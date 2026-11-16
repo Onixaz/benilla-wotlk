@@ -204,6 +204,12 @@ pub struct Frame {
     pub clamped_to_screen: bool,
     /// `IgnoreDepth` (`0x4a1d80`, `+0xcc`), the opt-out from the UI's stereo depth.
     pub ignore_depth: bool,
+    /// `SetDepth` (`0x4a1c40`, `+0xc4`, default 0): the frame's stereo depth, added to its
+    /// ancestors' for `GetEffectiveDepth`. Stored, not drawn: benilla renders no stereo UI.
+    pub depth: f32,
+    /// `SetDontSavePosition`, frame flag `0x80000`, also XML `dontSavePosition`. Stored: no reader
+    /// of the flag is traced in 12340.
+    pub dont_save_position: bool,
     /// `SetClampRectInsets` (`0x48eb00`), `[left, right, top, bottom]` in frame units: the clamp
     /// (`0x48944e`) lets the frame that far past each screen edge, scaled by the frame's scale.
     pub clamp_rect_insets: [f32; 4],
@@ -578,6 +584,8 @@ impl WidgetArena {
             keyboard_enabled: kind == FrameKind::EditBox,
             clamped_to_screen: matches!(kind, FrameKind::GameTooltip),
             ignore_depth: false,
+            depth: 0.0,
+            dont_save_position: false,
             clamp_rect_insets: [0.0; 4],
             hit_rect_insets: [0.0; 4],
             movable: false,

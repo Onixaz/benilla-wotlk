@@ -796,19 +796,13 @@ fn the_two_region_leaves_answer_their_own_maps() {
             "{m} is the Region map"
         );
     }
-    // 1.12 has no `GetStringHeight` on any table; `GetHeight` reads the same measurement.
-    assert!(
-        !has(&s, "Str", "GetStringHeight"),
-        "1.12 has no GetStringHeight"
-    );
-    assert!(
-        has(&s, "Str", "GetStringWidth"),
-        "…but it does have GetStringWidth"
-    );
-    assert!(
-        has(&s, "Str", "GetHeight"),
-        "GetHeight is the replacement, via the Region map"
-    );
+    // 3.3.5a's string metrics are FontString-only (`0x48df00`, `0x48de90`).
+    for m in ["GetStringHeight", "GetStringWidth"] {
+        assert!(
+            has(&s, "Str", m) && !has(&s, "Tex", m),
+            "{m} is FontString-only"
+        );
+    }
 
     // The near-miss pair: Texture has SetGradientAlpha, FontString has SetAlphaGradient.
     assert!(has(&s, "Tex", "SetGradientAlpha") && !has(&s, "Str", "SetGradientAlpha"));

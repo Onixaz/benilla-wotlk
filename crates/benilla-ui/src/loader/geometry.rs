@@ -129,6 +129,10 @@ impl Loader<'_> {
         if el.attr_bool("toplevel") {
             self.call(wrapper, "SetToplevel", true, dbg);
         }
+        // `dontSavePosition`: bit 0x80000, the flag `SetDontSavePosition` writes.
+        if el.attr_bool("dontSavePosition") {
+            self.call(wrapper, "SetDontSavePosition", true, dbg);
+        }
         // `enableKeyboard` enables both key kinds.
         if el.attr_bool("enableKeyboard") {
             self.call(wrapper, "EnableKeyboard", true, dbg);

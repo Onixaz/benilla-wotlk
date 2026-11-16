@@ -4,7 +4,7 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use crate::script::object::{as_f32, draw_layer_from_str, draw_layer_name};
-use crate::script::{BlendMode, TexCoords};
+use crate::script::{BlendMode, RegionData, TexCoords};
 
 use super::region_handle_of;
 
@@ -312,6 +312,55 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(Value::Number(1.0))
         })?,
     )?;
+
+    // IsDesaturated (`0x48ca30`): 1 while the desaturating shader is on, else nil; benilla always has
+    // it, so the flag `SetDesaturated` stored answers.
+    m.set(
+        "IsDesaturated",
+        lua.create_function(|lua, this: Table| {
+            let rh = region_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            Ok(crate::script::binding_abi::flag(
+                model.region_data.get(&rh).is_some_and(|d| d.desaturated),
+            ))
+        })?,
+    )?;
+
+    // The three `+0x160` flag pairs: `SetHorizTile` (`0x48cb60`), `SetVertTile` (`0x48cc30`) and
+    // `SetNonBlocking` (`0x48caa0`) read the boolean argument (`0x815500`, an absent one on) and
+    // answer nothing; their getters (`0x48cbc0`, `0x48cc90`, `0x48cb00`) answer 1 or nil.
+    type FlagOf = fn(&mut RegionData) -> &mut bool;
+    let flags: [(&str, &str, FlagOf); 3] = [
+        ("SetHorizTile", "GetHorizTile", |d| &mut d.tile.0),
+        ("SetVertTile", "GetVertTile", |d| &mut d.tile.1),
+        ("SetNonBlocking", "GetNonBlocking", |d| &mut d.non_blocking),
+    ];
+    for (set, get, field) in flags {
+        m.set(
+            set,
+            lua.create_function(move |lua, args: MultiValue| {
+                let this = match args.front() {
+                    Some(Value::Table(t)) => t.clone(),
+                    _ => return Err(mlua::Error::runtime("expected a texture")),
+                };
+                let on = crate::script::binding_abi::bool_or_default(args.get(1), true);
+                let rh = region_handle_of(lua, &this)?;
+                let mut model = crate::script::model_mut_of(lua);
+                let d = model.paint_mut(&[crate::order::ZTarget::Region(rh)]);
+                *field(d.region_data.entry(rh).or_default()) = on;
+                Ok(())
+            })?,
+        )?;
+        m.set(
+            get,
+            lua.create_function(move |lua, this: Table| {
+                let rh = region_handle_of(lua, &this)?;
+                let mut model = crate::script::model_mut_of(lua);
+                let on = model.region_data.get_mut(&rh).is_some_and(|d| *field(d));
+                Ok(crate::script::binding_abi::flag(on))
+            })?,
+        )?;
+    }
 
     // GetTexture, Texture only, answers one value: "Solid Texture" for the colour form, not nil,
     // and a path cut at its last `.`, even a dot in a directory name, as the client cuts it.

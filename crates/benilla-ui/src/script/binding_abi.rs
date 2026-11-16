@@ -180,28 +180,29 @@ pub(crate) fn bool_or_default(v: Option<&Value>, default: bool) -> bool {
         // Truncated like a number argument's cast, testing only the low dword.
         Value::Integer(i) => (*i as i32) != 0,
         Value::Number(n) => (*n as i64 as i32) != 0,
-        Value::String(s) => {
-            let bytes = s.as_bytes();
-            match bytes.first() {
-                Some(b'0' | b'F' | b'N' | b'f' | b'n') => false,
-                Some(b'1'..=b'9' | b'T' | b'Y' | b't' | b'y') => true,
-                // The keyword arm, also reached by every byte the remap table cannot index (and
-                // by an empty string).
-                _ => {
-                    if bytes.eq_ignore_ascii_case(b"off") || bytes.eq_ignore_ascii_case(b"disabled")
-                    {
-                        false
-                    } else if bytes.eq_ignore_ascii_case(b"on")
-                        || bytes.eq_ignore_ascii_case(b"enabled")
-                    {
-                        true
-                    } else {
-                        default
-                    }
-                }
+        Value::String(s) => str_bool_or_default(&s.as_bytes(), default),
+        _ => default,
+    }
+}
+
+/// [`bool_or_default`]'s string arm, which the XML load also applies to an attribute with a false
+/// default (`0x485f40`'s attribute read): the first byte through the remap table, else the whole
+/// string.
+pub(crate) fn str_bool_or_default(bytes: &[u8], default: bool) -> bool {
+    match bytes.first() {
+        Some(b'0' | b'F' | b'N' | b'f' | b'n') => false,
+        Some(b'1'..=b'9' | b'T' | b'Y' | b't' | b'y') => true,
+        // The keyword arm, also reached by every byte the remap table cannot index (and by an
+        // empty string).
+        _ => {
+            if bytes.eq_ignore_ascii_case(b"off") || bytes.eq_ignore_ascii_case(b"disabled") {
+                false
+            } else if bytes.eq_ignore_ascii_case(b"on") || bytes.eq_ignore_ascii_case(b"enabled") {
+                true
+            } else {
+                default
             }
         }
-        _ => default,
     }
 }
 

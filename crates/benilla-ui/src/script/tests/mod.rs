@@ -59,6 +59,7 @@ mod toplevel;
 mod ui_scale;
 mod update_walk;
 mod visibility;
+mod widget_methods;
 mod worldframe;
 mod worldmap;
 

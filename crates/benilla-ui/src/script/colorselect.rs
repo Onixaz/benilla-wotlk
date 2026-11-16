@@ -217,6 +217,29 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetColorRGB",
         lua.create_function(|lua, this: Table| with_colorselect(lua, &this, |s| s.rgb_f64()))?,
     )?;
+    // SetColorHSV(h, s, v) (`0x970f50`): three `lua_tonumber` reads, unchecked, stored raw, then the
+    // colour update that `SetColorRGB` also ends in, which fires `OnColorSelect`. Answers nothing.
+    m.set(
+        "SetColorHSV",
+        lua.create_function(|lua, (this, h, s, v): (Table, Value, Value, Value)| {
+            let [h, s, v] = [h, s, v].map(|x| crate::script::object::as_f64(&x) as f32);
+            let (r, g, b) = with_colorselect(lua, &this, |st| {
+                st.set_hsv(h, s, v);
+                st.rgb_f64()
+            })?;
+            fire_color_select(lua, &this, r, g, b)
+        })?,
+    )?;
+    // GetColorHSV (`0x970fd0`): the three stored floats.
+    m.set(
+        "GetColorHSV",
+        lua.create_function(|lua, this: Table| {
+            with_colorselect(lua, &this, |st| {
+                let [h, s, v] = st.hsv.map(f64::from);
+                (h, s, v)
+            })
+        })?,
+    )?;
 
     // The four texture accessors, through which the XML loader installs a ColorSelect's elements.
     install_slot_texture(

@@ -225,6 +225,7 @@ fn set_font_object_takes_the_object_or_the_name() {
             justify_v: None,
             shadow: None,
             spacing: None,
+            indented_word_wrap: false,
         },
     );
     s.run(
@@ -286,6 +287,7 @@ fn dewdrop_recolors_a_row_from_its_own_font_object() {
             justify_v: None,
             shadow: None,
             spacing: None,
+            indented_word_wrap: false,
         },
     );
     s.run(
@@ -322,6 +324,7 @@ fn mutating_a_font_object_repaints_everything_that_inherits_it() {
             justify_v: None,
             shadow: None,
             spacing: None,
+            indented_word_wrap: false,
         },
     );
     s.run(
@@ -509,6 +512,7 @@ fn fonz_appraiser_copies_a_shipped_object_then_overrides_the_face() {
             justify_v: None,
             shadow: None,
             spacing: None,
+            indented_word_wrap: false,
         },
     );
     s.run(

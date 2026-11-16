@@ -259,6 +259,14 @@ impl Loader<'_> {
     ) {
         let color = children_named(region, "Color").next().map(color_of);
         if is_texture {
+            // `horizTile`/`vertTile`, present and non-empty, set their tile bit to the value read
+            // as a boolean (`0x485f40`), before the file, which they also wrap.
+            for (attr, verb) in [("horizTile", "SetHorizTile"), ("vertTile", "SetVertTile")] {
+                if let Some(v) = region.attr(attr).filter(|v| !v.is_empty()) {
+                    let on = crate::script::binding_abi::str_bool_or_default(v.as_bytes(), false);
+                    self.call_region(region_wrapper, verb, on, dbg);
+                }
+            }
             if let Some(file) = region.attr("file") {
                 // A `<Color>` beside `file=` is discarded, not a tint: the reference applies it in
                 // its child loop, then the file, read after, overwrites the same slot.

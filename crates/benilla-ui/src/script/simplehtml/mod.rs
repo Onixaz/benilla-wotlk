@@ -74,6 +74,9 @@ pub(crate) struct SimpleHtmlState {
     pub(crate) hyperlink_format: String,
     /// The content list (`+0x340`): every region the last `SetText` built, freed by the next.
     pub(crate) blocks: Vec<RegionHandle>,
+    /// `+0x2f4`, on from the constructor: off, the content's links take no pointer, as the
+    /// reference deletes their buttons (`0x96d500`).
+    pub(crate) hyperlinks_enabled: bool,
 }
 
 impl Default for SimpleHtmlState {
@@ -82,6 +85,7 @@ impl Default for SimpleHtmlState {
             fonts: Default::default(),
             hyperlink_format: parse::DEFAULT_HYPERLINK_FORMAT.to_string(),
             blocks: Vec::new(),
+            hyperlinks_enabled: true,
         }
     }
 }
@@ -746,6 +750,35 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // SetHyperlinksEnabled(flag) (`0x9751e0`): the boolean argument (`0x815500`, an absent one on);
+    // GetHyperlinksEnabled (`0x975240`) answers 1 or nil.
+    m.set(
+        "SetHyperlinksEnabled",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let Some(Value::Table(this)) = args.front() else {
+                return Err(mlua::Error::runtime("expected a SimpleHTML"));
+            };
+            let on = crate::script::binding_abi::bool_or_default(args.get(1), true);
+            let h = frame_handle_of(lua, this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            model.simple_html.entry(h).or_default().hyperlinks_enabled = on;
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "GetHyperlinksEnabled",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            Ok(crate::script::binding_abi::flag(
+                model
+                    .simple_html
+                    .get(&h)
+                    .is_none_or(|s| s.hyperlinks_enabled),
+            ))
+        })?,
+    )?;
+    crate::script::font::install_frame_indented_wrap(lua, &m, true)?;
     m.set(
         "GetHyperlinkFormat",
         lua.create_function(|lua, this: Table| {

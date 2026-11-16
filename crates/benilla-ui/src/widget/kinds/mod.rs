@@ -696,6 +696,8 @@ pub struct MinimapState {
     /// The player texture's `[width, height]` in frame units (`0x57e280`/`0x57e1c0`), unsized
     /// from the ctor (`0x57dca0`).
     pub player_texture_size: [f32; 2],
+    /// `SetPlayerTexture`'s file for the player arrow (`0x57e100`); `None` keeps the stock arrow.
+    pub player_texture: Option<String>,
 }
 
 /// Both zoom CVars register with `"3"` and the reset copies the CVar in; a higher index zooms in, 3
@@ -712,6 +714,7 @@ impl Default for MinimapState {
             // Set by `WidgetArena::create` on insert, as the ctor builds its children.
             player_arrow: None,
             player_texture_size: [0.0; 2],
+            player_texture: None,
         }
     }
 }
@@ -1055,6 +1058,8 @@ pub struct StatusBarState {
     pub vertical: bool,
     /// The fill texture (`<BarTexture>`), cropped to [`Self::fraction`] along the orientation axis.
     pub bar: Option<RegionHandle>,
+    /// `SetRotatesTexture`, `+0x29c` bit `0x8`, off from the constructor.
+    pub rotates_texture: bool,
 }
 
 impl StatusBarState {

@@ -7,7 +7,7 @@ use mlua::{Lua, Table, Value};
 
 use crate::script::object::frame_handle_of;
 use crate::script::UiScript;
-use crate::widget::{KindState, ScrollingMessageState};
+use crate::widget::{InsertMode, KindState, ScrollingMessageState};
 
 /// Registry key of the ScrollingMessageFrame method table (the MAXCSTACK discipline).
 pub(crate) const REG_SCROLLINGMESSAGEFRAME_METHODS: &str =
@@ -78,6 +78,76 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // The justify quartet, on both classes ([`super::install_justify`]).
     super::install_justify(lua, &m, "ScrollingMessageFrame")?;
+    crate::script::font::install_frame_indented_wrap(lua, &m, false)?;
+
+    // GetCurrentLine (`0x973750`): the newest line's ring slot, -1 with none.
+    m.set(
+        "GetCurrentLine",
+        lua.create_function(|lua, this: Table| with_smf(lua, &this, |s| s.head as f64))?,
+    )?;
+    // GetCurrentScroll (`0x9736f0`): the lines scrolled back from the newest, 0 with none.
+    m.set(
+        "GetCurrentScroll",
+        lua.create_function(|lua, this: Table| {
+            with_smf(lua, &this, |s| {
+                if s.lines.is_empty() || s.head < 0 {
+                    0.0
+                } else {
+                    s.scroll_offset as f64
+                }
+            })
+        })?,
+    )?;
+    // GetNumLinesDisplayed (`0x9736a0`): how many messages the view shows.
+    m.set(
+        "GetNumLinesDisplayed",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            let rows = UiScript::message_viewport_rows(&model, h);
+            Ok(match model.arena.frame(h).map(|f| &f.kind_state) {
+                Some(KindState::ScrollingMessage(s)) => s.displayed_count(rows) as f64,
+                _ => return Err(mlua::Error::runtime("not a ScrollingMessageFrame")),
+            })
+        })?,
+    )?;
+    // SetInsertMode("TOP" or "BOTTOM") (`0x973b10`), case-insensitive, anything else the named
+    // Usage; GetInsertMode (`0x973bd0`) answers the name.
+    m.set(
+        "SetInsertMode",
+        lua.create_function(|lua, (this, mode): (Table, Value)| {
+            let mode = match &mode {
+                Value::String(s) if s.as_bytes().eq_ignore_ascii_case(b"TOP") => InsertMode::Top,
+                Value::String(s) if s.as_bytes().eq_ignore_ascii_case(b"BOTTOM") => {
+                    InsertMode::Bottom
+                }
+                _ => {
+                    let who: Option<String> =
+                        this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {}:SetInsertMode(\"TOP\" or \"BOTTOM\")",
+                        who.as_deref()
+                            .unwrap_or(crate::script::object::anchor_args::UNNAMED)
+                    )));
+                }
+            };
+            with_smf(lua, &this, |s| {
+                if s.insert_mode != mode {
+                    s.insert_mode = mode;
+                    s.lines_gen = s.lines_gen.wrapping_add(1);
+                }
+            })
+        })?,
+    )?;
+    m.set(
+        "GetInsertMode",
+        lua.create_function(|lua, this: Table| {
+            with_smf(lua, &this, |s| match s.insert_mode {
+                InsertMode::Top => "TOP",
+                InsertMode::Bottom => "BOTTOM",
+            })
+        })?,
+    )?;
 
     // AddMessage(text [, r, g, b,] id, backFill): white without rgb; the state quantizes the colour
     // and makes the line opaque. The rgb test is three `lua_isnumber` checks; the id is stack index

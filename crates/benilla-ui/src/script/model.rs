@@ -796,6 +796,13 @@ pub(crate) struct Model {
     /// `RegisterForDrag` buttons per frame, compared case-insensitively. Nothing destroys a frame,
     /// so this, `scripts` and `frame_events` are never pruned; a destroy path must prune all three.
     pub(crate) drag_registered: HashMap<FrameHandle, HashSet<String>>,
+    /// The indented word wrap (style bit `0x20000`) of a message frame's, edit box's or SimpleHTML's
+    /// own font, by frame and font slot (SimpleHTML's `P`, `H1`, `H2`, `H3` are 0 to 3; every other
+    /// frame has slot 0). Stored, not applied, as on a FontString.
+    pub(crate) frame_indented_wrap: HashSet<(FrameHandle, u8)>,
+    /// The minimap art every minimap shares, by the setter that replaced it (`SetBlipTexture`,
+    /// `SetIconTexture`, ...); an absent key is the stock file.
+    pub(crate) minimap_art: HashMap<&'static str, String>,
     /// The drag gesture, armed by a press on a drag-registered frame, started past the threshold.
     pub(crate) drag: Option<cursor::DragGesture>,
     /// The one `StartMoving()` in flight, the client's `root+0xcfc` slot, apart from `drag` as in
@@ -1689,6 +1696,8 @@ impl Model {
             container_autoequips: Vec::new(),
             bag_autostores: Vec::new(),
             drag_registered: HashMap::new(),
+            frame_indented_wrap: HashSet::new(),
+            minimap_art: HashMap::new(),
             drag: None,
             moving: None,
             sizing: None,

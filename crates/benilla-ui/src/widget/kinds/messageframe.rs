@@ -53,6 +53,12 @@ pub struct ScrollingMessageState {
     /// `+0x348`, on at construction (`0x96a45b`): off, the lines' link spans take no clicks
     /// (`0x9699c0`), what an uninteractable chat window sets.
     pub hyperlinks_enabled: bool,
+    /// The ring slot of the newest line (`+0x2c4`), -1 from the constructor and after a clear: a
+    /// line added at the bottom steps it, a back-filled one leaves it.
+    pub head: i64,
+    /// `SetInsertMode`, `+0x344`, BOTTOM from the constructor: which edge the newest line hangs
+    /// off.
+    pub insert_mode: InsertMode,
 }
 
 impl Default for ScrollingMessageState {
@@ -68,6 +74,8 @@ impl Default for ScrollingMessageState {
             lines_gen: 0,
             scroll_offset: 0,
             hyperlinks_enabled: true,
+            head: -1,
+            insert_mode: InsertMode::Bottom,
         }
     }
 }
@@ -108,6 +116,7 @@ impl ScrollingMessageState {
     pub fn add_with_id(&mut self, text: String, r: f32, g: f32, b: f32, id: u32) {
         let line = self.new_line(text, r, g, b, id);
         self.lines.push_back(line);
+        self.head = (self.head + 1).rem_euclid(self.max_lines as i64);
         // Scrolled up: keep the same lines in view as the ring grows below them.
         if self.scroll_offset > 0 {
             self.scroll_offset += 1;
@@ -154,6 +163,7 @@ impl ScrollingMessageState {
         self.lines_gen = self.lines_gen.wrapping_add(1);
         self.lines.clear();
         self.scroll_offset = 0;
+        self.head = -1;
         self.max_lines = n.max(1);
     }
 
@@ -162,6 +172,7 @@ impl ScrollingMessageState {
         self.lines_gen = self.lines_gen.wrapping_add(1);
         self.lines.clear();
         self.scroll_offset = 0;
+        self.head = -1;
     }
 
     /// Whether the view is pinned to the newest line (`AtBottom`).
@@ -331,8 +342,8 @@ fn quantize_fade_wide(x: f64) -> u8 {
     (x.clamp(0.0, 1.0) * 255.0).trunc() as u8
 }
 
-/// Where a MessageFrame's newest message enters: XML `insertMode` and
-/// `SetInsertMode`/`GetInsertMode`; the scrolling class has neither.
+/// Where a message frame's newest message enters: XML `insertMode` and
+/// `SetInsertMode`/`GetInsertMode`, on both classes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InsertMode {
     /// `"TOP"` (0): newest on the top line, older stepping down, as `UIErrorsFrame.xml:4` asks.

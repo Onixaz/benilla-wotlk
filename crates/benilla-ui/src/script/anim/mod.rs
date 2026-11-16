@@ -9,9 +9,11 @@
 //! saved when the first alpha group began (`0x48f8e0`, `0x487ce0`), restored each tick
 //! (`0x48eba0`) and when the last alpha group ends; a translation offsets the owner's regions'
 //! drawn rects, a frame's reaching every region below it (`0x491c60`). Rotation, Scale and Path
-//! keep their values and time but draw nothing: no stock 3.3.5a file declares one.
+//! keep their values and time but draw nothing: no stock 3.3.5a file declares one. A Path's control
+//! points ([`path`]) are kept the same way.
 
 pub(crate) mod lua;
+mod path;
 pub(crate) mod run;
 #[cfg(test)]
 mod tests;
@@ -140,6 +142,20 @@ pub(crate) struct Anim {
     pub(crate) smoothing: Option<(f32, f32)>,
 }
 
+/// A Path's control point (`0x499d00`): its offset in UI units, zeroed under a length of 2.38e-7
+/// (`0x4981f0`), and its 0-based order, -1 until set.
+#[derive(Clone, Debug)]
+pub(crate) struct ControlPoint {
+    /// The Path animation it belongs to.
+    pub(crate) path: u32,
+    pub(crate) name: Option<String>,
+    pub(crate) order: i32,
+    pub(crate) offset: (f32, f32),
+}
+
+/// `SetCurve`'s names (`0xa440d4`): the byte is the index.
+pub(crate) const CURVES: [&str; 2] = ["NONE", "SMOOTH"];
+
 /// An owner's playing groups, its animated alpha and its saved alpha.
 #[derive(Clone, Debug, Default)]
 struct OwnerState {
@@ -158,6 +174,10 @@ pub(crate) struct AnimStore {
     owners: HashMap<Owner, OwnerState>,
     /// The translation each region draws at this tick.
     pub(crate) offsets: HashMap<RegionHandle, (f32, f32)>,
+    /// Every Path's control points, by id. Kept, not flown: a Path draws nothing.
+    pub(crate) points: HashMap<u32, ControlPoint>,
+    /// A Path's curve byte (`+0xb4`), absent for NONE.
+    pub(crate) curves: HashMap<u32, u8>,
 }
 
 impl AnimStore {
@@ -220,6 +240,70 @@ impl AnimStore {
             g.anims.push(id);
         }
         id
+    }
+
+    /// The control point constructor (`0x499d00`), on `path`, unordered.
+    pub(crate) fn new_point(&mut self, path: u32, name: Option<String>) -> u32 {
+        let id = self.id();
+        self.points.insert(
+            id,
+            ControlPoint {
+                path,
+                name,
+                order: -1,
+                offset: (0.0, 0.0),
+            },
+        );
+        id
+    }
+
+    /// A Path's control points in its sorted array's order: by order, then by when each joined.
+    pub(crate) fn path_points(&self, path: u32) -> Vec<u32> {
+        let mut out: Vec<(i32, u32)> = self
+            .points
+            .iter()
+            .filter(|(_, p)| p.path == path)
+            .map(|(&id, p)| (p.order, id))
+            .collect();
+        out.sort_unstable();
+        out.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// The highest control point order on `path`, -1 with none.
+    pub(crate) fn max_point_order(&self, path: u32) -> i32 {
+        self.points
+            .values()
+            .filter(|p| p.path == path)
+            .map(|p| p.order)
+            .max()
+            .unwrap_or(-1)
+    }
+
+    /// Move animation `a` to group `to` (`0x4a5880`'s re-link): out of its old group's lists and
+    /// into the new one's, both durations recomputed. False when `to` is already its group.
+    pub(crate) fn change_group(&mut self, a: u32, to: u32) -> bool {
+        let Some(from) = self.anims.get(&a).map(|x| x.group) else {
+            return false;
+        };
+        if from == to || !self.groups.contains_key(&to) {
+            return false;
+        }
+        if let Some(g) = self.groups.get_mut(&from) {
+            g.anims.retain(|&x| x != a);
+            for l in &mut g.lists {
+                l.retain(|&x| x != a);
+            }
+            g.lists.retain(|l| !l.is_empty());
+        }
+        self.compute_duration(from);
+        if let Some(x) = self.anims.get_mut(&a) {
+            x.group = to;
+        }
+        if let Some(g) = self.groups.get_mut(&to) {
+            g.anims.push(a);
+        }
+        self.notify_added(to, a);
+        true
     }
 
     /// The groups an owner holds, in creation order (`GetAnimationGroups`).
