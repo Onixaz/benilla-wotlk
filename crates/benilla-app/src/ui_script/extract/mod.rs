@@ -471,7 +471,7 @@ pub(crate) fn seat_text_measurer(script: &mut UiScript, atlas: &UiFontAtlas, sea
 /// screen size, `tick`, the measure round-trip, `resolve` and the script errors. The quads are
 /// [`paint_script`]'s, after the camera that places the `WorldFrame` nameplates.
 pub(crate) fn tick_script(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     window: Query<&Window, With<PrimaryWindow>>,
     // Real time: the reference's `GetTime` is the OS tick count.
     time: Res<Time<Real>>,
@@ -651,7 +651,7 @@ pub(crate) fn tick_script(
 /// The UI pass's second half, after the camera and the plate driver: an incremental measure and
 /// `resolve` for what was written since the tick, the walk, and the conversion into [`UiQuads`].
 pub(super) fn paint_script(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     window: Query<&Window, With<PrimaryWindow>>,
     mut quads: ResMut<UiQuads>,
     world_assets: Option<ResMut<WorldAssets>>,

@@ -227,7 +227,7 @@ impl AttackPress<'_, '_> {
 /// mid-cast is the ladder's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
     // Not a `CastLadder` field: Bevy panics on a resource reachable twice from one system.
@@ -457,7 +457,7 @@ pub(crate) fn use_action(
 /// Applies the queued `PickupAction`/`PlaceAction` writes (packed 0 clears) to the store, which
 /// the VM already mirrors, marks it dirty for the feed and sends each as `CMSG_SET_ACTION_BUTTON`.
 pub(super) fn drain_action_sets(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut actions: ResMut<PlayerActions>,
     commands: Res<NetCommands>,
 ) {

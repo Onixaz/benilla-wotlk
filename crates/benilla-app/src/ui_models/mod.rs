@@ -615,7 +615,7 @@ struct TileRender<'w> {
 /// an unchanged one.
 fn forget_dead_vm_tiles(
     mut commands: Commands,
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut state: NonSendMut<TileState>,
     mut bridge: ResMut<UiModelTiles>,
     mut table: ResMut<MatAnimTable>,
@@ -628,7 +628,7 @@ fn forget_dead_vm_tiles(
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn sync_tiles(
     mut commands: Commands,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: NonSendMut<TileState>,
     mut bridge: ResMut<UiModelTiles>,
     mut assets: TileAssets,

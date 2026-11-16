@@ -449,7 +449,7 @@ fn expiry_lines(log: &mut QuestLog, expiries: Vec<u32>, commands: &NetCommands) 
 /// packet, ahead of the frame's `QUEST_LOG_UPDATE`, which the reference flushes after the packets.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(super) fn announce_quest_progress(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     mut log: ResMut<QuestLog>,
     names: Res<NameCache>,

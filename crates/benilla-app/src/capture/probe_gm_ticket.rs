@@ -198,7 +198,7 @@ fn unique_text(suffix: &str) -> String {
 fn gm_ticket_probe(
     time: ProbeClock,
     mut probe: ResMut<GmTicketProbe>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     player: Res<Player>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,

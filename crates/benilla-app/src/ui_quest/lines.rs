@@ -78,7 +78,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut lines: ResMut<QuestLines>) {
 
 /// Show every line whose record is here, in the order raised; the rest wait.
 fn feed_quest_lines(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut lines: ResMut<QuestLines>,
     quest_log: Res<QuestLog>,
     items: Res<Items>,

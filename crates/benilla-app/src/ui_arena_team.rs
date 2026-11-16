@@ -338,7 +338,7 @@ fn read_info(store: &ObjectStore) -> Option<[[u32; 7]; 3]> {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_arena_teams(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut teams: ResMut<ArenaTeams>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     inspect_target: Res<crate::ui_inspect::InspectTarget>,
@@ -396,7 +396,7 @@ fn feed_arena_teams(
 
 /// The VM's sends; the roster ask goes through the throttle.
 fn drain_arena_teams(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut teams: ResMut<ArenaTeams>,
     commands: Res<NetCommands>,
 ) {

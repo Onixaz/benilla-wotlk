@@ -393,7 +393,7 @@ pub(crate) fn seed_spell_info_for_vm(world: &World, script: &mut UiScript) {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_spell_info(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     spells: Option<Res<Spells>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
     talents: Option<Res<crate::ui_talent::Talents>>,

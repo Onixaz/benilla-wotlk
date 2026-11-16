@@ -155,7 +155,7 @@ fn watcher_events(catalog: &GlyphCatalog, edge: &FieldChanged) -> Vec<(&'static 
 
 #[allow(clippy::too_many_arguments)]
 fn feed_glyphs(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     glyphs: Option<Res<Glyphs>>,
     spells: Option<Res<Spells>>,
     targeting: Res<SpellTargeting>,
@@ -197,7 +197,10 @@ fn feed_glyphs(
 
 /// `RemoveGlyphFromSocket`'s sends, `CMSG_REMOVE_GLYPH` per socket; the server answers with
 /// `SMSG_TALENTS_INFO` and the glyph field.
-fn drain_glyph_removes(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_glyph_removes(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };

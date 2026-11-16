@@ -29,7 +29,7 @@ use super::{SoundConfig, SoundOutput};
 /// Drain the VM's queued `PlaySound` intents into the kit player; drained even with no catalog,
 /// so the queue cannot grow unbounded.
 fn drain_ui_sounds(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
     mut out: NonSendMut<SoundOutput>,
@@ -123,7 +123,7 @@ enum CursorGesture {
 /// lands on the cursor (`PlaceAction`); the same item is no change. A missing link (template,
 /// display, group 0, kit 0) is silent, as in the client.
 fn play_item_gesture_sounds(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut prev: Local<crate::ui_script::VmMemo<Option<CursorPayload>>>,
     items: Res<Items>,
     displays: Option<Res<ItemDisplays>>,
@@ -367,7 +367,7 @@ pub(super) fn plugin(app: &mut App) {
 
 /// Hand each new VM the cached device list, and every VM a list that moved.
 pub(super) fn feed_drivers(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     drivers: Res<OutputDrivers>,
     out: NonSend<SoundOutput>,
     mut device_changed: ResMut<DeviceChanged>,
@@ -389,7 +389,7 @@ pub(super) fn feed_drivers(
 
 /// Drain the panel's `Sound_GameSystem_RestartSoundSystem` into a [`SoundRestart`].
 pub(super) fn drain_restart_request(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut restarts: MessageWriter<SoundRestart>,
 ) {
     if script.is_some_and(|mut s| s.take_sound_restart()) {

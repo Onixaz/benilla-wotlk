@@ -632,7 +632,7 @@ pub(super) struct SpellTooltipSources<'w> {
 /// subjects, every unit's auras and the tracking spell) before it is hovered, as the reference
 /// reads them all locally; an ask for any other id too.
 pub(super) fn feed_spell_tooltips(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Option<Res<PlayerActions>>,
     spell_sources: SpellTooltipSources,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,

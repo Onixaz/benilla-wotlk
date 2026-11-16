@@ -83,7 +83,7 @@ type ReputationInputs = Option<(u8, u8, Option<u32>)>;
 /// keeps a change to no faction quiet. The first push fires too: the stock watch bar initializes
 /// off `UPDATE_FACTION` at login.
 fn feed_reputation(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     reputations: Res<Reputations>,
     factions: Option<Res<Factions>>,
@@ -149,7 +149,7 @@ struct LocalFlagWrites(Vec<(u32, u8, bool)>);
 /// Send the pane's queued verbs. None is acked, so the war and inactive flags go into the store
 /// the way the client writes its own (`0x5d0a10`, `0x5d1c10`): the next push keeps them.
 fn drain_reputation_sends(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
     mut writes: ResMut<LocalFlagWrites>,
 ) {

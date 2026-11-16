@@ -50,7 +50,10 @@ fn on_chat(
 fn on_channel_list(
     In(ev): In<SessionEvent>,
     mut chat_log: ResMut<ChatLog>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     names: Option<Res<crate::names::NameCache>>,
     commands: Option<Res<NetCommands>>,
 ) {
@@ -87,7 +90,10 @@ fn on_channel_list(
 /// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members.
 fn on_channel_user_list(
     In(ev): In<SessionEvent>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     names: Option<Res<crate::names::NameCache>>,
     commands: Option<Res<NetCommands>>,
 ) {
@@ -124,7 +130,10 @@ fn on_channel_user_list(
 /// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is
 /// handed over, and the last one fires the roster's events.
 pub(super) fn feed_channel_roster_names(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     names: Option<Res<crate::names::NameCache>>,
     commands: Option<Res<NetCommands>>,
 ) {

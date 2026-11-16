@@ -112,7 +112,7 @@ pub(crate) struct FeedMemory {
 }
 
 pub(crate) fn feed_spellbook(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
     skill_lines: Option<Res<SkillLines>>,

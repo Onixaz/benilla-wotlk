@@ -662,7 +662,7 @@ struct MailMemos {
 }
 
 fn feed_mail(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut mail: ResMut<MailOpen>,
     mut pending: ResMut<MailPending>,
     look: MailLookups,
@@ -841,7 +841,7 @@ fn complain(
 
 /// The VM's mail packets out, each as its verb's reference send does.
 fn drain_mail(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut mail: ResMut<MailOpen>,
     mut pending: ResMut<MailPending>,
     commands: Res<NetCommands>,

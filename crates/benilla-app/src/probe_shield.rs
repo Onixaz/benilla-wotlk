@@ -170,7 +170,10 @@ fn drive_shield(
     names: Res<NameCache>,
     self_guid: Res<SelfGuid>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
 ) {
     let entered_world = entered.read().next().is_some();
     let ours = intent.account().is_some_and(is_probe_account);

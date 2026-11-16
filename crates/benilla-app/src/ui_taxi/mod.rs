@@ -86,7 +86,7 @@ impl NpcSession for TaxiState {
 /// Push the map into the VM and fire its events, show an activate refusal or close on `OK`, and
 /// announce a first-visit discovery.
 fn feed_taxi(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<TaxiState>,
     catalogs: Option<Res<TaxiCatalogs>>,
     names: Res<NameCache>,
@@ -226,7 +226,7 @@ fn feed_taxi(
 /// a fear, is not a taxi: stock `UIParent.lua:474-478` closes the windows on `PLAYER_CONTROL_LOST`
 /// unless on a taxi. No self store reads as not on a taxi.
 fn feed_on_taxi(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut last: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
@@ -249,7 +249,7 @@ fn feed_on_taxi(
 /// `CMSG_ACTIVATETAXIEXPRESS` with the chain and its fare, as the reference's test decides; the
 /// `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
 fn drain_taxi(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<TaxiState>,
     cache: Res<TaxiRouteCache>,
     catalogs: Option<Res<TaxiCatalogs>>,

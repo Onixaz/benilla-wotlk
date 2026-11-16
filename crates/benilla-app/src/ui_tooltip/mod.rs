@@ -122,7 +122,7 @@ fn skill_lock_line(
 }
 
 fn drive_mouseover_tooltip(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     hovered: Res<Hovered>,
     hovered_go: Res<HoveredObject>,
     stores: Query<&ObjectStore>,

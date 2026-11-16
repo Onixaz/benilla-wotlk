@@ -131,7 +131,10 @@ struct Stretch {
 /// Installs the verbs into each new in-game VM.
 fn install_verbs(
     mut stretch: ResMut<Stretch>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_player: Query<(), With<SelfPlayer>>,
 ) {
     let Some(script) = script else { return };

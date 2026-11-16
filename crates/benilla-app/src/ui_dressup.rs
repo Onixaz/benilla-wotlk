@@ -196,7 +196,7 @@ impl Plugin for DressUpUiPlugin {
 }
 
 fn feed_dressup(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut room: ResMut<DressUpRoom>,
     mut preview: ResMut<DressUpPreview>,
     items: Res<Items>,

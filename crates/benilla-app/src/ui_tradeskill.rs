@@ -451,7 +451,7 @@ pub(crate) fn list_link(
 /// Build the book: the known recipes of the open line, banded against the current rank.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_trade_skill(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<TradeSkillOpen>,
     actions: Res<PlayerActions>,
     data: BookData,
@@ -782,7 +782,7 @@ fn feed_trade_skill(
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<TradeSkillOpen>,
     mut cast_events: MessageReader<CastEvent>,
     targeting: cast_target::CastTargeting,

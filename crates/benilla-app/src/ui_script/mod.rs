@@ -21,6 +21,10 @@ pub(crate) mod glue;
 pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
+pub(crate) mod live;
+pub(crate) use live::LendLive;
+#[cfg(test)]
+pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
 #[cfg(test)]
 pub(crate) use input::feed_ui_input;
@@ -569,7 +573,7 @@ pub(crate) use lifecycle::{
 /// `GetFramerate()`'s host half: FPS on `Time<Real>`, smoothed by a one-second pole; how the
 /// reference averages it is untraced.
 fn feed_framerate(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     time: Res<Time<bevy::time::Real>>,
     mut smoothed: Local<f64>,
 ) {
@@ -592,7 +596,10 @@ fn feed_framerate(
 }
 
 /// Synthetic player and target snapshots for a server-less UI capture, and its first events once.
-fn demo_unit_feed(script: Option<NonSendMut<UiScript>>, mut fired: Local<VmMemo<bool>>) {
+fn demo_unit_feed(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut fired: Local<VmMemo<bool>>,
+) {
     /// The synthetic target's guid: a creature high part; only its distinctness matters.
     const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
 

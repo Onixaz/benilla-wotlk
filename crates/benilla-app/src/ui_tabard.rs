@@ -128,7 +128,7 @@ pub(crate) fn preflight(
 }
 
 fn feed_tabard(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<TabardOpen>,
     mut design: ResMut<TabardDesign>,
     mut booth: ResMut<PaperDollBooth>,
@@ -198,7 +198,7 @@ fn feed_tabard(
 }
 
 fn drain_tabard(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<TabardOpen>,
     guilds: Res<GuildState>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,

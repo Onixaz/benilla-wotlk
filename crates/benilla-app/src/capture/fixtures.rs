@@ -40,7 +40,10 @@ pub(super) fn seed_ui_fixture(
     store: (ResMut<crate::items::Items>, ResMut<crate::net::GuidIndex>),
     mut names: ResMut<crate::names::NameCache>,
     icons: Option<Res<crate::entities::ItemDisplays>>,
-    mut script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (mut script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut selection: ResMut<crate::target::Selection>,
     mut player: ResMut<crate::player::Player>,
     // A nested tuple, one param under Bevy's 16-param cap.

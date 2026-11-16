@@ -89,7 +89,7 @@ fn flag_token(carrier_side: i8, map: u32) -> Option<&'static str> {
 const EYE_OF_THE_STORM: u32 = 566;
 
 fn feed_battlefield_positions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<BattlefieldPositions>,
     queue: Res<BattlefieldQueue>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,
@@ -195,7 +195,7 @@ fn feed_battlefield_positions(
 }
 
 fn drain_battlefield_positions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<BattlefieldPositions>,
     queue: Res<BattlefieldQueue>,
     commands: Res<NetCommands>,

@@ -653,7 +653,7 @@ fn track_instance_state(
 /// publish what the instance verbs read; the setters diff.
 #[allow(clippy::too_many_arguments)]
 fn feed_instance(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<InstanceState>,
     mut chat: ResMut<ChatLog>,
     inputs: ResetInputs,
@@ -736,7 +736,10 @@ fn feed_instance(
 }
 
 /// Turn the `ResetInstances()` calls and `RespondInstanceLock` answers into their sends.
-fn drain_instance(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_instance(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };

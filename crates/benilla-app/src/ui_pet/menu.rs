@@ -50,7 +50,7 @@ pub(super) fn summon_bars_dismiss(
 /// Push the menu's predicates. Abandon and Rename need us as `UNIT_FIELD_SUMMONEDBY` (`0x5d37cb`),
 /// Dismiss's refusal needs us as `UNIT_FIELD_CREATEDBY` (`0x5d386b`); with no pet it answers 1.
 pub(super) fn feed_pet_menu(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     pet: PetUnit,
     spells: Option<Res<crate::ui_action::Spells>>,
@@ -78,7 +78,7 @@ pub(super) fn feed_pet_menu(
 /// Send the menu's verbs under [`PetBar`]'s pet guid. Nothing is applied locally: the server
 /// answers by removing the pet or moving its name timestamp.
 pub(super) fn drain_pet_menu(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     commands: Res<NetCommands>,
     mut ui_errors: ResMut<UiErrorKeys>,

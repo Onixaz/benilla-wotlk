@@ -167,7 +167,7 @@ fn find_in_backpack(
 fn clam_probe(
     time: ProbeClock,
     mut probe: ResMut<ClamProbe>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     items: Res<Items>,

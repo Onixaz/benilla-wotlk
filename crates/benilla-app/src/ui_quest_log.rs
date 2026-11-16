@@ -761,7 +761,7 @@ fn remap_selection(selected: u32, new: &[QuestLogEntryView]) -> u32 {
 /// Pushes the server's wall clock every frame, for `GetQuestTimers()`; before the first
 /// `SMSG_QUERY_TIME_RESPONSE` nothing is pushed and the bindings report no timer.
 fn feed_server_clock(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     clock: Res<crate::net::ServerWallClock>,
 ) {
     let (Some(mut script), Some(now)) = (script, clock.now_unix()) else {
@@ -819,7 +819,7 @@ fn order_groups(rows: &[GroupRow]) -> Vec<(i32, String, Vec<usize>)> {
 /// refreshes `row_slots` for the abandon drain. A frame on which no input moved rebuilds nothing.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn feed_quest_log(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     mut quest_log: ResMut<QuestLog>,
     names: Res<NameCache>,
@@ -1214,7 +1214,10 @@ fn load_quest_tag_names(mut commands: Commands, assets: Option<Res<benilla_asset
 }
 
 /// `QuestLogPushQuest()`: the quest id taken at the click goes out; the server finds the party.
-fn drain_quest_log_pushes(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_quest_log_pushes(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1225,7 +1228,7 @@ fn drain_quest_log_pushes(script: Option<NonSendMut<UiScript>>, commands: Res<Ne
 }
 
 fn drain_quest_log_abandons(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     quest_log: Res<QuestLog>,
     commands: Res<NetCommands>,
 ) {

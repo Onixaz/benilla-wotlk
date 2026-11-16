@@ -100,7 +100,7 @@ pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cas
 
 /// The cascade, chained after the walk: the reference runs it at the walk's tail, on a fresh zone.
 pub(super) fn guild_recruitment_cascade(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<GuildRecruitmentCascade>,
     mut channels: ResMut<ChannelState>,
     walk: Res<ZoneChannelWalk>,

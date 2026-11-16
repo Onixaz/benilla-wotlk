@@ -139,7 +139,7 @@ impl ScreenshotState {
 /// this frame's: that order is the one-frame hold (module doc).
 fn ask_for_captures(
     mut commands: Commands,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<ScreenshotState>,
 ) {
     for _ in 0..std::mem::take(&mut state.pending) {
@@ -207,7 +207,10 @@ fn encode(rgb: &image::RgbImage, format: Format, path: &std::path::Path) -> std:
 
 /// Fires `SCREENSHOT_SUCCEEDED` or `SCREENSHOT_FAILED` for finished writes, always a frame after
 /// the capture, so the status cannot be in the picture.
-fn report_captures(script: Option<NonSendMut<UiScript>>, state: Res<ScreenshotState>) {
+fn report_captures(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    state: Res<ScreenshotState>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -346,7 +349,11 @@ mod tests {
     }
 
     /// The real [`ask_for_captures`] with no VM, as at character select.
-    fn spawn_pending_only(commands: Commands, state: ResMut<ScreenshotState>) {
-        ask_for_captures(commands, None, state);
+    fn spawn_pending_only(
+        commands: Commands,
+        live: crate::ui_script::LendLive,
+        state: ResMut<ScreenshotState>,
+    ) {
+        ask_for_captures(commands, (None, live), state);
     }
 }

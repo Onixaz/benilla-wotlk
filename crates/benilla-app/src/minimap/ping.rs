@@ -89,7 +89,10 @@ pub(super) fn seat_click(ctx: &BlipCtx, ping: &mut MinimapPing, click: Option<(f
 /// Republish the ping's normalized position and announce a fresh ping. Runs before the script
 /// tick, so the `MINIMAP_PING` event and `Minimap:GetPingPosition()` land in the same tick.
 pub(super) fn drive_minimap_ping(
-    script: Option<bevy::ecs::system::NonSendMut<UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut ping: ResMut<MinimapPing>,
     player: Res<Player>,
     widget: Res<super::MinimapWidget>,

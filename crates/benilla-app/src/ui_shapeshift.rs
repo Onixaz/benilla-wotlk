@@ -141,7 +141,7 @@ pub(crate) struct SeenForm(Option<u8>);
 /// Build the bar from the known spells and the catalog (module doc), and diff-push it.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn feed_shapeshift_bar(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
     cooldowns: Res<Cooldowns>,

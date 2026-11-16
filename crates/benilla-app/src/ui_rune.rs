@@ -91,7 +91,7 @@ fn queue_rune_packet(In(ev): In<SessionEvent>, mut runes: ResMut<Runes>) {
 /// The packets in arrival order, the regen tick, the push and the events.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_runes(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut runes: ResMut<Runes>,
     mut entered: MessageReader<EnteredWorldMessage>,
     self_guid: Res<SelfGuid>,

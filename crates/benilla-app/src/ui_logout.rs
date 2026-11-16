@@ -90,7 +90,7 @@ impl LogoutState {
 /// Fire the signals in wire order: the events the stock CAMP and QUIT dialogs hang off, and the
 /// refusal line.
 fn feed_logout(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut logout: ResMut<LogoutState>,
     mut sink: crate::ui_action::MessageSink,
 ) {
@@ -112,7 +112,7 @@ fn feed_logout(
 
 /// Turn the Lua intents into packets; a forced quit, or a quit with no world session, exits.
 pub(crate) fn drain_logout(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut logout: ResMut<LogoutState>,
     self_guid: Res<SelfGuid>,
     commands: Res<NetCommands>,

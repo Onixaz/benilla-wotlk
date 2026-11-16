@@ -186,7 +186,7 @@ fn territory_visible(realm_pvp: bool, zone_flags: u32) -> bool {
 
 /// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event.
 fn feed_zone_events(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     world: benilla_world::world_point::WorldPoint,
     areas: Option<Res<AreaTableRes>>,
     factions: Option<Res<Factions>>,

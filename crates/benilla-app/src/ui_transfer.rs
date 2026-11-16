@@ -78,7 +78,7 @@ fn load_map_difficulties(mut commands: Commands, assets: Option<Res<WorldAssets>
 /// [`crate::loading_screen`]'s, off the same latch.
 fn on_transfer_pending(
     In(ev): In<SessionEvent>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut cancel: crate::spell::SelfCancel,
 ) {
     if !matches!(ev, SessionEvent::TransferPending { .. }) {
@@ -160,7 +160,7 @@ fn difficulty_refusal(result: DifficultyChangeResult) -> Option<UiError> {
 /// with `PLAYER_DIFFICULTYn`, one past the stored difficulty (`0x52c5d7`); result 8's line is
 /// system chat.
 fn feed_difficulty_notices(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut notices: ResMut<DifficultyNotices>,
     mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<ChatLog>,
@@ -229,7 +229,7 @@ fn abort_text(
 /// (`[map+0x14]`, `0x403acc`). A map with no row, or text that resolves empty, shows nothing
 /// (`0x40395e`, `0x403ac5`-`0x403aca`).
 fn feed_transfer_aborts(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut aborts: ResMut<TransferAborts>,
     mut chat: ResMut<ChatLog>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,

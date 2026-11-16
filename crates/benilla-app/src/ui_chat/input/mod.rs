@@ -174,7 +174,10 @@ fn manual_join_or_leave(
 }
 
 pub(super) fn drain_chat_input(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut chat_log: ResMut<super::feed::ChatLog>,
     // Mutable because an explicit leave clears the channel's `ZONECHANNELS` bit; the zone walk's
     // own leave does not.
@@ -1233,7 +1236,10 @@ pub(super) fn party_lane(
 /// `"/dance"` says six characters. An unknown chat-type token prints a system line and sends
 /// nothing; an empty line of any other type but AFK and DND sends nothing and prints nothing.
 pub(super) fn drain_addon_chat_sends(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     commands: Res<NetCommands>,
     mut chat_log: ResMut<super::feed::ChatLog>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
@@ -1358,7 +1364,10 @@ pub(super) fn drain_addon_chat_sends(
 /// the outbound half of the `addon` trace tag and `ui_chat::net` the inbound:
 /// `WOW_MOVE_TRACE=<path> WOW_MOVE_TRACE_TAGS=addon` logs both.
 pub(super) fn drain_addon_message_sends(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {

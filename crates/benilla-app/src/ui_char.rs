@@ -188,7 +188,7 @@ fn skill_line(script: &UiScript, chat: &mut crate::ui_chat::ChatLog, key: &str, 
 }
 
 fn watch_skill_ups(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_guid: Res<crate::net::SelfGuid>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
@@ -299,7 +299,7 @@ fn watch_skill_ups(
 /// The skills-pane feed: every `PLAYER_SKILL_INFO` line the reference lists, as a flat
 /// [`SkillEntry`] pushed through `set_skills` on change; the engine groups, sorts and folds.
 fn feed_skills(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_store: Query<Ref<ObjectStore>, With<SelfPlayer>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
     mut last: Local<crate::ui_script::VmMemo<Option<SkillsState>>>,
@@ -394,7 +394,10 @@ pub(crate) fn skills_row(
 
 /// Each queued `AbandonSkill` becomes one `CMSG_UNLEARN_SKILL`; nothing changes locally, as the
 /// server's `SetSkill(id, 0, 0)` (vmangos `SkillHandler.cpp:69`) returns as a skill-field update.
-fn drain_skill_abandons(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_skill_abandons(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1026,7 +1029,7 @@ pub(crate) fn fire_stat_transitions(
 pub(crate) fn feed_char(
     // `ChrClasses.dbc` field 16, the relic flag `find_equip_slot` reads; absent, no class has one.
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut inv: crate::items::Inventory,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,

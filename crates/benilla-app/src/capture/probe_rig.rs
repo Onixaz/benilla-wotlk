@@ -238,7 +238,10 @@ fn drive_rig(
     time: ProbeClock,
     mut results: MessageReader<CharActionResultMessage>,
     mut entered: MessageReader<EnteredWorldMessage>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     catalog: Option<Res<crate::entities::CharCreate>>,
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,

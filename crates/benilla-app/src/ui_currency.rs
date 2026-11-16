@@ -225,7 +225,7 @@ fn listed_record_landed(
 
 #[allow(clippy::too_many_arguments)]
 fn feed_currencies(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: Option<Res<Currencies>>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,

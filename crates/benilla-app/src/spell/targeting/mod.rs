@@ -394,7 +394,10 @@ pub(crate) fn feed_targeting_to_vm(
     checks: BindChecks,
     tokens: crate::ui_unit::UnitTokens,
     mut last: Local<crate::ui_script::VmMemo<Option<u32>>>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
 ) {
     if let Some(mut script) = script {
         let last = last.get(&script);

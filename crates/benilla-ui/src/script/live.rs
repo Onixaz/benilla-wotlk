@@ -1,0 +1,232 @@
+//! The client state the verbs read at call time. 12340's verbs read the live object when called
+//! (`UnitOnTaxi` `0x60f350` reads the flags word at `0x60f396`); here the app lends a [`LiveState`]
+//! over its own state for the length of every call into Lua, either around one call
+//! ([`UiScript::with_live`]) or for as long as a guard lives ([`LiveLoan`]), and a verb reads it
+//! through [`read_live`]. The loan is the calling thread's: the VM runs on one thread, and a test
+//! thread's loan never reaches another's.
+
+use std::cell::Cell;
+use std::ptr::NonNull;
+
+use super::UiScript;
+
+/// What the verbs read live, implemented by the app over its state. Read-only.
+pub trait LiveState {
+    /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
+    fn unit_flags(&self, guid: u64) -> Option<u32>;
+}
+
+/// A lent view's address, its lifetime erased.
+type Lent = Option<NonNull<dyn LiveState>>;
+
+thread_local! {
+    /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of
+    /// which puts the previous one back before its borrow ends.
+    static SLOT: Cell<Lent> = const { Cell::new(None) };
+}
+
+/// Lend `live` on this thread, returning what it replaces.
+///
+/// # Safety
+/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends.
+unsafe fn lend(live: &dyn LiveState) -> Lent {
+    let ptr: NonNull<dyn LiveState + '_> = NonNull::from(live);
+    // SAFETY: only the lifetime is erased; the caller restores the slot before the borrow ends,
+    // and `read_live` hands the view out only for the length of one closure.
+    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(ptr) };
+    SLOT.with(|s| s.replace(Some(ptr)))
+}
+
+fn restore(previous: Lent) {
+    SLOT.with(|s| s.set(previous));
+}
+
+/// Puts the slot back as it was, on return and on unwind.
+struct Restore(Lent);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        restore(self.0);
+    }
+}
+
+/// A view lent to every verb on this thread until the loan drops, which puts the previous one
+/// back: the guard a host keeps for the length of a stretch of calls into Lua.
+pub struct LiveLoan<V: LiveState> {
+    /// Boxed, so the lent address holds while the loan moves.
+    view: Box<V>,
+    previous: Lent,
+}
+
+impl<V: LiveState> LiveLoan<V> {
+    /// Lend `view` until the loan drops.
+    ///
+    /// # Safety
+    /// The loan is dropped, never leaked, on the thread that made it, and loans on one thread
+    /// drop in the reverse order of their making.
+    pub unsafe fn new(view: V) -> Self {
+        let view = Box::new(view);
+        // SAFETY: `Drop` restores the slot before the box, and with it the view, is freed.
+        let previous = unsafe { lend(&*view) };
+        Self { view, previous }
+    }
+
+    /// The lent view.
+    pub fn view(&self) -> &V {
+        &self.view
+    }
+}
+
+impl<V: LiveState> Drop for LiveLoan<V> {
+    fn drop(&mut self) {
+        restore(self.previous);
+    }
+}
+
+impl UiScript {
+    /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
+    /// nested call lends its own and restores the outer one.
+    pub fn with_live<R>(&mut self, live: &dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
+        // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too.
+        let _restore = Restore(unsafe { lend(live) });
+        f(self)
+    }
+
+    /// Whether a view is lent right now.
+    pub fn has_live(&self) -> bool {
+        SLOT.with(|s| s.get().is_some())
+    }
+}
+
+/// `f` over the view lent right now, `None` with none lent.
+pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
+    let ptr = SLOT.with(Cell::get)?;
+    // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or
+    // `LiveLoan`, which outlives this call; the reference cannot escape `f`.
+    let live = unsafe { ptr.as_ref() };
+    Some(f(live))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A view whose one held unit carries `flags`.
+    struct One {
+        guid: u64,
+        flags: u32,
+    }
+
+    impl LiveState for One {
+        fn unit_flags(&self, guid: u64) -> Option<u32> {
+            (guid == self.guid).then_some(self.flags)
+        }
+    }
+
+    #[test]
+    fn a_view_is_lent_for_the_call_only_and_a_nested_loan_restores_the_outer() {
+        let mut s = UiScript::new().unwrap();
+        assert!(!s.has_live());
+        let outer = One { guid: 1, flags: 7 };
+        let inner = One { guid: 1, flags: 9 };
+        s.with_live(&outer, |s| {
+            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
+            s.with_live(&inner, |_| {
+                assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(9)));
+            });
+            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
+        });
+        assert!(!s.has_live());
+        assert_eq!(read_live(|l| l.unit_flags(1)), None);
+    }
+
+    /// A Lua function reaches the view lent around the call that runs it, and nothing outside one.
+    #[test]
+    fn a_lua_function_reads_the_view_lent_around_its_call() {
+        let mut s = UiScript::new().unwrap();
+        let flags = s
+            .lua()
+            .create_function(|_, guid: u64| Ok(read_live(|l| l.unit_flags(guid)).flatten()))
+            .unwrap();
+        s.lua().globals().set("Flags", flags).unwrap();
+        let ask = |s: &UiScript| s.eval::<Option<u32>>("return Flags(2)").unwrap();
+        assert_eq!(ask(&s), None);
+        let riding = One {
+            guid: 2,
+            flags: 1 << 20,
+        };
+        assert_eq!(s.with_live(&riding, |s| ask(s)), Some(1 << 20));
+        assert_eq!(ask(&s), None);
+    }
+
+    /// `UnitOnTaxi` answers the pushed ride flag, for the player only, with a view lent or not.
+    #[test]
+    fn unit_on_taxi_answers_the_push_with_a_view_lent() {
+        let mut s = UiScript::new().unwrap();
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            target: 2,
+            held: [(1, 0), (2, 0)].into(),
+            ..Default::default()
+        });
+        s.set_on_taxi(true);
+        let ask = |s: &UiScript| {
+            s.eval::<String>(
+                r#"return tostring(UnitOnTaxi("player")) .. tostring(UnitOnTaxi("target"))"#,
+            )
+            .unwrap()
+        };
+        assert_eq!(ask(&s), "1nil");
+        let riding = One {
+            guid: 2,
+            flags: 1 << 20,
+        };
+        assert_eq!(s.with_live(&riding, |s| ask(s)), "1nil");
+    }
+
+    /// A loan lends until it drops, a call's loan inside it restores it, and dropping it restores
+    /// what it replaced.
+    #[test]
+    fn a_loan_lends_until_it_drops() {
+        let mut s = UiScript::new().unwrap();
+        let outer = One { guid: 1, flags: 7 };
+        // SAFETY: dropped below, on this thread, after the inner one.
+        let loan = unsafe { LiveLoan::new(One { guid: 1, flags: 5 }) };
+        assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
+        s.with_live(&outer, |_| {
+            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
+            // SAFETY: dropped at the end of this closure, before `loan`.
+            let inner = unsafe { LiveLoan::new(One { guid: 1, flags: 9 }) };
+            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(9)));
+            drop(inner);
+            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
+        });
+        assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
+        assert_eq!(loan.view().flags, 5);
+        drop(loan);
+        assert!(!s.has_live());
+    }
+
+    /// A loan is its thread's: another thread sees none.
+    #[test]
+    fn a_loan_is_the_lending_threads_alone() {
+        // SAFETY: dropped at the end of this test, on this thread.
+        let _loan = unsafe { LiveLoan::new(One { guid: 1, flags: 5 }) };
+        let elsewhere = std::thread::spawn(|| read_live(|l| l.unit_flags(1)))
+            .join()
+            .unwrap();
+        assert_eq!(elsewhere, None);
+        assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
+    }
+
+    #[test]
+    fn an_unwinding_call_ends_the_loan() {
+        let mut s = UiScript::new().unwrap();
+        let view = One { guid: 1, flags: 7 };
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.with_live(&view, |_| panic!("a call that unwinds"));
+        }));
+        assert!(unwound.is_err());
+        assert!(!s.has_live());
+    }
+}

@@ -86,7 +86,7 @@ impl SummonState {
 /// Push the three getters' answers every frame, and fire the owed `CONFIRM_SUMMON`s (no arguments)
 /// and `CANCEL_SUMMON`s in order.
 fn feed_summon(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut summon: ResMut<SummonState>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
@@ -157,7 +157,7 @@ fn may_accept(player: Option<&ObjectStore>) -> bool {
 /// Turn each answer into `CMSG_SUMMON_RESPONSE`, gated on a latched summoner, never the deadline:
 /// an Accept also on [`may_accept`], a Cancel on nothing more (`0x51b110`).
 fn drain_summon(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     summon: Res<SummonState>,
     commands: Res<NetCommands>,
     self_guid: Res<SelfGuid>,

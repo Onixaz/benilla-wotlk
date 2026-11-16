@@ -54,7 +54,7 @@ pub(super) fn angle_update(rec: &VehicleRec, pitch: f32) -> [f32; 2] {
 /// Fire the mover's UI events when the active mover changes (`0x729010` → `0x747f40`).
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn on_mover_change(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mover: Query<(&Guid, &ObjectStore, Option<&Vehicle>), With<ActiveMover>>,
     passengers: Query<&Passenger>,
     index: Res<GuidIndex>,

@@ -232,7 +232,7 @@ fn self_res_refusal(
 /// Derive the death state from the self descriptor, push the snapshot, and fire the death events
 /// on its edges.
 fn feed_death(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<
         (
             &ObjectStore,
@@ -532,7 +532,7 @@ impl ReleasePoi {
 
 /// Rebuild [`ReleasePoi`] when the release point changes; waits for the VM, which holds its name.
 fn build_release_poi(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     death_net: Res<DeathNet>,
     mut release_poi: ResMut<ReleasePoi>,
 ) {
@@ -571,7 +571,7 @@ impl CorpsePoi {
 /// Follow [`DeathNet::corpse`] into [`CorpsePoi`]: a move only re-seats the POI, a corpse on a
 /// moving deck included. Waits for the VM, which holds its name.
 fn build_corpse_poi(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     death_net: Res<DeathNet>,
     mut corpse_poi: ResMut<CorpsePoi>,
 ) {
@@ -765,7 +765,7 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 
 /// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
 fn drain_death(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut death_net: ResMut<DeathNet>,
     net: Res<NetCommands>,
     targeting: crate::spell::cast_target::CastTargeting,

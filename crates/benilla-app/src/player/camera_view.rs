@@ -205,7 +205,7 @@ struct ViewTargets<'w, 's> {
 /// Drain the Lua queue and the barber chair's view into the rig, before [`super::control`] seats
 /// this frame's camera.
 fn drain_view_requests(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut cvars: ResMut<crate::cvars::Cvars>,
     mut targets: ViewTargets,
     mut barber: MessageReader<BarberView>,

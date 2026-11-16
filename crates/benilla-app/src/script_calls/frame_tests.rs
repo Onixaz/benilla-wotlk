@@ -759,6 +759,94 @@ fn a_button_click_sends_one_cast_per_press() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))], "one cast for one click");
 }
 
+/// Us on a taxi (`UNIT_FIELD_FLAGS` bit 20) and the test verb `CharzLiveTaxi` installed, which
+/// reads that bit through the view lent to the call that runs it.
+fn ride_and_install_live_taxi(rig: &mut Rig) {
+    let world = rig.app.world_mut();
+    let me = world.resource::<GuidIndex>().0[&ME];
+    world
+        .entity_mut(me)
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (2, 0x19),
+            (22, 100),
+            (28, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8 | 1 << 20),
+        ])));
+    crate::ui_script::live_tests::install_live_taxi(&rig.vm());
+    rig.lua("LIVE = {}");
+}
+
+/// The lines the probes in [`ride_and_install_live_taxi`]'s tests left.
+fn live_lines(rig: &mut Rig) -> Vec<String> {
+    rig.vm().eval("return LIVE").expect("the probe lines")
+}
+
+/// A button's mouse handlers run inside the input pass with the `World` lent: a verb they call
+/// reads the client's state, as 12340's verbs read the live object when called (`0x60f396`).
+#[test]
+fn a_click_handler_reads_the_world_through_the_input_pass() {
+    let mut rig = rig_or_skip!(&[Step::UiInput, Step::Tick]);
+    ride_and_install_live_taxi(&mut rig);
+    rig.lua(
+        r#"local b = CreateFrame("Button", "ProbeLiveButton")
+        b:SetWidth(40) b:SetHeight(40)
+        b:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 500, 300)
+        b:SetScript("OnMouseDown", function() LIVE[#LIVE + 1] = "down " .. CharzLiveTaxi(0x10) end)
+        b:SetScript("OnClick", function() LIVE[#LIVE + 1] = "click " .. CharzLiveTaxi(0x10) end)
+        b:Show()"#,
+    );
+    {
+        let world = rig.app.world_mut();
+        let mut windows = world.query_filtered::<&mut Window, With<PrimaryWindow>>();
+        windows
+            .single_mut(world)
+            .expect("the window")
+            .set_cursor_position(Some(Vec2::new(520.0, 768.0 - 320.0)));
+    }
+    rig.frame();
+    rig.frame();
+    rig.app
+        .world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .press(MouseButton::Left);
+    rig.frame();
+    rig.app
+        .world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .release(MouseButton::Left);
+    rig.frame();
+    assert_eq!(
+        live_lines(&mut rig),
+        ["down 1", "click 1"],
+        "each handler read the lent `World`"
+    );
+}
+
+/// A `runOnUp` binding's body runs on the press and on the release with the `World` lent: a verb
+/// it calls reads the client's state both times.
+#[test]
+fn a_binding_reads_the_world_on_its_press_and_its_release() {
+    let mut rig = rig_or_skip!(&[Step::UiInput, Step::BindingSync, Step::BindingDispatch]);
+    ride_and_install_live_taxi(&mut rig);
+    rig.vm().register_addon_bindings(
+        "ProbeAddon",
+        &benilla_ui::bindings_xml::parse(
+            r#"<Bindings><Binding name="PROBELIVE" runOnUp="true">
+                LIVE[#LIVE + 1] = keystate .. " " .. CharzLiveTaxi(0x10)
+            </Binding></Bindings>"#,
+        )
+        .expect("well-formed"),
+    );
+    rig.lua(r#"SetBinding("J", "PROBELIVE")"#);
+    rig.frame();
+    rig.press();
+    assert_eq!(
+        live_lines(&mut rig),
+        ["down 1", "up 1"],
+        "the press and the release each read the lent `World`"
+    );
+}
+
 /// A world click and a cast the script makes after it in the same frame (an `OnUpdate`'s): the
 /// cast goes to the unit the click selected, once.
 #[test]

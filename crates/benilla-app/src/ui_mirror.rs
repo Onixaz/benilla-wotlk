@@ -60,7 +60,7 @@ fn record(kind: MirrorTimerKind) -> usize {
 /// its nil colour before `Show()`. vmangos's `NUM_CLIENT_TIMERS` keeps its fourth timer off the
 /// wire.
 fn feed_mirror_timers(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut feed: ResMut<MirrorTimerFeed>,
     mut records: ResMut<MirrorRecords>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
