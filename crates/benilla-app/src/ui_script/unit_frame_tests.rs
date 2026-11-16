@@ -937,6 +937,7 @@ fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
                     &reps,
                     &crate::target::NoGroup,
                     Some(&me),
+                    false,
                 ),
                 is_connected: true,
                 ..UnitState::default()

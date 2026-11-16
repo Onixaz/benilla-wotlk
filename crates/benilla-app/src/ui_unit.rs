@@ -1448,6 +1448,8 @@ struct Interactions<'w> {
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
+    /// The active battlefield's arena test, which drops the selection colour's PvP flag.
+    instance: crate::ui_arena::ArenaInstance<'w>,
 }
 
 fn feed_units(
@@ -1524,7 +1526,8 @@ fn feed_units(
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
         || interact.quest.as_ref().is_some_and(|r| r.is_changed())
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
-        || interact.arena.as_ref().is_some_and(|r| r.is_changed());
+        || interact.arena.as_ref().is_some_and(|r| r.is_changed())
+        || interact.instance.is_changed();
     gate::trace(
         "feed_units",
         &[
@@ -1575,6 +1578,7 @@ fn feed_units(
             &reputations,
             &*group,
             Some(store),
+            interact.instance.active(),
         );
         s.raid_target = group.raid_target_index(guid.0);
         s.group_roles = group.own_roles;
@@ -1598,6 +1602,7 @@ fn feed_units(
         classes: chr,
         types,
         loot_lists: tables.loot_lists(),
+        arena: interact.instance.active(),
     };
     let target = match (selection.target, selection.guid) {
         (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {

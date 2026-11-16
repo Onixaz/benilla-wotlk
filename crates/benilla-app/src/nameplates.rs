@@ -523,6 +523,8 @@ pub(crate) fn drive_nameplates(
         Res<crate::ui_party::GroupState>,
         // The friend list: the highlight's friend colour.
         Res<crate::ui_social::SocialState>,
+        // The active battlefield's arena test, which drops the highlight's PvP flag.
+        crate::ui_arena::ArenaInstance,
         // The UnitName* CVar mask.
         Res<NameConfig>,
         // The title rows and medal strings ([`PvpNameStrings`]).
@@ -564,6 +566,7 @@ pub(crate) fn drive_nameplates(
         bubbles,
         group,
         social,
+        arena,
         name_cfg,
         pvp_strings,
         index,
@@ -575,6 +578,7 @@ pub(crate) fn drive_nameplates(
     let (self_guid, own_store) = self_store
         .single()
         .map_or((None, None), |(g, s)| (Some(g.0), Some(s)));
+    let in_arena = arena.active();
     let (Ok(cam_tf), Some(atlas)) = (camera.single(), atlas.as_mut()) else {
         return;
     };
@@ -782,6 +786,7 @@ pub(crate) fn drive_nameplates(
                     &reputations,
                     &group,
                     own_store,
+                    in_arena,
                     |g| social.is_friend(g),
                 )
             }))
