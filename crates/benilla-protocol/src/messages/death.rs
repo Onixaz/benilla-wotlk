@@ -104,10 +104,11 @@ pub(super) fn read_spirit_healer_confirm(r: &mut &[u8]) -> io::Result<u64> {
     read_u64_le(r)
 }
 
-/// `CMSG_REPOP_REQUEST` body: one byte, 0 from `RepopMe` (`0x51aa90` -> `0x6d2950(0)`, which puts
-/// `arg != 0` as a u8). The server reads it (`read_skip<uint8>`), so an empty body is dropped.
-pub fn repop_request() -> Vec<u8> {
-    vec![0]
+/// `CMSG_REPOP_REQUEST` body: one byte, `arg != 0` of `0x6d2950`: 0 from `RepopMe` (`0x51aa90`),
+/// 1 from a world entry while dead (`0x528010`). The server reads it (`read_skip<uint8>`), so an
+/// empty body is dropped.
+pub fn repop_request(automatic: bool) -> Vec<u8> {
+    vec![u8::from(automatic)]
 }
 
 /// `CMSG_RECLAIM_CORPSE` body: the corpse's full guid, as the 1.12 client sends, though the server
@@ -295,7 +296,8 @@ mod tests {
 
     #[test]
     fn client_bodies_are_full_guids() {
-        assert_eq!(repop_request(), [0]);
+        assert_eq!(repop_request(false), [0]);
+        assert_eq!(repop_request(true), [1]);
         assert_eq!(
             reclaim_corpse(0xF500_0000_0000_0001),
             0xF500_0000_0000_0001u64.to_le_bytes().to_vec()

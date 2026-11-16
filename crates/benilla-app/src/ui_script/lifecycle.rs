@@ -966,6 +966,10 @@ pub(crate) fn finish_ui_load_with(
     between(world, script);
     // `0x52a9e6`: the one-shot the world entry fires and clears.
     script.arm_player_login();
+    // The release deadline and its no-timer flag start zeroed with each UI (`0x52a9f6`).
+    if let Some(mut globals) = world.get_resource_mut::<crate::death::DeathGlobals>() {
+        globals.reset_release();
+    }
 }
 
 /// Run the patch chain's `Interface\FrameXML\GlobalStrings.lua`, the first file in the reference's

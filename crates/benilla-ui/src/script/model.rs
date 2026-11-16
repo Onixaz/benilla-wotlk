@@ -995,7 +995,6 @@ pub(crate) struct Model {
     pub(crate) quest_actions: Vec<quest::QuestAction>,
 
     /// Death countdowns and offers, and the release, reclaim and resurrect calls.
-    pub(crate) death: death::DeathUiState,
     pub(crate) death_actions: Vec<death::DeathAction>,
 
     /// The quest log, selection (1-based), abandon mark (a quest id) and abandons.
@@ -1226,7 +1225,6 @@ pub(crate) struct Model {
     /// `CheckBinderDist()`: the innkeeper's question is live and in range; false hides its dialog.
     pub(crate) binder_pending: bool,
     /// The summon getters' answers, defaulting to the reference's `""`, `""`, 0 with none pending.
-    pub(crate) summon_confirm: super::summon::SummonConfirmUiState,
     /// `ConfirmSummon()` (true) and `CancelSummon()` (false) calls in order, one
     /// `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
     pub(crate) summon_answers: Vec<bool>,
@@ -1803,7 +1801,6 @@ impl Model {
             quest: None,
             quest_selects: Vec::new(),
             quest_actions: Vec::new(),
-            death: death::DeathUiState::default(),
             death_actions: Vec::new(),
             quest_log: quest_log::QuestLogState::default(),
             quest_log_selection: 0,
@@ -1865,7 +1862,6 @@ impl Model {
             gm_survey: Default::default(),
             binder_confirms: 0,
             binder_pending: false,
-            summon_confirm: super::summon::SummonConfirmUiState::default(),
             summon_answers: Vec::new(),
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),

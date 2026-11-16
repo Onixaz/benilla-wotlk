@@ -992,7 +992,7 @@ impl WorldSession {
 
     /// Release the spirit (`CMSG_REPOP_REQUEST`).
     pub fn repop_request(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_REPOP_REQUEST, &messages::repop_request())
+        self.send(opcode::CMSG_REPOP_REQUEST, &messages::repop_request(false))
     }
 
     /// Ask where our corpse is (`MSG_CORPSE_QUERY`, empty body), answered on the same opcode.

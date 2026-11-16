@@ -48,6 +48,10 @@ local VERBS = {
     { "popup", popup },
     { "special", function() return GetQuestLogSpecialItemInfo(2) ~= nil end },
     { "watchitem", function() return WatchFrameItem1 ~= nil and WatchFrameItem1:IsShown() end },
+    { "release", function() return GetReleaseTimeRemaining() end },
+    { "reclaim", function() return GetCorpseRecoveryDelay() end },
+    { "summon", function() return GetSummonConfirmTimeLeft() end },
+    { "summoner", function() return GetSummonConfirmSummoner() end },
 }
 local function answers()
     local verbs = {}
@@ -499,6 +503,110 @@ fn death_release_and_resurrection() {
     );
 }
 
+/// A death and the release in one frame: 12340 handles each update's health watcher in wire order
+/// (`0x73f330`), so `PLAYER_DEAD` fires for the first with its release timer derived just before
+/// it (`0x6dc0f0` -> `0x6dc070`, no timer bit: -1), then `PLAYER_ALIVE` for the second's health 1
+/// (`0x73d5bc`), before the ghost bit's watcher asks for the corpse.
+#[test]
+fn death_and_release_in_one_frame_fire_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            self_values(&[(FIELD_UNIT_HEALTH, 0)]),
+            self_values(&[(FIELD_UNIT_HEALTH, 1), (FIELD_PLAYER_FLAGS, GHOST)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST"],
+            &["release"]
+        ),
+        vec!["PLAYER_DEAD | release=-1", "PLAYER_ALIVE | release=-1"]
+    );
+}
+
+/// A `/reload` while dead: the UI load enters the world but never refreshes the dead or alive
+/// signal (`0x52a980` calls `0x528010` alone), and it zeroes the release timer (`0x52a9f6`).
+#[test]
+fn reloading_dead_fires_no_player_dead() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let died = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 3);
+    assert_eq!(
+        pin(&died, &["PLAYER_DEAD"], &["release"]),
+        vec!["PLAYER_DEAD | release=-1"]
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_ENTERING_WORLD", "PLAYER_DEAD", "PLAYER_ALIVE"],
+            &["release", "popup"]
+        ),
+        vec!["PLAYER_ENTERING_WORLD | release=0 popup=nil"]
+    );
+}
+
+/// The summon offer and its withdrawal in one frame and apart: `CONFIRM_SUMMON` fires from the
+/// request's handler (`0x6d8680` -> `0x513c21`) with the deadline already latched, which
+/// `GetSummonConfirmTimeLeft` reads at call time (`0x5164b0`), and `CANCEL_SUMMON` from the
+/// cancel's (`0x6cbcf0`), in wire order.
+#[test]
+fn summon_offer_and_cancel_fire_from_their_handlers() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let request = || SessionEvent::SummonRequest {
+        summoner: 0x20,
+        zone: 1519,
+        delay_ms: 120_000,
+    };
+    let events = &["CONFIRM_SUMMON", "CANCEL_SUMMON"];
+    let both = rig.packets(vec![request(), SessionEvent::SummonCancel], 3);
+    assert_eq!(
+        pin(&both, events, &["summon"]),
+        vec!["CONFIRM_SUMMON | summon=120", "CANCEL_SUMMON | summon=120"]
+    );
+    let ask = rig.packets(vec![request()], 3);
+    assert_eq!(
+        pin(&ask, events, &["summon"]),
+        vec!["CONFIRM_SUMMON | summon=120"]
+    );
+}
+
+/// A named caster's offer while dead asks at once from its handler (`0x6dbd00` -> `0x512511`);
+/// alive, the offer only latches.
+#[test]
+fn a_resurrect_offer_asks_only_while_dead() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let offer = || SessionEvent::ResurrectRequest {
+        caster: 0x20,
+        name: "Charzpriest".into(),
+        sickness: false,
+        has_timer: true,
+    };
+    let alive = rig.packets(vec![offer()], 3);
+    assert!(pin(&alive, &["RESURRECT_REQUEST"], &[]).is_empty());
+    let dead = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)]), offer()], 3);
+    assert_eq!(
+        pin(&dead, &["PLAYER_DEAD", "RESURRECT_REQUEST"], &[]),
+        vec!["PLAYER_DEAD", "RESURRECT_REQUEST Charzpriest"]
+    );
+}
+
 /// The flags packet ahead of the control update: 12340 fires `UNIT_FLAGS` from the flags packet's
 /// field handler (`0x60c240`), still in control, then the control events from the control
 /// update's (`0x520fe0`), and `UnitOnTaxi` reads the flags the earlier packet set.
@@ -734,11 +842,12 @@ fn combat_enter_and_leave() {
 
 /// Logged in dead inside an arena, the battlefield status on the wire ahead of our create: 12340
 /// handles the status first, so `IsActiveBattlefieldArena` (`0x549ad0`, the state word at
-/// `0xbea570`) already answers true when `PLAYER_DEAD` shows the `DEATH` popup, whose `OnShow`
-/// then sets the arena text.
+/// `0xbea570`) already answers true when our create's init fires `PLAYER_DEAD` after
+/// `PLAYER_ENTERING_WORLD` (`0x6e818b`). The UI load zeroed the release timer (`0x52a9f6`) and no
+/// death edge armed it, so `GetReleaseTimeRemaining` reads 0 and `UIParent`'s handler shows no
+/// `DEATH` popup; the entry sends the automatic release instead (`0x528010` -> `0x6d2950` with 1).
 #[test]
-#[ignore = "#1245: PLAYER_DEAD fires from its feed before the battlefield feed pushes the arena"]
-fn arena_death_popup_shows_the_arena_text() {
+fn logging_in_dead_in_an_arena_fires_player_dead_with_the_arena_up() {
     use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
     // A 2v2 queue word (team size 2, type 6: all arenas), active on Nagrand Arena, map 559.
     let status = SessionEvent::BattlefieldStatus(BattlefieldStatus {
@@ -758,18 +867,18 @@ fn arena_death_popup_shows_the_arena_text() {
         return;
     };
     let seen = rig.take();
-    let want: String = rig
-        .app
-        .world()
-        .non_send_resource::<benilla_ui::script::UiScript>()
-        .eval("return DEATH_RELEASE_SPECTATOR")
-        .unwrap();
-    let dead = seen
-        .iter()
-        .find(|s| s.event == "PLAYER_DEAD")
-        .expect("PLAYER_DEAD");
-    assert_eq!(dead.verbs["arena"], "1");
-    assert_eq!(rig.now().verbs["popup"], want);
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_ENTERING_WORLD", "PLAYER_DEAD", "PLAYER_ALIVE"],
+            &["arena", "release", "popup"]
+        ),
+        vec![
+            "PLAYER_ENTERING_WORLD | arena=1 release=0 popup=nil",
+            "PLAYER_DEAD | arena=1 release=0 popup=nil",
+        ]
+    );
+    assert_eq!(rig.now().verbs["popup"], "nil");
 }
 
 /// The control update ahead of the flags in one frame: 12340 fires `PLAYER_CONTROL_LOST` inside

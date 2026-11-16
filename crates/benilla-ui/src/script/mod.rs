@@ -357,7 +357,7 @@ pub use cvars::{
     MultisampleFormat, ScreenMode, ScreenResolution, SeededCvar, VideoCaps, CVAR_GAMMA,
     IN_WORLD_READ_ONLY_CVARS, VIDEO_EFFECTS_DEFAULT_CVARS, VIDEO_RESOLUTION_DEFAULT_CVARS,
 };
-pub use death::{DeathAction, DeathUiState};
+pub use death::DeathAction;
 pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
@@ -480,7 +480,6 @@ pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
 };
 pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
-pub use summon::SummonConfirmUiState;
 pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };

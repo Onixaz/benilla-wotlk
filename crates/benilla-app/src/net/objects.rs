@@ -111,6 +111,9 @@ pub(crate) struct Scene<'w, 's> {
     items: ResMut<'w, Items>,
     go_templates: ResMut<'w, GameObjectTemplates>,
     death_net: ResMut<'w, crate::death::DeathNet>,
+    death_globals: ResMut<'w, crate::death::DeathGlobals>,
+    player_init: ResMut<'w, crate::death::ActivePlayerInit>,
+    arena: crate::ui_arena::ArenaInstance<'w>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
@@ -141,21 +144,28 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // (`0x4d6c4d`) and pass 2 runs only the field handlers (`0x4d64be`).
         if let Some(&e) = sc.index.0.get(&guid) {
             trace_create(guid, "live");
-            let moved = merge_fields(
+            let own = sc.self_guid.0 == Some(guid);
+            let merged = merge_fields(
                 &mut sc.commands,
                 &mut sc.stores,
                 &mut sc.field_changes,
                 e,
                 guid,
                 fields,
+                own,
             );
-            own_flags_watch(&mut sc, guid, moved);
+            own_flags_watch(&mut sc, guid, merged);
             return;
         }
         // Our own create gives us control (`0x6e80b6`), firing `PLAYER_CONTROL_GAINED` on the flag's
         // edge (`0x71c9a0` -> `0x520fe0`) before the silent re-seed (`0x6e8160` -> `0x513880`).
         if sc.self_guid.0 == Some(guid) && !std::mem::replace(&mut sc.control.0, true) {
             sc.ui.fire("PLAYER_CONTROL_GAINED", Vec::new());
+        }
+        // Our own create's init refreshes the dead or alive signal after its world entry
+        // (`0x6e818b`).
+        if sc.self_guid.0 == Some(guid) {
+            sc.player_init.0 = true;
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {
@@ -587,15 +597,17 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
             .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
         match sc.index.0.get(&guid).copied() {
             Some(e) => {
-                let moved = merge_fields(
+                let own = sc.self_guid.0 == Some(guid);
+                let merged = merge_fields(
                     &mut sc.commands,
                     &mut sc.stores,
                     &mut sc.field_changes,
                     e,
                     guid,
                     fields,
+                    own,
                 );
-                own_flags_watch(&mut sc, guid, moved);
+                own_flags_watch(&mut sc, guid, merged);
             }
             // A parked object revives with the delta (`0x4d6e80`); an unknown guid drops.
             None => {
@@ -948,7 +960,7 @@ fn item_create(
 ) {
     debug!("net: item create {guid:#x} (container: {container})");
     if let Some(&e) = index.0.get(&guid) {
-        merge_fields(commands, stores, edges, e, guid, fields);
+        merge_fields(commands, stores, edges, e, guid, fields, false);
     } else {
         let e = crate::items::spawn_item(commands, index, guid, fields, container);
         // Replay the enchant times queued while it was not held, as of now.
@@ -1417,18 +1429,43 @@ fn gameobject_info(
 
 /// `UNIT_FLAGS` for our own unit's `"player"` token from the field watch of the update that moved
 /// the word (`0x60c240` -> `0x60bf10`), so it keeps wire order with the next handler's events.
-fn own_flags_watch(sc: &mut Scene, guid: u64, moved: bool) {
-    if moved && sc.self_guid.0 == Some(guid) {
+fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
+    if sc.self_guid.0 != Some(guid) {
+        return;
+    }
+    if merged.flags_moved {
         sc.ui.fire(
             "UNIT_FLAGS",
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
+    if merged.death.is_empty() {
+        return;
+    }
+    let Some(fields) = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .map(|s| s.0.clone())
+    else {
+        return;
+    };
+    let arena = sc.arena.active();
+    let mut cx = crate::death::DeathCx {
+        globals: &mut sc.death_globals,
+        death_net: &mut sc.death_net,
+        ui: &mut sc.ui,
+        net: &sc.net,
+        now: sc.real.elapsed_secs_f64(),
+        arena,
+    };
+    crate::death::own_fields_changed(&merged.death, &fields, &mut cx);
 }
 
 /// Merges a descriptor delta into an object's store and reports its [`FieldChanged`] edges, and
-/// whether a unit's flags word moved. An indexed entity with no store should not happen, and is
-/// seeded from the delta.
+/// whether a unit's flags word moved, and for `own` (our own player) the death fields' edges.
+/// An indexed entity with no store should not happen, and is seeded from the delta.
 fn merge_fields(
     commands: &mut Commands,
     stores: &mut Query<&mut ObjectStore>,
@@ -1436,11 +1473,22 @@ fn merge_fields(
     entity: Entity,
     guid: u64,
     delta: ObjectFields,
-) -> bool {
-    let mut flags_moved = false;
+    own: bool,
+) -> Merged {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_FLAGS, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH,
+    };
+    let mut merged = Merged::default();
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
-            flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            if own
+                && (e.unit_field(FIELD_UNIT_HEALTH)
+                    || e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
+                    || e.unit_field(FIELD_PLAYER_FLAGS))
+            {
+                merged.death.push((e.index, e.old, e.new));
+            }
             edges.write(e);
         });
     } else {
@@ -1449,7 +1497,16 @@ fn merge_fields(
         );
         commands.entity(entity).insert(ObjectStore(delta));
     }
-    flags_moved
+    merged.death.sort_by_key(|&(index, ..)| index);
+    merged
+}
+
+/// What [`merge_fields`] saw.
+#[derive(Default)]
+struct Merged {
+    flags_moved: bool,
+    /// Our own death fields' `(index, old, new)`, in field order.
+    death: Vec<(u16, u32, u32)>,
 }
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,

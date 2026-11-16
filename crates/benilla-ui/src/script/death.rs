@@ -1,42 +1,10 @@
 //! The release, reclaim, resurrect and self-res verbs and the getters the `DEATH`,
-//! `RECOVER_CORPSE`, `RESURRECT` and `XP_LOSS` dialogs call, over a snapshot the app pushes. The
-//! three predicates answer Lua booleans where the reference answers `1` or nil
-//! (`ResurrectHasSickness`, `ResurrectHasTimer`, `CheckSpiritHealerDist`).
+//! `RECOVER_CORPSE`, `RESURRECT` and `XP_LOSS` dialogs call, each read through the lent view at
+//! call time, as 12340's read the client's own state (`0x516210`, `0x516280`).
 
 use mlua::{Lua, Value};
 
-/// The death snapshot the app pushes each frame.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct DeathUiState {
-    /// Seconds until the server force-releases, counted from death against the 6-minute
-    /// `CORPSE_REPOP_TIME` the wire never carries. `None` (`PLAYER_FIELD_BYTES` bit `0x08` clear,
-    /// an instanceable map) answers -1, which picks the no-timer text (`StaticPopup.lua:380-387`).
-    pub release_remaining: Option<f32>,
-    /// Seconds until the corpse is reclaimable, from `SMSG_CORPSE_RECLAIM_DELAY` at arrival; the
-    /// `StartDelay` gate of `RECOVER_CORPSE` and `RESURRECT`.
-    pub recovery_delay: f32,
-    /// The pending resurrect offer warns of resurrection sickness (`ResurrectHasSickness`).
-    pub resurrect_sickness: bool,
-    /// The pending offer still honors the reclaim-delay gate (`ResurrectHasTimer`).
-    pub resurrect_has_timer: bool,
-    /// The confirming spirit healer is in dialog range (`CheckSpiritHealerDist`).
-    pub spirit_healer_in_range: bool,
-    /// The sickness duration a spirit-healer res would apply ("N minutes"); `None` below the
-    /// sickness level picks `XP_LOSS_NO_SICKNESS` (`UIParent.lua:399-408`).
-    pub sickness_duration: Option<String>,
-    /// `HasSoulstone()`'s label, stamped on the DEATH dialog's second button:
-    /// `PLAYER_SELF_RES_SPELL`'s `Spell.dbc` name (3026 and 20758-20761 "Use Soulstone", 21169
-    /// "Reincarnation", 23700 "Twisting Nether"), else a carried self-resurrect item's name.
-    pub self_res_label: Option<String>,
-    /// `IsFalling()` (`0x612430`): the mover is falling and not rooted; the DEATH dialog
-    /// disables its buttons while it holds.
-    pub falling: bool,
-    /// `IsOutOfBounds()` (`0x6123c0`): `PLAYER_FLAGS` bit `0x4000`.
-    pub out_of_bounds: bool,
-    /// `CannotBeResurrected()` (`0x802270`): a live aura effect of type 314, which keeps the
-    /// DEATH dialog up after its release (`StaticPopup.lua`, `OnAccept`).
-    pub cannot_be_resurrected: bool,
-}
+use super::read_live;
 
 /// One drained death intent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,11 +25,6 @@ pub enum DeathAction {
 }
 
 impl super::UiScript {
-    /// Push this frame's death snapshot, before the event dispatch.
-    pub fn set_death(&mut self, state: DeathUiState) {
-        set_field!(self, death, state);
-    }
-
     /// Drain the queued death intents.
     pub fn take_death_actions(&mut self) -> Vec<DeathAction> {
         drain_field!(self, death_actions)
@@ -88,96 +51,76 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_action(lua, "AcceptXPLoss", DeathAction::AcceptXpLoss)?;
     install_action(lua, "UseSoulstone", DeathAction::UseSoulstone)?;
 
+    // Whole seconds, truncated; -1 while the no-timer flag is set (`0x516210`).
     g.set(
         "GetReleaseTimeRemaining",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model
-                .death
-                .release_remaining
-                .map_or(-1.0, |s| f64::from(s.max(0.0))))
+        lua.create_function(|_, ()| {
+            let left = read_live(|l| l.release_time_left_ms()).unwrap_or(Some(0));
+            Ok(left.map_or(-1, |ms| i64::from(ms / 1000)))
         })?,
     )?;
 
+    // Whole seconds, truncated (`0x516280`).
     g.set(
         "GetCorpseRecoveryDelay",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(f64::from(model.death.recovery_delay.max(0.0).ceil()))
+        lua.create_function(|_, ()| {
+            let ms = read_live(|l| l.corpse_recovery_delay_ms()).unwrap_or(0);
+            Ok(i64::from(ms / 1000))
         })?,
     )?;
 
-    g.set(
-        "ResurrectHasSickness",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(super::binding_abi::flag(model.death.resurrect_sickness))
-        })?,
-    )?;
-    g.set(
-        "ResurrectHasTimer",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(super::binding_abi::flag(model.death.resurrect_has_timer))
-        })?,
-    )?;
-    g.set(
-        "CheckSpiritHealerDist",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(super::binding_abi::flag(model.death.spirit_healer_in_range))
-        })?,
-    )?;
+    // The predicates answer `1` or nil, as the reference pushes them.
+    fn install_flag(
+        lua: &Lua,
+        name: &str,
+        read: fn(&dyn super::LiveState) -> bool,
+    ) -> mlua::Result<()> {
+        lua.globals().set(
+            name,
+            lua.create_function(move |_, ()| {
+                Ok(super::binding_abi::flag(read_live(read).unwrap_or(false)))
+            })?,
+        )
+    }
+    install_flag(lua, "ResurrectHasSickness", |l| l.resurrect_sickness())?;
+    install_flag(lua, "ResurrectHasTimer", |l| l.resurrect_has_timer())?;
+    install_flag(lua, "CheckSpiritHealerDist", |l| l.spirit_healer_in_range())?;
+    install_flag(lua, "IsFalling", |l| l.falling())?;
+    install_flag(lua, "IsOutOfBounds", |l| l.out_of_bounds())?;
+    install_flag(lua, "CannotBeResurrected", |l| l.cannot_be_resurrected())?;
 
     g.set(
         "GetResSicknessDuration",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match &model.death.sickness_duration {
-                Some(s) => Value::String(lua.create_string(s)?),
-                None => Value::Nil,
-            })
+            let Some(minutes) = read_live(|l| l.res_sickness_minutes()).flatten() else {
+                return Ok(Value::Nil);
+            };
+            // `GetText(token, nil, ordinal)`'s plural pick, through the shared primitive.
+            let get = |key: &str| {
+                lua.globals()
+                    .get::<String>(key)
+                    .ok()
+                    .filter(|t| !t.is_empty())
+            };
+            Ok(
+                match crate::strings::plural("GENERIC_MIN", Some(minutes), &get) {
+                    Some(template) => Value::String(lua.create_string(crate::strings::fill(
+                        &template,
+                        &[crate::strings::Arg::D(i64::from(minutes))],
+                    ))?),
+                    None => Value::Nil,
+                },
+            )
         })?,
     )?;
-
-    // The three answer `1` or nil, as the reference pushes them.
-    fn install_flag(lua: &Lua, name: &str, read: fn(&DeathUiState) -> bool) -> mlua::Result<()> {
-        lua.globals().set(
-            name,
-            lua.create_function(move |lua, ()| {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                Ok(read(&model.death).then_some(1.0))
-            })?,
-        )
-    }
-    install_flag(lua, "IsFalling", |d| d.falling)?;
-    install_flag(lua, "IsOutOfBounds", |d| d.out_of_bounds)?;
-    install_flag(lua, "CannotBeResurrected", |d| d.cannot_be_resurrected)?;
 
     // Nil, never `0`, when there is none: the DEATH dialog shows its second button on any truthy
     // answer, stamps the answer on it and picks soulstone over release by it.
     g.set(
         "HasSoulstone",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match &model.death.self_res_label {
-                Some(s) => Value::String(lua.create_string(s)?),
+            Ok(match read_live(|l| l.self_res_label()).flatten() {
+                Some(s) => Value::String(lua.create_string(&s)?),
                 None => Value::Nil,
             })
         })?,

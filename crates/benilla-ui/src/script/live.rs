@@ -28,6 +28,73 @@ pub trait LiveState {
     /// Whether our view looks through a far-sight subject: the bit set as `CMSG_FAR_SIGHT` 1 goes
     /// out (`0x6e29b5`) and cleared ahead of the 0 (`0x6e2a65`), which `HasFullControl` refuses on.
     fn far_sight(&self) -> bool;
+
+    /// Milliseconds left on the release timer (`0xbd0848`), `None` while its no-timer flag
+    /// (`0xbd084c`) is set; a UI load zeroes both (`0x52a9f6`).
+    fn release_time_left_ms(&self) -> Option<u32> {
+        Some(0)
+    }
+
+    /// Milliseconds until the corpse is reclaimable (`0xbd0850`), 0 when unset or passed.
+    fn corpse_recovery_delay_ms(&self) -> u32 {
+        0
+    }
+
+    /// The resurrect offer's sickness byte (`0xc9eac0`).
+    fn resurrect_sickness(&self) -> bool {
+        false
+    }
+
+    /// The resurrect offer's timer byte (`0xc9eac4`) outside an arena (`0x515a00`).
+    fn resurrect_has_timer(&self) -> bool {
+        false
+    }
+
+    /// The spirit healer asked about is held and within its bounding radius plus 4 yd of us
+    /// (`0x6d1fc0`).
+    fn spirit_healer_in_range(&self) -> bool {
+        false
+    }
+
+    /// The minutes of sickness a spirit-healer res would apply, `None` for none.
+    fn res_sickness_minutes(&self) -> Option<u32> {
+        None
+    }
+
+    /// `HasSoulstone`'s label: the self-res spell's name, or a carried self-res item's.
+    fn self_res_label(&self) -> Option<String> {
+        None
+    }
+
+    /// Our mover falling and not rooted (`0x612430`).
+    fn falling(&self) -> bool {
+        false
+    }
+
+    /// Our `PLAYER_FLAGS` out-of-bounds bit (`0x6123c0`).
+    fn out_of_bounds(&self) -> bool {
+        false
+    }
+
+    /// A live aura effect of ours prevents resurrection (`0x802270`).
+    fn cannot_be_resurrected(&self) -> bool {
+        false
+    }
+
+    /// The summoner's name from the name cache, `""` while unknown (`0x516510`).
+    fn summon_summoner(&self) -> String {
+        String::new()
+    }
+
+    /// The summoner's `AreaTable.dbc` row name, `""` with none (`0x516580`).
+    fn summon_area(&self) -> String {
+        String::new()
+    }
+
+    /// Milliseconds left on the summon offer (`0xbd0864`), 0 when unset or passed.
+    fn summon_time_left_ms(&self) -> u32 {
+        0
+    }
 }
 
 /// A lent view's address, its lifetime erased.

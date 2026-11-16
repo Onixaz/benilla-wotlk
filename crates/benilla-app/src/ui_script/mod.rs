@@ -1057,6 +1057,8 @@ mod binder_tests;
 
 #[cfg(test)]
 mod summon_tests;
+#[cfg(test)]
+mod test_live;
 
 #[cfg(test)]
 mod talent_wipe_tests;

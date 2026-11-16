@@ -1451,7 +1451,11 @@ fn feed_units(
     mut guild: ResMut<crate::ui_guild::GuildState>,
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
-    entered_world: Option<MessageReader<crate::net::EnteredWorldMessage>>,
+    // The commands carry the world-enter cascade's death part.
+    (entered_world, mut deferred): (
+        Option<MessageReader<crate::net::EnteredWorldMessage>>,
+        Commands,
+    ),
 ) {
     let Some(mut script) = script else {
         return;
@@ -1817,6 +1821,9 @@ fn feed_units(
             // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
             // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             script.fire_event("UPDATE_FACTION", vec![]);
+            // The cascade's corpse and release reset and our own create's dead or alive refresh,
+            // as an exclusive command with its events fired in turn (`0x528010`, `0x6e818b`).
+            crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;
         }
     } else if memo.entered_world {

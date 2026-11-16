@@ -24,6 +24,8 @@ pub(crate) struct LiveView<'w, 's> {
     control: Option<Res<'w, crate::net::ControlFlag>>,
     self_guid: Option<Res<'w, crate::net::SelfGuid>>,
     far_sight_clear: Option<Res<'w, crate::player::view_subject::FarSightClear>>,
+    death: crate::death::DeathView<'w, 's>,
+    summon: crate::ui_summon::SummonView<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -76,6 +78,58 @@ impl LiveState for LiveView<'_, '_> {
                     .as_ref()
                     .is_none_or(|c| !c.cuts(subject))
         })
+    }
+
+    fn release_time_left_ms(&self) -> Option<u32> {
+        self.death.release_time_left_ms()
+    }
+
+    fn corpse_recovery_delay_ms(&self) -> u32 {
+        self.death.corpse_recovery_delay_ms()
+    }
+
+    fn resurrect_sickness(&self) -> bool {
+        self.death.resurrect_sickness()
+    }
+
+    fn resurrect_has_timer(&self) -> bool {
+        self.death.resurrect_has_timer()
+    }
+
+    fn spirit_healer_in_range(&self) -> bool {
+        self.death.spirit_healer_in_range()
+    }
+
+    fn res_sickness_minutes(&self) -> Option<u32> {
+        self.death.res_sickness_minutes()
+    }
+
+    fn self_res_label(&self) -> Option<String> {
+        self.death.self_res_label()
+    }
+
+    fn falling(&self) -> bool {
+        self.death.falling()
+    }
+
+    fn out_of_bounds(&self) -> bool {
+        self.death.out_of_bounds()
+    }
+
+    fn cannot_be_resurrected(&self) -> bool {
+        self.death.cannot_be_resurrected()
+    }
+
+    fn summon_summoner(&self) -> String {
+        self.summon.summoner()
+    }
+
+    fn summon_area(&self) -> String {
+        self.summon.area()
+    }
+
+    fn summon_time_left_ms(&self) -> u32 {
+        self.summon.time_left_ms()
     }
 }
 
@@ -156,14 +210,38 @@ unsafe impl SystemParam for LendLive<'_, '_> {
 // SAFETY: `LiveView` reads only.
 unsafe impl ReadOnlySystemParam for LendLive<'_, '_> {}
 
+/// One queued call into the VM.
+enum UiEvent {
+    Fire(&'static str, Vec<ScriptValue>),
+    /// The cursor clear a handler runs beside its event (`0x520fab`).
+    ClearCursor,
+}
+
 /// The events this frame's handlers fired, in order; the drain empties it after each handler.
 #[derive(Resource, Default)]
-pub(crate) struct UiEvents(Vec<(&'static str, Vec<ScriptValue>)>);
+pub(crate) struct UiEvents(Vec<UiEvent>);
 
 impl UiEvents {
     /// Fire `event` once the calling handler's changes have applied, before the next handler runs.
     pub(crate) fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
-        self.0.push((event, args));
+        self.0.push(UiEvent::Fire(event, args));
+    }
+
+    /// Clear the cursor in turn with the events around it.
+    pub(crate) fn clear_cursor(&mut self) {
+        self.0.push(UiEvent::ClearCursor);
+    }
+
+    /// The fired event names, in order.
+    #[cfg(test)]
+    pub(crate) fn names(&self) -> Vec<&'static str> {
+        self.0
+            .iter()
+            .map(|e| match e {
+                UiEvent::Fire(name, _) => *name,
+                UiEvent::ClearCursor => "<clear cursor>",
+            })
+            .collect()
     }
 
     /// Whether nothing waits to fire.
@@ -250,8 +328,11 @@ pub(crate) fn fire_handler_events(world: &mut World) {
     }
     let events = std::mem::take(&mut queued.0);
     with_live_world(world, |script| {
-        for (event, args) in events {
-            script.fire_event(event, args);
+        for event in events {
+            match event {
+                UiEvent::Fire(event, args) => script.fire_event(event, args),
+                UiEvent::ClearCursor => script.clear_cursor_payload(),
+            }
         }
     });
 }

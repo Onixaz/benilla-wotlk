@@ -1,12 +1,14 @@
 //! The stock death popups (`StaticPopup.lua`): release, self-resurrect, resurrect offers, the
-//! spirit healer's confirm and the corpse run, driven as the app's death feed drives them.
+//! spirit healer's confirm and the corpse run, with the verbs' answers lent as a fixed view.
 
-use benilla_ui::script::{DeathAction, DeathUiState, ScriptValue, UiScript};
+use benilla_ui::script::{DeathAction, ScriptValue, UiScript};
+
+use super::test_live::{DeathUiState, Lent};
 
 use super::test_ui::load_ui as load_xml;
 
-fn setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
+fn setup() -> Lent {
+    let mut s = Lent::new(UiScript::new().unwrap());
     s.set_screen_size(1024.0, 768.0);
     load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
     load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
@@ -246,7 +248,7 @@ fn xp_loss_two_step_confirm_then_range_hide() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     s.set_death(DeathUiState {
-        sickness_duration: Some("8 Minutes".into()),
+        sickness_minutes: Some(8),
         spirit_healer_in_range: true,
         ..Default::default()
     });
@@ -280,7 +282,7 @@ fn xp_loss_two_step_confirm_then_range_hide() {
     assert!(!s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap());
 
     s.set_death(DeathUiState {
-        sickness_duration: None,
+        sickness_minutes: None,
         spirit_healer_in_range: true,
         ..Default::default()
     });
@@ -290,7 +292,7 @@ fn xp_loss_two_step_confirm_then_range_hide() {
         "XP_LOSS_NO_SICKNESS"
     );
     s.set_death(DeathUiState {
-        sickness_duration: None,
+        sickness_minutes: None,
         spirit_healer_in_range: false,
         ..Default::default()
     });
@@ -310,7 +312,7 @@ fn xp_loss_cancel_then_reconfirm_reshows_with_the_alert_dress() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     s.set_death(DeathUiState {
-        sickness_duration: Some("8 Minutes".into()),
+        sickness_minutes: Some(8),
         spirit_healer_in_range: true,
         ..Default::default()
     });
@@ -493,8 +495,8 @@ fn the_3_3_5a_death_dialog_releases_and_honors_the_fall_and_res_gates() {
     let _l = crate::local_state::test_env::ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (mut s, _load_failures) =
-        super::layer_tests::production_load_with("death", false, "", |_| {});
+    let (s, _load_failures) = super::layer_tests::production_load_with("death", false, "", |_| {});
+    let mut s = Lent::new(s);
     let _ = s.take_errors();
     let dead = DeathUiState {
         release_remaining: Some(300.0),

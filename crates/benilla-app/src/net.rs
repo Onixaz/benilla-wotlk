@@ -2303,8 +2303,10 @@ pub(crate) enum ClientCommand {
         orientation: f32,
         transport: Option<TransportPose>,
     },
-    /// `CMSG_REPOP_REQUEST`: Release Spirit.
-    RepopRequest,
+    /// `CMSG_REPOP_REQUEST`: Release Spirit, or the world entry's own while dead.
+    RepopRequest {
+        automatic: bool,
+    },
     /// `MSG_CORPSE_QUERY`, on becoming a ghost and at each world entry as one.
     CorpseQuery,
     /// `CMSG_WORLD_STATE_UI_TIMER_UPDATE`: ask for the server's UI clock.

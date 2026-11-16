@@ -840,7 +840,7 @@ fn bg_probe(
         Phase::Dying { sent_at } => {
             if store.0.unit_is_dead() {
                 info!("PROBE bg: DEAD — releasing (CMSG_REPOP_REQUEST)");
-                let _ = net.0.send(ClientCommand::RepopRequest);
+                let _ = net.0.send(ClientCommand::RepopRequest { automatic: false });
                 probe.phase = Phase::Ghost {
                     released_at: now,
                     next_sample: now + GHOST_SAMPLE_EVERY,

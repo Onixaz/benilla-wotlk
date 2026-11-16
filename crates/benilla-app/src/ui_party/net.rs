@@ -15,7 +15,6 @@ use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectSto
 use crate::sound::MessageSounds;
 use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_quest::QuestGiver;
-use crate::ui_summon::SummonState;
 use crate::unit_auras::UnitAuras;
 use benilla_protocol::messages::{party_operation, party_result};
 
@@ -148,7 +147,7 @@ fn on_uninvited(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
-    mut summon: ResMut<SummonState>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupUninvited = ev {
@@ -156,7 +155,7 @@ fn on_uninvited(
         let lines = group.apply_uninvited();
         removal_end(&mut group, &mut errors, before, map.kind());
         push_group_lines(&mut errors, lines);
-        summon.cancel();
+        crate::ui_summon::cancel(&mut ui);
     }
 }
 
@@ -206,14 +205,14 @@ fn on_destroyed(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
-    mut summon: ResMut<SummonState>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupDestroyed = ev {
         let before = removal_start(&group);
         destroyed(&mut group, &mut errors);
         removal_end(&mut group, &mut errors, before, map.kind());
-        summon.cancel();
+        crate::ui_summon::cancel(&mut ui);
     }
 }
 
@@ -285,7 +284,7 @@ fn on_command_result(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
-    mut summon: ResMut<SummonState>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::PartyCommandResult {
@@ -299,7 +298,7 @@ fn on_command_result(
         let line = group.apply_command_result(operation, &member, result, value);
         if operation == party_operation::LEAVE && result == party_result::OK {
             removal_end(&mut group, &mut errors, before, map.kind());
-            summon.cancel();
+            crate::ui_summon::cancel(&mut ui);
         }
         // By key, so the catalog row picks the surface; `None` is the reference's silence.
         errors.0.extend(line);
@@ -1050,7 +1049,7 @@ mod tests {
         world.init_resource::<GroupState>();
         world.init_resource::<GroupNotices>();
         world.init_resource::<UiErrorKeys>();
-        world.init_resource::<SummonState>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<NameCache>();
         world.init_resource::<GuidIndex>();
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -1092,7 +1091,8 @@ mod tests {
                 .run_system_once_with(on_command_result, command_result(operation, result))
                 .unwrap();
         }
-        assert_eq!(world.resource::<SummonState>().cancels_owed(), 3);
+        let fired = world.resource::<crate::ui_script::live::UiEvents>().names();
+        assert_eq!(fired, ["CANCEL_SUMMON"; 3]);
     }
 
     /// `0x6cbf14`: our leave's ack runs the party clear-all, whose difficulty line comes first, and

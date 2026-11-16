@@ -1,8 +1,10 @@
-//! The stock summon confirm, `CONFIRM_SUMMON`, raised by `ui_summon`'s feed. The event has no
-//! args: the popup reads the summoner, area and time left from engine getters every tick, so these
-//! tests drive the getters' snapshot.
+//! The stock summon confirm, `CONFIRM_SUMMON`, raised by `ui_summon`'s request handler. The event
+//! has no args: the popup reads the summoner, area and time left from engine getters every tick,
+//! so these tests lend the getters fixed answers.
 
-use benilla_ui::script::{SummonConfirmUiState, UiScript, UnitState};
+use benilla_ui::script::{UiScript, UnitState};
+
+use super::test_live::{Lent, SummonConfirmUiState};
 
 /// The player's snapshot; `UnitAffectingCombat` reads the lent view's flags word, which a port
 /// of these tests (#51) lends.
@@ -17,8 +19,8 @@ fn player(in_combat: bool) -> UnitState {
 use super::test_ui::load_ui as load_xml;
 
 /// A live offer with the server's full two-minute window left.
-fn setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
+fn setup() -> Lent {
+    let mut s = Lent::new(UiScript::new().unwrap());
     s.set_screen_size(1024.0, 768.0);
     load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
     load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
@@ -239,7 +241,7 @@ fn the_getters_answer_empties_before_anything_is_pending() {
 /// The binding truncates ms to whole seconds; the dialog seeds its countdown from it.
 #[test]
 fn the_time_left_getter_truncates_to_whole_seconds() {
-    let mut s = UiScript::new().unwrap();
+    let mut s = Lent::new(UiScript::new().unwrap());
     s.set_summon_confirm(SummonConfirmUiState {
         summoner: "Twomage".into(),
         area: "Stormwind City".into(),
