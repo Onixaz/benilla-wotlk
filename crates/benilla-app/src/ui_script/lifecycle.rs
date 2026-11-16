@@ -839,6 +839,10 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     let calendar = world
         .get_non_send_resource_mut::<UiScript>()
         .map(|mut s| s.take_calendar());
+    // So do the logging flags (`0xb759d0`), cleared only at a logout (`0x5072b0`).
+    let logging = world
+        .get_non_send_resource::<UiScript>()
+        .map(|s| s.logging_flags());
     // So do the currency categories' open flags, set only at a world entry (`0x52b887`).
     let currency_folds = world
         .get_non_send_resource_mut::<UiScript>()
@@ -863,6 +867,11 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         world.get_non_send_resource_mut::<UiScript>(),
     ) {
         script.restore_currency_folds(folds);
+    }
+    if let (Some((chat, combat)), Some(mut script)) =
+        (logging, world.get_non_send_resource_mut::<UiScript>())
+    {
+        script.set_logging_flags(chat, combat);
     }
     // The UI init ends by re-entering the world-enter cascade, its sends included, but only with
     // the active player set: our own player's entity exists. Not the active-mover set, which only

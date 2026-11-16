@@ -25,6 +25,8 @@ mod input;
 #[cfg(test)]
 pub(crate) use input::feed_ui_input;
 #[cfg(test)]
+mod characterization_tests;
+#[cfg(test)]
 mod layer_tests;
 mod load_log;
 mod manifest;

@@ -13,10 +13,10 @@ use bevy::prelude::*;
 use crate::ui_script::{UiFeed, UiInput};
 
 mod feed;
+mod local_who;
 mod query;
 
 pub(crate) use feed::{drain_social, feed_social};
-pub(crate) use query::parse as who_query;
 
 /// The friend array's slots (the friend list's `+0x0`).
 const MAX_FRIENDS: usize = 100;
@@ -71,6 +71,11 @@ pub(crate) struct SocialState {
     who: Vec<benilla_protocol::messages::WhoEntry>,
     who_total: u32,
     who_sent: u32,
+    /// The rows the battlefield pass appended after the wire's (`0x6b88e6`), counted into
+    /// `who_total` and the chat count line.
+    who_local: u32,
+    /// The last query sent, as `SendWho` keeps it for that pass (`0x6b5b12` on).
+    who_query: benilla_protocol::messages::WhoRequest,
     /// The `/who` sort chain (`SortWho`'s seven `{key, dir}` slots at `0xc79f9c`), pushed with the
     /// rows so the binding can re-sort synchronously.
     who_sort: benilla_ui::script::WhoSortChain,
@@ -330,7 +335,22 @@ impl SocialState {
         self.who = results.entries;
         self.who_total = results.total;
         self.who_sent = results.displayed;
+        self.who_local = 0;
         self.who_dirty = true;
+    }
+
+    /// The battlefield pass's rows after the wire's, each one counted into the total
+    /// (`0x6b8620`).
+    fn append_local_who(&mut self, rows: Vec<benilla_protocol::messages::WhoEntry>) {
+        let added = rows.len() as u32;
+        self.who.extend(rows);
+        self.who_local = added;
+        self.who_total = self.who_total.wrapping_add(added);
+    }
+
+    /// The room the 50-row array has left.
+    fn who_room(&self) -> usize {
+        WHO_MAX_RESULTS.saturating_sub(self.who.len())
     }
 }
 
@@ -483,9 +503,20 @@ pub(crate) mod net {
         }
     }
 
-    fn on_who(In(ev): In<SessionEvent>, mut social: ResMut<SocialState>) {
+    /// `SMSG_WHO` (`0x6b8720`): the wire's rows, then on a battleground or arena map the
+    /// local pass's.
+    fn on_who(
+        In(ev): In<SessionEvent>,
+        mut social: ResMut<SocialState>,
+        local: super::local_who::LocalWho,
+    ) {
         if let SessionEvent::WhoResults(results) = ev {
             who(&mut social, results);
+            let rows = local.rows(&social.who_query, social.who_room());
+            if !rows.is_empty() {
+                debug!("who: {} local rows after the wire's", rows.len());
+                social.append_local_who(rows);
+            }
         }
     }
 
@@ -767,6 +798,33 @@ mod tests {
         assert_eq!(social.who.len(), 50);
         assert_eq!(social.who[49].name, "N49");
         assert_eq!((social.who_sent, social.who_total), (57, 120));
+    }
+
+    /// The battlefield pass fills the room under 50 and counts into the total; the next answer
+    /// starts clean.
+    #[test]
+    fn local_rows_follow_the_wire_and_count_into_the_total() {
+        let row = |name: &str| benilla_protocol::messages::WhoEntry {
+            name: name.into(),
+            ..Default::default()
+        };
+        let mut social = SocialState::default();
+        social.apply_who(benilla_protocol::messages::WhoResults {
+            displayed: 48,
+            total: 48,
+            entries: (0..48).map(|i| row(&format!("N{i}"))).collect(),
+        });
+        assert_eq!(social.who_room(), 2);
+        social.append_local_who(vec![row("A-Far"), row("B-Far")]);
+        assert_eq!(social.who.len(), 50);
+        assert_eq!(social.who[48].name, "A-Far", "after the wire's rows");
+        assert_eq!(
+            (social.who_sent, social.who_total, social.who_local),
+            (48, 50, 2)
+        );
+        assert_eq!(social.who_room(), 0);
+        social.apply_who(benilla_protocol::messages::WhoResults::default());
+        assert_eq!(social.who_local, 0);
     }
 
     #[test]

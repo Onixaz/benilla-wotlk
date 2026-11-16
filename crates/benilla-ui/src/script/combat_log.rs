@@ -318,6 +318,132 @@ impl CombatLogEntry {
     fn spell_name(&self) -> Option<&str> {
         self.spell.as_ref()?.name.as_deref()
     }
+
+    /// The combat-log file's line for the entry (`0x74e880`): the values `0x74e290` pushes, past
+    /// the timestamp, comma-joined; names quoted, the units' flags and the spell's school in hex.
+    pub fn pack(&self, unknown: &str) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::from(self.event.name());
+        let o = &mut out;
+        let int = |o: &mut String, n: i32| {
+            let _ = write!(o, ",{n}");
+        };
+        let word = |o: &mut String, s: &str| {
+            o.push(',');
+            o.push_str(s);
+        };
+        let one = |o: &mut String, b: bool| if b { int(o, 1) } else { word(o, "nil") };
+        for unit in [&self.source, &self.dest] {
+            let _ = write!(o, ",{}", guid_text(unit.guid));
+            match &unit.name {
+                _ if unit.guid == 0 => word(o, "nil"),
+                Some(name) => quoted(o, name),
+                None => quoted(o, unknown),
+            }
+            let _ = write!(o, ",0x{:x}", unit.flags);
+        }
+        if let Some(s) = &self.spell {
+            int(o, s.id as i32);
+            match &s.name {
+                Some(name) => {
+                    quoted(o, name);
+                    let _ = write!(o, ",0x{:x}", s.school);
+                }
+                None => word(o, "nil,0x0"),
+            }
+        }
+        let i = &self.info;
+        if let Some(n) = i.amount {
+            int(o, n);
+        }
+        if let Some(reason) = &i.fail_reason {
+            quoted(o, reason);
+        }
+        if let Some(m) = i.miss {
+            word(o, m.kind.word());
+        }
+        if let Some(ty) = i.environmental {
+            word(o, environmental_word(ty));
+        }
+        if let Some(d) = i.damage {
+            for n in [
+                d.amount,
+                d.overkill,
+                d.school as i32,
+                d.resisted,
+                d.blocked,
+                d.absorbed,
+            ] {
+                int(o, n);
+            }
+            for b in [d.critical, d.glancing, d.crushing] {
+                one(o, b);
+            }
+        }
+        if let Some(Miss {
+            amount: Some(n), ..
+        }) = i.miss
+        {
+            int(o, n);
+        }
+        if let Some(h) = i.heal {
+            for n in [h.amount, h.overheal, h.absorbed] {
+                int(o, n);
+            }
+            one(o, h.critical);
+        }
+        if let Some((amount, power)) = i.energize {
+            int(o, amount);
+            int(o, power);
+        }
+        if let Some(d) = i.drain {
+            for n in [d.amount, d.power, d.extra] {
+                int(o, n);
+            }
+        }
+        if let Some(s) = &i.extra_spell {
+            int(o, s.id as i32);
+            match &s.name {
+                Some(name) => {
+                    quoted(o, name);
+                    int(o, s.school as i32);
+                }
+                None => word(o, "nil,0"),
+            }
+        }
+        if let Some(name) = &i.enchant {
+            quoted(o, name);
+        }
+        if let Some(item) = &i.item {
+            int(o, item.id as i32);
+            quoted(o, item.name.as_deref().unwrap_or(unknown));
+        }
+        if let Some(harmful) = i.harmful {
+            word(o, if harmful { "DEBUFF" } else { "BUFF" });
+        }
+        if let Some(n) = i.dose {
+            int(o, n);
+        }
+        out
+    }
+}
+
+/// A comma, then the text in quotes, a quote or backslash escaped (`0x74d350`).
+fn quoted(out: &mut String, s: &str) {
+    out.push_str(",\"");
+    for c in s.chars() {
+        if matches!(c, '"' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+}
+
+/// The environmental type's word (`0xad671c`), 0 fatigue to 5 fire.
+fn environmental_word(ty: u8) -> &'static str {
+    const TYPES: [&str; 6] = ["FATIGUE", "DROWNING", "FALLING", "LAVA", "SLIME", "FIRE"];
+    TYPES.get(usize::from(ty)).copied().unwrap_or("")
 }
 
 /// One `CombatLogAddFilter` row (`0x74e050`).
@@ -372,6 +498,9 @@ pub struct CombatLogStore {
     /// The entry `CombatLogGetCurrentEntry` reads (`[0xca1390]`).
     current: Option<u64>,
     filters: Vec<Filter>,
+    /// The unit `COMBAT_TEXT_UPDATE` reports on (`[0xca1380]`), 0 until `CombatTextSetActiveUnit`
+    /// names one, as `0x753963` clears it; `None` while this VM has not called it.
+    text_unit: Option<u64>,
 }
 
 impl CombatLogStore {
@@ -507,14 +636,7 @@ fn args(e: &CombatLogEntry, unknown: &str) -> Vec<ScriptValue> {
         out.push(ScriptValue::Str(m.kind.word().to_string()));
     }
     if let Some(ty) = i.environmental {
-        const TYPES: [&str; 6] = ["FATIGUE", "DROWNING", "FALLING", "LAVA", "SLIME", "FIRE"];
-        out.push(ScriptValue::Str(
-            TYPES
-                .get(usize::from(ty))
-                .copied()
-                .unwrap_or("")
-                .to_string(),
-        ));
+        out.push(ScriptValue::Str(environmental_word(ty).to_string()));
     }
     if let Some(d) = i.damage {
         out.extend([
@@ -630,15 +752,25 @@ impl super::UiScript {
         std::mem::take(&mut self.model_mut().combat_log)
     }
 
-    /// Put a store taken from the previous VM back.
-    pub fn restore_combat_log(&mut self, store: CombatLogStore) {
-        self.model_mut().combat_log = store;
+    /// Put a store taken from the previous VM back; a combat-text unit the new UI's load already
+    /// named stands, as the reference's global takes the last call.
+    pub fn restore_combat_log(&mut self, mut store: CombatLogStore) {
+        let mut model = self.model_mut();
+        store.text_unit = model.combat_log.text_unit.or(store.text_unit);
+        model.combat_log = store;
     }
 
-    /// Store and fire an entry (`0x750400`, `0x74f910`), first dropping one expired oldest entry.
-    pub fn push_combat_log(&mut self, entry: CombatLogEntry) {
+    /// The guid `CombatTextSetActiveUnit` last named, whose hits raise `COMBAT_TEXT_UPDATE`
+    /// (`0x74d430`).
+    pub fn combat_text_unit(&self) -> u64 {
+        self.model_mut().combat_log.text_unit.unwrap_or(0)
+    }
+
+    /// Store and fire an entry (`0x750400`, `0x74f910`), first dropping one expired oldest entry;
+    /// while `LoggingCombat` is on, also the entry's combat-log file line.
+    pub fn push_combat_log(&mut self, entry: CombatLogEntry) -> Option<String> {
         let unknown = unknown_text(self.lua());
-        let (args, passes) = {
+        let (args, passes, line) = {
             let mut model = self.model_mut();
             let retention_ms = retention_secs(&model) * 1000;
             let log = &mut model.combat_log;
@@ -648,7 +780,9 @@ impl super::UiScript {
             if expired {
                 log.pop_oldest();
             }
-            let out = (args(&entry, &unknown), log.passes(&entry));
+            let line = model.logging_combat.then(|| entry.pack(&unknown));
+            let log = &mut model.combat_log;
+            let out = (args(&entry, &unknown), log.passes(&entry), line);
             log.entries.push_back(entry);
             out
         };
@@ -656,6 +790,7 @@ impl super::UiScript {
             self.fire_event("COMBAT_LOG_EVENT", args.clone());
         }
         self.fire_event("COMBAT_LOG_EVENT_UNFILTERED", args);
+        line
     }
 }
 
@@ -702,11 +837,23 @@ fn count_arg(lua: &Lua, args: &MultiValue, usage: &'static str) -> mlua::Result<
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `CombatTextSetActiveUnit(unit)` (`0x74d580`) keys `COMBAT_TEXT_UPDATE` to the unit's guid
-    // `[0xca1380]` and returns nothing; benilla's feed reports the player, the stock default.
+    // `CombatTextSetActiveUnit(unit)` (`0x74d580`): the unit's guid now (`0x60abf0`), 0 for none,
+    // keys `COMBAT_TEXT_UPDATE`; it returns nothing.
     g.set(
         "CombatTextSetActiveUnit",
-        lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
+        lua.create_function(|lua, unit: Value| {
+            let token = super::binding_abi::optional_string(lua, &unit);
+            let mut model = super::model_mut_of(lua);
+            let guid = token.map_or(0, |t| {
+                model
+                    .unit_guids
+                    .guid_of(&t)
+                    .or_else(|| super::unit_menu::guid_of(&model, &t))
+                    .unwrap_or(0)
+            });
+            model.combat_log.text_unit = Some(guid);
+            Ok(())
+        })?,
     )?;
 
     g.set(
@@ -1337,6 +1484,304 @@ mod tests {
             .eval("return CombatLogGetNumEntries(), CombatLogGetNumEntries(1), select(9, CombatLogGetCurrentEntry())")
             .unwrap();
         assert_eq!((n, all, amount), (1, 2, 10));
+    }
+
+    /// Each info shape packs in `0x74e880`'s order, past the units: unquoted words, ints where
+    /// the push has nil for a zero count, 1 or nil for a flag.
+    #[test]
+    fn every_suffix_shape_packs_as_the_reference_writes_it() {
+        const SRC: &str = "0x00000000000003EE,\"Claude\",0x511";
+        const DST: &str = "0xF1300000060C281E,\"Kobold Vermin\",0xa48";
+        let with = |event: CombatLogEvent, spell: Option<CombatLogSpell>, info: CombatLogInfo| {
+            CombatLogEntry {
+                event,
+                spell,
+                info,
+                ..hit(0, 0)
+            }
+            .pack("UNKNOWNOBJECT")
+        };
+        let info = CombatLogInfo::default;
+        let cases: Vec<(String, String)> = vec![
+            (
+                with(
+                    CombatLogEvent::SwingDamage,
+                    None,
+                    CombatLogInfo {
+                        damage: Some(Damage {
+                            amount: 17,
+                            overkill: 3,
+                            school: 1,
+                            critical: true,
+                            ..Damage::default()
+                        }),
+                        ..info()
+                    },
+                ),
+                format!("SWING_DAMAGE,{SRC},{DST},17,3,1,0,0,0,1,nil,nil"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SwingMissed,
+                    None,
+                    CombatLogInfo {
+                        miss: Some(Miss {
+                            kind: MissType::Absorb,
+                            amount: Some(40),
+                        }),
+                        ..info()
+                    },
+                ),
+                format!("SWING_MISSED,{SRC},{DST},ABSORB,40"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellDamage,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        damage: Some(Damage {
+                            amount: 300,
+                            school: 20,
+                            resisted: 20,
+                            blocked: 5,
+                            absorbed: 7,
+                            glancing: true,
+                            crushing: true,
+                            ..Damage::default()
+                        }),
+                        ..info()
+                    },
+                ),
+                format!(
+                    "SPELL_DAMAGE,{SRC},{DST},133,\"Fireball\",0x4,300,0,20,20,5,7,nil,1,1"
+                ),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellHeal,
+                    Some(CombatLogSpell {
+                        id: 9999,
+                        name: None,
+                        school: 0,
+                    }),
+                    CombatLogInfo {
+                        heal: Some(Heal {
+                            amount: 50,
+                            overheal: 10,
+                            absorbed: 0,
+                            critical: true,
+                        }),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_HEAL,{SRC},{DST},9999,nil,0x0,50,10,0,1"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellEnergize,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        energize: Some((25, 0)),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_ENERGIZE,{SRC},{DST},133,\"Fireball\",0x4,25,0"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellDrain,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        drain: Some(Drain {
+                            amount: 30,
+                            power: 0,
+                            extra: 0,
+                        }),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_DRAIN,{SRC},{DST},133,\"Fireball\",0x4,30,0,0"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellInterrupt,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        extra_spell: Some(CombatLogSpell {
+                            id: 116,
+                            name: Some("Frostbolt".into()),
+                            school: 16,
+                        }),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_INTERRUPT,{SRC},{DST},133,\"Fireball\",0x4,116,\"Frostbolt\",16"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellDispel,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        extra_spell: Some(CombatLogSpell {
+                            id: 1,
+                            name: None,
+                            school: 0,
+                        }),
+                        harmful: Some(true),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_DISPEL,{SRC},{DST},133,\"Fireball\",0x4,1,nil,0,DEBUFF"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellAuraAppliedDose,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        harmful: Some(false),
+                        dose: Some(3),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_AURA_APPLIED_DOSE,{SRC},{DST},133,\"Fireball\",0x4,BUFF,3"),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellCastFailed,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        fail_reason: Some(r#"Say "no" \ now"#.into()),
+                        ..info()
+                    },
+                ),
+                format!(
+                    r#"SPELL_CAST_FAILED,{SRC},{DST},133,"Fireball",0x4,"Say \"no\" \\ now""#
+                ),
+            ),
+            (
+                with(
+                    CombatLogEvent::SpellExtraAttacks,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        amount: Some(2),
+                        ..info()
+                    },
+                ),
+                format!("SPELL_EXTRA_ATTACKS,{SRC},{DST},133,\"Fireball\",0x4,2"),
+            ),
+            (
+                with(
+                    CombatLogEvent::EnvironmentalDamage,
+                    None,
+                    CombatLogInfo {
+                        environmental: Some(2),
+                        damage: Some(Damage {
+                            amount: 90,
+                            school: 1,
+                            ..Damage::default()
+                        }),
+                        ..info()
+                    },
+                ),
+                format!("ENVIRONMENTAL_DAMAGE,{SRC},{DST},FALLING,90,0,1,0,0,0,nil,nil,nil"),
+            ),
+            (
+                with(
+                    CombatLogEvent::EnchantApplied,
+                    Some(fireball()),
+                    CombatLogInfo {
+                        enchant: Some("Sharpened".into()),
+                        item: Some(CombatLogItem { id: 25, name: None }),
+                        ..info()
+                    },
+                ),
+                format!(
+                    "ENCHANT_APPLIED,{SRC},{DST},133,\"Fireball\",0x4,\"Sharpened\",25,\"UNKNOWNOBJECT\""
+                ),
+            ),
+        ];
+        for (got, want) in cases {
+            assert_eq!(got, want);
+        }
+    }
+
+    /// No unit packs a bare nil name; an unresolved one the unknown text; an empty one quotes.
+    #[test]
+    fn the_units_pack_their_guid_name_and_hex_flags() {
+        let line = CombatLogEntry {
+            event: CombatLogEvent::UnitDied,
+            source: CombatLogUnit::none(),
+            dest: CombatLogUnit {
+                guid: MOB_GUID,
+                name: None,
+                flags: 0,
+            },
+            info: CombatLogInfo::default(),
+            ..hit(0, 0)
+        }
+        .pack("Unknown");
+        assert_eq!(
+            line,
+            "UNIT_DIED,0x0000000000000000,nil,0x80000000,0xF1300000060C281E,\"Unknown\",0x0"
+        );
+        let empty = CombatLogEntry {
+            info: CombatLogInfo::default(),
+            dest: unit(MOB_GUID, "", MOB),
+            event: CombatLogEvent::PartyKill,
+            ..hit(0, 0)
+        }
+        .pack("Unknown");
+        assert!(empty.ends_with(",0xF1300000060C281E,\"\",0xa48"), "{empty}");
+    }
+
+    /// The file line comes back only while `LoggingCombat` is on, for every entry, filtered or not
+    /// (`0x74f910`).
+    #[test]
+    fn a_pushed_entry_packs_while_combat_logging_is_on() {
+        let mut s = script();
+        assert_eq!(s.push_combat_log(hit(1_000, 5)), None);
+        s.run("LoggingCombat(1) CombatLogAddFilter('SPELL_DAMAGE', nil, nil)")
+            .unwrap();
+        assert_eq!(
+            s.push_combat_log(hit(2_000, 6)).as_deref(),
+            Some(
+                "SWING_DAMAGE,0x00000000000003EE,\"Claude\",0x511,0xF1300000060C281E,\
+                 \"Kobold Vermin\",0xa48,6,0,1,0,0,0,nil,nil,nil"
+            )
+        );
+        s.run("LoggingCombat(0)").unwrap();
+        assert_eq!(s.push_combat_log(hit(3_000, 7)), None);
+    }
+
+    /// `CombatTextSetActiveUnit` stores the token's guid now, 0 before any call and for a token
+    /// naming nobody; a reload carries it with the store.
+    #[test]
+    fn the_combat_text_unit_is_the_named_tokens_guid() {
+        let mut s = script();
+        assert_eq!(s.combat_text_unit(), 0, "0 until the addon names one");
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: ME_GUID,
+            vehicle: MOB_GUID,
+            ..Default::default()
+        });
+        s.run("CombatTextSetActiveUnit('player')").unwrap();
+        assert_eq!(s.combat_text_unit(), ME_GUID);
+        s.run("CombatTextSetActiveUnit('vehicle')").unwrap();
+        assert_eq!(s.combat_text_unit(), MOB_GUID);
+        let carried = s.take_combat_log();
+        let mut fresh = script();
+        fresh.restore_combat_log(carried);
+        assert_eq!(fresh.combat_text_unit(), MOB_GUID);
+        let carried = fresh.take_combat_log();
+        let mut reloaded = script();
+        reloaded.run("CombatTextSetActiveUnit('player')").unwrap();
+        reloaded.restore_combat_log(carried);
+        assert_eq!(reloaded.combat_text_unit(), 0, "the new load's call stands");
+        s.run("CombatTextSetActiveUnit('party1')").unwrap();
+        assert_eq!(s.combat_text_unit(), 0);
+        s.run("CombatTextSetActiveUnit('player') CombatTextSetActiveUnit()")
+            .unwrap();
+        assert_eq!(s.combat_text_unit(), 0);
     }
 
     #[test]

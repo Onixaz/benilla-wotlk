@@ -409,7 +409,7 @@ pub(crate) struct ActiveMover;
 
 /// The inbound event channel, drained each frame by [`apply_net_updates`].
 #[derive(Resource)]
-pub(crate) struct NetEvents(Receiver<SessionEvent>);
+pub(crate) struct NetEvents(pub(crate) Receiver<SessionEvent>);
 
 /// The outbound command channel.
 #[derive(Resource)]
@@ -2484,7 +2484,7 @@ pub(crate) enum ClientCommand {
     ChatIgnored {
         guid: u64,
     },
-    /// `CMSG_WHO`, parsed into wire fields by `ui_social::who_query`.
+    /// `CMSG_WHO`, the `/who` filter parsed into wire fields as `SendWho` builds them.
     Who {
         request: Box<WhoRequest>,
     },

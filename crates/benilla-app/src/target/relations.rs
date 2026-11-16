@@ -105,6 +105,28 @@ pub(crate) fn is_possessed_by(store: Option<&ObjectStore>, self_guid: Option<u64
         && store.0.unit_owner(OwnerFallback::CreatedBy) == Some(me)
 }
 
+/// The friendly check (`0x514050`) with `store` as `this` toward the player: the unit's reaction
+/// toward us at 4 or more, or a raid-unit creature template (`0x715df0`). No player is no friend.
+pub(crate) fn is_friendly(
+    store: &ObjectStore,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    party: &dyn GroupMembers,
+    self_store: Option<&ObjectStore>,
+    names: Option<&crate::names::NameCache>,
+) -> bool {
+    let Some(me) = self_store else {
+        return false;
+    };
+    ring_reaction(factions, reputations, party, Some(store), Some(me)) >= 4
+        || store
+            .0
+            .object_entry()
+            .filter(|_| !is_player_object(Some(store)))
+            .and_then(|e| names?.creature_record(e))
+            .is_some_and(|r| r.type_flags & TYPE_FLAG_TREAT_AS_RAID_UNIT != 0)
+}
+
 /// The corpse's reaction gate, asked as `(player, corpse)`: the reference compares the player's
 /// template (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (the race byte of
 /// `CORPSE_FIELD_BYTES_1`, then `ChrRaces.dbc` column 2) with the template comparator alone, no

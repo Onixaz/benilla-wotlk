@@ -367,6 +367,8 @@ pub(crate) struct Model {
     pub(crate) petition_requests: Vec<petition::PetitionRequest>,
     /// The arena registrar's petition vendor, as pushed.
     pub(crate) petition_vendor: petition::PetitionVendorState,
+    /// The charter the petition vendor's button holds (`0xc0f7d8`), engine-side like the cursor.
+    pub(crate) petition_button: Option<petition::PetitionButtonItem>,
     /// Per chat window from `ChatFrame1`, the tint, alpha and font size its tab menu can change.
     /// One per frame the target's FrameXML builds (`NUM_CHAT_WINDOWS`).
     pub(crate) chat_window_looks: Vec<chat_window::ChatWindowLook>,
@@ -1492,6 +1494,7 @@ impl Model {
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),
             petition_vendor: Default::default(),
+            petition_button: None,
             // Per window, as the stock dock differs: 1 and 2 are the dock, the rest undocked.
             chat_window_looks: (0..chat_window::ENGINE_CHAT_WINDOW_SLOTS)
                 .map(chat_window::ChatWindowLook::stock)

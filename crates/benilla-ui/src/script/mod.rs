@@ -278,7 +278,7 @@ mod update_walk;
 mod vehicle;
 pub use tooltip_unit::{skill_rung, skill_rung_suffix, TooltipTint};
 pub use tracking::{TownKind, TownType, TrackingSpell, TOWN_TYPES};
-pub use who_sort::{cmp_utf8i, starts_with_utf8i};
+pub use who_sort::{cmp_utf8i, contains_utf8i, starts_with_utf8i};
 mod trade;
 mod tradeskill;
 mod trainer;
@@ -375,8 +375,8 @@ pub use macro_options::{EquippedForMacros, EquippedRow, OptionState};
 pub use mirror_timer::{MirrorTimer, MIRROR_TIMER_TOKENS};
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
-    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionRecordView,
-    PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
+    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionButtonItem,
+    PetitionRecordView, PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
 };
 pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
