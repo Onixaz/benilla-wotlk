@@ -368,7 +368,11 @@ mod tests {
             .resource_mut::<TaxiState>()
             .open(NPC, 2, TaxiMask(vec![0b10]));
         assert_eq!(step(&mut app, &mut prev), WindowVocal::Hello(NPC));
-        assert_eq!(step(&mut app, &mut prev), WindowVocal::None, "no repeat while open");
+        assert_eq!(
+            step(&mut app, &mut prev),
+            WindowVocal::None,
+            "no repeat while open"
+        );
 
         app.world_mut().resource_mut::<TaxiState>().clear();
         assert_eq!(step(&mut app, &mut prev), WindowVocal::Goodbye(NPC));
