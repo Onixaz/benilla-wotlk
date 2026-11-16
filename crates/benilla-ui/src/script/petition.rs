@@ -150,14 +150,21 @@ impl super::UiScript {
     }
 
     /// The petition list's show and the world entry (`0x5a22cb`, `0x5a1f57`): the button forgets
-    /// its item.
-    pub fn clear_petition_button(&mut self) {
-        let Some(held) = self.model_ref().petition_button else {
-            return;
-        };
+    /// its item without unlocking it; the app keeps the returned item locked until its update.
+    pub fn clear_petition_button(&mut self) -> Option<PetitionButtonItem> {
+        let held = self.model_ref().petition_button?;
         let mut model = self.model_mut();
         model.petition_button = None;
-        super::cursor::queue_lock_changed(&mut model, held.bag, held.slot);
+        // The slot reads locked until the app's next push carries the pending lock.
+        if let Some(s) = model
+            .containers
+            .get_mut(&held.bag)
+            .and_then(|c| c.slots.get_mut(&held.slot))
+            .filter(|s| s.guid == held.item)
+        {
+            s.locked = true;
+        }
+        Some(held)
     }
 
     /// Take the charter intents queued since the last drain.
@@ -1082,15 +1089,34 @@ mod tests {
         assert_eq!(held_slot(&s), Some(1));
     }
 
-    /// The list's show forgets the button's item, which unlocks.
+    /// The list's show forgets the button's item but leaves it locked, with no lock event
+    /// (`0x5a22cb`); an empty button forgets nothing.
     #[test]
-    fn a_petition_list_show_empties_the_button() {
+    fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
         let mut s = vendor_with_charters();
+        assert_eq!(s.clear_petition_button(), None);
         s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
             .unwrap();
         assert!(locked(&s, 1));
-        s.clear_petition_button();
-        assert!(!locked(&s, 1));
+        s.model_mut().pending_events.clear();
+        assert_eq!(
+            s.clear_petition_button(),
+            Some(PetitionButtonItem {
+                item: 0x71,
+                bag: 0,
+                slot: 1
+            })
+        );
+        assert!(
+            !s.model_ref()
+                .pending_events
+                .iter()
+                .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
+            "no unlock"
+        );
+        assert!(locked(&s, 1), "the forgotten charter stays locked");
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
         s.run("TurnInPetition()").unwrap();
         assert!(s.take_petition_requests().is_empty());
     }
