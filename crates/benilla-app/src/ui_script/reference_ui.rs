@@ -2432,6 +2432,39 @@ mod tests {
         );
     }
 
+    /// The stock UI's style attributes reach the flags their getters answer: every chat window's
+    /// font is `indented` (`ChatFrame.xml:19`), and the aura and gear-set icons are `nonBlocking`
+    /// (`BuffFrame.xml:8`, `PaperDollFrame.xml:154`), the second a button's normal-texture slot.
+    #[test]
+    fn the_stock_style_attributes_reach_their_getters() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().expect("VM");
+        s.set_screen_size(1024.0, 768.0);
+        seat_a_player(&mut s);
+        let _ = super::super::manifest::load_default_ui(&s);
+        s.run(
+            r#"CreateFrame("Button", "StyleAura", UIParent, "AuraButtonTemplate")
+               CreateFrame("CheckButton", "StyleGearSet", UIParent, "GearSetPopupButtonTemplate")"#,
+        )
+        .unwrap();
+        for (lua, what) in [
+            (
+                "ChatFrame1:GetIndentedWordWrap() == 1",
+                "the chat font is indented",
+            ),
+            (
+                "StyleAuraIcon:GetNonBlocking() == 1",
+                "the aura icon is non-blocking",
+            ),
+            (
+                "StyleGearSetIcon:GetNonBlocking() == 1",
+                "the gear-set icon is non-blocking",
+            ),
+        ] {
+            assert!(s.eval::<bool>(&format!("return {lua}")).unwrap(), "{what}");
+        }
+    }
+
     /// 1.12.1 producers still to remove, each with what replaces it; the list only shrinks.
     const STILL_1_12_EVENTS: &[(&str, &str)] = &[(
         "CONFIRM_PET_UNLEARN",

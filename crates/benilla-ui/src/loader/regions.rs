@@ -78,6 +78,7 @@ impl Loader<'_> {
         if !is_texture {
             // Before the visual pass, so an explicit `<Color>` beats the font object's.
             self.apply_fontstring_font(region, region_wrapper, dbg);
+            self.apply_fontstring_flags(region, region_wrapper, dbg);
         }
         self.apply_region_visual(region, region_wrapper, is_texture, dbg);
         if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, region_wrapper) {
@@ -142,6 +143,12 @@ impl Loader<'_> {
             };
             self.apply_region_layout(region, &region_wrapper, parent_name, dbg);
             self.apply_fontstring_font(region, &region_wrapper, dbg);
+            self.apply_fontstring_flags(region, &region_wrapper, dbg);
+            // The element is the frame's own font too (`0x497070`), whose `indented` its
+            // indented-word-wrap pair answers.
+            if let Some(on) = xml_flag(region, "indented") {
+                self.call(wrapper, "SetIndentedWordWrap", on, dbg);
+            }
             self.apply_region_visual(region, &region_wrapper, false, dbg);
             // The implicit creation anchor, as in `apply_layers`; an EditBox's adopt replaces it.
             if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, &region_wrapper) {
@@ -236,6 +243,7 @@ impl Loader<'_> {
     /// The wrap of a texture slot the XML builds fresh (`0x815f40`), a button state, slider thumb
     /// or colour-select texture: its own wrap stands whenever its file loaded.
     pub(super) fn apply_slot_texture_wrap(&mut self, el: &Element, region: &Table, dbg: &str) {
+        self.apply_texture_non_blocking(el, region, dbg);
         let Some(file) = el.attr("file") else {
             return;
         };
@@ -250,6 +258,28 @@ impl Loader<'_> {
         }
     }
 
+    /// A `<FontString>`'s style flags (`0x4873e0`): `nonspacewrap`, `wordwrap` and `indented`, each
+    /// present and non-empty, through its setter. The indented one goes through
+    /// `GetIndentedWordWrap`, the name 12340 registers its FontString setter under.
+    pub(super) fn apply_fontstring_flags(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        for (attr, setter) in [
+            ("nonspacewrap", "SetNonSpaceWrap"),
+            ("wordwrap", "SetWordWrap"),
+            ("indented", "GetIndentedWordWrap"),
+        ] {
+            if let Some(on) = xml_flag(el, attr) {
+                self.call_region(wrapper, setter, on, dbg);
+            }
+        }
+    }
+
+    /// A texture element's `nonBlocking` (`0x485f40`), present and non-empty, through its setter.
+    pub(super) fn apply_texture_non_blocking(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        if let Some(on) = xml_flag(el, "nonBlocking") {
+            self.call_region(wrapper, "SetNonBlocking", on, dbg);
+        }
+    }
+
     pub(super) fn apply_region_visual(
         &mut self,
         region: &Element,
@@ -259,11 +289,11 @@ impl Loader<'_> {
     ) {
         let color = children_named(region, "Color").next().map(color_of);
         if is_texture {
+            self.apply_texture_non_blocking(region, region_wrapper, dbg);
             // `horizTile`/`vertTile`, present and non-empty, set their tile bit to the value read
             // as a boolean (`0x485f40`), before the file, which they also wrap.
             for (attr, verb) in [("horizTile", "SetHorizTile"), ("vertTile", "SetVertTile")] {
-                if let Some(v) = region.attr(attr).filter(|v| !v.is_empty()) {
-                    let on = crate::script::binding_abi::str_bool_or_default(v.as_bytes(), false);
+                if let Some(on) = xml_flag(region, attr) {
                     self.call_region(region_wrapper, verb, on, dbg);
                 }
             }
@@ -447,6 +477,14 @@ impl Loader<'_> {
             None => {}
         }
     }
+}
+
+/// A boolean attribute as the XML load reads one: present and non-empty, through the loader's
+/// string-to-boolean with a false default; `None` otherwise.
+pub(super) fn xml_flag(el: &Element, attr: &str) -> Option<bool> {
+    el.attr(attr)
+        .filter(|v| !v.is_empty())
+        .map(|v| crate::script::binding_abi::str_bool_or_default(v.as_bytes(), false))
 }
 
 /// A `<Texture>`'s `(u, v)` wrap, as the XML load (`0x485f40`) builds it for the file's create:

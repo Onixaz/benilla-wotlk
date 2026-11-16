@@ -2107,6 +2107,58 @@ mod loader_tests {
         assert_eq!(s.eval::<i64>("return Gone:GetNumRegions()").unwrap(), 0);
     }
 
+    /// The style attributes the 12340 loaders read into the same bits the Lua setters write: a
+    /// FontString's `wordwrap`, `nonspacewrap` and `indented` (`0x4873e0`), a texture's
+    /// `nonBlocking` (`0x485f40`), and a font's `indented` (`0x497070`), which a message frame's
+    /// or SimpleHTML's own `<FontString>` element sets on the frame's font, as stock
+    /// `ChatFrame.xml` does for every chat window.
+    #[test]
+    fn the_style_attributes_load_into_their_flags() {
+        let s = UiScript::new().unwrap();
+        let doc = parse(
+            r#"<Ui>
+                <Font name="IndentFont" font="Fonts\FRIZQT__.TTF" indented="true">
+                    <FontHeight val="12"/>
+                </Font>
+                <Font name="IndentChild" inherits="IndentFont"/>
+                <Frame name="StyleOwner">
+                    <Layers><Layer level="ARTWORK">
+                        <FontString name="StyleStr" wordwrap="false" nonspacewrap="false" indented="1"/>
+                        <FontString name="PlainStr"/>
+                        <Texture name="StyleTex" file="Interface\Icons\Spell" nonBlocking="true"/>
+                    </Layer></Layers>
+                </Frame>
+                <ScrollingMessageFrame name="StyleChat">
+                    <FontString inherits="IndentFont" justifyH="LEFT" indented="true"/>
+                </ScrollingMessageFrame>
+                <MessageFrame name="StylePlain">
+                    <FontString justifyH="LEFT"/>
+                </MessageFrame>
+                <SimpleHTML name="StyleHtml">
+                    <FontString indented="false"/>
+                    <FontStringHeader2 indented="yes"/>
+                </SimpleHTML>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        let is = |lua: &str| s.eval::<bool>(&format!("return {lua}")).unwrap();
+        assert!(is("StyleStr:CanWordWrap() == nil"));
+        assert!(is("StyleStr:CanNonSpaceWrap() == nil"));
+        // 12340's FontString answers the indented bit under the setter's name.
+        assert!(is("StyleStr:SetIndentedWordWrap() == 1"));
+        assert!(is(
+            "PlainStr:CanWordWrap() == 1 and PlainStr:SetIndentedWordWrap() == nil"
+        ));
+        assert!(is("StyleTex:GetNonBlocking() == 1"));
+        assert!(is("IndentFont:GetIndentedWordWrap() == 1"));
+        assert!(is("IndentChild:GetIndentedWordWrap() == 1"));
+        assert!(is("StyleChat:GetIndentedWordWrap() == 1"));
+        assert!(is("StylePlain:GetIndentedWordWrap() == nil"));
+        assert!(is("StyleHtml:GetIndentedWordWrap('P') == nil"));
+        assert!(is("StyleHtml:GetIndentedWordWrap('H2') == 1"));
+    }
+
     /// A direct-child `<FontString>` declares element font 0 and `<FontStringHeader1>` element font
     /// 1, neither a region, and `hyperlinkFormat=` lands at `+0x360`; stock `ItemTextFrame.xml:214`
     /// uses the first.
