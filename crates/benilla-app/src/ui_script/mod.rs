@@ -24,7 +24,7 @@ mod input;
 pub(crate) mod live;
 pub(crate) use live::LendLive;
 #[cfg(test)]
-mod live_tests;
+pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
 #[cfg(test)]
 pub(crate) use input::feed_ui_input;

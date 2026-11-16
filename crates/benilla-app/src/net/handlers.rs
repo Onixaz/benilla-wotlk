@@ -241,14 +241,13 @@ mod tests {
         }
         let (mut seen, mut problems) = (0, Vec::new());
         for path in files {
-            // This file's own fixtures and prose, and the test files' fixtures.
-            if path.ends_with("net/handlers.rs")
-                || path
-                    .file_stem()
-                    .is_some_and(|s| s.to_string_lossy().ends_with("_tests"))
-            {
-                continue;
+            if path.ends_with("net/handlers.rs") {
+                continue; // this file's own fixtures and prose
             }
+            // A test file's fixture registers in its own app, not the built client's census.
+            let fixture = path
+                .file_stem()
+                .is_some_and(|s| s.to_string_lossy().ends_with("_tests"));
             let text = regex_lite_strip_comments(&std::fs::read_to_string(&path).expect("source"));
             for call in text.split("net_handler(").skip(1) {
                 let Some((args, _)) = call.split_once(')') else {
@@ -260,7 +259,9 @@ mod tests {
                 let kind = kind.trim().rsplit("::").next().unwrap_or_default();
                 // rustfmt breaks a long call one argument a line, with a trailing comma.
                 let handler = handler.trim().trim_end_matches(',').trim_end();
-                seen += 1;
+                if !fixture {
+                    seen += 1;
+                }
                 if kind == "Disconnected" {
                     continue;
                 }
