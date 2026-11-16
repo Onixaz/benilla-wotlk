@@ -1,10 +1,9 @@
 //! The VM's live view of the client and the events a packet handler fires. 12340's verbs read the
-//! live object when called (`0x60f390`) and its handlers fire their events once their changes
-//! apply (`0x520fe0`), packet by packet. [`LiveView`] is the read-only [`LiveState`] over the
-//! `World` every call into Lua is lent: a system holding the VM takes [`LendLive`], which lends it
-//! for the system's run, and an exclusive one lends through [`with_live_world`] or [`lend_world`].
-//! [`UiEvents`] is the queue a handler fires into, which the drain empties into the VM after that
-//! handler's commands apply and before the next packet.
+//! live object when called (`0x60f396`) and a handler fires its events once its changes apply
+//! (`0x520fe0`). [`LiveView`] is the read-only [`LiveState`] over the `World` every call into Lua
+//! is lent: a system holding the VM takes [`LendLive`], which lends it for the system's run, and
+//! an exclusive one lends through [`with_live_world`] or [`lend_world`]. [`UiEvents`] is the queue
+//! a handler fires into, emptied into the VM once that handler's commands apply.
 
 use benilla_ui::script::{LiveLoan, LiveState, ScriptValue, UiScript};
 use bevy::ecs::change_detection::Tick;
@@ -33,7 +32,7 @@ impl LiveState for LiveView<'_, '_> {
     fn unit_flags(&self, guid: u64) -> Option<u32> {
         let &entity = self.index.as_ref()?.0.get(&guid)?;
         let fields = &self.stores.get(entity).ok()?.0;
-        // The object manager's unit lookup (`ecx = 8`): a unit or a player.
+        // The verbs' unit lookup (`0x60c1f0`) asks the object manager for type mask 8 (`0x60c21e`).
         fields.is_unit().then(|| fields.unit_flags())
     }
 }
@@ -120,10 +119,10 @@ unsafe impl ReadOnlySystemParam for LendLive<'_, '_> {}
 pub(crate) struct UiEvents(Vec<(&'static str, Vec<ScriptValue>)>);
 
 impl UiEvents {
-    /// Fire `event` once the calling handler's changes have applied, before the next packet's.
+    /// Fire `event` once the calling handler's changes have applied, before the next handler runs.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "no stock handler fires through it yet")
+        expect(dead_code, reason = "only the test handlers fire through it")
     )]
     pub(crate) fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
         self.0.push((event, args));
@@ -138,17 +137,48 @@ impl UiEvents {
 
 /// The cached parameter state [`with_live_world`] lends from.
 #[derive(Resource)]
-struct LiveViewState(SystemState<LiveView<'static, 'static>>);
+pub(super) struct LiveViewState(SystemState<LiveView<'static, 'static>>);
+
+/// The VM taken out of the world for a call, put back on return and on unwind.
+struct HeldScript<'w> {
+    world: &'w mut World,
+    script: Option<UiScript>,
+}
+
+impl Drop for HeldScript<'_> {
+    fn drop(&mut self) {
+        if let Some(script) = self.script.take() {
+            self.world.insert_non_send_resource(script);
+        }
+    }
+}
+
+/// The view's state taken out of the world for a call, put back on return and on unwind.
+struct HeldState<'w> {
+    world: &'w mut World,
+    state: Option<LiveViewState>,
+}
+
+impl Drop for HeldState<'_> {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.take() {
+            self.world.insert_resource(state);
+        }
+    }
+}
 
 /// Run `f` on the VM with the `World` lent as its live view; `None` with no VM.
 pub(crate) fn with_live_world<R>(
     world: &mut World,
     f: impl FnOnce(&mut UiScript) -> R,
 ) -> Option<R> {
-    let mut script = world.remove_non_send_resource::<UiScript>()?;
-    let out = lend_world(world, &mut script, f);
-    world.insert_non_send_resource(script);
-    Some(out)
+    let script = world.remove_non_send_resource::<UiScript>()?;
+    let mut held = HeldScript {
+        world,
+        script: Some(script),
+    };
+    let script = held.script.as_mut().expect("held until the drop");
+    Some(lend_world(held.world, script, f))
 }
 
 /// Run `f` on `script`, a VM held outside the world, with the `World` lent as its live view.
@@ -157,18 +187,22 @@ pub(crate) fn lend_world<R>(
     script: &mut UiScript,
     f: impl FnOnce(&mut UiScript) -> R,
 ) -> R {
-    if !world.contains_resource::<LiveViewState>() {
-        let state = SystemState::new(world);
-        world.insert_resource(LiveViewState(state));
-    }
-    world.resource_scope(|world, mut state: Mut<LiveViewState>| {
-        let view = state.0.get(world);
-        script.with_live(&view, f)
-    })
+    let state = match world.remove_resource::<LiveViewState>() {
+        Some(state) => state,
+        None => LiveViewState(SystemState::new(world)),
+    };
+    let mut held = HeldState {
+        world,
+        state: Some(state),
+    };
+    let state = held.state.as_mut().expect("held until the drop");
+    let view = state.0.get(held.world);
+    script.with_live(&view, f)
 }
 
-/// Fires what the handler that just ran queued, in its order, with the `World` lent; with no VM
-/// they are dropped, as the reference has no listener before its UI loads.
+/// Fires what the handler that just ran queued, in its order, with the `World` lent; it runs after
+/// each handler, not after each packet. With no VM they are dropped, as the reference has no
+/// listener before its UI loads.
 pub(crate) fn fire_handler_events(world: &mut World) {
     let Some(mut queued) = world.get_resource_mut::<UiEvents>() else {
         return;

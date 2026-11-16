@@ -37,7 +37,7 @@ fn on_values(
 
 /// Installs `CharzLiveTaxi(guid)`, a test verb reading the unit's taxi bit through the view lent to
 /// the call that runs it: `"1"` or `"nil"`, and `"unlent"` with no view lent.
-pub(super) fn install_live_taxi(script: &UiScript) {
+pub(crate) fn install_live_taxi(script: &UiScript) {
     let f = script
         .lua()
         .create_function(|_, guid: u64| {
@@ -140,6 +140,27 @@ fn with_no_vm_the_events_are_dropped() {
         .eval("return LOG")
         .unwrap();
     assert_eq!(log, vec!["CHARZ_VALUES 0 taxi=nil"]);
+}
+
+/// A call into Lua that unwinds puts the VM and the view's state back, and ends the loan.
+#[test]
+fn an_unwinding_call_puts_the_vm_and_the_view_back() {
+    let mut app = app();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::live::with_live_world(app.world_mut(), |_| panic!("a call that unwinds"))
+    }));
+    assert!(unwound.is_err());
+    let world = app.world_mut();
+    assert!(world.contains_resource::<super::live::LiveViewState>());
+    let script = world.non_send_resource::<UiScript>();
+    assert!(!script.has_live());
+    assert_eq!(
+        super::live::with_live_world(world, |s| s
+            .eval::<String>("return CharzLiveTaxi(0x10)")
+            .unwrap()),
+        Some("nil".to_string()),
+        "the next call lends again"
+    );
 }
 
 /// Whether a parameter list takes the VM by value, the way a system does (a helper borrowing a

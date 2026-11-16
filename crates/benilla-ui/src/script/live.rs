@@ -1,5 +1,5 @@
 //! The client state the verbs read at call time. 12340's verbs read the live object when called
-//! (`UnitOnTaxi` `0x60f350` reads the flags word at `0x60f390`); here the app lends a [`LiveState`]
+//! (`UnitOnTaxi` `0x60f350` reads the flags word at `0x60f396`); here the app lends a [`LiveState`]
 //! over its own state for the length of every call into Lua, either around one call
 //! ([`UiScript::with_live`]) or for as long as a guard lives ([`LiveLoan`]), and a verb reads it
 //! through [`read_live`]. The loan is the calling thread's: the VM runs on one thread, and a test
@@ -159,8 +159,7 @@ mod tests {
         assert_eq!(ask(&s), None);
     }
 
-    /// `UnitOnTaxi` does not read the view yet: lent or not, it answers the pushed ride flag, for
-    /// the player only.
+    /// `UnitOnTaxi` answers the pushed ride flag, for the player only, with a view lent or not.
     #[test]
     fn unit_on_taxi_answers_the_push_with_a_view_lent() {
         let mut s = UiScript::new().unwrap();

@@ -868,8 +868,8 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
 /// view's unit lookup tests.
 const OBJECT_TYPE_PLAYER: (u16, u32) = (2, 0x19);
 
-/// A test handler on the control update firing `CHARZ_HANDLER`, as a migrated handler fires its
-/// event (`0x520fe0`).
+/// A test handler on the control update firing `CHARZ_HANDLER`, as the reference's handler fires
+/// its event (`0x520fe0`).
 fn charz_control(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::ClientControl { allow_move, .. } = ev {
         let edge = if allow_move { "gained" } else { "lost" };
@@ -922,8 +922,8 @@ fn take_live(rig: &Rig) -> Vec<String> {
 
 /// A handler-fired event reaches Lua inside the drain, in wire order: after every earlier packet's
 /// change (the flags ahead of it), before any later one's (the flags behind it), and a verb its
-/// handler calls reads the `World` through the lent view. `UnitOnTaxi` still answers the push,
-/// which no feed has made yet in that frame.
+/// handler calls reads the `World` through the lent view. `UnitOnTaxi` answers the push, which the
+/// frame's feeds have not made at that point.
 #[test]
 fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     let Some(mut rig) = login_with_handler_event() else {
