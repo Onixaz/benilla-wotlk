@@ -95,6 +95,7 @@ impl Plugin for NetPlugin {
             .init_resource::<GuidIndex>()
             .init_resource::<ParkedObjects>()
             .init_resource::<SelfGuid>()
+            .init_resource::<ForcedMoveArrivals>()
             .init_resource::<AddonInfoReply>()
             .init_resource::<AccountExpansion>()
             .init_resource::<PendingTransfer>()
@@ -2881,6 +2882,8 @@ pub(crate) struct SpeedChangeMessage {
     pub(crate) kind: SpeedKind,
     pub(crate) counter: u32,
     pub(crate) speed: f32,
+    /// Its place among the frame's forced-move packets ([`ForcedMoveArrivals`]).
+    pub(crate) arrival: u64,
 }
 
 /// An acked mode granted or revoked on a unit: the server's `IsFlagAckOpcode` set. The controller
@@ -2892,6 +2895,21 @@ pub(crate) struct MoveModeMessage {
     pub(crate) counter: u32,
     pub(crate) mode: MoveMode,
     pub(crate) apply: bool,
+    /// Its place among the frame's forced-move packets ([`ForcedMoveArrivals`]).
+    pub(crate) arrival: u64,
+}
+
+/// The wire order of the acked speed and mode packets, which arrive on two message channels: the
+/// reference handles each fully before the next, so each ack carries the state its own packet left.
+#[derive(Resource, Default)]
+pub(crate) struct ForcedMoveArrivals(u64);
+
+impl ForcedMoveArrivals {
+    /// The next packet's place.
+    pub(crate) fn next(&mut self) -> u64 {
+        self.0 += 1;
+        self.0
+    }
 }
 
 /// `SMSG_MOVE_KNOCK_BACK` at our mover; the controller launches and acks.

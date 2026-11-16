@@ -100,8 +100,7 @@ pub(super) fn stream_self_movement(
     swim_pitch: f32,
     arc: ArcEdges,
     now: f32,
-    speed_acks: &[crate::net::SpeedChangeMessage],
-    mode_acks: &[crate::net::MoveModeMessage],
+    owed: &[OwedAck],
     knock_acks: &[super::state::PendingKnockback],
     transport: Option<TransportPose>,
     skip: SkipClock,
@@ -138,41 +137,22 @@ pub(super) fn stream_self_movement(
         }
     });
     // A forced speed change is acked within the server's 4 s window with this frame's live
-    // payload, which vmangos relocates us to and runs its anticheat position tests on.
-    for ack in speed_acks {
-        let _ = sender.send(ClientCommand::ForceSpeedAck {
-            kind: ack.kind,
-            guid: ack.guid,
-            counter: ack.counter,
-            speed: ack.speed,
-            flags: wire_flags,
-            pos: wow_pos,
-            orientation: facing,
-            pitch: swim_pitch,
-            fall_time,
-            jump: wire_jump,
-            transport,
-        });
+    // payload, which vmangos relocates us to and runs its anticheat position tests on. A granted or
+    // revoked mode is acked the same way: the reference's drain acks each event from the live
+    // status it left (`0x6ed17d`), so a root taken mid-fall goes back with its pending bit, FALLING
+    // and the jump tail; it applies and acks one event (`0x6ed70a`) before it takes the next
+    // (`0x6ed84e`), so an ack does not yet carry a mode a later packet of the frame changed.
+    let pose = AckPose {
+        pos: wow_pos,
+        orientation: facing,
+        pitch: swim_pitch,
+        fall_time,
+        jump: wire_jump,
+        transport,
+    };
+    for (ack, flags) in owed.iter().zip(ack_flags(owed, wire_flags)) {
+        send_ack(sender, ack, flags, &pose);
         // The ack relocates us server-side, so it is a position report too.
-        player.last_pos = wow_pos;
-    }
-    // A granted or revoked mode is acked the same way: the reference's drain acks each event from
-    // the live status it left (`0x6ed17d`), so a root taken mid-fall goes back with its pending bit,
-    // FALLING and the jump tail.
-    for ack in mode_acks {
-        let _ = sender.send(ClientCommand::MoveModeAck {
-            guid: ack.guid,
-            counter: ack.counter,
-            mode: ack.mode,
-            apply: ack.apply,
-            flags: wire_flags,
-            pos: wow_pos,
-            orientation: facing,
-            pitch: swim_pitch,
-            fall_time,
-            jump: wire_jump,
-            transport,
-        });
         player.last_pos = wow_pos;
     }
 
@@ -457,47 +437,94 @@ pub(super) fn wire_transport(player: &Player) -> Option<TransportPose> {
     })
 }
 
-/// Acks forced speed changes on a frame the controller does not drive (a server spline, a fear, a
-/// mover hand-off), as the reference's per-mover drain acks whoever drives. Unacked, vmangos
-/// enforces the change after 4 s, counts the miss for anticheat and holds the graveyard repop
-/// (`Player.cpp:1332`). The payload is our last reported flags minus the airborne pair, as no arc
-/// runs on these frames.
-pub(super) fn ack_speeds_undriven(
-    sender: &Sender<ClientCommand>,
-    player: &Player,
-    acks: &[crate::net::SpeedChangeMessage],
-) {
-    let transport = wire_transport(player);
-    let mut flags =
-        player.move_flags & OUTBOUND_FLAG_MASK & !(move_flags::FALLING | move_flags::FALLING_FAR);
-    if transport.is_none() {
-        flags &= !move_flags::ON_TRANSPORT; // flag and tail travel together
-    }
-    for ack in acks {
-        let _ = sender.send(ClientCommand::ForceSpeedAck {
-            kind: ack.kind,
-            guid: ack.guid,
-            counter: ack.counter,
-            speed: ack.speed,
-            flags,
-            pos: bevy_to_wow(player.pos),
-            orientation: player.face_yaw.rem_euclid(std::f32::consts::TAU),
-            pitch: 0.0,
-            fall_time: 0,
-            jump: None,
-            transport: transport.filter(|_| flags & move_flags::ON_TRANSPORT != 0),
-        });
+/// A forced speed or mode packet owed an ack, in the order the server sent it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum OwedAck {
+    Speed(crate::net::SpeedChangeMessage),
+    /// A mode change, with the mode bits it flipped and their state before it.
+    Mode {
+        msg: crate::net::MoveModeMessage,
+        flipped: u32,
+        before: u32,
+    },
+}
+
+impl OwedAck {
+    /// Its place in the wire order ([`crate::net::ForcedMoveArrivals`]).
+    pub(super) fn arrival(&self) -> u64 {
+        match self {
+            Self::Speed(s) => s.arrival,
+            Self::Mode { msg, .. } => msg.arrival,
+        }
     }
 }
 
-/// Acks mode grants on a frame the controller does not drive, from the parked status: our last
-/// reported flags with the modes as they now stand, the airborne pair dropped as no arc runs.
-pub(super) fn ack_modes_undriven(
-    sender: &Sender<ClientCommand>,
-    player: &Player,
-    acks: &[crate::net::MoveModeMessage],
-) {
-    if acks.is_empty() {
+/// Each ack's flags: the frame's final `flags` with the mode changes of every later packet taken
+/// back, as the reference's drain acks each event (`0x6ed70a`) before it takes the next
+/// (`0x6ed84e`).
+fn ack_flags(owed: &[OwedAck], flags: u32) -> Vec<u32> {
+    let mut out = vec![0; owed.len()];
+    let mut live = flags;
+    for (slot, ack) in out.iter_mut().zip(owed).rev() {
+        *slot = live;
+        if let OwedAck::Mode {
+            flipped, before, ..
+        } = *ack
+        {
+            live = live & !flipped | before & flipped;
+        }
+    }
+    out
+}
+
+/// The live status every ack of a frame shares but its flags.
+struct AckPose {
+    pos: [f32; 3],
+    orientation: f32,
+    pitch: f32,
+    fall_time: u32,
+    jump: Option<JumpInfo>,
+    transport: Option<TransportPose>,
+}
+
+fn send_ack(sender: &Sender<ClientCommand>, ack: &OwedAck, flags: u32, pose: &AckPose) {
+    let _ = sender.send(match *ack {
+        OwedAck::Speed(s) => ClientCommand::ForceSpeedAck {
+            kind: s.kind,
+            guid: s.guid,
+            counter: s.counter,
+            speed: s.speed,
+            flags,
+            pos: pose.pos,
+            orientation: pose.orientation,
+            pitch: pose.pitch,
+            fall_time: pose.fall_time,
+            jump: pose.jump,
+            transport: pose.transport,
+        },
+        OwedAck::Mode { msg, .. } => ClientCommand::MoveModeAck {
+            guid: msg.guid,
+            counter: msg.counter,
+            mode: msg.mode,
+            apply: msg.apply,
+            flags,
+            pos: pose.pos,
+            orientation: pose.orientation,
+            pitch: pose.pitch,
+            fall_time: pose.fall_time,
+            jump: pose.jump,
+            transport: pose.transport,
+        },
+    });
+}
+
+/// Acks forced speed changes and mode grants on a frame the controller does not drive (a server
+/// spline, a fear, a mover hand-off), as the reference's per-mover drain acks whoever drives.
+/// Unacked, vmangos enforces a speed change after 4 s, counts the miss for anticheat and holds the
+/// graveyard repop (`Player.cpp:1332`). The payload is the parked status: our last reported flags
+/// with the modes as they now stand, the airborne pair dropped as no arc runs.
+pub(super) fn ack_undriven(sender: &Sender<ClientCommand>, player: &Player, owed: &[OwedAck]) {
+    if owed.is_empty() {
         return;
     }
     let transport = wire_transport(player);
@@ -510,20 +537,16 @@ pub(super) fn ack_modes_undriven(
     if transport.is_none() {
         flags &= !move_flags::ON_TRANSPORT; // flag and tail travel together
     }
-    for ack in acks {
-        let _ = sender.send(ClientCommand::MoveModeAck {
-            guid: ack.guid,
-            counter: ack.counter,
-            mode: ack.mode,
-            apply: ack.apply,
-            flags,
-            pos: bevy_to_wow(player.pos),
-            orientation: player.face_yaw.rem_euclid(std::f32::consts::TAU),
-            pitch: 0.0,
-            fall_time: 0,
-            jump: None,
-            transport: transport.filter(|_| flags & move_flags::ON_TRANSPORT != 0),
-        });
+    let pose = AckPose {
+        pos: bevy_to_wow(player.pos),
+        orientation: player.face_yaw.rem_euclid(std::f32::consts::TAU),
+        pitch: 0.0,
+        fall_time: 0,
+        jump: None,
+        transport: transport.filter(|_| flags & move_flags::ON_TRANSPORT != 0),
+    };
+    for (ack, flags) in owed.iter().zip(ack_flags(owed, flags)) {
+        send_ack(sender, ack, flags, &pose);
     }
 }
 
@@ -629,7 +652,6 @@ mod tests {
             0.0,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -650,7 +672,6 @@ mod tests {
             0.0,
             arc(),
             0.0,
-            &[],
             &[],
             &[],
             None,
@@ -674,7 +695,6 @@ mod tests {
             0.0,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -688,7 +708,6 @@ mod tests {
             0.1,
             arc(),
             0.1,
-            &[],
             &[],
             &[],
             None,
@@ -720,7 +739,6 @@ mod tests {
                 fall_time: 400,
             },
             0.0,
-            &[],
             &[],
             &[],
             None,
@@ -759,7 +777,6 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
-            &[],
             &[],
             &[],
             None,
@@ -803,7 +820,6 @@ mod tests {
             0.0,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -844,7 +860,6 @@ mod tests {
             0.2,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -868,7 +883,6 @@ mod tests {
                 fall_time: 800,
             },
             0.8,
-            &[],
             &[],
             &[],
             None,
@@ -905,7 +919,6 @@ mod tests {
                     fall_time: (now * 1000.0) as u32,
                 },
                 now,
-                &[],
                 &[],
                 &[],
                 None,
@@ -966,7 +979,6 @@ mod tests {
             0.3,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1007,7 +1019,6 @@ mod tests {
             0.3,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1039,7 +1050,6 @@ mod tests {
             0.2,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1067,7 +1077,6 @@ mod tests {
                 fall_time: 900,
             },
             1.5,
-            &[],
             &[],
             &[],
             None,
@@ -1110,7 +1119,6 @@ mod tests {
             0.05,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1146,7 +1154,6 @@ mod tests {
             0.06,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1177,7 +1184,6 @@ mod tests {
                 0.05 * (i as f32 + 1.0),
                 &[],
                 &[],
-                &[],
                 None,
                 no_skip(),
             );
@@ -1200,7 +1206,6 @@ mod tests {
                 fall_time: 0,
             },
             0.2,
-            &[],
             &[],
             &[],
             None,
@@ -1239,7 +1244,6 @@ mod tests {
             0.05,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1269,7 +1273,6 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
-            &[],
             &[],
             &[],
             None,
@@ -1358,7 +1361,9 @@ mod tests {
             kind: benilla_protocol::SpeedKind::Run,
             counter: 3,
             speed: 3.5,
+            arrival: 1,
         };
+        let ack = OwedAck::Speed(ack);
 
         // A spline ride reporting FORWARD, off any deck, with a stale ON_TRANSPORT bit.
         let player = Player {
@@ -1366,7 +1371,7 @@ mod tests {
             face_yaw: -1.0,
             ..Default::default()
         };
-        ack_speeds_undriven(&tx, &player, &[ack]);
+        ack_undriven(&tx, &player, &[ack]);
         let Ok(ClientCommand::ForceSpeedAck {
             counter,
             speed,
@@ -1417,7 +1422,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        ack_speeds_undriven(&tx, &player, &[ack]);
+        ack_undriven(&tx, &player, &[ack]);
         let Ok(ClientCommand::ForceSpeedAck {
             flags, transport, ..
         }) = rx.try_recv()
@@ -1426,6 +1431,107 @@ mod tests {
         };
         assert_eq!(flags, move_flags::ON_TRANSPORT);
         assert_eq!(transport.map(|t| t.guid), Some(0x1F));
+    }
+
+    /// The acks a frame owes, as `(is_speed, flags)` in send order.
+    fn sent_acks(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<(bool, u32)> {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::ForceSpeedAck { flags, .. } => Some((true, flags)),
+                ClientCommand::MoveModeAck { flags, .. } => Some((false, flags)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A run-speed change and a can-fly grant or revoke in one frame, in `speed_first` wire order:
+    /// the owed acks, and the can-fly bit before the frame and at its end.
+    fn speed_and_can_fly(speed_first: bool, grant: bool) -> (Vec<OwedAck>, u32, u32) {
+        let (speed_at, mode_at) = if speed_first { (1, 2) } else { (2, 1) };
+        let speed = OwedAck::Speed(crate::net::SpeedChangeMessage {
+            guid: 7,
+            kind: benilla_protocol::SpeedKind::Run,
+            counter: 1,
+            speed: 14.0,
+            arrival: speed_at,
+        });
+        let before = if grant { 0 } else { move_flags::CAN_FLY };
+        let mode = OwedAck::Mode {
+            msg: crate::net::MoveModeMessage {
+                guid: 7,
+                counter: 2,
+                mode: benilla_protocol::MoveMode::CanFly,
+                apply: grant,
+                arrival: mode_at,
+            },
+            flipped: move_flags::CAN_FLY,
+            before,
+        };
+        let owed = if speed_first {
+            vec![speed, mode]
+        } else {
+            vec![mode, speed]
+        };
+        (owed, before, before ^ move_flags::CAN_FLY)
+    }
+
+    /// `0x6ed84e`: each packet is acked from the status it left before the next is handled, so a
+    /// speed ack ahead of a can-fly change in the frame carries the can-fly bit as it was.
+    #[test]
+    fn each_ack_carries_the_modes_its_own_packet_left() {
+        for (speed_first, grant) in [(true, true), (false, true), (true, false), (false, false)] {
+            let (owed, before, after) = speed_and_can_fly(speed_first, grant);
+            let expected = if speed_first {
+                vec![(true, before), (false, after)]
+            } else {
+                vec![(false, after), (true, after)]
+            };
+
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let mut player = Player {
+                move_flags: before,
+                ..Default::default()
+            };
+            stream_self_movement(
+                &tx,
+                &mut player,
+                after,
+                0.0,
+                ArcEdges {
+                    jumped: false,
+                    wire_launch: false,
+                    air_nudged: false,
+                    landed: false,
+                    fall_time: 0,
+                },
+                0.0,
+                &owed,
+                &[],
+                None,
+                no_skip(),
+            );
+            assert_eq!(
+                sent_acks(&rx),
+                expected,
+                "driven, speed first {speed_first}, grant {grant}"
+            );
+
+            // Undriven, the parked status holds the modes as they now stand.
+            let player = Player {
+                move_flags: before,
+                modes: super::super::state::MoveModes {
+                    can_fly: grant,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            ack_undriven(&tx, &player, &owed);
+            assert_eq!(
+                sent_acks(&rx),
+                expected,
+                "undriven, speed first {speed_first}, grant {grant}"
+            );
+        }
     }
 
     #[test]
@@ -1457,7 +1563,6 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
-            &[],
             &[],
             &[super::super::state::PendingKnockback {
                 guid: 0x1234,
@@ -1534,7 +1639,6 @@ mod tests {
             },
             0.0,
             &[],
-            &[],
             &[knock(107, 1.0), knock(108, -1.0)],
             None,
             no_skip(),
@@ -1575,7 +1679,6 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
-            &[],
             &[],
             &[],
             None,
@@ -1620,7 +1723,6 @@ mod tests {
                     fall_time: 0,
                 },
                 now,
-                &[],
                 &[],
                 &[],
                 None,
@@ -1670,7 +1772,6 @@ mod tests {
             0.3,
             &[],
             &[],
-            &[],
             None,
             no_skip(),
         );
@@ -1705,7 +1806,6 @@ mod tests {
                     fall_time: 0,
                 },
                 now,
-                &[],
                 &[],
                 &[],
                 None,

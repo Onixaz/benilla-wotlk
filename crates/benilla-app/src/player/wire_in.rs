@@ -83,8 +83,9 @@ fn control_verdict(mover: u64, allow_move: bool, self_guid: Option<u64>) -> Cont
     }
 }
 
-/// Apply this frame's server-authored movement and send each ack. Returns the forced-speed changes
-/// for the movement stream to ack, except pre-control or detached, where they are acked here.
+/// Apply this frame's server-authored movement and send each ack. Returns the forced speed and
+/// mode changes for the movement stream to ack in wire order, except pre-control or detached,
+/// where they are acked here.
 /// `self_pose` is the streamed self entity's translation and yaw, the take-control target, and
 /// `driven` that body's guid and its own modes word ([`crate::net::UnitMoveModes`]).
 // `control`'s own transports query, passed through.
@@ -110,7 +111,7 @@ pub(super) fn apply_server_moves(
     >,
     self_pose: Option<(Vec3, f32)>,
     driven: Option<(u64, u32)>,
-) -> ServerAcks {
+) -> Vec<movement_net::OwedAck> {
     // World entry hands control back before this frame's control packets, so a later revoke wins;
     // AzerothCore never lifts a battleground's end freeze by packet.
     let creates: Vec<SelfCreateMover> = self_creates.read().copied().collect();
@@ -381,7 +382,9 @@ pub(super) fn apply_server_moves(
     // A root applied at once also parks the walk stream and ends the arc, as the reference's root
     // clears the direction bits and stops the fall (`0x98c517`); moving bits beside ROOT freeze
     // the reference and raise vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
-    for m in modes.iter().filter(|m| ours(m.guid)) {
+    let mut owed: Vec<movement_net::OwedAck> = Vec::with_capacity(modes.len() + speeds.len());
+    for m in modes.into_iter().filter(|m| ours(m.guid)) {
+        let before = player.modes.wire_flags();
         // A root taken while falling off a spline is held off to the landing (`0x98c4f0`: FALLING
         // and no spline set only the pending bit); an already rooted body takes nothing.
         let held_off = m.mode == MoveMode::Root
@@ -423,44 +426,29 @@ pub(super) fn apply_server_moves(
             if m.apply { "granted" } else { "revoked" },
             m.guid
         );
+        let after = player.modes.wire_flags();
+        owed.push(movement_net::OwedAck::Mode {
+            msg: m,
+            flipped: before ^ after,
+            before,
+        });
     }
 
-    let mode_acks: Vec<MoveModeMessage> = modes.into_iter().filter(|m| ours(m.guid)).collect();
     // Forced speed changes: the bridge applied the speed; the ack carries our wire state, which the
     // server relocates us to. Controlled, the movement stream acks; otherwise our state is the
-    // parked pose, so ack here.
-    let speed_acks: Vec<SpeedChangeMessage> = speeds.into_iter().filter(|s| ours(s.guid)).collect();
+    // parked pose, so ack here. Either way the acks go out in wire order.
+    owed.extend(
+        speeds
+            .into_iter()
+            .filter(|s| ours(s.guid))
+            .map(movement_net::OwedAck::Speed),
+    );
+    owed.sort_by_key(movement_net::OwedAck::arrival);
     if !player.active || player.detached {
-        for ack in &speed_acks {
-            let _ = net_cmds.0.send(ClientCommand::ForceSpeedAck {
-                kind: ack.kind,
-                guid: ack.guid,
-                counter: ack.counter,
-                speed: ack.speed,
-                flags: 0,
-                pos: bevy_to_wow(player.pos),
-                orientation: player.face_yaw.rem_euclid(std::f32::consts::TAU),
-                pitch: 0.0,
-                fall_time: 0,
-                jump: None,
-                transport: None, // flags 0 → no transport tail
-            });
-        }
-        movement_net::ack_modes_undriven(&net_cmds.0, player, &mode_acks);
-        return ServerAcks::default();
+        movement_net::ack_undriven(&net_cmds.0, player, &owed);
+        return Vec::new();
     }
-    ServerAcks {
-        speeds: speed_acks,
-        modes: mode_acks,
-    }
-}
-
-/// This frame's forced speed changes and mode grants for our mover, applied and owed an ack with
-/// the live status the frame ends on ([`movement_net::stream_self_movement`]).
-#[derive(Default)]
-pub(super) struct ServerAcks {
-    pub(super) speeds: Vec<SpeedChangeMessage>,
-    pub(super) modes: Vec<MoveModeMessage>,
+    owed
 }
 
 /// A same-map teleport that keeps us aboard: the pose is deck-local, composed through the deck as
@@ -1004,7 +992,7 @@ mod handover_tests {
     const EYE: u64 = 0xF130_006F_5F29_221A;
 
     #[derive(Resource, Default)]
-    struct Returned(Vec<SpeedChangeMessage>);
+    struct Returned(Vec<movement_net::OwedAck>);
 
     #[allow(clippy::type_complexity)]
     fn step(
@@ -1055,8 +1043,13 @@ mod handover_tests {
             driven.map(|(_, g, m)| (g.0, m.map_or(0, |m| m.0))),
         );
         // The mode acks as the stream sends them, from this frame's status: here the parked one.
-        super::super::movement_net::ack_modes_undriven(&net.0, &player, &acks.modes);
-        out.0 = acks.speeds;
+        let modes: Vec<_> = acks
+            .iter()
+            .filter(|a| matches!(a, movement_net::OwedAck::Mode { .. }))
+            .copied()
+            .collect();
+        movement_net::ack_undriven(&net.0, &player, &modes);
+        out.0 = acks;
     }
 
     /// A teleport ends the auto-move, the near and the far alike (`0x72d2d0`, `0x72aec0(1, 0)`).
@@ -1116,6 +1109,7 @@ mod handover_tests {
             counter: 7,
             mode: MoveMode::Root,
             apply,
+            arrival: 0,
         }
     }
 
@@ -1149,6 +1143,7 @@ mod handover_tests {
             kind: SpeedKind::Flight,
             counter: 3,
             speed: 7.5,
+            arrival: 0,
         });
         app.update();
         assert!(
@@ -1170,13 +1165,21 @@ mod handover_tests {
         assert_eq!((guid, mode, apply), (EYE, MoveMode::Root, false));
         assert_eq!(pos, eye_pos, "the eye's own pose");
         assert_eq!(flags & move_flags::ROOT, 0, "the unroot rebuilds the word");
-        let speeds = &app.world().resource::<Returned>().0;
+        let speeds: Vec<_> = app
+            .world()
+            .resource::<Returned>()
+            .0
+            .iter()
+            .filter_map(|a| match a {
+                movement_net::OwedAck::Speed(s) => Some(s.guid),
+                movement_net::OwedAck::Mode { .. } => None,
+            })
+            .collect();
         assert_eq!(
-            speeds.len(),
-            1,
+            speeds,
+            [EYE],
             "the eye's forced speed goes to the stream's ack"
         );
-        assert_eq!(speeds[0].guid, EYE);
     }
 
     #[test]
@@ -1250,6 +1253,59 @@ mod handover_tests {
         assert!(
             modes.rooted && !modes.pending_root,
             "on the ground the root applies at once"
+        );
+    }
+
+    /// The Eye of Acherus launch: a speed change and a can-fly grant in one frame come back in
+    /// wire order, each with the mode bits its own packet flipped.
+    #[test]
+    fn a_frame_s_speed_and_mode_changes_are_owed_in_wire_order() {
+        let (mut app, _me, _eye, _rx) = harness();
+        let speed = |arrival| SpeedChangeMessage {
+            guid: ME,
+            kind: SpeedKind::Run,
+            counter: 3,
+            speed: 14.0,
+            arrival,
+        };
+        let can_fly = |apply, arrival| MoveModeMessage {
+            guid: ME,
+            counter: 4,
+            mode: MoveMode::CanFly,
+            apply,
+            arrival,
+        };
+        // Written to their own channels in the opposite order to the wire's.
+        app.world_mut().write_message(can_fly(true, 2));
+        app.world_mut().write_message(speed(1));
+        app.update();
+        let owed = app.world().resource::<Returned>().0.clone();
+        assert_eq!(
+            owed,
+            [
+                movement_net::OwedAck::Speed(speed(1)),
+                movement_net::OwedAck::Mode {
+                    msg: can_fly(true, 2),
+                    flipped: move_flags::CAN_FLY,
+                    before: 0,
+                },
+            ]
+        );
+
+        app.world_mut().write_message(speed(3));
+        app.world_mut().write_message(can_fly(false, 4));
+        app.update();
+        let owed = app.world().resource::<Returned>().0.clone();
+        assert_eq!(
+            owed,
+            [
+                movement_net::OwedAck::Speed(speed(3)),
+                movement_net::OwedAck::Mode {
+                    msg: can_fly(false, 4),
+                    flipped: move_flags::CAN_FLY,
+                    before: move_flags::CAN_FLY,
+                },
+            ]
         );
     }
 
