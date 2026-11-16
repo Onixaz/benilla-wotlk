@@ -467,25 +467,17 @@ pub fn adt_to_tile_mesh(
 
         // Layers 1..3 into one RGBA map: 8-bit on a big-alpha map, else 4-bit; the last row and
         // column duplicated unless the chunk sets `0x8000` (`0x7b8e20`).
+        let fix_alpha = mcnk.header.flags & 0x8000 == 0;
         let alpha_map = (layer_textures.len() > 1).then(|| {
-            let fix_alpha = mcnk.header.flags & 0x8000 == 0;
             CombinedAlphaMap::new(mcnk, big_alpha, fix_alpha)
                 .as_slice()
                 .to_vec()
         });
 
-        let shadow = mcnk.shadow.as_ref().map(|sh| {
-            let n = SHADOW_MAP_SIZE as usize;
-            let mut out = vec![0u8; n * n];
-            for y in 0..n {
-                for x in 0..n {
-                    if sh.is_shadowed(x, y) {
-                        out[y * n + x] = 255;
-                    }
-                }
-            }
-            out
-        });
+        let shadow = mcnk
+            .shadow
+            .as_ref()
+            .map(|sh| shadow_texels(|x, y| sh.is_shadowed(x, y), fix_alpha));
 
         // predominantTexture (`0x40..0x4F`) is the header's `pred_tex` then `no_effect_doodad`,
         // and noEffectDoodad (`0x50..0x57`) its `unknown_8bytes`: 2 and 1 bits per cell, LSB first.
@@ -744,9 +736,64 @@ pub fn load_tiles_around(
     Ok(out)
 }
 
+/// An MCSH map as a byte per texel (255 shadowed). Without `0x8000` (`fix`) the last row and
+/// column repeat 62, as the unfixed unpack does at both mips (`0x7b85a0`, `0x7b8620`, through
+/// `0x7b84a0`); a `0x8000` chunk keeps its own texel 63.
+fn shadow_texels(shadowed: impl Fn(usize, usize) -> bool, fix: bool) -> Vec<u8> {
+    let n = SHADOW_MAP_SIZE as usize;
+    let mut out = vec![0u8; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            let (sx, sy) = if fix {
+                (x.min(n - 2), y.min(n - 2))
+            } else {
+                (x, y)
+            };
+            if shadowed(sx, sy) {
+                out[y * n + x] = 255;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An unfixed chunk's shadow repeats texel 62 into row and column 63; a `0x8000` chunk keeps
+    /// its own 63.
+    #[test]
+    fn an_unfixed_shadow_repeats_its_last_row_and_column() {
+        let n = SHADOW_MAP_SIZE as usize;
+        // Shadowed exactly on row 62 and column 62; texel 63 is lit in the source.
+        let lines = |x: usize, y: usize| x == 62 || y == 62;
+        let fixed = shadow_texels(lines, true);
+        let raw = shadow_texels(lines, false);
+        for i in 0..n {
+            assert_eq!(
+                fixed[63 * n + i],
+                255,
+                "row 63 repeats row 62 at column {i}"
+            );
+            assert_eq!(
+                fixed[i * n + 63],
+                255,
+                "column 63 repeats column 62 at row {i}"
+            );
+        }
+        for y in 0..n - 1 {
+            for x in 0..n - 1 {
+                assert_eq!(
+                    fixed[y * n + x],
+                    raw[y * n + x],
+                    "texel ({x}, {y}) untouched"
+                );
+            }
+        }
+        assert_eq!(raw[63 * n + 63], 0, "a 0x8000 chunk keeps its own texel 63");
+        assert_eq!(raw[63 * n + 10], 0, "and its own row 63");
+    }
 
     /// A chunk with only `positions` and `indices` set.
     fn chunk(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> ChunkMesh {
