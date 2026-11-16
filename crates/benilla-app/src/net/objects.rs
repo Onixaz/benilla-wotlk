@@ -102,6 +102,8 @@ pub(crate) struct Scene<'w, 's> {
     speed_changes: MessageWriter<'w, SpeedChangeMessage>,
     self_moves: MessageWriter<'w, super::SelfMoveMessage>,
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
+    control: ResMut<'w, super::ControlFlag>,
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -139,7 +141,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // (`0x4d6c4d`) and pass 2 runs only the field handlers (`0x4d64be`).
         if let Some(&e) = sc.index.0.get(&guid) {
             trace_create(guid, "live");
-            merge_fields(
+            let moved = merge_fields(
                 &mut sc.commands,
                 &mut sc.stores,
                 &mut sc.field_changes,
@@ -147,7 +149,13 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 guid,
                 fields,
             );
+            own_flags_watch(&mut sc, guid, moved);
             return;
+        }
+        // Our own create gives us control (`0x6e80b6`), firing `PLAYER_CONTROL_GAINED` on the flag's
+        // edge (`0x71c9a0` -> `0x520fe0`) before the silent re-seed (`0x6e8160` -> `0x513880`).
+        if sc.self_guid.0 == Some(guid) && !std::mem::replace(&mut sc.control.0, true) {
+            sc.ui.fire("PLAYER_CONTROL_GAINED", Vec::new());
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {
@@ -578,14 +586,17 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
         sc.parked
             .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
         match sc.index.0.get(&guid).copied() {
-            Some(e) => merge_fields(
-                &mut sc.commands,
-                &mut sc.stores,
-                &mut sc.field_changes,
-                e,
-                guid,
-                fields,
-            ),
+            Some(e) => {
+                let moved = merge_fields(
+                    &mut sc.commands,
+                    &mut sc.stores,
+                    &mut sc.field_changes,
+                    e,
+                    guid,
+                    fields,
+                );
+                own_flags_watch(&mut sc, guid, moved);
+            }
             // A parked object revives with the delta (`0x4d6e80`); an unknown guid drops.
             None => {
                 revive(&mut sc, guid, Some(fields), None);
@@ -1399,8 +1410,20 @@ fn gameobject_info(
     go_templates.insert(entry, type_id, name, data);
 }
 
-/// Merges a descriptor delta into an object's store and reports its [`FieldChanged`] edges. An
-/// indexed entity with no store should not happen, and is seeded from the delta.
+/// `UNIT_FLAGS` for our own unit's `"player"` token from the field watch of the update that moved
+/// the word (`0x60c240` -> `0x60bf10`), so it keeps wire order with the next handler's events.
+fn own_flags_watch(sc: &mut Scene, guid: u64, moved: bool) {
+    if moved && sc.self_guid.0 == Some(guid) {
+        sc.ui.fire(
+            "UNIT_FLAGS",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+    }
+}
+
+/// Merges a descriptor delta into an object's store and reports its [`FieldChanged`] edges, and
+/// whether a unit's flags word moved. An indexed entity with no store should not happen, and is
+/// seeded from the delta.
 fn merge_fields(
     commands: &mut Commands,
     stores: &mut Query<&mut ObjectStore>,
@@ -1408,9 +1431,11 @@ fn merge_fields(
     entity: Entity,
     guid: u64,
     delta: ObjectFields,
-) {
+) -> bool {
+    let mut flags_moved = false;
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
+            flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
             edges.write(e);
         });
     } else {
@@ -1419,6 +1444,7 @@ fn merge_fields(
         );
         commands.entity(entity).insert(ObjectStore(delta));
     }
+    flags_moved
 }
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,

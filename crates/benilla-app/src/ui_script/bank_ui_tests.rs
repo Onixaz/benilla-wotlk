@@ -23,7 +23,6 @@ pub(super) fn load(tag: &str) -> UiScript {
     let (mut s, _load_failures) = super::layer_tests::production_load_with(tag, false, "", |_| {});
     let _ = s.take_errors();
     s.set_money(1_000_000);
-    s.set_player_control(true);
     s
 }
 

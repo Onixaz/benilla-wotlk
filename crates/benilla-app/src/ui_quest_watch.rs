@@ -305,7 +305,7 @@ fn feed_quest_pois(
 /// under flag `0x20000` its drop items in order, the first carried copy with an on-use spell
 /// (`0x708c10`); its range against the target as `IsItemInRange` asks it.
 #[allow(clippy::too_many_arguments)] // a Bevy system's inputs
-fn feed_special_items(
+pub(crate) fn feed_special_items(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     quest_log: Res<QuestLog>,
     self_q: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,

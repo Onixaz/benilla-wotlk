@@ -108,6 +108,7 @@ impl Plugin for NetPlugin {
             .init_resource::<PlayedTimeAnswer>()
             .init_resource::<PlayedClock>()
             .init_resource::<Proficiencies>()
+            .init_resource::<ControlFlag>()
             .init_resource::<crate::names::NameCache>()
             .init_resource::<crate::go_templates::GameObjectTemplates>()
             .init_resource::<crate::items::Items>()
@@ -271,8 +272,8 @@ pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
 pub(crate) struct ObjectStore(pub(crate) ObjectFields);
 
 impl ObjectStore {
-    /// The object manager's unit lookup (`ecx = 8`): a unit or a player, which share the unit
-    /// block; a game object, corpse or item is not one.
+    /// The verbs' unit lookup (`0x60c1f0`), type mask 8 (`0x60c21e`): a unit or a player, which
+    /// share the unit block; a game object, corpse or item is not one.
     pub(crate) fn is_unit(&self) -> bool {
         use benilla_protocol::messages::ObjectType;
         matches!(
@@ -2850,6 +2851,17 @@ pub(crate) struct SelfMoveMessage {
 pub(crate) struct SelfCreateMover {
     pub(crate) flags: u32,
     pub(crate) pitch: f32,
+}
+
+/// The UI's control flag (`0xbcfb8c`) the verbs read: set at a game start (`0x52b8a0`) and by our
+/// own create (`0x513880`), written by the control update for our own unit (`0x520fe0`).
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ControlFlag(pub(crate) bool);
+
+impl Default for ControlFlag {
+    fn default() -> Self {
+        Self(true)
+    }
 }
 
 /// `SMSG_CLIENT_CONTROL_UPDATE`, verbatim; the controller decides. `mover` is the unit spoken

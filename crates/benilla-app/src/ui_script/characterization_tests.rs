@@ -305,6 +305,10 @@ impl Rig {
     }
 }
 
+/// `OBJECT_FIELD_TYPE` as a server sends it for a player (object, unit, player), which the live
+/// view's unit lookup tests; a scenario whose verbs read the view sends it.
+pub(super) const OBJECT_TYPE_PLAYER: (u16, u32) = (2, 0x19);
+
 /// Our own create block, with `extra` fields over a live level-80 body.
 pub(super) fn self_create(extra: &[(u16, u32)]) -> SessionEvent {
     let mut pairs = vec![
@@ -378,7 +382,7 @@ fn quest_template(src_item_id: u32) -> SessionEvent {
 
 #[test]
 fn login_fires_the_load_events_in_order() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     let seen = rig.take();
@@ -408,7 +412,7 @@ fn login_fires_the_load_events_in_order() {
 
 #[test]
 fn reload_fires_the_load_events_again() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     rig.take();
@@ -495,9 +499,12 @@ fn death_release_and_resurrection() {
     );
 }
 
+/// The flags packet ahead of the control update: 12340 fires `UNIT_FLAGS` from the flags packet's
+/// field handler (`0x60c240`), still in control, then the control events from the control
+/// update's (`0x520fe0`), and `UnitOnTaxi` reads the flags the earlier packet set.
 #[test]
 fn flight_start_and_end_with_the_flags_ahead_of_the_control_update() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     let events = &["UNIT_FLAGS", "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED"];
@@ -693,9 +700,10 @@ fn zone_change() {
     );
 }
 
+/// `UnitAffectingCombat` reads the live flags word (`0x60f8ac`), so the create names its type.
 #[test]
 fn combat_enter_and_leave() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     let events = &[
@@ -766,20 +774,26 @@ fn arena_death_popup_shows_the_arena_text() {
 
 /// The control update ahead of the flags in one frame: 12340 fires `PLAYER_CONTROL_LOST` inside
 /// the control update's handler (`0x520fe0`), before the flags packet is handled, so `UnitOnTaxi`
-/// (`0x60f350`, bit 20 of the live flags word at `0x60f390`-`0x60f39f`) still answers false there.
+/// (`0x60f350`, bit 20 of the live flags word at `0x60f390`-`0x60f39f`) still answers false there,
+/// and `PLAYER_CONTROL_GAINED` at the end still finds the ride.
 #[test]
-#[ignore = "#1245: the feeds push both packets' state before the control feed fires"]
 fn flight_start_with_the_control_update_ahead_of_the_flags() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
+    let events = &["PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED"];
     let start = rig.packets(
         vec![control(false), flags(crate::player::UNIT_FLAG_TAXI_FLIGHT)],
         3,
     );
+    let end = rig.packets(vec![control(true), flags(0)], 3);
     assert_eq!(
-        pin(&start, &["PLAYER_CONTROL_LOST"], &["taxi"]),
-        vec!["PLAYER_CONTROL_LOST | taxi=nil".to_string()]
+        pin(&start, events, &["taxi", "control"]),
+        vec!["PLAYER_CONTROL_LOST | taxi=nil control=nil".to_string()]
+    );
+    assert_eq!(
+        pin(&end, events, &["taxi", "control"]),
+        vec!["PLAYER_CONTROL_GAINED | taxi=1 control=1".to_string()]
     );
 }
 
@@ -864,10 +878,6 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
 
 // ── The live infrastructure end to end ───────────────────────────────────────────────────────────
 
-/// `OBJECT_FIELD_TYPE` as a server sends it for a player (object, unit, player), which the live
-/// view's unit lookup tests.
-const OBJECT_TYPE_PLAYER: (u16, u32) = (2, 0x19);
-
 /// A test handler on the control update firing `CHARZ_HANDLER`, as the reference's handler fires
 /// its event (`0x520fe0`).
 fn charz_control(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
@@ -882,7 +892,7 @@ fn charz_control(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live
 
 /// A logged-in rig with [`charz_control`] registered after the stock control handler, the test verb
 /// `CharzLiveTaxi` installed, and a frame logging each `CHARZ_HANDLER` with our taxi bit as the
-/// lent view reads it and as `UnitOnTaxi` answers it from the push.
+/// lent view reads it and as `UnitOnTaxi` answers it.
 fn login_with_handler_event() -> Option<Rig> {
     use crate::net::handlers::NetHandlerApp;
     let mut rig = Rig::login(&[OBJECT_TYPE_PLAYER])?;
@@ -903,7 +913,7 @@ fn login_with_handler_event() -> Option<Rig> {
             f:RegisterEvent("CHARZ_HANDLER")
             f:SetScript("OnEvent", function(_, _, edge)
                 CHARZ_LIVE[#CHARZ_LIVE + 1] = edge .. " live=" .. CharzLiveTaxi({ME})
-                    .. " pushed=" .. tostring(UnitOnTaxi("player"))
+                    .. " verb=" .. tostring(UnitOnTaxi("player"))
             end)
             "#
         ))
@@ -922,8 +932,7 @@ fn take_live(rig: &Rig) -> Vec<String> {
 
 /// A handler-fired event reaches Lua inside the drain, in wire order: after every earlier packet's
 /// change (the flags ahead of it), before any later one's (the flags behind it), and a verb its
-/// handler calls reads the `World` through the lent view. `UnitOnTaxi` answers the push, which the
-/// frame's feeds have not made at that point.
+/// handler calls reads the `World` through the lent view, `UnitOnTaxi` among them.
 #[test]
 fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     let Some(mut rig) = login_with_handler_event() else {
@@ -931,22 +940,23 @@ fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     };
     let taxi = crate::player::UNIT_FLAG_TAXI_FLIGHT;
     let ahead = rig.packets(vec![flags(taxi), control(false)], 1);
-    assert_eq!(take_live(&rig), vec!["lost live=1 pushed=nil"]);
+    assert_eq!(take_live(&rig), vec!["lost live=1 verb=1"]);
     rig.packets(vec![flags(0), control(true)], 1);
-    assert_eq!(take_live(&rig), vec!["gained live=nil pushed=1"]);
+    assert_eq!(take_live(&rig), vec!["gained live=nil verb=nil"]);
     rig.packets(vec![control(false), flags(taxi)], 1);
-    assert_eq!(take_live(&rig), vec!["lost live=nil pushed=nil"]);
+    assert_eq!(take_live(&rig), vec!["lost live=nil verb=nil"]);
     rig.packets(vec![flags(0), control(true), flags(taxi)], 1);
-    assert_eq!(take_live(&rig), vec!["gained live=nil pushed=1"]);
-    // The observer sees it too, as the frame's first event: it fires inside the drain, ahead of
-    // every feed.
+    assert_eq!(take_live(&rig), vec!["gained live=nil verb=nil"]);
+    // The observer sees it too, inside the drain ahead of every feed, after the stock control
+    // handler registered before it and the flags packet's `UNIT_FLAGS` (`0x60c240`) ahead of both.
     assert_eq!(
         pin(&ahead, &["CHARZ_HANDLER"], &["taxi"]),
-        vec!["CHARZ_HANDLER lost | taxi=nil"]
+        vec!["CHARZ_HANDLER lost | taxi=1"]
     );
+    let first: Vec<&str> = ahead.iter().take(3).map(|s| s.event.as_str()).collect();
     assert_eq!(
-        ahead.first().map(|s| s.event.as_str()),
-        Some("CHARZ_HANDLER")
+        first,
+        ["UNIT_FLAGS", "PLAYER_CONTROL_LOST", "CHARZ_HANDLER"]
     );
 }
 
@@ -993,8 +1003,8 @@ fn an_on_update_reads_the_world_through_the_lent_view() {
     assert_eq!(outside, "unlent");
 }
 
-/// A feed lends the view for its calls into Lua: every event the feeds fire on a taxi flags change
-/// and a control loss reads the `World` there, never an unlent view, and reads the flags the
+/// A feed lends the view for its calls into Lua: the `UNIT_HEALTH` the unit feed fires beside a
+/// taxi flags change reads the `World` there, never an unlent view, and reads the flags the
 /// frame's packets set.
 #[test]
 fn a_feed_fired_event_reads_the_world_through_the_lent_view() {
@@ -1011,9 +1021,7 @@ fn a_feed_fired_event_reads_the_world_through_the_lent_view() {
             r#"
             CHARZ_FEED = {{}}
             local f = CreateFrame("Frame")
-            f:RegisterEvent("PLAYER_CONTROL_LOST")
-            f:RegisterEvent("PLAYER_CONTROL_GAINED")
-            f:RegisterEvent("UNIT_FLAGS")
+            f:RegisterEvent("UNIT_HEALTH")
             f:SetScript("OnEvent", function(_, e, unit)
                 CHARZ_FEED[#CHARZ_FEED + 1] = e .. " " .. tostring(unit) .. " live="
                     .. CharzLiveTaxi({ME})
@@ -1029,16 +1037,19 @@ fn a_feed_fired_event_reads_the_world_through_the_lent_view() {
             .unwrap()
     };
     rig.packets(
-        vec![flags(crate::player::UNIT_FLAG_TAXI_FLIGHT), control(false)],
+        vec![self_values(&[
+            (FIELD_UNIT_FLAGS, crate::player::UNIT_FLAG_TAXI_FLIGHT),
+            (FIELD_UNIT_HEALTH, 900),
+        ])],
         1,
     );
-    assert_eq!(feed(&mut rig), vec!["UNIT_FLAGS player live=1"]);
-    rig.packets(vec![flags(0), control(true)], 1);
-    assert_eq!(
-        feed(&mut rig),
-        vec![
-            "UNIT_FLAGS player live=nil",
-            "PLAYER_CONTROL_LOST nil live=nil"
-        ]
+    assert_eq!(feed(&mut rig), vec!["UNIT_HEALTH player live=1"]);
+    rig.packets(
+        vec![self_values(&[
+            (FIELD_UNIT_FLAGS, 0),
+            (FIELD_UNIT_HEALTH, 800),
+        ])],
+        1,
     );
+    assert_eq!(feed(&mut rig), vec!["UNIT_HEALTH player live=nil"]);
 }

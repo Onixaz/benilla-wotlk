@@ -1073,33 +1073,52 @@ fn unit_classification_reads_the_five_word_table() {
 
 // ── `UnitAffectingCombat` and `TargetByName` ────────────────────────────────────────────────────
 
-/// Not in combat and no such unit share one nil arm: both jump to it in the reference.
+/// Bit 19 of the named unit's live flags word (`0x60f8ac`); not in combat and no such unit share
+/// one nil arm: both jump to it in the reference.
 #[test]
 fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
     let mut s = UiScript::new().unwrap();
-    let mut hot = player();
-    hot.in_combat = true;
-    s.set_unit("player", Some(hot));
-    s.set_unit("target", Some(player())); // exists, peaceful
-
-    assert_eq!(
-        s.eval::<i64>(r#"return UnitAffectingCombat("player")"#)
-            .unwrap(),
-        1,
-        "the number 1, never a boolean"
-    );
-    assert!(s
-        .eval::<bool>(r#"return UnitAffectingCombat("target") == nil"#)
-        .unwrap());
+    s.set_unit_guids(&crate::script::UnitGuids {
+        player: 1,
+        target: 2,
+        held: [(1, 0), (2, 0)].into(),
+        ..Default::default()
+    });
     assert!(
-        s.eval::<bool>(r#"return UnitAffectingCombat("party3") == nil"#)
+        s.eval::<bool>(r#"return UnitAffectingCombat("player") == nil"#)
             .unwrap(),
-        "an unresolvable token is the SAME nil a peaceful unit gives"
+        "no view lent reads nobody"
     );
-    // A number passes the gate as the token "5", which matches no prefix: nobody.
-    assert!(s
-        .eval::<bool>("return UnitAffectingCombat(5) == nil")
-        .unwrap());
+    let live = crate::script::live::TestView {
+        units: [(1, (1 << 19, 72)), (2, (1 << 20, 1))].into(),
+        ..Default::default()
+    };
+    s.with_live(&live, |s| {
+        assert_eq!(
+            s.eval::<String>(r#"return type(UnitAffectingCombat("player"))"#)
+                .unwrap(),
+            "number",
+            "the number 1, never a boolean"
+        );
+        assert_eq!(
+            s.eval::<i64>(r#"return UnitAffectingCombat("player")"#)
+                .unwrap(),
+            1
+        );
+        // Held, its flags word without the combat bit.
+        assert!(s
+            .eval::<bool>(r#"return UnitAffectingCombat("target") == nil"#)
+            .unwrap());
+        assert!(
+            s.eval::<bool>(r#"return UnitAffectingCombat("party3") == nil"#)
+                .unwrap(),
+            "an unresolvable token is the SAME nil a peaceful unit gives"
+        );
+        // A number passes the gate as the token "5", which matches no prefix: nobody.
+        assert!(s
+            .eval::<bool>("return UnitAffectingCombat(5) == nil")
+            .unwrap());
+    });
 }
 
 /// The usage raise is `luaL_error`, which does not return.
@@ -1904,15 +1923,6 @@ fn every_unit_predicate_is_one_or_nil_and_never_a_boolean() {
             },
         ),
         (
-            "UnitAffectingCombat",
-            r#"UnitAffectingCombat("target")"#,
-            UnitState {
-                exists: true,
-                in_combat: true,
-                ..Default::default()
-            },
-        ),
-        (
             "UnitIsConnected",
             r#"UnitIsConnected("target")"#,
             UnitState {
@@ -2080,30 +2090,41 @@ fn the_equals_one_idiom_branches_correctly_on_a_live_and_a_dead_token() {
     );
 }
 
-/// `UnitOnTaxi`, registered with the taxi module's ride flag, has the family's shape and raises
-/// `Usage:` from its gate.
+/// `UnitOnTaxi` reads the lent view's flags word for the named unit, has the family's shape and
+/// raises `Usage:` from its gate.
 #[test]
 fn unit_on_taxi_is_one_or_nil_and_raises_the_reference_usage() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player()));
+    s.set_unit_guids(&crate::script::UnitGuids {
+        player: 1,
+        target: 2,
+        held: [(1, 0), (2, 0)].into(),
+        ..Default::default()
+    });
 
     assert!(s
         .eval::<bool>(r#"return UnitOnTaxi("player") == nil"#)
         .unwrap());
-    s.set_on_taxi(true);
-    assert_eq!(
-        s.eval::<String>(r#"return type(UnitOnTaxi("player"))"#)
-            .unwrap(),
-        "number"
-    );
-    assert_eq!(s.eval::<i64>(r#"return UnitOnTaxi("player")"#).unwrap(), 1);
-    assert!(!s
-        .eval::<bool>(r#"return UnitOnTaxi("player") == true"#)
-        .unwrap());
-    // Only the player's ride is tracked: any other token is nil.
-    assert!(s
-        .eval::<bool>(r#"return UnitOnTaxi("target") == nil"#)
-        .unwrap());
+    let riding = crate::script::live::TestView {
+        units: [(1, (1 << 20, 72)), (2, (0, 1))].into(),
+        ..Default::default()
+    };
+    s.with_live(&riding, |s| {
+        assert_eq!(
+            s.eval::<String>(r#"return type(UnitOnTaxi("player"))"#)
+                .unwrap(),
+            "number"
+        );
+        assert_eq!(s.eval::<i64>(r#"return UnitOnTaxi("player")"#).unwrap(), 1);
+        assert!(!s
+            .eval::<bool>(r#"return UnitOnTaxi("player") == true"#)
+            .unwrap());
+        // The target's own flags word, which has no ride.
+        assert!(s
+            .eval::<bool>(r#"return UnitOnTaxi("target") == nil"#)
+            .unwrap());
+    });
 
     let err = s.eval::<mlua::Value>("return UnitOnTaxi()").unwrap_err();
     assert!(

@@ -66,12 +66,10 @@ fn yield_own_body(net_cmds: &NetCommands, player: &mut Player, self_guid: Option
 }
 
 /// The world-entry grant of the active player's init (`0x6e7f50`): our body is in control again
-/// (`0x6e80b6`) and the UI's flag is re-seeded with no event (`0x513880`). A possession in hand
-/// keeps its own state.
+/// (`0x6e80b6`). A possession in hand keeps its own state.
 fn hand_back_control(player: &mut Player) {
     if player.foreign_mover.is_none() {
         player.control_lost = false;
-        player.control_inits = player.control_inits.wrapping_add(1);
     }
 }
 
@@ -844,8 +842,7 @@ mod control_tests {
     const CREATURE: u64 = 0xF130_000C_1A00_A2B4;
 
     /// A battleground's end revokes control and never restores it; the world entry after the
-    /// teleport out hands it back (`0x6e80b6`) and re-seeds the UI's flag. A possession keeps its
-    /// own state.
+    /// teleport out hands it back (`0x6e80b6`). A possession keeps its own state.
     #[test]
     fn a_world_entry_hands_back_a_revoked_control() {
         let mut p = Player {
@@ -854,13 +851,6 @@ mod control_tests {
         };
         hand_back_control(&mut p);
         assert!(!p.control_lost, "the frozen body moves again");
-        assert_eq!(p.control_inits, 1, "the UI's flag is re-seeded");
-
-        hand_back_control(&mut p);
-        assert_eq!(
-            p.control_inits, 2,
-            "every world entry re-seeds, held or not"
-        );
 
         let mut possessing = Player {
             control_lost: true,
@@ -869,7 +859,6 @@ mod control_tests {
         };
         hand_back_control(&mut possessing);
         assert!(possessing.control_lost);
-        assert_eq!(possessing.control_inits, 0);
     }
 
     #[test]

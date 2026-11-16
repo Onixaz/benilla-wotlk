@@ -4,7 +4,8 @@
 
 use benilla_ui::script::{SummonConfirmUiState, UiScript, UnitState};
 
-/// `UnitAffectingCombat` needs `exists` as well as `in_combat`.
+/// The player's snapshot; `UnitAffectingCombat` reads the lent view's flags word, which a port
+/// of these tests (#51) lends.
 fn player(in_combat: bool) -> UnitState {
     UnitState {
         exists: true,

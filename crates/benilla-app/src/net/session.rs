@@ -15,12 +15,12 @@ use bevy::ecs::system::SystemParam;
 
 use super::{
     CharActionResultMessage, CharListMessage, CharacterLoginFailedMessage,
-    CinematicTriggeredMessage, ClientControlMessage, DisconnectedMessage, DroppedOpcodes,
-    EnteredWorldMessage, GameTime, GuidIndex, HomeBind, KnockBackMessage, LoggedOutMessage,
-    LoginFailedMessage, LoginQueuedMessage, LoginStageMessage, NetCommands, NetHandlerApp,
-    NetStatus, ObjectStore, PendingTransfer, Proficiencies, RealmListMessage, Reputations,
-    RosterFailedMessage, SelfGuid, ServerTime, ServerWallClock, TeleportMessage, WorldAuthMessage,
-    WorldportMessage,
+    CinematicTriggeredMessage, ClientControlMessage, ControlFlag, DisconnectedMessage,
+    DroppedOpcodes, EnteredWorldMessage, GameTime, GuidIndex, HomeBind, KnockBackMessage,
+    LoggedOutMessage, LoginFailedMessage, LoginQueuedMessage, LoginStageMessage, NetCommands,
+    NetHandlerApp, NetStatus, ObjectStore, PendingTransfer, Proficiencies, RealmListMessage,
+    Reputations, RosterFailedMessage, SelfGuid, ServerTime, ServerWallClock, TeleportMessage,
+    WorldAuthMessage, WorldportMessage,
 };
 
 /// Registers the session handlers.
@@ -44,6 +44,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Teleport, on_mover_edge)
         .net_handler(K::KnockBack, on_mover_edge)
         .net_handler(K::ClientControl, on_mover_edge)
+        .net_handler(K::ClientControl, on_control_flag)
         .net_handler(K::Worldport, on_worldport)
         .net_handler(K::TransferPending, on_transfer)
         .net_handler(K::TransferAborted, on_transfer)
@@ -180,7 +181,12 @@ fn on_character_list(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
     }
 }
 
-fn on_connected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
+fn on_connected(
+    In(ev): In<SessionEvent>,
+    mut e: Edges,
+    mut b: Bridge,
+    mut control: ResMut<ControlFlag>,
+) {
     if let SessionEvent::Connected {
         self_guid: guid,
         name,
@@ -191,6 +197,9 @@ fn on_connected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
     } = ev
     {
         e.account_expansion.0 = expansion;
+        // A game start gives the UI control (`0x52b8a0`), so a session that ended without it
+        // carries no loss into the next.
+        control.0 = true;
         connected(
             guid,
             name,
@@ -293,6 +302,29 @@ fn on_mover_edge(
         }
         _ => {}
     }
+}
+
+/// The control update's UI half: only for our own unit (`0x71c98b`) it writes the control flag and,
+/// on a change, fires `PLAYER_CONTROL_GAINED` or `PLAYER_CONTROL_LOST` (`0x520fe0`).
+fn on_control_flag(
+    In(ev): In<SessionEvent>,
+    self_guid: Res<SelfGuid>,
+    mut flag: ResMut<ControlFlag>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    let SessionEvent::ClientControl { mover, allow_move } = ev else {
+        return;
+    };
+    if self_guid.0 != Some(mover) || flag.0 == allow_move {
+        return;
+    }
+    flag.0 = allow_move;
+    let event = if allow_move {
+        "PLAYER_CONTROL_GAINED"
+    } else {
+        "PLAYER_CONTROL_LOST"
+    };
+    ui.fire(event, Vec::new());
 }
 
 fn on_worldport(
@@ -1250,3 +1282,6 @@ mod reputation_delta_tests {
         assert_eq!(reps.0[stormwind as usize].0 & flag::VISIBLE, 0);
     }
 }
+
+#[cfg(test)]
+mod control_flag_tests;

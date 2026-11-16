@@ -52,29 +52,64 @@ impl RemoteView {
 /// `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` (`0x6e2b00`): far sight ends at once, sending
 /// `CMSG_FAR_SIGHT` 0 (`0x6e2a92`), though the field still names the subject. The field's value at
 /// the clear stays ignored until the field moves, whose watcher then finds far sight already off.
+/// Only handlers write it, so every reader sees it in wire order.
 #[derive(Resource, Default)]
 pub(crate) struct FarSightClear {
-    /// A clear the next resolve takes.
-    pending: bool,
-    /// The field value the clear ended.
+    /// The field value the clear ended, until the field moves.
     held: Option<u64>,
 }
 
-/// Registers the `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` handler.
-pub(super) fn register(app: &mut App) {
-    use crate::net::NetHandlerApp;
-    app.net_handler(
-        benilla_protocol::SessionEventKind::ClearFarSight,
-        on_clear_far_sight,
-    );
+impl FarSightClear {
+    /// Whether a clear has ended far sight through `field`, which the field still names.
+    pub(crate) fn cuts(&self, field: u64) -> bool {
+        self.held == Some(field)
+    }
 }
 
-fn on_clear_far_sight(
+/// Registers the `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` handler and the field's watcher.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    use benilla_protocol::SessionEventKind as K;
+    app.net_handler(K::ClearFarSight, on_clear_far_sight)
+        .net_handler(K::ObjectValues, on_far_sight_field)
+        .net_handler(K::ObjectCreate, on_far_sight_field);
+}
+
+pub(crate) fn on_clear_far_sight(
     In(ev): In<benilla_protocol::SessionEvent>,
     mut clear: ResMut<FarSightClear>,
+    self_store: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
     if let benilla_protocol::SessionEvent::ClearFarSight = ev {
-        clear.pending = true;
+        clear.held = self_store
+            .iter()
+            .next()
+            .and_then(|store| store.0.player_farsight());
+    }
+}
+
+/// Our own create, or a values update moving our `PLAYER_FARSIGHT` off the held value, ends a
+/// clear's hold.
+pub(crate) fn on_far_sight_field(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut clear: ResMut<FarSightClear>,
+    self_guid: Res<crate::net::SelfGuid>,
+) {
+    use benilla_protocol::field::FIELD_PLAYER_FARSIGHT;
+    use benilla_protocol::SessionEvent;
+    let moved = match &ev {
+        SessionEvent::ObjectCreate { guid, .. } => self_guid.0 == Some(*guid),
+        SessionEvent::ObjectValues { guid, fields } => {
+            self_guid.0 == Some(*guid)
+                && fields
+                    .raw_fields()
+                    .any(|(i, _)| (FIELD_PLAYER_FARSIGHT..=FIELD_PLAYER_FARSIGHT + 1).contains(&i))
+                && fields.player_farsight() != clear.held
+        }
+        _ => false,
+    };
+    if moved {
+        clear.held = None;
     }
 }
 
@@ -92,20 +127,14 @@ pub(super) fn publish_view_subject(
     )>,
     net: Res<NetCommands>,
     vehicle: Option<Res<VehicleFocus>>,
-    mut clear: ResMut<FarSightClear>,
+    clear: Res<FarSightClear>,
     mut engaged: Local<Option<u64>>,
 ) {
     let field = self_store
         .iter()
         .next()
         .and_then(|store| store.0.player_farsight());
-    if std::mem::take(&mut clear.pending) {
-        clear.held = field;
-    }
-    if clear.held != field {
-        clear.held = None;
-    }
-    let anchor = field.filter(|_| clear.held.is_none());
+    let anchor = field.filter(|&f| !clear.cuts(f));
     subject.remote = anchor
         .and_then(|guid| index.0.get(&guid).copied())
         .and_then(|entity| Some((entity, poses.get(entity).ok()?)))
@@ -138,11 +167,14 @@ mod tests {
     fn an_unset_or_unstreamed_far_sight_both_resolve_to_the_body() {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
+        const ME: u64 = 0x7;
         app.init_resource::<ViewSubject>()
             .init_resource::<FarSightClear>()
             .init_resource::<GuidIndex>()
+            .insert_resource(crate::net::SelfGuid(Some(ME)))
             .insert_resource(NetCommands(tx))
             .add_systems(Update, publish_view_subject);
+        register(&mut app);
         // The `CMSG_FAR_SIGHT` votes, as engage booleans.
         let votes = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<bool> {
             rx.try_iter()
@@ -181,14 +213,17 @@ mod tests {
         );
         assert!(votes(&rx).is_empty(), "no field, no vote");
 
-        // Far sight set, the object not streamed: still the body, not the origin.
+        // Far sight set, the object not streamed: still the body, not the origin. The store takes
+        // the field as the values handler merges it, and the update reaches the field's watcher.
         const FARSIGHT: u16 = 712;
         let set = |app: &mut App, lo: u32| {
-            *app.world_mut().get_mut::<ObjectStore>(me).unwrap() =
-                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (FARSIGHT, lo),
-                    (FARSIGHT + 1, 0),
-                ]));
+            let fields =
+                benilla_protocol::ObjectFields::from_pairs(&[(FARSIGHT, lo), (FARSIGHT + 1, 0)]);
+            *app.world_mut().get_mut::<ObjectStore>(me).unwrap() = ObjectStore(fields.clone());
+            crate::net::handlers::dispatch(
+                app.world_mut(),
+                vec![benilla_protocol::SessionEvent::ObjectValues { guid: ME, fields }],
+            );
         };
         set(&mut app, 0x1234);
         app.update();
@@ -241,12 +276,21 @@ mod tests {
         set(&mut app, 0x1234);
         app.update();
         assert_eq!(votes(&rx), [true]);
-        app.world_mut().resource_mut::<FarSightClear>().pending = true;
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![benilla_protocol::SessionEvent::ClearFarSight],
+        );
         app.update();
         assert!(app.world().resource::<ViewSubject>().remote.is_none());
         assert_eq!(votes(&rx), [false], "the clear sends the release itself");
         app.update();
         assert!(app.world().resource::<ViewSubject>().remote.is_none());
+        set(&mut app, 0x1234);
+        app.update();
+        assert!(
+            app.world().resource::<ViewSubject>().remote.is_none() && votes(&rx).is_empty(),
+            "a resend of the held value keeps the clear"
+        );
         set(&mut app, 0);
         app.update();
         assert!(

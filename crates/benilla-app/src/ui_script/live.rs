@@ -21,7 +21,19 @@ use bevy::prelude::*;
 pub(crate) struct LiveView<'w, 's> {
     index: Option<Res<'w, crate::net::GuidIndex>>,
     stores: Query<'w, 's, &'static crate::net::ObjectStore>,
+    control: Option<Res<'w, crate::net::ControlFlag>>,
+    self_guid: Option<Res<'w, crate::net::SelfGuid>>,
+    far_sight_clear: Option<Res<'w, crate::player::view_subject::FarSightClear>>,
     _mark: Option<Res<'w, LendsLive>>,
+}
+
+impl LiveView<'_, '_> {
+    /// A held unit's fields: the verbs' unit lookup (`0x60c1f0`) asks for type mask 8 (`0x60c21e`).
+    fn unit(&self, guid: u64) -> Option<&benilla_protocol::ObjectFields> {
+        let &entity = self.index.as_ref()?.0.get(&guid)?;
+        let fields = &self.stores.get(entity).ok()?.0;
+        fields.is_unit().then_some(fields)
+    }
 }
 
 /// Never inserted: read by every [`LiveView`], so a system's declared access shows it lends.
@@ -30,10 +42,40 @@ pub(crate) struct LendsLive;
 
 impl LiveState for LiveView<'_, '_> {
     fn unit_flags(&self, guid: u64) -> Option<u32> {
-        let &entity = self.index.as_ref()?.0.get(&guid)?;
-        let fields = &self.stores.get(entity).ok()?.0;
-        // The verbs' unit lookup (`0x60c1f0`) asks the object manager for type mask 8 (`0x60c21e`).
-        fields.is_unit().then(|| fields.unit_flags())
+        self.unit(guid).map(|f| f.unit_flags())
+    }
+
+    fn unit_health(&self, guid: u64) -> Option<u32> {
+        self.unit(guid).map(|f| f.unit_health().unwrap_or(0))
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        self.self_guid.as_ref()?.0
+    }
+
+    /// An app without the net plugin boots in control.
+    fn has_control(&self) -> bool {
+        self.control.as_ref().is_none_or(|c| c.0)
+    }
+
+    /// Our `PLAYER_FARSIGHT` naming a held object, as the bit needs (`0x6e28c6`-`0x6e28ff`), and
+    /// no immediate clear ending it (`0x6e2b00`).
+    fn far_sight(&self) -> bool {
+        let Some(index) = self.index.as_ref() else {
+            return false;
+        };
+        let field = self
+            .active_player()
+            .and_then(|me| index.0.get(&me))
+            .and_then(|&e| self.stores.get(e).ok())
+            .and_then(|store| store.0.player_farsight());
+        field.is_some_and(|subject| {
+            index.0.contains_key(&subject)
+                && self
+                    .far_sight_clear
+                    .as_ref()
+                    .is_none_or(|c| !c.cuts(subject))
+        })
     }
 }
 
@@ -120,10 +162,6 @@ pub(crate) struct UiEvents(Vec<(&'static str, Vec<ScriptValue>)>);
 
 impl UiEvents {
     /// Fire `event` once the calling handler's changes have applied, before the next handler runs.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the test handlers fire through it")
-    )]
     pub(crate) fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
         self.0.push((event, args));
     }

@@ -44,8 +44,8 @@ pub struct UnitGuids {
     /// `GetNumArenaOpponents` (`0x549630`), the leading slots holding an opponent or a pet; the
     /// fan-out walks only these.
     pub arena_count: usize,
-    /// Each held unit a token can reach, to its `UNIT_FIELD_TARGET` (0 for none): the object
-    /// manager's lookup with the unit typemask (`ecx = 8`) and the descriptor read a `target` hop
+    /// Each held unit a token can reach, to its `UNIT_FIELD_TARGET` (0 for none): the verbs' unit
+    /// lookup (`0x60c1f0`, type mask 8 at `0x60c21e`) and the descriptor read a `target` hop
     /// makes. A guid missing here is not held.
     pub held: HashMap<u64, u64>,
 }

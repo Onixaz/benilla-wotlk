@@ -255,11 +255,6 @@ impl super::UiScript {
         })
     }
 
-    /// Set the flag `HasFullControl` answers.
-    pub fn set_player_control(&mut self, in_control: bool) {
-        set_field!(self, player_control, in_control);
-    }
-
     /// Drain the drag's bar writes, already applied here: one `Vec` per `CMSG_PET_SET_ACTION` of
     /// one or two `(0-based position, packed word)` pairs. Send each whole: the server tells the
     /// two forms apart by body size.
@@ -1180,16 +1175,6 @@ mod tests {
             ]
         );
         assert!(s.take_pet_orders().is_empty(), "drained");
-    }
-
-    #[test]
-    fn has_full_control_follows_the_hosts_flag() {
-        let mut s = UiScript::new().unwrap();
-        assert_eq!(s.eval::<i64>("return HasFullControl()").unwrap(), 1);
-        s.set_player_control(false);
-        assert!(s.eval::<bool>("return HasFullControl() == nil").unwrap());
-        s.set_player_control(true);
-        assert_eq!(s.eval::<i64>("return HasFullControl()").unwrap(), 1);
     }
 
     #[test]

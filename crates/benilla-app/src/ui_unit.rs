@@ -164,7 +164,6 @@ impl Plugin for UiUnitPlugin {
                 held::feed_chain_units
                     .in_set(ChainUnitFeed)
                     .after(crate::ui_aura::AuraEvents),
-                feed_player_control,
                 feed_farsight_focus,
                 melee_unit_combat,
                 fire_unit_combat,
@@ -874,38 +873,6 @@ fn dist_sq(q: Vec3, p: Vec3) -> f64 {
     (dz * dz + dx * dx) + dy * dy
 }
 
-/// `PLAYER_CONTROL_LOST`/`GAINED` on a change of the flag `SMSG_CLIENT_CONTROL_UPDATE` writes
-/// (`0x520fe0`); the boot value, and a fresh VM's memo, is in control. A world entry sets the flag
-/// with no event (`0x513880`).
-fn feed_player_control(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    player: Option<Res<crate::player::Player>>,
-    mut memo: Local<crate::ui_script::VmMemo<(bool, u32)>>,
-) {
-    let (Some(mut script), Some(player)) = (script, player) else {
-        return;
-    };
-    let (lost, inits) = memo.get(&script);
-    if *inits != player.control_inits {
-        *inits = player.control_inits;
-        if !player.control_lost {
-            *lost = false;
-            script.set_player_control(true);
-        }
-    }
-    if *lost != player.control_lost {
-        *lost = player.control_lost;
-        // `HasFullControl`'s flag rides the same edge.
-        script.set_player_control(!player.control_lost);
-        let event = if player.control_lost {
-            "PLAYER_CONTROL_LOST"
-        } else {
-            "PLAYER_CONTROL_GAINED"
-        };
-        script.fire_event(event, vec![]);
-    }
-}
-
 /// `PLAYER_FARSIGHT_FOCUS_CHANGED`: the `PLAYER_FARSIGHT` field callback fires it on every change,
 /// whether or not the new guid resolves, so this diffs the field, never the pose.
 fn feed_farsight_focus(
@@ -1133,7 +1100,7 @@ pub(crate) fn snapshot(
             .or_else(|| store.0.unit_charmed_by())
             .or_else(|| store.0.unit_created_by())
             .unwrap_or(0),
-        // `UnitAffectingCombat`: bit 19, the one combat bit for every token.
+        // Bit 19, the one combat bit for every token; `UnitAffectingCombat` reads it live.
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
         // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
         is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
@@ -1384,8 +1351,9 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_FLAGS` (id 40), the per-field watch bridge: the reference registers one watch per named
     // unit field, and on any change of the dword the notifier fires, once per token naming the
-    // unit, `arg1` the token. The stock pet bar reads it.
-    if edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
+    // unit, `arg1` the token. The stock pet bar reads it. `"player"` fires from the values
+    // handler instead (`own_flags_watch`); the other tokens wait on #1266.
+    if token != "player" && edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
         script.fire_event("UNIT_FLAGS", vec![tok()]);
     }
     // `PLAYER_FLAGS_CHANGED` (id 407): no bit test after the XOR diff and above the local-GUID
@@ -3262,22 +3230,19 @@ mod tests {
         );
     }
 
-    /// LOST going down, GAINED going up (boot is in control); far sight on every change.
+    /// Far sight fires on every change of the field.
     #[test]
-    fn the_control_and_far_sight_edges_fire_once_each_way() {
+    fn the_far_sight_edge_fires_on_every_change() {
         use bevy::prelude::*;
         const FIELD_PLAYER_FARSIGHT: u16 = 712;
         let mut app = App::new();
-        app.init_resource::<crate::player::Player>()
-            .add_systems(Update, (feed_player_control, feed_farsight_focus));
+        app.add_systems(Update, feed_farsight_focus);
         let script = UiScript::new().unwrap();
         script
             .run(
                 r#"
                 SEEN = {}
                 local f = CreateFrame("Frame")
-                f:RegisterEvent("PLAYER_CONTROL_LOST")
-                f:RegisterEvent("PLAYER_CONTROL_GAINED")
                 f:RegisterEvent("PLAYER_FARSIGHT_FOCUS_CHANGED")
                 f:SetScript("OnEvent", function() table.insert(SEEN, event) end)
             "#,
@@ -3300,41 +3265,7 @@ mod tests {
             s.run("SEEN = {}").unwrap();
             out
         };
-        assert_eq!(
-            seen(&mut app),
-            Vec::<String>::new(),
-            "in control, no far sight: quiet"
-        );
-        app.world_mut()
-            .resource_mut::<crate::player::Player>()
-            .control_lost = true;
-        assert_eq!(seen(&mut app), vec!["PLAYER_CONTROL_LOST".to_string()]);
-        assert_eq!(seen(&mut app), Vec::<String>::new(), "held, not repeated");
-        app.world_mut()
-            .resource_mut::<crate::player::Player>()
-            .control_lost = false;
-        assert_eq!(seen(&mut app), vec!["PLAYER_CONTROL_GAINED".to_string()]);
-
-        // A world entry hands control back with no event (`0x513880`), the flag re-seeded.
-        app.world_mut()
-            .resource_mut::<crate::player::Player>()
-            .control_lost = true;
-        assert_eq!(seen(&mut app), vec!["PLAYER_CONTROL_LOST".to_string()]);
-        {
-            let mut p = app.world_mut().resource_mut::<crate::player::Player>();
-            p.control_lost = false;
-            p.control_inits += 1;
-        }
-        assert_eq!(
-            seen(&mut app),
-            Vec::<String>::new(),
-            "no GAINED at a world entry"
-        );
-        assert!(app
-            .world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .eval::<bool>("return HasFullControl() == 1")
-            .unwrap());
+        assert_eq!(seen(&mut app), Vec::<String>::new(), "no far sight: quiet");
 
         let set_farsight = |app: &mut App, guid: u64| {
             app.world_mut().entity_mut(me).insert(ObjectStore(
