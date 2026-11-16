@@ -896,7 +896,7 @@ fn a_reagent_moving_requeues_the_views_that_list_it() {
         reagents
             .iter()
             .map(|&e| {
-                let state = reagent_state(e, Some(store), &objects, &mut t.items, &t.commands);
+                let state = reagent_state(e, Some(store), &objects, &t.items, &t.commands);
                 (e, state)
             })
             .collect()
@@ -1312,7 +1312,7 @@ fn the_search_answers_the_same_wherever_the_watched_state_is_the_same() {
                             range_caster: RangeUnit::still(1.5),
                             attack_target: None,
                             objects: &objects,
-                            items: &mut items,
+                            items: &items,
                             commands: &commands,
                             sub_classes: None,
                             skill_lines: None,

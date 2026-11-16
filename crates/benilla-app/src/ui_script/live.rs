@@ -251,40 +251,6 @@ impl UiEvents {
     }
 }
 
-/// The systems that refresh a sampled answer the live view reads, run before a handler's events
-/// fire, so a listener's verbs read what that handler just applied, as 12340's read at call time.
-#[derive(Resource, Default)]
-pub(crate) struct LiveSamplers(Vec<bevy::ecs::system::SystemId>);
-
-/// `app.live_sampler(system)` registers a sampler [`fire_handler_events`] runs before firing.
-pub(crate) trait LiveSamplerApp {
-    fn live_sampler<M>(&mut self, system: impl IntoSystem<(), (), M> + 'static) -> &mut Self;
-}
-
-impl LiveSamplerApp for App {
-    fn live_sampler<M>(&mut self, system: impl IntoSystem<(), (), M> + 'static) -> &mut Self {
-        let id = self.world_mut().register_system(system);
-        self.world_mut()
-            .get_resource_or_init::<LiveSamplers>()
-            .0
-            .push(id);
-        self
-    }
-}
-
-/// Run every registered sampler on the `World` as it stands.
-fn run_live_samplers(world: &mut World) {
-    let Some(samplers) = world.remove_resource::<LiveSamplers>() else {
-        return;
-    };
-    for &id in &samplers.0 {
-        if let Err(e) = world.run_system(id) {
-            warn!("live: a sampler did not run: {e}");
-        }
-    }
-    world.insert_resource(samplers);
-}
-
 /// The cached parameter state [`with_live_world`] lends from.
 #[derive(Resource)]
 pub(super) struct LiveViewState(SystemState<LiveView<'static, 'static>>);
@@ -361,7 +327,6 @@ pub(crate) fn fire_handler_events(world: &mut World) {
         return;
     }
     let events = std::mem::take(&mut queued.0);
-    run_live_samplers(world);
     with_live_world(world, |script| {
         for event in events {
             match event {

@@ -63,6 +63,10 @@ local VERBS = {
     { "reclaim", function() return GetCorpseRecoveryDelay() end },
     { "summon", function() return GetSummonConfirmTimeLeft() end },
     { "summoner", function() return GetSummonConfirmSummoner() end },
+    { "falling", function() return IsFalling() end },
+    { "nores", function() return CannotBeResurrected() end },
+    { "healer", function() return CheckSpiritHealerDist() end },
+    { "restimer", function() return ResurrectHasTimer() end },
 }
 local function answers()
     local verbs = {}
@@ -301,6 +305,16 @@ impl Rig {
             .non_send_resource::<benilla_ui::script::UiScript>()
             .eval("return CHARZ_ANSWERS()")
             .expect("the observer is loaded");
+        Seen::parse(&format!("NOW		{answers}"))
+    }
+
+    /// The probe verbs' answers with the `World` lent, as a script call between frames reads them.
+    pub fn live_now(&mut self) -> Seen {
+        let answers = super::live::with_live_world(self.app.world_mut(), |s| {
+            s.eval::<String>("return CHARZ_ANSWERS()")
+        })
+        .expect("a VM")
+        .expect("the observer is loaded");
         Seen::parse(&format!("NOW		{answers}"))
     }
 
@@ -1274,4 +1288,164 @@ fn a_feed_fired_event_reads_the_world_through_the_lent_view() {
         1,
     );
     assert_eq!(feed(&mut rig), vec!["UNIT_HEALTH player live=nil"]);
+}
+
+/// The death verbs read the `World` when called: a change made between frames, before any system
+/// runs, reads at once in `IsFalling` (`0x612430`, the mover's flags word), `HasSoulstone`
+/// (`0x51acd0`), `CannotBeResurrected` (`0x802270`, our aura effects), `CheckSpiritHealerDist`
+/// (`0x6d1fc0`, both positions) and `ResurrectHasTimer`'s arena test (`0x515a00`, `[0xbea570]`).
+#[test]
+fn the_death_verbs_read_the_world_between_frames() {
+    use crate::creature_anim::move_flags::{FALLING, ROOT};
+    use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let me = |rig: &mut Rig| {
+        let world = rig.app.world_mut();
+        world
+            .query_filtered::<Entity, With<crate::net::SelfPlayer>>()
+            .single(world)
+            .expect("our player")
+    };
+    let read = |rig: &mut Rig, verb: &str| rig.live_now().verbs[verb].clone();
+
+    let fall = |rig: &mut Rig, flags: u32| {
+        rig.app
+            .world_mut()
+            .resource_mut::<crate::player::Player>()
+            .set_move_flags(flags);
+    };
+    fall(&mut rig, FALLING);
+    assert_eq!(read(&mut rig, "falling"), "1", "the fall reads at once");
+    fall(&mut rig, FALLING | ROOT);
+    assert_eq!(read(&mut rig, "falling"), "nil", "a rooted fall is no fall");
+    fall(&mut rig, 0);
+
+    assert_eq!(read(&mut rig, "soulstone"), "nil");
+    let entity = me(&mut rig);
+    rig.app
+        .world_mut()
+        .get_mut::<crate::net::ObjectStore>(entity)
+        .unwrap()
+        .0
+        .merge(ObjectFields::from_pairs(&[
+            (FIELD_PLAYER_SELF_RES_SPELL, 21169),
+            (FIELD_UNIT_HEALTH, 0),
+        ]));
+    assert_eq!(
+        read(&mut rig, "soulstone"),
+        "Reincarnation",
+        "dead with one owed"
+    );
+
+    assert_eq!(read(&mut rig, "nores"), "nil");
+    let (spell, effect) = rig
+        .app
+        .world()
+        .resource::<crate::ui_action::Spells>()
+        .catalog
+        .iter()
+        .find_map(|(id, d)| {
+            let i = d.effect_apply_aura.iter().position(|&a| a == 314)?;
+            Some((id, i))
+        })
+        .expect("a spell applying aura 314");
+    rig.app
+        .world_mut()
+        .entity_mut(entity)
+        .insert(crate::unit_auras::UnitAuras::of(
+            ME,
+            &[(0, spell, 1 << effect)],
+        ));
+    assert_eq!(
+        read(&mut rig, "nores"),
+        "1",
+        "the aura's effect reads at once"
+    );
+
+    const HEALER: u64 = 0xF130_0000_0000_6767;
+    rig.packets(
+        vec![SessionEvent::ObjectCreate {
+            guid: HEALER,
+            kind: EntityKind::Unit,
+            display_id: None,
+            position: [-8949.0, -132.0, 83.5],
+            orientation: 0.0,
+            scale: 1.0,
+            speeds: None,
+            mover: None,
+            transport_progress: None,
+            transport: None,
+            spline: None,
+            vehicle: None,
+            attack_target: None,
+            spawned: true,
+            // `OBJECT_FIELD_TYPE` object and unit, which the verbs' unit lookup tests.
+            fields: ObjectFields::from_pairs(&[
+                (2, 0x9),
+                (FIELD_UNIT_HEALTH, 500),
+                (FIELD_UNIT_MAXHEALTH, 500),
+                (FIELD_UNIT_LEVEL, 80),
+            ])
+            .into_created(ObjectType::Unit),
+        }],
+        2,
+    );
+    let place = |rig: &mut Rig, yards: f32| {
+        let e = me(rig);
+        let world = rig.app.world_mut();
+        let at = world.get::<Transform>(e).unwrap().translation;
+        let healer = world.resource::<crate::net::GuidIndex>().0[&HEALER];
+        world.get_mut::<Transform>(healer).unwrap().translation = at + Vec3::X * yards;
+        world
+            .resource_mut::<crate::death::DeathGlobals>()
+            .spirit_healer = Some(HEALER);
+    };
+    place(&mut rig, 3.0);
+    assert_eq!(
+        read(&mut rig, "healer"),
+        "1",
+        "the healer stands within its reach"
+    );
+    place(&mut rig, 50.0);
+    assert_eq!(
+        read(&mut rig, "healer"),
+        "nil",
+        "and its move out reads at once"
+    );
+
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::death::DeathGlobals>()
+        .resurrect = Some(crate::death::ResurrectOffer {
+        caster: 0x20,
+        name: "Brisca".into(),
+        sickness: false,
+        has_timer: true,
+        awaiting_name: false,
+    });
+    assert_eq!(read(&mut rig, "restimer"), "1");
+    // A 2v2 queue word, active on Nagrand Arena, map 559.
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_battlefield::BattlefieldQueue>()
+        .apply(BattlefieldStatus {
+            slot: 0,
+            queue: (6 << 16) | 2,
+            status: 3,
+            active: Some(BattlefieldActive {
+                map_id: 559,
+                joined_queue: 0,
+                shutdown_ms: 0,
+                run_ms: 30_000,
+                arena_faction: 0,
+            }),
+            ..Default::default()
+        });
+    assert_eq!(
+        read(&mut rig, "restimer"),
+        "nil",
+        "inside an arena the offer has no timer"
+    );
 }

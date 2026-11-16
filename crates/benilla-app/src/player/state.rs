@@ -656,6 +656,12 @@ impl Player {
         self.move_flags
     }
 
+    /// Set the streamed flags word, as the mover does each frame.
+    #[cfg(test)]
+    pub(crate) fn set_move_flags(&mut self, flags: u32) {
+        self.move_flags = flags;
+    }
+
     /// The states on this resource that stop WASD, comma-joined, or `"none"`: an instrument for the
     /// log after a session boundary, not a gate. A stun lives on the descriptor and does not show.
     pub(crate) fn movement_suppressors(&self) -> String {

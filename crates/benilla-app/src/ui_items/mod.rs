@@ -1062,6 +1062,7 @@ impl Plugin for UiItemsPlugin {
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
             .init_resource::<LockTransitions>()
             .init_resource::<net::BagOpens>()
+            .init_resource::<feed::FreshTemplates>()
             // After the chain opens: unordered, it can run first and skip every item DBC.
             .add_systems(
                 Startup,
@@ -1087,6 +1088,10 @@ impl Plugin for UiItemsPlugin {
                     feed_item_stats
                         .in_set(UnitFeed)
                         .after(crate::ui_action::SlotIdentityFeed),
+                    // In the net drain, ahead of every system lending the VM.
+                    feed::take_fresh_templates
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::apply_net_updates),
                     feed_item_sets
                         .in_set(UnitFeed)
                         .after(crate::ui_action::SlotIdentityFeed),

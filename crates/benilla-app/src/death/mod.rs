@@ -146,18 +146,33 @@ const RELEASE_WINDOW_SECS: f64 = 360.0;
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct DeathView<'w, 's> {
     globals: Option<Res<'w, DeathGlobals>>,
-    sample: Option<Res<'w, DeathSample>>,
     time: Option<Res<'w, Time<Real>>>,
-    me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    me: Query<
+        'w,
+        's,
+        (
+            &'static ObjectStore,
+            Option<&'static crate::unit_auras::UnitAuras>,
+        ),
+        With<SelfPlayer>,
+    >,
+    /// Where we stand, which the spirit-healer reach measures from.
+    me_at: Query<'w, 's, &'static Transform, (With<SelfPlayer>, With<ObjectStore>)>,
+    /// Where each held object stands, which the spirit-healer reach measures to.
+    places: Query<'w, 's, (&'static ObjectStore, &'static Transform)>,
+    index: Option<Res<'w, crate::net::GuidIndex>>,
+    /// Our mover, whose flags `IsFalling` tests.
+    player: Option<Res<'w, crate::player::Player>>,
+    objects: Option<Objects<'w, 's>>,
+    items: Option<Res<'w, crate::items::Items>>,
+    spells: Option<Res<'w, Spells>>,
+    net: Option<Res<'w, NetCommands>>,
+    arena: crate::ui_arena::ArenaInstance<'w>,
 }
 
 impl DeathView<'_, '_> {
     fn now(&self) -> f64 {
         self.time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64())
-    }
-
-    fn sample(&self) -> Option<&DeathSample> {
-        self.sample.as_deref()
     }
 
     pub(crate) fn release_time_left_ms(&self) -> Option<u32> {
@@ -174,108 +189,72 @@ impl DeathView<'_, '_> {
         self.offer().is_some_and(|o| o.sickness)
     }
 
-    /// Outside an arena alone (`0x515a00`).
+    /// Outside an arena alone (`0x515a00`, the battlefield word `[0xbea570] == 4`).
     pub(crate) fn resurrect_has_timer(&self) -> bool {
-        !self.sample().is_some_and(|s| s.arena) && self.offer().is_some_and(|o| o.has_timer)
+        !self.arena.active() && self.offer().is_some_and(|o| o.has_timer)
     }
 
     fn offer(&self) -> Option<&ResurrectOffer> {
         self.globals.as_ref()?.resurrect.as_ref()
     }
 
+    /// `CheckSpiritHealerDist` (`0x6d1fc0`): the healer asked about, held, within its reach of us.
     pub(crate) fn spirit_healer_in_range(&self) -> bool {
-        self.sample().is_some_and(|s| s.spirit_healer_in_range)
+        let reach = self
+            .globals
+            .as_ref()
+            .and_then(|g| g.spirit_healer)
+            .zip(self.index.as_deref())
+            .and_then(|(guid, index)| healer_reach(guid, index, &self.places));
+        self.me_at
+            .single()
+            .is_ok_and(|at| within_spirit_healer_reach(at.translation, reach))
     }
 
     /// The minutes a spirit-healer res would apply at our level ([`sickness_minutes`]).
     pub(crate) fn res_sickness_minutes(&self) -> Option<u32> {
-        sickness_minutes(self.me.single().ok()?.0.unit_level().unwrap_or(0))
+        let (store, _) = self.me.single().ok()?;
+        sickness_minutes(store.0.unit_level().unwrap_or(0))
     }
 
+    /// `HasSoulstone` (`0x51acd0`); the dead gate is first, so the inventory walk runs only while
+    /// dead.
     pub(crate) fn self_res_label(&self) -> Option<String> {
-        self.sample()?.self_res_label.clone()
+        let (store, _) = self.me.single().ok()?;
+        resolve_self_res(
+            &store.0,
+            self.objects.as_ref()?,
+            self.items.as_deref()?,
+            self.spells.as_deref(),
+            self.net.as_deref()?,
+        )
+        .map(|r| r.label().to_owned())
     }
 
+    /// `IsFalling` (`0x612430`): our mover's flags word.
     pub(crate) fn falling(&self) -> bool {
-        self.sample().is_some_and(|s| s.falling)
+        self.player
+            .as_ref()
+            .is_some_and(|p| is_falling(p.move_flags()))
     }
 
     pub(crate) fn out_of_bounds(&self) -> bool {
         self.me
             .single()
-            .is_ok_and(|s| s.0.player_flags() & PLAYER_FLAGS_OUT_OF_BOUNDS != 0)
+            .is_ok_and(|(s, _)| s.0.player_flags() & PLAYER_FLAGS_OUT_OF_BOUNDS != 0)
     }
 
+    /// `CannotBeResurrected` (`0x802270`): a live aura effect of ours.
     pub(crate) fn cannot_be_resurrected(&self) -> bool {
-        self.sample().is_some_and(|s| s.cannot_be_resurrected)
-    }
-}
-
-/// The death verbs' answers that read state systems holding the VM also write (the mover's
-/// flags, positions, item templates, the spell catalog, the battlefield): sampled once a frame
-/// after the packet drain, ahead of every script call, and before each handler's events fire, as
-/// the borrow rules let no VM holder lend them.
-#[derive(Resource, Default, PartialEq)]
-pub(crate) struct DeathSample {
-    /// `IsFalling` (`0x612430`).
-    falling: bool,
-    /// `CheckSpiritHealerDist` (`0x6d1fc0`).
-    spirit_healer_in_range: bool,
-    /// `HasSoulstone` (`0x51acd0`).
-    self_res_label: Option<String>,
-    /// `CannotBeResurrected` (`0x802270`).
-    cannot_be_resurrected: bool,
-    /// The active battlefield is an arena (`[0xbea570] == 4`).
-    arena: bool,
-}
-
-/// Fill [`DeathSample`], writing only on a change.
-fn sample_death_state(
-    me: Query<
-        (
-            &ObjectStore,
-            &Transform,
-            Option<&crate::unit_auras::UnitAuras>,
-        ),
-        With<SelfPlayer>,
-    >,
-    units: Query<(&ObjectStore, &Transform)>,
-    index: Option<Res<crate::net::GuidIndex>>,
-    globals: Res<DeathGlobals>,
-    player: Option<Res<crate::player::Player>>,
-    objects: Objects,
-    items: Res<crate::items::Items>,
-    spells: Option<Res<Spells>>,
-    net: Res<NetCommands>,
-    arena: crate::ui_arena::ArenaInstance,
-    mut sample: ResMut<DeathSample>,
-) {
-    let me = me.single().ok();
-    let reach = globals
-        .spirit_healer
-        .zip(index.as_deref())
-        .and_then(|(guid, index)| healer_reach(guid, index, &units));
-    let next = DeathSample {
-        falling: player.as_ref().is_some_and(|p| is_falling(p.move_flags())),
-        spirit_healer_in_range: me
-            .is_some_and(|(_, t, _)| within_spirit_healer_reach(t.translation, reach)),
-        // The dead gate is first, so the inventory walk runs only while dead.
-        self_res_label: me.and_then(|(s, ..)| {
-            resolve_self_res(&s.0, &objects, &items, spells.as_deref(), &net)
-                .map(|r| r.label().to_owned())
-        }),
-        cannot_be_resurrected: me.and_then(|(.., a)| a).is_some_and(|a| {
-            prevents_resurrection(a, |id| {
-                spells
-                    .as_deref()
-                    .and_then(|s| s.catalog.get(id))
-                    .map(|d| d.effect_apply_aura)
-            })
-        }),
-        arena: arena.active(),
-    };
-    if *sample != next {
-        *sample = next;
+        let Ok((_, Some(auras))) = self.me.single() else {
+            return false;
+        };
+        prevents_resurrection(auras, |id| {
+            self.spells
+                .as_deref()
+                .and_then(|s| s.catalog.get(id))
+                .map(|d| d.effect_apply_aura)
+        })
     }
 }
 
@@ -1012,14 +991,10 @@ pub(crate) struct DeathPlugin;
 
 impl Plugin for DeathPlugin {
     fn build(&self, app: &mut App) {
-        use crate::ui_script::live::LiveSamplerApp;
         net::register(app);
-        // Again before a handler's events fire, so `PLAYER_DEAD`'s popup reads this death.
-        app.live_sampler(sample_death_state);
         app.init_resource::<DeathNet>()
             .init_resource::<DeathGlobals>()
             .init_resource::<ActivePlayerInit>()
-            .init_resource::<DeathSample>()
             .init_resource::<ReleasePoi>()
             .init_resource::<CorpsePoi>()
             .add_systems(
@@ -1027,10 +1002,6 @@ impl Plugin for DeathPlugin {
                 (
                     drain_death.after(UiInput),
                     drive_death_look,
-                    // After the drain and ahead of every script call.
-                    sample_death_state
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::apply_net_updates),
                     // After the transport chain, so a corpse rides this frame's deck pose.
                     resolve_corpse_position
                         .in_set(UiFeed)

@@ -1028,7 +1028,10 @@ pub(crate) mod schedule_tests {
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
     // The press pass (#1215) runs the script calls ahead of the feeds and their drains, and the
     // packet-derived state a press reads ahead of it, taking the count from at most 3891 to 3808.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_808;
+    // The live view's `IsFalling` and `CheckSpiritHealerDist` (#1274) read `Player` and the held
+    // objects' `Transform` at call time, as 12340's verbs read the mover and the object, which
+    // leaves every holder of the VM unordered against those writers, taking it to 7344.
+    const UPDATE_ACTIONABLE_CEILING: usize = 7_344;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1587,6 +1590,8 @@ pub(crate) mod schedule_tests {
          "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
         ("ui_battlefield.rs", "feed_battlefield", Because::SelfHealing,
          "`reset_on_world_enter` runs before it at each world-enter cascade, clears the session and re-sends `BattlefieldStatusRequest`"),
+        ("ui_battlefield_score.rs", "feed_battlefield_score", Because::SelfHealing,
+         "`became_active` comes from a status 3, which `reset_on_world_enter`'s `BattlefieldStatusRequest` asks for again at each world-enter cascade"),
         ("ui_binder.rs", "feed_binder", Because::PlayerRoundTrip,
          "`SMSG_BINDER_CONFIRM` only answers the innkeeper's gossip line"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,

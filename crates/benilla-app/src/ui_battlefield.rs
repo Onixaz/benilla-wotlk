@@ -176,6 +176,28 @@ impl BattlefieldQueue {
     }
 }
 
+/// What the status handler owes the feeds, moved out of the queue by [`take_battlefield_owed`], so
+/// the feeds lending the VM only read the queue.
+#[derive(Resource, Default)]
+pub(crate) struct BattlefieldOwed {
+    /// `UPDATE_BATTLEFIELD_STATUS`'s argument for each status, the 1-based slot.
+    events: Vec<u32>,
+    /// Tutorials 47 (queued) and 48 (confirm).
+    tutorials: Vec<u32>,
+    /// A status 3 owes the scoreboard its filter reset and rebuild (`0x54b0a6`).
+    pub(crate) became_active: bool,
+}
+
+/// Move what the queue owes to [`BattlefieldOwed`]; holds no VM.
+fn take_battlefield_owed(mut queue: ResMut<BattlefieldQueue>, mut owed: ResMut<BattlefieldOwed>) {
+    if queue.events.is_empty() && queue.tutorials.is_empty() && !queue.became_active {
+        return;
+    }
+    owed.events.append(&mut queue.events);
+    owed.tutorials.append(&mut queue.tutorials);
+    owed.became_active |= queue.take_became_active();
+}
+
 fn millis(d: Duration) -> u32 {
     d.as_millis().min(u128::from(u32::MAX)) as u32
 }
@@ -534,7 +556,7 @@ fn feed_battlemaster_rows(
 pub(crate) fn feed_battlefield(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<Battlefield>,
-    mut queue: ResMut<BattlefieldQueue>,
+    (queue, mut owed): (Res<BattlefieldQueue>, ResMut<BattlefieldOwed>),
     table: Option<Res<BattlemasterTable>>,
     maps: Option<Res<MapCatalogRes>>,
     areas: Option<Res<crate::area::AreaTableRes>>,
@@ -617,12 +639,12 @@ pub(crate) fn feed_battlefield(
     };
     script.set_battlefield_frame(frame);
 
-    for id in std::mem::take(&mut queue.tutorials) {
+    for id in std::mem::take(&mut owed.tutorials) {
         if let Some(t) = tutorials.as_mut() {
             t.write(crate::tutorial::TutorialEvent::trigger(id));
         }
     }
-    for slot in std::mem::take(&mut queue.events) {
+    for slot in std::mem::take(&mut owed.events) {
         script.fire_event(
             "UPDATE_BATTLEFIELD_STATUS",
             vec![ScriptValue::Int(i64::from(slot))],
@@ -805,7 +827,6 @@ fn drain_battlefield(
 pub(crate) fn reset_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     mut state: ResMut<Battlefield>,
-    mut queue: ResMut<BattlefieldQueue>,
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
 ) {
@@ -814,11 +835,20 @@ pub(crate) fn reset_on_world_enter(
     }
     state.lists.clear();
     state.battlemaster = None;
-    queue.zero_statuses();
     if let Some(mut script) = script {
         script.reset_battlefield_on_world_enter();
     }
     let _ = commands.0.send(ClientCommand::BattlefieldStatusRequest);
+}
+
+/// [`reset_on_world_enter`]'s status zeroing, apart from the VM it lends.
+fn zero_statuses_on_world_enter(
+    mut cascades: MessageReader<WorldEnterCascadeMessage>,
+    mut queue: ResMut<BattlefieldQueue>,
+) {
+    if cascades.read().next().is_some() {
+        queue.zero_statuses();
+    }
 }
 
 fn load_battlemaster_list(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
@@ -903,10 +933,18 @@ impl Plugin for BattlefieldPlugin {
         net::register(app);
         app.init_resource::<Battlefield>()
             .init_resource::<BattlefieldQueue>()
+            .init_resource::<BattlefieldOwed>()
             .add_systems(Startup, load_battlemaster_list.after(AssetSet::Open))
             .add_systems(
                 Update,
                 (
+                    // In the net drain, ahead of every system lending the VM.
+                    zero_statuses_on_world_enter
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::enter_world_on_self_create),
+                    take_battlefield_owed
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::apply_net_updates),
                     reset_on_world_enter
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)

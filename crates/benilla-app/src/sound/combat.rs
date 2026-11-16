@@ -277,7 +277,7 @@ fn combat_sounds(
     tables: MeleeTables,
     attach: crate::entities::AttachPoints,
     objects: crate::net::Objects,
-    mut items: Option<ResMut<crate::items::Items>>,
+    items: Option<Res<crate::items::Items>>,
     net_commands: Res<crate::net::NetCommands>,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
@@ -501,7 +501,7 @@ fn combat_sounds(
                             if vnet.kind == EntityKind::Player =>
                         {
                             items
-                                .as_mut()
+                                .as_deref()
                                 .and_then(|it| {
                                     super::worn_chest_material(vstore, &objects, it, &net_commands)
                                 })

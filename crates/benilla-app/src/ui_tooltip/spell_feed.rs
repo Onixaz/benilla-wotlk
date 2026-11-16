@@ -62,7 +62,7 @@ pub(super) struct ViewCtx<'a, 'w, 's> {
     pub(super) attack_target: Option<benilla_formats::RangeUnit>,
     /// The object index the worn-item search and each reagent's carried count resolve through.
     pub(super) objects: &'a Objects<'w, 's>,
-    pub(super) items: &'a mut Items,
+    pub(super) items: &'a Items,
     pub(super) commands: &'a NetCommands,
     pub(super) sub_classes: Option<&'a benilla_formats::ItemSubClassCatalog>,
     /// The spell-to-line hop the `$`-tokens' skill level reads ([`crate::spell::spell_skill_value`]).
@@ -573,7 +573,7 @@ pub(super) fn reagent_state(
     entry: u32,
     store: Option<&ObjectStore>,
     objects: &Objects,
-    items: &mut Items,
+    items: &Items,
     commands: &NetCommands,
 ) -> (u32, bool) {
     let named = items.template(entry, 0, commands).is_some();
@@ -644,7 +644,7 @@ pub(super) fn feed_spell_tooltips(
     objects: Objects,
     home_bind: Option<Res<crate::net::HomeBind>>,
     area_names: Option<Res<crate::ui_quest_log::QuestHeaderNamesRes>>,
-    mut items: ResMut<Items>,
+    items: Res<Items>,
     // One tuple param, under Bevy's 16-param ceiling.
     lookups: (
         Option<Res<crate::ui_items::ItemSubClasses>>,
@@ -752,9 +752,8 @@ pub(super) fn feed_spell_tooltips(
     // block, dodge, parry and crit percentages, and the two units the melee range cell reads.
     let self_auras = self_auras.single().ok();
     // This feed only reads the item cache and asks it for a missing template, which books a query
-    // and changes nothing a reader shows; the template's landing marks it. Through `Mut`, every
-    // frame's borrow would mark the cache changed for every feed gated on it.
-    let items: &mut Items = items.bypass_change_detection();
+    // and changes nothing a reader shows; the template's landing marks it.
+    let items: &Items = &items;
     let seen = Seen::of(
         self_store,
         home_area.as_deref(),
@@ -841,7 +840,7 @@ pub(super) fn feed_spell_tooltips(
             range_caster: caster_unit,
             attack_target,
             objects: &objects,
-            items: &mut *items,
+            items,
             commands: &commands,
             sub_classes: sub_classes.as_deref().map(|c| &c.0),
             skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),

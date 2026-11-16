@@ -636,13 +636,25 @@ fn push_scaling_tables(script: &mut UiScript, tables: &super::ScalingStats) {
     });
 }
 
+/// The templates landed since [`feed_item_stats`] last pushed, moved out of the cache by
+/// [`take_fresh_templates`], so the feed lending the VM only reads the cache.
+#[derive(Resource, Default)]
+pub(crate) struct FreshTemplates(Vec<u32>);
+
+/// Move the landed templates to [`FreshTemplates`]; holds no VM.
+pub(crate) fn take_fresh_templates(mut items: ResMut<Items>, mut fresh: ResMut<FreshTemplates>) {
+    if items.has_fresh() {
+        fresh.0.extend(items.take_fresh());
+    }
+}
+
 /// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
 /// misses, as the reference reads one item cache synchronously; a read of an unresolved id records
 /// a miss, which queries it here.
 #[allow(clippy::type_complexity)]
 pub(crate) fn feed_item_stats(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut items: ResMut<Items>,
+    (items, mut fresh): (Res<Items>, ResMut<FreshTemplates>),
     commands: Res<NetCommands>,
     spells: Option<Res<crate::ui_action::Spells>>,
     // The caster the `$`-tokens read: its spell modifiers and its skills.
@@ -710,8 +722,8 @@ pub(crate) fn feed_item_stats(
         pending.extend(items.cached_template_ids());
     }
 
-    if items.has_fresh() {
-        pending.extend(items.take_fresh());
+    if !fresh.0.is_empty() {
+        pending.extend(fresh.0.drain(..));
     }
     pending.extend(script.take_item_stat_asks());
     if all_due {

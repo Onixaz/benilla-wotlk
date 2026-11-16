@@ -1945,6 +1945,7 @@ mod tests {
         app.init_resource::<crate::net::GuidIndex>()
             .init_resource::<NameCache>()
             .init_resource::<Items>()
+            .init_resource::<crate::ui_items::feed::FreshTemplates>()
             .init_resource::<crate::world_state::WorldStates>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
