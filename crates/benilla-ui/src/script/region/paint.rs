@@ -28,9 +28,9 @@ pub(crate) fn texture_path_of(lua: &Lua, this: &Table) -> Option<String> {
     model.region_data.get(&rh).and_then(|d| d.texture.clone())
 }
 
-/// The XML load's wrap for the file its `SetTexture` just created: `CSimpleTexture::LoadXML`
-/// passes `horizTile`/`vertTile` and its `<TexCoords>` overhang to `SetTexture(file, wrapU,
-/// wrapV)`, which the Lua binding cannot carry per axis.
+/// The XML load's wrap for the file its `SetTexture` just created: the load (`0x485f40`) passes
+/// `horizTile`/`vertTile` and its `<TexCoords>` overhang as the create's per-axis wrap, which the
+/// Lua binding cannot carry.
 pub(crate) fn set_texture_wrap(lua: &Lua, this: &Table, wrap: (bool, bool)) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     crate::script::model_mut_of(lua)
@@ -233,7 +233,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             if resolvable {
                                 let data = model.region_data.entry(rh).or_default();
                                 // A new file is created with the call's wrap; the same file
-                                // returns before creating (`TextureIsSame`) and keeps its own.
+                                // returns before creating (`0x4b53a0`) and keeps its own.
                                 if data.texture.as_deref() != Some(path.as_str()) {
                                     let tile = !matches!(g, Value::Nil | Value::Boolean(false));
                                     data.wrap = (tile, tile);

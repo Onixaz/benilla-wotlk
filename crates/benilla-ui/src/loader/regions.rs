@@ -233,8 +233,8 @@ impl Loader<'_> {
         }
     }
 
-    /// A `LoadXML_Texture` slot's wrap (`0x815f40`), a button state, slider thumb or colour-select
-    /// texture: each element is a fresh texture, so its own wrap stands whenever its file loaded.
+    /// The wrap of a texture slot the XML builds fresh (`0x815f40`), a button state, slider thumb
+    /// or colour-select texture: its own wrap stands whenever its file loaded.
     pub(super) fn apply_slot_texture_wrap(&mut self, el: &Element, region: &Table, dbg: &str) {
         let Some(file) = el.attr("file") else {
             return;
@@ -264,8 +264,8 @@ impl Loader<'_> {
                 // its child loop, then the file, read after, overwrites the same slot.
                 let before = crate::script::region::texture_path_of(self.lua, region_wrapper);
                 self.call_region(region_wrapper, "SetTexture", file.to_string(), dbg);
-                // The file is created with the element's wrap (`CSimpleTexture::LoadXML`); a file
-                // the region already shows is kept with its own, as `TextureIsSame` returns first.
+                // The file is created with the element's wrap (`0x485f40`); a file the region
+                // already shows is kept with its own, as the same-file check returns first.
                 let after = crate::script::region::texture_path_of(self.lua, region_wrapper);
                 if before.as_deref() != Some(file) && after.as_deref() == Some(file) {
                     let wrap = xml_texture_wrap(region);
@@ -441,9 +441,9 @@ impl Loader<'_> {
     }
 }
 
-/// A `<Texture>`'s `(u, v)` wrap, as `CSimpleTexture::LoadXML` builds it for `SetTexture(file,
-/// wrapU, wrapV)`: `horizTile` or `vertTile` present and non-empty sets its axis whatever its value,
-/// and a `<TexCoords>` edge outside `[0, 1]` sets the axis it lies on.
+/// A `<Texture>`'s `(u, v)` wrap, as the XML load (`0x485f40`) builds it for the file's create:
+/// `horizTile` or `vertTile` present and non-empty sets its axis whatever its value, and a
+/// `<TexCoords>` edge outside `[0, 1]` sets the axis it lies on.
 ///
 /// Deviation: only the `left`/`right`/`top`/`bottom` form is read, all four present, as
 /// [`tex_coords_of`] parses it; the reference also reads a `<Rect>` child and defaults a

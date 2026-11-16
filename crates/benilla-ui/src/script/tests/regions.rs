@@ -1339,11 +1339,11 @@ fn texture_wrap(s: &UiScript, name: &str) -> (bool, bool) {
     model.region_data.get(&h).map_or((false, false), |d| d.wrap)
 }
 
-/// The wrap is fixed when the file is created (`CSimpleTexture::SetTexture`, `0x4859e0`): the
-/// Lua binding passes `lua_toboolean` of its third argument on both axes (`0x48c6f0`), a same-path
-/// call keeps the file's (`TextureIsSame`), and `SetTexCoord` never changes it. So the eight-value
-/// form past `[0, 1]` that `DrawRouteLine` (`TaxiFrame.lua`) writes clamps to the edge texel
-/// instead of tiling ghost copies of the flight line beside it.
+/// The wrap is fixed when the file is created (`0x4859e0`): the Lua binding passes `lua_toboolean`
+/// of its third argument on both axes (`0x48c6f0`), a same-path call keeps the file's (`0x4b53a0`),
+/// and `SetTexCoord` never changes it. So the eight-value form past `[0, 1]` that `DrawRouteLine`
+/// (`TaxiFrame.lua`) writes clamps to the edge texel instead of tiling ghost copies of the flight
+/// line beside it.
 #[test]
 fn a_texture_wraps_as_its_file_was_created_never_as_its_tex_coords_run() {
     let mut s = script();
@@ -1405,8 +1405,8 @@ fn a_texture_wraps_as_its_file_was_created_never_as_its_tex_coords_run() {
     assert_eq!(texture_wrap(&s, "WrapLine"), (false, false));
 }
 
-/// The XML load's wrap (`CSimpleTexture::LoadXML`): a `<TexCoords>` edge past `[0, 1]` wraps its
-/// own axis, as `ShapeshiftBarMiddle`'s `right="2"` does for `ShapeshiftBar_Update`'s
+/// The XML load's wrap (`0x485f40`): a `<TexCoords>` edge past `[0, 1]` wraps its own axis, as
+/// `ShapeshiftBarMiddle`'s `right="2"` does for `ShapeshiftBar_Update`'s
 /// `SetTexCoord(0, n-2, 0, 1)`, and `horizTile`/`vertTile` present wrap theirs whatever the value.
 #[test]
 fn the_xml_load_wraps_the_axes_its_tex_coords_overrun_or_its_tile_attributes_name() {

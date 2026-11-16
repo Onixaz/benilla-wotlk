@@ -410,13 +410,12 @@ pub(crate) struct RegionData {
     pub(crate) justify: crate::justify::Justify,
     /// The `<TexCoords>`/`SetTexCoord` mapping; `None` is the full texture.
     pub(crate) tex_coords: Option<TexCoords>,
-    /// The `(u, v)` wrap the texture slot's file was created with, `CGxTexFlags(filter, wrapU,
-    /// wrapV)` in `CSimpleTexture::SetTexture` (`0x4859e0`): the Lua `SetTexture(path, tile)`'s
-    /// third argument on both axes (`0x48c6f0`), or the XML load's `horizTile`/`vertTile` and
-    /// out-of-range `<TexCoords>` (`CSimpleTexture::LoadXML`). It is fixed at creation: a later
-    /// `SetTexCoord` past `[0, 1]` does not tile, so its overhang samples the clamped edge, as
-    /// `DrawRouteLine`'s rotated quad relies on (`TaxiFrame.lua`). A same-path `SetTexture` keeps
-    /// it, as `TextureIsSame` returns before creating.
+    /// The `(u, v)` wrap the texture slot's file was created with (`0x4859e0`): the Lua
+    /// `SetTexture(path, tile)`'s third argument on both axes (`0x48c6f0`), or the XML load's
+    /// `horizTile`/`vertTile` and out-of-range `<TexCoords>` (`0x485f40`). It is fixed at creation:
+    /// a later `SetTexCoord` past `[0, 1]` does not tile, so its overhang samples the clamped edge,
+    /// as `DrawRouteLine`'s rotated quad relies on (`TaxiFrame.lua`). A same-path `SetTexture`
+    /// keeps it, as the same-file check (`0x4b53a0`) returns before creating.
     pub(crate) wrap: (bool, bool),
     /// `SetTexCoordModifiesRect`, the reference's `+0x124`. Stored, not applied: there a set flag
     /// makes `SetTexCoord` re-derive the rect from the UV quad; no stock or corpus code sets it.

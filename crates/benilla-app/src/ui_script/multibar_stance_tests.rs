@@ -1330,7 +1330,7 @@ fn an_extra_bars_empty_well_keeps_its_bound_hotkey_label() {
 }
 
 /// `ShapeshiftBarMiddle` tiles along u only: its XML `<TexCoords right="2">` creates the file with
-/// u wrap (`CSimpleTexture::LoadXML`), so `ShapeshiftBar_Update`'s `SetTexCoord(0, n-2, 0, 1)`
+/// u wrap (`0x485f40`), so `ShapeshiftBar_Update`'s `SetTexCoord(0, n-2, 0, 1)`
 /// (BonusActionBarFrame.lua:140) repeats it. Wrapping v too would bleed the texture's opaque last
 /// row (`ShapeshiftBarMiddle.blp` row 31) into its transparent top edge as a grey hairline.
 #[test]
