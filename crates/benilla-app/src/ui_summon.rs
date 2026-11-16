@@ -53,6 +53,11 @@ impl SummonState {
         self.expires_at = Some(now + f64::from(delay_ms) / 1000.0);
     }
 
+    /// A UI load zeroes the deadline alone (`0x52aa20`); the summoner and zone stay.
+    pub(crate) fn reset_at_ui_load(&mut self) {
+        self.expires_at = None;
+    }
+
     fn pending(&self) -> Option<u64> {
         (self.summoner != 0).then_some(self.summoner)
     }
@@ -193,8 +198,8 @@ pub(crate) mod net {
         }
     }
 
-    /// The latch dies with the session (the module's deviation); a `/reload` keeps it, as the
-    /// reference's does.
+    /// The latch dies with the session (the module's deviation); a `/reload` keeps the summoner
+    /// and zone and zeroes the deadline (`0x52aa20`), so the time left reads 0.
     fn on_session_end(In(_): In<SessionEvent>, mut summon: ResMut<SummonState>) {
         *summon = SummonState::default();
     }
@@ -387,6 +392,16 @@ mod tests {
         cancel(&mut ui);
         assert_eq!(ui.names(), ["CANCEL_SUMMON"]);
         assert_eq!(summon.pending(), Some(0x2a));
+    }
+
+    /// A UI load zeroes the deadline alone (`0x52aa20`): the time left reads 0, the latch stays.
+    #[test]
+    fn a_ui_load_zeroes_the_deadline_and_keeps_the_latch() {
+        let mut summon = SummonState::default();
+        summon.latch(0x2a, 1519, 120_000, 100.0);
+        summon.reset_at_ui_load();
+        assert_eq!(summon.time_left_ms(100.0), 0);
+        assert_eq!((summon.pending(), summon.zone), (Some(0x2a), 1519));
     }
 
     /// `0x51b07e`-`0x51b0b0`: alive with none of the four flags; no player object refuses.

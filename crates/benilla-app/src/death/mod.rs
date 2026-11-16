@@ -95,10 +95,12 @@ pub(crate) struct DeathGlobals {
 }
 
 impl DeathGlobals {
-    /// A UI load zeroes the release deadline and its flag (`0x52a9f6`, `0x52a9fc`).
-    pub(crate) fn reset_release(&mut self) {
+    /// A UI load zeroes the release deadline, its flag and the reclaim deadline (`0x52a9f6`,
+    /// `0x52a9fc`, `0x52aa02`); the resurrect offer and the healer asked about stay.
+    pub(crate) fn reset_at_ui_load(&mut self) {
         self.release_at = None;
         self.no_release_timer = false;
+        self.reclaim_at = None;
     }
 
     /// The release timer's derivation (`0x6dc070`): no release window reads 0 at once, the timer
@@ -1099,7 +1101,8 @@ mod tests {
     }
 
     /// The release timer's three arms (`0x6dc070`): no window reads 0 at once, the timer bit arms
-    /// 360 s unless out of bounds, anything else sets the no-timer flag; a UI load zeroes both.
+    /// 360 s unless out of bounds, anything else sets the no-timer flag; a UI load zeroes both,
+    /// and the reclaim deadline with them.
     #[test]
     fn the_release_timer_derives_from_the_window_bits_and_the_bounds_flag() {
         let player =
@@ -1114,8 +1117,10 @@ mod tests {
         assert_eq!(g.release_left_ms(5.0), None);
         g.update_repop_timer(&player(0, 0), 5.0);
         assert_eq!(g.release_left_ms(5.0), None, "the no-timer flag");
-        g.reset_release();
+        g.reclaim_at = Some(35.0);
+        g.reset_at_ui_load();
         assert_eq!(g.release_left_ms(5.0), Some(0), "a UI load zeroes both");
+        assert_eq!(g.reclaim_at, None, "and the reclaim deadline");
         assert_eq!(active_player_refresh(0), ("PLAYER_DEAD", true));
         assert_eq!(active_player_refresh(1), ("PLAYER_ALIVE", false));
     }

@@ -76,6 +76,11 @@ impl InstanceBoot {
         }
     }
 
+    /// A UI load zeroes the deadline (`0x52aa08`), with no event.
+    pub(crate) fn reset_at_ui_load(&mut self) {
+        self.deadline = None;
+    }
+
     /// Whole seconds left, 0 when idle or past, as the reference divides a clamped ms remainder.
     pub(crate) fn secs(&self, now: Instant) -> u32 {
         self.deadline

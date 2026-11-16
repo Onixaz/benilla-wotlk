@@ -592,6 +592,63 @@ fn reloading_dead_fires_no_player_dead() {
     );
 }
 
+/// A `/reload` zeroes the countdowns the UI load owns (`0x52a9f6`-`0x52aa20`): reclaim, instance
+/// boot, instance lock and summon all read 0 after it.
+#[test]
+fn a_reload_zeroes_the_countdowns() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let armed = rig.packets(
+        vec![
+            SessionEvent::CorpseReclaimDelay { delay_ms: 30_000 },
+            SessionEvent::RaidGroupOnly {
+                delay_ms: 60_000,
+                reason: 0,
+            },
+            SessionEvent::InstanceLockWarning {
+                warning: benilla_protocol::messages::InstanceLockWarning {
+                    ms: 90_000,
+                    completed_mask: 0,
+                    extending: false,
+                },
+            },
+            SessionEvent::SummonRequest {
+                summoner: 0x20,
+                zone: 1519,
+                delay_ms: 120_000,
+            },
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&armed, &["CONFIRM_SUMMON"], &["reclaim", "summon"]),
+        vec!["CONFIRM_SUMMON | reclaim=30 summon=120"]
+    );
+    let clocks = |rig: &Rig| {
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<String>(
+                "return GetInstanceBootTimeRemaining() .. ',' .. GetInstanceLockTimeRemaining()",
+            )
+            .unwrap()
+    };
+    assert_eq!(clocks(&rig), "59,89", "the boot and lock clocks run");
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &["reclaim", "summon"]),
+        vec!["PLAYER_ENTERING_WORLD | reclaim=0 summon=0"]
+    );
+    assert_eq!(clocks(&rig), "0,0");
+}
+
 /// The summon offer and its withdrawal in one frame and apart: `CONFIRM_SUMMON` fires from the
 /// request's handler (`0x6d8680` -> `0x513c21`) with the deadline already latched, which
 /// `GetSummonConfirmTimeLeft` reads at call time (`0x5164b0`), and `CANCEL_SUMMON` from the
