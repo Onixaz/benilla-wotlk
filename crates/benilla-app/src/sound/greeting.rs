@@ -14,25 +14,28 @@
 //!
 //! ## The window hello and goodbye (right-click)
 //!
-//! The vocal belongs to the interact target, not to any one window. `CGGameUI::SetInteractTarget`
-//! (`0x51fce0`) plays `CGUnit_C::PlayNPCSound(true)` (`0x720860`), the hello (`+0x4`, free-picked
-//! take), when the target changes to a new non-player unit, and `CGGameUI::ClearInteractTarget`
-//! (`0x518d50`) plays `PlayNPCSound(false)`, the goodbye (`+0x8`), only when it clears to nothing:
-//! `SetInteractTarget` passes `a2 = (new_guid != 0)`, so a swap to another target plays the new
-//! hello with no goodbye for the old one. Every NPC window opener calls `SetInteractTarget`,
-//! `CGTaxiMap`'s `SMSG_SHOWTAXINODES` open (`0x5932e0`) among them. Here the interact target is
-//! [`InteractNpc`], the union of every NPC-bound session that also drives the `"npc"` unit. A
-//! flight master with no gossip flag (most of Northrend's) opens its taxi map directly, with no
-//! gossip session in front of it, so only the taxi session carries the vocal.
+//! The vocal belongs to the interact target, not to any one window. Setting the target (`0x51fce0`)
+//! plays the NPC sound's hello (`0x720860`, `+0x4`, free-picked take) when it changes to a
+//! different non-player unit. Clearing it (`0x518d50`) plays the goodbye (`+0x8`) only when it
+//! clears to nothing: the set clears the old target with "the new guid is non-zero", so a swap to
+//! another target plays the new hello with no goodbye for the old one. Every NPC window opener sets
+//! the target, the taxi map's `SMSG_SHOWTAXINODES` open (`0x5932e0`) among them, and the NPC sound
+//! itself stays silent while the player is dead or a ghost or the NPC reads dead
+//! ([`npc_sound_silenced`]). Here the interact target is [`InteractNpc`], the union of every
+//! NPC-bound session that also drives the `"npc"` unit. A flight master with no gossip flag (most
+//! of Northrend's) opens its taxi map directly, with no gossip session in front of it, so only the
+//! taxi session carries the vocal.
 
 use bevy::prelude::*;
 
 use benilla_formats::NpcGreetingCatalog;
 use benilla_protocol::EntityKind;
 
-use crate::net::{GuidIndex, NetEntity, ObjectStore};
+use crate::net::{GuidIndex, NetEntity, ObjectStore, SelfPlayer};
 use crate::ui_session::InteractNpc;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
+use benilla_protocol::field::UNIT_DYNFLAG_DEAD;
+use benilla_protocol::ObjectFields;
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 
@@ -93,8 +96,8 @@ enum WindowVocal {
     None,
 }
 
-/// `SetInteractTarget`'s vocal: a new target plays its hello (`!same`) with no goodbye for the old
-/// (`ClearInteractTarget(old, new_guid != 0)`); clearing to nothing plays the goodbye.
+/// The interact target's vocal (`0x51fce0`): a different target plays its hello with no goodbye
+/// for the old (`0x518d50` told the new guid is non-zero); clearing to nothing plays the goodbye.
 fn window_vocal(prev: Option<u64>, active: Option<u64>) -> WindowVocal {
     match (prev, active) {
         (p, a) if p == a => WindowVocal::None,
@@ -229,6 +232,16 @@ fn play_select_greetings(
     }
 }
 
+/// The NPC sound's own gates (`0x720860`), past its player check and the channel latch
+/// [`play_line`] keeps: no active player, a dead or ghost one, or an NPC whose health reads 0 or
+/// that carries `UNIT_DYNFLAG_DEAD` plays nothing. An NPC with no fields yet is not gated.
+fn npc_sound_silenced(player: Option<&ObjectFields>, npc: Option<&ObjectFields>) -> bool {
+    player.is_none_or(|p| p.is_dead_or_ghost())
+        || npc.is_some_and(|n| {
+            n.unit_health().unwrap_or(0) == 0 || n.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0
+        })
+}
+
 /// The window hello and goodbye, from the interact target's change.
 fn play_window_greetings(
     interact: Res<InteractNpc>,
@@ -241,6 +254,7 @@ fn play_window_greetings(
     mut out: NonSendMut<SoundOutput>,
     config: Res<SoundConfig>,
     cam: Query<&Transform, (With<WorldCamera>, Without<NetEntity>)>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
     // `InteractNpc` is fed in `WorldStage::Net`, ahead of this `Present` system, so a window's
     // open and its hello land on the same frame.
@@ -257,7 +271,7 @@ fn play_window_greetings(
     let listener = cam.single().map(|t| t.translation).unwrap_or(Vec3::ZERO);
 
     // A despawned NPC resolves nothing: the reference's teardown clear is silent. A player target
-    // (trade) resolves nothing either, as `PlayNPCSound` returns for `TYPEMASK_PLAYER`.
+    // (trade) resolves nothing either, as the NPC sound (`0x720860`) returns for a player.
     let (guid, hello) = match vocal {
         WindowVocal::Hello(g) => (g, true),
         WindowVocal::Goodbye(g) => (g, false),
@@ -269,6 +283,10 @@ fn play_window_greetings(
     let Some((row, pos)) = resolve(npc, &units, &greetings) else {
         return;
     };
+    let npc_fields = units.get(npc).ok().and_then(|(_, _, s)| s).map(|s| &s.0);
+    if npc_sound_silenced(self_q.single().ok().map(|s| &s.0), npc_fields) {
+        return;
+    }
     let kit_id = if hello { row.hello } else { row.goodbye };
     // Both window lines free-pick their take (`variation = -1`).
     play_line(
@@ -379,7 +397,7 @@ mod tests {
     }
 
     /// A gossip flight master's "Show me where I can fly" hands off to the taxi map on the same
-    /// NPC: `same` in `SetInteractTarget`, so no second hello and no goodbye; closing the map
+    /// NPC: the same target (`0x51fce0`), so no second hello and no goodbye; closing the map
     /// closes the gossip behind it and plays the one goodbye.
     #[test]
     fn a_gossip_to_taxi_hand_off_on_one_npc_is_a_silent_swap() {
@@ -427,5 +445,34 @@ mod tests {
             WindowVocal::None,
             "gossip→trainer on one NPC is a silent swap — no goodbye",
         );
+    }
+
+    /// The NPC sound's gates (`0x720860`): a living player and a living NPC hear it; no player, a
+    /// dead or ghost player, an NPC at health 0 or one with `UNIT_DYNFLAG_DEAD` (feign death) do
+    /// not.
+    #[test]
+    fn the_npc_sound_is_silent_for_a_dead_player_or_a_dead_npc() {
+        use benilla_protocol::field::{
+            FIELD_PLAYER_FLAGS, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, FIELD_UNIT_MAXHEALTH,
+        };
+        let unit = |health: u32, extra: &[(u16, u32)]| {
+            let mut pairs = vec![(FIELD_UNIT_HEALTH, health), (FIELD_UNIT_MAXHEALTH, 100)];
+            pairs.extend_from_slice(extra);
+            ObjectFields::from_pairs(&pairs)
+        };
+        let (alive, dead) = (unit(100, &[]), unit(0, &[]));
+        let ghost = unit(1, &[(FIELD_PLAYER_FLAGS, 0x10)]);
+        let feigning = unit(100, &[(FIELD_UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_DEAD)]);
+
+        assert!(!npc_sound_silenced(Some(&alive), Some(&alive)));
+        assert!(
+            !npc_sound_silenced(Some(&alive), None),
+            "no fields yet: not gated"
+        );
+        assert!(npc_sound_silenced(None, Some(&alive)), "no active player");
+        assert!(npc_sound_silenced(Some(&dead), Some(&alive)));
+        assert!(npc_sound_silenced(Some(&ghost), Some(&alive)));
+        assert!(npc_sound_silenced(Some(&alive), Some(&dead)));
+        assert!(npc_sound_silenced(Some(&alive), Some(&feigning)));
     }
 }
