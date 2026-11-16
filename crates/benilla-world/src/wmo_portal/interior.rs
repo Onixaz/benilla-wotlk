@@ -102,8 +102,16 @@ pub struct CurrentAreaInterior(pub Option<WmoInteriorKeys>);
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentWmoGroup(pub u32);
 
-/// Track [`CurrentAreaInterior`] (first interior claim) and [`CurrentWmoGroup`] (nearest claim, the
-/// one link `0x7c28f0` keeps) from the faces-only down-ray; the camera stands in before login.
+/// The keys of the nearest WMO group under the player, interior or exterior, `None` when terrain
+/// is nearer: the group whose `WMOAreaTable.AreaTableID` the area lookup takes
+/// (`World::QueryAreaIdAtPosition`, `0x77fa00`, which skips no group class). Dalaran's streets
+/// are exterior groups whose rows name Dalaran (4395) and Dalaran City (4613).
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CurrentAreaWmo(pub Option<WmoInteriorKeys>);
+
+/// Track [`CurrentAreaInterior`] (first interior claim), and [`CurrentWmoGroup`] and
+/// [`CurrentAreaWmo`] (nearest claim, the one link `0x7c28f0` keeps) from the faces-only down-ray;
+/// the camera stands in before login.
 pub(super) fn track_area_interior(
     wmos: Res<Assets<WmoModel>>,
     viewer: Res<crate::view::Viewer>,
@@ -113,6 +121,7 @@ pub(super) fn track_area_interior(
     adt_tiles: Res<Assets<AdtTile>>,
     mut current: ResMut<CurrentAreaInterior>,
     mut standing: ResMut<CurrentWmoGroup>,
+    mut area_wmo: ResMut<CurrentAreaWmo>,
 ) {
     // Cast from the position, lifted only for float safety, as the client does.
     let eye_world = if let Some(body) = viewer.at {
@@ -124,7 +133,7 @@ pub(super) fn track_area_interior(
     };
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
     let mut found = None;
-    let mut nearest: Option<(f32, u32)> = None;
+    let mut nearest: Option<(f32, WmoInteriorKeys)> = None;
     for inst in &instances {
         let Some(model) = wmos.get(&inst.handle) else {
             continue;
@@ -155,22 +164,24 @@ pub(super) fn track_area_interior(
             .group_nav
             .get(claim.group)
             .map_or(0, |g| g.area_table_id);
+        let keys = WmoInteriorKeys {
+            wmo_id: model.wmo_id,
+            name_set: u32::from(inst.name_set),
+            group_area_id,
+        };
         // Static placements only, so `0x7a1640`'s exterior skip on a moved (0x400) one never applies.
         if nearest.is_none_or(|(depth, _)| claim.depth < depth) {
-            nearest = Some((claim.depth, group_area_id));
+            nearest = Some((claim.depth, keys));
         }
         if !claim.outdoor && found.is_none() {
-            found = Some(WmoInteriorKeys {
-                wmo_id: model.wmo_id,
-                name_set: u32::from(inst.name_set),
-                group_area_id,
-            });
+            found = Some(keys);
         }
     }
     if current.0 != found {
         current.0 = found;
     }
-    standing.set_if_neq(CurrentWmoGroup(nearest.map_or(0, |(_, id)| id)));
+    standing.set_if_neq(CurrentWmoGroup(nearest.map_or(0, |(_, k)| k.group_area_id)));
+    area_wmo.set_if_neq(CurrentAreaWmo(nearest.map(|(_, k)| k)));
 }
 
 /// Track [`CurrentWmoInterior`] and [`PlayerWmoRoom`] from the character, where the client's audio
@@ -1021,6 +1032,7 @@ mod tests {
         world.init_resource::<crate::view::Viewer>();
         world.init_resource::<CurrentAreaInterior>();
         world.init_resource::<CurrentWmoGroup>();
+        world.init_resource::<CurrentAreaWmo>();
         let handle = world.resource_mut::<Assets<WmoModel>>().add(model);
         world.spawn(WmoPortalInstance {
             handle,
@@ -1037,16 +1049,23 @@ mod tests {
             (
                 world.resource::<CurrentAreaInterior>().0,
                 world.resource::<CurrentWmoGroup>().0,
+                world.resource::<CurrentAreaWmo>().0,
             )
         };
-        let room = WmoInteriorKeys {
+        let keys = |group_area_id| WmoInteriorKeys {
             wmo_id: 77,
             name_set: 3,
-            group_area_id: 501,
+            group_area_id,
         };
-        assert_eq!(stand([-5.0, 0.0, 0.0]), (Some(room), 501));
-        assert_eq!(stand([5.0, 0.0, 0.0]), (None, 502), "the courtyard");
-        assert_eq!(stand([50.0, 0.0, 0.0]), (None, 0), "open ground");
+        let (room, courtyard) = (keys(501), keys(502));
+        assert_eq!(stand([-5.0, 0.0, 0.0]), (Some(room), 501, Some(room)));
+        // The area lookup names the courtyard too, as Dalaran's streets.
+        assert_eq!(
+            stand([5.0, 0.0, 0.0]),
+            (None, 502, Some(courtyard)),
+            "the courtyard"
+        );
+        assert_eq!(stand([50.0, 0.0, 0.0]), (None, 0, None), "open ground");
     }
 
     /// Across buildings the floor key is the nearest hit's group (`0x7c28f0` keeps one per slot),
@@ -1087,6 +1106,7 @@ mod tests {
             world.init_resource::<crate::view::Viewer>();
             world.init_resource::<CurrentAreaInterior>();
             world.init_resource::<CurrentWmoGroup>();
+            world.init_resource::<CurrentAreaWmo>();
             for model in [
                 building(10, exterior_z, EXTERIOR, 601),
                 building(20, interior_z, 0, 701),
@@ -1107,15 +1127,26 @@ mod tests {
             (
                 world.resource::<CurrentAreaInterior>().0,
                 world.resource::<CurrentWmoGroup>().0,
+                world.resource::<CurrentAreaWmo>().0,
             )
         };
-        let interior = Some(WmoInteriorKeys {
-            wmo_id: 20,
+        let keys = |wmo_id, group_area_id| WmoInteriorKeys {
+            wmo_id,
             name_set: 0,
-            group_area_id: 701,
-        });
-        assert_eq!(run(0.0, -3.0), (interior, 601), "the nearer exterior deck");
-        assert_eq!(run(-3.0, 0.0), (interior, 701), "the nearer interior floor");
+            group_area_id,
+        };
+        let interior = Some(keys(20, 701));
+        // The area lookup takes the nearest group, the exterior deck included.
+        assert_eq!(
+            run(0.0, -3.0),
+            (interior, 601, Some(keys(10, 601))),
+            "the nearer exterior deck"
+        );
+        assert_eq!(
+            run(-3.0, 0.0),
+            (interior, 701, interior),
+            "the nearer interior floor"
+        );
     }
 
     /// The containment attach's upward retry: after a downward miss the nearest face above answers,
