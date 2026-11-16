@@ -321,49 +321,42 @@ impl CombatLogEntry {
 
     /// The combat-log file's line for the entry (`0x74e880`): the values `0x74e290` pushes, past
     /// the timestamp, comma-joined; names quoted, the units' flags and the spell's school in hex.
-    pub fn pack(&self, unknown: &str) -> String {
-        use std::fmt::Write as _;
-        let mut out = String::from(self.event.name());
-        let o = &mut out;
-        let int = |o: &mut String, n: i32| {
-            let _ = write!(o, ",{n}");
-        };
-        let word = |o: &mut String, s: &str| {
-            o.push(',');
-            o.push_str(s);
-        };
-        let one = |o: &mut String, b: bool| if b { int(o, 1) } else { word(o, "nil") };
+    pub fn pack(&self, unknown: &str) -> Vec<u8> {
+        let mut p = Packer::new(self.event.name());
         for unit in [&self.source, &self.dest] {
-            let _ = write!(o, ",{}", guid_text(unit.guid));
+            p.guid(unit.guid);
             match &unit.name {
-                _ if unit.guid == 0 => word(o, "nil"),
-                Some(name) => quoted(o, name),
-                None => quoted(o, unknown),
+                _ if unit.guid == 0 => p.word("nil"),
+                Some(name) => p.quoted(name),
+                None => p.quoted(unknown),
             }
-            let _ = write!(o, ",0x{:x}", unit.flags);
+            p.hex(unit.flags);
         }
         if let Some(s) = &self.spell {
-            int(o, s.id as i32);
+            p.int(s.id as i32);
             match &s.name {
                 Some(name) => {
-                    quoted(o, name);
-                    let _ = write!(o, ",0x{:x}", s.school);
+                    p.quoted(name);
+                    p.hex(s.school);
                 }
-                None => word(o, "nil,0x0"),
+                None => {
+                    p.word("nil");
+                    p.hex(0);
+                }
             }
         }
         let i = &self.info;
         if let Some(n) = i.amount {
-            int(o, n);
+            p.int(n);
         }
         if let Some(reason) = &i.fail_reason {
-            quoted(o, reason);
+            p.quoted(reason);
         }
         if let Some(m) = i.miss {
-            word(o, m.kind.word());
+            p.word(m.kind.word());
         }
         if let Some(ty) = i.environmental {
-            word(o, environmental_word(ty));
+            p.word(environmental_word(ty));
         }
         if let Some(d) = i.damage {
             for n in [
@@ -374,70 +367,166 @@ impl CombatLogEntry {
                 d.blocked,
                 d.absorbed,
             ] {
-                int(o, n);
+                p.int(n);
             }
             for b in [d.critical, d.glancing, d.crushing] {
-                one(o, b);
+                p.one(b);
             }
         }
         if let Some(Miss {
             amount: Some(n), ..
         }) = i.miss
         {
-            int(o, n);
+            p.int(n);
         }
         if let Some(h) = i.heal {
             for n in [h.amount, h.overheal, h.absorbed] {
-                int(o, n);
+                p.int(n);
             }
-            one(o, h.critical);
+            p.one(h.critical);
         }
         if let Some((amount, power)) = i.energize {
-            int(o, amount);
-            int(o, power);
+            p.int(amount);
+            p.int(power);
         }
         if let Some(d) = i.drain {
             for n in [d.amount, d.power, d.extra] {
-                int(o, n);
+                p.int(n);
             }
         }
         if let Some(s) = &i.extra_spell {
-            int(o, s.id as i32);
+            p.int(s.id as i32);
             match &s.name {
                 Some(name) => {
-                    quoted(o, name);
-                    int(o, s.school as i32);
+                    p.quoted(name);
+                    p.int(s.school as i32);
                 }
-                None => word(o, "nil,0"),
+                None => {
+                    p.word("nil");
+                    p.int(0);
+                }
             }
         }
         if let Some(name) = &i.enchant {
-            quoted(o, name);
+            p.quoted(name);
         }
         if let Some(item) = &i.item {
-            int(o, item.id as i32);
-            quoted(o, item.name.as_deref().unwrap_or(unknown));
+            p.int(item.id as i32);
+            p.quoted(item.name.as_deref().unwrap_or(unknown));
         }
         if let Some(harmful) = i.harmful {
-            word(o, if harmful { "DEBUFF" } else { "BUFF" });
+            p.word(if harmful { "DEBUFF" } else { "BUFF" });
         }
         if let Some(n) = i.dose {
-            int(o, n);
+            p.int(n);
         }
-        out
+        p.out
     }
 }
 
-/// A comma, then the text in quotes, a quote or backslash escaped (`0x74d350`).
-fn quoted(out: &mut String, s: &str) {
-    out.push_str(",\"");
-    for c in s.chars() {
-        if matches!(c, '"' | '\\') {
-            out.push('\\');
+/// The packer's line buffer, 4096 bytes on the writer's stack (`0x74f9e9`).
+const PACK_BUFFER: u32 = 0x1000;
+
+/// The entry packer's cursor and byte budget (`0x74e880`): each field writes only what the budget
+/// left by the fields before it allows, so an overlong line ends truncated mid-field.
+struct Packer {
+    out: Vec<u8>,
+    remaining: u32,
+}
+
+impl Packer {
+    /// The event name copied in, after which the budget grows by the copied length (`0x74e8a6`).
+    fn new(event: &str) -> Self {
+        let name = &event.as_bytes()[..event.len().min(PACK_BUFFER as usize - 1)];
+        Self {
+            out: name.to_vec(),
+            remaining: PACK_BUFFER + name.len() as u32,
         }
-        out.push(c);
     }
-    out.push('"');
+
+    fn push(&mut self, b: u8) {
+        self.out.push(b);
+        self.remaining -= 1;
+    }
+
+    /// Each field's leading comma, written while more than one byte is left (`0x74d280`).
+    fn comma(&mut self) {
+        if self.remaining > 1 {
+            self.push(b',');
+        }
+    }
+
+    /// `0x` and sixteen digits, only with more than 18 bytes left (`0x74e8c4`).
+    fn guid(&mut self, guid: u64) {
+        self.comma();
+        if self.remaining > 18 {
+            self.out.extend_from_slice(guid_text(guid).as_bytes());
+            self.remaining -= 18;
+        }
+    }
+
+    /// `%d` printed into what is left, keeping the digits that fit (`0x74ea23`).
+    fn int(&mut self, n: i32) {
+        self.comma();
+        let text = n.to_string();
+        let len = text.len().min(self.remaining.saturating_sub(1) as usize);
+        self.out.extend_from_slice(&text.as_bytes()[..len]);
+        self.remaining -= len as u32;
+    }
+
+    /// A 1 for a set flag, else `nil`.
+    fn one(&mut self, b: bool) {
+        if b {
+            self.int(1);
+        } else {
+            self.word("nil");
+        }
+    }
+
+    /// Lower-case hex after `0x`, written whole or not at all with fewer than 10 bytes left
+    /// (`0x74d280`).
+    fn hex(&mut self, v: u32) {
+        self.comma();
+        if self.remaining < 10 {
+            return;
+        }
+        let text = format!("0x{v:x}");
+        self.out.extend_from_slice(text.as_bytes());
+        self.remaining -= text.len() as u32;
+    }
+
+    /// The bare text, byte by byte while any budget is left (`0x74d310`).
+    fn word(&mut self, s: &str) {
+        self.comma();
+        for &b in s.as_bytes() {
+            if self.remaining == 0 {
+                break;
+            }
+            self.push(b);
+        }
+    }
+
+    /// The text in quotes, a quote or backslash escaped while two bytes are left (`0x74d350`).
+    fn quoted(&mut self, s: &str) {
+        if self.remaining > 1 {
+            self.push(b',');
+            if self.remaining > 1 {
+                self.push(b'"');
+            }
+        }
+        for &b in s.as_bytes() {
+            if self.remaining == 0 {
+                break;
+            }
+            if matches!(b, b'"' | b'\\') && self.remaining > 1 {
+                self.push(b'\\');
+            }
+            self.push(b);
+        }
+        if self.remaining > 1 {
+            self.push(b'"');
+        }
+    }
 }
 
 /// The environmental type's word (`0xad671c`), 0 fatigue to 5 fire.
@@ -768,7 +857,7 @@ impl super::UiScript {
 
     /// Store and fire an entry (`0x750400`, `0x74f910`), first dropping one expired oldest entry;
     /// while `LoggingCombat` is on, also the entry's combat-log file line.
-    pub fn push_combat_log(&mut self, entry: CombatLogEntry) -> Option<String> {
+    pub fn push_combat_log(&mut self, entry: CombatLogEntry) -> Option<Vec<u8>> {
         let unknown = unknown_text(self.lua());
         let (args, passes, line) = {
             let mut model = self.model_mut();
@@ -1005,6 +1094,64 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl CombatLogEntry {
+        /// The packed line as text, for lines that end on a character boundary.
+        fn pack_text(&self, unknown: &str) -> String {
+            String::from_utf8(self.pack(unknown)).unwrap()
+        }
+    }
+
+    /// The budget starts at the 4096-byte buffer plus the event name's length (`0x74e8a6`), and a
+    /// name that runs past it ends the line mid-quote with nothing after.
+    #[test]
+    fn an_overlong_line_stops_at_the_reference_budget() {
+        let long = "a".repeat(5000);
+        let line = CombatLogEntry {
+            source: unit(ME_GUID, &long, ME),
+            ..hit(0, 5)
+        }
+        .pack("Unknown");
+        let name = CombatLogEvent::SwingDamage.name();
+        let head = format!("{name},0x00000000000003EE,\"");
+        assert_eq!(line.len(), 4096 + 2 * name.len());
+        assert!(line.starts_with(head.as_bytes()));
+        assert!(line[head.len()..].iter().all(|&b| b == b'a'));
+    }
+
+    /// Each field writes what the budget left: digits cut, hex whole or not at all, a word byte
+    /// by byte, a quote's escape and closing quote only with two bytes left (`0x74d280`-`0x74d3b8`).
+    #[test]
+    fn each_field_truncates_as_the_reference_writes_it() {
+        let packer = |remaining: u32| Packer {
+            out: Vec::new(),
+            remaining,
+        };
+        let mut p = packer(4);
+        p.int(12345);
+        p.hex(1);
+        p.word("nil");
+        assert_eq!((p.out.as_slice(), p.remaining), (&b",12n"[..], 0));
+
+        let mut p = packer(12);
+        p.hex(0xabc);
+        assert_eq!((p.out.as_slice(), p.remaining), (&b",0xabc"[..], 6));
+        p.hex(1);
+        assert_eq!(p.out.as_slice(), b",0xabc,");
+
+        let mut p = packer(5);
+        p.quoted("a\"b");
+        assert_eq!((p.out.as_slice(), p.remaining), (&b",\"a\\\""[..], 0));
+        let mut p = packer(20);
+        p.guid(1);
+        assert_eq!(
+            (p.out.as_slice(), p.remaining),
+            (&b",0x0000000000000001"[..], 1)
+        );
+        p.guid(1);
+        p.int(7);
+        assert_eq!(p.out.as_slice(), b",0x0000000000000001");
+    }
     use crate::script::UiScript;
 
     /// Mine, friendly, player-controlled player.
@@ -1499,7 +1646,7 @@ mod tests {
                 info,
                 ..hit(0, 0)
             }
-            .pack("UNKNOWNOBJECT")
+            .pack_text("UNKNOWNOBJECT")
         };
         let info = CombatLogInfo::default;
         let cases: Vec<(String, String)> = vec![
@@ -1719,7 +1866,7 @@ mod tests {
             info: CombatLogInfo::default(),
             ..hit(0, 0)
         }
-        .pack("Unknown");
+        .pack_text("Unknown");
         assert_eq!(
             line,
             "UNIT_DIED,0x0000000000000000,nil,0x80000000,0xF1300000060C281E,\"Unknown\",0x0"
@@ -1730,7 +1877,7 @@ mod tests {
             event: CombatLogEvent::PartyKill,
             ..hit(0, 0)
         }
-        .pack("Unknown");
+        .pack_text("Unknown");
         assert!(empty.ends_with(",0xF1300000060C281E,\"\",0xa48"), "{empty}");
     }
 
@@ -1743,7 +1890,9 @@ mod tests {
         s.run("LoggingCombat(1) CombatLogAddFilter('SPELL_DAMAGE', nil, nil)")
             .unwrap();
         assert_eq!(
-            s.push_combat_log(hit(2_000, 6)).as_deref(),
+            s.push_combat_log(hit(2_000, 6))
+                .map(|b| String::from_utf8(b).unwrap())
+                .as_deref(),
             Some(
                 "SWING_DAMAGE,0x00000000000003EE,\"Claude\",0x511,0xF1300000060C281E,\
                  \"Kobold Vermin\",0xa48,6,0,1,0,0,0,nil,nil,nil"

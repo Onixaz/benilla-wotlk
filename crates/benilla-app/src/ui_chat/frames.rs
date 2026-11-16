@@ -38,7 +38,7 @@ pub(crate) fn route(
     if let Some(line) = compose(event, kind, &default_language, windows.line_id, &|key| {
         script.lua().globals().get::<String>(key).ok()
     }) {
-        windows.logs.0.record(&line);
+        windows.logs.0.record(line.as_bytes());
     }
     let args = event.script_args_with_line(windows.line_id);
     script.fire_event(event_name(kind), args);

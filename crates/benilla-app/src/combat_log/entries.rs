@@ -375,10 +375,13 @@ impl NameSources<'_> {
     /// The answer for one endpoint: `None` in flight, `Some(None)` answered empty.
     fn answer(&self, key: NameRef, guid: u64) -> Option<Option<String>> {
         match key {
-            NameRef::Unit(k) => self
-                .names
-                .answer(k, guid, &self.net)
-                .map(|n| n.map(str::to_owned)),
+            NameRef::Unit(k) => self.names.answer(k, guid, &self.net).map(|n| {
+                n.map(|n| match (k, self.names.player_realm(guid)) {
+                    // A player record with a realm reads `name-realm` (`0x74f720`, `0x74e319`).
+                    (NameKey::Player(_), Some(realm)) => format!("{n}-{realm}"),
+                    _ => n.to_owned(),
+                })
+            }),
             NameRef::GameObject => {
                 let objects = self.objects.as_deref()?;
                 match objects.get(guid) {
