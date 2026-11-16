@@ -1483,9 +1483,12 @@ mod tests {
     /// `UNIT_FIELD_HEALTH` (22), on [`fx::factions`]' rows: template 1 the caster's Human, 2 an Orc.
     fn unit_store(template: u32, flags: u32, health: u32) -> ObjectStore {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (35, template),
-            (46, flags),
-            (22, health),
+            (
+                benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                template,
+            ),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, health),
         ]))
     }
 
@@ -1643,13 +1646,13 @@ mod tests {
     /// (10) and `UNIT_FIELD_CREATEDBY` (14) the guids `charmed_by` and `created_by`, 0 for none.
     fn owned(flags: u32, charmed_by: u32, created_by: u32) -> ObjectStore {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (35, 2),
-            (46, flags),
-            (22, 100),
-            (10, charmed_by),
-            (11, 0),
-            (14, created_by),
-            (15, 0),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 2),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_CHARMEDBY, charmed_by),
+            (benilla_protocol::field::FIELD_UNIT_CHARMEDBY + 1, 0),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, created_by),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
         ]))
     }
 

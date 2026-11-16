@@ -723,12 +723,12 @@ mod attack_actor_tests {
     use crate::spell::cast_target::AutoDismount;
     use benilla_protocol::ObjectFields;
 
-    const HEALTH: u16 = 22;
-    const MAXHEALTH: u16 = 28;
-    const FLAGS: u16 = 46;
-    const CHARMEDBY: u16 = 10;
-    const MOUNT: u16 = 133;
-    const PLAYER_FLAGS: u16 = 190;
+    const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
+    const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const CHARMEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CHARMEDBY;
+    const MOUNT: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+    const PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
 
     fn actor(pairs: &[(u16, u32)]) -> ObjectStore {
         // A live, unowned, unmounted, unimpaired unit unless a case says otherwise.

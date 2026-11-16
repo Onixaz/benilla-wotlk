@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use crate::creature_anim::{advance_track, scan_events, AnimSoundEvent};
 use crate::net::{GuidIndex, ObjectStore};
+use benilla_protocol::field::gameobject_state_of;
 use benilla_world::schedule::WorldStage;
 
 /// `GO_STATE_ACTIVE` (vmangos `GOState`): open, and passable.
@@ -238,8 +239,8 @@ fn resolve(prev: Option<u32>, cur: u32) -> Option<Play> {
     }
 }
 
-/// Caller 1, the wire: seeds the state at first sight, then follows the `GAMEOBJECT_STATE` edge, so
-/// an unrelated field change never re-closes a looted chest.
+/// Caller 1, the wire: seeds the state at first sight, then follows an edge of the state byte of
+/// `GAMEOBJECT_BYTES_1`, so an unrelated field change never re-closes a looted chest.
 #[allow(clippy::type_complexity)]
 fn sync_wire_go_state(
     mut edges: MessageReader<crate::net::FieldChanged>,
@@ -256,12 +257,17 @@ fn sync_wire_go_state(
     let mut live = gos.p1();
     for e in edges.read() {
         if e.kind != benilla_protocol::messages::ObjectType::GameObject
-            || e.index != benilla_protocol::field::FIELD_GAMEOBJECT_STATE
+            || e.index != benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1
         {
             continue;
         }
+        // The state is `GAMEOBJECT_BYTES_1` byte 0; the type, art kit and progress share the word.
+        let (old, new) = (gameobject_state_of(e.old), gameobject_state_of(e.new));
+        if old == new {
+            continue;
+        }
         if let Ok(mut anim) = live.get_mut(e.entity) {
-            anim.state = Some(e.new);
+            anim.state = Some(new);
         }
     }
 }
@@ -630,7 +636,8 @@ fn drive_go_collision(
 ) {
     let state_edges = edges.read().filter(|e| {
         e.kind == benilla_protocol::messages::ObjectType::GameObject
-            && e.index == benilla_protocol::field::FIELD_GAMEOBJECT_STATE
+            && e.index == benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1
+            && gameobject_state_of(e.old) != gameobject_state_of(e.new)
     });
     let mut due: bevy::ecs::entity::EntityHashSet = arrived.iter().collect();
     due.extend(state_edges.map(|e| e.entity));
@@ -1244,7 +1251,7 @@ mod tests {
             .add_systems(Update, (reset_go_state, arm_spawn_anim));
         const LID: u64 = 0xF110_0000_0000_0001;
         let store = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-            benilla_protocol::field::FIELD_GAMEOBJECT_STATE,
+            benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1,
             GO_STATE_READY,
         )]));
         let lid = app

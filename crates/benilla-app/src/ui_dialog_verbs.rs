@@ -554,11 +554,11 @@ mod tests {
     }
 
     /// `UNIT_FIELD_FLAGS`, absolute field 46; `UNIT_FLAG_PVP` (`0x1000`) passes `can_assist`.
-    const UNIT_FLAGS_FIELD: u16 = 46;
+    const UNIT_FLAGS_FIELD: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
     /// `UNIT_NPC_FLAGS`, absolute field 147.
-    const NPC_FLAGS_FIELD: u16 = 147;
+    const NPC_FLAGS_FIELD: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
     /// `PLAYER_FLAGS`, absolute field 190; bit `0x10` is GHOST.
-    const PLAYER_FLAGS_FIELD: u16 = 190;
+    const PLAYER_FLAGS_FIELD: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
 
     fn fields(pairs: &[(u16, u32)]) -> ObjectStore {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs))
@@ -611,7 +611,7 @@ mod tests {
     }
 
     /// `UNIT_FIELD_FACTIONTEMPLATE`, absolute field 35.
-    const FACTION_TEMPLATE_FIELD: u16 = 35;
+    const FACTION_TEMPLATE_FIELD: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
 
     macro_rules! catalog_or_skip {
         () => {{

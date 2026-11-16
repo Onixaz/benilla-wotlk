@@ -74,10 +74,10 @@ pub(crate) fn drive_fx_view(
                     },
                     crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(
                         &[
-                            (22, 100), // UNIT_FIELD_HEALTH
-                            (28, 100), // UNIT_FIELD_MAXHEALTH
-                            (34, 60),  // UNIT_FIELD_LEVEL
-                            (35, 35),  // UNIT_FIELD_FACTIONTEMPLATE: friendly, no combat pose
+                            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100), // UNIT_FIELD_HEALTH
+                            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100), // UNIT_FIELD_MAXHEALTH
+                            (benilla_protocol::field::FIELD_UNIT_LEVEL, 60), // UNIT_FIELD_LEVEL
+                            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 35), // UNIT_FIELD_FACTIONTEMPLATE: friendly, no combat pose
                         ],
                     )),
                     Transform::from_translation(pos)
@@ -109,10 +109,11 @@ pub(crate) fn drive_fx_view(
                         scale: req.scale,
                     },
                     crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(
-                        &[
-                            (14, req.go_state), // GAMEOBJECT_STATE
-                            (21, req.go_type),  // GAMEOBJECT_TYPE_ID
-                        ],
+                        // `GAMEOBJECT_BYTES_1`: the state in byte 0, the type in byte 1.
+                        &[(
+                            benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1,
+                            (req.go_state & 0xff) | (req.go_type & 0xff) << 8,
+                        )],
                     )),
                     Transform::from_translation(pos)
                         .with_rotation(Quat::from_rotation_y(req.yaw_deg.to_radians())),

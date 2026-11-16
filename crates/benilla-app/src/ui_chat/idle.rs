@@ -208,9 +208,9 @@ mod tests {
     use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 
     /// Descriptor indices, spelled here so a fixture reads like the field it sets.
-    const UNIT_FLAGS: u16 = 46;
-    const MOUNT_DISPLAY_ID: u16 = 133;
-    const BYTES_1: u16 = 138;
+    const UNIT_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const MOUNT_DISPLAY_ID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+    const BYTES_1: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_1;
 
     const FIVE_MIN: Duration = Duration::from_millis(300_000);
     const THIRTY_MIN: Duration = Duration::from_millis(1_800_000);

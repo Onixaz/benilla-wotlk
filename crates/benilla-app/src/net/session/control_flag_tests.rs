@@ -37,7 +37,7 @@ fn our_own_control_update_writes_the_flag_and_fires_its_edge() {
         .net_handler(SessionEventKind::ClientControl, on_control);
     // Our body held, alive, for `HasFullControl`'s player test.
     let body = benilla_protocol::ObjectFields::from_pairs(&[
-        (2, 0x19),
+        (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
         (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
     ]);
     let me = app.world_mut().spawn(ObjectStore(body)).id();
@@ -96,7 +96,7 @@ fn far_sight_through_a_held_subject_takes_full_control() {
         .spawn((
             crate::net::SelfPlayer,
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x19),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
                 (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
             ])),
         ))
@@ -173,7 +173,8 @@ fn our_own_create_regains_control_on_the_flags_edge() {
         vehicle: None,
         attack_target: None,
         spawned: false,
-        fields: ObjectFields::from_pairs(&[(2, 0x19)]).into_created(ObjectType::Player),
+        fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19)])
+            .into_created(ObjectType::Player),
     };
     let mut app = crate::game_plugins::schedule_tests::headless_client();
     let script = UiScript::new().unwrap();
@@ -260,7 +261,11 @@ fn a_game_start_regains_control_silently() {
                 vehicle: None,
                 attack_target: None,
                 spawned: false,
-                fields: ObjectFields::from_pairs(&[(2, 0x19)]).into_created(ObjectType::Player),
+                fields: ObjectFields::from_pairs(&[(
+                    benilla_protocol::field::FIELD_OBJECT_TYPE,
+                    0x19,
+                )])
+                .into_created(ObjectType::Player),
             },
         ],
     );

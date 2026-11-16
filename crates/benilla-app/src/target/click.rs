@@ -2470,10 +2470,10 @@ mod tests {
     use crate::net::{ClientCommand, NetCommands, ObjectStore};
     use bevy::ecs::system::RunSystemOnce;
 
-    const F_HEALTH: u16 = 22;
-    const F_MAXHEALTH: u16 = 28;
-    /// `GAMEOBJECT_TYPE_ID`, absolute field 21, which the GameObject arms fork on.
-    const GO_TYPE_FIELD: u16 = 21;
+    const F_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const F_MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
+    /// `GAMEOBJECT_BYTES_1`, whose byte 1 is the type the GameObject arms fork on.
+    const GO_TYPE_FIELD: u16 = benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1;
     const BOAR: u64 = 0xB0A2;
     const ME: u64 = 0x5E1F;
 
@@ -2567,8 +2567,8 @@ mod tests {
     /// no service packet; a live player on the same fork swings.
     #[test]
     fn a_ghost_takes_the_attack_arm_and_is_refused_silently() {
-        const F_PLAYER_FLAGS: u16 = 190;
-        const F_NPC_FLAGS: u16 = 147;
+        const F_PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
+        const F_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
         for (label, own, swings) in [
             (
                 "ghost",
@@ -2642,7 +2642,7 @@ mod tests {
         let (mut world, _boar) = right_click_world();
         world.insert_resource(NetCommands(tx));
         let stone = world
-            .spawn((Guid(STONE), store(&[(GO_TYPE_FIELD, 23)])))
+            .spawn((Guid(STONE), store(&[(GO_TYPE_FIELD, 23 << 8)])))
             .id();
         *world.resource_mut::<PressPick>() = PressPick {
             object: HoveredObject {
@@ -2683,7 +2683,7 @@ mod tests {
         const STONE: u64 = 0x5703;
         let (mut world, _boar) = right_click_world();
         let stone = world
-            .spawn((Guid(STONE), store(&[(GO_TYPE_FIELD, 23)])))
+            .spawn((Guid(STONE), store(&[(GO_TYPE_FIELD, 23 << 8)])))
             .id();
         *world.resource_mut::<PressPick>() = PressPick {
             object: HoveredObject {
@@ -2712,7 +2712,7 @@ mod tests {
         at: Vec3,
         walk: bool,
     ) -> (World, Entity, crossbeam_channel::Receiver<ClientCommand>) {
-        const F_NPC_FLAGS: u16 = 147;
+        const F_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
         let (tx, rx) = crossbeam_channel::unbounded::<ClientCommand>();
         let (mut world, _boar) = right_click_world();
         world.insert_resource(NetCommands(tx));
@@ -2834,7 +2834,7 @@ mod tests {
         let object = world
             .spawn((
                 Guid(CHEST),
-                store(&[(GO_TYPE_FIELD, go_type)]),
+                store(&[(GO_TYPE_FIELD, go_type << 8)]),
                 Transform::from_translation(at),
                 crate::net::NetEntity {
                     kind: benilla_protocol::EntityKind::GameObject,
@@ -3047,8 +3047,8 @@ mod tests {
     /// A Loot walk stops at 3.67 yd at the floor, and 5 yd for a corpse (`0x71b47f`, `0x71b49b`).
     #[test]
     fn a_loot_walk_stops_at_the_melee_reach_less_its_offset() {
-        const F_DYNAMIC_FLAGS: u16 = 143;
-        const F_COMBAT_REACH: u16 = 130;
+        const F_DYNAMIC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS;
+        const F_COMBAT_REACH: u16 = benilla_protocol::field::FIELD_UNIT_COMBATREACH;
         // A unit of reach 4 against our default 1.5: 4 + 1.5 + 1.3333 = 6.8333.
         let (mut world, _vendor, _rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), true);
         let body = world
@@ -3113,12 +3113,12 @@ mod tests {
     /// Talk's walk stops off the NPC's own combat reach (`0x71b40a`).
     #[test]
     fn a_vendor_walk_stops_off_its_combat_reach() {
-        const F_COMBAT_REACH: u16 = 130;
+        const F_COMBAT_REACH: u16 = benilla_protocol::field::FIELD_UNIT_COMBATREACH;
         let (mut world, vendor, _rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), true);
         world.entity_mut(vendor).insert(store(&[
             (F_HEALTH, 100),
             (F_MAXHEALTH, 100),
-            (147, 0x80),
+            (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, 0x80),
             (F_COMBAT_REACH, 6.0_f32.to_bits()),
         ]));
         click_vendor(&mut world, vendor);
@@ -3191,7 +3191,7 @@ mod tests {
         let (mut world, _boar) = right_click_world();
         world.insert_resource(NetCommands(tx));
         let stone = world
-            .spawn((Guid(STONE), store(&[(GO_TYPE_FIELD, 23)])))
+            .spawn((Guid(STONE), store(&[(GO_TYPE_FIELD, 23 << 8)])))
             .id();
         *world.resource_mut::<PressPick>() = PressPick {
             object: HoveredObject {
@@ -3318,7 +3318,7 @@ mod tests {
     }
 
     fn attack_wolf_at(at: Vec3, reach: f32) -> (World, crossbeam_channel::Receiver<ClientCommand>) {
-        const F_COMBAT_REACH: u16 = 130;
+        const F_COMBAT_REACH: u16 = benilla_protocol::field::FIELD_UNIT_COMBATREACH;
         let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), true);
         let wolf = world
             .spawn((
@@ -3633,7 +3633,7 @@ mod tests {
         Entity,
         crossbeam_channel::Receiver<ClientCommand>,
     ) {
-        const F_DYNAMIC_FLAGS: u16 = 143;
+        const F_DYNAMIC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS;
         let (mut world, _vendor, rx) = walking_world(Vec3::new(2.5, 0.0, 0.0), walk);
         world.insert_resource(crate::player::Player::with_move_flags(flags));
         let body = world
@@ -3839,7 +3839,7 @@ mod tests {
     /// A ghost's right-click on a lootable body or corpse sends nothing (`0x6d5b76`).
     #[test]
     fn a_ghost_loots_nothing() {
-        const F_PLAYER_FLAGS: u16 = 190;
+        const F_PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
         for on_corpse in [false, true] {
             let (mut world, body, corpse, rx) = loot_world(2.0, 0, false);
             let me = world
@@ -3951,8 +3951,8 @@ mod tests {
         }
     }
 
-    const F_BYTES_1: u16 = 138;
-    const F_BYTES_2: u16 = 164;
+    const F_BYTES_1: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_1;
+    const F_BYTES_2: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_2;
     /// A form with none of the stance, interact or item flags: creature Cat Form.
     const NO_INTERACT_FORM: u32 = 15 << 24;
 

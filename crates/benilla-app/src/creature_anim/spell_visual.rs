@@ -3586,7 +3586,7 @@ pub(super) fn arm_go_loot_fx(
     mut armed: Local<EntityHashSet>,
     mut seen_self: Local<(u32, bool)>,
 ) {
-    use benilla_protocol::field::FIELD_GAMEOBJECT_DYN_FLAGS;
+    use benilla_protocol::field::FIELD_GAMEOBJECT_DYNAMIC;
     let me = self_store.iter().next();
     let mask = me.map_or(0, |m| m.0.player_track_resources());
     // `PLAYER_FLAGS` ghost bit or no health: the tracking check's dead gate.
@@ -3612,7 +3612,7 @@ pub(super) fn arm_go_loot_fx(
                 .read()
                 .filter(|e| {
                     e.kind == benilla_protocol::messages::ObjectType::GameObject
-                        && e.index == FIELD_GAMEOBJECT_DYN_FLAGS
+                        && e.index == FIELD_GAMEOBJECT_DYNAMIC
                         && go_sparkle_edge(e.old, e.new)
                 })
                 .map(|e| e.entity),

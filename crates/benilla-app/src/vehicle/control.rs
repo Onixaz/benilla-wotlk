@@ -142,8 +142,12 @@ mod tests {
         const ME: u64 = 0x10;
         const CART: u64 = 0xF150_0000_0000_0001;
         let charmed = ObjectStore(
-            benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9), (10, ME as u32), (11, 0)])
-                .into_created(benilla_protocol::messages::ObjectType::Unit),
+            benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+                (benilla_protocol::field::FIELD_UNIT_CHARMEDBY, ME as u32),
+                (benilla_protocol::field::FIELD_UNIT_CHARMEDBY + 1, 0),
+            ])
+            .into_created(benilla_protocol::messages::ObjectType::Unit),
         );
         let seated = |g: u64| {
             (g == ME).then_some(Passenger {
@@ -155,8 +159,11 @@ mod tests {
         assert!(!movement_prevented(CART, &charmed, seated, ME, false));
         assert!(movement_prevented(CART, &charmed, seated, ME, true));
         let free = ObjectStore(
-            benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9)])
-                .into_created(benilla_protocol::messages::ObjectType::Unit),
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_TYPE,
+                0x9,
+            )])
+            .into_created(benilla_protocol::messages::ObjectType::Unit),
         );
         assert!(
             movement_prevented(CART, &free, |_| None, ME, false),

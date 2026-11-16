@@ -177,10 +177,19 @@ fn a_dodge_change_rebuilds_only_the_dodge_chance_view() {
     };
     let player = |dodge: f32, health: u32| {
         [
-            (22, health),
-            (1107, dodge.to_bits()),
-            (1108, 6.0f32.to_bits()),
-            (1109, 7.0f32.to_bits()),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, health),
+            (
+                benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+                dodge.to_bits(),
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PARRY_PERCENTAGE,
+                6.0f32.to_bits(),
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+                7.0f32.to_bits(),
+            ),
         ]
     };
     let mut feed = FeedApp::new(spells, &player(5.0, 100));
@@ -203,19 +212,37 @@ fn a_dodge_change_rebuilds_only_the_dodge_chance_view() {
 
     // The other two percentages, one frame each.
     feed.set_player(&[
-        (22, 60),
-        (1107, 9.5f32.to_bits()),
-        (1108, 8.0f32.to_bits()),
-        (1109, 7.0f32.to_bits()),
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 60),
+        (
+            benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+            9.5f32.to_bits(),
+        ),
+        (
+            benilla_protocol::field::FIELD_PLAYER_PARRY_PERCENTAGE,
+            8.0f32.to_bits(),
+        ),
+        (
+            benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+            7.0f32.to_bits(),
+        ),
     ]);
     feed.app.update();
     assert_eq!(feed.generations(), [2, 3, 1, 1, 1], "parry");
     feed.catalog(4);
     feed.set_player(&[
-        (22, 60),
-        (1107, 9.5f32.to_bits()),
-        (1108, 8.0f32.to_bits()),
-        (1109, 1.0f32.to_bits()),
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 60),
+        (
+            benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+            9.5f32.to_bits(),
+        ),
+        (
+            benilla_protocol::field::FIELD_PLAYER_PARRY_PERCENTAGE,
+            8.0f32.to_bits(),
+        ),
+        (
+            benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+            1.0f32.to_bits(),
+        ),
     ]);
     feed.app.update();
     assert_eq!(feed.generations(), [2, 3, 4, 1, 1], "crit");
@@ -241,7 +268,7 @@ fn a_modifier_change_rebuilds_only_the_matching_familys_views() {
             (14, spell(3, &[5, 6], g)), // a mage spell on both
         ]
     };
-    let mut feed = FeedApp::new(spells, &[(22, 100)]);
+    let mut feed = FeedApp::new(spells, &[(benilla_protocol::field::FIELD_UNIT_HEALTH, 100)]);
     let mods = |feed: &mut FeedApp, f: &dyn Fn(&mut crate::spell::SpellModifiers)| {
         f(&mut feed
             .app
@@ -306,12 +333,18 @@ fn a_units_run_rebuilds_only_the_melee_range_views() {
             (32, spell(0, g)), // no row at all
         ]
     };
-    let mut feed = FeedApp::new(spells, &[(22, 100)]);
+    let mut feed = FeedApp::new(spells, &[(benilla_protocol::field::FIELD_UNIT_HEALTH, 100)]);
     let speeds = walking_and_running_speeds();
     let mob = feed
         .app
         .world_mut()
-        .spawn((speeds, ObjectStore(ObjectFields::from_pairs(&[(22, 100)]))))
+        .spawn((
+            speeds,
+            ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_HEALTH,
+                100,
+            )])),
+        ))
         .id();
     feed.app
         .world_mut()
@@ -390,14 +423,31 @@ fn a_pet_view_reads_the_pets_and_its_targets_run() {
         .world_mut()
         .spawn((
             SelfPlayer,
-            store(&[(8, IMP as u32), (9, (IMP >> 32) as u32), (34, 60)]),
+            store(&[
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, IMP as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (IMP >> 32) as u32,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
+            ]),
         ))
         .id();
     let imp = app
         .world_mut()
-        .spawn((speeds, Engaged(MOB), store(&[(34, 14)])))
+        .spawn((
+            speeds,
+            Engaged(MOB),
+            store(&[(benilla_protocol::field::FIELD_UNIT_LEVEL, 14)]),
+        ))
         .id();
-    let mob = app.world_mut().spawn((speeds, store(&[(22, 100)]))).id();
+    let mob = app
+        .world_mut()
+        .spawn((
+            speeds,
+            store(&[(benilla_protocol::field::FIELD_UNIT_HEALTH, 100)]),
+        ))
+        .id();
     let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
     index.0.insert(ME, me);
     index.0.insert(IMP, imp);

@@ -181,42 +181,6 @@ impl ObjectFields {
     pub fn unit_level(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_LEVEL)
     }
-    /// One aura slot, live only when its `AURAFLAGS` nibble has an effect bit (`& 0x0E`) as the
-    /// client tests it, since a cleared slot can keep a stale spell id.
-    pub fn unit_aura(&self, slot: u8) -> Option<UnitAuraSlot> {
-        if slot >= UNIT_AURA_SLOTS {
-            return None;
-        }
-        let flags = self.get_aura_nibble(slot);
-        if flags & AURA_FLAG_EFF_INDEX_MASK == 0 {
-            return None;
-        }
-        let spell_id = self
-            .get_u32(FIELD_UNIT_AURA + u16::from(slot))
-            .filter(|&id| id != 0)?;
-        Some(UnitAuraSlot {
-            slot,
-            spell_id,
-            flags,
-            level: self.get_aura_byte(FIELD_UNIT_AURALEVELS, slot),
-            // The wire byte is `stack - 1` and saturates at 254, so an occupied slot is always ≥ 1.
-            stacks: self
-                .get_aura_byte(FIELD_UNIT_AURAAPPLICATIONS, slot)
-                .saturating_add(1),
-        })
-    }
-    /// Live auras by ascending slot, buffs 0-31 then debuffs 32-47: the order `UnitBuff` and
-    /// `UnitDebuff` read another unit. The local player's buff bar keeps insertion order in a
-    /// packed cache instead, which this cannot recover.
-    pub fn unit_auras(&self) -> impl Iterator<Item = UnitAuraSlot> + '_ {
-        (0..UNIT_AURA_SLOTS).filter_map(|slot| self.unit_aura(slot))
-    }
-    /// Every `UNIT_FIELD_AURA` slot's raw spell id, zeros and stale ids included, as the cast
-    /// validator's crowd-control scan reads them, without `AURAFLAGS`.
-    pub fn unit_aura_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        (0..UNIT_AURA_SLOTS)
-            .map(|slot| self.get_u32(FIELD_UNIT_AURA + u16::from(slot)).unwrap_or(0))
-    }
 
     /// `UNIT_FIELD_BYTES_0` byte 3: power type, 0 mana, 1 rage, 2 focus, 3 energy, 4 happiness.
     pub fn unit_power_type(&self) -> u8 {
@@ -227,11 +191,6 @@ impl ObjectFields {
     pub fn unit_stand_state(&self) -> u8 {
         (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) & 0xff) as u8
     }
-    /// `UNIT_FIELD_BYTES_1` byte 1: a hunter pet's loyalty level, 1-8, which `GetPetLoyalty`
-    /// indexes `PetLoyalty.dbc` with; 0 is none and answers nil.
-    pub fn unit_loyalty_level(&self) -> u8 {
-        ((self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 8) & 0xff) as u8
-    }
     /// `UNIT_FIELD_PETEXPERIENCE` and `UNIT_FIELD_PETNEXTLEVELEXP`: `GetPetExperience`'s
     /// `(currXP, nextXP)`; absent reads 0, the binding's own failure value, never nil.
     pub fn unit_pet_experience(&self) -> (u32, u32) {
@@ -240,32 +199,31 @@ impl ObjectFields {
             self.get_u32(FIELD_UNIT_PETNEXTLEVELEXP).unwrap_or(0),
         )
     }
-    /// `UNIT_TRAINING_POINTS`: `(total, spent)`, total in the high half as the client splits it.
-    pub fn unit_training_points(&self) -> (u16, u16) {
-        let packed = self.get_u32(FIELD_UNIT_TRAINING_POINTS).unwrap_or(0);
-        ((packed >> 16) as u16, (packed & 0xffff) as u16)
-    }
-    /// 3.3.5a's `UNIT_FIELD_BYTES_1` byte 3, the anim tier (0 ground, 2 hover, 3 fly), kept in
-    /// byte 2: a unit on a tier plays that tier's rows (`0x7167e9`, read at `0x717708`).
+    /// `UNIT_FIELD_BYTES_1` byte 3, the anim tier (0 ground, 2 hover, 3 fly): a unit on a tier
+    /// plays that tier's rows (`0x7167e9`, read at `0x717708`).
     pub fn unit_anim_tier(&self) -> u8 {
-        ((self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 16) & 0xff) as u8
+        (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 24) as u8
     }
-    /// `UNIT_FIELD_BYTES_1` byte 3 bit `0x2`, `UNIT_VIS_FLAGS_CREEP` (`SpellAuras.cpp:3610`):
-    /// stealthed; read by the usable check (`[+0x110]+0x213 & 2`) and the tracker.
+    /// `UNIT_FIELD_BYTES_1` byte 2, the visibility flags (AzerothCore `UnitStandFlags`).
+    fn unit_vis_flags(&self) -> u8 {
+        (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 16) as u8
+    }
+    /// `UNIT_FIELD_BYTES_1` byte 2 bit `0x2`, `UNIT_STAND_FLAGS_CREEP`: stealthed; read by the
+    /// usable check and the tracker.
     pub fn unit_is_stealthed(&self) -> bool {
-        (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 24) & 0x2 != 0
+        self.unit_vis_flags() & 0x2 != 0
     }
-    /// `UNIT_FIELD_BYTES_1` byte 3 bit `0x1`, `UNIT_VIS_FLAGS_GHOST`, set by the ghost aura: it
-    /// only hides names and plates (`byte3 & 0x03`); the ghostly body is the aura's own visual kit
-    /// (spell 8326, kit 989).
+    /// `UNIT_FIELD_BYTES_1` byte 2 bit `0x1`, `UNIT_STAND_FLAGS_UNK1`, set by the ghost aura: it
+    /// only hides names and plates; the ghostly body is the aura's own visual kit (spell 8326, kit
+    /// 989).
     pub fn unit_is_ghost_visual(&self) -> bool {
-        (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 24) & 0x1 != 0
+        self.unit_vis_flags() & 0x1 != 0
     }
 
-    /// `UNIT_FIELD_BYTES_1` byte 3 bit `0x4` (vmangos `UNIT_VIS_FLAGS_UNTRACKABLE`): no minimap
-    /// dot at all, quest or tracking (`byte [eax+0x213] & 4`, the byte's only such test).
+    /// `UNIT_FIELD_BYTES_1` byte 2 bit `0x4`, `UNIT_STAND_FLAGS_UNTRACKABLE`: no minimap dot at
+    /// all, quest or tracking.
     pub fn unit_is_untrackable(&self) -> bool {
-        (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 24) & 0x4 != 0
+        self.unit_vis_flags() & 0x4 != 0
     }
 
     /// `UNIT_FIELD_AURASTATE`: the aura-state bits (1 defense, 2 health under 20%, ...), which
@@ -285,37 +243,29 @@ impl ObjectFields {
         if let Some(predicted) = self.predicted_power(ty) {
             return Some(predicted);
         }
-        match ty {
-            0..5 => self.get_u32(FIELD_UNIT_POWER1 + u16::from(ty)),
-            5..7 => self.get_u32(FIELD_UNIT_POWER6 + u16::from(ty - 5)),
-            _ => None,
-        }
+        (ty < 7).then(|| self.get_u32(FIELD_UNIT_POWER1 + u16::from(ty)))?
     }
     /// `UNIT_FIELD_MAXPOWER1..7`: maximum power of type `ty`, raw (`0x60ef40`).
     pub fn unit_max_power(&self, ty: u8) -> Option<u32> {
-        match ty {
-            0..5 => self.get_u32(FIELD_UNIT_MAXPOWER1 + u16::from(ty)),
-            5..7 => self.get_u32(FIELD_UNIT_MAXPOWER6 + u16::from(ty - 5)),
-            _ => None,
-        }
+        (ty < 7).then(|| self.get_u32(FIELD_UNIT_MAXPOWER1 + u16::from(ty)))?
     }
-    /// `UNIT_FIELD_BASE_MANA` (field 162, owner only): what `ManaCostPercentage` costs scale from.
+    /// `UNIT_FIELD_BASE_MANA` (owner only): what `ManaCostPercentage` costs scale from.
     pub fn unit_base_mana(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_BASE_MANA)
     }
-    /// `UNIT_FIELD_BASE_HEALTH` (field 163, owner only): the basis for percentage health costs.
+    /// `UNIT_FIELD_BASE_HEALTH` (owner only): the basis for percentage health costs.
     pub fn unit_base_health(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_BASE_HEALTH)
     }
-    /// `UNIT_FIELD_FACTIONTEMPLATE` (public, `+0x74`): the `FactionTemplate.dbc` row reactions use.
+    /// `UNIT_FIELD_FACTIONTEMPLATE` (public): the `FactionTemplate.dbc` row reactions use.
     pub fn unit_faction_template(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_FACTIONTEMPLATE)
     }
-    /// `UNIT_FIELD_FLAGS` (`+0xa0`): unit state flags; bit `0x0400_0000` is skinnable.
+    /// `UNIT_FIELD_FLAGS`: unit state flags; bit `0x0400_0000` is skinnable.
     pub fn unit_flags(&self) -> u32 {
         self.get_u32(FIELD_UNIT_FLAGS).unwrap_or(0)
     }
-    /// `UNIT_FIELD_COMBATREACH` (`+0x1f0`): melee reach, summed as `rA + rB + 1.333`, floor 5.0, by
+    /// `UNIT_FIELD_COMBATREACH`: melee reach, summed as `rA + rB + 1.333`, floor 5.0, by
     /// the attack range gate; 1.5, the vanilla default, before it streams.
     pub fn unit_combat_reach(&self) -> f32 {
         self.get_f32(FIELD_UNIT_COMBATREACH).unwrap_or(1.5)
@@ -325,7 +275,7 @@ impl ObjectFields {
     pub fn unit_bounding_radius(&self) -> f32 {
         self.get_f32(FIELD_UNIT_BOUNDINGRADIUS).unwrap_or(0.0)
     }
-    /// `UNIT_DYNAMIC_FLAGS` (`+0x224`), per viewer: `0x1` lootable, `0x2` tracked, `0x20` dead.
+    /// `UNIT_DYNAMIC_FLAGS`, per viewer: `0x1` lootable, `0x2` tracked, `0x20` dead.
     pub fn unit_dynamic_flags(&self) -> u32 {
         self.get_u32(FIELD_UNIT_DYNAMIC_FLAGS).unwrap_or(0)
     }
@@ -348,7 +298,7 @@ impl ObjectFields {
     pub fn unit_lootable(&self) -> bool {
         self.unit_dynamic_flags() & 0x1 != 0
     }
-    /// `UNIT_NPC_FLAGS` (`+0x234`, `UnitDefines.h`): gossip `0x1`, questgiver `0x2`, vendor
+    /// `UNIT_NPC_FLAGS` (`UnitDefines.h`): gossip `0x1`, questgiver `0x2`, vendor
     /// `0x4`, flight master `0x8`, trainer `0x10`, ..., repair `0x4000`; cursor: first bit wins.
     pub fn unit_npc_flags(&self) -> u32 {
         self.get_u32(FIELD_UNIT_NPC_FLAGS).unwrap_or(0)

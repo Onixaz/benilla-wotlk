@@ -33,8 +33,8 @@ fn price_discount(reaction: u8, vendor_unit_flags: u32, pvp_rank: u8) -> f64 {
 
 /// [`price_discount`] for `vendor` and the player: the vendor's reaction toward the player
 /// ([`ring_reaction`], `vendor->UnitReaction(player)`), the vendor's own `UNIT_FIELD_FLAGS`
-/// (`[[vendor+0x110]+0xa0]`) and the player's current honor rank, `PLAYER_BYTES_3` byte 3
-/// (`[[player+0xe68]+0x1f]`), not the highest rank held.
+/// and the player's current honor rank, which no 3.3.5a field carries: `PLAYER_BYTES_3` byte 3 is
+/// the arena faction, so it is 0.
 pub(crate) fn vendor_price_discount(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -45,7 +45,7 @@ pub(crate) fn vendor_price_discount(
     price_discount(
         ring_reaction(factions, reputations, party, Some(vendor), Some(player)),
         vendor.0.unit_flags(),
-        player.0.player_pvp_rank().unwrap_or(0),
+        0,
     )
 }
 
@@ -148,15 +148,14 @@ mod tests {
         assert_ne!(f64::from(d as f32).to_bits(), d.to_bits());
     }
 
-    /// `PLAYER_BYTES_3`, `PLAYER_FIELD_BYTES`: absolute descriptor indices.
-    const PLAYER_BYTES_3: u16 = 195;
-    const PLAYER_FIELD_BYTES: u16 = 1222;
+    const PLAYER_BYTES_3: u16 = benilla_protocol::field::FIELD_PLAYER_BYTES_3;
+    const PLAYER_FIELD_BYTES: u16 = benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES;
 
-    /// The flag is read off the vendor and the rank off the player's current-rank byte, never the
-    /// highest-rank-held byte of `PLAYER_FIELD_BYTES`. With no faction catalog the reaction is
-    /// Neutral, so only the honor steps can show.
+    /// The flag is read off the vendor; no player byte is a current rank: `PLAYER_BYTES_3` byte 3
+    /// is the arena faction and `PLAYER_FIELD_BYTES` byte 3 the highest rank held. With no faction
+    /// catalog the reaction is Neutral, so only the honor steps could show.
     #[test]
-    fn the_inputs_are_the_vendors_flag_and_the_players_current_rank() {
+    fn the_inputs_are_the_vendors_flag_and_no_player_rank() {
         let reps = Reputations::default();
         let store = |pairs: &[(u16, u32)]| ObjectStore(ObjectFields::from_pairs(pairs));
         let pvp_vendor = store(&[(FIELD_UNIT_FLAGS, UNIT_FLAG_PVP)]);
@@ -167,7 +166,11 @@ mod tests {
         let disc = |v: &ObjectStore, p: &ObjectStore| {
             vendor_price_discount(None, &reps, &crate::target::NoGroup, v, p).to_bits()
         };
-        assert_eq!(disc(&pvp_vendor, &rank_8), D10, "two honor steps");
+        assert_eq!(
+            disc(&pvp_vendor, &rank_8),
+            ZERO,
+            "the arena faction is no rank"
+        );
         assert_eq!(
             disc(&pvp_vendor, &held_8),
             ZERO,
@@ -181,7 +184,7 @@ mod tests {
     }
 
     /// `UNIT_FIELD_BYTES_0`, absolute descriptor index.
-    const BYTES_0: u16 = 36;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
 
     /// The reputation term reads the vendor's reaction to the player, the standing rank: Friendly
     /// (8999) earns nothing, Honored (9000) the 0.1. The player's reaction to the vendor would be

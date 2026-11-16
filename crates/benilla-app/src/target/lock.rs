@@ -391,7 +391,7 @@ mod tests {
         // third word, as `PlayerSkillSlot` packs them.
         let store_with_mining = |value: u32, bonus_word: u32| {
             ObjectStore(ObjectFields::from_pairs(&[
-                (34, 60),
+                (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
                 (FIELD_PLAYER_SKILL_INFO_1_1, 186),
                 (FIELD_PLAYER_SKILL_INFO_1_1 + 1, value | (300 << 16)),
                 (FIELD_PLAYER_SKILL_INFO_1_1 + 2, bonus_word),

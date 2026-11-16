@@ -151,7 +151,10 @@ fn arrive(app: &mut App, look: Look) -> Entity {
                 ..Default::default()
             },
             // UNIT_FIELD_BYTES_0 (36): race, gender; PLAYER_BYTES (193): face, hair style.
-            ObjectStore(ObjectFields::from_pairs(&[(36, bytes_0), (193, bytes)])),
+            ObjectStore(ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_BYTES_0, bytes_0),
+                (benilla_protocol::field::FIELD_PLAYER_BYTES, bytes),
+            ])),
             Transform::default(),
             Visibility::default(),
         ))

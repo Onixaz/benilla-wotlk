@@ -1164,7 +1164,7 @@ fn the_swim_relatch_holds_the_kick_but_a_ground_cut_freezes_it() {
     );
 }
 
-/// A remote unit kneels on `UNIT_FLAG_LOOTING` (field 46); moving outranks it.
+/// A remote unit kneels on `UNIT_FLAG_LOOTING`; moving outranks it.
 #[test]
 fn unit_flag_looting_kneels_stationary_units_only() {
     use benilla_protocol::messages::ObjectFields;
@@ -1187,7 +1187,10 @@ fn unit_flag_looting_kneels_stationary_units_only() {
             AnimationPlayer::default(),
             AnimationTransitions::new(),
             AnimDriver::default(),
-            crate::net::ObjectStore(ObjectFields::from_pairs(&[(46, 0x400)])),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                0x400,
+            )])),
         ))
         .id();
     let gait = |app: &App| app.world().entity(unit).get::<AnimDriver>().unwrap().gait;
@@ -1207,7 +1210,8 @@ fn unit_flag_looting_kneels_stationary_units_only() {
     app.world_mut()
         .entity_mut(unit)
         .insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[(
-            46, 0,
+            benilla_protocol::field::FIELD_UNIT_FLAGS,
+            0,
         )])));
     app.update();
     assert_eq!(gait(&app), Some(0), "released — back to Stand");
@@ -1239,7 +1243,10 @@ fn the_self_kneel_rides_the_loot_latch_not_the_flag() {
             AnimationTransitions::new(),
             AnimDriver::default(),
             crate::net::SelfPlayer,
-            crate::net::ObjectStore(ObjectFields::from_pairs(&[(46, 0x400)])),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                0x400,
+            )])),
             MovementState::default(),
         ))
         .id();
@@ -1269,13 +1276,13 @@ fn the_self_kneel_rides_the_loot_latch_not_the_flag() {
     );
 }
 
-/// The CREEP vis flag (`UNIT_FIELD_BYTES_1` byte 3 bit 1, field 138) alone flips the prowl pose,
+/// The CREEP vis flag (`UNIT_FIELD_BYTES_1` byte 2 bit 1) alone flips the prowl pose,
 /// read off the self unit's own descriptor too.
 #[test]
 fn the_creep_vis_flag_prowls_the_body() {
     use benilla_protocol::messages::ObjectFields;
 
-    const CREEP: u32 = 0x0200_0000;
+    const CREEP: u32 = 0x0002_0000;
     let mut app = app();
     let model = ModelAnimations {
         graph: Handle::default(),
@@ -1300,7 +1307,10 @@ fn the_creep_vis_flag_prowls_the_body() {
             AnimationTransitions::new(),
             AnimDriver::default(),
             crate::net::SelfPlayer,
-            crate::net::ObjectStore(ObjectFields::from_pairs(&[(138, 0)])),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_BYTES_1,
+                0,
+            )])),
             MovementState::default(),
         ))
         .id();
@@ -1309,7 +1319,8 @@ fn the_creep_vis_flag_prowls_the_body() {
         app.world_mut()
             .entity_mut(unit)
             .insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[(
-                138, v,
+                benilla_protocol::field::FIELD_UNIT_BYTES_1,
+                v,
             )])));
     };
 
@@ -2627,8 +2638,8 @@ fn drv_of(app: &App, unit: Entity) -> &AnimDriver {
 fn the_mount_transition_takes_bone_0_back_from_a_full_body_one_shot() {
     use benilla_protocol::ObjectFields;
 
-    /// `UNIT_FIELD_MOUNTDISPLAYID` (index 133).
-    const FIELD_MOUNTDISPLAYID: u16 = 133;
+    /// `UNIT_FIELD_MOUNTDISPLAYID`.
+    const FIELD_MOUNTDISPLAYID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
     const SPELL_CAST_OMNI: u16 = 54;
     const MOUNT: u16 = 91;
 
@@ -2708,7 +2719,7 @@ fn the_mount_transition_takes_bone_0_back_from_a_full_body_one_shot() {
 fn the_dismount_cuts_the_saddle_pose_where_the_mount_up_blends_into_it() {
     use benilla_protocol::ObjectFields;
 
-    const FIELD_MOUNTDISPLAYID: u16 = 133;
+    const FIELD_MOUNTDISPLAYID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
     const MOUNT: u16 = 91;
     let stand_node = AnimationNodeIndex::new(1);
     let mount_node = AnimationNodeIndex::new(2);
@@ -4125,7 +4136,7 @@ mod base_anim_lock {
 mod routing {
     use super::*;
 
-    const FIELD_MOUNTDISPLAYID: u16 = 133;
+    const FIELD_MOUNTDISPLAYID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
     const MOUNT: u16 = 91;
     const PRAY: u16 = 75; // EmoteKneel, in neither set
     const CHEER: u16 = 68; // the upper set
@@ -4431,7 +4442,7 @@ mod emote_state {
     const STUBBORN: u32 = 29;
     /// `/stand`'s state 26 (vmangos `ChatHandler.cpp` `HandleTextEmoteOpcode`): AnimID 0.
     const STAND_STATE: u32 = 26;
-    const FIELD_NPC_EMOTESTATE: u16 = 148;
+    const FIELD_NPC_EMOTESTATE: u16 = benilla_protocol::field::FIELD_UNIT_NPC_EMOTESTATE;
 
     /// Real graph nodes, so loop windows complete: every clip lasts 0.1 s, and the loops are one
     /// pass per window.
@@ -5402,8 +5413,8 @@ fn a_tiered_hold_resolves_unless_kit_flag_0x8_and_runs_on_at_its_end() {
             anims.clips[1].anim_id = 300;
             anims.clips[1].frequency = 32767;
             e.insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[(
-                138,
-                1 << 16,
+                benilla_protocol::field::FIELD_UNIT_BYTES_1,
+                1 << 24,
             )])));
         }
         nodes.swap(1, 2);
@@ -5519,9 +5530,9 @@ fn spawn_mortal(
             AnimationGraphHandle(graph_handle),
             AnimDriver::default(),
             crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                (22, health),
-                (28, 100),
-                (138, tier << 16),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, health),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_1, tier << 24),
             ])),
         ))
         .id();
@@ -5679,8 +5690,8 @@ fn a_swap_carries_a_death_under_half_played() {
     app.world_mut()
         .entity_mut(unit)
         .insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[
-            (22, 0),
-            (28, 100),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
         ])));
     app.update();
     let carried = |app: &App| {
@@ -5801,7 +5812,10 @@ fn spawn_on_clips(
             AnimationTransitions::new(),
             AnimationGraphHandle(graph_handle),
             AnimDriver::default(),
-            crate::net::ObjectStore(ObjectFields::from_pairs(&[(22, 100), (28, 100)])),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ])),
         ))
         .id();
     let by_id = rows.iter().map(|r| r.0).zip(nodes).collect();

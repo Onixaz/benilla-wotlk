@@ -2347,7 +2347,10 @@ mod tests {
     #[test]
     fn the_token_reads_move_with_the_gender_byte_alone() {
         let store = |bytes: u32| {
-            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(36, bytes)]))
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_BYTES_0,
+                bytes,
+            )]))
         };
         let items = crate::items::Items::default();
         let male = super::token_reads(Some(&store(4 | 1 << 8)), &items);

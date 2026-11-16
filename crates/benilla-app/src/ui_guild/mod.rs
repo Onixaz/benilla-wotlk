@@ -85,9 +85,9 @@ pub(crate) struct GuildMemberNotify(pub(crate) bool);
 /// The guild session mirror: filled by the packet handlers, read by the feed, reset on disconnect.
 #[derive(Resource, Default)]
 pub(crate) struct GuildState {
-    /// Our `PLAYER_GUILDID` (field 191), `0` when guildless; `IsInGuild` reads it, not the roster.
+    /// Our `PLAYER_GUILDID`, `0` when guildless; `IsInGuild` reads it, not the roster.
     guild_id: u32,
-    /// Our `PLAYER_GUILDRANK` (field 192), 0-based, `0` = guild master.
+    /// Our `PLAYER_GUILDRANK`, 0-based, `0` = guild master.
     rank_index: u32,
     /// Guild id to identity, asked once, negatives included; keyed by id because `PLAYER_GUILDID`
     /// is public, so any visible player's guild is nameable ([`unit_guild`]).
@@ -1311,21 +1311,30 @@ mod tests {
         assert_eq!(rx.try_iter().count(), 0, "guild id 0 asks nothing");
 
         // Fields 191/192 = PLAYER_GUILDID/PLAYER_GUILDRANK.
-        let unknown = ObjectFields::from_pairs(&[(191, 9), (192, 1)]);
+        let unknown = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_PLAYER_GUILDID, 9),
+            (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 1),
+        ]);
         assert!(
             unit_guild(&unknown, &mut guild, &commands).is_none(),
             "a query in flight is not a blank-named guild"
         );
         assert_eq!(rx.try_iter().count(), 1, "and the miss asked for it");
 
-        let member = ObjectFields::from_pairs(&[(191, 7), (192, 1)]);
+        let member = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_PLAYER_GUILDID, 7),
+            (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 1),
+        ]);
         let resolved = unit_guild(&member, &mut guild, &commands).expect("cached");
         assert_eq!(resolved.name, "Legacy");
         assert_eq!(resolved.rank_name, "Off");
         assert_eq!(resolved.rank_index, 1);
 
         // A rank past the ten slots names nothing.
-        let odd_rank = ObjectFields::from_pairs(&[(191, 7), (192, 99)]);
+        let odd_rank = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_PLAYER_GUILDID, 7),
+            (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 99),
+        ]);
         assert_eq!(
             unit_guild(&odd_rank, &mut guild, &commands)
                 .unwrap()
@@ -1348,7 +1357,8 @@ mod tests {
         assert_eq!(unit_guild_name(&guildless, &mut guild, &commands), None);
         assert_eq!(rx.try_iter().count(), 0, "guild id 0 asks nothing");
 
-        let unknown = ObjectFields::from_pairs(&[(191, 9)]);
+        let unknown =
+            ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 9)]);
         assert_eq!(
             unit_guild_name(&unknown, &mut guild, &commands),
             None,
@@ -1356,7 +1366,7 @@ mod tests {
         );
         assert_eq!(rx.try_iter().count(), 1, "and the miss asked for it");
 
-        let blank = ObjectFields::from_pairs(&[(191, 8)]);
+        let blank = ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 8)]);
         assert_eq!(unit_guild_name(&blank, &mut guild, &commands), None);
         assert_eq!(
             rx.try_iter().count(),
@@ -1364,7 +1374,10 @@ mod tests {
             "the negative cache re-asks nothing"
         );
 
-        let member = ObjectFields::from_pairs(&[(191, 7), (192, 1)]);
+        let member = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_PLAYER_GUILDID, 7),
+            (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 1),
+        ]);
         assert_eq!(
             unit_guild_name(&member, &mut guild, &commands),
             Some("Legacy")

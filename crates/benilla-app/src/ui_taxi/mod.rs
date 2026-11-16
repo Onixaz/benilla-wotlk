@@ -307,18 +307,15 @@ mod tests {
     use benilla_protocol::ObjectFields;
 
     /// The map's fares take the flight master's discount and the express leg sends the raw route
-    /// sum. Honored, a PvP-flagged flight master and honor rank byte 6 make 0.15: Sentinel Hill's
-    /// direct 110 shows 94, and Thelsamar's route through Ironforge, 50 + 110, shows 136 and sends
-    /// 160.
+    /// sum. Honored makes 0.1, as no 3.3.5a field carries an honor rank: Sentinel Hill's direct 110
+    /// shows 99, and Thelsamar's route through Ironforge, 50 + 110, shows 144 and sends 160.
     /// With the flight master unresolved the fares show 0.
     #[test]
     fn the_map_shows_discounted_fares_and_the_express_sends_the_raw_sum() {
         use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
         use bevy::ecs::system::RunSystemOnce;
 
-        /// `UNIT_FIELD_BYTES_0`, `PLAYER_BYTES_3`: absolute descriptor indices.
-        const BYTES_0: u16 = 36;
-        const PLAYER_BYTES_3: u16 = 195;
+        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
         const MASTER: u64 = 0xF130_0000_0000_0099;
 
         let data = benilla_formats::wow_data_or_skip!();
@@ -341,10 +338,10 @@ mod tests {
             .insert_non_send_resource(UiScript::new().unwrap());
         app.world_mut().spawn((
             SelfPlayer,
-            ObjectStore(ObjectFields::from_pairs(&[
-                (BYTES_0, crate::target::HUMAN_WARRIOR),
-                (PLAYER_BYTES_3, 6 << 24),
-            ])),
+            ObjectStore(ObjectFields::from_pairs(&[(
+                BYTES_0,
+                crate::target::HUMAN_WARRIOR,
+            )])),
         ));
         let master = app
             .world_mut()
@@ -376,10 +373,10 @@ mod tests {
                 .unwrap()
         };
         app.world_mut().run_system_once(feed_taxi).unwrap();
-        assert_eq!(node(&mut app, "Sentinel Hill, Westfall").1, 94);
-        assert_eq!(node(&mut app, "Ironforge, Dun Morogh").1, 42);
+        assert_eq!(node(&mut app, "Sentinel Hill, Westfall").1, 99);
+        assert_eq!(node(&mut app, "Ironforge, Dun Morogh").1, 45);
         let (thelsamar, shown) = node(&mut app, "Thelsamar, Loch Modan");
-        assert_eq!(shown, 136);
+        assert_eq!(shown, 144);
 
         app.world_mut()
             .non_send_resource_mut::<UiScript>()

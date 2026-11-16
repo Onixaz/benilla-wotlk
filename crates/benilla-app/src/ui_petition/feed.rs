@@ -541,7 +541,10 @@ mod tests {
 
     /// The player's display ids, `UNIT_FIELD_DISPLAYID` (131) and `UNIT_FIELD_NATIVEDISPLAYID`.
     fn player(display: u32, native: u32) -> ObjectStore {
-        ObjectStore(ObjectFields::from_pairs(&[(131, display), (132, native)]))
+        ObjectStore(ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_DISPLAYID, display),
+            (benilla_protocol::field::FIELD_UNIT_NATIVEDISPLAYID, native),
+        ]))
     }
 
     fn run(npc: u64, designer: u64, me: &ObjectStore) -> (Vec<ClientCommand>, Vec<&'static str>) {
@@ -589,14 +592,23 @@ mod tests {
         world.spawn((
             SelfPlayer,
             ObjectStore(ObjectFields::from_pairs(&[
-                (532, CHARTER as u32),
-                (533, (CHARTER >> 32) as u32),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                    CHARTER as u32,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                    (CHARTER >> 32) as u32,
+                ),
             ])),
         ));
         let item = crate::items::test_spawn_item(
             &mut world,
             CHARTER,
-            ObjectFields::from_pairs(&[(3, 23560), (14, 1)]),
+            ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, 23560),
+                (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, 1),
+            ]),
             false,
         );
         let forget = |world: &mut World, guid: u64| {
@@ -639,8 +651,8 @@ mod tests {
         world
             .entity_mut(item)
             .insert(ObjectStore(ObjectFields::from_pairs(&[
-                (3, 23560),
-                (14, 2),
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, 23560),
+                (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, 2),
             ])));
         assert_eq!(resolve(&mut world), vec![(0, 1)]);
     }

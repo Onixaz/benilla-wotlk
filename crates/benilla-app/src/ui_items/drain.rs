@@ -933,9 +933,9 @@ mod tests {
     const CLAM_ENTRY: u32 = 7973;
     const CLAM: u64 = 0x4000_0000_0000_1939;
     /// `PLAYER_FIELD_PACK_SLOT_1`, backpack slot 1's guid pair.
-    const F_PACK_SLOT_1: u16 = 532;
+    const F_PACK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
     /// `OBJECT_FIELD_ENTRY` on the item object.
-    const F_OBJECT_ENTRY: u16 = 3;
+    const F_OBJECT_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
 
     /// Right-clicks backpack slot 1, holding a lootable template, and runs the click dispatcher.
     fn open_the_clam() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
@@ -1223,16 +1223,13 @@ mod tests {
 
     /// The repair arm's purse test, unsigned `cost > money` on the discounted cost: one copper
     /// short shows `ERR_NOT_ENOUGH_MONEY` with its speech row, plays no `ITEM_REPAIR` and sends
-    /// nothing; exactly the cost, under the full price, sounds and sends.
+    /// nothing; exactly the cost sounds and sends.
     fn the_purse_test_refuses_one_copper_short_and_pays_the_exact_cost(worn: bool) {
-        use crate::ui_merchant::purse_fixture::{sword_prices, NOT_ENOUGH_MONEY, SWORD, VENDOR};
-        let (full, discounted) = sword_prices();
+        use crate::ui_merchant::purse_fixture::{sword_price, NOT_ENOUGH_MONEY, SWORD, VENDOR};
+        let price = sword_price();
 
-        let short = click_to_repair_the_sword(discounted - 1, worn);
-        assert!(
-            short.sent.is_empty(),
-            "short of {discounted}: nothing goes out"
-        );
+        let short = click_to_repair_the_sword(price - 1, worn);
+        assert!(short.sent.is_empty(), "short of {price}: nothing goes out");
         assert!(short.sounds.is_empty(), "…no ITEM_REPAIR");
         assert_eq!(short.shown, [NOT_ENOUGH_MONEY], "…the red line");
         assert_eq!(
@@ -1241,7 +1238,7 @@ mod tests {
             "…and its row, which speaks line 0x28"
         );
 
-        let exact = click_to_repair_the_sword(discounted, worn);
+        let exact = click_to_repair_the_sword(price, worn);
         assert!(
             matches!(
                 exact.sent.as_slice(),
@@ -1251,7 +1248,7 @@ mod tests {
                     guild_bank: false,
                 }]
             ),
-            "{discounted} in the purse pays the discounted {discounted}, short of the full {full}"
+            "{price} in the purse pays the {price}"
         );
         assert_eq!(
             exact.sounds,
@@ -1444,11 +1441,11 @@ mod bind_confirm_tests {
     /// Flurry Axe, a real `item_template` row: quality 4, bonding 2 (bind on equip).
     const FLURRY_AXE: u32 = 871;
     const AXE_GUID: u64 = 0x4000_0000_0000_0871;
-    /// `ITEM_FIELD_FLAGS` (field 21); bit 0 is soulbound.
-    const F_ITEM_FLAGS: u16 = 21;
+    /// `ITEM_FIELD_FLAGS`; bit 0 is soulbound.
+    const F_ITEM_FLAGS: u16 = benilla_protocol::field::FIELD_ITEM_FLAGS;
     /// `PLAYER_FIELD_PACK_SLOT_1`, backpack slot 1's guid pair.
-    const F_PACK_SLOT_1: u16 = 532;
-    const F_OBJECT_ENTRY: u16 = 3;
+    const F_PACK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
+    const F_OBJECT_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
 
     fn load_ui(s: &UiScript) {
         // Chain files, so through the chain-aware reader.

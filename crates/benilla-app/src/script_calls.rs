@@ -212,9 +212,9 @@ mod tests {
     /// A mob the TAB scan can pick: it alone carries a `NetEntity`.
     const MOB: u64 = 0x31;
     /// `UNIT_FIELD_FACTIONTEMPLATE`, `UNIT_FIELD_HEALTH`, `UNIT_FIELD_FLAGS`.
-    const TEMPLATE: u16 = 35;
-    const HEALTH: u16 = 22;
-    const FLAGS: u16 = 46;
+    const TEMPLATE: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
+    const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
     /// The fixture's templates: ours (group 1, friendly toward group 2, enemy of group 4), a
     /// friendly NPC's (group 2) and a hostile mob's (group 4).
     const OURS: u32 = 1;
@@ -240,8 +240,8 @@ mod tests {
                 Transform::from_xyz(x, 0.0, 0.0),
                 GlobalTransform::from_translation(Vec3::new(x, 0.0, 0.0)),
                 ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (22, 100),
-                    (28, 100),
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
                 ])),
             )
         };
@@ -251,10 +251,10 @@ mod tests {
         world
             .entity_mut(me)
             .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x19),
-                (22, 100),
-                (28, 100),
-                (46, 0x8),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
             ])));
         let old = world.spawn(unit(OLD, 5.0)).id();
         let new = world.spawn(unit(NEW, 6.0)).id();
@@ -339,7 +339,10 @@ mod tests {
     /// `MOB` at 3 yd, alive, with `fields` over its health.
     fn spawn_mob(f: &mut Frame, fields: &[(u16, u32)]) {
         let world = f.app.world_mut();
-        let mut pairs = vec![(HEALTH, 100), (28, 100)];
+        let mut pairs = vec![
+            (HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        ];
         pairs.extend_from_slice(fields);
         let mob = world
             .spawn((
@@ -386,13 +389,17 @@ mod tests {
         world
             .entity_mut(me)
             .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x19),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
                 (HEALTH, 100),
-                (28, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
                 (FLAGS, 0x8),
                 (TEMPLATE, OURS),
             ])));
-        let mut pairs = vec![(HEALTH, 100), (28, 100), (TEMPLATE, old)];
+        let mut pairs = vec![
+            (HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (TEMPLATE, old),
+        ];
         pairs.extend_from_slice(fields);
         world
             .entity_mut(old_unit)
@@ -574,8 +581,8 @@ mod tests {
                 .spawn((
                     Guid(PET),
                     ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                        (12, ME as u32),
-                        (13, 0),
+                        (benilla_protocol::field::FIELD_UNIT_SUMMONEDBY, ME as u32),
+                        (benilla_protocol::field::FIELD_UNIT_SUMMONEDBY + 1, 0),
                     ])),
                 ))
                 .id();
@@ -721,9 +728,9 @@ mod tests {
             world
                 .entity_mut(me)
                 .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (2, 0x19),
+                    (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
                     (HEALTH, 100),
-                    (28, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
                     (FLAGS, 0x8),
                     (TEMPLATE, OURS),
                     (FIELD_UNIT_MOUNTDISPLAYID, 1147),

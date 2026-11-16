@@ -285,7 +285,10 @@ impl Rig {
         app.insert_resource(NetCommands(tx));
         let world = app.world_mut();
         let unit = |guid: u64, x: f32, pairs: &[(u16, u32)]| {
-            let mut fields = vec![(22, 100), (28, 100)];
+            let mut fields = vec![
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ];
             fields.extend_from_slice(pairs);
             (
                 Guid(guid),
@@ -297,7 +300,17 @@ impl Rig {
         // A player (`OBJECT_FIELD_TYPE` 0x19, `UNIT_FLAG_PVP_ATTACKABLE`): with no faction table
         // every plain unit is attackable to it.
         let me = world
-            .spawn((SelfPlayer, unit(ME, 0.0, &[(2, 0x19), (46, 0x8)])))
+            .spawn((
+                SelfPlayer,
+                unit(
+                    ME,
+                    0.0,
+                    &[
+                        (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                        (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+                    ],
+                ),
+            ))
             .id();
         let old = world.spawn(unit(OLD, 5.0, &[])).id();
         let new = world.spawn(unit(NEW, 6.0, &[])).id();
@@ -306,10 +319,10 @@ impl Rig {
             .spawn((
                 Guid(PET),
                 ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (12, ME as u32),
-                    (13, 0),
-                    (14, ME as u32),
-                    (15, 0),
+                    (benilla_protocol::field::FIELD_UNIT_SUMMONEDBY, ME as u32),
+                    (benilla_protocol::field::FIELD_UNIT_SUMMONEDBY + 1, 0),
+                    (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+                    (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
                 ])),
             ))
             .id();
@@ -539,7 +552,7 @@ impl Rig {
         self.app.world().resource::<Selection>().guid
     }
 
-    /// Five waters in the backpack's first slot (`PLAYER_FIELD_PACK_SLOT_1`, field 532), with
+    /// Five waters in the backpack's first slot (`PLAYER_FIELD_PACK_SLOT_1`), with
     /// Drink as their on-use spell.
     fn water_in_the_backpack(&mut self) {
         let world = self.app.world_mut();
@@ -547,8 +560,8 @@ impl Rig {
             .spawn((
                 Guid(WATER_GUID),
                 ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (3, WATER),
-                    (14, 5),
+                    (benilla_protocol::field::FIELD_OBJECT_ENTRY, WATER),
+                    (benilla_protocol::field::FIELD_UNIT_CREATEDBY, 5),
                 ])),
             ))
             .id();
@@ -560,12 +573,18 @@ impl Rig {
         world
             .entity_mut(me)
             .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x19),
-                (22, 100),
-                (28, 100),
-                (46, 0x8),
-                (532, WATER_GUID as u32),
-                (533, (WATER_GUID >> 32) as u32),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                    WATER_GUID as u32,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                    (WATER_GUID >> 32) as u32,
+                ),
             ])));
         world.resource_mut::<crate::items::Items>().insert_template(
             WATER,
@@ -767,9 +786,9 @@ fn ride_and_install_live_taxi(rig: &mut Rig) {
     world
         .entity_mut(me)
         .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (2, 0x19),
-            (22, 100),
-            (28, 100),
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
             (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8 | 1 << 20),
         ])));
     crate::ui_script::live_tests::install_live_taxi(&rig.vm());

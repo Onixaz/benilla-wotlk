@@ -2,7 +2,7 @@
 //! vault window reads (the bank bag guids and the purchased-slot count).
 
 use benilla_protocol::events::{decode, SessionEvent};
-use benilla_protocol::messages::{self, ObjectFields};
+use benilla_protocol::messages::{self, field, ObjectFields};
 use benilla_protocol::ServerPacket;
 
 fn hx(s: &str) -> Vec<u8> {
@@ -107,9 +107,9 @@ fn buy_bank_slot_result_wire() {
 
 #[test]
 fn player_bank_bag_slot_field() {
-    // The shared space keeps the seven bank-bag guids past the 1.12.1 player end, from field 1572
-    // (after the 28 bank slots at 1516).
-    let f = ObjectFields::from_pairs(&[(1572, 0xEF), (1573, 0)]);
+    // The seven bank-bag guids follow the 28 bank slots.
+    const BAG_1: u16 = field::FIELD_PLAYER_BANK_BAG_SLOT_1;
+    let f = ObjectFields::from_pairs(&[(BAG_1, 0xEF), (BAG_1 + 1, 0)]);
     assert_eq!(f.player_bank_bag_slot(0), Some(0xEF));
     assert_eq!(f.player_bank_bag_slot(1), None, "unsent slot reads None");
     assert_eq!(
@@ -118,16 +118,15 @@ fn player_bank_bag_slot_field() {
         "out of range (only 7 bag slots)"
     );
 
-    // Bag slot 6 (the 7th, last purchasable slot): fields 1584/1585.
-    let f6 = ObjectFields::from_pairs(&[(1584, 0x1234), (1585, 0)]);
+    // Bag slot 6, the 7th and last purchasable slot.
+    let f6 = ObjectFields::from_pairs(&[(BAG_1 + 12, 0x1234), (BAG_1 + 13, 0)]);
     assert_eq!(f6.player_bank_bag_slot(6), Some(0x1234));
 }
 
 #[test]
 fn player_bank_bag_slots_purchased_field() {
-    // PLAYER_BYTES_2 (field 194), from byte 0: facialHair, unk, bankBagSlots, restState
-    // (vmangos Player.h:347).
-    let f = ObjectFields::from_pairs(&[(194, 0x0403_0201)]);
+    // PLAYER_BYTES_2, from byte 0: facialHair, unk, bankBagSlots, restState.
+    let f = ObjectFields::from_pairs(&[(field::FIELD_PLAYER_BYTES_2, 0x0403_0201)]);
     assert_eq!(f.player_bank_bag_slots_purchased(), Some(3));
     assert_eq!(f.player_facial_hair(), Some(1), "byte 0 unaffected");
 
@@ -135,6 +134,6 @@ fn player_bank_bag_slots_purchased_field() {
     let empty = ObjectFields::from_pairs(&[]);
     assert_eq!(empty.player_bank_bag_slots_purchased(), None);
 
-    let full = ObjectFields::from_pairs(&[(194, 7 << 16)]);
+    let full = ObjectFields::from_pairs(&[(field::FIELD_PLAYER_BYTES_2, 7 << 16)]);
     assert_eq!(full.player_bank_bag_slots_purchased(), Some(7));
 }

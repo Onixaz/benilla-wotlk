@@ -604,7 +604,12 @@ mod tests {
         ]));
         world.insert_resource(spells);
         // `UNIT_FIELD_HEALTH` 100: a store with no health reads dead to the target bind's gates.
-        let live = || ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(22, 100)]));
+        let live = || {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_HEALTH,
+                100,
+            )]))
+        };
         world.spawn((SelfPlayer, Guid(ME), GlobalTransform::default(), live()));
         let ally = world
             .spawn((
@@ -758,9 +763,12 @@ mod tests {
         // `OBJECT_FIELD_TYPE` and `UNIT_FIELD_TARGET`, the latter a 2-field guid.
         let unit = |kind: u32, target: u64| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, kind),
-                (16, target as u32),
-                (17, (target >> 32) as u32),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, kind),
+                (benilla_protocol::field::FIELD_UNIT_TARGET, target as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_TARGET + 1,
+                    (target >> 32) as u32,
+                ),
             ]))
         };
         let seat = |world: &mut World, ally: Entity| {
@@ -860,10 +868,13 @@ mod tests {
         // `OBJECT_FIELD_TYPE`, `UNIT_FIELD_HEALTH` and `UNIT_FIELD_TARGET`, the last a 2-field guid.
         let unit = |kind: u32, target: u64| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, kind),
-                (22, 100),
-                (16, target as u32),
-                (17, (target >> 32) as u32),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, kind),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_TARGET, target as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_TARGET + 1,
+                    (target >> 32) as u32,
+                ),
             ]))
         };
         let can = |distance: f32, token: &str| {
@@ -930,10 +941,10 @@ mod tests {
         const SPELL: u32 = 3000;
         /// Absolute descriptor indices: `OBJECT_FIELD_ENTRY`, `UNIT_FIELD_HEALTH`,
         /// `UNIT_FIELD_FLAGS` and `UNIT_DYNAMIC_FLAGS`.
-        const ENTRY: u16 = 3;
-        const HEALTH: u16 = 22;
-        const FLAGS: u16 = 46;
-        const DYNAMIC_FLAGS: u16 = 143;
+        const ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+        const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+        const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+        const DYNAMIC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS;
         const HUMANOID: u32 = 69;
         const BEAST: u32 = 70;
 

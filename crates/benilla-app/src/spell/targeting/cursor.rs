@@ -822,7 +822,10 @@ mod tests {
             // `UNIT_FIELD_HEALTH` 100: a store with no health reads dead to the target bind's
             // gates.
             let live = || {
-                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(22, 100)]))
+                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                    benilla_protocol::field::FIELD_UNIT_HEALTH,
+                    100,
+                )]))
             };
             world.spawn((
                 SelfPlayer,
@@ -927,7 +930,10 @@ mod tests {
                 ..Default::default()
             });
             let live = || {
-                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(22, 100)]))
+                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                    benilla_protocol::field::FIELD_UNIT_HEALTH,
+                    100,
+                )]))
             };
             world.spawn((
                 SelfPlayer,

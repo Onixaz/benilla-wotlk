@@ -386,9 +386,9 @@ fn only_a_possessed_units_attack_press_raises_the_latch() {
 /// The reference's possessed-unit lookup asks for the unit we possess, not the one we own.
 #[test]
 fn the_latch_gate_is_possession_not_ownership() {
-    const FLAGS: u16 = 46;
-    const CHARMEDBY: u16 = 10;
-    const CREATEDBY: u16 = 14;
+    const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const CHARMEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CHARMEDBY;
+    const CREATEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CREATEDBY;
     let unit =
         |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
     let me = Some(0x77u64);
@@ -553,9 +553,9 @@ fn touching_your_target_calls_the_pet_off() {
 /// The owner test falls back to SUMMONEDBY, not the possessed-unit lookup's CREATEDBY.
 #[test]
 fn the_attack_events_read_the_pets_combat_flag_not_the_click_latch() {
-    const FLAGS: u16 = 46;
-    const CHARMEDBY: u16 = 10;
-    const SUMMONEDBY: u16 = 12;
+    const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const CHARMEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CHARMEDBY;
+    const SUMMONEDBY: u16 = benilla_protocol::field::FIELD_UNIT_SUMMONEDBY;
     let unit =
         |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
     let me = Some(0x77u64);
@@ -898,12 +898,12 @@ fn a_held_pet_reads_connected_and_its_stock_power_bar_shows_its_power() {
     // type a hunter's pet runs on, at POWER1 + 2 and MAXPOWER1 + 2.
     const FOCUS: u32 = 2;
     let fields = [
-        (22, 72),
-        (28, 100),
-        (34, 60),
-        (36, FOCUS << 24),
-        (25, 45),
-        (31, 80),
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 72),
+        (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
+        (benilla_protocol::field::FIELD_UNIT_BYTES_0, FOCUS << 24),
+        (benilla_protocol::field::FIELD_UNIT_POWER1 + 2, 45),
+        (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 2, 80),
     ];
 
     let mut script = benilla_ui::script::UiScript::new().unwrap();
@@ -976,7 +976,7 @@ fn a_held_pet_names_its_templates_creature_type() {
     use bevy::prelude::*;
     const PET: u64 = 0xF140_0000_0000_002A;
     /// `OBJECT_FIELD_ENTRY`, and the Imp's template entry.
-    const OBJECT_FIELD_ENTRY: u16 = 3;
+    const OBJECT_FIELD_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
     const IMP: u32 = 416;
 
     let mut names = crate::names::NameCache::default();
@@ -1045,7 +1045,7 @@ fn a_moved_summon_field_fires_unit_pet_with_the_bar_unchanged() {
     use bevy::prelude::*;
     const PET: u64 = 0xF140_0000_0000_002A;
     const ME: u64 = 0x19;
-    const SUMMON: u16 = 8;
+    const SUMMON: u16 = benilla_protocol::field::FIELD_UNIT_SUMMON;
 
     let mut app = App::new();
     app.add_message::<crate::net::FieldChanged>()

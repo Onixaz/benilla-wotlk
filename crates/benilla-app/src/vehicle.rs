@@ -877,7 +877,10 @@ mod tests {
         let unit = |w: &mut World, t: ObjectType| {
             let mask = if t == ObjectType::Player { 0x19 } else { 0x9 };
             w.spawn((
-                ObjectStore(ObjectFields::from_pairs(&[(2, mask)]).into_created(t)),
+                ObjectStore(
+                    ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_OBJECT_TYPE, mask)])
+                        .into_created(t),
+                ),
                 Transform::from_rotation(Quat::from_rotation_y(0.75)),
             ))
             .id()
@@ -993,9 +996,15 @@ mod tests {
             raw_facing: 0.0,
         });
         // `UNIT_FIELD_CHARM` (6-7) on the cart.
-        let charm =
-            ObjectFields::from_pairs(&[(2, 0x19), (6, CART as u32), (7, (CART >> 32) as u32)])
-                .into_created(ObjectType::Player);
+        let charm = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_CHARM, CART as u32),
+            (
+                benilla_protocol::field::FIELD_UNIT_CHARM + 1,
+                (CART >> 32) as u32,
+            ),
+        ])
+        .into_created(ObjectType::Player);
         w.entity_mut(me).insert((
             crate::net::Guid(ME),
             ObjectStore(charm),

@@ -388,7 +388,7 @@ mod tests {
     /// A live helpful and a live harmful aura's wire flags.
     const HELP: u8 = 1;
     const HARM: u8 = benilla_protocol::messages::AURA_UPDATE_FLAG_HARMFUL | 1;
-    const SUMMON: u16 = 8;
+    const SUMMON: u16 = benilla_protocol::field::FIELD_UNIT_SUMMON;
 
     /// The feed on a bare app with a VM, us, and a party of one, `MEMBER`, with no record.
     fn party_app() -> App {
@@ -975,9 +975,9 @@ mod tests {
     // == Any token the resolver parses ==
 
     /// `OBJECT_FIELD_TYPE`; a unit's typemask is `0x9`, a player's `0x19`.
-    const TYPE: u16 = 2;
+    const TYPE: u16 = benilla_protocol::field::FIELD_OBJECT_TYPE;
     /// `UNIT_FIELD_TARGET`'s low dword; the high half is the next index.
-    const TARGET: u16 = 16;
+    const TARGET: u16 = benilla_protocol::field::FIELD_UNIT_TARGET;
     const MOB: u64 = 0xF130_0000_0000_0001;
     const ADD: u64 = 0xF130_0000_0000_0002;
 

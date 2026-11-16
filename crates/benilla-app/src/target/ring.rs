@@ -991,10 +991,16 @@ mod tests {
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let factions = Factions(benilla_formats::load_faction_catalog(&mut chain).expect("dbc"));
         // A Chicken, template 31: neutral by the comparator.
-        let chicken = ObjectStore(ObjectFields::from_pairs(&[(35, 31)]));
+        let chicken = ObjectStore(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+            31,
+        )]));
         let me = ObjectStore(ObjectFields::from_pairs(&[
-            (35, 1),
-            (46, UNIT_FLAG_PVP_ATTACKABLE),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
         ]));
         let faction = factions.0.template(31).expect("template 31").faction;
         let forced = Reputations(Vec::new(), vec![(faction + 1, 4), (faction, 1)]);
@@ -1012,7 +1018,10 @@ mod tests {
         };
         assert_eq!(both(&Reputations::default(), &me), (3, 3));
         assert_eq!(both(&forced, &me), (1, 1), "hostile by force");
-        let uncontrolled = ObjectStore(ObjectFields::from_pairs(&[(35, 1)]));
+        let uncontrolled = ObjectStore(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+            1,
+        )]));
         assert_eq!(
             both(&forced, &uncontrolled),
             (3, 3),
@@ -1031,11 +1040,19 @@ mod tests {
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let factions = Factions(benilla_formats::load_faction_catalog(&mut chain).expect("dbc"));
         // Field indices: 35 = UNIT_FIELD_FACTIONTEMPLATE, 46 = UNIT_FIELD_FLAGS.
-        let unit = |tpl: u32| ObjectStore(ObjectFields::from_pairs(&[(35, tpl)]));
+        let unit = |tpl: u32| {
+            ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                tpl,
+            )]))
+        };
         // Us: a player-controlled Human, faction template 1.
         let me = ObjectStore(ObjectFields::from_pairs(&[
-            (35, 1),
-            (46, UNIT_FLAG_PVP_ATTACKABLE),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
         ]));
         let quiet = Reputations::default(); // nothing at war
         let category = |unit: &ObjectStore, reps: &Reputations| {
@@ -1095,7 +1112,7 @@ mod tests {
         use benilla_protocol::ObjectFields;
 
         /// `UNIT_FIELD_BYTES_0`, absolute descriptor index.
-        const BYTES_0: u16 = 36;
+        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let me = ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, HUMAN_WARRIOR)]));
@@ -1139,11 +1156,17 @@ mod tests {
         let factions = Factions(benilla_formats::load_faction_catalog(&mut chain).expect("dbc"));
         // 35 = UNIT_FIELD_FACTIONTEMPLATE, 46 = UNIT_FIELD_FLAGS, 147 = UNIT_NPC_FLAGS.
         let npc = |tpl: u32, npc_flags: u32| {
-            ObjectStore(ObjectFields::from_pairs(&[(35, tpl), (147, npc_flags)]))
+            ObjectStore(ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, tpl),
+                (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, npc_flags),
+            ]))
         };
         let me = ObjectStore(ObjectFields::from_pairs(&[
-            (35, 1), // Human
-            (46, UNIT_FLAG_PVP_ATTACKABLE),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1), // Human
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
         ]));
         let quiet = Reputations::default(); // nothing at war
         let mut slots = vec![(0u8, 0i32); 64];
@@ -1223,8 +1246,11 @@ mod tests {
         let reps = Reputations::default();
         let player = |tpl: u32| {
             ObjectStore(ObjectFields::from_pairs(&[
-                (35, tpl),
-                (46, UNIT_FLAG_PVP_ATTACKABLE),
+                (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, tpl),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FLAGS,
+                    UNIT_FLAG_PVP_ATTACKABLE,
+                ),
             ]))
         };
         let category = |subject: &ObjectStore, me: &ObjectStore| {
@@ -1271,7 +1297,12 @@ mod tests {
             );
         }
         // …while NPCs keep theirs: the cooperation check is never asked for an NPC.
-        let npc = |tpl: u32| ObjectStore(ObjectFields::from_pairs(&[(35, tpl)]));
+        let npc = |tpl: u32| {
+            ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                tpl,
+            )]))
+        };
         let npc_category = |subject: &ObjectStore, me: &ObjectStore| {
             plate_is_friendly(
                 Some(&factions),
@@ -1303,11 +1334,19 @@ mod tests {
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let factions = Factions(benilla_formats::load_faction_catalog(&mut chain).expect("dbc"));
         let me = ObjectStore(ObjectFields::from_pairs(&[
-            (35, 1),
-            (46, UNIT_FLAG_PVP_ATTACKABLE),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
         ]));
         let reps = Reputations::default();
-        let mob = |flags: u32| ObjectStore(ObjectFields::from_pairs(&[(35, 14), (46, flags)]));
+        let mob = |flags: u32| {
+            ObjectStore(ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 14),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+            ]))
+        };
 
         // Template 14, Monster: hostile by the comparator.
         assert_eq!(
@@ -1390,7 +1429,7 @@ mod tests {
                 // `OBJECT_FIELD_TYPE` (2) 0x9, object and unit, as a creature's create carries it:
                 // the selection set's selectable test refuses any other type.
                 fields: ObjectFields::from_pairs(&[
-                    (2, 0x9),
+                    (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
                     (FIELD_UNIT_HEALTH, 100),
                     (FIELD_UNIT_MAXHEALTH, 100),
                     (FIELD_UNIT_LEVEL, 9),

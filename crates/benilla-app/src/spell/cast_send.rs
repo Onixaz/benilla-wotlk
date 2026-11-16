@@ -1427,8 +1427,15 @@ mod tests {
         let leak = |pairs: &[(u16, u32)]| -> &'static ObjectStore {
             Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(pairs))))
         };
-        let corpse = leak(&[(22, 0), (28, 100)]);
-        let ghost = leak(&[(22, 1), (28, 100), (190, 0x10)]);
+        let corpse = leak(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        ]);
+        let ghost = leak(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 1),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_PLAYER_FLAGS, 0x10),
+        ]);
         let press = |world: &mut World, spell_id: u32, store: &'static ObjectStore| {
             world
                 .run_system_once(move |mut ladder: CastLadder| {
@@ -1502,9 +1509,9 @@ mod tests {
         world.insert_resource(spells);
         let seated: &'static ObjectStore =
             Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
-                (138, 1),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_1, 1),
             ]))));
         for auto_stand in [true, false] {
             world
@@ -1575,9 +1582,9 @@ mod tests {
         world.insert_resource(spells);
         let shifted: &'static ObjectStore =
             Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
-                (164, 15 << 24),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_2, 15 << 24),
             ]))));
         let auras: &'static crate::unit_auras::UnitAuras = Box::leak(Box::new(
             crate::unit_auras::UnitAuras::of(1, &[(0, FORM_AURA, AURA_UPDATE_FLAG_CANCELABLE | 1)]),
@@ -1663,11 +1670,11 @@ mod tests {
         world.insert_resource(spells);
         let store: &'static ObjectStore =
             Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
-                (131, 15374),
-                (132, 49),
-                (164, FORM << 24),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_DISPLAYID, 15374),
+                (benilla_protocol::field::FIELD_UNIT_NATIVEDISPLAYID, 49),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
             ]))));
         let auras: &'static crate::unit_auras::UnitAuras = Box::leak(Box::new(
             crate::unit_auras::UnitAuras::of(1, &[(0, FORM_AURA, AURA_UPDATE_FLAG_CANCELABLE | 1)]),
@@ -1729,8 +1736,8 @@ mod tests {
         world.insert_resource(spells);
         let mounted: &'static ObjectStore =
             Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
                 (FIELD_UNIT_MOUNTDISPLAYID, 2410),
             ]))));
         let press = |world: &mut World, spell_id: u32, auto_dismount: bool| {
@@ -2213,12 +2220,15 @@ mod tests {
         );
         assert!(rx.try_recv().is_err());
 
-        // `UNIT_FIELD_BYTES_0` (field 36) byte 1 is the class; the context banks no points.
+        // `UNIT_FIELD_BYTES_0` byte 1 is the class; the context banks no points.
         for (class, reason) in [(4u32, 0x46), (11, 0x46), (1, 0x12)] {
             let (mut world, rx) = combat_world(false);
             let held = world
                 .run_system_once(move |mut ladder: CastLadder| {
-                    let me = crate::net::ObjectStore(ObjectFields::from_pairs(&[(36, class << 8)]));
+                    let me = crate::net::ObjectStore(ObjectFields::from_pairs(&[(
+                        benilla_protocol::field::FIELD_UNIT_BYTES_0,
+                        class << 8,
+                    )]));
                     let ctx = cast_target::CastContext {
                         rel: cast_target::TargetRelations {
                             self_store: Some(&me),
@@ -2486,8 +2496,8 @@ mod tests {
         // 100 mana (field 23 = UNIT_FIELD_POWER1). Leaked: the one-shot closure must be 'static.
         let store: &'static ObjectStore =
             Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
-                (22u16, 100u32),
-                (23, 100),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100u32),
+                (benilla_protocol::field::FIELD_UNIT_POWER1, 100),
             ]))));
 
         let base = ctx();

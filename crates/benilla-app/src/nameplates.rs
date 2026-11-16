@@ -309,7 +309,8 @@ fn title_key(
     (net.kind == EntityKind::Player).then(|| TitleKey {
         chosen: store.0.player_chosen_title(),
         female: store.0.unit_gender() == Some(1),
-        medal: store.0.player_pvp_medal().unwrap_or(0),
+        // No city-protector medal streams: 3.3.5a's `PLAYER_BYTES_3` byte 2 is the PvP title.
+        medal: 0,
         on: cfg.has(name_bit::PLAYER_PVP_TITLE),
         strings: strings.generation,
     })
@@ -1188,23 +1189,36 @@ mod tests {
     }
 
     /// `UNIT_FIELD_BYTES_0` (36): race human, class warrior, male.
-    const HUMAN_MALE: (u16, u32) = (36, 0x0101);
+    const HUMAN_MALE: (u16, u32) = (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x0101);
     /// `PLAYER_CHOSEN_TITLE`: mask 46.
     const EXPLORER: (u16, u32) = (benilla_protocol::field::FIELD_PLAYER_CHOSEN_TITLE, 46);
 
-    /// The a4 inputs off the descriptor: the chosen title, the sex, the medal byte and the CVar; a
-    /// creature has no a4 leg.
+    /// The a4 inputs off the descriptor: the chosen title, the sex and the CVar, with no medal, which
+    /// no 3.3.5a field carries; a creature has no a4 leg.
     #[test]
     fn title_key_reads_the_chosen_title_the_sex_and_the_cvar() {
         let cfg = NameConfig::default();
         let strings = strings_of(1, &[]);
-        let (net, human) = unit(EntityKind::Player, &[HUMAN_MALE, EXPLORER, (195, 2 << 16)]);
+        let (net, human) = unit(
+            EntityKind::Player,
+            &[
+                HUMAN_MALE,
+                EXPLORER,
+                (benilla_protocol::field::FIELD_PLAYER_BYTES_3, 2 << 16),
+            ],
+        );
         let key = title_key(&cfg, &strings, &net, Some(&human)).unwrap();
         assert_eq!(
             (key.chosen, key.female, key.medal, key.on),
-            (46, false, 2, true)
+            (46, false, 0, true)
         );
-        let (_, orc) = unit(EntityKind::Player, &[(36, 0x010102), EXPLORER]);
+        let (_, orc) = unit(
+            EntityKind::Player,
+            &[
+                (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x010102),
+                EXPLORER,
+            ],
+        );
         assert!(title_key(&cfg, &strings, &net, Some(&orc)).unwrap().female);
         let off = NameConfig(cfg.0 & !name_bit::PLAYER_PVP_TITLE);
         assert!(!title_key(&off, &strings, &net, Some(&human)).unwrap().on);
@@ -1244,12 +1258,13 @@ mod tests {
         assert_eq!(line(&cfg, &wolf, 0, "Young Wolf"), "Young Wolf");
         let female = unit(
             EntityKind::Player,
-            &[(36, 0x01_0101), EXPLORER, (195, 1 << 16)],
+            &[
+                (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x01_0101),
+                EXPLORER,
+                (benilla_protocol::field::FIELD_PLAYER_BYTES_3, 1 << 16),
+            ],
         );
-        assert_eq!(
-            line(&cfg, &female, 0, "Alice"),
-            "Alice the Exploress\nGuardian"
-        );
+        assert_eq!(line(&cfg, &female, 0, "Alice"), "Alice the Exploress");
     }
 
     /// The strings and rows move the key the plate cache compares only when they differ: the

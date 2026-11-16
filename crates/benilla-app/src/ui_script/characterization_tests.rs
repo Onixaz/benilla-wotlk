@@ -856,7 +856,11 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
                 guid: ITEM_GUID,
                 container: false,
                 // `OBJECT_FIELD_ENTRY`, word 3.
-                fields: ObjectFields::from_pairs(&[(3, ITEM)]).into_created(ObjectType::Item),
+                fields: ObjectFields::from_pairs(&[(
+                    benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                    ITEM,
+                )])
+                .into_created(ObjectType::Item),
             },
             // The backpack's first slot, after the 23 equipment and bag slots.
             self_values(&[

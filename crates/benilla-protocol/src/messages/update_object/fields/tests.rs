@@ -1,128 +1,77 @@
 use super::player::player_slot_of_field;
 use super::*;
 
-/// The indices re-derived from vmangos's enum arithmetic and chained to two anchors known
-/// independently: `FIELD_PLAYER_INV_SLOT_HEAD` (486, a live descriptor dump) and
-/// `FIELD_PLAYER_BUYBACK_PRICE_1` (1226, the client binary).
+/// Each block's length and a field per run, against the offsets in the reference's descriptor
+/// tables (`0xac5ce8` item, `0xac5cac` container, `0xac5fe0` unit, `0xac66d8` player, `0xac77a8`
+/// gameobject, `0xac7848` dynamic object, `0xac78b0` corpse), each added to the end of the block
+/// before it.
 #[test]
-fn combat_stat_indices_chain_to_the_tested_anchors() {
-    const OBJECT_END: u16 = 6;
-    const UNIT_END: u16 = OBJECT_END + 0xB6; // UpdateFields_1_12_1.h
-    assert_eq!(UNIT_END, 188);
-    assert_eq!(FIELD_PLAYER_INV_SLOT_HEAD, UNIT_END + 0x12A);
-    assert_eq!(FIELD_PLAYER_BUYBACK_PRICE_1, UNIT_END + 0x40E);
-    // UNIT combat block.
-    assert_eq!(FIELD_UNIT_BASEATTACKTIME, OBJECT_END + 0x78);
-    assert_eq!(FIELD_UNIT_RANGEDATTACKTIME, OBJECT_END + 0x7A);
-    assert_eq!(FIELD_UNIT_MINDAMAGE, OBJECT_END + 0x80);
-    assert_eq!(FIELD_UNIT_MAXDAMAGE, OBJECT_END + 0x81);
-    assert_eq!(FIELD_UNIT_MINOFFHANDDAMAGE, OBJECT_END + 0x82);
-    assert_eq!(FIELD_UNIT_MAXOFFHANDDAMAGE, OBJECT_END + 0x83);
-    assert_eq!(FIELD_UNIT_STAT0, OBJECT_END + 0x90);
-    assert_eq!(FIELD_UNIT_RESISTANCES, OBJECT_END + 0x95);
-    assert_eq!(FIELD_UNIT_ATTACK_POWER, OBJECT_END + 0x9F);
-    assert_eq!(FIELD_UNIT_ATTACK_POWER_MODS, OBJECT_END + 0xA0);
-    assert_eq!(FIELD_UNIT_ATTACK_POWER_MULTIPLIER, OBJECT_END + 0xA1);
-    assert_eq!(FIELD_UNIT_RANGED_ATTACK_POWER, OBJECT_END + 0xA2);
-    assert_eq!(FIELD_UNIT_RANGED_ATTACK_POWER_MODS, OBJECT_END + 0xA3);
-    assert_eq!(FIELD_UNIT_RANGED_ATTACK_POWER_MULTIPLIER, OBJECT_END + 0xA4);
-    assert_eq!(FIELD_UNIT_MINRANGEDDAMAGE, OBJECT_END + 0xA5);
-    assert_eq!(FIELD_UNIT_MAXRANGEDDAMAGE, OBJECT_END + 0xA6);
-    assert_eq!(FIELD_PLAYER_REST_STATE_EXPERIENCE, UNIT_END + 0x3DB);
+fn indices_are_the_12340_descriptor_offsets() {
     assert_eq!(
-        FIELD_PLAYER_REST_STATE_EXPERIENCE + 1,
-        FIELD_PLAYER_FIELD_COINAGE
+        [
+            OBJECT_END,
+            ITEM_END,
+            CONTAINER_END,
+            UNIT_END,
+            PLAYER_END,
+            GAMEOBJECT_END,
+            DYNAMICOBJECT_END,
+            CORPSE_END
+        ],
+        [6, 64, 138, 148, 1326, 18, 12, 36]
     );
-    // The discovery bitset sits past the 1.12.1 player end, after the override spell id.
-    assert_eq!(
-        FIELD_PLAYER_EXPLORED_ZONES_1,
-        FIELD_PLAYER_OVERRIDE_SPELLS_ID + 1
-    );
-    assert_eq!(PLAYER_EXPLORED_ZONES_SLOTS, 128);
-    // The stat block runs past COINAGE to AMMO_ID 1223; SELF_RES and PVP_MEDALS fill 1224-1225.
-    assert_eq!(FIELD_PLAYER_POSSTAT0, FIELD_PLAYER_FIELD_COINAGE + 1);
-    assert_eq!(FIELD_PLAYER_POSSTAT0, UNIT_END + 0x3DD);
-    assert_eq!(FIELD_PLAYER_NEGSTAT0, UNIT_END + 0x3E2);
-    assert_eq!(FIELD_PLAYER_RESISTANCEBUFFMODSPOSITIVE, UNIT_END + 0x3E7);
-    assert_eq!(FIELD_PLAYER_RESISTANCEBUFFMODSNEGATIVE, UNIT_END + 0x3EE);
-    assert_eq!(FIELD_PLAYER_MOD_DAMAGE_DONE_POS, UNIT_END + 0x3F5);
-    assert_eq!(FIELD_PLAYER_MOD_DAMAGE_DONE_NEG, UNIT_END + 0x3FC);
-    assert_eq!(FIELD_PLAYER_MOD_DAMAGE_DONE_PCT, UNIT_END + 0x403);
-    assert_eq!(FIELD_PLAYER_AMMO_ID, UNIT_END + 0x40B);
-    assert_eq!(FIELD_PLAYER_AMMO_ID + 3, FIELD_PLAYER_BUYBACK_PRICE_1);
-    assert_eq!(FIELD_PLAYER_FIELD_BYTES, UNIT_END + 0x40A);
-    assert_eq!(FIELD_PLAYER_FIELD_BYTES + 1, FIELD_PLAYER_AMMO_ID);
-    // The watched-faction slot is 0x431 - 0x3DC = 85 dwords above COINAGE.
-    assert_eq!(FIELD_PLAYER_WATCHED_FACTION_INDEX, UNIT_END + 0x431);
-    assert_eq!(
-        FIELD_PLAYER_WATCHED_FACTION_INDEX,
-        FIELD_PLAYER_FIELD_COINAGE + 85
-    );
-    // Keyring 648 + 64 = far sight 712, + 2 combo target 714, + 2 XP 716. vmangos's hex comment
-    // for far sight says 0x2C2 = 706, six low; its enum arithmetic is what compiles.
-    assert_eq!(FIELD_PLAYER_FARSIGHT, UNIT_END + 0x20C);
-    assert_eq!(
-        FIELD_PLAYER_FARSIGHT,
-        FIELD_PLAYER_KEYRING_SLOT_1 + 2 * 32,
-        "far sight closes the 32-slot keyring array"
-    );
-    assert_eq!(FIELD_PLAYER_FARSIGHT + 2, FIELD_PLAYER_FIELD_COMBO_TARGET);
-    // `GetComboPoints` reads the combo target at `[player+0xe68]+0x838`, and 0x838 / 4 = 0x20E.
-    assert_eq!(FIELD_PLAYER_FIELD_COMBO_TARGET, UNIT_END + 0x20E);
-    assert_eq!(FIELD_PLAYER_FIELD_COMBO_TARGET + 2, FIELD_PLAYER_XP);
-    // The skill array is 128 slots of 3 dwords.
-    assert_eq!(FIELD_PLAYER_SKILL_INFO_1_1, FIELD_PLAYER_NEXT_LEVEL_XP + 1);
-    assert_eq!(FIELD_PLAYER_SKILL_INFO_1_1, UNIT_END + 0x212);
-    assert_eq!(FIELD_PLAYER_SKILL_INFO_1_1 + 384, UNIT_END + 0x392);
-    assert_eq!(
-        FIELD_PLAYER_CHARACTER_POINTS1,
-        FIELD_PLAYER_SKILL_INFO_1_1 + 384
-    );
-    assert_eq!(FIELD_PLAYER_CHARACTER_POINTS2, UNIT_END + 0x393);
-    assert_eq!(
-        FIELD_PLAYER_TRACK_CREATURES,
-        FIELD_PLAYER_CHARACTER_POINTS2 + 1
-    );
-    assert_eq!(FIELD_PLAYER_TRACK_RESOURCES, UNIT_END + 0x395);
-    assert_eq!(
-        FIELD_PLAYER_BUYBACK_TIMESTAMP_1 + 12,
-        FIELD_PLAYER_FIELD_SESSION_KILLS,
-        "the honor block opens where the 12-slot buyback-timestamp array ends"
-    );
-    assert_eq!(
-        FIELD_PLAYER_FIELD_BYTES2 + 1,
-        FIELD_PLAYER_WATCHED_FACTION_INDEX,
-        "and closes one below the watched-faction slot"
-    );
-    assert_eq!(FIELD_PLAYER_FIELD_SESSION_KILLS, UNIT_END + 0x426);
-    assert_eq!(FIELD_PLAYER_FIELD_YESTERDAY_KILLS, UNIT_END + 0x427);
-    assert_eq!(FIELD_PLAYER_FIELD_LAST_WEEK_KILLS, UNIT_END + 0x428);
-    assert_eq!(FIELD_PLAYER_FIELD_THIS_WEEK_KILLS, UNIT_END + 0x429);
-    assert_eq!(FIELD_PLAYER_FIELD_THIS_WEEK_CONTRIBUTION, UNIT_END + 0x42A);
-    assert_eq!(
-        FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS,
-        UNIT_END + 0x42B
-    );
-    assert_eq!(
-        FIELD_PLAYER_FIELD_LIFETIME_DISHONORABLE_KILLS,
-        UNIT_END + 0x42C
-    );
-    assert_eq!(FIELD_PLAYER_FIELD_YESTERDAY_CONTRIBUTION, UNIT_END + 0x42D);
-    assert_eq!(FIELD_PLAYER_FIELD_LAST_WEEK_CONTRIBUTION, UNIT_END + 0x42E);
-    assert_eq!(FIELD_PLAYER_FIELD_LAST_WEEK_RANK, UNIT_END + 0x42F);
-    assert_eq!(FIELD_PLAYER_FIELD_BYTES2, UNIT_END + 0x430);
-    // The current rank rides the public PLAYER_BYTES_3, outside the honor block.
-    assert_eq!(FIELD_PLAYER_BYTES_3, UNIT_END + 0x7);
+    // Item: `ITEM_FIELD_ENCHANTMENT_1_1` at 16, `_12_3` at 51, `CREATE_PLAYED_TIME` at 56.
+    assert_eq!(FIELD_ITEM_ENCHANTMENT_1_1, 6 + 16);
+    assert_eq!(FIELD_ITEM_ENCHANTMENT_1_1 + 3 * 11 + 2, 6 + 51);
+    assert_eq!(FIELD_ITEM_CREATE_PLAYED_TIME, 6 + 56);
+    assert_eq!(FIELD_CONTAINER_SLOT_1, 64 + 2);
+    // Unit: health 18, the seven powers 19..=25, maxima 27..=33, level 48, bytes 1 68, bytes 2 116,
+    // the cost multiplier 132.
+    assert_eq!(FIELD_UNIT_HEALTH, 6 + 18);
+    assert_eq!(FIELD_UNIT_POWER1 + 6, 6 + 25);
+    assert_eq!(FIELD_UNIT_MAXPOWER1 + 6, 6 + 33);
+    assert_eq!(FIELD_UNIT_LEVEL, 6 + 48);
+    assert_eq!(FIELD_UNIT_BYTES_1, 6 + 68);
+    assert_eq!(FIELD_UNIT_BYTES_2, 6 + 116);
+    assert_eq!(FIELD_UNIT_POWER_COST_MULTIPLIER, 6 + 132);
+    assert_eq!(FIELD_UNIT_HOVERHEIGHT, 6 + 140);
+    // Player: quest log 10, visible items 135, title 173, inventory 176, far sight 476, skills
+    // 488, coinage 1022, field bytes 1049, bytes 2 1081, daily quests 1132, pet spell power 1177.
+    assert_eq!(FIELD_PLAYER_QUEST_LOG_1_1, 148 + 10);
+    assert_eq!(player_visible_item_entry_field(0), 148 + 135);
+    assert_eq!(player_visible_item_entry_field(18) + 1, 148 + 172);
+    assert_eq!(FIELD_PLAYER_CHOSEN_TITLE, 148 + 173);
+    assert_eq!(FIELD_PLAYER_INV_SLOT_HEAD, 148 + 176);
+    assert_eq!(FIELD_PLAYER_BANK_BAG_SLOT_1, 148 + 310);
+    assert_eq!(FIELD_PLAYER_FARSIGHT, 148 + 476);
+    assert_eq!(FIELD_PLAYER_SKILL_INFO_1_1, 148 + 488);
+    assert_eq!(FIELD_PLAYER_EXPERTISE, 148 + 879);
+    assert_eq!(FIELD_PLAYER_SHIELD_BLOCK, 148 + 891);
+    assert_eq!(FIELD_PLAYER_EXPLORED_ZONES_1, 148 + 893);
+    assert_eq!(FIELD_PLAYER_FIELD_COINAGE, 148 + 1022);
+    assert_eq!(FIELD_PLAYER_FIELD_BYTES, 148 + 1049);
+    assert_eq!(FIELD_PLAYER_FIELD_KILLS, 148 + 1077);
+    assert_eq!(FIELD_PLAYER_FIELD_BYTES2, 148 + 1081);
+    assert_eq!(FIELD_PLAYER_FIELD_ARENA_TEAM_INFO_1_1, 148 + 1108);
+    assert_eq!(FIELD_PLAYER_DAILY_QUESTS_1, 148 + 1132);
+    assert_eq!(FIELD_PLAYER_GLYPHS_ENABLED, 148 + 1176);
+    assert_eq!(FIELD_PLAYER_PET_SPELL_POWER + 1, PLAYER_END);
+    // GameObject, dynamic object, corpse.
+    assert_eq!(FIELD_GAMEOBJECT_DYNAMIC, 6 + 8);
+    assert_eq!(FIELD_GAMEOBJECT_BYTES_1 + 1, GAMEOBJECT_END);
+    assert_eq!(FIELD_DYNAMICOBJECT_CASTTIME + 1, DYNAMICOBJECT_END);
+    assert_eq!(FIELD_CORPSE_ITEM, 6 + 5);
+    assert_eq!(FIELD_CORPSE_DYNAMIC_FLAGS, 6 + 28);
 }
 
 #[test]
 fn unit_stats_and_resistances_read_indexed_and_gate_range() {
     let f = ObjectFields::from_pairs(&[
-        (150, 25),                  // STAT0 strength
-        (154, 31),                  // STAT4 spirit
-        (155, 120),                 // RESISTANCES[0] = armor
-        (157, 15),                  // fire
-        (161, 8u32.wrapping_neg()), // arcane, cursed to −8
+        (FIELD_UNIT_STAT0, 25),                            // strength
+        (FIELD_UNIT_STAT0 + 4, 31),                        // spirit
+        (FIELD_UNIT_RESISTANCES, 120),                     // armor
+        (FIELD_UNIT_RESISTANCES + 2, 15),                  // fire
+        (FIELD_UNIT_RESISTANCES + 6, 8u32.wrapping_neg()), // arcane, cursed to −8
     ]);
     assert_eq!(f.unit_stat(0), Some(25));
     assert_eq!(f.unit_stat(4), Some(31));
@@ -136,16 +85,19 @@ fn unit_stats_and_resistances_read_indexed_and_gate_range() {
 
 #[test]
 fn attack_power_mods_split_signed_halves() {
-    // vmangos `SetInt16Value(index_mod, 0, pos)` and `(index_mod, 1, neg)`: low positive, high
-    // negative. pos 30, neg -10.
+    // The positive mod in the low half, the negative in the high: pos 30, neg -10.
     let packed = u32::from(30u16) | (u32::from((-10i16) as u16) << 16);
     let f = ObjectFields::from_pairs(&[
-        (165, 78),                              // ATTACK_POWER
-        (166, packed),                          // ATTACK_POWER_MODS
-        (167, 0.1f32.to_bits()),                // MULTIPLIER (stores multiplier − 1.0)
-        (168, 52),                              // RANGED_ATTACK_POWER
-        (169, u32::from((-3i16) as u16) << 16), // ranged: pos 0, neg −3
-        (170, 0.0f32.to_bits()),
+        (FIELD_UNIT_ATTACK_POWER, 78),
+        (FIELD_UNIT_ATTACK_POWER_MODS, packed),
+        // The multiplier less 1.0.
+        (FIELD_UNIT_ATTACK_POWER_MULTIPLIER, 0.1f32.to_bits()),
+        (FIELD_UNIT_RANGED_ATTACK_POWER, 52),
+        (
+            FIELD_UNIT_RANGED_ATTACK_POWER_MODS,
+            u32::from((-3i16) as u16) << 16,
+        ),
+        (FIELD_UNIT_RANGED_ATTACK_POWER_MULTIPLIER, 0.0f32.to_bits()),
     ]);
     assert_eq!(f.unit_attack_power(), Some(78));
     assert_eq!(f.unit_attack_power_mods(), (30, -10));
@@ -159,15 +111,15 @@ fn attack_power_mods_split_signed_halves() {
 #[test]
 fn damage_and_attack_time_fields_read_their_slots() {
     let f = ObjectFields::from_pairs(&[
-        (126, 2900),              // BASEATTACKTIME main
-        (127, 1500),              // BASEATTACKTIME offhand
-        (128, 2800),              // RANGEDATTACKTIME
-        (134, 12.5f32.to_bits()), // MINDAMAGE
-        (135, 19.5f32.to_bits()), // MAXDAMAGE
-        (136, 5.0f32.to_bits()),  // MINOFFHANDDAMAGE
-        (137, 9.0f32.to_bits()),  // MAXOFFHANDDAMAGE
-        (171, 31.0f32.to_bits()), // MINRANGEDDAMAGE
-        (172, 47.0f32.to_bits()), // MAXRANGEDDAMAGE
+        (FIELD_UNIT_BASEATTACKTIME, 2900),
+        (FIELD_UNIT_BASEATTACKTIME + 1, 1500),
+        (FIELD_UNIT_RANGEDATTACKTIME, 2800),
+        (FIELD_UNIT_MINDAMAGE, 12.5f32.to_bits()),
+        (FIELD_UNIT_MAXDAMAGE, 19.5f32.to_bits()),
+        (FIELD_UNIT_MINOFFHANDDAMAGE, 5.0f32.to_bits()),
+        (FIELD_UNIT_MAXOFFHANDDAMAGE, 9.0f32.to_bits()),
+        (FIELD_UNIT_MINRANGEDDAMAGE, 31.0f32.to_bits()),
+        (FIELD_UNIT_MAXRANGEDDAMAGE, 47.0f32.to_bits()),
     ]);
     assert_eq!(f.unit_base_attack_time(0), Some(2900));
     assert_eq!(f.unit_base_attack_time(1), Some(1500));
@@ -181,15 +133,15 @@ fn damage_and_attack_time_fields_read_their_slots() {
     assert_eq!(f.unit_max_ranged_damage(), Some(47.0));
 }
 
-/// The buff-split arrays are ints on the wire, narrowed from the server's floats by
-/// `BuildValuesUpdate`; `-4` is an x86 server's word, where arm64 would send 0.
+/// The buff-split arrays are ints on the wire, narrowed from the server's floats; `-4` is an x86
+/// server's word, where arm64 would send 0.
 #[test]
-fn player_stat_buff_arrays_read_signed_ints() {
+fn stat_buff_arrays_read_signed_ints() {
     let f = ObjectFields::from_pairs(&[
-        (1177, 10),              // POSSTAT0
-        (1182, (-4i32) as u32),  // NEGSTAT0
-        (1187, 30),              // RESISTANCEBUFFMODSPOSITIVE[0]
-        (1196, (-20i32) as u32), // RESISTANCEBUFFMODSNEGATIVE[2]
+        (FIELD_UNIT_POSSTAT0, 10),
+        (FIELD_UNIT_NEGSTAT0, (-4i32) as u32),
+        (FIELD_UNIT_RESISTANCEBUFFMODSPOSITIVE, 30),
+        (FIELD_UNIT_RESISTANCEBUFFMODSNEGATIVE + 2, (-20i32) as u32),
     ]);
     assert_eq!(f.player_posstat(0), Some(10));
     assert_eq!(f.player_negstat(0), Some(-4));
@@ -199,18 +151,15 @@ fn player_stat_buff_arrays_read_signed_ints() {
     assert_eq!(f.player_resistance_buff_neg(2), Some(-20));
     assert_eq!(f.player_resistance_buff_pos(7), None, "out of range");
     assert_eq!(f.player_resistance_buff_neg(7), None, "out of range");
-    // A live value: 105 read as an f32 bit pattern would be near 0.
-    let live = ObjectFields::from_pairs(&[(1177, 105)]);
-    assert_eq!(live.player_posstat(0), Some(105));
 }
 
 #[test]
 fn player_mod_damage_done_reads_int_pos_neg_and_float_pct() {
     let f = ObjectFields::from_pairs(&[
-        (1201, 25),                   // MOD_DAMAGE_DONE_POS[0] physical
-        (1203, 40),                   // MOD_DAMAGE_DONE_POS[2] fire
-        (1208, 15u32.wrapping_neg()), // MOD_DAMAGE_DONE_NEG[0] = −15
-        (1215, 1.1f32.to_bits()),     // MOD_DAMAGE_DONE_PCT[0], a true float
+        (FIELD_PLAYER_MOD_DAMAGE_DONE_POS, 25),
+        (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 2, 40),
+        (FIELD_PLAYER_MOD_DAMAGE_DONE_NEG, 15u32.wrapping_neg()),
+        (FIELD_PLAYER_MOD_DAMAGE_DONE_PCT, 1.1f32.to_bits()),
     ]);
     assert_eq!(f.player_mod_damage_done_pos(0), Some(25));
     assert_eq!(f.player_mod_damage_done_pos(2), Some(40));
@@ -224,12 +173,12 @@ fn player_mod_damage_done_reads_int_pos_neg_and_float_pct() {
 
 #[test]
 fn player_skill_unpacks_the_three_dword_triplet() {
-    // Slot 1 (718 + 3 = 721): Swords (43) step 0, 25/300, temp -3, perm +5; lo|hi pairs,
-    // bonuses signed (`Player.cpp:94-100`).
+    // Slot 1: Swords (43) step 0, 25/300, temp -3, perm +5; lo|hi pairs, bonuses signed.
+    let base = FIELD_PLAYER_SKILL_INFO_1_1 + 3;
     let f = ObjectFields::from_pairs(&[
-        (721, 43),
-        (722, 25 | (300 << 16)),
-        (723, u32::from((-3i16) as u16) | (5 << 16)),
+        (base, 43),
+        (base + 1, 25 | (300 << 16)),
+        (base + 2, u32::from((-3i16) as u16) | (5 << 16)),
     ]);
     assert_eq!(
         f.player_skill(1),
@@ -244,7 +193,7 @@ fn player_skill_unpacks_the_three_dword_triplet() {
     );
     assert_eq!(f.player_skill(0), None);
     assert_eq!(
-        ObjectFields::from_pairs(&[(718, 0)])
+        ObjectFields::from_pairs(&[(FIELD_PLAYER_SKILL_INFO_1_1, 0)])
             .player_skill(0)
             .map(|s| s.skill_id),
         Some(0)
@@ -253,277 +202,313 @@ fn player_skill_unpacks_the_three_dword_triplet() {
 }
 
 #[test]
-fn player_ammo_id_reads_the_field() {
-    let f = ObjectFields::from_pairs(&[(1223, 2512)]);
-    assert_eq!(f.player_ammo_id(), Some(2512));
-    assert_eq!(ObjectFields::default().player_ammo_id(), None);
-}
-
-#[test]
 fn player_self_res_spell_collapses_absent_and_zero() {
-    // 1224 follows AMMO_ID 1223 and FIELD_BYTES 1222, all set so a wrong index reads a
-    // neighbour. 3026 is the rank-1 soulstone's effect spell.
-    let f = ObjectFields::from_pairs(&[(1222, 0), (1223, 0), (1224, 3026)]);
+    // Its neighbours are set, so a wrong index reads one. 3026 is the rank-1 soulstone's spell.
+    let f = ObjectFields::from_pairs(&[
+        (FIELD_PLAYER_FIELD_BYTES, 0),
+        (FIELD_PLAYER_AMMO_ID, 2512),
+        (FIELD_PLAYER_SELF_RES_SPELL, 3026),
+    ]);
     assert_eq!(f.player_self_res_spell(), Some(3026));
     assert_eq!(
         f.player_ammo_id(),
-        Some(0),
+        Some(2512),
         "the neighbour is not disturbed"
     );
     assert_eq!(ObjectFields::default().player_self_res_spell(), None);
     assert_eq!(
-        ObjectFields::from_pairs(&[(1224, 0)]).player_self_res_spell(),
+        ObjectFields::from_pairs(&[(FIELD_PLAYER_SELF_RES_SPELL, 0)]).player_self_res_spell(),
         None
     );
 }
 
+/// `PLAYER_FIELD_BYTES`: flags, Refer-a-Friend levels, the action bar toggles, the lifetime
+/// highest honor rank.
 #[test]
-fn player_field_bytes_splits_into_toggles_and_honor_rank() {
-    // Bytes 2-3 of field 1222: action bars 3, highest rank 5 (`[[player+0xe68]+0x102a..0x102b]`).
-    let f = ObjectFields::from_pairs(&[(1222, 0x05_03_02_01)]);
-    assert_eq!(f.player_honor_rank(), Some(5));
+fn player_field_bytes_splits_into_flags_raf_toggles_and_honor_rank() {
+    let f = ObjectFields::from_pairs(&[(FIELD_PLAYER_FIELD_BYTES, 0x05_03_02_18)]);
+    assert!(f.player_release_timer_running() && f.player_no_release_window());
+    assert_eq!(f.player_raf_grantable_level(), 2);
     assert_eq!(f.player_action_bar_toggles(), Some(3));
-    let capped = ObjectFields::from_pairs(&[(1222, 0x00_00_05_00)]);
-    assert_eq!(capped.player_action_bar_toggles(), Some(0));
-    assert_eq!(capped.player_honor_rank(), Some(0));
+    assert_eq!(f.player_honor_rank(), Some(5));
     // The accessor returns the raw byte, high nibble included; only the binding masks to 4 bits.
-    let high = ObjectFields::from_pairs(&[(1222, 0x00_f5_00_00)]);
+    let high = ObjectFields::from_pairs(&[(FIELD_PLAYER_FIELD_BYTES, 0x00_f5_00_00)]);
     assert_eq!(high.player_action_bar_toggles(), Some(0xf5));
     assert_eq!(ObjectFields::default().player_honor_rank(), None);
     assert_eq!(ObjectFields::default().player_action_bar_toggles(), None);
 }
 
-/// The nonzero drunk byte catches a wrong shift; the current rank (field 195) and the highest
-/// rank (field 1222) are separate fields.
+/// `PLAYER_BYTES_3`: gender, drunkenness, PvP title, arena faction.
 #[test]
-fn player_bytes_3_byte_3_is_the_current_pvp_rank_not_the_highest() {
-    // byte 0 = 0x01 gender, byte 1 = 0xA0 drunk, byte 2 = 0x04 city-protector title,
-    // byte 3 = 0x0B = internal rank 11 (visual 7).
-    let f = ObjectFields::from_pairs(&[(195, 0x0B_04_A0_01)]);
-    assert_eq!(f.player_pvp_rank(), Some(11));
-    assert_eq!(f.player_drunk_byte(), Some(0xA0), "the neighbouring byte");
-    assert_eq!(
-        f.player_honor_rank(),
-        None,
-        "the HIGHEST rank is a different field: absent means absent"
-    );
-    // A demoted player keeps the higher lifetime rank.
-    let demoted = ObjectFields::from_pairs(&[(195, 0x03_00_00_00), (1222, 0x0B_00_00_00)]);
-    assert_eq!(demoted.player_pvp_rank(), Some(3));
-    assert_eq!(demoted.player_honor_rank(), Some(11));
-    assert_eq!(ObjectFields::default().player_pvp_rank(), None);
+fn player_bytes_3_reads_gender_drunkenness_and_arena_faction() {
+    let f = ObjectFields::from_pairs(&[(FIELD_PLAYER_BYTES_3, 0x01_04_A0_01)]);
+    assert_eq!(f.player_gender_byte(), Some(1));
+    assert_eq!(f.player_drunk_byte(), Some(0xA0));
+    assert_eq!(f.player_arena_faction(), Some(1));
 }
 
-/// vmangos writes only SESSION_KILLS as two halves; it writes the other three as a whole dword,
-/// so their dishonorable half is 0.
+/// `PLAYER_FIELD_BYTES2`: the override-spells id in the low `i16`, the aura vision in byte 3.
 #[test]
-fn honor_kill_counters_split_into_honorable_and_dishonorable_halves() {
-    let f = ObjectFields::from_pairs(&[
-        (1250, 0x0003_0011), // SESSION: 17 HK, 3 DK, both halves live
-        (1251, 0x0000_0029), // YESTERDAY: 41 HK, whole-dword write ⇒ DK half 0
-        (1252, 0x0000_01A4), // LAST_WEEK: 420 HK
-        (1253, 0x0000_007B), // THIS_WEEK: 123 HK
-    ]);
-    assert_eq!(f.player_session_kills(), Some((17, 3)));
-    assert_eq!(f.player_yesterday_kills(), Some((41, 0)));
-    assert_eq!(f.player_last_week_kills(), Some((420, 0)));
-    assert_eq!(f.player_this_week_kills(), Some((123, 0)));
-    // A filled high half still decodes: the shape is the descriptor's, not vmangos's habit.
-    let both = ObjectFields::from_pairs(&[(1251, 0x0007_0029)]);
-    assert_eq!(both.player_yesterday_kills(), Some((41, 7)));
-    let empty = ObjectFields::default();
-    assert_eq!(empty.player_session_kills(), None);
-    assert_eq!(empty.player_yesterday_kills(), None);
-    assert_eq!(empty.player_last_week_kills(), None);
-    assert_eq!(empty.player_this_week_kills(), None);
+fn player_field_bytes2_reads_the_override_spells_and_the_aura_vision() {
+    let f = ObjectFields::from_pairs(&[(FIELD_PLAYER_FIELD_BYTES2, 0x6056_1234)]);
+    assert_eq!(f.player_override_spells_id(), Some(0x1234));
+    assert_eq!(f.player_aura_vision(), Some(0x60));
 }
 
+/// `PLAYER_FIELD_KILLS` is `TWO_SHORT`, today's then yesterday's honorable kills.
 #[test]
-fn honor_contributions_standing_and_lifetime_read_their_own_fields() {
+fn honor_fields_read_their_own_words() {
     let f = ObjectFields::from_pairs(&[
-        (1254, 1_250), // THIS_WEEK_CONTRIBUTION
-        (1255, 3_907), // LIFETIME_HONORABLE_KILLS
-        (1256, 12),    // LIFETIME_DISHONORABLE_KILLS
-        (1257, 640),   // YESTERDAY_CONTRIBUTION
-        (1258, 8_431), // LAST_WEEK_CONTRIBUTION
-        (1259, 57),    // LAST_WEEK_RANK: the standing, not an honor rank
+        (FIELD_PLAYER_FIELD_KILLS, 0x0029_0011),
+        (FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION, 1_250),
+        (FIELD_PLAYER_FIELD_YESTERDAY_CONTRIBUTION, 640),
+        (FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS, 3_907),
+        (FIELD_PLAYER_FIELD_HONOR_CURRENCY, 75_000),
     ]);
-    assert_eq!(f.player_this_week_contribution(), Some(1_250));
-    assert_eq!(f.player_lifetime_honorable_kills(), Some(3_907));
-    assert_eq!(f.player_lifetime_dishonorable_kills(), Some(12));
+    assert_eq!(f.player_kills_today(), Some(17));
+    assert_eq!(f.player_kills_yesterday(), Some(41));
+    assert_eq!(f.player_today_contribution(), Some(1_250));
     assert_eq!(f.player_yesterday_contribution(), Some(640));
-    assert_eq!(f.player_last_week_contribution(), Some(8_431));
-    assert_eq!(f.player_last_week_rank(), Some(57));
-    let empty = ObjectFields::default();
-    assert_eq!(empty.player_this_week_contribution(), None);
-    assert_eq!(empty.player_yesterday_contribution(), None);
-    assert_eq!(empty.player_last_week_contribution(), None);
-    assert_eq!(empty.player_last_week_rank(), None);
-    assert_eq!(empty.player_lifetime_honorable_kills(), None);
-    assert_eq!(empty.player_lifetime_dishonorable_kills(), None);
+    assert_eq!(f.player_lifetime_honorable_kills(), Some(3_907));
+    assert_eq!(f.player_honor_currency(), Some(75_000));
+    assert_eq!(ObjectFields::default().player_kills_today(), None);
 }
 
-/// Bytes 1-3 are a flags byte and two unknowns; the fixture fills them to catch a wrong shift.
+/// `UNIT_FIELD_BYTES_1`: stand state, pet talents, the visibility flags (`0x1` ghost, `0x2`
+/// creep, `0x4` untrackable) and the anim tier.
 #[test]
-fn player_honor_rank_bar_is_byte_zero_of_player_field_bytes2() {
-    let f = ObjectFields::from_pairs(&[(1260, 0xDE_AD_BE_7F)]);
-    assert_eq!(f.player_honor_rank_bar(), Some(0x7F));
-    // A negative rank's wrapped `uint8(fraction * -255)` is carried as sent.
-    assert_eq!(
-        ObjectFields::from_pairs(&[(1260, 0x0000_009C)]).player_honor_rank_bar(),
-        Some(0x9C)
-    );
-    assert_eq!(ObjectFields::default().player_honor_rank_bar(), None);
+fn unit_bytes_1_reads_stand_state_visibility_and_anim_tier() {
+    let f = ObjectFields::from_pairs(&[(FIELD_UNIT_BYTES_1, 0x03_02_05_01)]);
+    assert_eq!(f.unit_stand_state(), 1);
+    assert!(f.unit_is_stealthed());
+    assert!(!f.unit_is_ghost_visual());
+    assert!(!f.unit_is_untrackable());
+    assert_eq!(f.unit_anim_tier(), 3);
+    let ghost = ObjectFields::from_pairs(&[(FIELD_UNIT_BYTES_1, 0x00_05_00_00)]);
+    assert!(ghost.unit_is_ghost_visual() && ghost.unit_is_untrackable());
+    assert_eq!(ghost.unit_anim_tier(), 0);
 }
 
-/// 48 spell-id dwords, 48 nibbles (6 dwords), 48 bytes (12 dwords) twice, `AURASTATE` (+0x77),
-/// then `BASEATTACKTIME` (+0x78), which the first test chains to the anchors.
+/// `UNIT_FIELD_BYTES_2`: sheath byte 0, flags byte 1, pet flags byte 2, form byte 3 (`0x71af70`).
 #[test]
-fn aura_arrays_tile_from_object_end_onto_the_tested_anchor() {
-    const OBJECT_END: u16 = 6;
-    assert_eq!(FIELD_UNIT_AURA, OBJECT_END + 0x29);
-    assert_eq!(FIELD_UNIT_AURAFLAGS, OBJECT_END + 0x59);
-    assert_eq!(FIELD_UNIT_AURALEVELS, OBJECT_END + 0x5F);
-    assert_eq!(FIELD_UNIT_AURAAPPLICATIONS, OBJECT_END + 0x6B);
-
-    assert_eq!(
-        FIELD_UNIT_AURA + u16::from(UNIT_AURA_SLOTS),
-        FIELD_UNIT_AURAFLAGS,
-        "48 dwords of spell id"
-    );
-    assert_eq!(
-        FIELD_UNIT_AURAFLAGS + 6,
-        FIELD_UNIT_AURALEVELS,
-        "48 nibbles"
-    );
-    assert_eq!(
-        FIELD_UNIT_AURALEVELS + 12,
-        FIELD_UNIT_AURAAPPLICATIONS,
-        "48 bytes"
-    );
-    assert_eq!(
-        FIELD_UNIT_AURAAPPLICATIONS + 12 + 1,
-        FIELD_UNIT_BASEATTACKTIME,
-        "48 bytes, then the 1-dword AURASTATE, then the tested anchor"
-    );
+fn unit_bytes_2_reads_sheath_flags_and_form() {
+    let f = ObjectFields::from_pairs(&[(FIELD_UNIT_BYTES_2, 0x1003_0901)]);
+    assert_eq!(f.unit_sheath_state(), Some(1));
+    assert_eq!(f.unit_byte2_flags(), 0x09);
+    assert_eq!(f.unit_pet_flags(), 0x03);
+    assert_eq!(f.unit_shapeshift_form(), 0x10);
 }
 
-/// Flags are a nibble per slot, levels and applications a byte (`stack - 1`); slot 32 has no
-/// applications word, so it reads a stack of 1.
+/// A death knight's runes and runic power ride `POWER6`/`POWER7` and `MAXPOWER6`/`MAXPOWER7`, the
+/// rune regen four floats.
 #[test]
-fn aura_slots_unpack_nibbles_bytes_and_the_stack_bias() {
+fn a_death_knight_s_seven_powers_and_rune_regen_all_read() {
     let f = ObjectFields::from_pairs(&[
-        // Spell ids: slot 0 and 2 (buffs), slot 32 and 47 (debuffs).
-        (47, 1126),
-        (49, 25),
-        (79, 589),
-        (94, 11),
-        // Flags: slot 0 nibble 0x9 (eff0 + cancelable), slot 2 nibble 0x8 (eff0, not cancelable).
-        (95, 0x0000_0809),
-        (99, 0x0000_0002),  // slot 32, nibble 0x2 (eff2)
-        (100, 0xE000_0000), // slot 47, nibble 0xE in the top nibble
-        // Levels: slot 0 → 60, slot 2 → 5.
-        (101, 0x0005_003C),
-        (109, 0x0000_003C), // slot 32 → 60
-        (112, 0x0100_0000), // slot 47 → 1
-        // Applications: slot 0 → byte 0 (stack 1), slot 2 → byte 2 (stack 3).
-        (113, 0x0002_0000),
-        (124, 0xFE00_0000), // slot 47 → byte 254 (stack 255)
+        (FIELD_UNIT_POWER1, 100),
+        (FIELD_UNIT_POWER1 + 5, 8),
+        (FIELD_UNIT_POWER1 + 6, 450),
+        (FIELD_UNIT_MAXPOWER1, 200),
+        (FIELD_UNIT_MAXPOWER1 + 5, 8),
+        (FIELD_UNIT_MAXPOWER1 + 6, 1000),
+        (FIELD_PLAYER_RUNE_REGEN_1, 0.1f32.to_bits()),
+        (FIELD_PLAYER_RUNE_REGEN_1 + 3, 0.2f32.to_bits()),
     ]);
-
-    let buff = f.unit_aura(0).expect("slot 0 occupied");
+    assert_eq!(f.unit_power(0), Some(100));
+    assert_eq!(f.unit_max_power(0), Some(200));
+    assert_eq!((f.unit_power(5), f.unit_max_power(5)), (Some(8), Some(8)));
     assert_eq!(
-        buff,
-        UnitAuraSlot {
-            slot: 0,
-            spell_id: 1126,
-            flags: 0x9,
-            level: 60,
-            stacks: 1
-        }
+        (f.unit_shown_power(6), f.unit_shown_max_power(6)),
+        (Some(45), Some(100))
     );
-    assert!(buff.is_helpful() && buff.is_cancelable());
-    assert!(
-        buff.flags & AURA_FLAG_EFF_INDEX_MASK != 0,
-        "an occupied slot always has an effect"
-    );
-
-    assert_eq!(f.unit_aura(1), None, "no spell id ⇒ empty slot");
-
-    let stacked = f.unit_aura(2).expect("slot 2 occupied");
-    assert_eq!(
-        (stacked.spell_id, stacked.level, stacked.stacks),
-        (25, 5, 3)
-    );
-    assert!(!stacked.is_cancelable(), "nibble 0x8 has no cancelable bit");
-
-    let debuff = f.unit_aura(32).expect("slot 32 occupied");
-    assert_eq!(
-        debuff,
-        UnitAuraSlot {
-            slot: 32,
-            spell_id: 589,
-            flags: 0x2,
-            level: 60,
-            stacks: 1
-        }
-    );
-    assert!(!debuff.is_helpful() && !debuff.is_cancelable());
-
-    let last = f.unit_aura(47).expect("slot 47 occupied");
-    assert_eq!((last.flags, last.level, last.stacks), (0xE, 1, 255));
-
-    assert_eq!(f.unit_aura(UNIT_AURA_SLOTS), None, "out of range");
-    assert_eq!(
-        f.unit_auras().map(|a| a.slot).collect::<Vec<_>>(),
-        [0, 2, 32, 47],
-        "occupied slots, ascending"
-    );
-    assert_eq!(ObjectFields::default().unit_auras().count(), 0);
+    assert_eq!(f.unit_power(7), None);
+    assert_eq!(f.player_rune_regen(0), 0.1);
+    assert_eq!(f.player_rune_regen(3), 0.2);
+    assert_eq!(f.player_rune_regen(1), 0.0);
+    assert_eq!(f.player_rune_regen(4), 0.0);
 }
 
-/// The cancelable bit `0x1` alone is no effect bit: a `0x1`-only nibble is as empty as a zero one.
+/// A visible-item slot is the entry, then the permanent and temporary enchant as two `u16`.
 #[test]
-fn a_stale_spell_id_with_a_cleared_flags_nibble_is_not_a_live_aura() {
-    let f = ObjectFields::from_pairs(&[
-        // slot 0: a live buff, spell id and effect bit 0x8.
-        (47, 1126),
-        (95, 0x0000_0018), // slot 0 nibble 0x8 (eff0), slot 1 nibble 0x1 (cancelable only)
-        // slot 1: a stale id with only the cancelable bit.
-        (48, 5000),
-        // slot 2: a stale id with a zero nibble.
-        (49, 6000),
-    ]);
+fn a_visible_item_slot_reads_its_entry_and_both_enchant_halves() {
+    let chest = player_visible_item_entry_field(4);
+    let f = ObjectFields::from_pairs(&[(chest, 6_096), (chest + 1, 1_897 | 25 << 16)]);
+    assert_eq!(f.player_visible_item_entry(4), Some(6_096));
+    assert_eq!(f.player_visible_item_enchant(4, 0), Some(1_897));
+    assert_eq!(f.player_visible_item_enchant(4, 1), Some(25));
+    assert_eq!(f.player_visible_item_enchant(4, 2), None, "two halves only");
+    assert_eq!(f.player_visible_item_entry(3), None);
+    assert_eq!(f.player_visible_item_entry(19), None);
+}
 
-    assert!(f.unit_aura(0).is_some(), "slot 0 is a live buff");
+#[test]
+fn the_character_sheet_fields_read_where_the_12340_stat_verbs_read_them() {
+    let f = ObjectFields::from_pairs(&[
+        (FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER, 12.5f32.to_bits()),
+        (
+            FIELD_UNIT_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER,
+            3.25f32.to_bits(),
+        ),
+        (FIELD_UNIT_POWER_COST_MODIFIER + 2, 12),
+        (FIELD_UNIT_POWER_COST_MODIFIER + 3, (-30i32) as u32),
+        (FIELD_UNIT_POWER_COST_MODIFIER + 6, 7),
+        (FIELD_UNIT_POWER_COST_MULTIPLIER + 2, (-0.25f32).to_bits()),
+        (FIELD_UNIT_POWER_COST_MULTIPLIER + 3, 0.25f32.to_bits()),
+        (FIELD_UNIT_POWER_COST_MULTIPLIER + 6, 0.5f32.to_bits()),
+        (FIELD_UNIT_MAXHEALTHMODIFIER, 0.1f32.to_bits()),
+        (FIELD_PLAYER_EXPERTISE, 12),
+        (FIELD_PLAYER_EXPERTISE + 1, 7),
+        (FIELD_PLAYER_RANGED_CRIT_PERCENTAGE, 4.5f32.to_bits()),
+        (FIELD_PLAYER_SPELL_CRIT_PERCENTAGE1 + 1, 6.75f32.to_bits()),
+        (FIELD_PLAYER_SHIELD_BLOCK, 95),
+        (FIELD_PLAYER_MOD_HEALING_DONE_POS, 410),
+        (FIELD_PLAYER_MOD_TARGET_RESISTANCE, (-35i32) as u32),
+        (FIELD_PLAYER_COMBAT_RATING_1, 18),
+        (FIELD_PLAYER_COMBAT_RATING_1 + 24, 40),
+    ]);
+    assert_eq!(f.unit_power_regen(0, false), Some(12.5));
+    assert_eq!(f.unit_power_regen(0, true), Some(3.25));
+    assert_eq!(f.unit_max_health_modifier(), Some(0.1));
+    assert_eq!(f.unit_power_cost_modifier(1 << 2 | 1 << 3), -30);
+    assert_eq!(f.unit_power_cost_modifier(1 << 2), 12);
+    assert_eq!(f.unit_power_cost_modifier(1 << 6), 7);
+    assert_eq!(f.unit_power_cost_modifier(0), 0);
+    assert_eq!(f.unit_power_cost_multiplier(1 << 2 | 1 << 3), 0.75);
+    assert_eq!(f.unit_power_cost_multiplier(1 << 6), 1.5);
+    assert_eq!(f.unit_power_cost_multiplier(0), 1.0);
+    assert_eq!(f.player_expertise(0), Some(12));
+    assert_eq!(f.player_expertise(1), Some(7));
+    assert_eq!(f.player_ranged_crit_percentage(), Some(4.5));
+    assert_eq!(f.player_spell_crit_percentage(1), Some(6.75));
+    assert_eq!(f.player_shield_block(), Some(95));
+    assert_eq!(f.player_mod_healing_done_pos(), Some(410));
+    assert_eq!(f.player_mod_target_resistance(), Some(-35));
+    assert_eq!(f.player_combat_rating(0), Some(18));
+    assert_eq!(f.player_combat_rating(24), Some(40));
+    assert_eq!(f.player_combat_rating(25), None);
+}
+
+/// `GAMEOBJECT_BYTES_1` holds the state and type; `GAMEOBJECT_DYNAMIC`'s low half the dynamic
+/// flags under a path progress. The parent rotation is not the spawn's own.
+#[test]
+fn a_gameobject_reads_its_packed_bytes_and_its_rotation_from_movement() {
+    let mut f = ObjectFields::from_pairs(&[
+        (FIELD_GAMEOBJECT_BYTES_1, 0xFF00_1301),
+        (FIELD_GAMEOBJECT_DYNAMIC, 0x1234_0004),
+        (FIELD_GAMEOBJECT_DISPLAYID, 5_000),
+        (FIELD_GAMEOBJECT_FACTION, 35),
+        (FIELD_GAMEOBJECT_PARENTROTATION + 3, 1.0f32.to_bits()),
+    ]);
     assert_eq!(
-        f.unit_aura(1),
+        f.gameobject_rotation(),
         None,
-        "a spell id with only the cancelable bit (no effect) is a husk, not a live aura"
+        "the parent rotation is not the spawn's"
     );
-    assert_eq!(
-        f.unit_aura(2),
+    f.place_movement_values(ObjectType::GameObject, None, Some([0.0, 0.0, 0.6, 0.8]));
+    let f = f.into_created(ObjectType::GameObject);
+    assert_eq!(f.gameobject_state(), Some(1));
+    assert_eq!(f.gameobject_type_id(), 19);
+    assert_eq!(f.gameobject_dynamic_flags(), 0x4);
+    assert_eq!(f.gameobject_displayid(), Some(5_000));
+    assert_eq!(f.gameobject_faction(), 35);
+    assert_eq!(f.gameobject_rotation(), Some([0.0, 0.0, 0.6, 0.8]));
+    // A values delta keeps the create's rotation.
+    let mut live = f.clone();
+    live.merge(ObjectFields::from_pairs(&[(
+        FIELD_GAMEOBJECT_BYTES_1,
+        0xFF00_1300,
+    )]));
+    assert_eq!(live.gameobject_state(), Some(0));
+    assert_eq!(live.gameobject_rotation(), Some([0.0, 0.0, 0.6, 0.8]));
+}
+
+/// A dynamic object's position rides its create's movement block; `DYNAMICOBJECT_CASTTIME` is a
+/// field of its own.
+#[test]
+fn a_dynamic_object_s_position_comes_from_its_movement_block() {
+    let mut f = ObjectFields::from_pairs(&[
+        (FIELD_DYNAMICOBJECT_CASTER, 26),
+        (FIELD_DYNAMICOBJECT_BYTES, 1),
+        (FIELD_DYNAMICOBJECT_SPELLID, 10),
+        (FIELD_DYNAMICOBJECT_RADIUS, 8.0f32.to_bits()),
+        (FIELD_DYNAMICOBJECT_CASTTIME, 123_456),
+    ]);
+    assert_eq!(f.dynamicobject_position(), None);
+    f.place_movement_values(
+        ObjectType::DynamicObject,
+        Some((
+            Vector3d {
+                x: -8844.14,
+                y: 668.83,
+                z: 97.81,
+            },
+            0.5,
+        )),
         None,
-        "a spell id with a zero flags nibble is a husk, not a live aura"
     );
+    let f = f.into_created(ObjectType::DynamicObject);
+    assert_eq!(f.dynamicobject_caster(), Some(26));
+    assert_eq!(f.dynamicobject_bytes(), Some(1));
+    assert_eq!(f.dynamicobject_spell_id(), Some(10));
+    assert_eq!(f.dynamicobject_radius(), Some(8.0));
+    assert_eq!(f.dynamicobject_cast_time(), Some(123_456));
     assert_eq!(
-        f.unit_auras().map(|a| a.slot).collect::<Vec<_>>(),
-        [0],
-        "only the live slot enumerates; the two husks are hidden"
+        f.dynamicobject_position(),
+        Some(([-8844.14, 668.83, 97.81], 0.5))
     );
 }
 
-/// A create omits zero fields (vmangos `_SetCreateBits`), so a created store reads absent as 0,
+/// All twelve enchant triples sit in a row: permanent, a socket gem, the socket bonus, the last
+/// random property.
+#[test]
+fn all_twelve_item_enchant_slots_read() {
+    let e = FIELD_ITEM_ENCHANTMENT_1_1;
+    let item = ObjectFields::from_pairs(&[
+        (e, 3_000),
+        (e + 3 * 2, 3_100),
+        (e + 3 * 2 + 2, 2),
+        (e + 3 * 5, 3_301),
+        (e + 3 * 11, 3_400),
+    ]);
+    assert_eq!(item.item_enchant(0), Some(3_000));
+    assert_eq!(item.item_enchant(2), Some(3_100));
+    assert_eq!(item.item_enchant_charges(2), 2);
+    assert_eq!(item.item_enchant(5), Some(3_301));
+    assert_eq!(item.item_enchant(11), Some(3_400));
+    assert_eq!(item.item_enchant(12), None);
+}
+
+/// `PLAYER_EXPLORED_ZONES_1` is 128 words: the later Northrend zones reveal through `exploreFlag`
+/// 2048 and up, in words 64 and past, and rest XP follows.
+#[test]
+fn every_word_of_the_discovery_bitset_reads() {
+    let z = FIELD_PLAYER_EXPLORED_ZONES_1;
+    let f = ObjectFields::from_pairs(&[
+        (z, 0x1),
+        (z + 64, 0x2),
+        (z + 127, 0x8000_0000),
+        (FIELD_PLAYER_REST_STATE_EXPERIENCE, 4_200),
+    ]);
+    assert_eq!(f.player_explored_zone_slot(0), 0x1);
+    assert_eq!(f.player_explored_zone_slot(64), 0x2);
+    assert_eq!(f.player_explored_zone_slot(127), 0x8000_0000);
+    assert_eq!(f.player_explored_zone_slot(128), 0);
+    assert_eq!(f.player_rest_state_experience(), Some(4_200));
+    assert_eq!(z + 128, FIELD_PLAYER_REST_STATE_EXPERIENCE);
+}
+
+/// A create omits zero fields, so a created store reads absent as 0,
 /// like the client's zeroed descriptor; a bare delta reads it as untouched.
 #[test]
 fn created_store_reads_absent_fields_as_zero_a_delta_as_none() {
     // A broken item's create: MAXDURABILITY present (40), DURABILITY omitted (it is 0).
-    let create = ObjectFields::from_pairs(&[(3, 2264), (47, 40)]).into_created(ObjectType::Item);
+    let create =
+        ObjectFields::from_pairs(&[(FIELD_OBJECT_ENTRY, 2264), (FIELD_ITEM_MAXDURABILITY, 40)])
+            .into_created(ObjectType::Item);
     assert_eq!(create.item_durability(), Some(0), "created absent = 0");
     assert_eq!(create.item_max_durability(), Some(40));
 
     // The same mask as a bare delta: absent means "not changed", never 0.
-    let delta = ObjectFields::from_pairs(&[(47, 40)]);
+    let delta = ObjectFields::from_pairs(&[(FIELD_ITEM_MAXDURABILITY, 40)]);
     assert_eq!(delta.item_durability(), None, "delta absent = untouched");
 
     // A guid slot is present only if its low half was sent, even on a created store.
@@ -532,18 +517,16 @@ fn created_store_reads_absent_fields_as_zero_a_delta_as_none() {
 
 #[test]
 fn corpse_descriptor_indices_and_packing() {
-    // `OBJECT_END + 0x6 = 12` display · `+0x7 = 13` item[0] · `+0x1A/0x1B = 32/33` bytes ·
-    // `+0x1D = 35` flags · `+0x1E = 36` dynamic flags (vmangos `UpdateFields_1_12_1.h:338-350`).
     let corpse = ObjectFields::from_pairs(&[
-        (12, 49),
-        // Slot 4 (chest): DisplayInfoID 902 | InventoryType 5 << 24 (`Player.cpp:4822`).
-        (13 + 4, 902 | (5 << 24)),
-        // BYTES_1: (0) | race<<8 | gender<<16 | skin<<24 (`Corpse.cpp:228`).
-        (32, (6 << 8) | (1 << 16) | (3 << 24)),
-        // BYTES_2: face | hairstyle<<8 | haircolor<<16 | facialhair<<24 (`Corpse.cpp:229`).
-        (33, 7 | (2 << 8) | (4 << 16) | (5 << 24)),
-        (35, 0x04 | 0x08),
-        (36, 0x01),
+        (FIELD_CORPSE_DISPLAY_ID, 49),
+        // Slot 4 (chest): DisplayInfoID 902 | InventoryType 5 << 24.
+        (FIELD_CORPSE_ITEM + 4, 902 | (5 << 24)),
+        // BYTES_1: (0) | race<<8 | gender<<16 | skin<<24.
+        (FIELD_CORPSE_BYTES_1, (6 << 8) | (1 << 16) | (3 << 24)),
+        // BYTES_2: face | hairstyle<<8 | haircolor<<16 | facialhair<<24.
+        (FIELD_CORPSE_BYTES_2, 7 | (2 << 8) | (4 << 16) | (5 << 24)),
+        (FIELD_CORPSE_FLAGS, 0x04 | 0x08),
+        (FIELD_CORPSE_DYNAMIC_FLAGS, 0x01),
     ])
     .into_created(ObjectType::Corpse);
 
@@ -571,7 +554,7 @@ fn corpse_descriptor_indices_and_packing() {
             look.facial_hair
         ),
         (6, 1, 3, 7, 2, 4, 5),
-        "the seven bytes the reference loads at [descr+0x69..+0x6f], in that order"
+        "the seven bytes the reference's dress loads, in that order"
     );
 
     // Three independent bits; BONES picks the skeleton model.
@@ -583,8 +566,9 @@ fn corpse_descriptor_indices_and_packing() {
         "DYNAMIC_FLAGS bit 0 — a different field"
     );
 
-    // CORPSE_END is 38, so a created corpse reads 0, not None, for every field below it.
-    let bare = ObjectFields::from_pairs(&[(12, 49)]).into_created(ObjectType::Corpse);
+    // A created corpse reads 0, not None, for every field below `CORPSE_END`.
+    let bare =
+        ObjectFields::from_pairs(&[(FIELD_CORPSE_DISPLAY_ID, 49)]).into_created(ObjectType::Corpse);
     assert_eq!(bare.corpse_flags(), 0);
     assert!(
         bare.corpse_look().is_some(),
@@ -597,12 +581,13 @@ fn corpse_descriptor_indices_and_packing() {
 /// player-block read off one is `None`.
 #[test]
 fn a_creature_has_no_player_block_to_be_absent_from() {
-    // PLAYER_FIELD_MOD_DAMAGE_DONE_PCT[0] = UNIT_END(188) + 0x403, past a unit's descriptor.
-    const MOD_DAMAGE_DONE_PCT: u16 = 1215;
+    // PLAYER_FIELD_MOD_DAMAGE_DONE_PCT[0] lies past a unit's descriptor.
+    const MOD_DAMAGE_DONE_PCT: u16 = FIELD_PLAYER_MOD_DAMAGE_DONE_PCT;
     // UNIT_FIELD_BASEATTACKTIME, well inside it.
-    const BASEATTACKTIME: u16 = 126;
+    const BASEATTACKTIME: u16 = FIELD_UNIT_BASEATTACKTIME;
 
-    let pet = ObjectFields::from_pairs(&[(2, 0x09), (150, 33)]).into_created(ObjectType::Unit);
+    let pet = ObjectFields::from_pairs(&[(FIELD_OBJECT_TYPE, 0x09), (FIELD_UNIT_STAT0, 33)])
+        .into_created(ObjectType::Unit);
     assert_eq!(
         pet.player_mod_damage_done_pct(0),
         None,
@@ -616,7 +601,7 @@ fn a_creature_has_no_player_block_to_be_absent_from() {
     assert_eq!(pet.unit_stat(0), Some(33), "and a present field is itself");
 
     // On a player the same index is inside the descriptor, so absent reads 0.
-    let player = ObjectFields::from_pairs(&[(2, 0x19), (BASEATTACKTIME, 1800)])
+    let player = ObjectFields::from_pairs(&[(FIELD_OBJECT_TYPE, 0x19), (BASEATTACKTIME, 1800)])
         .into_created(ObjectType::Player);
     assert_eq!(player.player_mod_damage_done_pct(0), Some(0.0));
     assert_eq!(player.unit_base_attack_time(0), Some(1800));
@@ -630,11 +615,14 @@ fn a_creature_has_no_player_block_to_be_absent_from() {
 /// A re-create replaces the store, so a field that dropped to 0 out of view does not survive.
 #[test]
 fn merge_overlays_deltas_and_replaces_on_recreate() {
-    let mut store =
-        ObjectFields::from_pairs(&[(3, 2264), (46, 40), (47, 40)]).into_created(ObjectType::Item);
+    const ENTRY: u16 = FIELD_OBJECT_ENTRY;
+    const DUR: u16 = FIELD_ITEM_DURABILITY;
+    const MAXDUR: u16 = FIELD_ITEM_MAXDURABILITY;
+    let mut store = ObjectFields::from_pairs(&[(ENTRY, 2264), (DUR, 40), (MAXDUR, 40)])
+        .into_created(ObjectType::Item);
 
     // A durability delta overlays; the store stays created.
-    store.merge(ObjectFields::from_pairs(&[(46, 30)]));
+    store.merge(ObjectFields::from_pairs(&[(DUR, 30)]));
     assert_eq!(store.item_durability(), Some(30));
     assert_eq!(
         store.item_max_durability(),
@@ -643,7 +631,9 @@ fn merge_overlays_deltas_and_replaces_on_recreate() {
     );
 
     // Re-create after the item broke out of view: the fresh snapshot omits DURABILITY (0).
-    store.merge(ObjectFields::from_pairs(&[(3, 2264), (47, 40)]).into_created(ObjectType::Item));
+    store.merge(
+        ObjectFields::from_pairs(&[(ENTRY, 2264), (MAXDUR, 40)]).into_created(ObjectType::Item),
+    );
     assert_eq!(
         store.item_durability(),
         Some(0),
@@ -655,17 +645,21 @@ fn merge_overlays_deltas_and_replaces_on_recreate() {
 /// value: moved dwords only, ascending, absent as 0, an unchanged resend silent.
 #[test]
 fn merge_diff_reports_each_moved_dword_once_with_its_old_value() {
-    let mut store =
-        ObjectFields::from_pairs(&[(22, 100), (28, 100), (34, 9)]).into_created(ObjectType::Unit);
+    const HP: u16 = FIELD_UNIT_HEALTH;
+    const MAXHP: u16 = FIELD_UNIT_MAXHEALTH;
+    const LEVEL: u16 = FIELD_UNIT_LEVEL;
+    const FLAGS: u16 = FIELD_UNIT_FLAGS;
+    let mut store = ObjectFields::from_pairs(&[(HP, 100), (MAXHP, 100), (LEVEL, 9)])
+        .into_created(ObjectType::Unit);
     let mut edges = Vec::new();
     // Health drops, level rises, max-health re-sent as it was, a never-seen field appears.
     store.merge_diff(
-        ObjectFields::from_pairs(&[(34, 10), (22, 40), (28, 100), (46, 8)]),
+        ObjectFields::from_pairs(&[(LEVEL, 10), (HP, 40), (MAXHP, 100), (FLAGS, 8)]),
         |i, old, new| edges.push((i, old, new)),
     );
     assert_eq!(
         edges,
-        vec![(22, 100, 40), (34, 9, 10), (46, 0, 8)],
+        vec![(HP, 100, 40), (LEVEL, 9, 10), (FLAGS, 0, 8)],
         "moved dwords only, ascending; absent-before reads 0; an unchanged resend is silent"
     );
     assert_eq!(store.unit_health(), Some(40), "the delta still lands");
@@ -676,16 +670,21 @@ fn merge_diff_reports_each_moved_dword_once_with_its_old_value() {
 /// an edge to 0.
 #[test]
 fn merge_diff_on_a_recreate_reports_the_replace_on_both_masks() {
-    let mut store =
-        ObjectFields::from_pairs(&[(3, 2264), (46, 30), (47, 40)]).into_created(ObjectType::Item);
+    const ENTRY: u16 = FIELD_OBJECT_ENTRY;
+    const GIFT: u16 = FIELD_ITEM_GIFTCREATOR;
+    const DUR: u16 = FIELD_ITEM_DURABILITY;
+    const MAXDUR: u16 = FIELD_ITEM_MAXDURABILITY;
+    let mut store = ObjectFields::from_pairs(&[(ENTRY, 2264), (DUR, 30), (MAXDUR, 40)])
+        .into_created(ObjectType::Item);
     let mut edges = Vec::new();
     store.merge_diff(
-        ObjectFields::from_pairs(&[(3, 2264), (47, 40), (12, 7)]).into_created(ObjectType::Item),
+        ObjectFields::from_pairs(&[(ENTRY, 2264), (MAXDUR, 40), (GIFT, 7)])
+            .into_created(ObjectType::Item),
         |i, old, new| edges.push((i, old, new)),
     );
     assert_eq!(
         edges,
-        vec![(12, 0, 7), (46, 30, 0)],
+        vec![(GIFT, 0, 7), (DUR, 30, 0)],
         "the omitted durability is a 30 → 0 edge; the identical entry and max are silent"
     );
     assert_eq!(store.item_durability(), Some(0));
@@ -708,38 +707,8 @@ fn created_as_reads_back_off_the_created_length() {
             Some(t)
         );
     }
-    assert_eq!(ObjectFields::from_pairs(&[(22, 1)]).created_as(), None);
-}
-
-/// A live vmangos capture of a Blizzard (spell 10) dynamic-object create: caster guid 26, area
-/// spell, radius 8.0, the cast point in POS, FACING never sent.
-#[test]
-fn dynamicobject_fields_read_the_live_blizzard_capture() {
-    let f = ObjectFields::from_pairs(&[
-        (0, 6),                        // OBJECT_FIELD_GUID lo
-        (1, 0xf100_0000),              // guid hi, HIGHGUID dynobj
-        (2, 0x41),                     // TYPE: OBJECT | DYNAMICOBJECT
-        (3, 10),                       // ENTRY = the spell id
-        (4, 1.0f32.to_bits()),         // SCALE_X
-        (6, 26),                       // DYNAMICOBJECT_CASTER lo
-        (8, 1),                        // BYTES: area spell
-        (9, 10),                       // SPELLID
-        (10, 8.0f32.to_bits()),        // RADIUS
-        (11, (-8844.14f32).to_bits()), // POS_X
-        (12, 668.83f32.to_bits()),     // POS_Y
-        (13, 97.81f32.to_bits()),      // POS_Z
-    ])
-    .into_created(ObjectType::DynamicObject);
-    assert_eq!(f.dynamicobject_caster(), Some(26));
-    assert_eq!(f.dynamicobject_bytes(), Some(1));
-    assert_eq!(f.dynamicobject_spell_id(), Some(10));
-    assert_eq!(f.dynamicobject_radius(), Some(8.0));
-    let (pos, facing) = f.dynamicobject_position().unwrap();
-    assert_eq!(pos, [-8844.14, 668.83, 97.81]);
-    assert_eq!(facing, 0.0, "FACING absent on a created store reads 0");
-    // Not a dynobj (a corpse never streams SPELLID): the id gate reads None, not Some(0).
     assert_eq!(
-        ObjectFields::from_pairs(&[(6, 26)]).dynamicobject_spell_id(),
+        ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 1)]).created_as(),
         None
     );
 }
@@ -810,7 +779,7 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
             (FIELD_UNIT_BYTES_1, 7),
         ])
         .unit_reads_dead(),
-        "the stand-state leg: stand state 7 (inert against vmangos, kept as the reference has it)"
+        "the stand-state leg: stand state 7, as the reference has it"
     );
 
     // Current values go to 0 and the maxima stay, so the bar shows empty.
@@ -828,8 +797,8 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
     assert_eq!(ObjectFields::default().unit_shown_health(), None);
 }
 
-/// vmangos sends rage max 1000 and happiness max 1050000 (`GetCreatePowers`); the table divides
-/// them to the 100 and 1050 the reference shows.
+/// Rage max 1000 and happiness max 1050000 on the wire; the table divides them to the 100 and 1050
+/// the reference shows.
 #[test]
 fn rage_and_happiness_divide_for_display_but_not_for_the_raw_readers() {
     const RAGE: u8 = 1;
@@ -881,11 +850,10 @@ fn rage_and_happiness_divide_for_display_but_not_for_the_raw_readers() {
     assert_eq!(feigning_warrior.unit_shown_max_power(RAGE), Some(100));
 }
 
-/// `UNIT_FIELD_BASE_MANA` and `UNIT_FIELD_BASE_HEALTH` are fields 162 and 163
-/// (`UpdateFields_1_12_1.h:101-102`), the unit block's `+0x270` and `+0x274` reads.
 #[test]
-fn base_mana_and_base_health_read_fields_162_and_163() {
-    let unit = ObjectFields::from_pairs(&[(162, 1500), (163, 1689)]);
+fn base_mana_and_base_health_read_their_fields() {
+    let unit =
+        ObjectFields::from_pairs(&[(FIELD_UNIT_BASE_MANA, 1500), (FIELD_UNIT_BASE_HEALTH, 1689)]);
     assert_eq!(unit.unit_base_mana(), Some(1500));
     assert_eq!(unit.unit_base_health(), Some(1689));
 }

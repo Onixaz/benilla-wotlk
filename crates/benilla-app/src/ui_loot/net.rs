@@ -886,7 +886,8 @@ mod tests {
                 },
                 // `UNIT_FIELD_HEALTH` (22) at 0.
                 crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(&[(
-                    22, 0,
+                    benilla_protocol::field::FIELD_UNIT_HEALTH,
+                    0,
                 )])),
             ))
             .id();
@@ -924,8 +925,8 @@ mod tests {
     /// A creature flagged `UNIT_FLAG_NOT_SELECTABLE`.
     const UNSELECTABLE: u64 = 0xF130_0000_0700_00EF;
 
-    const OBJECT_FIELD_TYPE: u16 = 2;
-    const OBJECT_FIELD_ENTRY: u16 = 3;
+    const OBJECT_FIELD_TYPE: u16 = benilla_protocol::field::FIELD_OBJECT_TYPE;
+    const OBJECT_FIELD_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
     /// `OBJECT_FIELD_TYPE` masks: `TYPEMASK_OBJECT` with `UNIT`, `PLAYER` or `GAMEOBJECT`.
     const TYPE_UNIT: u32 = 0x09;
     const TYPE_PLAYER: u32 = 0x19;
@@ -1149,7 +1150,7 @@ mod tests {
         use crate::net::{ObjectStore, SelfPlayer};
         use benilla_protocol::field::{FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_HEALTH};
         use benilla_protocol::messages::{ObjectFields, ObjectType};
-        const UNIT_FIELD_BYTES_0: u16 = 36;
+        const UNIT_FIELD_BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let (factions, stormwind, reps) = crate::target::stormwind_fixture(&mut chain, 0);
@@ -1258,8 +1259,8 @@ mod tests {
         use crate::net::{ObjectStore, SelfPlayer};
         use benilla_protocol::field::FIELD_UNIT_HEALTH;
         use benilla_protocol::messages::{ObjectFields, ObjectType};
-        const UNIT_FIELD_BYTES_0: u16 = 36;
-        const PLAYER_BYTES_2: u16 = 194;
+        const UNIT_FIELD_BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
+        const PLAYER_BYTES_2: u16 = benilla_protocol::field::FIELD_PLAYER_BYTES_2;
         let me = world
             .query_filtered::<Entity, With<SelfPlayer>>()
             .single(world)
