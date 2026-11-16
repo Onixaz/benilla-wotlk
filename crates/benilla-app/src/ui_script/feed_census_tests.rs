@@ -160,7 +160,7 @@ const FEEDS: &[&str] = &[
 /// read live, or no state at all. A piece of #1245 moves a feed here only with its reason.
 const KEPT: &[(&str, &str)] = &[(
     "benilla_app::death::update_corpse_distance",
-    "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires      the corpse range events from that test (0x512c40), not from a packet",
+    "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
 )];
 
 /// Every system in [`super::UiFeed`] that holds the VM, off the built `Update` schedule.

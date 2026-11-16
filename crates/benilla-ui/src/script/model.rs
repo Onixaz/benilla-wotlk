@@ -994,7 +994,7 @@ pub(crate) struct Model {
     pub(crate) quest_selects: Vec<quest::QuestSelect>,
     pub(crate) quest_actions: Vec<quest::QuestAction>,
 
-    /// Death countdowns and offers, and the release, reclaim and resurrect calls.
+    /// The release, reclaim, resurrect, spirit-healer and soulstone calls, in order; the app sends each.
     pub(crate) death_actions: Vec<death::DeathAction>,
 
     /// The quest log, selection (1-based), abandon mark (a quest id) and abandons.
@@ -1224,7 +1224,6 @@ pub(crate) struct Model {
     pub(crate) binder_confirms: u32,
     /// `CheckBinderDist()`: the innkeeper's question is live and in range; false hides its dialog.
     pub(crate) binder_pending: bool,
-    /// The summon getters' answers, defaulting to the reference's `""`, `""`, 0 with none pending.
     /// `ConfirmSummon()` (true) and `CancelSummon()` (false) calls in order, one
     /// `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
     pub(crate) summon_answers: Vec<bool>,

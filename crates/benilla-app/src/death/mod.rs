@@ -289,8 +289,8 @@ fn active_player_refresh(health: u32) -> (&'static str, bool) {
     }
 }
 
-/// The corpse-range dialog radius, 40 yd inclusive: the 1.12 client compares d² ≤ 1600.0 against
-/// the corpse-query position. The server's reclaim gate, `CORPSE_RECLAIM_RADIUS` 39
+/// The corpse-range dialog radius, 40 yd inclusive: 12340 compares d² ≤ 1600.0 against the
+/// corpse-query position (`0x51f663`). The server's reclaim gate, `CORPSE_RECLAIM_RADIUS` 39
 /// (`Corpse.h:40`), sits 1 yd inside it.
 const CORPSE_RANGE_SQ: f32 = 40.0 * 40.0;
 
