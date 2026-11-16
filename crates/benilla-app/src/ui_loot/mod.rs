@@ -877,7 +877,7 @@ impl LootSourceObjects<'_, '_> {
 }
 
 fn feed_loot(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut loot: ResMut<LootState>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -1191,7 +1191,7 @@ impl LootUnlocks<'_> {
 
 /// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`).
 fn drain_loot(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     commands: Res<NetCommands>,

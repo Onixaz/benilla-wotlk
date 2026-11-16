@@ -217,7 +217,7 @@ fn player_view(
 
 #[allow(clippy::too_many_arguments)]
 fn feed_calendar(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     catalog: Option<Res<CalendarCatalog>>,
     mut feed: ResMut<CalendarFeed>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,

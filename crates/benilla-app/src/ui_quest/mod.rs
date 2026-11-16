@@ -260,7 +260,7 @@ pub(crate) struct TrivialQuestTracking(pub(crate) bool);
 
 /// Read the tracking choice a `SetTracking` in the tick made.
 pub(crate) fn read_trivial_tracking(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut tracking: ResMut<TrivialQuestTracking>,
 ) {
     let on = script.is_some_and(|s| s.tracking_trivial_quests());
@@ -450,7 +450,7 @@ fn panel_event(panel: QuestPanel) -> &'static str {
 /// `QUEST_ITEM_UPDATE` when an item record lands on the open panel (`0x58b8f0`), `QUEST_FINISHED`
 /// on close. A giver's name landing fires nothing.
 pub(crate) fn feed_quest(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut giver: ResMut<QuestGiver>,
     objects: crate::net::Objects,
     items: Res<Items>,
@@ -660,7 +660,7 @@ fn decline_leg(npc: u64, acted: bool, close_on_cancel: u32, npc_flags: Option<u3
 
 /// Drain the Lua intents: greeting-row selects and the panel buttons, each to its `CMSG`.
 fn drain_quest(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut giver: ResMut<QuestGiver>,
     commands: Res<NetCommands>,
     index: Res<GuidIndex>,

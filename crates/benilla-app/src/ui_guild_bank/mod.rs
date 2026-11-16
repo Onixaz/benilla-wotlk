@@ -335,7 +335,7 @@ impl BankCatalogs<'_> {
 
 /// Push the view and fire the events owed, in the reference's order.
 fn feed_guild_bank(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<GuildBankState>,
     guild: Res<GuildState>,
     catalogs: BankCatalogs,
@@ -479,7 +479,7 @@ pub(crate) struct SwapInputs<'w, 's> {
 
 /// Drain the engine's sends: each gated on the open banker as the reference's senders are.
 fn drain_guild_bank(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<GuildBankState>,
     net: Res<NetCommands>,
     inputs: SwapInputs,

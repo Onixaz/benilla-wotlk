@@ -51,7 +51,7 @@ impl Walk {
 /// The walk; every leg logs itself, so a timeout names the boundary that stalled.
 fn walk_realm_list(
     mut msgs: MessageReader<CharListMessage>,
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     time: ProbeClock,
     mut walk: Local<Walk>,
     mut exit: MessageWriter<AppExit>,

@@ -147,7 +147,7 @@ impl PvpTimer {
 
 /// Track the toggle timer off our `PLAYER_FLAGS` and push it for `GetPVPTimer`.
 fn feed_pvp_timer(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     mut entered: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut timer: Local<PvpTimer>,
@@ -174,7 +174,7 @@ fn feed_pvp_timer(
 /// boot VM with `GlobalStrings.lua` run, a world VM after its FrameXML and addon load), so the read
 /// sees what the load defined; any other frame pays one compare.
 fn feed_pvp_name_strings(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut strings: ResMut<crate::nameplates::PvpNameStrings>,
 ) {
     let Some(script) = script else {
@@ -237,7 +237,7 @@ fn events_for(before: Option<&HonorState>, after: &HonorState) -> (bool, bool, b
 
 /// Push the self snapshot and the inspect reply, fire what moved, and drain the pane's request.
 fn feed_honor(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     inspect_target: Res<crate::ui_inspect::InspectTarget>,
     selection: Res<crate::target::Selection>,

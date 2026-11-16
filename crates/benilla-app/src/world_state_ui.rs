@@ -130,7 +130,7 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
 /// Pushes the readout when a world-state packet arrives, the reference's rebuild trigger, then the
 /// events the packets owe, in their order.
 pub(crate) fn feed_world_state_ui(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     catalog: Option<Res<WorldStateUiRes>>,
     mut states: ResMut<WorldStates>,
     mut last: Local<crate::ui_script::VmMemo<Option<u64>>>,

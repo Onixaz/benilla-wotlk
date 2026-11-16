@@ -641,7 +641,10 @@ pub(crate) struct GxRestarts(pub(crate) u32);
 /// the reference's restart commits them (`0x7698b0`); `GetCVar` answers the applied value until
 /// then.
 fn drain_restart_gx(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut restarts: ResMut<GxRestarts>,
     mut cvars: ResMut<crate::cvars::Cvars>,
     mut commands: Commands,
@@ -760,7 +763,10 @@ struct PublishedModes {
 /// The host half of `GetScreenResolutions`, `GetCurrentResolution` and `GetRefreshRates`,
 /// recomputed on change; the reference builds its list once and never invalidates it.
 fn publish_display_modes(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     cfg: Res<VideoConfig>,
     windows: Query<&Window, With<PrimaryWindow>>,
     monitors: Query<(Entity, Ref<bevy::window::Monitor>), With<PrimaryMonitor>>,

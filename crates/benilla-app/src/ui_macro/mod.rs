@@ -76,7 +76,7 @@ impl Plugin for UiMacroPlugin {
 /// so no VM builds it unasked. A failed load leaves it empty, and `MacroPopupOkayButton_Update`
 /// then keeps OKAY disabled.
 fn load_icon_catalog(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     assets: Option<Res<WorldAssets>>,
     list: Res<MacroIconList>,
     item_list: Res<MacroItemIconList>,
@@ -145,7 +145,7 @@ pub(crate) fn identity(roster: &crate::char_select::Roster) -> Option<(String, S
 /// Seed the engine's macro table from the two slots once per VM, when both have heard from the
 /// server (the reference's macro read `0x567c10` runs from the deferred load).
 fn load_macros(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     data: Res<crate::account_data::AccountData>,
     mut files: ResMut<MacroFiles>,
 ) {
@@ -175,7 +175,10 @@ fn load_macros(
 }
 
 /// An edit fires `UPDATE_MACROS` and owes the shutdown's save.
-fn note_dirty_macros(script: Option<NonSendMut<UiScript>>, mut files: ResMut<MacroFiles>) {
+fn note_dirty_macros(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut files: ResMut<MacroFiles>,
+) {
     let Some(mut script) = script else { return };
     if !script.take_macros_dirty() {
         return;
@@ -217,7 +220,7 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 /// Recompute every macro's bound spell when the macro table or the spell book changes: gated on
 /// the engine's macro generation and on change detection over the action store.
 fn rebind_macro_spells(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Res<crate::ui_action::PlayerActions>,
     table: Option<Res<crate::ui_chat::commands::SlashCommands>>,
     mut bound: ResMut<MacroBoundSpells>,

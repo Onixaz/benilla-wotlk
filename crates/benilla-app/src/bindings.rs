@@ -240,7 +240,10 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
 
 /// Drain the VM's binding requests: `SaveBindings` copies the live table into its set in the VM
 /// and owes the files at the UI shutdown.
-fn drain_binding_requests(script: Option<NonSendMut<UiScript>>, mut files: ResMut<BindingFiles>) {
+fn drain_binding_requests(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut files: ResMut<BindingFiles>,
+) {
     let Some(mut script) = script else { return };
     for req in script.take_keybind_requests() {
         let KeybindRequest::Save(which) = req;
@@ -299,7 +302,7 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 /// load), and fire `UPDATE_BINDINGS` so the Lua consumers (the action bar's hotkey corners)
 /// repaint.
 pub(crate) fn sync_dispatch(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut dispatch: ResMut<BindingDispatch>,
 ) {
     let Some(mut script) = script else { return };
@@ -368,7 +371,7 @@ impl WheelNotches {
 /// The dispatch pass (see the module doc). Runs after the UI key feed and before the script calls
 /// apply, so a bound key acts this frame, once, ahead of the frame's feed and tick.
 pub(crate) fn latch_and_dispatch(
-    mut script: Option<NonSendMut<UiScript>>,
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut keyboard: MessageReader<KeyboardInput>,
     // What the active layout names a letter, digit or punctuation key.
     layout: Res<LayoutNames>,
@@ -385,8 +388,6 @@ pub(crate) fn latch_and_dispatch(
     mut notches: Local<WheelNotches>,
     mut focus_lost: MessageReader<bevy::input::keyboard::KeyboardFocusLost>,
     cover: Option<Res<crate::loading_screen::LoadingScreen>>,
-    // What the verbs read live, lent for each binding's call into Lua.
-    live: crate::ui_script::live::LiveView,
 ) {
     state.just.clear();
     state.fired.clear();
@@ -489,12 +490,12 @@ pub(crate) fn latch_and_dispatch(
                     key: BindKey::Key(name),
                 };
                 if let Some(command) = dispatch.resolve(chord, dev_plane) {
-                    press(&mut state, &mut script, &live, command, Held::Key(key));
+                    press(&mut state, &mut script, command, Held::Key(key));
                 }
             }
             ButtonState::Released => {
                 state.down.retain(|&kc| kc != key);
-                release(&mut state, &mut script, &live, Held::Key(key));
+                release(&mut state, &mut script, Held::Key(key));
             }
         }
     }
@@ -520,11 +521,11 @@ pub(crate) fn latch_and_dispatch(
                 key: BindKey::Mouse(b),
             };
             if let Some(command) = dispatch.resolve(chord, false) {
-                press(&mut state, &mut script, &live, command, Held::Mouse(b));
+                press(&mut state, &mut script, command, Held::Mouse(b));
             }
         }
         if buttons.just_released(b) {
-            release(&mut state, &mut script, &live, Held::Mouse(b));
+            release(&mut state, &mut script, Held::Mouse(b));
         }
     }
 
@@ -550,8 +551,8 @@ pub(crate) fn latch_and_dispatch(
         };
         if let Some(command) = dispatch.resolve(chord, false) {
             for _ in 0..steps.unsigned_abs() {
-                press(&mut state, &mut script, &live, command, Held::Wheel);
-                release(&mut state, &mut script, &live, Held::Wheel);
+                press(&mut state, &mut script, command, Held::Wheel);
+                release(&mut state, &mut script, Held::Wheel);
             }
         }
     }
@@ -567,7 +568,7 @@ pub(crate) fn latch_and_dispatch(
         }
     }
     for k in stuck {
-        release(&mut state, &mut script, &live, k);
+        release(&mut state, &mut script, k);
     }
 
     // The calls this pass's binding bodies made act this frame, as in the reference the bit has
@@ -602,12 +603,11 @@ fn physically_down(
 fn press(
     state: &mut BindingsState,
     script: &mut Option<NonSendMut<UiScript>>,
-    live: &crate::ui_script::live::LiveView,
     command: &str,
     key: Held,
 ) {
     if let Some(s) = script.as_mut() {
-        if let Err(e) = s.with_live(live, |s| s.execute_binding(command, true)) {
+        if let Err(e) = s.execute_binding(command, true) {
             warn!("bindings({command}): {e}");
         }
     }
@@ -616,18 +616,13 @@ fn press(
 
 /// A base key's release: drop its latch and run the command's `runOnUp` up-half, even while
 /// typing (the reference completes a pressed binding's release regardless of focus).
-fn release(
-    state: &mut BindingsState,
-    script: &mut Option<NonSendMut<UiScript>>,
-    live: &crate::ui_script::live::LiveView,
-    key: Held,
-) {
+fn release(state: &mut BindingsState, script: &mut Option<NonSendMut<UiScript>>, key: Held) {
     let mut i = 0;
     while i < state.latched.len() {
         if state.latched[i].0 == key {
             let (_, command) = state.latched.remove(i);
             if let Some(s) = script.as_mut() {
-                if let Err(e) = s.with_live(live, |s| s.execute_binding(&command, false)) {
+                if let Err(e) = s.execute_binding(&command, false) {
                     warn!("bindings({command}): {e}");
                 }
             }

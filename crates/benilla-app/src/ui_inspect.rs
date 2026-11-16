@@ -183,7 +183,7 @@ fn inspect_slot_view(
 }
 
 fn feed_inspect(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut target: ResMut<InspectTarget>,
     mut feed: ResMut<InspectFeedState>,
     mut booth: ResMut<InspectBooth>,

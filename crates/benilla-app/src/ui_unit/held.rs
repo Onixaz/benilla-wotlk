@@ -121,7 +121,7 @@ pub(super) struct ChainMemo {
 /// or pet record, and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`; those
 /// legs are not built for a chain's end. A token without a hop reads its own push, not these.
 pub(super) fn feed_chain_units(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: super::SnapshotTables,
     // The object manager's lookup on its own, not through [`super::UnitTokens`], whose pet-bar read
     // would order this feed against the pet feed it does not depend on.

@@ -55,7 +55,7 @@ pub(crate) struct FedSocial {
 
 /// Push the display snapshot to the VM, fire the list events, and print the owed result lines.
 pub(crate) fn feed_social(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut social: ResMut<SocialState>,
     names: Res<NameCache>,
     areas: Option<Res<AreaTableRes>>,
@@ -425,7 +425,7 @@ fn index_of(order: &[u64], guid: u64) -> u32 {
 /// Turn the Lua API's social intents into their sends. A row resolves through the order the feed
 /// published, since the wire removes by guid.
 pub(crate) fn drain_social(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut social: ResMut<SocialState>,
     commands: Res<NetCommands>,
     areas: Option<Res<AreaTableRes>>,

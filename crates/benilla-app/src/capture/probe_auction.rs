@@ -206,7 +206,7 @@ fn auction_probe(
     time: ProbeClock,
     mut probe: ResMut<AuctionProbe>,
     auction: Res<AuctionOpen>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,

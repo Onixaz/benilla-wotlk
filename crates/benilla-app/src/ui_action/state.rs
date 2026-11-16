@@ -144,7 +144,7 @@ fn pet_slot<'a>(
 /// Computes and diff-pushes every occupied slot's state, and fires the reference's events.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(crate) fn feed_action_state(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
     mut cooldowns: ResMut<Cooldowns>,
@@ -632,7 +632,7 @@ pub(crate) fn feed_action_state(
 /// `PLAYER_ENTER_COMBAT` and `PLAYER_LEAVE_COMBAT`, one per attack start and stop of ours, in
 /// packet order: a new victim enters again, a stop and a start in one frame leave then enter.
 pub(super) fn fire_combat_edges(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     edges: Option<ResMut<crate::creature_anim::PlayerCombatEdges>>,
 ) {
     let (Some(mut script), Some(mut edges)) = (script, edges) else {

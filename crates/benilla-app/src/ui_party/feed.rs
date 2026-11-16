@@ -132,7 +132,7 @@ pub(super) fn feed_party(
     // `ChrClasses.dbc` field 16, `UnitHasRelicSlot`'s input, and the form table the creature type
     // reads.
     tables: crate::ui_unit::SnapshotTables,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     group: Res<GroupState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
@@ -630,7 +630,7 @@ pub(super) fn feed_party(
 /// setter's name twice, the icon's number and the target's name, `UNKNOWNOBJECT` while it
 /// resolves.
 pub(super) fn feed_marks(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     group: Res<GroupState>,
     mut notices: ResMut<super::GroupNotices>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
@@ -1029,7 +1029,7 @@ fn unit_guid(
 
 /// Drain the Lua party intents into their `CMSG_*` sends.
 pub(crate) fn drain_party(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut group: ResMut<GroupState>,
     selection: Res<Selection>,
     names: Res<NameCache>,

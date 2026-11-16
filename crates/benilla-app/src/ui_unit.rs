@@ -71,7 +71,7 @@ pub(crate) struct CombatTextEvent {
 /// Deviation: fires with our descriptor present, so `UnitExists("player")` answers true where the
 /// reference's misses, because matching it breaks `UnitExists` for no stock reader.
 pub(crate) fn fire_leaving_world_on_worldport(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut sweep: crate::ui_script::LeaveWorldSweep,
     mut ports: MessageReader<crate::net::WorldportMessage>,
 ) {
@@ -270,7 +270,7 @@ pub(crate) fn known_languages(
 }
 
 fn feed_known_languages(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Option<Res<crate::ui_action::PlayerActions>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
@@ -371,7 +371,7 @@ pub(crate) fn seed_language_table(world: &World, script: &mut UiScript) {
 /// Push `GetDefaultLanguage()`'s string on a change of race; `None` is the reference's zero value.
 /// Locale column 0: only enUS is populated in the 1.12 data.
 fn feed_default_language(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     langs: Option<Res<DefaultLanguagesRes>>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<Option<String>>>>,
@@ -409,7 +409,7 @@ impl RestStates {
 
 /// Seed each VM's `Exhaustion.dbc` table; a failed load keeps the shipped-table fallback.
 fn load_exhaustion_rows(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     assets: Option<Res<benilla_assets::WorldAssets>>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
     mut rest_states: ResMut<RestStates>,
@@ -503,7 +503,7 @@ fn melee_unit_combat(
 
 /// Drain [`CombatTextEvent`] into `COMBAT_TEXT_UPDATE(messageType, data, extra)`.
 fn fire_combat_text(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut events: MessageReader<CombatTextEvent>,
 ) {
     let Some(mut script) = script else {
@@ -519,7 +519,7 @@ fn fire_combat_text(
 
 /// Drain [`UnitCombatFeedback`] into `UNIT_COMBAT`, once per token naming the guid (`0x60bb70`).
 fn fire_unit_combat(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut events: MessageReader<UnitCombatFeedback>,
 ) {
     let Some(mut script) = script else {
@@ -543,7 +543,7 @@ fn fire_unit_combat(
 
 /// `SetTaxiBenchmarkMode`'s send, and the two events off `PLAYER_FLAGS` 0x20000's edge.
 fn taxi_benchmark(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
     mut was_on: Local<crate::ui_script::VmMemo<Option<bool>>>,
@@ -575,7 +575,7 @@ fn taxi_benchmark(
 /// Mirror the name cache's changed players into the VM, every answered one into a new VM, and
 /// send `GetPlayerInfoByGUID`'s asks.
 fn feed_name_records(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     names: Res<crate::names::NameCache>,
     commands: Res<crate::net::NetCommands>,
     mut fed: Local<crate::ui_script::VmMemo<bool>>,
@@ -878,7 +878,7 @@ fn dist_sq(q: Vec3, p: Vec3) -> f64 {
 /// (`0x520fe0`); the boot value, and a fresh VM's memo, is in control. A world entry sets the flag
 /// with no event (`0x513880`).
 fn feed_player_control(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     player: Option<Res<crate::player::Player>>,
     mut memo: Local<crate::ui_script::VmMemo<(bool, u32)>>,
 ) {
@@ -909,7 +909,7 @@ fn feed_player_control(
 /// `PLAYER_FARSIGHT_FOCUS_CHANGED`: the `PLAYER_FARSIGHT` field callback fires it on every change,
 /// whether or not the new guid resolves, so this diffs the field, never the pose.
 fn feed_farsight_focus(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut focus: Local<crate::ui_script::VmMemo<Option<u64>>>,
 ) {
@@ -935,7 +935,7 @@ fn feed_farsight_focus(
 /// reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated:
 /// distances move every frame, and no event keys off the map.
 fn feed_unit_reach(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tokens: UnitTokens,
     self_q: Query<(&Transform, &ObjectStore), With<SelfPlayer>>,
     transforms: Query<&Transform>,
@@ -1202,7 +1202,10 @@ pub(crate) fn enrich_unit(
 
 /// Drain `TogglePVP` into the bare `CMSG_TOGGLE_PVP` and `SetPVP(state)` into its one-byte form,
 /// in that order within a frame.
-fn drain_pvp_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_pvp_toggles(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1216,7 +1219,10 @@ fn drain_pvp_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetComm
 
 /// Drain the `ShowHelm`/`ShowCloak` flips into `CMSG_TOGGLE_HELM`/`CMSG_TOGGLE_CLOAK`; the VM,
 /// which alone knows what the Options row did, has already decided each is needed.
-fn drain_worn_display_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_worn_display_toggles(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1230,7 +1236,10 @@ fn drain_worn_display_toggles(script: Option<NonSendMut<UiScript>>, commands: Re
 
 /// Drain `SetActionBarToggles` into `CMSG_SET_ACTIONBAR_TOGGLES`, one packet per call: the
 /// reference binding neither checks for a change nor coalesces.
-fn drain_action_bar_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_action_bar_toggles(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1451,7 +1460,7 @@ struct Interactions<'w> {
 }
 
 fn feed_units(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
 
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -2025,7 +2034,7 @@ fn feed_units(
 /// (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE` (`0x5d3507`). A fresh VM takes
 /// the banks silently.
 fn feed_combo_points(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     combo: Option<Res<crate::spell::ComboPoints>>,
     self_guid: Option<Res<crate::net::SelfGuid>>,
     pet_bar: Option<Res<crate::ui_pet::PetBar>>,
@@ -2192,7 +2201,7 @@ impl EquippedFeed<'_, '_> {
 
 /// The player state `SecureCmdOptionParse`'s conditions read, pushed each frame.
 fn feed_option_state(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     player: Option<Res<crate::player::Player>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     place: Option<Res<crate::area::PlayerPlace>>,

@@ -26,7 +26,10 @@ fn pick(scenario: (u8, u8, u8)) -> (u8, u8, u8) {
 pub(super) fn seed_char_create(
     ctx: Res<CaptureCtx>,
     mut step: Local<u8>,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSend<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     catalog: Option<Res<crate::entities::CharCreate>>,
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
 ) {

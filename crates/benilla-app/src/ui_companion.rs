@@ -191,7 +191,7 @@ fn identity(state: &CompanionState) -> Vec<(u32, u32, Option<&str>)> {
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn feed_companions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
     summons: Res<SummonSlots>,
@@ -408,7 +408,7 @@ pub(crate) fn dismiss(
 
 /// The dismissals `DismissCompanion` queued.
 fn drain_companions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     spells: Option<Res<Spells>>,
     summons: Res<SummonSlots>,
     commands: Res<NetCommands>,
@@ -436,7 +436,7 @@ fn drain_companions(
 /// (`0x597960`, the record's first display id), asking for a record not yet cached. The pane's
 /// rotate buttons own the yaw.
 fn feed_companion_booth(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     mut booth: ResMut<crate::portrait::CompanionBooth>,

@@ -117,7 +117,7 @@ fn requirement_lines(
 
 /// Answers the open asks; runs after the template handler, so a landed record shows the same frame.
 pub(super) fn feed_quest_tooltips(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     log: Res<QuestLog>,
     names: Res<NameCache>,
     items: Res<Items>,

@@ -95,7 +95,10 @@ fn parent_zone(areas: &AreaTableRes, id: u32) -> Option<u32> {
 /// lands the frame it decodes.
 pub(super) fn feed_broadcasts(
     mut log: ResMut<ChatLog>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     channels: Res<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
     messages: Option<Res<ServerMessages>>,

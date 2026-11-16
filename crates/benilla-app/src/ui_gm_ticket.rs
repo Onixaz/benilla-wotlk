@@ -212,7 +212,7 @@ struct GmTicketFeedState {
 
 /// Fire the handler's signals in arrival order; push the categories once per VM.
 fn feed_gm_ticket(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<GmTicketState>,
     categories: Option<Res<GmTicketCategories>>,
     survey: Option<Res<GmSurveyTables>>,
@@ -279,7 +279,7 @@ fn update_ticket_args(ticket: Option<&GmTicket>) -> Vec<ScriptValue> {
 
 /// Turn the window's verbs into packets, each through its sender's gate.
 fn drain_gm_ticket(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<GmTicketState>,
     commands: Res<NetCommands>,
     player: Option<Res<Player>>,

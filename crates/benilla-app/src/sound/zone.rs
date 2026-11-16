@@ -893,7 +893,10 @@ fn fade_out_ambience(zone: &mut ZoneAudio, fade_ms: u64) {
 /// The Lua music slot: this frame's queued verbs, the loop, the slider and the watch.
 /// Unconditional: the stream is the caller's, not the world soundscape's.
 fn lua_music(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut zone: NonSendMut<ZoneAudio>,
     mut out: NonSendMut<SoundOutput>,
     assets: Option<Res<WorldAssets>>,

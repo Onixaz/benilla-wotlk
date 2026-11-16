@@ -97,7 +97,7 @@ pub(super) fn possess_view(spell_id: u32, spells: &SpellCatalog) -> PossessView 
 
 /// Follow the possess spell and push it, firing `UPDATE_BONUS_ACTIONBAR` on a change.
 pub(super) fn feed_possess_spell(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     pet: PetUnit,
     mut field_edges: MessageReader<crate::net::FieldChanged>,
     spells: Option<Res<crate::ui_action::Spells>>,

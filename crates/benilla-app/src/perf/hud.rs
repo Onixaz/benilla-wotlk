@@ -93,7 +93,7 @@ pub(super) fn refresh_hud_snapshot(
     mut hud: ResMut<PerfHud>,
     stats: Res<FrameStats>,
     time: Res<Time<Real>>,
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     if !hud.visible {

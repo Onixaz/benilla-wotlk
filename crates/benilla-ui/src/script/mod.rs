@@ -199,7 +199,7 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
-pub use live::{read_live, LiveState};
+pub use live::{read_live, LiveLoan, LiveState};
 mod loot;
 mod loot_roll;
 mod lua51;

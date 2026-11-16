@@ -72,7 +72,10 @@ impl NpcSession for TalentWipeState {
 
 /// Publishes `CheckTalentMasterDist()` every frame and fires `CONFIRM_TALENT_WIPE(cost)` for a
 /// question still owed.
-fn feed_talent_wipe(script: Option<NonSendMut<UiScript>>, mut wipe: ResMut<TalentWipeState>) {
+fn feed_talent_wipe(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut wipe: ResMut<TalentWipeState>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -94,7 +97,7 @@ fn feed_talent_wipe(script: Option<NonSendMut<UiScript>>, mut wipe: ResMut<Talen
 /// not-enough-money line, only while a question is pending: with no guid latched, the reference
 /// finds no unit and sends nothing.
 fn drain_talent_wipe(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut wipe: ResMut<TalentWipeState>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,

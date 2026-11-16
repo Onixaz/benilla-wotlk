@@ -178,7 +178,7 @@ fn snapshot(
 
 /// Push the stable into the VM and fire its events on a change.
 fn feed_stable(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     // Mutable only to take the fresh-list latch.
     mut open: ResMut<StableOpen>,
     bar: Res<crate::ui_pet::PetBar>,
@@ -263,7 +263,7 @@ fn feed_stable(
 /// Drain the Lua intents into the four stable verbs, each aimed at the open session's NPC; a close
 /// clears locally, as there is no close opcode.
 pub(crate) fn drain_stable(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<StableOpen>,
     commands: Res<NetCommands>,
 ) {
@@ -295,7 +295,7 @@ pub(crate) fn drain_stable(
 /// anything else, or a failed live resolve, shows the row's creature display, whose late cache
 /// answer re-points the pane.
 fn feed_stable_booth(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     open: Res<StableOpen>,
     bar: Res<crate::ui_pet::PetBar>,
     pet: crate::ui_pet::PetUnit,

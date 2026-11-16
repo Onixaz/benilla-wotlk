@@ -349,7 +349,7 @@ fn marker_view(poi: &AreaPoi) -> WorldMapPoiView {
 }
 
 fn feed_world_map(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     catalog: Option<Res<WorldMapCatalogRes>>,
     player: Res<Player>,
     map: Option<Res<CurrentMap>>,
@@ -477,7 +477,7 @@ fn dev_map_jump(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     net: Res<crate::net::NetCommands>,
 ) {
     // A dev affordance compiled into every build, so gated at run time.

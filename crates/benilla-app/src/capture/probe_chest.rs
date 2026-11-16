@@ -168,7 +168,7 @@ fn report(label: &str, expect: u16, seen: &[Option<u16>]) -> u32 {
 fn chest_probe(
     time: ProbeClock,
     mut probe: ResMut<ChestProbe>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&AnimDriver, With<SelfPlayer>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,

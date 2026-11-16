@@ -171,7 +171,7 @@ fn model_camera_probe(
     mut commands: Commands,
     time: ProbeClock,
     mut probe: ResMut<ModelCameraProbe>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tiles: Res<UiModelTiles>,
     self_player: Query<(), With<SelfPlayer>>,
     cams: Query<

@@ -254,7 +254,7 @@ fn on_notice(
     mut errors: ResMut<UiErrorKeys>,
     names: Res<NameCache>,
     cvars: Option<ResMut<crate::cvars::Cvars>>,
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut chat: ResMut<ChatLog>,
     mut events: ResMut<NoticeEvents>,
 ) {
@@ -506,7 +506,7 @@ fn inebriation_line(
 /// landed.
 #[allow(clippy::too_many_arguments)]
 fn feed_notices(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     clock: Res<UiClock>,
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
@@ -607,7 +607,7 @@ fn feed_notices(
 /// `AcceptLevelGrant` sends `CMSG_ACCEPT_LEVEL_GRANT` to the pending granter and forgets it
 /// (`0x521b00`); `DeclineLevelGrant` only forgets it (`0x517d20`).
 fn drain_level_grant(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut grant: ResMut<LevelGrant>,
     net: Res<NetCommands>,
     names: Res<NameCache>,

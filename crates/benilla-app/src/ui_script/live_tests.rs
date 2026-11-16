@@ -40,14 +40,15 @@ fn on_values(
 pub(super) fn install_live_taxi(script: &UiScript) {
     let f = script
         .lua()
-        .create_function(|lua, guid: u64| {
+        .create_function(|_, guid: u64| {
             Ok(
-                benilla_ui::script::read_live(lua, |l| l.unit_flags(guid)).map_or("unlent", |f| {
-                    match f {
+                benilla_ui::script::read_live(|l| l.unit_flags(guid)).map_or(
+                    "unlent",
+                    |f| match f {
                         Some(f) if f & TAXI != 0 => "1",
                         _ => "nil",
-                    }
-                }),
+                    },
+                ),
             )
         })
         .unwrap();
@@ -139,4 +140,155 @@ fn with_no_vm_the_events_are_dropped() {
         .eval("return LOG")
         .unwrap();
     assert_eq!(log, vec!["CHARZ_VALUES 0 taxi=nil"]);
+}
+
+/// Whether a parameter list takes the VM by value, the way a system does (a helper borrowing a
+/// system's `&mut Option<NonSendMut<UiScript>>` does not count).
+fn takes_vm(params: &str) -> bool {
+    let flat: String = params.split_whitespace().collect();
+    flat.match_indices("UiScript>").any(|(at, _)| {
+        let head = &flat[..at];
+        let ty = &head[head.rfind(':').map_or(0, |c| c + 1)..];
+        let ty = ty.trim_start_matches('(');
+        !ty.starts_with('&') && ty.contains("NonSend")
+    })
+}
+
+/// Holders that call no Lua, argued: (file, item, why).
+const CALLS_NO_LUA: &[(&str, &str, &str)] = &[(
+    "spell/net.rs",
+    "SpellGoLoot",
+    "reads the modified-click table on the Rust side, and its handler writes the object stores      the view would read",
+)];
+
+/// Whether `CALLS_NO_LUA` argues `item` in `rel`.
+fn argued(rel: &str, item: &str) -> bool {
+    CALLS_NO_LUA
+        .iter()
+        .any(|&(f, i, _)| f == rel && item.contains(i))
+}
+
+/// Every system parameter list or `SystemParam` struct that holds the VM also takes
+/// [`super::LendLive`], so every call into Lua from it reads the `World`: scheduled systems, packet
+/// handlers and observers alike. Read off the source, as no schedule lists handlers.
+#[test]
+fn every_holder_of_the_vm_lends_the_world() {
+    use crate::test_support::{fn_items, rel_path, rust_files, src_dir};
+    // An inline test module, wherever it sits; `mod tests;` is only a declaration.
+    let test_module =
+        regex::Regex::new(r"\r?\n#\[cfg\(test\)\]\r?\n(?:#\[[^\n]*\]\r?\n)*mod \w+ \{")
+            .expect("a valid pattern");
+    let mut checked = 0;
+    let mut offenders = Vec::new();
+    for file in rust_files(&src_dir()) {
+        let rel = rel_path(&file);
+        if rel.ends_with("tests.rs") || rel.starts_with("ui_script/live") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&file).expect("readable source");
+        // Production code only: every inline test module cut out, to its closing brace.
+        let mut text = String::new();
+        let mut from = 0;
+        while let Some(m) = test_module.find_at(&source, from) {
+            text.push_str(&source[from..m.start()]);
+            let mut depth = 0usize;
+            from = source.len();
+            for (i, c) in source[m.end() - 1..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => continue,
+                }
+                if depth == 0 {
+                    from = m.end() + i;
+                    break;
+                }
+            }
+        }
+        text.push_str(&source[from..]);
+        let text = text.as_str();
+        if !text.contains("UiScript") {
+            continue;
+        }
+        for f in fn_items(text) {
+            if takes_vm(f.params) {
+                checked += 1;
+                if !f.params.contains("LendLive") {
+                    offenders.push(format!("{rel}: fn {}", f.name));
+                }
+            }
+        }
+        for (at, _) in text.match_indices("#[derive(SystemParam)]") {
+            let rest = &text[at..];
+            let (Some(open), Some(close)) = (rest.find('{'), rest.find("\n}")) else {
+                continue;
+            };
+            let body = &rest[open..close];
+            let name = rest[..open].trim();
+            if takes_vm(body) {
+                checked += 1;
+                if !body.contains("LendLive") && !argued(&rel, name) {
+                    offenders.push(format!("{rel}: {name}"));
+                }
+            }
+        }
+    }
+    assert!(checked > 200, "the scan found only {checked} holders");
+    assert!(
+        offenders.is_empty(),
+        "these hold the VM and lend nothing, so a verb they reach reads no client state; take \
+         `crate::ui_script::LendLive` beside the VM:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// The same off the built schedules, which also sees a VM held inside a tuple alias: every
+/// non-exclusive system whose access holds the VM reads [`super::live::LendsLive`], the mark only
+/// [`super::live::LiveView`] reads.
+#[test]
+fn every_scheduled_holder_of_the_vm_lends_the_world() {
+    use std::any::TypeId;
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    let world = app.world_mut();
+    let labels: Vec<_> = world
+        .resource::<bevy::ecs::schedule::Schedules>()
+        .iter()
+        .map(|(_, schedule)| schedule.label())
+        .collect();
+    let mut holders = 0;
+    let mut offenders = Vec::new();
+    for label in labels {
+        world.schedule_scope(label, |world, schedule| {
+            schedule.graph_mut().systems.initialize(world);
+            let components = world.components();
+            let (Some(vm), Some(mark)) = (
+                components.get_resource_id(TypeId::of::<UiScript>()),
+                components.get_resource_id(TypeId::of::<super::live::LendsLive>()),
+            ) else {
+                return;
+            };
+            let graph = schedule.graph();
+            for (key, system, _) in graph.systems.iter() {
+                if system.is_exclusive() {
+                    continue;
+                }
+                let Some(with_access) = graph.systems.get(key) else {
+                    continue;
+                };
+                let access = with_access.access.combined_access();
+                if access.has_resource_read(vm) || access.has_resource_write(vm) {
+                    holders += 1;
+                    if !access.has_resource_read(mark) {
+                        offenders.push(format!("{label:?}: {}", system.name()));
+                    }
+                }
+            }
+        });
+    }
+    assert!(holders > 200, "the census found only {holders} holders");
+    assert!(
+        offenders.is_empty(),
+        "these scheduled systems hold the VM and lend nothing:\n{}",
+        offenders.join("\n")
+    );
 }

@@ -472,24 +472,27 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
         // The custom re-join list, seated here, then moved only by a confirmed join or a leave.
         channels.custom = parsed.joined.clone();
     }
-    script.set_guild_recruitment_mode(u8::from(parsed.guild_recruitment_auto));
-    script.set_chat_colors(parsed.colors);
-    script.set_chat_window_looks(parsed.looks);
-    // `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` for every registry entry, file or no
-    // file.
-    script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
-    let renorm = |b: u8| f64::from(b as f32 * (1.0f32 / 255.0f32));
-    for entry in script.chat_colors() {
-        script.fire_event(
-            "UPDATE_CHAT_COLOR",
-            vec![
-                benilla_ui::script::ScriptValue::Str(entry.name),
-                benilla_ui::script::ScriptValue::Number(renorm(entry.rgb[0])),
-                benilla_ui::script::ScriptValue::Number(renorm(entry.rgb[1])),
-                benilla_ui::script::ScriptValue::Number(renorm(entry.rgb[2])),
-            ],
-        );
-    }
+    // The events read the client through the lent `World`.
+    crate::ui_script::live::lend_world(world, script, |script| {
+        script.set_guild_recruitment_mode(u8::from(parsed.guild_recruitment_auto));
+        script.set_chat_colors(parsed.colors);
+        script.set_chat_window_looks(parsed.looks);
+        // `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` for every registry entry, file or
+        // no file.
+        script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
+        let renorm = |b: u8| f64::from(b as f32 * (1.0f32 / 255.0f32));
+        for entry in script.chat_colors() {
+            script.fire_event(
+                "UPDATE_CHAT_COLOR",
+                vec![
+                    benilla_ui::script::ScriptValue::Str(entry.name),
+                    benilla_ui::script::ScriptValue::Number(renorm(entry.rgb[0])),
+                    benilla_ui::script::ScriptValue::Number(renorm(entry.rgb[1])),
+                    benilla_ui::script::ScriptValue::Number(renorm(entry.rgb[2])),
+                ],
+            );
+        }
+    });
     // The header's `CHANNELS` re-join at login, as in the reference; zone channels are the walk's.
     // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join is the client's
     // own, auto 1.

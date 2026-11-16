@@ -26,7 +26,7 @@ impl Plugin for UiPetDollPlugin {
 }
 
 fn feed_pet_doll(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     pet: PetUnit,
     mut booth: ResMut<PetDollBooth>,

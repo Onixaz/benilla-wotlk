@@ -162,7 +162,7 @@ pub(super) fn target_by_name_requests(
     mut requests: MessageReader<by_name::TargetByNameRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    mut script: Option<NonSendMut<UiScript>>,
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
 ) {
     for request in requests.read() {
         if by_name::target_named(&scan_params, &mut commit, &request.name, false) {
@@ -176,7 +176,7 @@ pub(super) fn assist_requests(
     mut requests: MessageReader<by_name::AssistRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    mut script: Option<NonSendMut<UiScript>>,
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
 ) {
     for request in requests.read() {
         if by_name::assist_named(

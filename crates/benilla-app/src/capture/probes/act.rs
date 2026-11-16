@@ -45,7 +45,10 @@ struct ProbeChat {
 fn fire_probe_chat(
     mut probe: ResMut<ProbeChat>,
     time: ProbeClock,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_player: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if probe.lines.is_empty() {
@@ -519,7 +522,10 @@ fn install_probe_log(script: &benilla_ui::script::UiScript) {
 fn fire_probe_lua(
     mut probe: ResMut<ProbeLua>,
     time: ProbeClock,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_player: Query<(), With<crate::net::SelfPlayer>>,
     state: Res<State<crate::char_select::ClientState>>,
     entry_ui_pending: Option<Res<crate::ui_script::PendingEntryUiLoad>>,
@@ -673,7 +679,10 @@ fn glue_chunk_failure(e: &dyn std::fmt::Display) -> String {
 fn fire_probe_glue_lua(
     mut probe: ResMut<ProbeGlueLua>,
     time: ProbeClock,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSend<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs();
@@ -779,7 +788,10 @@ fn fire_probe_hover(
     mut probe: ResMut<ProbeHover>,
     mut synthetic: ResMut<crate::ui_script::SyntheticPointer>,
     time: ProbeClock,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_player: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if probe.names.is_empty() {
@@ -915,7 +927,10 @@ fn fire_probe_drag(
     mut probe: ResMut<ProbeDrag>,
     mut synthetic: ResMut<crate::ui_script::SyntheticPointer>,
     time: ProbeClock,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_player: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if probe.pairs.is_empty() || probe.pair >= probe.pairs.len() {

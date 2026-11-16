@@ -309,7 +309,7 @@ fn on_threat(
 /// then the tooltips, sounds, tutorial and signals the frame owes.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_threat(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut threat: ResMut<Threat>,
     index: Res<GuidIndex>,
     units: Query<(&ObjectStore, &Transform)>,

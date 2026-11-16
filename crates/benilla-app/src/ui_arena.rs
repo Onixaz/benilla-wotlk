@@ -238,7 +238,10 @@ fn track_streamed_players(
 }
 
 /// The owed `ARENA_OPPONENT_UPDATE`s, after the aura feed pushed the tokens they name.
-fn feed_arena(script: Option<NonSendMut<UiScript>>, mut arena: ResMut<ArenaOpponents>) {
+fn feed_arena(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut arena: ResMut<ArenaOpponents>,
+) {
     let Some(mut script) = script else {
         return;
     };

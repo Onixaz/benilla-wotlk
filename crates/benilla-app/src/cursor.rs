@@ -166,7 +166,10 @@ fn drive_displayed_cursor(
     world: Res<crate::target::WorldCursor>,
     over_ui: Res<crate::ui_script::PointerOverUi>,
     targeting: Res<crate::spell::targeting::SpellTargeting>,
-    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     // The base last restored on entering the UI; `None` over the world, so re-entry restores.
     mut last: Local<crate::ui_script::VmMemo<Option<crate::target::WorldCursor>>>,
     mut displayed: ResMut<DisplayedCursor>,
@@ -365,7 +368,10 @@ mod other {
         mut sprite: Query<(&SoftwareCursor, &mut ImageNode)>,
         cursor: Res<super::DisplayedCursor>,
         cursors: Option<ResMut<CursorImages>>,
-        script: Option<NonSend<benilla_ui::script::UiScript>>,
+        (script, _live): (
+            Option<NonSend<benilla_ui::script::UiScript>>,
+            crate::ui_script::LendLive,
+        ),
         mut world_assets: Option<ResMut<WorldAssets>>,
         mut images: ResMut<Assets<Image>>,
         mut payload_cursors: ResMut<PayloadCursorImages>,
@@ -563,7 +569,10 @@ mod macos {
     pub(super) fn drive(
         cursors: Option<NonSendMut<NativeCursors>>,
         mut payload_cursors: NonSendMut<PayloadCursors>,
-        script: Option<NonSend<benilla_ui::script::UiScript>>,
+        (script, _live): (
+            Option<NonSend<benilla_ui::script::UiScript>>,
+            crate::ui_script::LendLive,
+        ),
         mut world_assets: Option<ResMut<WorldAssets>>,
         mode: Res<super::DisplayedCursor>,
         screen: Res<crate::loading_screen::LoadingScreen>,

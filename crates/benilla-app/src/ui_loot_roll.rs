@@ -547,7 +547,7 @@ fn snapshot(
 /// Tick the open rolls, push them into the VM, fire their events and post their chat lines.
 #[allow(clippy::too_many_arguments)]
 fn feed_loot_rolls(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut rolls: ResMut<LootRolls>,
     items: Res<Items>,
     names: Res<NameCache>,
@@ -667,7 +667,7 @@ fn feed_loot_rolls(
 /// confirm raises its popup, `CONFIRM_DISENCHANT_ROLL (id, 3)` for Disenchant, else
 /// `CONFIRM_LOOT_ROLL (id, rollType)` (`0x6fbc70`).
 fn drain_loot_rolls(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut rolls: ResMut<LootRolls>,
     commands: Res<NetCommands>,
 ) {

@@ -297,7 +297,7 @@ fn service_probe(
     // The vendor fork: the merchant window, the VM the held-cursor leg picks up in, and what
     // turns a (bag, slot) into the item guid.
     mut merchant: ResMut<MerchantOpen>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     objects: crate::net::Objects,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     self_player: Query<(), With<SelfPlayer>>,

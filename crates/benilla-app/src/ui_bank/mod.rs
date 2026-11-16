@@ -97,7 +97,7 @@ fn bank_slot_error_key(result: u32) -> Option<&'static str> {
 /// Push the purchase row and fire the bank events. `BANKFRAME_OPENED` has no arguments: the
 /// reference fires it bare, and stock `BankFrame.lua:127` titles with `UnitName("npc")`.
 fn feed_bank(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     open: Res<BankOpen>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     prices: Option<Res<BankPrices>>,
@@ -155,7 +155,7 @@ fn feed_bank(
 
 /// Drain the Lua intents: `PurchaseSlot()` sends the buy, `CloseBankFrame()` clears locally.
 fn drain_bank(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<BankOpen>,
     net: Res<NetCommands>,
 ) {

@@ -165,7 +165,7 @@ fn stats_for(
 }
 
 fn feed_pet_stats(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     pet: PetUnit,
     self_store: Query<&ObjectStore, With<crate::net::SelfPlayer>>,

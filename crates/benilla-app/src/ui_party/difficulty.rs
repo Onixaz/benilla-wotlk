@@ -212,7 +212,7 @@ pub(super) struct FedGates {
 /// Push the difficulties, the LFG bit and the Refer-a-Friend state, and fire one
 /// `PARTY_LFG_RESTRICTED` per list that set the bit.
 pub(super) fn feed_menu_gates(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     group: Res<GroupState>,
     spells: Option<Res<Spells>>,
     actions: Res<PlayerActions>,

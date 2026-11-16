@@ -992,3 +992,53 @@ fn an_on_update_reads_the_world_through_the_lent_view() {
         .unwrap();
     assert_eq!(outside, "unlent");
 }
+
+/// A feed lends the view for its calls into Lua: every event the feeds fire on a taxi flags change
+/// and a control loss reads the `World` there, never an unlent view, and reads the flags the
+/// frame's packets set.
+#[test]
+fn a_feed_fired_event_reads_the_world_through_the_lent_view() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let script = rig
+        .app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>();
+    super::live_tests::install_live_taxi(script);
+    script
+        .run(&format!(
+            r#"
+            CHARZ_FEED = {{}}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("PLAYER_CONTROL_LOST")
+            f:RegisterEvent("PLAYER_CONTROL_GAINED")
+            f:RegisterEvent("UNIT_FLAGS")
+            f:SetScript("OnEvent", function(_, e, unit)
+                CHARZ_FEED[#CHARZ_FEED + 1] = e .. " " .. tostring(unit) .. " live="
+                    .. CharzLiveTaxi({ME})
+            end)
+            "#
+        ))
+        .unwrap();
+    let feed = |rig: &mut Rig| -> Vec<String> {
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval("local t = CHARZ_FEED; CHARZ_FEED = {}; return t")
+            .unwrap()
+    };
+    rig.packets(
+        vec![flags(crate::player::UNIT_FLAG_TAXI_FLIGHT), control(false)],
+        1,
+    );
+    assert_eq!(feed(&mut rig), vec!["UNIT_FLAGS player live=1"]);
+    rig.packets(vec![flags(0), control(true)], 1);
+    assert_eq!(
+        feed(&mut rig),
+        vec![
+            "UNIT_FLAGS player live=nil",
+            "PLAYER_CONTROL_LOST nil live=nil"
+        ]
+    );
+}

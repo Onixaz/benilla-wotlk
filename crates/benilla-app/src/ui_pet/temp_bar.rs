@@ -64,7 +64,7 @@ fn unit_pet_bar_used(
 /// Write the temporary bar and its flag when the pet's bar takes it or leaves it.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn update_pet_temp_bar(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     me: Query<(&ObjectStore, Option<&crate::vehicle::Passenger>), With<SelfPlayer>>,
     stores: Query<(&ObjectStore, Option<&crate::vehicle::Vehicle>)>,

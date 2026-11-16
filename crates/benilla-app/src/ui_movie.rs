@@ -107,7 +107,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut playing: ResMut<MoviePlaying>) {
 
 /// `PLAY_MOVIE` once our player is in the world (`0x523632`), then the stops its handlers ask for.
 fn feed_movie(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut playing: ResMut<MoviePlaying>,
     me: Query<(), With<SelfPlayer>>,
     net: Res<NetCommands>,

@@ -398,7 +398,7 @@ struct AuraUnits<'w> {
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn feed_auras(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<
         (
             &ObjectStore,
@@ -605,7 +605,9 @@ fn feed_auras(
 
 /// The session's end: drops the lists, so nothing reaches the next character's frames. The
 /// tables die with their units.
-fn end_session_aura_state(script: Option<NonSendMut<UiScript>>) {
+fn end_session_aura_state(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+) {
     if let Some(mut script) = script {
         script.clear_auras();
         script.set_unit_guids(&Default::default());
@@ -616,7 +618,10 @@ fn end_session_aura_state(script: Option<NonSendMut<UiScript>>) {
 
 /// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell, not the
 /// slot.
-fn drain_aura_cancels(script: Option<NonSendMut<UiScript>>, net: Res<NetCommands>) {
+fn drain_aura_cancels(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    net: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };

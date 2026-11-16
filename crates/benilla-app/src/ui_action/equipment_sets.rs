@@ -52,7 +52,7 @@ fn sync_bar(script: &UiScript, actions: &mut PlayerActions) {
 /// `SMSG_EQUIPMENT_SET_LIST` (`0x5af490`); with no VM the bar takes the list as sent.
 fn on_equipment_set_list(
     In(ev): In<SessionEvent>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut actions: ResMut<PlayerActions>,
 ) {
     let SessionEvent::EquipmentSetList(sets) = ev else {
@@ -75,7 +75,7 @@ fn on_equipment_set_list(
 /// `SMSG_EQUIPMENT_SET_SAVED` (`0x5af6c0`): the server's guid for a new set, 0 for a refused one.
 fn on_equipment_set_saved(
     In(ev): In<SessionEvent>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut actions: ResMut<PlayerActions>,
 ) {
     let (SessionEvent::EquipmentSetSaved { id, guid }, Some(mut script)) = (ev, script) else {
@@ -87,7 +87,10 @@ fn on_equipment_set_saved(
 }
 
 /// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`).
-fn on_equipment_set_use_result(In(ev): In<SessionEvent>, script: Option<NonSendMut<UiScript>>) {
+fn on_equipment_set_use_result(
+    In(ev): In<SessionEvent>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+) {
     let (SessionEvent::EquipmentSetUseResult { result }, Some(mut script)) = (ev, script) else {
         return;
     };
@@ -97,7 +100,7 @@ fn on_equipment_set_use_result(In(ev): In<SessionEvent>, script: Option<NonSendM
 
 /// A new VM starts from the held list; then the VM's sends go out and the bar follows its edits.
 pub(super) fn drain_equipment_sets(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut actions: ResMut<PlayerActions>,
     commands: Res<NetCommands>,
     mut memory: Local<VmMemo<()>>,

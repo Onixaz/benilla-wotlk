@@ -330,7 +330,7 @@ struct FeedMemory {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_lfg(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     catalog: Option<Res<LfgCatalog>>,
     mut feed: ResMut<LfgFeed>,
     current_map: Option<Res<benilla_world::world_map::CurrentMap>>,

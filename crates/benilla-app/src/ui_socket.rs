@@ -177,7 +177,10 @@ fn on_item_create(In(ev): In<SessionEvent>, mut records: ResMut<RefundRecords>) 
 }
 
 /// The VM's socketing accepts and refund sends.
-fn drain_item_sends(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_item_sends(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -213,7 +216,7 @@ fn trade_stamp(
 /// the trade stamps, push all of it to the VM, and print the refund results.
 #[allow(clippy::too_many_arguments)] // the param list is the input set
 fn feed_refunds(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut records: ResMut<RefundRecords>,
     mut results: ResMut<RefundResults>,
     mut field_edges: MessageReader<FieldChanged>,

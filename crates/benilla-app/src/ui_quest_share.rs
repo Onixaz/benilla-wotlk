@@ -163,7 +163,7 @@ impl Plugin for QuestSharePlugin {
 
 /// Resolves the queued names and shows what they unlock: verdict lines and `QUEST_ACCEPT_CONFIRM`.
 fn feed_quest_share(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut share: ResMut<QuestShare>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
@@ -225,7 +225,7 @@ fn feed_quest_share(
 
 /// `ConfirmAcceptQuest()`, the popup's Yes, answered with the latched quest id.
 fn drain_quest_share(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     share: Res<QuestShare>,
     commands: Res<NetCommands>,
 ) {

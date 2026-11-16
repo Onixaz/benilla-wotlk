@@ -132,7 +132,7 @@ fn record(
     time: Res<Time<Real>>,
     cost: Res<UiFrameCost>,
     mesh: Res<crate::ui_pass::UiMeshCost>,
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mut rec: ResMut<Recorder>,
 ) {
     let frame_ms = time.delta_secs() * 1000.0;

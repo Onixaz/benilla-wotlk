@@ -203,7 +203,7 @@ fn local_fields(secs: i64) -> LocalTime {
 /// The VM's two flags → the two files, on the frame either flag moves or a new session's VM
 /// starts with both off, as a logout closes them (`0x5072b0`).
 pub(super) fn sync_chat_logging(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut windows: ResMut<super::frames::ChatWindows>,
     mut combat_file: ResMut<CombatLogFile>,
 ) {

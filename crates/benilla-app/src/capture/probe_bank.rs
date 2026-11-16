@@ -152,7 +152,7 @@ fn bank_probe(
     mut probe: ResMut<BankProbe>,
     open: Res<BankOpen>,
     prices: Option<Res<BankPrices>>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,

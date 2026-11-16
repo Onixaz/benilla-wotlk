@@ -405,7 +405,7 @@ pub(crate) fn taught_spell(
 /// miss queried as the reference queries set members, and bonus text from the `$`-engine. A set
 /// stays pending, re-pushing, until every member resolves.
 pub(super) fn feed_item_sets(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     sets: Option<Res<super::ItemSets>>,
     items: Res<Items>,
     // The pieces' names and slot types, the set block's own cache (`0x62ba33`).
@@ -554,7 +554,7 @@ pub(super) struct TablesPushed {
 /// answer) and the two scaling tables (a link's heirloom reads them on its first hover). One
 /// system: once both are in, a frame costs a VM check and two flags.
 pub(super) fn feed_item_tables(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     props: Option<Res<crate::items::RandomProperties>>,
     enchants: Option<Res<crate::items::Enchants>>,
     scaling: Option<Res<super::ScalingStats>>,
@@ -641,7 +641,7 @@ fn push_scaling_tables(script: &mut UiScript, tables: &super::ScalingStats) {
 /// a miss, which queries it here.
 #[allow(clippy::type_complexity)]
 pub(crate) fn feed_item_stats(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut items: ResMut<Items>,
     commands: Res<NetCommands>,
     spells: Option<Res<crate::ui_action::Spells>>,
@@ -804,7 +804,7 @@ pub(crate) fn feed_item_stats(
 /// proficiencies (`SMSG_SET_PROFICIENCY`) and reputation ranks (the DBC base plus the
 /// `SMSG_INITIALIZE_FACTIONS` standing), pushed on change.
 pub(super) fn feed_player_req(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
     proficiencies: Res<crate::net::Proficiencies>,
@@ -1121,7 +1121,7 @@ pub(crate) fn resolve_item_locks(
 
 #[allow(clippy::type_complexity)] // the param list is the input set
 pub(crate) fn feed_containers(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     // `ChrClasses.dbc` field 16, the fit rule's relic flag.
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     items: Res<Items>,

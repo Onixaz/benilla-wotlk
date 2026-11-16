@@ -309,7 +309,7 @@ const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
 /// Before the script tick: the sites' asks, the descriptor edges, the timers, the cue and the
 /// event, and the acknowledged bank's push to whichever VM is live.
 fn feed_tutorials(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut tutorials: ResMut<Tutorials>,
     mut asks: MessageReader<TutorialEvent>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -430,7 +430,7 @@ fn watch_self(
 
 /// After the script tick: the verbs' writes, then every send.
 fn drain_tutorials(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut tutorials: ResMut<Tutorials>,
     commands: Res<NetCommands>,
 ) {

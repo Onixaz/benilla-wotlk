@@ -1719,7 +1719,7 @@ fn notice_cvar(notice: GlueNotice) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_glue_mgr(
     mut mgr: ResMut<GlueMgr>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut news: LoginNews,
     mut asks: GlueAsks,
     realms: Option<Res<crate::realm_select::Realms>>,

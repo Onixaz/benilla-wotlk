@@ -376,7 +376,7 @@ fn bg_probe(
     dropped: Res<DroppedOpcodes>,
     go_templates: Res<crate::go_templates::GameObjectTemplates>,
     mut idle: ResMut<crate::ui_chat::idle::LastInput>,
-    mut script: Option<NonSendMut<UiScript>>,
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
 ) {
     let Ok(store) = me.single() else {
         return;

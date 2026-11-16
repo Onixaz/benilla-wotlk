@@ -84,7 +84,7 @@ fn keep_locked(
 /// Build the snapshot, push it, drain the queued lines, and fire the events on their edges.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn feed_petition(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     registrar: Res<GuildRegistrarState>,
     mut vendor: ResMut<PetitionVendorState>,
     mut petition: ResMut<PetitionState>,
@@ -282,7 +282,7 @@ pub(super) fn feed_petition(
 /// (`decline_on_close`); `CloseGuildRegistrar` sends nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_petition(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut registrar: ResMut<GuildRegistrarState>,
     mut vendor: ResMut<PetitionVendorState>,
     mut petition: ResMut<PetitionState>,
