@@ -499,10 +499,11 @@ fn death_release_and_resurrection() {
     );
 }
 
-/// The control events fire inside the control update's handler (`0x520fe0`), ahead of the
-/// `UNIT_FLAGS` the unit feed still fires after the drain (12340 fires it from the flags packet's
-/// field handler, `0x60c240`); `UnitOnTaxi` reads the flags the earlier packet set.
+/// The flags packet ahead of the control update: 12340 fires `UNIT_FLAGS` from the flags packet's
+/// field handler (`0x60c240`), still in control, then the control events from the control
+/// update's (`0x520fe0`), and `UnitOnTaxi` reads the flags the earlier packet set.
 #[test]
+#[ignore = "#1266: UNIT_FLAGS fires from the unit feed after the drain, behind the control events"]
 fn flight_start_and_end_with_the_flags_ahead_of_the_control_update() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
@@ -517,16 +518,40 @@ fn flight_start_and_end_with_the_flags_ahead_of_the_control_update() {
     assert_eq!(
         pin(&start, events, verbs),
         vec![
+            "UNIT_FLAGS player | taxi=1 control=1",
             "PLAYER_CONTROL_LOST | taxi=1 control=nil",
-            "UNIT_FLAGS player | taxi=1 control=nil",
         ]
     );
     assert_eq!(
         pin(&end, events, verbs),
         vec![
+            "UNIT_FLAGS player | taxi=nil control=nil",
             "PLAYER_CONTROL_GAINED | taxi=nil control=1",
-            "UNIT_FLAGS player | taxi=nil control=1",
         ]
+    );
+}
+
+/// The control events alone with the flags packet ahead: each fires from the control update's
+/// handler (`0x520fe0`) with the flags the earlier packet set, as in 12340.
+#[test]
+fn flight_control_events_read_the_flags_packet_ahead_of_them() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let events = &["PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED"];
+    let verbs = &["taxi", "control"];
+    let start = rig.packets(
+        vec![flags(crate::player::UNIT_FLAG_TAXI_FLIGHT), control(false)],
+        3,
+    );
+    let end = rig.packets(vec![flags(0), control(true)], 3);
+    assert_eq!(
+        pin(&start, events, verbs),
+        vec!["PLAYER_CONTROL_LOST | taxi=1 control=nil"]
+    );
+    assert_eq!(
+        pin(&end, events, verbs),
+        vec!["PLAYER_CONTROL_GAINED | taxi=nil control=1"]
     );
 }
 

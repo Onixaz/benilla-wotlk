@@ -573,8 +573,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // HasFullControl(): the active player held with health above zero and the control flag set
-    // (`0x611603`-`0x611637`); the stock unit menu greys Trade and Duel on it.
+    // HasFullControl(): the active player held, not looking through far sight, with health above
+    // zero and the control flag set (`0x611603`-`0x611637`); the stock unit menu greys Trade and
+    // Duel on it.
     g.set(
         "HasFullControl",
         lua.create_function(|_, ()| {
@@ -582,6 +583,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 live.active_player()
                     .and_then(|p| live.unit_health(p))
                     .is_some_and(|h| h > 0)
+                    && !live.far_sight()
                     && live.has_control()
             });
             Ok(flag(full.unwrap_or_else(crate::script::live::has_control)))

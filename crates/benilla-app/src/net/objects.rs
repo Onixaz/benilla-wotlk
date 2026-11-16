@@ -103,6 +103,7 @@ pub(crate) struct Scene<'w, 's> {
     self_moves: MessageWriter<'w, super::SelfMoveMessage>,
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
     control: ResMut<'w, super::ControlFlag>,
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -150,9 +151,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             );
             return;
         }
-        // Our own create re-seeds the UI's control flag with no event (`0x6e8160` -> `0x513880`).
-        if sc.self_guid.0 == Some(guid) {
-            sc.control.0 = true;
+        // Our own create gives us control (`0x6e80b6`), firing `PLAYER_CONTROL_GAINED` on the flag's
+        // edge (`0x71c9a0` -> `0x520fe0`) before the silent re-seed (`0x6e8160` -> `0x513880`).
+        if sc.self_guid.0 == Some(guid) && !std::mem::replace(&mut sc.control.0, true) {
+            sc.ui.fire("PLAYER_CONTROL_GAINED", Vec::new());
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {

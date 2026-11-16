@@ -24,6 +24,10 @@ pub trait LiveState {
     /// The UI's control flag (`0xbcfb8c`), which the control update for our own unit writes
     /// (`0x520fe0`) and a world entry sets (`0x513880`).
     fn has_control(&self) -> bool;
+
+    /// Whether our view looks through a far-sight subject: the bit set as `CMSG_FAR_SIGHT` 1 goes
+    /// out (`0x6e29b5`) and cleared ahead of the 0 (`0x6e2a65`), which `HasFullControl` refuses on.
+    fn far_sight(&self) -> bool;
 }
 
 /// A lent view's address, its lifetime erased.
@@ -133,6 +137,8 @@ pub(crate) struct TestView {
     pub units: std::collections::HashMap<u64, (u32, u32)>,
     /// The control flag; the default view has lost control.
     pub control: bool,
+    /// Whether the view looks through a far-sight subject.
+    pub far_sight: bool,
 }
 
 #[cfg(test)]
@@ -151,6 +157,10 @@ impl LiveState for TestView {
 
     fn has_control(&self) -> bool {
         self.control
+    }
+
+    fn far_sight(&self) -> bool {
+        self.far_sight
     }
 }
 
@@ -179,6 +189,10 @@ mod tests {
 
         fn has_control(&self) -> bool {
             true
+        }
+
+        fn far_sight(&self) -> bool {
+            false
         }
     }
 
@@ -248,8 +262,9 @@ mod tests {
         assert_eq!(s.with_live(&grounded, |s| ask(s)), "nilnil");
     }
 
-    /// `HasFullControl` needs the active player held with health above zero and the control flag
-    /// set (`0x611603`-`0x611637`); with no view lent it answers the boot flag.
+    /// `HasFullControl` needs the active player held, not looking through far sight, with health
+    /// above zero and the control flag set (`0x611603`-`0x611637`); with no view lent it answers
+    /// the boot flag.
     #[test]
     fn has_full_control_reads_the_flag_and_the_players_health() {
         let mut s = UiScript::new().unwrap();
@@ -264,13 +279,20 @@ mod tests {
             player: Some(1),
             units: [(1, (0, 100))].into(),
             control,
+            ..Default::default()
         };
         assert_eq!(ask(&mut s, &alive(true)), "1");
         assert_eq!(ask(&mut s, &alive(false)), "nil");
+        let far = TestView {
+            far_sight: true,
+            ..alive(true)
+        };
+        assert_eq!(ask(&mut s, &far), "nil");
         let dead = TestView {
             player: Some(1),
             units: [(1, (0, 0))].into(),
             control: true,
+            ..Default::default()
         };
         assert_eq!(ask(&mut s, &dead), "nil");
         let nobody = TestView {
