@@ -78,12 +78,17 @@ pub(super) fn feed_petition(
     self_guid: Res<SelfGuid>,
     commands: Res<NetCommands>,
     mut sink: crate::ui_action::MessageSink,
+    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut fed: Local<crate::ui_script::VmMemo<FedPetition>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let fed = fed.get(&script);
+    // The vendor's world entry (`0x5a1f50`) empties the petition button.
+    if cascades.read().next().is_some() {
+        script.clear_petition_button();
+    }
 
     // Shown before the snapshot, so a refusal lands the same frame as its state change; a key the
     // VM's `GlobalStrings.lua` lacks shows nothing, as in the reference.
@@ -230,8 +235,9 @@ pub(super) fn feed_petition(
     });
     let now_vendor = vendor.npc();
     if std::mem::take(&mut vendor.update) {
-        // The petition list show (`0x5a22a0`): the update, then the show, with no close between
-        // two.
+        // The petition list show (`0x5a22a0`): the button emptied, the update, then the show, with
+        // no close between two.
+        script.clear_petition_button();
         script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
         script.fire_event("PETITION_VENDOR_SHOW", vec![]);
     } else if fed.vendor.is_some() && now_vendor.is_none() {
@@ -345,10 +351,18 @@ pub(super) fn drain_petition(
                     .0
                     .send(ClientCommand::TurnInArenaPetition { item, banner });
             }
-            // The petition button's held item: the cursor drop onto it is not built, so the
-            // button is always empty and `TurnInPetition` sends nothing (`0x5a2600`).
-            PetitionRequest::VendorTurnIn | PetitionRequest::VendorClickButton => {
-                debug!("ui_petition: petition button item not built — {request:?} dropped");
+            // The button's item, unchecked, with five all-ones banner words (`0x5a2600`).
+            PetitionRequest::VendorTurnIn { item } => {
+                let banner = ArenaBanner {
+                    background_color: u32::MAX,
+                    emblem_style: u32::MAX,
+                    emblem_color: u32::MAX,
+                    border_style: u32::MAX,
+                    border_color: u32::MAX,
+                };
+                let _ = commands
+                    .0
+                    .send(ClientCommand::TurnInArenaPetition { item, banner });
             }
             PetitionRequest::CloseVendor => {
                 vendor.close();

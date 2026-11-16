@@ -323,6 +323,7 @@ pub(super) fn slot_held(model: &super::Model, bag: i64, slot: u32) -> bool {
     ) || super::auction::holds_slot(model, bag, slot)
         || super::mail::holds_slot(model, bag, slot)
         || super::socket::holds_slot(model, bag, slot)
+        || super::petition::holds_slot(model, bag, slot)
 }
 
 /// Whether a bag slot's item is locked: a pending operation the app reports, or a UI-side hold.
@@ -397,7 +398,8 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
     }
     // The socketed item is locked while the window holds it (`0x5c4680`), and a locked item
     // never picks up.
-    let socketed = super::socket::holds_slot(model, bag, slot);
+    let socketed = super::socket::holds_slot(model, bag, slot)
+        || super::petition::holds_slot(model, bag, slot);
     match model.cursor.take() {
         None => {
             let picked = model
