@@ -850,10 +850,6 @@ static LINK_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::
 fn track_link_level(
     self_q: Query<&ObjectStore, (With<crate::net::SelfPlayer>, Changed<ObjectStore>)>,
 ) {
-    // A test process runs whole-frame rigs beside link tests, so there the level stays 0.
-    if cfg!(test) {
-        return;
-    }
     if let Some(level) = self_q.iter().next().and_then(|s| s.0.unit_level()) {
         LINK_LEVEL.store(level, std::sync::atomic::Ordering::Relaxed);
     }

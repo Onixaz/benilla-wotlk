@@ -116,6 +116,36 @@ pub(super) fn pin(seen: &[Seen], events: &[&str], verbs: &[&str]) -> Vec<String>
         .collect()
 }
 
+/// Set in the child process that runs one rig test; the parent only launches it.
+const CHILD: &str = "BENILLA_CHARZ_CHILD";
+
+/// One child at a time: each opens the install's tables.
+static CHILD_RUNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Runs the calling test alone in a child copy of this test binary, so the rig's process-wide
+/// state (environment, statics, parked materials) never reaches the tests running beside it.
+fn run_in_child() {
+    let name = std::thread::current()
+        .name()
+        .expect("a test runs on a thread named after it")
+        .to_string();
+    let _one = CHILD_RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([&name, "--exact", "--include-ignored", "--nocapture"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success() && report.contains("1 passed"),
+        "the child run of {name}:\n{report}"
+    );
+}
+
 /// The headless client logged in with the production UI and the observer, and the packet line.
 pub(super) struct Rig {
     pub app: App,
@@ -144,6 +174,10 @@ impl Rig {
     /// [`Self::login`] with `before` on the wire ahead of our create, in the same frame.
     pub fn login_after(before: Vec<SessionEvent>, fields: &[(u16, u32)]) -> Option<Self> {
         benilla_formats::wow_data_or_skip!(None);
+        if std::env::var_os(CHILD).is_none() {
+            run_in_child();
+            return None;
+        }
         let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!(
             "benilla-charz-{}-{:?}",
@@ -161,8 +195,6 @@ impl Rig {
             EnvGuard::set("BENILLA_HOME", home.to_str().unwrap()),
         );
 
-        // The parked model materials are process-wide; this app's store starts with none.
-        benilla_world::model_render::lazy::forget_parked();
         let mut app = crate::game_plugins::schedule_tests::headless_client();
         // A stub device, so every main-world system that makes GPU resources (the world store's light
         // buffer, the model and portrait targets) runs, and the world store opens the install's
@@ -591,16 +623,17 @@ fn pet_summon_and_dismiss() {
     );
     assert_eq!(
         pin(&summon, events, verbs),
+        // The pet unit feeds before the bar (#1244), so the bar's handler sees the pet.
         vec![
-            "PET_BAR_UPDATE | pet=nil petui=nil",
             "UNIT_PET player | pet=1 petui=nil",
+            "PET_BAR_UPDATE | pet=1 petui=nil",
         ]
     );
     assert_eq!(
         pin(&dismiss, events, verbs),
         vec![
-            "PET_BAR_UPDATE | pet=1 petui=nil",
             "UNIT_PET player | pet=nil petui=nil",
+            "PET_BAR_UPDATE | pet=nil petui=nil",
         ]
     );
 }
