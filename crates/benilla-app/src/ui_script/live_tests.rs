@@ -35,8 +35,27 @@ fn on_values(
     ui.fire("CHARZ_VALUES", vec![ScriptValue::Int(i64::from(flags))]);
 }
 
-/// The app with the handler, our player held, and a VM whose observer logs each event with
-/// `UnitOnTaxi("player")` at that moment.
+/// Installs `CharzLiveTaxi(guid)`, a test verb reading the unit's taxi bit through the view lent to
+/// the call that runs it: `"1"` or `"nil"`, and `"unlent"` with no view lent.
+pub(super) fn install_live_taxi(script: &UiScript) {
+    let f = script
+        .lua()
+        .create_function(|lua, guid: u64| {
+            Ok(
+                benilla_ui::script::read_live(lua, |l| l.unit_flags(guid)).map_or("unlent", |f| {
+                    match f {
+                        Some(f) if f & TAXI != 0 => "1",
+                        _ => "nil",
+                    }
+                }),
+            )
+        })
+        .unwrap();
+    script.lua().globals().set("CharzLiveTaxi", f).unwrap();
+}
+
+/// The app with the handler, our player held, and a VM whose observer logs each event with our
+/// taxi bit read through the lent view at that moment.
 fn app() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
@@ -54,6 +73,7 @@ fn app() -> App {
         held: [(ME, 0)].into(),
         ..Default::default()
     });
+    install_live_taxi(&script);
     script
         .run(
             r#"
@@ -61,7 +81,7 @@ fn app() -> App {
             local f = CreateFrame("Frame")
             f:RegisterEvent("CHARZ_VALUES")
             f:SetScript("OnEvent", function(_, e, flags)
-                LOG[#LOG + 1] = e .. " " .. flags .. " taxi=" .. tostring(UnitOnTaxi("player"))
+                LOG[#LOG + 1] = e .. " " .. flags .. " taxi=" .. CharzLiveTaxi(0x10)
             end)
             "#,
         )
@@ -78,7 +98,7 @@ fn values(flags: u32) -> SessionEvent {
 }
 
 /// Each handler-fired event reaches Lua after its own packet's changes and before the next
-/// packet's, and its handler's verb reads the `World`, not the pushed model.
+/// packet's, and its handler's verb reads the `World` through the lent view.
 #[test]
 fn a_handler_event_fires_after_its_changes_and_before_the_next_packet() {
     let mut app = app();

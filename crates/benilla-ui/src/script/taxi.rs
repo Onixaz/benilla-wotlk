@@ -8,9 +8,6 @@ use mlua::{Lua, Table};
 use super::region::region_handle_of;
 use super::Model;
 
-/// Bit 20 of a unit's flags word, the taxi ride `UnitOnTaxi` tests (`0x60f39c`).
-const UNIT_FLAG_TAXI_FLIGHT: u32 = 1 << 20;
-
 /// A visible node's icon state (`TaxiNodeGetType`): green, white or yellow in the reference.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TaxiNodeType {
@@ -218,8 +215,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // The number 1 or nil, never a boolean; an argument neither string nor number raises the
-    // reference's usage. With a live view lent, bit 20 of the unit's flags word (`0x60f390`);
-    // without one, the player's pushed ride flag.
+    // reference's usage. Only the player is tracked, as the stock UI asks about no other unit.
     g.set(
         "UnitOnTaxi",
         lua.create_function(|lua, unit: mlua::Value| {
@@ -228,13 +224,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
-            let guid = model.unit_guids.guid_of(&unit);
-            let riding = crate::script::live::read(lua, |live| {
-                guid.and_then(|g| live.unit_flags(g))
-                    .is_some_and(|f| f & UNIT_FLAG_TAXI_FLIGHT != 0)
-            })
-            .unwrap_or_else(|| unit.eq_ignore_ascii_case("player") && model.taxi_riding);
-            Ok(crate::script::binding_abi::flag(riding))
+            Ok(crate::script::binding_abi::flag(
+                unit.eq_ignore_ascii_case("player") && model.taxi_riding,
+            ))
         })?,
     )?;
 

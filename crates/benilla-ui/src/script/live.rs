@@ -1,7 +1,8 @@
 //! The client state the verbs read at call time. 12340's verbs read the live object when called
 //! (`UnitOnTaxi` `0x60f350` reads the flags word at `0x60f390`); here the app lends the VM a
 //! [`LiveState`] over its own state for the length of one call into Lua ([`UiScript::with_live`]),
-//! and a verb without one lent falls back to what the feeds pushed into the model.
+//! and a verb reads it through [`read_live`]. No stock verb reads it yet: a verb moves to it once
+//! every call into Lua that can reach it lends one, so it never answers two ways in one frame.
 
 use std::cell::Cell;
 use std::ptr::NonNull;
@@ -72,8 +73,8 @@ pub(crate) fn is_lent(lua: &Lua) -> bool {
         .is_some_and(|s| s.0.get().is_some())
 }
 
-/// `f` over the lent view, `None` with none lent.
-pub(crate) fn read<R>(lua: &Lua, f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
+/// `f` over the view lent to `lua`, `None` with none lent.
+pub fn read_live<R>(lua: &Lua, f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = lua.app_data_ref::<LiveSlot>()?.0.get()?;
     // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live`, which
     // outlives this call; the reference cannot escape `f`.
@@ -104,20 +105,39 @@ mod tests {
         let outer = One { guid: 1, flags: 7 };
         let inner = One { guid: 1, flags: 9 };
         s.with_live(&outer, |s| {
-            assert_eq!(read(s.lua(), |l| l.unit_flags(1)), Some(Some(7)));
+            assert_eq!(read_live(s.lua(), |l| l.unit_flags(1)), Some(Some(7)));
             s.with_live(&inner, |s| {
-                assert_eq!(read(s.lua(), |l| l.unit_flags(1)), Some(Some(9)));
+                assert_eq!(read_live(s.lua(), |l| l.unit_flags(1)), Some(Some(9)));
             });
-            assert_eq!(read(s.lua(), |l| l.unit_flags(1)), Some(Some(7)));
+            assert_eq!(read_live(s.lua(), |l| l.unit_flags(1)), Some(Some(7)));
         });
         assert!(!s.has_live());
-        assert_eq!(read(s.lua(), |l| l.unit_flags(1)), None);
+        assert_eq!(read_live(s.lua(), |l| l.unit_flags(1)), None);
     }
 
-    /// `UnitOnTaxi` reads the lent view for whichever unit the token names, over the pushed flag;
-    /// with none lent it answers the pushed flag, for the player only.
+    /// A Lua function reaches the view lent around the call that runs it, and nothing outside one.
     #[test]
-    fn unit_on_taxi_reads_the_lent_view_and_falls_back_to_the_push() {
+    fn a_lua_function_reads_the_view_lent_around_its_call() {
+        let mut s = UiScript::new().unwrap();
+        let flags = s
+            .lua()
+            .create_function(|lua, guid: u64| Ok(read_live(lua, |l| l.unit_flags(guid)).flatten()))
+            .unwrap();
+        s.lua().globals().set("Flags", flags).unwrap();
+        let ask = |s: &UiScript| s.eval::<Option<u32>>("return Flags(2)").unwrap();
+        assert_eq!(ask(&s), None);
+        let riding = One {
+            guid: 2,
+            flags: 1 << 20,
+        };
+        assert_eq!(s.with_live(&riding, |s| ask(s)), Some(1 << 20));
+        assert_eq!(ask(&s), None);
+    }
+
+    /// `UnitOnTaxi` does not read the view yet: lent or not, it answers the pushed ride flag, for
+    /// the player only.
+    #[test]
+    fn unit_on_taxi_answers_the_push_with_a_view_lent() {
         let mut s = UiScript::new().unwrap();
         s.set_unit_guids(&crate::script::UnitGuids {
             player: 1,
@@ -137,13 +157,7 @@ mod tests {
             guid: 2,
             flags: 1 << 20,
         };
-        assert_eq!(s.with_live(&riding, |s| ask(s)), "nil1");
-        let grounded = One {
-            guid: 1,
-            flags: !(1 << 20),
-        };
-        assert_eq!(s.with_live(&grounded, |s| ask(s)), "nilnil");
-        assert_eq!(ask(&s), "1nil");
+        assert_eq!(s.with_live(&riding, |s| ask(s)), "1nil");
     }
 
     #[test]

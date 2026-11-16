@@ -880,7 +880,9 @@ fn charz_control(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live
     }
 }
 
-/// A logged-in rig with [`charz_control`] registered after the stock control handler.
+/// A logged-in rig with [`charz_control`] registered after the stock control handler, the test verb
+/// `CharzLiveTaxi` installed, and a frame logging each `CHARZ_HANDLER` with our taxi bit as the
+/// lent view reads it and as `UnitOnTaxi` answers it from the push.
 fn login_with_handler_event() -> Option<Rig> {
     use crate::net::handlers::NetHandlerApp;
     let mut rig = Rig::login(&[OBJECT_TYPE_PLAYER])?;
@@ -888,12 +890,40 @@ fn login_with_handler_event() -> Option<Rig> {
         benilla_protocol::SessionEventKind::ClientControl,
         charz_control,
     );
+    let script = rig
+        .app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>();
+    super::live_tests::install_live_taxi(script);
+    script
+        .run(&format!(
+            r#"
+            CHARZ_LIVE = {{}}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CHARZ_HANDLER")
+            f:SetScript("OnEvent", function(_, _, edge)
+                CHARZ_LIVE[#CHARZ_LIVE + 1] = edge .. " live=" .. CharzLiveTaxi({ME})
+                    .. " pushed=" .. tostring(UnitOnTaxi("player"))
+            end)
+            "#
+        ))
+        .unwrap();
     Some(rig)
 }
 
+/// The `CHARZ_LIVE` lines since the last call.
+fn take_live(rig: &Rig) -> Vec<String> {
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .eval("local t = CHARZ_LIVE; CHARZ_LIVE = {}; return t")
+        .unwrap()
+}
+
 /// A handler-fired event reaches Lua inside the drain, in wire order: after every earlier packet's
-/// change (the flags ahead of it), before any later one's (the flags behind it), and its handler's
-/// `UnitOnTaxi` reads the `World` through the lent view, since no feed has pushed the flag yet.
+/// change (the flags ahead of it), before any later one's (the flags behind it), and a verb its
+/// handler calls reads the `World` through the lent view. `UnitOnTaxi` still answers the push,
+/// which no feed has made yet in that frame.
 #[test]
 fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     let Some(mut rig) = login_with_handler_event() else {
@@ -901,56 +931,47 @@ fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     };
     let taxi = crate::player::UNIT_FLAG_TAXI_FLIGHT;
     let ahead = rig.packets(vec![flags(taxi), control(false)], 1);
-    let landed = rig.packets(vec![flags(0), control(true)], 1);
-    let behind = rig.packets(vec![control(false), flags(taxi)], 1);
-    let between = rig.packets(vec![flags(0), control(true), flags(taxi)], 1);
-    let events = &["CHARZ_HANDLER"];
-    let verbs = &["taxi"];
+    assert_eq!(take_live(&rig), vec!["lost live=1 pushed=nil"]);
+    rig.packets(vec![flags(0), control(true)], 1);
+    assert_eq!(take_live(&rig), vec!["gained live=nil pushed=1"]);
+    rig.packets(vec![control(false), flags(taxi)], 1);
+    assert_eq!(take_live(&rig), vec!["lost live=nil pushed=nil"]);
+    rig.packets(vec![flags(0), control(true), flags(taxi)], 1);
+    assert_eq!(take_live(&rig), vec!["gained live=nil pushed=1"]);
+    // The observer sees it too, as the frame's first event: it fires inside the drain, ahead of
+    // every feed.
     assert_eq!(
-        pin(&ahead, events, verbs),
-        vec!["CHARZ_HANDLER lost | taxi=1"]
-    );
-    assert_eq!(
-        pin(&landed, events, verbs),
-        vec!["CHARZ_HANDLER gained | taxi=nil"]
-    );
-    assert_eq!(
-        pin(&behind, events, verbs),
+        pin(&ahead, &["CHARZ_HANDLER"], &["taxi"]),
         vec!["CHARZ_HANDLER lost | taxi=nil"]
     );
-    assert_eq!(
-        pin(&between, events, verbs),
-        vec!["CHARZ_HANDLER gained | taxi=nil"]
-    );
-    // The handler event is the frame's first: it fires inside the drain, ahead of every feed.
     assert_eq!(
         ahead.first().map(|s| s.event.as_str()),
         Some("CHARZ_HANDLER")
     );
 }
 
-/// The OnUpdate tick lends the view too: `UnitOnTaxi("playertarget")`, with us our own target,
-/// reads the flags the frame's packet set, which the pushed ride flag answers for `player` alone;
+/// The OnUpdate tick lends the view too: a verb there reads the flags the frame's packet set;
 /// outside any call into Lua nothing is lent.
 #[test]
 fn an_on_update_reads_the_world_through_the_lent_view() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
-    // `UNIT_FIELD_TARGET`, words 16 and 17: we target ourselves.
-    rig.packets(vec![self_values(&[(16, ME as u32), (17, 0)])], 2);
-    rig.app
+    let script = rig
+        .app
         .world()
-        .non_send_resource::<benilla_ui::script::UiScript>()
-        .run(
+        .non_send_resource::<benilla_ui::script::UiScript>();
+    super::live_tests::install_live_taxi(script);
+    script
+        .run(&format!(
             r#"
-            CHARZ_TICK = {}
+            CHARZ_TICK = {{}}
             local f = CreateFrame("Frame")
             f:SetScript("OnUpdate", function()
-                CHARZ_TICK[#CHARZ_TICK + 1] = tostring(UnitOnTaxi("playertarget"))
+                CHARZ_TICK[#CHARZ_TICK + 1] = CharzLiveTaxi({ME})
             end)
-            "#,
-        )
+            "#
+        ))
         .unwrap();
     let tick = |rig: &mut Rig| -> Vec<String> {
         rig.app
@@ -963,9 +984,11 @@ fn an_on_update_reads_the_world_through_the_lent_view() {
     assert_eq!(tick(&mut rig), vec!["1"]);
     rig.packets(vec![flags(0)], 1);
     assert_eq!(tick(&mut rig), vec!["nil"]);
-    assert!(!rig
+    let outside: String = rig
         .app
         .world()
         .non_send_resource::<benilla_ui::script::UiScript>()
-        .has_live());
+        .eval(&format!("return CharzLiveTaxi({ME})"))
+        .unwrap();
+    assert_eq!(outside, "unlent");
 }
