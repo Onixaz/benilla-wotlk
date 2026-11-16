@@ -233,6 +233,23 @@ impl Loader<'_> {
         }
     }
 
+    /// The wrap of a texture slot the XML builds fresh (`0x815f40`), a button state, slider thumb
+    /// or colour-select texture: its own wrap stands whenever its file loaded.
+    pub(super) fn apply_slot_texture_wrap(&mut self, el: &Element, region: &Table, dbg: &str) {
+        let Some(file) = el.attr("file") else {
+            return;
+        };
+        if crate::script::region::texture_path_of(self.lua, region).as_deref() != Some(file) {
+            return;
+        }
+        let wrap = xml_texture_wrap(el);
+        if let Err(e) = crate::script::region::set_texture_wrap(self.lua, region, wrap) {
+            self.report
+                .errors
+                .push(format!("{dbg}: region texture wrap: {e}"));
+        }
+    }
+
     pub(super) fn apply_region_visual(
         &mut self,
         region: &Element,
@@ -245,7 +262,21 @@ impl Loader<'_> {
             if let Some(file) = region.attr("file") {
                 // A `<Color>` beside `file=` is discarded, not a tint: the reference applies it in
                 // its child loop, then the file, read after, overwrites the same slot.
+                let before = crate::script::region::texture_path_of(self.lua, region_wrapper);
                 self.call_region(region_wrapper, "SetTexture", file.to_string(), dbg);
+                // The file is created with the element's wrap (`0x485f40`); a file the region
+                // already shows is kept with its own, as the same-file check returns first.
+                let after = crate::script::region::texture_path_of(self.lua, region_wrapper);
+                if before.as_deref() != Some(file) && after.as_deref() == Some(file) {
+                    let wrap = xml_texture_wrap(region);
+                    if let Err(e) =
+                        crate::script::region::set_texture_wrap(self.lua, region_wrapper, wrap)
+                    {
+                        self.report
+                            .errors
+                            .push(format!("{dbg}: region texture wrap: {e}"));
+                    }
+                }
             } else if let Some(c) = color {
                 // No file: a solid fill, an 8×8 texture in the reference, so its alpha multiplies
                 // with `SetVertexColor` rather than being replaced by it.
@@ -408,4 +439,19 @@ impl Loader<'_> {
             None => {}
         }
     }
+}
+
+/// A `<Texture>`'s `(u, v)` wrap, as the XML load (`0x485f40`) builds it for the file's create:
+/// `horizTile` or `vertTile` present and non-empty sets its axis whatever its value, and a
+/// `<TexCoords>` edge outside `[0, 1]` sets the axis it lies on.
+///
+/// Deviation: only the `left`/`right`/`top`/`bottom` form is read, all four present, as
+/// [`tex_coords_of`] parses it; the reference also reads a `<Rect>` child and defaults a
+/// missing edge.
+pub(super) fn xml_texture_wrap(region: &Element) -> (bool, bool) {
+    let tiled = |attr: &str| region.attr(attr).is_some_and(|v| !v.is_empty());
+    let out = |a: f32, b: f32| !(0.0..=1.0).contains(&a) || !(0.0..=1.0).contains(&b);
+    let (u, v) =
+        tex_coords_of(region).map_or((false, false), |(l, r, t, b)| (out(l, r), out(t, b)));
+    (tiled("horizTile") || u, tiled("vertTile") || v)
 }

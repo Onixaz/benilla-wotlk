@@ -450,6 +450,7 @@ fn extract_one(
                     // answer `GetBlendMode` but draw as straight alpha.
                     additive: data.blend == crate::script::BlendMode::Add,
                     tex_coords: data.tex_coords,
+                    wrap: data.wrap,
                     circular: data.circular,
                     portrait_unit: data.portrait_unit,
                     rotation: data.rotation,

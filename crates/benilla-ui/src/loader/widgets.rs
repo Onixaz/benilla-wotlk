@@ -123,6 +123,7 @@ impl Loader<'_> {
                     if let Some(tc) = tex_coords_of(t) {
                         this.call_region(&region, "SetTexCoord", tc, dbg);
                     }
+                    this.apply_slot_texture_wrap(t, &region, dbg);
                     // A named state texture is published both ways: the region registry for its
                     // `GetName()`, `_G` for `getglobal` and a sibling's `relativeTo`.
                     if let Some(rname) = t.name().map(|raw| framexml::resolve_name(raw, self_name))
@@ -463,6 +464,7 @@ impl Loader<'_> {
                 if let Some(tc) = tex_coords_of(tt) {
                     self.call_region(&region, "SetTexCoord", tc, dbg);
                 }
+                self.apply_slot_texture_wrap(tt, &region, dbg);
                 if let Some(rname) = tt.name().map(|raw| framexml::resolve_name(raw, self_name)) {
                     crate::script::region::publish_region_name(self.lua(), &rname, &region);
                     if let Err(e) = self.lua().globals().set(rname.clone(), region) {
@@ -529,6 +531,7 @@ impl Loader<'_> {
                     if let Some(tc) = tex_coords_of(tt) {
                         self.call_region(&region, "SetTexCoord", tc, dbg);
                     }
+                    self.apply_slot_texture_wrap(tt, &region, dbg);
                     if let Some(rname) = tt.name().map(|raw| framexml::resolve_name(raw, self_name))
                     {
                         // Published both ways: the stock `<ColorValueTexture>` anchors to

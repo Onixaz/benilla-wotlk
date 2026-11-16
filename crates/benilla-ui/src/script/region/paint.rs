@@ -19,6 +19,28 @@ pub(crate) fn rotation_corners(angle: f32, cx: f32, cy: f32) -> TexCoords {
     TexCoords::Corners([ul, ur, lr, ll])
 }
 
+/// The Texture region's file, for the XML load to tell a newly created texture from a kept one.
+pub(crate) fn texture_path_of(lua: &Lua, this: &Table) -> Option<String> {
+    let rh = region_handle_of(lua, this).ok()?;
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model.region_data.get(&rh).and_then(|d| d.texture.clone())
+}
+
+/// The XML load's wrap for the file its `SetTexture` just created: the load (`0x485f40`) passes
+/// `horizTile`/`vertTile` and its `<TexCoords>` overhang as the create's per-axis wrap, which the
+/// Lua binding cannot carry.
+pub(crate) fn set_texture_wrap(lua: &Lua, this: &Table, wrap: (bool, bool)) -> mlua::Result<()> {
+    let rh = region_handle_of(lua, this)?;
+    crate::script::model_mut_of(lua)
+        .region_data
+        .entry(rh)
+        .or_default()
+        .wrap = wrap;
+    Ok(())
+}
+
 /// Install the paint methods into `m`.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // SetAlpha/GetAlpha: the region's own alpha, not the owner frame's; stock
@@ -150,10 +172,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     m.set(
         "SetTexture",
-        // The path form reads one argument, the colour form up to four, and extras such as
-        // `SetTexture(path, true)` are ignored. `SetTexture` answers 1, or nil when the path form's
-        // file does not load, as the host's `Model::texture_probe` judges; with no probe the path
-        // form answers nil.
+        // The path form reads the path and `lua_toboolean` of the third argument, the wrap on both
+        // axes (`0x48c6f0`); the colour form reads up to four. `SetTexture` answers 1, or nil when
+        // the path form's file does not load, as the host's `Model::texture_probe` judges; with no
+        // probe the path form answers nil.
         lua.create_function(
             |lua, (this, arg, g, b, a): (Table, Value, Value, Value, Value)| {
                 let rh = region_handle_of(lua, &this)?;
@@ -210,6 +232,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             let had_probe = model.texture_probe.is_some();
                             if resolvable {
                                 let data = model.region_data.entry(rh).or_default();
+                                // A new file is created with the call's wrap; the same file
+                                // returns before creating (`0x4b53a0`) and keeps its own.
+                                if data.texture.as_deref() != Some(path.as_str()) {
+                                    let tile = !matches!(g, Value::Nil | Value::Boolean(false));
+                                    data.wrap = (tile, tile);
+                                }
                                 data.texture = Some(path);
                                 data.fill = None;
                             }

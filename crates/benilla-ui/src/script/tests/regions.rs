@@ -1327,3 +1327,115 @@ fn a_region_edge_read_resolves_a_pending_size_change() {
         (64.0, 34.0)
     );
 }
+
+/// A Texture region's sampler wrap, read off the model by name.
+fn texture_wrap(s: &UiScript, name: &str) -> (bool, bool) {
+    let lua = s.lua();
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
+    let id = *model.region_names.get(name).expect("region name");
+    let h = *model.id_to_region.get(&id).expect("region handle");
+    model.region_data.get(&h).map_or((false, false), |d| d.wrap)
+}
+
+/// The wrap is fixed when the file is created (`0x4859e0`): the Lua binding passes `lua_toboolean`
+/// of its third argument on both axes (`0x48c6f0`), a same-path call keeps the file's (`0x4b53a0`),
+/// and `SetTexCoord` never changes it. So the eight-value form past `[0, 1]` that `DrawRouteLine`
+/// (`TaxiFrame.lua`) writes clamps to the edge texel instead of tiling ghost copies of the flight
+/// line beside it.
+#[test]
+fn a_texture_wraps_as_its_file_was_created_never_as_its_tex_coords_run() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local f = CreateFrame("Frame", "WrapOwner")
+        f:SetPoint("BOTTOMLEFT", 0, 0)
+        f:SetWidth(100) f:SetHeight(50)
+        line = f:CreateTexture("WrapLine", "BACKGROUND")
+        line:SetTexture("Interface\\TaxiFrame\\UI-Taxi-Line")
+        line:SetAllPoints()
+        line:SetTexCoord(-0.66, 0.4, 0.1, 1.66, 0.9, -0.66, 1.66, 0.6)
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(
+        texture_wrap(&s, "WrapLine"),
+        (false, false),
+        "a rotated quad past [0, 1] clamps: SetTexCoord does not tile"
+    );
+    let quad_wrap = s
+        .extract()
+        .iter()
+        .find_map(|q| match &q.content {
+            QuadContent::Texture {
+                path: Some(p),
+                wrap,
+                ..
+            } if p.contains("UI-Taxi-Line") => Some(*wrap),
+            _ => None,
+        })
+        .expect("the line quad");
+    assert_eq!(
+        quad_wrap,
+        (false, false),
+        "the extract carries the file's wrap"
+    );
+
+    s.run(r#"line:SetTexture("Interface\\TaxiFrame\\UI-Taxi-Line", true)"#)
+        .unwrap();
+    assert_eq!(
+        texture_wrap(&s, "WrapLine"),
+        (false, false),
+        "the same file returns before creating and keeps its wrap"
+    );
+
+    s.run(r#"line:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background", 1)"#)
+        .unwrap();
+    assert_eq!(
+        texture_wrap(&s, "WrapLine"),
+        (true, true),
+        "a new file takes the third argument's truth on both axes"
+    );
+
+    s.run(r#"line:SetTexture("Interface\\TaxiFrame\\UI-Taxi-Line", nil)"#)
+        .unwrap();
+    assert_eq!(texture_wrap(&s, "WrapLine"), (false, false));
+}
+
+/// The XML load's wrap (`0x485f40`): a `<TexCoords>` edge past `[0, 1]` wraps its own axis, as
+/// `ShapeshiftBarMiddle`'s `right="2"` does for `ShapeshiftBar_Update`'s
+/// `SetTexCoord(0, n-2, 0, 1)`, and `horizTile`/`vertTile` present wrap theirs whatever the value.
+#[test]
+fn the_xml_load_wraps_the_axes_its_tex_coords_overrun_or_its_tile_attributes_name() {
+    let s = script();
+    let xml = r#"<Ui>
+        <Frame name="XmlWrapOwner">
+            <Size x="100" y="50"/>
+            <Layers>
+                <Layer level="ARTWORK">
+                    <Texture name="XmlWrapStrip" file="Interface\ShapeshiftBar\ShapeshiftBarMiddle">
+                        <TexCoords left="0" right="2" top="0" bottom="1"/>
+                    </Texture>
+                    <Texture name="XmlWrapCrop" file="Interface\ShapeshiftBar\ShapeshiftBar">
+                        <TexCoords left="0" right="0.734375" top="0" bottom="0.296875"/>
+                    </Texture>
+                    <Texture name="XmlWrapTiled" file="Interface\Tooltips\UI-Tooltip-Background" vertTile="false"/>
+                </Layer>
+            </Layers>
+        </Frame>
+    </Ui>"#;
+    let doc = crate::framexml::parse(xml).expect("valid FrameXML");
+    let report = crate::loader::load(&s, &doc, &|_| None);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+    assert_eq!(texture_wrap(&s, "XmlWrapStrip"), (true, false));
+    assert_eq!(texture_wrap(&s, "XmlWrapCrop"), (false, false));
+    assert_eq!(
+        texture_wrap(&s, "XmlWrapTiled"),
+        (false, true),
+        "a present tile attribute wraps its axis even when false"
+    );
+}
