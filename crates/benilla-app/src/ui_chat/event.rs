@@ -76,13 +76,6 @@ pub(crate) enum ChatEventKind {
 }
 
 impl ChatEventKind {
-    /// The `COMBAT_` lines the stock frame prints verbatim by their prefix; `COMBAT_XP_GAIN` and
-    /// `COMBAT_HONOR_GAIN`, composed apart, are outside this set.
-    pub(crate) fn is_combat_log(self) -> bool {
-        use ChatEventKind as K;
-        matches!(self, K::CombatMiscInfo | K::CombatFactionChange)
-    }
-
     /// Every kind, for the exhaustive sweeps; `ui_chat::tests::every_kind_is_in_all` fails when one
     /// is missing.
     #[cfg(test)]
