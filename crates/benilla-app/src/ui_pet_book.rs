@@ -55,7 +55,7 @@ pub(crate) struct FeedMemory {
 }
 
 pub(crate) fn feed_pet_book(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     spells: Option<Res<Spells>>,
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
@@ -188,7 +188,7 @@ pub(crate) fn cast_pet_spell(
 /// Drains the pet book's `ToggleSpellAutocast` intents. Each asks the usability predicate before it
 /// looks anything up, so an unusable pet's toggle flips, repaints and sends nothing.
 pub(crate) fn drain_pet_book(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut bar: ResMut<PetBar>,
     commands: Res<NetCommands>,
     pet: PetUnit,

@@ -345,7 +345,7 @@ pub(crate) struct UnlearnedSpells(pub(crate) Vec<u32>);
 /// open is a close then an open: `ShowUIPanel` returns early on a visible frame.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(crate) fn feed_trainer(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     // Writes the re-derived states, as `0x596b00` overwrites its own records.
     mut open: ResMut<TrainerOpen>,
     actions: Res<PlayerActions>,
@@ -582,7 +582,7 @@ impl NpcSession for TrainerOpen {
 
 /// Each `BuyTrainerService` becomes `CMSG_TRAINER_BUY_SPELL`; a close sends nothing.
 fn drain_trainer(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<TrainerOpen>,
     commands: Res<NetCommands>,
 ) {

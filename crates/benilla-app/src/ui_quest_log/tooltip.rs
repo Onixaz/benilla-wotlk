@@ -102,7 +102,7 @@ fn requirement_lines(
     } else if t.rep_objective_faction != 0 {
         if let Some(name) = n
             .factions
-            .and_then(|f| f.catalog().faction_name(t.rep_objective_faction))
+            .and_then(|f| f.catalog().faction_name_or_empty(t.rep_objective_faction))
         {
             let rank = standing_rank(t.rep_objective_value as i32);
             let label = get(&format!("FACTION_STANDING_LABEL{rank}")).unwrap_or_default();
@@ -117,7 +117,7 @@ fn requirement_lines(
 
 /// Answers the open asks; runs after the template handler, so a landed record shows the same frame.
 pub(super) fn feed_quest_tooltips(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     log: Res<QuestLog>,
     names: Res<NameCache>,
     items: Res<Items>,
@@ -178,7 +178,48 @@ pub(super) fn feed_quest_tooltips(
 
 #[cfg(test)]
 mod tests {
-    use super::standing_rank;
+    use super::*;
+    use benilla_formats::FactionCatalog;
+    use std::collections::HashMap;
+
+    /// The leaderboard lines for a quest needing `faction`, over a catalog where 6 is named and 7
+    /// has a row with an empty name.
+    fn rep_lines(faction: u32) -> Vec<String> {
+        let factions = crate::target::Factions::from_catalog(
+            FactionCatalog::from_rows(HashMap::new(), HashMap::new())
+                .with_faction(6, Some("Darnassus"))
+                .with_faction(7, None),
+        );
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let (names, items, commands) = (NameCache::default(), Items::default(), NetCommands(tx));
+        let n = Names {
+            names: &names,
+            items: &items,
+            gos: None,
+            factions: Some(&factions),
+            commands: &commands,
+        };
+        let t = QuestTemplate {
+            rep_objective_faction: faction,
+            rep_objective_value: 3000,
+            ..Default::default()
+        };
+        let get = |key: &str| match key {
+            "QUEST_FACTION_NEEDED_NOPROGRESS" => Some("%s: %s".to_string()),
+            "FACTION_STANDING_LABEL5" => Some("Friendly".to_string()),
+            _ => None,
+        };
+        requirement_lines(&t, &n, &get).expect("nothing in flight")
+    }
+
+    /// The line needs only the faction row and formats its name as stored (`0x5e1ecc`), empty
+    /// included; an id with no row gives no line (`0x5e1d8a`).
+    #[test]
+    fn a_reputation_line_needs_the_row_and_keeps_an_empty_name() {
+        assert_eq!(rep_lines(6), ["Darnassus: Friendly"]);
+        assert_eq!(rep_lines(7), [": Friendly"]);
+        assert!(rep_lines(8).is_empty());
+    }
 
     #[test]
     fn a_required_amount_reads_its_standing() {

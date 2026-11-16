@@ -15,7 +15,13 @@ impl Plugin for UiWardenPlugin {
 
 /// A check's chunk, through the executor it bound (`0x819210`), in whichever UI state is up: glue
 /// or game.
-fn on_script(In(ev): In<SessionEvent>, script: Option<NonSend<benilla_ui::script::UiScript>>) {
+fn on_script(
+    In(ev): In<SessionEvent>,
+    (script, _live): (
+        Option<NonSend<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
+) {
     let SessionEvent::WardenScript { chunk } = ev else {
         return;
     };

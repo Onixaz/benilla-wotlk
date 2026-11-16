@@ -546,7 +546,7 @@ struct RepairFeedMemo {
 
 /// Push each item's repair cost, and `GetRepairAllCost`'s total while a repairer is open.
 fn feed_repair_costs(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     open: Res<MerchantOpen>,
     mut inv: crate::items::Inventory,
     items: Res<Items>,
@@ -657,7 +657,7 @@ fn snapshot(
 /// Push the merchant into the VM and fire its events on a change; show the refusals and push the
 /// purse.
 fn feed_merchant(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     open: Res<MerchantOpen>,
     objects: Objects,
     items: Res<Items>,
@@ -770,7 +770,7 @@ impl NpcSession for MerchantOpen {
 /// 0 when the guild pays or the purse covers the carried gear, and a close clears locally, as there
 /// is no close packet.
 fn drain_merchant(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<MerchantOpen>,
     commands: Res<NetCommands>,
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -898,7 +898,7 @@ fn drain_merchant(
 pub(crate) fn end_repair_mode_on_right_press(
     mut presses: MessageReader<WorldRightPress>,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
 ) {
     if presses.read().last().is_none() || payload_held.0 {
         return;

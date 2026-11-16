@@ -1,6 +1,6 @@
 //! Frame methods: visibility, hierarchy, strata, level, scale, alpha, backdrop and input flags.
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, MultiValue, Table, Value};
 
 use crate::script::region_map::{set_shared, Side};
 
@@ -798,6 +798,102 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(crate::script::binding_abi::flag(
                 model.arena.frame(h).is_some_and(|f| f.ignore_depth),
             ))
+        })?,
+    )?;
+    // SetDepth(additiveDepth) (`0x4a1c40`): a number, else the named Usage; a change under
+    // 2.38e-7 is none (`0x48f5d0`). Answers nothing.
+    m.set(
+        "SetDepth",
+        lua.create_function(|lua, (this, depth): (Table, Value)| {
+            let Some(depth) = lua.coerce_number(depth)? else {
+                let who: Option<String> =
+                    this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetDepth(additiveDepth)",
+                    who.as_deref().unwrap_or(super::anchor_args::UNNAMED)
+                )));
+            };
+            let h = frame_handle_of(lua, &this)?;
+            if let Some(f) = crate::script::model_mut_of(lua).arena.frame_mut(h) {
+                if (f.depth - depth as f32).abs() >= 2.384_185_8e-7 {
+                    f.depth = depth as f32;
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+    // GetDepth (`0x4a1cc0`) answers the frame's own depth, GetEffectiveDepth (`0x4a1d20`) it plus
+    // its parent's effective depth, a top-level frame's parent depth being the constructor's 1.0.
+    // A nameplate answers nothing to either: its constructor sets flag `0x40000` (`0x98f790`).
+    for (name, effective) in [("GetDepth", false), ("GetEffectiveDepth", true)] {
+        m.set(
+            name,
+            lua.create_function(move |lua, this: Table| {
+                let h = frame_handle_of(lua, &this)?;
+                let model = crate::script::model_mut_of(lua);
+                if crate::script::nameplate::is_world_seated(&model, h) {
+                    return Ok(None);
+                }
+                let own = model.arena.frame(h).map_or(0.0, |f| f.depth);
+                if !effective {
+                    return Ok(Some(f64::from(own)));
+                }
+                let mut total = 1.0 + own;
+                let mut at = model.arena.frame(h).and_then(|f| f.parent);
+                while let Some(p) = at.and_then(|p| model.arena.frame(p)) {
+                    total += p.depth;
+                    at = p.parent;
+                }
+                Ok(Some(f64::from(total)))
+            })?,
+        )?;
+    }
+    // SetDontSavePosition(flag) (`0x4a08c0`): the boolean argument (`0x815500`, an absent one on)
+    // into frame flag `0x80000`; GetDontSavePosition (`0x4a0910`) answers 1 or nil.
+    m.set(
+        "SetDontSavePosition",
+        lua.create_function(|lua, args: MultiValue| {
+            let this = match args.front() {
+                Some(Value::Table(t)) => t.clone(),
+                _ => return Err(mlua::Error::runtime("expected a frame")),
+            };
+            let on = crate::script::binding_abi::bool_or_default(args.get(1), true);
+            let h = frame_handle_of(lua, &this)?;
+            if let Some(f) = crate::script::model_mut_of(lua).arena.frame_mut(h) {
+                f.dont_save_position = on;
+            }
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "GetDontSavePosition",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            Ok(crate::script::binding_abi::flag(
+                model.arena.frame(h).is_some_and(|f| f.dont_save_position),
+            ))
+        })?,
+    )?;
+    // GetEffectiveAlpha (`0x49f900`): the alpha byte (`SetAlpha` truncates `alpha × 255`) times the
+    // parent's effective byte over 255, integer division, then over 255; a top-level frame's
+    // parent byte is 255.
+    m.set(
+        "GetEffectiveAlpha",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            let mut chain = Vec::new();
+            let mut at = Some(h);
+            while let Some(f) = at.and_then(|f| model.arena.frame(f)) {
+                chain.push((f.alpha * 255.0) as u8);
+                at = f.parent;
+            }
+            let byte = chain
+                .iter()
+                .rev()
+                .fold(255u32, |parent, &own| u32::from(own) * parent / 255);
+            Ok(f64::from(byte) * (1.0 / 255.0))
         })?,
     )?;
     // SetClampRectInsets(left, right, top, bottom) (`0x4a0310`): four numbers, else the named

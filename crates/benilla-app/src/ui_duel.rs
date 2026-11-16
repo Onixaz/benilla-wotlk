@@ -257,7 +257,7 @@ pub(crate) mod net {
 
 /// Fire the four duel events on [`DuelState`]'s edges.
 fn feed_duel(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut duel: ResMut<DuelState>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
@@ -351,7 +351,7 @@ fn tick_countdown(time: Res<Time>, mut duel: ResMut<DuelState>, mut started: Loc
 
 /// Drain the duel verbs' intents into their sends.
 fn drain_duel(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     duel: Res<DuelState>,
     spells: Option<Res<Spells>>,
     actions: Res<crate::ui_action::PlayerActions>,

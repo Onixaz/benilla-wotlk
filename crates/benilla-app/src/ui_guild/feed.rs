@@ -34,7 +34,7 @@ pub(super) struct FedGuild {
 
 /// Build the display snapshot, push it, and fire the guild events on their edges.
 pub(super) fn feed_guild(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut guild: ResMut<GuildState>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     areas: Option<Res<AreaTableRes>>,
@@ -306,7 +306,7 @@ pub(super) fn index_of(order: &[u64], guid: u64) -> u32 {
 /// Turn the Lua guild intents into their sends. The note verbs carry a 1-based display row where
 /// the wire wants a name; select, sort and show-offline are local and send nothing.
 pub(super) fn drain_guild(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut guild: ResMut<GuildState>,
     commands: Res<NetCommands>,
     time: Res<Time<Real>>,

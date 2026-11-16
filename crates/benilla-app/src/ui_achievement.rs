@@ -214,7 +214,7 @@ struct FeedMemory {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_achievements(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     db: Option<Res<Achievements>>,
     mut held: ResMut<PlayerAchievements>,
     self_guid: Res<SelfGuid>,

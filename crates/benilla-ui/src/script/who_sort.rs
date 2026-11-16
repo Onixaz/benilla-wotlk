@@ -169,9 +169,27 @@ fn cmp_upper(c: u32) -> u32 {
 
 /// The UTF-8 case-insensitive compare, the name arm: folded code points in order, a shorter string
 /// first.
-pub(crate) fn cmp_utf8i(a: &str, b: &str) -> Ordering {
+pub fn cmp_utf8i(a: &str, b: &str) -> Ordering {
     let fold = |s: &str| s.chars().map(|c| cmp_upper(code(c))).collect::<Vec<_>>();
     fold(a).cmp(&fold(b))
+}
+
+/// The same compare cut at `prefix`'s length in code points (`0x76eea0`): `name` starts with the
+/// whole of `prefix`, folded.
+pub fn starts_with_utf8i(name: &str, prefix: &str) -> bool {
+    let fold = |c: char| cmp_upper(code(c));
+    let mut name = name.chars();
+    prefix
+        .chars()
+        .all(|p| name.next().is_some_and(|n| fold(n) == fold(p)))
+}
+
+/// The UTF-8 case-insensitive search (`0x76f7e0`): `needle`, folded, starts at some character of
+/// `haystack`. An empty needle is found in any non-empty haystack, and nothing in an empty one.
+pub fn contains_utf8i(haystack: &str, needle: &str) -> bool {
+    haystack
+        .char_indices()
+        .any(|(i, _)| starts_with_utf8i(&haystack[i..], needle))
 }
 
 /// The UTF-8 sort compare's fold (`0x76e7a0`): ASCII, Latin-1 and Cyrillic lower case up, `œ` to
@@ -415,6 +433,30 @@ mod tests {
         assert_eq!(cmp_utf8i("Ann", "Anne"), Ordering::Less, "prefix first");
         // No base-letter fold here: É (0xC9) is past every ASCII letter.
         assert_eq!(cmp_utf8i("Éa", "Zb"), Ordering::Greater);
+    }
+
+    /// The compare at a length counts code points, so a two-byte letter is one step, and a name
+    /// shorter than the prefix fails.
+    #[test]
+    fn the_prefix_compare_runs_to_the_prefix_length_in_letters() {
+        assert!(starts_with_utf8i("Ragnaros", "rag"));
+        assert!(starts_with_utf8i("Éowyn", "éo"));
+        assert!(starts_with_utf8i("Ёлка", "ёл"), "Cyrillic folds too");
+        assert!(!starts_with_utf8i("Brian", "Bob"));
+        assert!(!starts_with_utf8i("Bob", "Bobby"));
+        assert!(starts_with_utf8i("Bob", ""));
+    }
+
+    /// The search tries the folded needle at every letter, and an empty needle finds any letter.
+    #[test]
+    fn the_search_finds_the_needle_anywhere_without_case() {
+        assert!(contains_utf8i("Elwynn Forest", "elwynn"));
+        assert!(contains_utf8i("Warlock", "WAR"));
+        assert!(contains_utf8i("Ice Troll", "troll"));
+        assert!(contains_utf8i("Éowyn", "OWYN"));
+        assert!(!contains_utf8i("Mage", "warrior"));
+        assert!(contains_utf8i("Mage", ""));
+        assert!(!contains_utf8i("", ""), "an empty haystack holds nothing");
     }
 
     /// The record and guild arms are the UTF-8 sort compare: by base letter, ligatures spelled out,

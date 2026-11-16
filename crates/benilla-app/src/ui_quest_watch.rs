@@ -122,7 +122,7 @@ fn poi_line(
 /// the drops, and the header zone's top area. Rebuilt only when an input moved.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // one Bevy system's full input set
 fn feed_quest_poi_lines(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     me: Query<Ref<ObjectStore>, With<SelfPlayer>>,
     quest_log: Res<QuestLog>,
     names: Res<crate::names::NameCache>,
@@ -281,7 +281,7 @@ fn feed_quest_poi_lines(
 /// Hand the VM its POI responses and send the queries it raised, at most 25 ids each, as the
 /// reference's one query per log update carries.
 fn feed_quest_pois(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut pending: ResMut<PendingPois>,
     commands: Res<NetCommands>,
 ) {
@@ -305,8 +305,8 @@ fn feed_quest_pois(
 /// under flag `0x20000` its drop items in order, the first carried copy with an on-use spell
 /// (`0x708c10`); its range against the target as `IsItemInRange` asks it.
 #[allow(clippy::too_many_arguments)] // a Bevy system's inputs
-fn feed_special_items(
-    script: Option<NonSendMut<UiScript>>,
+pub(crate) fn feed_special_items(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     quest_log: Res<QuestLog>,
     self_q: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
     units: Query<&Transform, Without<SelfPlayer>>,

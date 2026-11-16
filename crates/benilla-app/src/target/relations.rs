@@ -105,6 +105,28 @@ pub(crate) fn is_possessed_by(store: Option<&ObjectStore>, self_guid: Option<u64
         && store.0.unit_owner(OwnerFallback::CreatedBy) == Some(me)
 }
 
+/// The friendly check (`0x514050`) with `store` as `this` toward the player: the unit's reaction
+/// toward us at 4 or more, or a raid-unit creature template (`0x715df0`). No player is no friend.
+pub(crate) fn is_friendly(
+    store: &ObjectStore,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    party: &dyn GroupMembers,
+    self_store: Option<&ObjectStore>,
+    names: Option<&crate::names::NameCache>,
+) -> bool {
+    let Some(me) = self_store else {
+        return false;
+    };
+    ring_reaction(factions, reputations, party, Some(store), Some(me)) >= 4
+        || store
+            .0
+            .object_entry()
+            .filter(|_| !is_player_object(Some(store)))
+            .and_then(|e| names?.creature_record(e))
+            .is_some_and(|r| r.type_flags & TYPE_FLAG_TREAT_AS_RAID_UNIT != 0)
+}
+
 /// The corpse's reaction gate, asked as `(player, corpse)`: the reference compares the player's
 /// template (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (the race byte of
 /// `CORPSE_FIELD_BYTES_1`, then `ChrRaces.dbc` column 2) with the template comparator alone, no
@@ -278,17 +300,20 @@ enum Matrix {
     TheyOnly,
     /// We can attack it; it cannot attack us (`0x521e9e`).
     WeOnly,
-    /// Neither can; `pvp` is its PvP bit with neither side in a sanctuary (`0x521ea5`).
+    /// Neither can; `pvp` is its PvP bit with neither side in a sanctuary and no arena active
+    /// (`0x521ea5`-`0x521ec9`).
     Neither { pvp: bool },
 }
 
-/// `0x521bf0`'s question for a player-controlled unit, as both of its modes ask it.
+/// `0x521bf0`'s question for a player-controlled unit, as both of its modes ask it. `arena` is the
+/// active battlefield's arena test (`[0xbea570] == 4`, `0x521ec2`).
 fn attack_matrix(
     store: &ObjectStore,
     own: &ObjectStore,
     factions: Option<&Factions>,
     reputations: &Reputations,
     party: &dyn GroupMembers,
+    arena: bool,
 ) -> Matrix {
     // The attack check of the unit on the player: the arm both bit-3 flags select is the same
     // either way round, so the player-side predicate with the two swapped asks it.
@@ -310,7 +335,8 @@ fn attack_matrix(
             Matrix::Neither {
                 pvp: theirs & BYTE2_PVP != 0
                     && theirs & BYTE2_SANCTUARY == 0
-                    && ours & BYTE2_SANCTUARY == 0,
+                    && ours & BYTE2_SANCTUARY == 0
+                    && !arena,
             }
         }
     }
@@ -321,16 +347,17 @@ fn attack_matrix(
 /// reaction toward the player (`0x521fa7`, no dead grey in this mode). A player-controlled one asks
 /// the attack check (`0x729740`) both ways: it can attack us and we it, red; it us only, blue; we
 /// it only, yellow (`0x521e45`-`0x521e9e`). Else a PvP-flagged unit, neither side in a sanctuary,
-/// takes its reaction's entry, and any other blue. `self_store` is the player's own descriptor;
-/// passing it as `store` reads the player's own colour, whose reaction toward itself is 4
-/// (`0x7251c0`). Not applied: the active mover's vehicle or charm (`0x6dd060`, `0x5140a0`) and the
-/// zone's sanctuary test (`[0xbea570] == 4`).
+/// takes its reaction's entry, and any other blue; inside an arena (`arena`, `0x521ec2`) none is
+/// flagged. `self_store` is the player's own descriptor; passing it as `store` reads the player's
+/// own colour, whose reaction toward itself is 4 (`0x7251c0`). Not applied: the viewer being the
+/// possessed unit or the vehicle (`0x6dd060`, `0x5140a0`).
 pub(crate) fn selection_color(
     store: &ObjectStore,
     factions: Option<&Factions>,
     reputations: &Reputations,
     party: &dyn GroupMembers,
     self_store: Option<&ObjectStore>,
+    arena: bool,
 ) -> u32 {
     let Some(own) = self_store else {
         return SELECTION_BLUE;
@@ -342,12 +369,23 @@ pub(crate) fn selection_color(
     if store.0.unit_flags() & UNIT_FLAG_PLAYER_CONTROLLED == 0 {
         return reaction_color();
     }
-    match attack_matrix(store, own, factions, reputations, party) {
+    match attack_matrix(store, own, factions, reputations, party, arena) {
         Matrix::Mutual => SELECTION_REACTION[1],
         Matrix::TheyOnly => SELECTION_BLUE,
         Matrix::WeOnly => SELECTION_REACTION[3],
         Matrix::Neither { pvp: true } => reaction_color(),
         Matrix::Neither { pvp: false } => SELECTION_BLUE,
+    }
+}
+
+/// `UnitSelectionColor` for a guid the object manager does not hold (`0x521fda`): the PvP bit of
+/// its party, raid or battlefield record (`+8 & 2`), friendly green when set, blue when not
+/// (`0x52207e`). A guid with no record reads unflagged.
+pub(crate) fn selection_color_unheld(pvp: bool) -> u32 {
+    if pvp {
+        SELECTION_REACTION[4]
+    } else {
+        SELECTION_BLUE
     }
 }
 
@@ -361,13 +399,14 @@ pub(crate) fn selection_color(
 /// - the blue entry is the second of `0xbd0c8c`, a soft blue.
 ///
 /// The combat flash, which `0x718ac0` checks before the resolver, is the callers'. Not applied, as
-/// in [`selection_color`]: the active mover's vehicle or charm, and the zone sanctuary test.
+/// in [`selection_color`]: the viewer being the possessed unit or the vehicle.
 pub(crate) fn highlight_variant(
     store: &ObjectStore,
     factions: Option<&Factions>,
     reputations: &Reputations,
     party: &GroupState,
     self_store: Option<&ObjectStore>,
+    arena: bool,
     is_friend: impl Fn(u64) -> bool,
 ) -> super::RingVariant {
     use super::RingVariant as V;
@@ -387,7 +426,7 @@ pub(crate) fn highlight_variant(
         }
         return reaction_variant();
     }
-    let pvp = match attack_matrix(store, own, factions, reputations, party) {
+    let pvp = match attack_matrix(store, own, factions, reputations, party, arena) {
         Matrix::Mutual => return V::Hostile,
         Matrix::TheyOnly => return V::Player,
         Matrix::WeOnly => return V::Neutral,
@@ -520,7 +559,9 @@ mod tests {
                     Some(them),
                     true,
                 ),
-                ring: highlight_variant(them, Some(&f), &reps, party, Some(me), |g| g == FRIEND),
+                ring: highlight_variant(them, Some(&f), &reps, party, Some(me), false, |g| {
+                    g == FRIEND
+                }),
             }
         }
 
@@ -542,7 +583,8 @@ mod tests {
                         Some(&factions()),
                         &Reputations::default(),
                         &group(),
-                        Some(&me)
+                        Some(&me),
+                        false
                     ),
                     SELECTION_BLUE,
                     "UnitSelectionColor(\"player\") agrees"
@@ -576,6 +618,17 @@ mod tests {
                 RingVariant::PartyPvp,
                 "pale green when PvP-flagged"
             );
+            let f = factions();
+            let in_arena = highlight_variant(
+                &unit(MEMBER, true, BYTE2_PVP, &[]),
+                Some(&f),
+                &Reputations::default(),
+                &group(),
+                Some(&me),
+                true,
+                |_| false,
+            );
+            assert_eq!(in_arena, RingVariant::Party, "an arena drops the flag");
 
             let s = seen(&pet(MEMBER_PET, MEMBER), &me, &group());
             assert_eq!((s.toward_us, s.from_us), (FRIENDLY, FRIENDLY));
@@ -671,7 +724,15 @@ mod tests {
                 (35, 1),
             ]));
             assert_eq!(
-                highlight_variant(&dead_npc, Some(&f), &reps, &group(), Some(&me), |_| false),
+                highlight_variant(
+                    &dead_npc,
+                    Some(&f),
+                    &reps,
+                    &group(),
+                    Some(&me),
+                    false,
+                    |_| false
+                ),
                 RingVariant::Dead
             );
             let dead_member = unit(MEMBER, true, 0, &[(22, 0), (28, 100)]);
@@ -717,7 +778,7 @@ mod tests {
         };
         let me = unit(1, UNIT_FLAG_PLAYER_CONTROLLED, 0, true);
         let color = |store: &ObjectStore| {
-            selection_color(store, Some(&factions), &reps, &NoGroup, Some(&me))
+            selection_color(store, Some(&factions), &reps, &NoGroup, Some(&me), false)
         };
 
         // NPCs: the reaction palette.
@@ -755,6 +816,18 @@ mod tests {
             "in a sanctuary the flag does not count"
         );
         assert_eq!(
+            selection_color(
+                &unit(1, pc, BYTE2_PVP, true),
+                Some(&factions),
+                &reps,
+                &NoGroup,
+                Some(&me),
+                true
+            ),
+            0xFF00_00FF,
+            "inside an arena the flag does not count (`0x521ec2`)"
+        );
+        assert_eq!(
             color(&unit(2, pc, 0, true)),
             0xFF00_00FF,
             "nobody can attack: blue"
@@ -767,7 +840,14 @@ mod tests {
         let flagged_me = unit(1, pc, BYTE2_PVP, true);
         let enemy = unit(2, pc, BYTE2_PVP, true);
         assert_eq!(
-            selection_color(&enemy, Some(&factions), &reps, &NoGroup, Some(&flagged_me)),
+            selection_color(
+                &enemy,
+                Some(&factions),
+                &reps,
+                &NoGroup,
+                Some(&flagged_me),
+                false
+            ),
             0xFFFF_0000,
             "both flagged: red"
         );
@@ -777,7 +857,8 @@ mod tests {
                 Some(&factions),
                 &reps,
                 &NoGroup,
-                Some(&flagged_me)
+                Some(&flagged_me),
+                false
             ),
             0xFF00_00FF,
             "it can attack us and we not it: blue"
@@ -787,7 +868,14 @@ mod tests {
         assert_eq!(color(&me), 0xFF00_00FF);
         let flagged = unit(1, pc, BYTE2_PVP, true);
         assert_eq!(
-            selection_color(&flagged, Some(&factions), &reps, &NoGroup, Some(&flagged)),
+            selection_color(
+                &flagged,
+                Some(&factions),
+                &reps,
+                &NoGroup,
+                Some(&flagged),
+                false
+            ),
             0xFF00_FF00
         );
         // No player: the resolver's blue.
@@ -797,10 +885,18 @@ mod tests {
                 Some(&factions),
                 &reps,
                 &NoGroup,
-                None
+                None,
+                false
             ),
             0xFF00_00FF
         );
+    }
+
+    /// A guid with no object reads its record's PvP bit (`0x521fda`): green flagged, blue not.
+    #[test]
+    fn an_unheld_guid_reads_its_records_pvp_bit() {
+        assert_eq!(selection_color_unheld(true), 0xFF00_FF00);
+        assert_eq!(selection_color_unheld(false), 0xFF00_00FF);
     }
 
     /// The attack check (`0x729740`) between players reads the PvP byte of `UNIT_FIELD_BYTES_2`: a

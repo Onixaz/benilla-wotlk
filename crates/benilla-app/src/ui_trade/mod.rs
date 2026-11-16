@@ -631,7 +631,7 @@ fn snapshot(
 /// Push the trade into the VM and fire its events on a change, diffed against `Local` memory;
 /// `TRADE_ACCEPT_UPDATE` fires after `TRADE_SHOW`, whose handler hides the highlights.
 fn feed_trade(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut trade: ResMut<TradeSession>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -760,7 +760,7 @@ fn feed_trade(
 /// Drain the Lua intents into the trade `CMSG`s. `CloseTrade` clears the session, sending
 /// `CMSG_CANCEL_TRADE` only while one is live.
 fn drain_trade(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut trade: ResMut<TradeSession>,
     commands: Res<NetCommands>,
     selection: Res<Selection>,

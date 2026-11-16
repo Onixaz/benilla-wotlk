@@ -558,6 +558,18 @@ pub(crate) fn unit_guild_name<'a>(
         .map(|identity| identity.name.as_str())
 }
 
+/// A player's guild name off its `PLAYER_GUILDID`, asking on a miss: the reference's
+/// `GetPlayerGuildNameText` (`0x6db6a0`), `None` for no guild or a query in flight.
+pub(crate) fn player_guild_name<'a>(
+    fields: &ObjectFields,
+    guild: &'a GuildState,
+    commands: &NetCommands,
+) -> Option<&'a str> {
+    guild
+        .resolve_identity(fields.player_guild_id(), commands)
+        .map(|identity| identity.name.as_str())
+}
+
 /// A unit's guild crest for the body composite, off its public `PLAYER_GUILDID`, asking on a miss
 /// like [`unit_guild`]. `None` keeps a Guild Tabard's own `Tabard_A_05Default` art, as the
 /// reference never enters its install for a guildless wearer, a creature, a query in flight

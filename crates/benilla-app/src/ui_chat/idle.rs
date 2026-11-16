@@ -123,7 +123,10 @@ pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
 pub(crate) fn idle_handler(
     time: Res<Time<Real>>,
     last: Res<LastInput>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     mut mirror: ResMut<AfkMirror>,
     mut chat: ResMut<ChatLog>,

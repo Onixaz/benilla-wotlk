@@ -186,7 +186,7 @@ fn binder_probe(
     binder: Res<BinderState>,
     mut home: ResMut<HomeBind>,
     areas: Option<Res<AreaTableRes>>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,

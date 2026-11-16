@@ -90,6 +90,7 @@ pub(crate) struct LogCtx<'w, 's> {
     reputations: Res<'w, Reputations>,
     selection: Option<Res<'w, crate::target::Selection>>,
     script: Option<NonSend<'w, UiScript>>,
+    _live: crate::ui_script::LendLive<'w, 's>,
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     enchants: Option<Res<'w, crate::items::Enchants>>,
     objects: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
@@ -128,9 +129,12 @@ impl LogCtx<'_, '_> {
         self.store(guid).is_some_and(ObjectStore::is_unit)
     }
 
-    /// The combat-text unit (`0x74d430`): the player.
+    /// The combat-text unit (`0x74d430`): the guid `CombatTextSetActiveUnit` last named, the
+    /// player or its vehicle; none before Blizzard_CombatText names one.
     fn is_text_unit(&self, guid: u64) -> bool {
-        self.me() == Some(guid)
+        self.script
+            .as_ref()
+            .is_some_and(|s| s.combat_text_unit() == guid)
     }
 
     /// The name by GUID: the name now, or empty while it is asked.

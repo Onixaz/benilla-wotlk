@@ -7,8 +7,8 @@
 
 use benilla_protocol::messages::{ArenaBanner, ITEM_FLAG_CHARTER};
 use benilla_ui::script::{
-    petition_type_name, PetitionRecordView, PetitionRequest, PetitionState as VmPetition,
-    PetitionVendorItem, PetitionVendorState as VmVendor, UiScript,
+    petition_type_name, PetitionButtonItem, PetitionRecordView, PetitionRequest,
+    PetitionState as VmPetition, PetitionVendorItem, PetitionVendorState as VmVendor, UiScript,
 };
 use bevy::prelude::*;
 
@@ -16,6 +16,7 @@ use crate::entities::ItemDisplays;
 use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfGuid, SelfPlayer};
+use crate::pending_item_ops::PendingItemOps;
 use crate::ui_items::{find_carried, find_item, ItemSearch};
 use crate::ui_session::{npc_switched, NpcSession};
 
@@ -63,10 +64,27 @@ pub(super) struct FedPetition {
     shown_signers: Vec<Option<String>>,
 }
 
+/// A forgotten button item keeps the pickup's lock (`0x5a22cb`, `0x5a1f57` unlock nothing) until
+/// its slot's next item update (`0x5d9790`, `0x707720`), as a pending op over that slot.
+fn keep_locked(
+    held: Option<PetitionButtonItem>,
+    store: Option<&ObjectStore>,
+    objects: &Objects,
+    pending: &mut PendingItemOps,
+) {
+    let Some(held) = held else {
+        return;
+    };
+    let (guid, count) = crate::ui_items::slot_guid_count(store, held.bag, held.slot, objects);
+    if guid == held.item {
+        pending.add([(held.bag, held.slot, guid, count)]);
+    }
+}
+
 /// Build the snapshot, push it, drain the queued lines, and fire the events on their edges.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn feed_petition(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     registrar: Res<GuildRegistrarState>,
     mut vendor: ResMut<PetitionVendorState>,
     mut petition: ResMut<PetitionState>,
@@ -78,12 +96,19 @@ pub(super) fn feed_petition(
     self_guid: Res<SelfGuid>,
     commands: Res<NetCommands>,
     mut sink: crate::ui_action::MessageSink,
+    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    mut pending: ResMut<PendingItemOps>,
     mut fed: Local<crate::ui_script::VmMemo<FedPetition>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let fed = fed.get(&script);
+    // The vendor's world entry (`0x5a1f50`) empties the petition button.
+    if cascades.read().next().is_some() {
+        let held = script.clear_petition_button();
+        keep_locked(held, self_q.iter().next(), &objects, &mut pending);
+    }
 
     // Shown before the snapshot, so a refusal lands the same frame as its state change; a key the
     // VM's `GlobalStrings.lua` lacks shows nothing, as in the reference.
@@ -230,8 +255,10 @@ pub(super) fn feed_petition(
     });
     let now_vendor = vendor.npc();
     if std::mem::take(&mut vendor.update) {
-        // The petition list show (`0x5a22a0`): the update, then the show, with no close between
-        // two.
+        // The petition list show (`0x5a22a0`): the button emptied, the update, then the show, with
+        // no close between two.
+        let held = script.clear_petition_button();
+        keep_locked(held, self_q.iter().next(), &objects, &mut pending);
         script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
         script.fire_event("PETITION_VENDOR_SHOW", vec![]);
     } else if fed.vendor.is_some() && now_vendor.is_none() {
@@ -255,7 +282,7 @@ pub(super) fn feed_petition(
 /// (`decline_on_close`); `CloseGuildRegistrar` sends nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_petition(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut registrar: ResMut<GuildRegistrarState>,
     mut vendor: ResMut<PetitionVendorState>,
     mut petition: ResMut<PetitionState>,
@@ -345,10 +372,18 @@ pub(super) fn drain_petition(
                     .0
                     .send(ClientCommand::TurnInArenaPetition { item, banner });
             }
-            // The petition button's held item: the cursor drop onto it is not built, so the
-            // button is always empty and `TurnInPetition` sends nothing (`0x5a2600`).
-            PetitionRequest::VendorTurnIn | PetitionRequest::VendorClickButton => {
-                debug!("ui_petition: petition button item not built — {request:?} dropped");
+            // The button's item, unchecked, with five all-ones banner words (`0x5a2600`).
+            PetitionRequest::VendorTurnIn { item } => {
+                let banner = ArenaBanner {
+                    background_color: u32::MAX,
+                    emblem_style: u32::MAX,
+                    emblem_color: u32::MAX,
+                    border_style: u32::MAX,
+                    border_color: u32::MAX,
+                };
+                let _ = commands
+                    .0
+                    .send(ClientCommand::TurnInArenaPetition { item, banner });
             }
             PetitionRequest::CloseVendor => {
                 vendor.close();
@@ -539,6 +574,75 @@ mod tests {
         // With no registrar and no designer both guids are 0: equal, so nothing.
         let (sent, _) = run(0, 0, &player(49, 49));
         assert!(sent.is_empty());
+    }
+
+    /// A forgotten button charter stays locked as a pending op until its item update: here a
+    /// stack-count change (`0x707720`); a charter no longer in its slot adds nothing.
+    #[test]
+    fn a_forgotten_button_charter_stays_locked_until_its_item_update() {
+        use bevy::ecs::system::RunSystemOnce;
+        const CHARTER: u64 = 0x4000_0000_0000_0071;
+        // The backpack's first slot, `PLAYER_FIELD_PACK_SLOT_1`, and the item's entry and count.
+        let mut world = World::new();
+        world.init_resource::<crate::net::GuidIndex>();
+        world.init_resource::<PendingItemOps>();
+        world.spawn((
+            SelfPlayer,
+            ObjectStore(ObjectFields::from_pairs(&[
+                (532, CHARTER as u32),
+                (533, (CHARTER >> 32) as u32),
+            ])),
+        ));
+        let item = crate::items::test_spawn_item(
+            &mut world,
+            CHARTER,
+            ObjectFields::from_pairs(&[(3, 23560), (14, 1)]),
+            false,
+        );
+        let forget = |world: &mut World, guid: u64| {
+            world
+                .run_system_once(
+                    move |q: Query<&ObjectStore, With<SelfPlayer>>,
+                          objects: Objects,
+                          mut pending: ResMut<PendingItemOps>| {
+                        let held = PetitionButtonItem {
+                            item: guid,
+                            bag: 0,
+                            slot: 1,
+                        };
+                        keep_locked(Some(held), q.iter().next(), &objects, &mut pending);
+                        keep_locked(None, q.iter().next(), &objects, &mut pending);
+                    },
+                )
+                .unwrap();
+        };
+        forget(&mut world, 0x99);
+        assert!(!world.resource::<PendingItemOps>().contains(0, 1));
+        forget(&mut world, CHARTER);
+        assert!(world.resource::<PendingItemOps>().contains(0, 1));
+
+        let resolve = |world: &mut World| {
+            world
+                .run_system_once(
+                    |q: Query<&ObjectStore, With<SelfPlayer>>,
+                     objects: Objects,
+                     mut pending: ResMut<PendingItemOps>| {
+                        let me = q.iter().next();
+                        pending.resolve(|bag, slot| {
+                            crate::ui_items::slot_guid_count(me, bag, slot, &objects)
+                        })
+                    },
+                )
+                .unwrap()
+        };
+        assert!(resolve(&mut world).is_empty(), "no update, still locked");
+        world
+            .entity_mut(item)
+            .insert(ObjectStore(ObjectFields::from_pairs(&[
+                (3, 23560),
+                (14, 2),
+            ])));
+        assert_eq!(resolve(&mut world), vec![(0, 1)]);
     }
 
     #[test]

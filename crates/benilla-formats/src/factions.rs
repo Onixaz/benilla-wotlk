@@ -273,6 +273,30 @@ impl FactionCatalog {
         }
     }
 
+    /// This catalog with a blank `Faction.dbc` row `id` added, named `name` (`None` for an empty
+    /// name). Fixture builder for tests, as [`Self::from_rows`].
+    pub fn with_faction(mut self, id: u32, name: Option<&str>) -> Self {
+        self.factions.insert(
+            id,
+            FactionInfo {
+                rep_index: -1,
+                team: 0,
+                race_masks: [0; 4],
+                class_masks: [0; 4],
+                base: [0; 4],
+                flags: [0; 4],
+                spillover_rate_in: 0.0,
+                spillover_rate_out: 0.0,
+                spillover_max_rank_in: 0,
+                spillover_rank: 0,
+            },
+        );
+        if let Some(name) = name {
+            self.names.insert(id, name.to_string());
+        }
+        self
+    }
+
     /// The factions whose parent (field 18) is `faction_id`, in table order: the reward walk's
     /// child list (`0x5d2680`).
     pub fn children_of(&self, faction_id: u32) -> &[u32] {
@@ -310,6 +334,13 @@ impl FactionCatalog {
     /// The localized name of a `Faction.dbc` id.
     pub fn faction_name(&self, faction_id: u32) -> Option<&str> {
         self.names.get(&faction_id).map(String::as_str)
+    }
+
+    /// The localized name of a `Faction.dbc` row, empty when the row's name is: the quest
+    /// leaderboard needs only the row and formats its name as stored (`0x5e1d82`, `0x5e1e82`).
+    pub fn faction_name_or_empty(&self, faction_id: u32) -> Option<&str> {
+        self.factions.get(&faction_id)?;
+        Some(self.names.get(&faction_id).map_or("", String::as_str))
     }
 
     /// The localized description of a `Faction.dbc` id, the reputation pane's detail paragraph.
@@ -717,6 +748,22 @@ mod tests {
         assert_eq!(Reaction::from_rank(3), Reaction::Neutral);
         assert_eq!(Reaction::from_rank(4), Reaction::Friendly);
         assert_eq!(Reaction::from_rank(7), Reaction::Friendly);
+    }
+
+    #[test]
+    fn faction_name_or_empty_distinguishes_empty_and_missing_rows() {
+        let cat = FactionCatalog::from_rows(HashMap::new(), HashMap::new())
+            .with_faction(6, Some("Darnassus"))
+            .with_faction(7, None);
+
+        assert_eq!(cat.faction_name_or_empty(6), Some("Darnassus"));
+        assert_eq!(cat.faction_name_or_empty(7), Some(""));
+        assert_eq!(
+            cat.faction_name(7),
+            None,
+            "the plain lookup keeps answering no name"
+        );
+        assert_eq!(cat.faction_name_or_empty(8), None);
     }
 
     #[test]

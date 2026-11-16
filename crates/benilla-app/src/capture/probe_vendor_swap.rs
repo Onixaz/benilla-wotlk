@@ -142,7 +142,7 @@ fn vendor_swap_probe(
     time: ProbeClock,
     mut probe: ResMut<VendorSwapProbe>,
     merchant: Res<MerchantOpen>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     names: Res<NameCache>,
     panes: Res<BoothPanes>,
     images: Res<PortraitImages>,

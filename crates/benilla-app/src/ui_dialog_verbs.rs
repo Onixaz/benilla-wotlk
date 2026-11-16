@@ -177,7 +177,7 @@ fn area_spirit_healer_leave_world(mut spirit: ResMut<AreaSpiritHealer>) {
 }
 
 pub(crate) fn feed_dialog_verbs(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut pet: ResMut<PetUnlearnState>,
     mut boot: ResMut<InstanceBoot>,
     mut spirit: ResMut<AreaSpiritHealer>,
@@ -218,7 +218,7 @@ pub(crate) fn feed_dialog_verbs(
 
 /// The pet trainer's confirm and the spirit healer's accept, the two drains over a latch.
 fn drain_latch_verbs(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     pet: Res<PetUnlearnState>,
     spirit: Res<AreaSpiritHealer>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -288,7 +288,7 @@ fn poll_area_spirit_healer(
     group: Option<Res<crate::ui_party::GroupState>>,
     names: Option<Res<crate::names::NameCache>>,
     commands: Res<NetCommands>,
-    mut script: Option<NonSendMut<UiScript>>,
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
 ) {
     let mut apply = |outcome: SetHealerOutcome| {
         if outcome.cancel_aura {

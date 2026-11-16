@@ -62,8 +62,14 @@ pub(crate) fn wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
     }
     let t = lua.create_table()?;
     t.raw_set(0, Value::LightUserData(id_to_lud(id)))?;
+    let is_point = crate::script::model_mut_of(lua)
+        .anims
+        .points
+        .contains_key(&id);
     let meta: Table = if is_group(lua, id) {
         lua.named_registry_value(REG_GROUP_META)?
+    } else if is_point {
+        lua.named_registry_value(super::path::REG_POINT_META)?
     } else {
         let kind = crate::script::model_mut_of(lua)
             .anims
@@ -178,7 +184,7 @@ pub(crate) fn fire(lua: &Lua, id: u32, name: &str, args: Vec<Value>) {
 }
 
 /// The receiver's id, checked to be a live group or animation.
-fn this_id(lua: &Lua, this: &Table, group: bool) -> mlua::Result<u32> {
+pub(super) fn this_id(lua: &Lua, this: &Table, group: bool) -> mlua::Result<u32> {
     let id = decode_id(this)?;
     let model = crate::script::model_mut_of(lua);
     let live = if group {
@@ -193,7 +199,7 @@ fn this_id(lua: &Lua, this: &Table, group: bool) -> mlua::Result<u32> {
     }
 }
 
-fn name_of(lua: &Lua, id: u32) -> String {
+pub(super) fn name_of(lua: &Lua, id: u32) -> String {
     let model = crate::script::model_mut_of(lua);
     model
         .anims
@@ -201,6 +207,7 @@ fn name_of(lua: &Lua, id: u32) -> String {
         .get(&id)
         .and_then(|g| g.name.clone())
         .or_else(|| model.anims.anims.get(&id).and_then(|a| a.name.clone()))
+        .or_else(|| model.anims.points.get(&id).and_then(|p| p.name.clone()))
         .unwrap_or_else(|| "<unnamed>".into())
 }
 
@@ -208,7 +215,7 @@ fn number(lua: &Lua, v: Value) -> mlua::Result<Option<f64>> {
     lua.coerce_number(v)
 }
 
-fn usage(lua: &Lua, id: u32, text: &str) -> mlua::Error {
+pub(super) fn usage(lua: &Lua, id: u32, text: &str) -> mlua::Error {
     mlua::Error::RuntimeError(format!("Usage: {}:{text}", name_of(lua, id)))
 }
 
@@ -244,6 +251,28 @@ pub(crate) fn create_anim(
     let t = wrapper(lua, id)?;
     publish(lua, name.as_deref(), &t)?;
     Ok((id, t))
+}
+
+/// `Path:CreateControlPoint` (`0x4a7bf0`): the point, its order set, published under its name.
+pub(super) fn create_point(
+    lua: &Lua,
+    path: u32,
+    name: Option<String>,
+    order: Option<i32>,
+) -> mlua::Result<Table> {
+    let id = {
+        let mut model = crate::script::model_mut_of(lua);
+        let s = &mut model.anims;
+        let at = super::path::new_point_order(s, path, order);
+        let id = s.new_point(path, name.clone());
+        if let Some(p) = s.points.get_mut(&id) {
+            p.order = at;
+        }
+        id
+    };
+    let t = wrapper(lua, id)?;
+    publish(lua, name.as_deref(), &t)?;
+    Ok(t)
 }
 
 /// An XML-built animation, not yet in an order list: the animation sort places it at the group's
@@ -825,7 +854,9 @@ fn install_anim_methods(lua: &Lua, type_name: &'static str) -> mlua::Result<Tabl
             owner.map(|o| owner_wrapper(lua, o)).transpose()
         })?,
     )?;
+    super::path::install_anim_set_parent(lua, &m)?;
     match type_name {
+        "Path" => super::path::install_path_methods(lua, &m)?,
         "Alpha" => install_alpha(lua, &m)?,
         "Translation" => install_translation(lua, &m)?,
         "Rotation" => install_rotation(lua, &m)?,
@@ -1043,6 +1074,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         metas.set(kind, meta(install_anim_methods(lua, kind)?)?)?;
     }
     lua.set_named_registry_value(REG_ANIM_META, metas)?;
+    super::path::install_point_meta(lua)?;
     let _ = (LOOP_STATES, NONE);
     Ok(())
 }

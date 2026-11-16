@@ -323,7 +323,7 @@ fn solo_target_trade_click_queues_an_initiate() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Clicking Follow calls `FollowByName("Ally", 1)` (`UnitPopup.lua:623`): the `1` asks for an
+/// Clicking Follow calls `FollowUnit("Ally", 1)` (`UnitPopup.lua:1325`): the `1` asks for an
 /// exact match, so the menu never prefix-matches onto a bystander as `/follow rag` may.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]

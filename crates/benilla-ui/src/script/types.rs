@@ -114,6 +114,9 @@ pub enum QuadContent {
         additive: bool,
         /// `None` is the full texture.
         tex_coords: Option<TexCoords>,
+        /// The texture's `(u, v)` sampler wrap, fixed when its file was set: repeat where set,
+        /// else clamped to the edge.
+        wrap: (bool, bool),
         /// A portrait, masked to the inscribed circle.
         circular: bool,
         /// A live unit portrait's unit: the renderer samples the app's bake of it instead of
@@ -309,6 +312,9 @@ pub struct FontObject {
     /// The line gap in logical px (`spacing=`, `SetSpacing`), held once set (`0x4a3f90`'s
     /// `0x1000` bit); `None` leaves an inheriting FontString's own.
     pub spacing: Option<f32>,
+    /// `SetIndentedWordWrap`, the style bit `0x20000` (`0x4a4a50`), off from the constructor's
+    /// `0x212`; an inheriting FontString answers it until it sets its own.
+    pub indented_word_wrap: bool,
 }
 
 /// One entry of [`UiScript::extract`](super::UiScript::extract)'s render list, in the client's
@@ -399,6 +405,22 @@ pub(crate) struct RegionData {
     pub(crate) anchors: Vec<Anchor>,
     /// `SetDesaturated`: the renderer greys the texel, so the binding reports support.
     pub(crate) desaturated: bool,
+    /// `SetHorizTile`/`SetVertTile`, XML `horizTile`/`vertTile`: the texture's `+0x160` bits `0x4`
+    /// and `0x8`. A set axis maps each nonzero texcoord to the region's extent over the file's
+    /// texel extent when the texture is queued (`0x4847a0`), so the art repeats at one texel per
+    /// unit.
+    pub(crate) tile: (bool, bool),
+    /// `SetNonBlocking` or XML `nonBlocking`, `+0x160` bit `0x1`: the reference then asks for the
+    /// file without waiting on its read. Every benilla texture load already works that way, so the
+    /// bit is read by its getter alone.
+    pub(crate) non_blocking: bool,
+    /// `SetWordWrap(false)`, the font string's style bit `0x40`. Stored, not applied: the reference
+    /// then lays the text out on one line; here it still wraps at the rect's width.
+    pub(crate) no_word_wrap: bool,
+    /// The style bit `0x20000`, the indented word wrap, set through the FontString's
+    /// `GetIndentedWordWrap` (12340 registers the pair swapped); `None` reads its font object's.
+    /// Stored, not applied: a wrapped line's indent is not drawn.
+    pub(crate) indented_word_wrap: Option<bool>,
     /// `SetNonSpaceWrap`/`CanNonSpaceWrap`, `None` on. Stored, not applied: the reference's flag
     /// `0x40` drives a mid-word wrap and the ellipsis fit count.
     pub(crate) non_space_wrap: Option<bool>,
@@ -407,6 +429,13 @@ pub(crate) struct RegionData {
     pub(crate) justify: crate::justify::Justify,
     /// The `<TexCoords>`/`SetTexCoord` mapping; `None` is the full texture.
     pub(crate) tex_coords: Option<TexCoords>,
+    /// The `(u, v)` wrap the texture slot's file was created with (`0x4859e0`): the Lua
+    /// `SetTexture(path, tile)`'s third argument on both axes (`0x48c6f0`), or the XML load's
+    /// `horizTile`/`vertTile` and out-of-range `<TexCoords>` (`0x485f40`). It is fixed at creation:
+    /// a later `SetTexCoord` past `[0, 1]` does not tile, so its overhang samples the clamped edge,
+    /// as `DrawRouteLine`'s rotated quad relies on (`TaxiFrame.lua`). A same-path `SetTexture`
+    /// keeps it, as the same-file check (`0x4b53a0`) returns before creating.
+    pub(crate) wrap: (bool, bool),
     /// `SetTexCoordModifiesRect`, the reference's `+0x124`. Stored, not applied: there a set flag
     /// makes `SetTexCoord` re-derive the rect from the UV quad; no stock or corpus code sets it.
     pub(crate) tex_coord_modifies_rect: bool,

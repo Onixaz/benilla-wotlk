@@ -95,6 +95,7 @@ impl Plugin for NetPlugin {
             .init_resource::<GuidIndex>()
             .init_resource::<ParkedObjects>()
             .init_resource::<SelfGuid>()
+            .init_resource::<ForcedMoveArrivals>()
             .init_resource::<AddonInfoReply>()
             .init_resource::<AccountExpansion>()
             .init_resource::<PendingTransfer>()
@@ -108,6 +109,7 @@ impl Plugin for NetPlugin {
             .init_resource::<PlayedTimeAnswer>()
             .init_resource::<PlayedClock>()
             .init_resource::<Proficiencies>()
+            .init_resource::<ControlFlag>()
             .init_resource::<crate::names::NameCache>()
             .init_resource::<crate::go_templates::GameObjectTemplates>()
             .init_resource::<crate::items::Items>()
@@ -271,8 +273,8 @@ pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
 pub(crate) struct ObjectStore(pub(crate) ObjectFields);
 
 impl ObjectStore {
-    /// The object manager's unit lookup (`ecx = 8`): a unit or a player, which share the unit
-    /// block; a game object, corpse or item is not one.
+    /// The verbs' unit lookup (`0x60c1f0`), type mask 8 (`0x60c21e`): a unit or a player, which
+    /// share the unit block; a game object, corpse or item is not one.
     pub(crate) fn is_unit(&self) -> bool {
         use benilla_protocol::messages::ObjectType;
         matches!(
@@ -409,7 +411,7 @@ pub(crate) struct ActiveMover;
 
 /// The inbound event channel, drained each frame by [`apply_net_updates`].
 #[derive(Resource)]
-pub(crate) struct NetEvents(Receiver<SessionEvent>);
+pub(crate) struct NetEvents(pub(crate) Receiver<SessionEvent>);
 
 /// The outbound command channel.
 #[derive(Resource)]
@@ -2484,7 +2486,7 @@ pub(crate) enum ClientCommand {
     ChatIgnored {
         guid: u64,
     },
-    /// `CMSG_WHO`, parsed into wire fields by `ui_social::who_query`.
+    /// `CMSG_WHO`, the `/who` filter parsed into wire fields as `SendWho` builds them.
     Who {
         request: Box<WhoRequest>,
     },
@@ -2852,6 +2854,17 @@ pub(crate) struct SelfCreateMover {
     pub(crate) pitch: f32,
 }
 
+/// The UI's control flag (`0xbcfb8c`) the verbs read: set at a game start (`0x52b8a0`) and by our
+/// own create (`0x513880`), written by the control update for our own unit (`0x520fe0`).
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ControlFlag(pub(crate) bool);
+
+impl Default for ControlFlag {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 /// `SMSG_CLIENT_CONTROL_UPDATE`, verbatim; the controller decides. `mover` is the unit spoken
 /// about, not the new mover: the server revokes by naming us (`allow_move` false) and grants by
 /// naming another unit.
@@ -2869,6 +2882,8 @@ pub(crate) struct SpeedChangeMessage {
     pub(crate) kind: SpeedKind,
     pub(crate) counter: u32,
     pub(crate) speed: f32,
+    /// Its place among the frame's forced-move packets ([`ForcedMoveArrivals`]).
+    pub(crate) arrival: u64,
 }
 
 /// An acked mode granted or revoked on a unit: the server's `IsFlagAckOpcode` set. The controller
@@ -2880,6 +2895,21 @@ pub(crate) struct MoveModeMessage {
     pub(crate) counter: u32,
     pub(crate) mode: MoveMode,
     pub(crate) apply: bool,
+    /// Its place among the frame's forced-move packets ([`ForcedMoveArrivals`]).
+    pub(crate) arrival: u64,
+}
+
+/// The wire order of the acked speed and mode packets, which arrive on two message channels: the
+/// reference handles each fully before the next, so each ack carries the state its own packet left.
+#[derive(Resource, Default)]
+pub(crate) struct ForcedMoveArrivals(u64);
+
+impl ForcedMoveArrivals {
+    /// The next packet's place.
+    pub(crate) fn next(&mut self) -> u64 {
+        self.0 += 1;
+        self.0
+    }
 }
 
 /// `SMSG_MOVE_KNOCK_BACK` at our mover; the controller launches and acks.

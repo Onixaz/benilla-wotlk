@@ -637,22 +637,22 @@ fn world_hover_drive_and_health_watcher() {
     s.set_unit("target", Some(as_target));
     s.run(r#"assert(GameTooltipStatusBar:GetValue() == 8, "the watcher follows the guid")"#)
         .unwrap();
-    s.tick(0.5);
-    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the ramp")"#)
+    s.tick(2.0);
+    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the 2 s countdown")"#)
         .unwrap();
     assert!(s.take_errors().is_empty());
 }
 
 /// The minimap blip tooltip (`minimap_tooltip`): refused without `UIParent`, otherwise one line
-/// seated above the cursor, world-owned so the shared fade hides it on hover loss.
+/// in `ANCHOR_CURSOR` (`0x57d181`) that follows the pointer, hidden at once on hover loss.
 #[test]
-fn minimap_blip_tooltip_shows_and_fades() {
+fn minimap_blip_tooltip_follows_the_cursor_and_hides_on_loss() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(r#"CreateFrame("GameTooltip", "GameTooltip")"#)
         .unwrap();
     assert!(
-        !s.minimap_tooltip("Stormwind", 700.0, 500.0, false),
+        !s.minimap_tooltip("Stormwind", false),
         "no UIParent yet: the show refuses"
     );
     s.run(
@@ -662,11 +662,13 @@ fn minimap_blip_tooltip_shows_and_fades() {
     "#,
     )
     .unwrap();
-    assert!(s.minimap_tooltip("Stormwind", 795.0, 500.0, false));
+    s.mouse_move(795.0, 500.0);
+    assert!(s.minimap_tooltip("Stormwind", false));
     s.run(
         r#"
         assert(GameTooltipTextLeft1:GetText() == "Stormwind")
         assert(GameTooltip:IsShown(), "the blip tooltip shows")
+        assert(GameTooltip:GetAnchorType() == "ANCHOR_CURSOR", "cursor mode")
     "#,
     )
     .unwrap();
@@ -682,13 +684,16 @@ fn minimap_blip_tooltip_shows_and_fades() {
         r#"assert(GameTooltip:GetRight() <= 800, "clamped inside the screen, got " .. tostring(GameTooltip:GetRight()))"#,
     )
     .unwrap();
-    s.world_tooltip_move(400.0, 300.0);
-    s.run(r#"assert(GameTooltipTextLeft1:GetText() == "Stormwind", "content survives a move")"#)
-        .unwrap();
-    // Hover loss rides the shared world fade.
-    s.world_tooltip_fade();
-    s.tick(0.6);
-    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the ramp")"#)
+    s.mouse_move(400.0, 300.0);
+    s.resolve();
+    s.run(
+        r#"assert(GameTooltip:GetBottom() == 300, "the plate follows the pointer")
+           assert(GameTooltipTextLeft1:GetText() == "Stormwind", "content survives a move")"#,
+    )
+    .unwrap();
+    // Hover loss is a plain Hide, not a fade.
+    s.minimap_tooltip_hide();
+    s.run(r#"assert(not GameTooltip:IsShown(), "hidden at once")"#)
         .unwrap();
     assert!(s.take_errors().is_empty());
 }

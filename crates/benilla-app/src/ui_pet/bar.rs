@@ -246,7 +246,7 @@ pub(super) fn active_aura_press(
 /// of the cooldowns alone is pushed without an event: the pet's cooldown events fire off the
 /// list's generation, so a natural expiry fires none, as in the reference.
 pub(crate) fn feed_pet_bar(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     spells: Option<Res<Spells>>,
     clock: Res<crate::ui_script::UiClock>,
@@ -367,7 +367,7 @@ pub(crate) fn feed_pet_bar(
 /// [`CooldownEvents`](crate::ui_action::CooldownEvents): every feed that pushes a pet cooldown, the
 /// bar's and the book's, has pushed by then, so the handlers read the new list.
 pub(crate) fn fire_pet_cooldown_events(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     mut memory: Local<crate::ui_script::VmMemo<crate::ui_script::gate::Watch>>,
 ) {

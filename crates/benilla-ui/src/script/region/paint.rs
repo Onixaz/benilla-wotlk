@@ -4,7 +4,7 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use crate::script::object::{as_f32, draw_layer_from_str, draw_layer_name};
-use crate::script::{BlendMode, TexCoords};
+use crate::script::{BlendMode, RegionData, TexCoords};
 
 use super::region_handle_of;
 
@@ -17,6 +17,28 @@ pub(crate) fn rotation_corners(angle: f32, cx: f32, cy: f32) -> TexCoords {
     let ur = [c + cx, s + cy];
     let lr = [cx - s, cy + c];
     TexCoords::Corners([ul, ur, lr, ll])
+}
+
+/// The Texture region's file, for the XML load to tell a newly created texture from a kept one.
+pub(crate) fn texture_path_of(lua: &Lua, this: &Table) -> Option<String> {
+    let rh = region_handle_of(lua, this).ok()?;
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model.region_data.get(&rh).and_then(|d| d.texture.clone())
+}
+
+/// The XML load's wrap for the file its `SetTexture` just created: the load (`0x485f40`) passes
+/// `horizTile`/`vertTile` and its `<TexCoords>` overhang as the create's per-axis wrap, which the
+/// Lua binding cannot carry.
+pub(crate) fn set_texture_wrap(lua: &Lua, this: &Table, wrap: (bool, bool)) -> mlua::Result<()> {
+    let rh = region_handle_of(lua, this)?;
+    crate::script::model_mut_of(lua)
+        .region_data
+        .entry(rh)
+        .or_default()
+        .wrap = wrap;
+    Ok(())
 }
 
 /// Install the paint methods into `m`.
@@ -150,10 +172,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     m.set(
         "SetTexture",
-        // The path form reads one argument, the colour form up to four, and extras such as
-        // `SetTexture(path, true)` are ignored. `SetTexture` answers 1, or nil when the path form's
-        // file does not load, as the host's `Model::texture_probe` judges; with no probe the path
-        // form answers nil.
+        // The path form reads the path and `lua_toboolean` of the third argument, the wrap on both
+        // axes (`0x48c6f0`); the colour form reads up to four. `SetTexture` answers 1, or nil when
+        // the path form's file does not load, as the host's `Model::texture_probe` judges; with no
+        // probe the path form answers nil.
         lua.create_function(
             |lua, (this, arg, g, b, a): (Table, Value, Value, Value, Value)| {
                 let rh = region_handle_of(lua, &this)?;
@@ -210,6 +232,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             let had_probe = model.texture_probe.is_some();
                             if resolvable {
                                 let data = model.region_data.entry(rh).or_default();
+                                // A new file is created with the call's wrap; the same file
+                                // returns before creating (`0x4b53a0`) and keeps its own.
+                                if data.texture.as_deref() != Some(path.as_str()) {
+                                    let tile = !matches!(g, Value::Nil | Value::Boolean(false));
+                                    data.wrap = (tile, tile);
+                                }
                                 data.texture = Some(path);
                                 data.fill = None;
                             }
@@ -284,6 +312,55 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(Value::Number(1.0))
         })?,
     )?;
+
+    // IsDesaturated (`0x48ca30`): 1 while the desaturating shader is on, else nil; benilla always has
+    // it, so the flag `SetDesaturated` stored answers.
+    m.set(
+        "IsDesaturated",
+        lua.create_function(|lua, this: Table| {
+            let rh = region_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            Ok(crate::script::binding_abi::flag(
+                model.region_data.get(&rh).is_some_and(|d| d.desaturated),
+            ))
+        })?,
+    )?;
+
+    // The three `+0x160` flag pairs: `SetHorizTile` (`0x48cb60`), `SetVertTile` (`0x48cc30`) and
+    // `SetNonBlocking` (`0x48caa0`) read the boolean argument (`0x815500`, an absent one on) and
+    // answer nothing; their getters (`0x48cbc0`, `0x48cc90`, `0x48cb00`) answer 1 or nil.
+    type FlagOf = fn(&mut RegionData) -> &mut bool;
+    let flags: [(&str, &str, FlagOf); 3] = [
+        ("SetHorizTile", "GetHorizTile", |d| &mut d.tile.0),
+        ("SetVertTile", "GetVertTile", |d| &mut d.tile.1),
+        ("SetNonBlocking", "GetNonBlocking", |d| &mut d.non_blocking),
+    ];
+    for (set, get, field) in flags {
+        m.set(
+            set,
+            lua.create_function(move |lua, args: MultiValue| {
+                let this = match args.front() {
+                    Some(Value::Table(t)) => t.clone(),
+                    _ => return Err(mlua::Error::runtime("expected a texture")),
+                };
+                let on = crate::script::binding_abi::bool_or_default(args.get(1), true);
+                let rh = region_handle_of(lua, &this)?;
+                let mut model = crate::script::model_mut_of(lua);
+                let d = model.paint_mut(&[crate::order::ZTarget::Region(rh)]);
+                *field(d.region_data.entry(rh).or_default()) = on;
+                Ok(())
+            })?,
+        )?;
+        m.set(
+            get,
+            lua.create_function(move |lua, this: Table| {
+                let rh = region_handle_of(lua, &this)?;
+                let mut model = crate::script::model_mut_of(lua);
+                let on = model.region_data.get_mut(&rh).is_some_and(|d| *field(d));
+                Ok(crate::script::binding_abi::flag(on))
+            })?,
+        )?;
+    }
 
     // GetTexture, Texture only, answers one value: "Solid Texture" for the colour form, not nil,
     // and a path cut at its last `.`, even a dot in a directory name, as the client cuts it.

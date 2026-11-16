@@ -114,6 +114,7 @@ fn rig() -> App {
         .add_message::<CombatTextSpawn>()
         .add_message::<UnitCombatFeedback>()
         .add_message::<CombatTextEvent>();
+    app.insert_non_send_resource(text_unit_vm("player"));
     for (guid, store) in [
         (ME, unit(ObjectType::Player, 100)),
         (MOB, unit(ObjectType::Unit, 100)),
@@ -128,6 +129,20 @@ fn rig() -> App {
             .insert(guid, e);
     }
     app
+}
+
+/// A VM whose Blizzard_CombatText named `token` the combat-text unit, the player as `ME` and
+/// its vehicle as `MOB`.
+fn text_unit_vm(token: &str) -> benilla_ui::script::UiScript {
+    let mut s = benilla_ui::script::UiScript::new().unwrap();
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: ME,
+        vehicle: MOB,
+        ..Default::default()
+    });
+    s.run(&format!("CombatTextSetActiveUnit('{token}')"))
+        .unwrap();
+    s
 }
 
 fn run(app: &mut App, f: impl FnOnce(&mut Log) + Send + Sync + 'static) {
@@ -693,4 +708,75 @@ fn a_batched_entry_logs_backdated_by_its_offset() {
         vec![SessionEvent::SpellDamageLog(fireball_hit(0, 5))],
     );
     assert_eq!(entries(&app).last().map(|e| e.time_ms), Some(10_000));
+}
+
+/// #444: the centre text follows the unit Blizzard_CombatText names: in a vehicle a hit on the
+/// vehicle raises it and one on the player does not; back out, the player's again; before any
+/// call (`[0xca1380]` 0), none.
+#[test]
+fn centre_text_follows_the_combat_text_unit() {
+    let swing = |victim: u64| AttackerState {
+        attacker: if victim == ME { MOB } else { ME },
+        victim,
+        hit_info: hit_info::AFFECTS_VICTIM,
+        damage: 9,
+        overkill: 0,
+        victim_state: 1,
+        absorb: 0,
+        resist: 0,
+        blocked: 0,
+        melee_spell_id: 0,
+        school_mask: 1,
+    };
+    let mut app = rig();
+    let hits = |app: &mut App| {
+        run(app, move |log| {
+            log.swing(&swing(ME));
+            log.swing(&swing(MOB));
+        });
+        centre(app).len()
+    };
+    let name_unit = |app: &mut App, token: &str| {
+        app.insert_non_send_resource(text_unit_vm(token));
+    };
+    name_unit(&mut app, "vehicle");
+    run(&mut app, move |log| log.swing(&swing(MOB)));
+    assert_eq!(
+        centre(&mut app),
+        [("DAMAGE", vec![ScriptValue::Int(9)])],
+        "a hit on the vehicle"
+    );
+    run(&mut app, move |log| log.swing(&swing(ME)));
+    assert!(centre(&mut app).is_empty(), "the player's own is silent");
+    name_unit(&mut app, "player");
+    assert_eq!(hits(&mut app), 1, "back out, the player's hit alone");
+    app.insert_non_send_resource(benilla_ui::script::UiScript::new().unwrap());
+    assert_eq!(hits(&mut app), 0, "no unit named yet");
+}
+
+/// A player whose name record carries a realm fires as `name-realm`; one without keeps the bare
+/// name (`0x74f720`, `0x74e319`).
+#[test]
+fn a_player_from_another_realm_logs_as_name_dash_realm() {
+    let fire = |realm: &str| {
+        let mut app = rig();
+        app.add_message::<super::entries::CombatLogFired>()
+            .insert_resource(Time::<bevy::time::Real>::default());
+        let mut names = app.world_mut().resource_mut::<crate::names::NameCache>();
+        names.insert_player(ME, "Claude".into(), None);
+        names.set_player_realm(ME, realm.into());
+        run(&mut app, |log| log.unit_dead(ME));
+        app.world_mut()
+            .run_system_once(super::entries::fire_pending)
+            .unwrap();
+        let fired = app
+            .world_mut()
+            .resource_mut::<Messages<super::entries::CombatLogFired>>()
+            .drain()
+            .map(|f| f.0.dest.name)
+            .collect::<Vec<_>>();
+        fired
+    };
+    assert_eq!(fire("Outland"), [Some("Claude-Outland".to_string())]);
+    assert_eq!(fire(""), [Some("Claude".to_string())]);
 }

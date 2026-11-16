@@ -432,7 +432,7 @@ fn readable(
 /// takes the text colour from the material (`ItemTextFrame.lua:18-23`), then to
 /// `ITEM_TEXT_READY`, which shows the window, once the body and any creator line are in.
 fn feed_item_text(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<ItemTextOpen>,
     letters: Res<LetterTexts>,
     pages: Res<PageTexts>,
@@ -622,7 +622,7 @@ pub(crate) struct PageMaterials(pub(crate) benilla_formats::PageTextMaterialCata
 /// Drain the reader's intents: `CloseItemText()` clears the session and fires `ITEM_TEXT_CLOSED`;
 /// a page turn re-runs the feed from `ITEM_TEXT_READY`, as the reference does not re-fire BEGIN.
 fn drain_item_text(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut open: ResMut<ItemTextOpen>,
     pages: Res<PageTexts>,
 ) {

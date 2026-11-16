@@ -55,8 +55,8 @@ pub(crate) struct UnitCombatFeedback {
 }
 
 /// One `COMBAT_TEXT_UPDATE` (the combat-text send, `0x74d460`-`0x74d550`): the type word, then the
-/// fire's own `%s`/`%d` arguments. The combat log fires it only for the combat-text unit, the
-/// player (`0x74d430`).
+/// fire's own `%s`/`%d` arguments. The combat log fires it only for the combat-text unit
+/// (`0x74d430`).
 #[derive(Message, Clone)]
 pub(crate) struct CombatTextEvent {
     pub(crate) message_type: &'static str,
@@ -71,7 +71,7 @@ pub(crate) struct CombatTextEvent {
 /// Deviation: fires with our descriptor present, so `UnitExists("player")` answers true where the
 /// reference's misses, because matching it breaks `UnitExists` for no stock reader.
 pub(crate) fn fire_leaving_world_on_worldport(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut sweep: crate::ui_script::LeaveWorldSweep,
     mut ports: MessageReader<crate::net::WorldportMessage>,
 ) {
@@ -164,7 +164,6 @@ impl Plugin for UiUnitPlugin {
                 held::feed_chain_units
                     .in_set(ChainUnitFeed)
                     .after(crate::ui_aura::AuraEvents),
-                feed_player_control,
                 feed_farsight_focus,
                 melee_unit_combat,
                 fire_unit_combat,
@@ -270,7 +269,7 @@ pub(crate) fn known_languages(
 }
 
 fn feed_known_languages(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Option<Res<crate::ui_action::PlayerActions>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
@@ -371,7 +370,7 @@ pub(crate) fn seed_language_table(world: &World, script: &mut UiScript) {
 /// Push `GetDefaultLanguage()`'s string on a change of race; `None` is the reference's zero value.
 /// Locale column 0: only enUS is populated in the 1.12 data.
 fn feed_default_language(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     langs: Option<Res<DefaultLanguagesRes>>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<Option<String>>>>,
@@ -409,7 +408,7 @@ impl RestStates {
 
 /// Seed each VM's `Exhaustion.dbc` table; a failed load keeps the shipped-table fallback.
 fn load_exhaustion_rows(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     assets: Option<Res<benilla_assets::WorldAssets>>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
     mut rest_states: ResMut<RestStates>,
@@ -503,7 +502,7 @@ fn melee_unit_combat(
 
 /// Drain [`CombatTextEvent`] into `COMBAT_TEXT_UPDATE(messageType, data, extra)`.
 fn fire_combat_text(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut events: MessageReader<CombatTextEvent>,
 ) {
     let Some(mut script) = script else {
@@ -519,7 +518,7 @@ fn fire_combat_text(
 
 /// Drain [`UnitCombatFeedback`] into `UNIT_COMBAT`, once per token naming the guid (`0x60bb70`).
 fn fire_unit_combat(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut events: MessageReader<UnitCombatFeedback>,
 ) {
     let Some(mut script) = script else {
@@ -543,7 +542,7 @@ fn fire_unit_combat(
 
 /// `SetTaxiBenchmarkMode`'s send, and the two events off `PLAYER_FLAGS` 0x20000's edge.
 fn taxi_benchmark(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
     mut was_on: Local<crate::ui_script::VmMemo<Option<bool>>>,
@@ -575,7 +574,7 @@ fn taxi_benchmark(
 /// Mirror the name cache's changed players into the VM, every answered one into a new VM, and
 /// send `GetPlayerInfoByGUID`'s asks.
 fn feed_name_records(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     names: Res<crate::names::NameCache>,
     commands: Res<crate::net::NetCommands>,
     mut fed: Local<crate::ui_script::VmMemo<bool>>,
@@ -874,42 +873,10 @@ fn dist_sq(q: Vec3, p: Vec3) -> f64 {
     (dz * dz + dx * dx) + dy * dy
 }
 
-/// `PLAYER_CONTROL_LOST`/`GAINED` on a change of the flag `SMSG_CLIENT_CONTROL_UPDATE` writes
-/// (`0x520fe0`); the boot value, and a fresh VM's memo, is in control. A world entry sets the flag
-/// with no event (`0x513880`).
-fn feed_player_control(
-    script: Option<NonSendMut<UiScript>>,
-    player: Option<Res<crate::player::Player>>,
-    mut memo: Local<crate::ui_script::VmMemo<(bool, u32)>>,
-) {
-    let (Some(mut script), Some(player)) = (script, player) else {
-        return;
-    };
-    let (lost, inits) = memo.get(&script);
-    if *inits != player.control_inits {
-        *inits = player.control_inits;
-        if !player.control_lost {
-            *lost = false;
-            script.set_player_control(true);
-        }
-    }
-    if *lost != player.control_lost {
-        *lost = player.control_lost;
-        // `HasFullControl`'s flag rides the same edge.
-        script.set_player_control(!player.control_lost);
-        let event = if player.control_lost {
-            "PLAYER_CONTROL_LOST"
-        } else {
-            "PLAYER_CONTROL_GAINED"
-        };
-        script.fire_event(event, vec![]);
-    }
-}
-
 /// `PLAYER_FARSIGHT_FOCUS_CHANGED`: the `PLAYER_FARSIGHT` field callback fires it on every change,
 /// whether or not the new guid resolves, so this diffs the field, never the pose.
 fn feed_farsight_focus(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut focus: Local<crate::ui_script::VmMemo<Option<u64>>>,
 ) {
@@ -935,7 +902,7 @@ fn feed_farsight_focus(
 /// reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated:
 /// distances move every frame, and no event keys off the map.
 fn feed_unit_reach(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tokens: UnitTokens,
     self_q: Query<(&Transform, &ObjectStore), With<SelfPlayer>>,
     transforms: Query<&Transform>,
@@ -1115,8 +1082,8 @@ pub(crate) fn snapshot(
             Some(1) => 3,
             _ => 0,
         },
-        // `UNIT_FIELD_FLAGS` PvP `0x1000` and Skinnable `0x04000000` (vmangos `UnitDefines.h`).
-        pvp: store.0.unit_flags() & 0x1000 != 0,
+        // `UnitIsPVP`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x1` (`0x60ceae`).
+        pvp: store.0.unit_byte2_flags() & 0x1 != 0,
         // The tooltip's unit setter adds the line for a non-player only (`0x621dd8`); the creature
         // record's kind is [`enrich_unit`]'s.
         skinnable: (store.0.unit_flags() & 0x0400_0000 != 0
@@ -1133,10 +1100,10 @@ pub(crate) fn snapshot(
             .or_else(|| store.0.unit_charmed_by())
             .or_else(|| store.0.unit_created_by())
             .unwrap_or(0),
-        // `UnitAffectingCombat`: bit 19, the one combat bit for every token.
+        // Bit 19, the one combat bit for every token; `UnitAffectingCombat` reads it live.
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
-        // Free-for-all PvP, `PLAYER_FLAGS` bit 7 (vmangos `Player.h:322`); false on a creature.
-        is_pvp_ffa: store.0.player_flags() & 0x80 != 0,
+        // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
+        is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
         // The honor rank, `PLAYER_BYTES_3` byte 3 (0..=18), public for every player in view.
         pvp_rank: store.0.player_pvp_rank().unwrap_or(0),
         // The team digit of `PVP_RANK_<rank>_<team>`, from the race ([`race_pvp_team`]).
@@ -1202,7 +1169,10 @@ pub(crate) fn enrich_unit(
 
 /// Drain `TogglePVP` into the bare `CMSG_TOGGLE_PVP` and `SetPVP(state)` into its one-byte form,
 /// in that order within a frame.
-fn drain_pvp_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_pvp_toggles(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1216,7 +1186,10 @@ fn drain_pvp_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetComm
 
 /// Drain the `ShowHelm`/`ShowCloak` flips into `CMSG_TOGGLE_HELM`/`CMSG_TOGGLE_CLOAK`; the VM,
 /// which alone knows what the Options row did, has already decided each is needed.
-fn drain_worn_display_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_worn_display_toggles(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1230,7 +1203,10 @@ fn drain_worn_display_toggles(script: Option<NonSendMut<UiScript>>, commands: Re
 
 /// Drain `SetActionBarToggles` into `CMSG_SET_ACTIONBAR_TOGGLES`, one packet per call: the
 /// reference binding neither checks for a change nor coalesces.
-fn drain_action_bar_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_action_bar_toggles(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -1375,8 +1351,9 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_FLAGS` (id 40), the per-field watch bridge: the reference registers one watch per named
     // unit field, and on any change of the dword the notifier fires, once per token naming the
-    // unit, `arg1` the token. The stock pet bar reads it.
-    if edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
+    // unit, `arg1` the token. The stock pet bar reads it. `"player"` fires from the values
+    // handler instead (`own_flags_watch`); the other tokens wait on #1266.
+    if token != "player" && edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
         script.fire_event("UNIT_FLAGS", vec![tok()]);
     }
     // `PLAYER_FLAGS_CHANGED` (id 407): no bit test after the XOR diff and above the local-GUID
@@ -1448,10 +1425,12 @@ struct Interactions<'w> {
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
+    /// The active battlefield's arena test, which drops the selection colour's PvP flag.
+    instance: crate::ui_arena::ArenaInstance<'w>,
 }
 
 fn feed_units(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
 
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -1524,7 +1503,8 @@ fn feed_units(
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
         || interact.quest.as_ref().is_some_and(|r| r.is_changed())
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
-        || interact.arena.as_ref().is_some_and(|r| r.is_changed());
+        || interact.arena.as_ref().is_some_and(|r| r.is_changed())
+        || interact.instance.is_changed();
     gate::trace(
         "feed_units",
         &[
@@ -1575,6 +1555,7 @@ fn feed_units(
             &reputations,
             &*group,
             Some(store),
+            interact.instance.active(),
         );
         s.raid_target = group.raid_target_index(guid.0);
         s.group_roles = group.own_roles;
@@ -1598,6 +1579,7 @@ fn feed_units(
         classes: chr,
         types,
         loot_lists: tables.loot_lists(),
+        arena: interact.instance.active(),
     };
     let target = match (selection.target, selection.guid) {
         (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {
@@ -2025,7 +2007,7 @@ fn feed_units(
 /// (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE` (`0x5d3507`). A fresh VM takes
 /// the banks silently.
 fn feed_combo_points(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     combo: Option<Res<crate::spell::ComboPoints>>,
     self_guid: Option<Res<crate::net::SelfGuid>>,
     pet_bar: Option<Res<crate::ui_pet::PetBar>>,
@@ -2192,7 +2174,7 @@ impl EquippedFeed<'_, '_> {
 
 /// The player state `SecureCmdOptionParse`'s conditions read, pushed each frame.
 fn feed_option_state(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     player: Option<Res<crate::player::Player>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     place: Option<Res<crate::area::PlayerPlace>>,
@@ -2228,6 +2210,29 @@ fn feed_option_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `UnitIsPVP` and `UnitIsPVPFreeForAll` read `UNIT_FIELD_BYTES_2` byte 1 (`0x60ceae`,
+    /// `0x60d03c`): `0x1` and `0x4`, not the `UNIT_FIELD_FLAGS` or `PLAYER_FLAGS` bits.
+    #[test]
+    fn the_pvp_predicates_read_the_bytes_2_flags() {
+        let snap = |pairs: &[(u16, u32)]| {
+            snapshot(
+                &ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs)),
+                0,
+                None,
+                0,
+                None,
+                Default::default(),
+            )
+        };
+        // `UNIT_FIELD_BYTES_2` 164, `UNIT_FIELD_FLAGS` 46.
+        let s = snap(&[(164, 0x05 << 8)]);
+        assert!(s.pvp && s.is_pvp_ffa);
+        let s = snap(&[(164, 0x01 << 8)]);
+        assert!(s.pvp && !s.is_pvp_ffa);
+        let s = snap(&[(46, 0x1000)]);
+        assert!(!s.pvp && !s.is_pvp_ffa, "the 1.12 bits are not read");
+    }
 
     /// `"mouseover"` resolves through the pick the tooltip publishes: the hovered unit, until a
     /// nearer GameObject wins it and the resolver rejects the GameObject's guid.
@@ -3225,22 +3230,19 @@ mod tests {
         );
     }
 
-    /// LOST going down, GAINED going up (boot is in control); far sight on every change.
+    /// Far sight fires on every change of the field.
     #[test]
-    fn the_control_and_far_sight_edges_fire_once_each_way() {
+    fn the_far_sight_edge_fires_on_every_change() {
         use bevy::prelude::*;
         const FIELD_PLAYER_FARSIGHT: u16 = 712;
         let mut app = App::new();
-        app.init_resource::<crate::player::Player>()
-            .add_systems(Update, (feed_player_control, feed_farsight_focus));
+        app.add_systems(Update, feed_farsight_focus);
         let script = UiScript::new().unwrap();
         script
             .run(
                 r#"
                 SEEN = {}
                 local f = CreateFrame("Frame")
-                f:RegisterEvent("PLAYER_CONTROL_LOST")
-                f:RegisterEvent("PLAYER_CONTROL_GAINED")
                 f:RegisterEvent("PLAYER_FARSIGHT_FOCUS_CHANGED")
                 f:SetScript("OnEvent", function() table.insert(SEEN, event) end)
             "#,
@@ -3263,41 +3265,7 @@ mod tests {
             s.run("SEEN = {}").unwrap();
             out
         };
-        assert_eq!(
-            seen(&mut app),
-            Vec::<String>::new(),
-            "in control, no far sight: quiet"
-        );
-        app.world_mut()
-            .resource_mut::<crate::player::Player>()
-            .control_lost = true;
-        assert_eq!(seen(&mut app), vec!["PLAYER_CONTROL_LOST".to_string()]);
-        assert_eq!(seen(&mut app), Vec::<String>::new(), "held, not repeated");
-        app.world_mut()
-            .resource_mut::<crate::player::Player>()
-            .control_lost = false;
-        assert_eq!(seen(&mut app), vec!["PLAYER_CONTROL_GAINED".to_string()]);
-
-        // A world entry hands control back with no event (`0x513880`), the flag re-seeded.
-        app.world_mut()
-            .resource_mut::<crate::player::Player>()
-            .control_lost = true;
-        assert_eq!(seen(&mut app), vec!["PLAYER_CONTROL_LOST".to_string()]);
-        {
-            let mut p = app.world_mut().resource_mut::<crate::player::Player>();
-            p.control_lost = false;
-            p.control_inits += 1;
-        }
-        assert_eq!(
-            seen(&mut app),
-            Vec::<String>::new(),
-            "no GAINED at a world entry"
-        );
-        assert!(app
-            .world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .eval::<bool>("return HasFullControl() == 1")
-            .unwrap());
+        assert_eq!(seen(&mut app), Vec::<String>::new(), "no far sight: quiet");
 
         let set_farsight = |app: &mut App, guid: u64| {
             app.world_mut().entity_mut(me).insert(ObjectStore(

@@ -136,7 +136,7 @@ fn clear_at_session_start(
 /// The view, the sightings and the destroys.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_totems(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut totems: ResMut<Totems>,
     categories: Res<TotemCategories>,
     index: Res<GuidIndex>,
@@ -240,7 +240,7 @@ const ELEMENT_ROWS: [u32; 5] = [2, 3, 4, 5, 21];
 
 /// The totem bar's lists and tables, and `UPDATE_MULTI_CAST_ACTIONBAR` after a refill.
 fn feed_multicast(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut lists: ResMut<crate::spell::multicast::MultiCastLists>,
     spells: Option<Res<Spells>>,
     categories: Res<TotemCategories>,

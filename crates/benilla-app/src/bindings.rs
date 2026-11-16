@@ -240,7 +240,10 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
 
 /// Drain the VM's binding requests: `SaveBindings` copies the live table into its set in the VM
 /// and owes the files at the UI shutdown.
-fn drain_binding_requests(script: Option<NonSendMut<UiScript>>, mut files: ResMut<BindingFiles>) {
+fn drain_binding_requests(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut files: ResMut<BindingFiles>,
+) {
     let Some(mut script) = script else { return };
     for req in script.take_keybind_requests() {
         let KeybindRequest::Save(which) = req;
@@ -299,7 +302,7 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 /// load), and fire `UPDATE_BINDINGS` so the Lua consumers (the action bar's hotkey corners)
 /// repaint.
 pub(crate) fn sync_dispatch(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut dispatch: ResMut<BindingDispatch>,
 ) {
     let Some(mut script) = script else { return };
@@ -368,7 +371,7 @@ impl WheelNotches {
 /// The dispatch pass (see the module doc). Runs after the UI key feed and before the script calls
 /// apply, so a bound key acts this frame, once, ahead of the frame's feed and tick.
 pub(crate) fn latch_and_dispatch(
-    mut script: Option<NonSendMut<UiScript>>,
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut keyboard: MessageReader<KeyboardInput>,
     // What the active layout names a letter, digit or punctuation key.
     layout: Res<LayoutNames>,

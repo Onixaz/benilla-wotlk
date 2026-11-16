@@ -258,8 +258,9 @@ pub struct TooltipState {
     pub min_width: f32,
     /// `SetMinimumWidth`'s `force` (`+0x3dc`), read back by `GetMinimumWidth`.
     pub min_width_forced: bool,
-    /// `FadeOut()`'s start on the `GetTime` clock; any fresh content or `Show` cancels the fade.
-    pub fade_start: Option<f64>,
+    /// `FadeOut`'s countdown, the seconds left while armed (`+0x3cc`, `+0x3d0`); `SetOwner` and
+    /// `Show` disarm it.
+    pub fade: Option<f32>,
     /// The guid of the unit this tooltip shows (`+0x368`/`+0x36c`), whose health watcher drives the
     /// bar; a `set_unit` push of that unit, under any token, re-drives it.
     pub unit_guid: Option<u64>,
@@ -305,8 +306,8 @@ pub const TOOLTIP_PAD: f32 = 10.0;
 pub const TOOLTIP_LINE_GAP: f32 = 2.0;
 /// The least double-line column gap, the stock `TextRightN` offset; the reference's is untraced.
 pub const TOOLTIP_DOUBLE_GAP: f32 = 40.0;
-/// `FadeOut`'s ramp length in seconds; the reference's constant is untraced.
-pub const TOOLTIP_FADE_SECS: f64 = 0.5;
+/// `FadeOut`'s countdown in seconds (`[0xa246d8]`); the alpha is the time left, capped at 1.
+pub const TOOLTIP_FADE_SECS: f32 = 2.0;
 /// A wrap-flagged line's width, pinned when it is appended; the reference's column is untraced.
 pub const TOOLTIP_WRAP_WIDTH: f32 = 260.0;
 
@@ -695,6 +696,8 @@ pub struct MinimapState {
     /// The player texture's `[width, height]` in frame units (`0x57e280`/`0x57e1c0`), unsized
     /// from the ctor (`0x57dca0`).
     pub player_texture_size: [f32; 2],
+    /// `SetPlayerTexture`'s file for the player arrow (`0x57e100`); `None` keeps the stock arrow.
+    pub player_texture: Option<String>,
 }
 
 /// Both zoom CVars register with `"3"` and the reset copies the CVar in; a higher index zooms in, 3
@@ -711,6 +714,7 @@ impl Default for MinimapState {
             // Set by `WidgetArena::create` on insert, as the ctor builds its children.
             player_arrow: None,
             player_texture_size: [0.0; 2],
+            player_texture: None,
         }
     }
 }
@@ -1054,6 +1058,8 @@ pub struct StatusBarState {
     pub vertical: bool,
     /// The fill texture (`<BarTexture>`), cropped to [`Self::fraction`] along the orientation axis.
     pub bar: Option<RegionHandle>,
+    /// `SetRotatesTexture`, `+0x29c` bit `0x8`, off from the constructor.
+    pub rotates_texture: bool,
 }
 
 impl StatusBarState {

@@ -141,6 +141,7 @@ fn on_move_mode(
     index: Res<GuidIndex>,
     mut modes: Query<&mut UnitMoveModes>,
     mut death_net: ResMut<DeathNet>,
+    mut arrivals: ResMut<crate::net::ForcedMoveArrivals>,
     mut out: MessageWriter<MoveModeMessage>,
 ) {
     if let SessionEvent::MoveMode {
@@ -155,10 +156,13 @@ fn on_move_mode(
             return;
         }
         move_mode(
-            guid,
-            counter,
-            mode,
-            apply,
+            MoveModeMessage {
+                guid,
+                counter,
+                mode,
+                apply,
+                arrival: arrivals.next(),
+            },
             &self_guid,
             &mut death_net,
             &mut out,
@@ -295,23 +299,15 @@ fn durability_damage_death(log: &mut crate::ui_chat::ChatLog) {
 /// moves: our own body or a possessed one (`0x732450` resolves any unit by guid). Our own
 /// water-walk is also mirrored into [`DeathNet`] as a ghost cue.
 fn move_mode(
-    guid: u64,
-    counter: u32,
-    mode: MoveMode,
-    apply: bool,
+    m: MoveModeMessage,
     self_guid: &SelfGuid,
     death_net: &mut DeathNet,
     out: &mut MessageWriter<MoveModeMessage>,
 ) {
-    if self_guid.0 == Some(guid) && mode == MoveMode::WaterWalk {
-        death_net.water_walk = apply;
+    if self_guid.0 == Some(m.guid) && m.mode == MoveMode::WaterWalk {
+        death_net.water_walk = m.apply;
     }
-    out.write(MoveModeMessage {
-        guid,
-        counter,
-        mode,
-        apply,
-    });
+    out.write(m);
 }
 
 /// Another unit's acked mode is that unit's own movement state (`0x6eeff0`), kept through a
@@ -370,6 +366,7 @@ mod tests {
         w.insert_resource(SelfGuid(Some(ME)));
         w.init_resource::<DeathNet>();
         w.init_resource::<Messages<MoveModeMessage>>();
+        w.init_resource::<crate::net::ForcedMoveArrivals>();
         let eye = w.spawn(UnitMoveModes(0x1000)).id();
         let mut index = GuidIndex::default();
         index.0.insert(EYE, eye);

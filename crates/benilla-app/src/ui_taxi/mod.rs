@@ -9,7 +9,6 @@ use benilla_ui::script::{TaxiUiState, UiScript};
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
-use crate::player::UNIT_FLAG_TAXI_FLIGHT;
 use crate::ui_script::{UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
@@ -86,7 +85,7 @@ impl NpcSession for TaxiState {
 /// Push the map into the VM and fire its events, show an activate refusal or close on `OK`, and
 /// announce a first-visit discovery.
 fn feed_taxi(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<TaxiState>,
     catalogs: Option<Res<TaxiCatalogs>>,
     names: Res<NameCache>,
@@ -221,35 +220,12 @@ fn feed_taxi(
     }
 }
 
-/// Push `UnitOnTaxi("player")`: the reference's verb answers bit 20 of `UNIT_FIELD_FLAGS`, which
-/// vmangos sets only for a flight (`FlightPathMovementGenerator`). Any other server spline, such as
-/// a fear, is not a taxi: stock `UIParent.lua:474-478` closes the windows on `PLAYER_CONTROL_LOST`
-/// unless on a taxi. No self store reads as not on a taxi.
-fn feed_on_taxi(
-    script: Option<NonSendMut<UiScript>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut last: Local<crate::ui_script::VmMemo<Option<bool>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let last = last.get(&script);
-    let on_taxi = self_q
-        .iter()
-        .next()
-        .is_some_and(|s| s.0.unit_flags() & UNIT_FLAG_TAXI_FLIGHT != 0);
-    if *last != Some(on_taxi) {
-        script.set_on_taxi(on_taxi);
-        *last = Some(on_taxi);
-    }
-}
-
 /// Drain the Lua intents. `TakeTaxiNode(i)` sends `CMSG_ACTIVATETAXI` when a direct `TaxiPath` edge
 /// joins the current node and the target, even if the drawn route detours, and otherwise
 /// `CMSG_ACTIVATETAXIEXPRESS` with the chain and its fare, as the reference's test decides; the
 /// `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
 fn drain_taxi(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<TaxiState>,
     cache: Res<TaxiRouteCache>,
     catalogs: Option<Res<TaxiCatalogs>>,
@@ -318,7 +294,6 @@ impl Plugin for UiTaxiPlugin {
                     // Range-close first so the clear fires `TAXIMAP_CLOSED` the same frame.
                     close_npc_session_out_of_range::<TaxiState>.before(feed_taxi),
                     feed_taxi.in_set(UiFeed),
-                    feed_on_taxi.in_set(UiFeed),
                     drain_taxi.after(UiInput),
                 ),
             );
@@ -330,45 +305,6 @@ mod tests {
     use super::*;
     use benilla_protocol::field::FIELD_UNIT_FLAGS;
     use benilla_protocol::ObjectFields;
-
-    /// `1` with the bit, `nil` without it; the feed reads nothing about server splines.
-    #[test]
-    fn unit_on_taxi_reads_the_taxi_flight_flag() {
-        let mut app = App::new();
-        app.add_systems(Update, feed_on_taxi);
-        app.insert_non_send_resource(UiScript::new().unwrap());
-        let me = app
-            .world_mut()
-            .spawn((
-                SelfPlayer,
-                ObjectStore(ObjectFields::from_pairs(&[(FIELD_UNIT_FLAGS, 0x1000)])),
-            ))
-            .id();
-        let on_taxi = |app: &mut App| -> bool {
-            app.update();
-            let s = app.world_mut().non_send_resource_mut::<UiScript>();
-            s.eval::<Option<i64>>(r#"return UnitOnTaxi("player")"#)
-                .unwrap()
-                .is_some()
-        };
-        assert!(!on_taxi(&mut app), "no TAXI_FLIGHT bit: nil");
-
-        app.world_mut()
-            .entity_mut(me)
-            .insert(ObjectStore(ObjectFields::from_pairs(&[(
-                FIELD_UNIT_FLAGS,
-                0x1000 | UNIT_FLAG_TAXI_FLIGHT,
-            )])));
-        assert!(on_taxi(&mut app), "the bit set: 1");
-
-        app.world_mut()
-            .entity_mut(me)
-            .insert(ObjectStore(ObjectFields::from_pairs(&[(
-                FIELD_UNIT_FLAGS,
-                0,
-            )])));
-        assert!(!on_taxi(&mut app), "landed: nil again");
-    }
 
     /// The map's fares take the flight master's discount and the express leg sends the raw route
     /// sum. Honored, a PvP-flagged flight master and honor rank byte 6 make 0.15: Sentinel Hill's

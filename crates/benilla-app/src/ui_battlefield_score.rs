@@ -106,7 +106,7 @@ fn resolve_board(
 }
 
 pub(crate) fn feed_battlefield_score(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     board: Res<BattlefieldScoreboard>,
     mut queue: ResMut<BattlefieldQueue>,
     catalog: Option<Res<WorldStateUiRes>>,
@@ -177,7 +177,7 @@ fn sync_board(
 /// The score request (`0x54ce30`): once asked, a finished match's or an arena's board is not
 /// asked again; otherwise once per 5000 ms.
 fn drain_battlefield_score(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut board: ResMut<BattlefieldScoreboard>,
     queue: Res<BattlefieldQueue>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,

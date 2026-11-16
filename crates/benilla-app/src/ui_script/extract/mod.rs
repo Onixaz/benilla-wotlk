@@ -165,20 +165,9 @@ fn content_kind(c: &QuadContent) -> &'static str {
     }
 }
 
-/// Which axes run past the texture, the reference's tiling idiom (`SetTexCoord(0, n, 0, 1)`
-/// repeats the art n times), and so sample `Repeat`; a bounded axis on `Repeat` would filter its
-/// edge against the opposite one. Its tolerance must match [`uv_clamp_window`]'s.
-pub(crate) fn tiling_axes(uv: &UvRect) -> (bool, bool) {
-    let past = |axis: usize| {
-        uv.corners
-            .iter()
-            .any(|c| !(-0.001..=1.001).contains(&c[axis]))
-    };
-    (past(0), past(1))
-}
-
 /// The [`UiQuad::uv_clamp`] window of an atlas crop, inset half a texel so a magnified cell does
-/// not filter in its neighbour. A tiling axis is left alone, as
+/// not filter in its neighbour. An axis past `[0, 1]` is left alone, for the sampler's repeat or
+/// edge clamp to decide, as
 /// [`benilla_ui::script::inset_atlas_bleed`] does; a whole-texture axis needs no window.
 fn uv_clamp_window(uv: &UvRect, size: (u32, u32)) -> Option<[f32; 4]> {
     let mut out = [1.0, 1.0, 0.0, 0.0]; // both axes off: `min > max`
@@ -482,7 +471,7 @@ pub(crate) fn seat_text_measurer(script: &mut UiScript, atlas: &UiFontAtlas, sea
 /// screen size, `tick`, the measure round-trip, `resolve` and the script errors. The quads are
 /// [`paint_script`]'s, after the camera that places the `WorldFrame` nameplates.
 pub(crate) fn tick_script(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     window: Query<&Window, With<PrimaryWindow>>,
     // Real time: the reference's `GetTime` is the OS tick count.
     time: Res<Time<Real>>,
@@ -662,7 +651,7 @@ pub(crate) fn tick_script(
 /// The UI pass's second half, after the camera and the plate driver: an incremental measure and
 /// `resolve` for what was written since the tick, the walk, and the conversion into [`UiQuads`].
 pub(super) fn paint_script(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     window: Query<&Window, With<PrimaryWindow>>,
     mut quads: ResMut<UiQuads>,
     world_assets: Option<ResMut<WorldAssets>>,
@@ -1470,6 +1459,7 @@ fn convert_entry(
             color,
             additive,
             tex_coords,
+            wrap,
             circular,
             portrait_unit,
             rotation,
@@ -1531,14 +1521,15 @@ fn convert_entry(
             // draws untextured.
             //
             // `SetTexCoord`'s edges map to raw UV corners, so a mirrored slice (`left > right`)
-            // keeps its flip; resolved before the handle because the wrap mode follows it.
+            // keeps its flip.
             let uv = match tex_coords {
                 Some(TexCoords::Rect(edges)) => UvRect::from_tex_coords(edges),
                 Some(TexCoords::Corners(corners)) => UvRect::from_corners(corners),
                 None => UvRect::FULL,
             };
-            // A slice past the texture tiles (`BonusActionBarFrame.lua:173`), on that axis alone.
-            let wrap = tiling_axes(&uv);
+            // The sampler wrap is the one the file was created with (`0x4859e0`), never the UVs':
+            // an axis past `[0, 1]` without it clamps to the edge texel, as `DrawRouteLine`'s
+            // rotated quads need, and tiles only where the XML or `SetTexture(path, true)` asked.
             let handle = match (path.as_deref(), assets.as_mut()) {
                 (Some(p), Some(a)) => {
                     let resolved = if p == benilla_ui::script::nameplate::BORDER_TEXTURE {
@@ -1769,10 +1760,10 @@ fn cursor_icon_quad(pos: Vec2, texture: Handle<Image>) -> UiQuad {
     }
 }
 
-/// [`uv_clamp_window`] and [`tiling_axes`] on shapes the stock UI draws.
+/// [`uv_clamp_window`] on shapes the stock UI draws.
 #[cfg(test)]
 mod uv_clamp_tests {
-    use super::{tiling_axes, uv_clamp_window, UvRect};
+    use super::{uv_clamp_window, UvRect};
 
     /// `POIIcons` is 128², and a world-map POI samples its cell (7, 1).
     #[test]
@@ -1789,40 +1780,6 @@ mod uv_clamp_tests {
     #[test]
     fn the_whole_texture_asks_for_no_window() {
         assert!(uv_clamp_window(&UvRect::FULL, (128, 128)).is_none());
-    }
-
-    /// The stance bar's middle strip, `SetTexCoord(0, n-2, 0, 1)` (`BonusActionBarFrame.lua:173`).
-    #[test]
-    fn a_one_axis_strip_wraps_that_axis_only() {
-        assert_eq!(
-            tiling_axes(&UvRect::from_tex_coords([0.0, 2.0, 0.0, 1.0])),
-            (true, false)
-        );
-        assert_eq!(
-            tiling_axes(&UvRect::from_tex_coords([0.0, 1.0, 0.0, 3.0])),
-            (false, true)
-        );
-    }
-
-    #[test]
-    fn a_bounded_mapping_tiles_nothing() {
-        assert_eq!(
-            tiling_axes(&UvRect::from_tex_coords([0.0, 1.0, 0.0, 1.0])),
-            (false, false)
-        );
-        assert_eq!(tiling_axes(&UvRect::FULL), (false, false));
-        assert_eq!(
-            tiling_axes(&UvRect::from_tex_coords([0.453125, 0.875, 0.0, 1.0])),
-            (false, false)
-        );
-    }
-
-    #[test]
-    fn a_two_axis_tile_wraps_both() {
-        assert_eq!(
-            tiling_axes(&UvRect::from_tex_coords([0.0, 4.0, 0.0, 2.5])),
-            (true, true)
-        );
     }
 
     #[test]

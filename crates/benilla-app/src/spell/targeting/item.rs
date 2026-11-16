@@ -130,7 +130,10 @@ pub(crate) fn item_bind_verdict(
 /// `ReplaceEnchant` calls directly. An empty slot (the reference's null-item guard), a refusal or a
 /// confirm keeps the mode.
 pub(crate) fn commit_item_cast_on_pick(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_q: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
     enchants: Option<Res<crate::items::Enchants>>,
     mut parked: ResMut<EnchantConfirmItem>,

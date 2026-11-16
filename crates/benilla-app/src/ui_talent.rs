@@ -271,7 +271,7 @@ impl PetTalentInputs<'_, '_> {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_talents(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     talents: Option<Res<Talents>>,
     mut held: ResMut<PlayerTalentGroups>,
     mut pet_inputs: PetTalentInputs,
@@ -424,7 +424,7 @@ fn feed_talents(
 /// The inspected player's snapshot, pushed when its class, its groups or a catalog moved, then the
 /// `INSPECT_TALENT_READY`s owed; a `/reload`'s new VM gets the snapshot again.
 fn feed_inspect_talents(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     talents: Option<Res<Talents>>,
     spells: Option<Res<Spells>>,
     mut inspect: ResMut<InspectTalents>,
@@ -637,7 +637,7 @@ fn tab_pages(
 /// the VM chose the talent and rank (`0x5c80e0`, `0x5c6a10`), and the server answers with
 /// `SMSG_TALENTS_INFO`.
 fn drain_talent_learns(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
     bar: Option<Res<crate::ui_pet::PetBar>>,
     pet: crate::ui_pet::PetUnit,

@@ -458,7 +458,7 @@ fn emit_minimap(
         Res<MinimapRotate>,
         Res<crate::death::ReleasePoi>,
     ),
-    blip_inputs: blips::BlipInputs,
+    (blip_inputs, _live): (blips::BlipInputs, crate::ui_script::LendLive),
     mut composite: ResMut<composite::MinimapComposite>,
     rig: Option<Res<composite::CompositeRig>>,
     mut quads: ResMut<UiQuads>,
@@ -795,11 +795,6 @@ fn emit_minimap(
             wx: (wx / q).round() * q,
             wy: (wy / q).round() * q,
             cursor,
-            // The cursor in root units (y-up, ÷ the seam scale): the tooltip anchor resolves in
-            // those, not window px.
-            cursor_ui: cursor
-                .zip(win)
-                .map(|(c, w)| Vec2::new(c.x / seam, (w.height() - c.y) / seam)),
             seam,
             turn,
         }
@@ -956,8 +951,8 @@ fn emit_minimap(
                     );
                 }
             }
-            if let (false, Some(ui)) = (hits.is_empty(), ctx.cursor_ui) {
-                hover = blips::MinimapBlipHover::Objects(hits, ui);
+            if !hits.is_empty() {
+                hover = blips::MinimapBlipHover::Objects(hits);
             }
         }
     }
@@ -1018,7 +1013,10 @@ struct InsideProbe {
 /// widget built later is still told. The edge also fires `MINIMAP_UPDATE_ZOOM`, on which the stock
 /// `Minimap_OnEvent` re-syncs the +/- buttons to the other index's level.
 fn feed_minimap_inside(
-    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     world: benilla_world::world_point::WorldPoint,
     player: Res<Player>,
     instances: Query<&WmoPortalInstance>,
@@ -1067,7 +1065,10 @@ fn feed_minimap_inside(
 /// Swap the disc's mask for the one `Minimap:SetMaskTexture` names (a 1.12 method). Memoised on the
 /// path and re-read with a fresh VM; a path that fails to load keeps the current mask and warns.
 fn feed_minimap_mask(
-    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     assets: Option<ResMut<MinimapAssets>>,
     world_assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
@@ -1102,7 +1103,10 @@ fn feed_minimap_mask(
 /// `GetPlayerFacing`'s answer rides along (`0x60a490`): the facing of what the camera follows, a
 /// far-sight subject or a vehicle when one is published, else our body.
 fn feed_minimap_player_facing(
-    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     player: Res<Player>,
     subject: Option<Res<crate::player::ViewSubject>>,
 ) {
@@ -1117,7 +1121,10 @@ fn feed_minimap_player_facing(
 /// Turn the compass texture against the map while it rotates (by `-facing`, `0x57d5b0`, from the
 /// minimap draw); north-up leaves it alone, as the stock file hides it then.
 fn feed_minimap_compass(
-    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     player: Res<Player>,
     rotate: Res<MinimapRotate>,
 ) {
@@ -1131,7 +1138,10 @@ fn feed_minimap_compass(
 /// and the calendar's clock with it (`CalendarGetDate()`, an event's alarm). Before the first
 /// `SMSG_LOGIN_SETTIMESPEED` they read 0:00 and the unset date.
 fn feed_game_time(
-    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     time: Res<crate::net::ServerTime>,
     mut last: Local<crate::ui_script::VmMemo<Option<u32>>>,
 ) {

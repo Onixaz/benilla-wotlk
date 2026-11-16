@@ -209,7 +209,7 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
 
 mod layout;
 mod paint;
-pub(crate) use paint::rotation_corners;
+pub(crate) use paint::{rotation_corners, set_texture_wrap, texture_path_of};
 mod text;
 
 pub(crate) use text::store_text;
@@ -406,6 +406,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
 
     // In any order: each only adds to the same method table.
     paint::install(lua, &m)?;
+    super::object::mouse_over::install_region(lua, &m)?;
     text::install(lua, &m)?;
     layout::install(lua, &m)?;
 

@@ -23,7 +23,7 @@ pub(crate) mod attributes;
 mod events_regions;
 mod frame_state;
 pub(crate) mod layout_methods;
-mod mouse_over;
+pub(crate) mod mouse_over;
 pub(crate) mod protection;
 pub(crate) use layout_methods::eff_scale;
 pub(crate) mod movable;

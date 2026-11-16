@@ -65,9 +65,11 @@ pub(super) fn register(app: &mut App) {
         .net_handler(SessionEventKind::Disconnected, on_session_end)
         .add_systems(
             Update,
+            // After the special items' push, which `QUEST_ACCEPTED`'s tracker redraw reads.
             feed_quest_lines
                 .in_set(crate::ui_unit::UnitFeed)
-                .after(crate::ui_quest_log::feed_quest_log),
+                .after(crate::ui_quest_log::feed_quest_log)
+                .after(crate::ui_quest_watch::feed_special_items),
         );
 }
 
@@ -78,7 +80,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut lines: ResMut<QuestLines>) {
 
 /// Show every line whose record is here, in the order raised; the rest wait.
 fn feed_quest_lines(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut lines: ResMut<QuestLines>,
     quest_log: Res<QuestLog>,
     items: Res<Items>,

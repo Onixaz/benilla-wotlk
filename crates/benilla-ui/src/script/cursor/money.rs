@@ -55,7 +55,7 @@ fn install_money(model: &mut Model, copper: u32) {
 
 /// `PickupPlayerMoney` after the argument gate; each refusal is silent.
 pub(crate) fn pickup_player_money(model: &mut Model, copper: u32) -> bool {
-    if copper == 0 || !model.player_control || u64::from(copper) > model.money {
+    if copper == 0 || !crate::script::live::has_control() || u64::from(copper) > model.money {
         return false;
     }
     install_money(model, copper);
@@ -64,7 +64,8 @@ pub(crate) fn pickup_player_money(model: &mut Model, copper: u32) -> bool {
 
 /// `DropCursorMoney`: `PLAYER_MONEY`, then the clear's `CURSOR_UPDATE`, and no packet.
 pub(crate) fn drop_cursor_money(model: &mut Model) -> bool {
-    if !matches!(model.cursor, Some(CursorPayload::Money(_))) || !model.player_control {
+    if !matches!(model.cursor, Some(CursorPayload::Money(_))) || !crate::script::live::has_control()
+    {
         return false;
     }
     model.cursor = None;
@@ -283,14 +284,13 @@ mod tests {
             250,
             "a numeric string"
         );
-        s.set_player_control(false);
-        s.run("DropCursorMoney()").unwrap();
+        let lost = crate::script::live::TestView::default();
+        s.with_live(&lost, |s| s.run("DropCursorMoney()")).unwrap();
         assert_eq!(
             s.eval::<i64>("return GetCursorMoney()").unwrap(),
             250,
             "neither pickup nor drop while control is lost"
         );
-        s.set_player_control(true);
         s.run("DropCursorMoney()").unwrap();
         assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 0);
         s.run("DropCursorMoney()").unwrap();

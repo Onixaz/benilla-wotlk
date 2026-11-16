@@ -123,6 +123,7 @@ impl Loader<'_> {
                     if let Some(tc) = tex_coords_of(t) {
                         this.call_region(&region, "SetTexCoord", tc, dbg);
                     }
+                    this.apply_slot_texture_wrap(t, &region, dbg);
                     // A named state texture is published both ways: the region registry for its
                     // `GetName()`, `_G` for `getglobal` and a sibling's `relativeTo`.
                     if let Some(rname) = t.name().map(|raw| framexml::resolve_name(raw, self_name))
@@ -359,8 +360,8 @@ impl Loader<'_> {
     }
 
     /// `<ScrollingMessageFrame>` and `<MessageFrame>`, two loaders: both take `displayDuration` and
-    /// `fadeDuration` (only when > 0) and `fade`; only the scrolling one has `maxLines` (> 0), only
-    /// the plain one `insertMode`. The line font and its `justifyH` come from the direct-child
+    /// `fadeDuration` (only when > 0), `fade` and `insertMode`; only the scrolling one has `maxLines`
+    /// (> 0). The line font and its `justifyH` come from the direct-child
     /// `<FontString>`.
     pub(super) fn apply_messageframe(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         let scrolling = el.tag.eq_ignore_ascii_case("ScrollingMessageFrame");
@@ -378,10 +379,15 @@ impl Loader<'_> {
                 }
             }
         }
-        if plain {
-            if let Some(mode) = el.attr("insertMode") {
-                self.call(wrapper, "SetInsertMode", mode.trim().to_string(), dbg);
-            }
+        if let Some(mode) = el.attr("insertMode").filter(|m| !m.is_empty()) {
+            // The scrolling loader (`0x96ac50`) takes "TOP" as TOP and any other value as BOTTOM,
+            // where its Lua setter raises on one; the plain setter reads it as it is.
+            let mode = if scrolling && !mode.eq_ignore_ascii_case("TOP") {
+                "BOTTOM".to_string()
+            } else {
+                mode.trim().to_string()
+            };
+            self.call(wrapper, "SetInsertMode", mode, dbg);
         }
         if let Some(s) = el
             .attr("displayDuration")
@@ -463,6 +469,7 @@ impl Loader<'_> {
                 if let Some(tc) = tex_coords_of(tt) {
                     self.call_region(&region, "SetTexCoord", tc, dbg);
                 }
+                self.apply_slot_texture_wrap(tt, &region, dbg);
                 if let Some(rname) = tt.name().map(|raw| framexml::resolve_name(raw, self_name)) {
                     crate::script::region::publish_region_name(self.lua(), &rname, &region);
                     if let Err(e) = self.lua().globals().set(rname.clone(), region) {
@@ -529,6 +536,7 @@ impl Loader<'_> {
                     if let Some(tc) = tex_coords_of(tt) {
                         self.call_region(&region, "SetTexCoord", tc, dbg);
                     }
+                    self.apply_slot_texture_wrap(tt, &region, dbg);
                     if let Some(rname) = tt.name().map(|raw| framexml::resolve_name(raw, self_name))
                     {
                         // Published both ways: the stock `<ColorValueTexture>` anchors to
@@ -575,6 +583,11 @@ impl Loader<'_> {
             };
             let child = &self.expand_region(child);
             self.apply_element_font(child, wrapper, elem, dbg);
+            // The element font's `indented` (`0x497070`), by the element's name.
+            if let Some(on) = super::regions::xml_flag(child, "indented") {
+                let name = ["P", "H1", "H2", "H3"][elem];
+                self.call(wrapper, "SetIndentedWordWrap", (name, on), dbg);
+            }
         }
         if let Some(raw) = el.attr("file") {
             if let Some(bytes) = (self.files)(raw) {

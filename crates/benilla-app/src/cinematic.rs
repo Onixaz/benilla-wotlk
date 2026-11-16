@@ -544,7 +544,7 @@ fn abandon_on_leaving_world(
 /// is per VM, so a `/reload` mid-cinematic re-fires `CINEMATIC_START` into the rebuilt tree.
 fn feed_ui(
     cine: Res<Cinematic>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut published: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
     let Some(mut script) = script else {
@@ -576,7 +576,10 @@ fn feed_ui(
 
 /// Each Lua `OpeningCinematic()` is one empty `CMSG_OPENING_CINEMATIC`; the server answers, if at
 /// all, with the `SMSG_TRIGGER_CINEMATIC` [`take_trigger`] plays.
-fn send_opening_cinematic(script: Option<NonSendMut<UiScript>>, net: Option<Res<NetCommands>>) {
+fn send_opening_cinematic(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    net: Option<Res<NetCommands>>,
+) {
     let Some(mut script) = script else {
         return;
     };

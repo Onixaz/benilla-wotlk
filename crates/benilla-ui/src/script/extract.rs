@@ -394,6 +394,9 @@ fn extract_one(
             if bar_fill.is_none() && !thumb_fill && !color_thumb {
                 rect = model.region_resolved.get(&rh).copied();
             }
+            if data.tile != (false, false) {
+                data.tex_coords = tile_uv(model, &data, rect);
+            }
             // An animation's translation moves the drawn quad only, not the layout rect.
             if let (Some(r), Some(&(dx, dy))) = (rect.as_mut(), model.anims.offsets.get(&rh)) {
                 r.left += dx;
@@ -450,6 +453,7 @@ fn extract_one(
                     // answer `GetBlendMode` but draw as straight alpha.
                     additive: data.blend == crate::script::BlendMode::Add,
                     tex_coords: data.tex_coords,
+                    wrap: data.wrap,
                     circular: data.circular,
                     portrait_unit: data.portrait_unit,
                     rotation: data.rotation,
@@ -530,6 +534,39 @@ fn bar_fill_rect(r: Rect, sb: &crate::widget::StatusBarState) -> Rect {
 /// client crops rather than scales: `SetValue` drives, which writes the 4-corner UV block
 /// (`+0x104..+0x120`) with `u1` set to the fill fraction. Vertical mirrors it up `v`, pinning the
 /// art's bottom edge (inferred, not traced).
+/// A tiled texture's coordinates as it is queued (`0x4847a0`): on a tiled axis each nonzero
+/// coordinate becomes the rect's extent over the file's texel extent, so the art repeats once per
+/// texel span; a zero coordinate stays the origin. Untouched without a rect or a measured file.
+fn tile_uv(
+    model: &super::Model,
+    data: &super::RegionData,
+    rect: Option<Rect>,
+) -> Option<TexCoords> {
+    let base = data.tex_coords;
+    let (Some(rect), Some(path)) = (rect, data.texture.as_deref()) else {
+        return base;
+    };
+    let Some((tw, th)) = model.texture_size_probe.as_ref().and_then(|p| p(path)) else {
+        return base;
+    };
+    let span =
+        |extent: f32, texels: u32| (texels > 0 && extent > 0.0).then(|| extent / texels as f32);
+    let su = span(rect.right - rect.left, tw).filter(|_| data.tile.0);
+    let sv = span(rect.top - rect.bottom, th).filter(|_| data.tile.1);
+    let fit = |c: f32, s: Option<f32>| match s {
+        Some(s) if c != 0.0 => s,
+        _ => c,
+    };
+    Some(
+        match base.unwrap_or(TexCoords::Rect([0.0, 1.0, 0.0, 1.0])) {
+            TexCoords::Rect([l, r, t, b]) => {
+                TexCoords::Rect([fit(l, su), fit(r, su), fit(t, sv), fit(b, sv)])
+            }
+            TexCoords::Corners(c) => TexCoords::Corners(c.map(|[u, v]| [fit(u, su), fit(v, sv)])),
+        },
+    )
+}
+
 fn bar_fill_uv(base: Option<TexCoords>, sb: &crate::widget::StatusBarState) -> TexCoords {
     // An affine base contributes its bounding edges (no live StatusBar uses one).
     let [l, r, t, b] = base.map(|tc| tc.edges()).unwrap_or([0.0, 1.0, 0.0, 1.0]);

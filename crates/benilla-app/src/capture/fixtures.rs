@@ -40,7 +40,10 @@ pub(super) fn seed_ui_fixture(
     store: (ResMut<crate::items::Items>, ResMut<crate::net::GuidIndex>),
     mut names: ResMut<crate::names::NameCache>,
     icons: Option<Res<crate::entities::ItemDisplays>>,
-    mut script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (mut script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut selection: ResMut<crate::target::Selection>,
     mut player: ResMut<crate::player::Player>,
     // A nested tuple, one param under Bevy's 16-param cap.
@@ -662,7 +665,8 @@ pub(super) fn seed_ui_fixture(
             // it at the scenario's Northshire spot.
             player.pos = benilla_assets::coords::wow_to_bevy(scenario.eye);
             // Alternating explore bits, so about half of each zone's overlays reveal.
-            script.set_world_map_explored(vec![0x5555_5555; 64]);
+            let words = usize::from(benilla_protocol::messages::PLAYER_EXPLORED_ZONES_SLOTS);
+            script.set_world_map_explored(vec![0x5555_5555; words]);
             // The Elwynn zone map: continent 2, zone 10 in the alphabetical zone list.
             if let Err(e) = script.run("ToggleWorldMap(); SetMapZoom(2, 10)") {
                 warn!("capture: ui-worldmap seed failed to open the map: {e}");

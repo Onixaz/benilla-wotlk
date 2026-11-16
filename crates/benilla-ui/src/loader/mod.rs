@@ -1049,6 +1049,8 @@ pub(super) fn font_object_from_element(el: &Element) -> FontObject {
         spacing: el
             .attr("spacing")
             .and_then(|v| v.trim().parse::<f32>().ok()),
+        // `indented`, read by the font's XML load (`0x497070`).
+        indented_word_wrap: regions::xml_flag(el, "indented").unwrap_or(false),
     }
 }
 

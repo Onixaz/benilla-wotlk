@@ -78,6 +78,7 @@ impl Loader<'_> {
         if !is_texture {
             // Before the visual pass, so an explicit `<Color>` beats the font object's.
             self.apply_fontstring_font(region, region_wrapper, dbg);
+            self.apply_fontstring_flags(region, region_wrapper, dbg);
         }
         self.apply_region_visual(region, region_wrapper, is_texture, dbg);
         if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, region_wrapper) {
@@ -142,6 +143,12 @@ impl Loader<'_> {
             };
             self.apply_region_layout(region, &region_wrapper, parent_name, dbg);
             self.apply_fontstring_font(region, &region_wrapper, dbg);
+            self.apply_fontstring_flags(region, &region_wrapper, dbg);
+            // The element is the frame's own font too (`0x497070`), whose `indented` its
+            // indented-word-wrap pair answers.
+            if let Some(on) = xml_flag(region, "indented") {
+                self.call(wrapper, "SetIndentedWordWrap", on, dbg);
+            }
             self.apply_region_visual(region, &region_wrapper, false, dbg);
             // The implicit creation anchor, as in `apply_layers`; an EditBox's adopt replaces it.
             if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, &region_wrapper) {
@@ -233,6 +240,46 @@ impl Loader<'_> {
         }
     }
 
+    /// The wrap of a texture slot the XML builds fresh (`0x815f40`), a button state, slider thumb
+    /// or colour-select texture: its own wrap stands whenever its file loaded.
+    pub(super) fn apply_slot_texture_wrap(&mut self, el: &Element, region: &Table, dbg: &str) {
+        self.apply_texture_non_blocking(el, region, dbg);
+        let Some(file) = el.attr("file") else {
+            return;
+        };
+        if crate::script::region::texture_path_of(self.lua, region).as_deref() != Some(file) {
+            return;
+        }
+        let wrap = xml_texture_wrap(el);
+        if let Err(e) = crate::script::region::set_texture_wrap(self.lua, region, wrap) {
+            self.report
+                .errors
+                .push(format!("{dbg}: region texture wrap: {e}"));
+        }
+    }
+
+    /// A `<FontString>`'s style flags (`0x4873e0`): `nonspacewrap`, `wordwrap` and `indented`, each
+    /// present and non-empty, through its setter. The indented one goes through
+    /// `GetIndentedWordWrap`, the name 12340 registers its FontString setter under.
+    pub(super) fn apply_fontstring_flags(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        for (attr, setter) in [
+            ("nonspacewrap", "SetNonSpaceWrap"),
+            ("wordwrap", "SetWordWrap"),
+            ("indented", "GetIndentedWordWrap"),
+        ] {
+            if let Some(on) = xml_flag(el, attr) {
+                self.call_region(wrapper, setter, on, dbg);
+            }
+        }
+    }
+
+    /// A texture element's `nonBlocking` (`0x485f40`), present and non-empty, through its setter.
+    pub(super) fn apply_texture_non_blocking(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        if let Some(on) = xml_flag(el, "nonBlocking") {
+            self.call_region(wrapper, "SetNonBlocking", on, dbg);
+        }
+    }
+
     pub(super) fn apply_region_visual(
         &mut self,
         region: &Element,
@@ -242,10 +289,32 @@ impl Loader<'_> {
     ) {
         let color = children_named(region, "Color").next().map(color_of);
         if is_texture {
+            self.apply_texture_non_blocking(region, region_wrapper, dbg);
+            // `horizTile`/`vertTile`, present and non-empty, set their tile bit to the value read
+            // as a boolean (`0x485f40`), before the file, which they also wrap.
+            for (attr, verb) in [("horizTile", "SetHorizTile"), ("vertTile", "SetVertTile")] {
+                if let Some(on) = xml_flag(region, attr) {
+                    self.call_region(region_wrapper, verb, on, dbg);
+                }
+            }
             if let Some(file) = region.attr("file") {
                 // A `<Color>` beside `file=` is discarded, not a tint: the reference applies it in
                 // its child loop, then the file, read after, overwrites the same slot.
+                let before = crate::script::region::texture_path_of(self.lua, region_wrapper);
                 self.call_region(region_wrapper, "SetTexture", file.to_string(), dbg);
+                // The file is created with the element's wrap (`0x485f40`); a file the region
+                // already shows is kept with its own, as the same-file check returns first.
+                let after = crate::script::region::texture_path_of(self.lua, region_wrapper);
+                if before.as_deref() != Some(file) && after.as_deref() == Some(file) {
+                    let wrap = xml_texture_wrap(region);
+                    if let Err(e) =
+                        crate::script::region::set_texture_wrap(self.lua, region_wrapper, wrap)
+                    {
+                        self.report
+                            .errors
+                            .push(format!("{dbg}: region texture wrap: {e}"));
+                    }
+                }
             } else if let Some(c) = color {
                 // No file: a solid fill, an 8×8 texture in the reference, so its alpha multiplies
                 // with `SetVertexColor` rather than being replaced by it.
@@ -408,4 +477,27 @@ impl Loader<'_> {
             None => {}
         }
     }
+}
+
+/// A boolean attribute as the XML load reads one: present and non-empty, through the loader's
+/// string-to-boolean with a false default; `None` otherwise.
+pub(super) fn xml_flag(el: &Element, attr: &str) -> Option<bool> {
+    el.attr(attr)
+        .filter(|v| !v.is_empty())
+        .map(|v| crate::script::binding_abi::str_bool_or_default(v.as_bytes(), false))
+}
+
+/// A `<Texture>`'s `(u, v)` wrap, as the XML load (`0x485f40`) builds it for the file's create:
+/// `horizTile` or `vertTile` present and non-empty sets its axis whatever its value, and a
+/// `<TexCoords>` edge outside `[0, 1]` sets the axis it lies on.
+///
+/// Deviation: only the `left`/`right`/`top`/`bottom` form is read, all four present, as
+/// [`tex_coords_of`] parses it; the reference also reads a `<Rect>` child and defaults a
+/// missing edge.
+pub(super) fn xml_texture_wrap(region: &Element) -> (bool, bool) {
+    let tiled = |attr: &str| region.attr(attr).is_some_and(|v| !v.is_empty());
+    let out = |a: f32, b: f32| !(0.0..=1.0).contains(&a) || !(0.0..=1.0).contains(&b);
+    let (u, v) =
+        tex_coords_of(region).map_or((false, false), |(l, r, t, b)| (out(l, r), out(t, b)));
+    (tiled("horizTile") || u, tiled("vertTile") || v)
 }

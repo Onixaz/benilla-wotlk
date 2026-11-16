@@ -79,7 +79,7 @@ fn known_titles_watch(index: u16) -> Option<u16> {
 }
 
 fn feed_titles(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: Option<Res<QuestRewardTablesRes>>,
     self_q: Query<(Entity, &ObjectStore), With<SelfPlayer>>,
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
@@ -118,7 +118,10 @@ fn feed_titles(
 }
 
 /// `SetCurrentTitle`'s sends; the server answers with `PLAYER_CHOSEN_TITLE`.
-fn drain_title_sets(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
+fn drain_title_sets(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    commands: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -133,7 +136,7 @@ fn drain_title_sets(script: Option<NonSendMut<UiScript>>, commands: Res<NetComma
 /// for a mask no row has or with no player. The earn effect plays in `creature_anim`.
 fn on_title_earned(
     In(ev): In<SessionEvent>,
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     tables: Option<Res<QuestRewardTablesRes>>,
     names: Res<NameCache>,
     self_q: Query<(&crate::net::Guid, &ObjectStore), With<SelfPlayer>>,

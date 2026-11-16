@@ -17,7 +17,7 @@ use crate::char_select::ClientState;
 use crate::net::{
     ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, Reputations, SelfPlayer,
 };
-use crate::target::{can_assist, Factions, Selection};
+use crate::target::{is_friendly, Factions, Selection};
 use crate::ui_action::Spells;
 use crate::ui_script::UiInput;
 use crate::ui_unit::UnitFeed;
@@ -265,16 +265,13 @@ fn aura_list(ctx: ListCtx, inputs: &[AuraInput]) -> Vec<AuraState> {
     inputs.iter().map(|a| aura_state(ctx, a)).collect()
 }
 
-/// A unit's listed auras through the display filter. `buffs_visible` false drops the helpful
-/// ones, the unit-level gate's nil at every index ([`buffs_visible_on`]).
+/// A unit's listed auras through the display filter.
 fn table_inputs<'a>(
     table: &'a UnitAuras,
     ctx: ListCtx<'a>,
-    buffs_visible: bool,
 ) -> impl Iterator<Item = AuraInput> + 'a {
     table
         .listed()
-        .filter(move |a| buffs_visible || a.is_harmful())
         .filter(move |a| shown_in_aura_ui(ctx, a.spell_id, a.flags, a.caster))
         .map(AuraInput::from)
 }
@@ -302,30 +299,36 @@ fn record_inputs<'a>(
         })
 }
 
-/// `UnitBuff`'s unit-level gate, before any slot: a unit's buffs are listed only if it has
-/// `UNIT_FLAG_AURAS_VISIBLE` or the uncharmed player can assist it, else every index is nil;
-/// `UnitDebuff` has no gate. vmangos sets the flag for Detect Magic (`UnitDefines.h:572`) and for a
-/// GM viewer (`Object.cpp:765-766`), so it is read as received.
-fn buffs_visible_on(
-    store: &ObjectStore,
-    self_store: Option<&ObjectStore>,
-    factions: Option<&Factions>,
-    reputations: &Reputations,
-    party: &dyn crate::target::GroupMembers,
-    names: Option<&crate::names::NameCache>,
-) -> bool {
-    if store.0.unit_flags() & UNIT_FLAG_AURAS_VISIBLE != 0 {
-        return true;
-    }
-    // While charmed you assist nobody.
-    if self_store.is_some_and(|s| s.0.unit_charmed_by().is_some()) {
+/// Aura type 295, unnamed and on no 12340 `Spell.dbc` row: the aura-effect mask's byte 36, bit
+/// `0x80` (`unit+0xf20`, built by `0x727e70`), that `UnitAura`'s unit gate tests (`0x6147f3`).
+const AURA_TYPE_HIDES_AURAS: u32 = 295;
+
+/// The aura-effect mask's test for [`AURA_TYPE_HIDES_AURAS`]: a held aura whose `Spell.dbc` row
+/// names it on an effect the aura's flags apply (bit `1 << effect`, `0x727f87`).
+fn hides_its_auras(table: &UnitAuras, catalog: Option<&SpellCatalog>) -> bool {
+    let Some(catalog) = catalog else {
         return false;
-    }
-    can_assist(Some(store), factions, reputations, party, self_store, names)
+    };
+    table.iter().any(|a| {
+        catalog.get(a.spell_id).is_some_and(|d| {
+            (0..3)
+                .any(|e| a.flags & (1 << e) != 0 && d.effect_apply_aura[e] == AURA_TYPE_HIDES_AURAS)
+        })
+    })
 }
 
-/// `UNIT_FIELD_FLAGS` bit 27, `0x08000000`.
-const UNIT_FLAG_AURAS_VISIBLE: u32 = 0x0800_0000;
+/// `UnitAura`, `UnitBuff` and `UnitDebuff`'s unit-level gate (`0x6147f3`-`0x61482a`), and
+/// `GameTooltip:SetUnitAura`'s (`0x625f33`): a unit carrying [`AURA_TYPE_HIDES_AURAS`] that is not
+/// friendly to the player lists nothing at any index. The reference's other unit gate, a disabled
+/// object (model flag `0x10000`) walking the roster record instead, is the unheld unit here.
+fn auras_hidden_on(
+    store: &ObjectStore,
+    table: &UnitAuras,
+    catalog: Option<&SpellCatalog>,
+    friendly: impl FnOnce(&ObjectStore) -> bool,
+) -> bool {
+    hides_its_auras(table, catalog) && !friendly(store)
+}
 
 /// `AttributesEx & 0x4` (vmangos `SpellDefines.h:834`), the cancel gate's DBC arm.
 const SPELL_ATTR_EX_IS_CHANNELED: u32 = 0x4;
@@ -395,7 +398,7 @@ struct AuraUnits<'w> {
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn feed_auras(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<
         (
             &ObjectStore,
@@ -458,8 +461,8 @@ fn feed_auras(
     let catalog = ctx.catalog;
     let empty = UnitAuras::default();
     let self_table = self_table.unwrap_or(&empty);
-    // The player's own buffs are never gated.
-    let inputs: Vec<AuraInput> = table_inputs(self_table, ctx, true).collect();
+    // The player is friendly to itself, so its own list never meets the unit gate.
+    let inputs: Vec<AuraInput> = table_inputs(self_table, ctx).collect();
     let list = aura_list(ctx, &inputs);
 
     // The minimap's tracking spell follows a known tracking spell's aura on and off the player
@@ -513,20 +516,18 @@ fn feed_auras(
 
     let held = |guid: u64| index.0.get(&guid).and_then(|&e| stores.get(e).ok());
     let table_of = |guid: u64| index.0.get(&guid).and_then(|&e| tables.get(e).ok());
-    // `UnitBuff`'s unit gate on a live unit. `unit` is never `store`, the player's, which is the
-    // gate's second argument. The pet is ungated; the reference gates a pet too, but the assist
-    // check's player-controlled arm (the controlling players' duel and FFA-PvP state) passes for
-    // your own pet, leaving only the charm, selectable and reaction clauses to hide its buffs.
-    let buffs_visible = |guid: u64, unit: &ObjectStore| {
-        guid == pet_guid
-            || buffs_visible_on(
+    // `UnitAura`'s unit gate on a live unit, asked toward `store`, the player's.
+    let auras_hidden = |unit: &ObjectStore, table: &UnitAuras| {
+        auras_hidden_on(unit, table, catalog, |unit| {
+            is_friendly(
                 unit,
-                Some(store),
                 factions.as_deref(),
                 &reputations,
                 crate::target::party_of(units.group.as_deref()),
+                Some(store),
                 names.as_deref(),
             )
+        })
     };
     let target_guid = units.selection.guid.unwrap_or(0);
     let focus_guid = script.focus_guid();
@@ -565,7 +566,7 @@ fn feed_auras(
             arena,
             held,
             table_of,
-            buffs_visible,
+            auras_hidden,
             ctx,
             catalog_moved,
         },
@@ -604,7 +605,9 @@ fn feed_auras(
 
 /// The session's end: drops the lists, so nothing reaches the next character's frames. The
 /// tables die with their units.
-fn end_session_aura_state(script: Option<NonSendMut<UiScript>>) {
+fn end_session_aura_state(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+) {
     if let Some(mut script) = script {
         script.clear_auras();
         script.set_unit_guids(&Default::default());
@@ -615,7 +618,10 @@ fn end_session_aura_state(script: Option<NonSendMut<UiScript>>) {
 
 /// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell, not the
 /// slot.
-fn drain_aura_cancels(script: Option<NonSendMut<UiScript>>, net: Res<NetCommands>) {
+fn drain_aura_cancels(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    net: Res<NetCommands>,
+) {
     let Some(mut script) = script else {
         return;
     };
@@ -645,8 +651,8 @@ mod tests {
     };
 
     /// [`table_inputs`] as the list.
-    fn other_unit_auras(table: &UnitAuras, buffs_visible: bool) -> Vec<AuraState> {
-        let inputs: Vec<AuraInput> = table_inputs(table, NO_SPELLS, buffs_visible).collect();
+    fn other_unit_auras(table: &UnitAuras) -> Vec<AuraState> {
+        let inputs: Vec<AuraInput> = table_inputs(table, NO_SPELLS).collect();
         aura_list(NO_SPELLS, &inputs)
     }
 
@@ -773,7 +779,7 @@ mod tests {
             catalog: Some(&catalog),
             ..NO_SPELLS
         };
-        let inputs: Vec<AuraInput> = table_inputs(&table, ctx, true).collect();
+        let inputs: Vec<AuraInput> = table_inputs(&table, ctx).collect();
         let listed: Vec<(u32, Option<String>)> = aura_list(ctx, &inputs)
             .into_iter()
             .map(|a| (a.spell_id, a.name))
@@ -798,7 +804,7 @@ mod tests {
         assert_eq!(roster, [6673]);
 
         // No catalog at all: nothing is known to be missing, so both stay.
-        assert_eq!(table_inputs(&table, NO_SPELLS, true).count(), 2);
+        assert_eq!(table_inputs(&table, NO_SPELLS).count(), 2);
     }
 
     /// The aura-show check's viewer legs (`0x53d580`): a caster-only aura lists only when the
@@ -861,113 +867,60 @@ mod tests {
         assert!(shown(ctx, 3, 0, 0x99), "bit 27 hides only a self-cast aura");
     }
 
-    // == `UnitBuff`'s unit-level gate == A stealthed Ridge Stalker carries 5916 helpful and 22766
-    // harmful; the reference draws only 22766, as `UnitBuff` lists no hostile creature's buffs.
-
-    /// `UNIT_FIELD_FLAGS`'s index.
-    const F_FLAGS: u16 = 46;
-    /// `UNIT_FIELD_CHARMEDBY`'s low dword; the high half is the next index.
-    const F_CHARMEDBY: u16 = 10;
-
-    fn ridge_stalker_slots(flags: u32) -> ObjectStore {
-        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-            F_FLAGS, flags,
-        )]))
-    }
+    // == `UnitAura`'s unit-level gate == A stealthed Ridge Stalker carries 5916 helpful and 22766
+    // harmful; 12340 has no assist gate (`0x6147c0`), so a hostile creature lists both.
 
     fn ridge_stalker_table() -> UnitAuras {
         UnitAuras::of(7, &[(0, 5916, 1), (1, 22766, AURA_UPDATE_FLAG_HARMFUL | 1)])
     }
 
-    /// Denied, `UnitBuff` is nil at every index; `UnitDebuff` is untouched.
+    /// No assist or `UNIT_FLAG_AURAS_VISIBLE` test: a hostile unit's buffs list beside its debuffs.
     #[test]
-    fn the_unit_gate_drops_the_whole_helpful_half_and_never_the_harmful_one() {
+    fn a_hostile_units_buffs_list_beside_its_debuffs() {
         let table = ridge_stalker_table();
-
-        let denied = other_unit_auras(&table, false);
-        assert_eq!(
-            denied.iter().map(|a| a.spell_id).collect::<Vec<_>>(),
-            [22766],
-            "a hostile creature shows its debuffs and NOT its buffs — `UnitBuff`'s unit gate"
+        let unit = ObjectStore::default();
+        assert!(
+            !auras_hidden_on(&unit, &table, None, |_| false),
+            "no aura-type-295 effect: the gate stays open, friendly or not"
         );
-        assert!(denied.iter().all(|a| !a.helpful));
-
-        let allowed = other_unit_auras(&table, true);
         assert_eq!(
-            allowed.iter().map(|a| a.spell_id).collect::<Vec<_>>(),
-            [22766, 5916],
-            "with the gate open both enumerate, in the table's display order"
+            other_unit_auras(&table)
+                .iter()
+                .map(|a| (a.spell_id, a.helpful))
+                .collect::<Vec<_>>(),
+            [(22766, false), (5916, true)],
+            "both halves enumerate, in the table's display order"
         );
     }
 
-    /// vmangos sets `UNIT_FLAG_AURAS_VISIBLE` for a GM viewer too (`Object.cpp:765-766`).
+    /// An applied aura-type-295 effect hides every aura of a unit not friendly to the player, and
+    /// none of a friendly one's; an effect the aura's flags do not apply sets no mask bit.
     #[test]
-    fn detect_magic_or_gm_mode_opens_the_gate_on_the_flag_alone() {
-        let reputations = Reputations::default();
-        // No factions catalog: the reaction is neutral (3), below the `>= 4` bar.
-        let hostile = ridge_stalker_slots(0);
-        assert!(
-            !buffs_visible_on(
-                &hostile,
-                None,
-                None,
-                &reputations,
-                &crate::target::NoGroup,
-                None
-            ),
-            "neutral reaction, not player-controlled, no PvP flag → no buffs"
+    fn an_applied_aura_type_295_effect_hides_an_unfriendly_units_auras() {
+        const HIDER: u32 = 900_001;
+        let catalog = SpellCatalog::from_displays(
+            [(
+                HIDER,
+                benilla_formats::SpellDisplay {
+                    effect_apply_aura: [0, AURA_TYPE_HIDES_AURAS, 0],
+                    ..Default::default()
+                },
+            )]
+            .into(),
         );
-
-        let detected = ridge_stalker_slots(UNIT_FLAG_AURAS_VISIBLE);
+        let unit = ObjectStore::default();
+        // Effect 1 applied: flags bit `1 << 1`.
+        let applied = UnitAuras::of(7, &[(0, 5916, 1), (1, HIDER, 0x2)]);
+        assert!(auras_hidden_on(&unit, &applied, Some(&catalog), |_| false));
         assert!(
-            buffs_visible_on(
-                &detected,
-                None,
-                None,
-                &reputations,
-                &crate::target::NoGroup,
-                None
-            ),
-            "UNIT_FLAG_AURAS_VISIBLE alone opens it, whatever the reaction says"
+            !auras_hidden_on(&unit, &applied, Some(&catalog), |_| true),
+            "a friendly unit keeps its list"
         );
-    }
-
-    /// `NOT_SELECTABLE` is the assist check's; the charm clause is `UnitBuff`'s.
-    #[test]
-    fn not_selectable_and_being_charmed_each_close_the_gate_on_their_own() {
-        let reputations = Reputations::default();
-
-        // AURAS_VISIBLE is tested before the assist check, so it wins over NOT_SELECTABLE.
-        let both = ridge_stalker_slots(UNIT_FLAG_AURAS_VISIBLE | (1 << 25));
-        assert!(
-            buffs_visible_on(
-                &both,
-                None,
-                None,
-                &reputations,
-                &crate::target::NoGroup,
-                None
-            ),
-            "AURAS_VISIBLE is tested FIRST and short-circuits the assist check entirely"
-        );
-
-        // Being charmed closes the gate before the assist check runs.
-        let friendly_pc = ridge_stalker_slots(0x8);
-        let charmed_self = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (F_CHARMEDBY, 0x1234),
-            (F_CHARMEDBY + 1, 0),
-        ]));
-        assert!(
-            !buffs_visible_on(
-                &friendly_pc,
-                Some(&charmed_self),
-                None,
-                &reputations,
-                &crate::target::NoGroup,
-                None
-            ),
-            "activePlayer.CHARMEDBY != 0 → no buffs on anyone"
-        );
+        // Only effect 0 applied, which names no aura.
+        let unapplied = UnitAuras::of(7, &[(0, 5916, 1), (1, HIDER, 0x1)]);
+        assert!(!auras_hidden_on(&unit, &unapplied, Some(&catalog), |_| {
+            false
+        }));
     }
 
     /// The two clauses.

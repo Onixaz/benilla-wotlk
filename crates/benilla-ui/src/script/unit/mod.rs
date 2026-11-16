@@ -245,8 +245,8 @@ pub struct UnitState {
     /// `UnitIsCorpse`: the token names a `TYPEID_CORPSE` object, which a dead unit is not. No feed
     /// sets it.
     pub corpse_object: bool,
-    /// `UnitAffectingCombat`: `UNIT_FIELD_FLAGS` bit `0x00080000`, for every token including
-    /// `"player"`; the reference has no separate player combat flag.
+    /// `UNIT_FIELD_FLAGS` bit `0x00080000`, for every token including `"player"`; the reference
+    /// has no separate player combat flag. `UnitAffectingCombat` reads the live word instead.
     pub in_combat: bool,
 }
 

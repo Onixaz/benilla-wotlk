@@ -39,7 +39,10 @@ pub(super) fn seed_realm_list(
     ctx: Res<CaptureCtx>,
     mut step: Local<u8>,
     mut lists: MessageWriter<crate::net::RealmListMessage>,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSend<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
 ) {
     if ctx.name != NAME {
         return;

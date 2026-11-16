@@ -46,11 +46,14 @@ impl Plugin for UiCompanionPlugin {
             Update,
             (
                 // Before the cooldown events, whose `SPELL_UPDATE_COOLDOWN` makes the page re-read
-                // `GetCompanionCooldown`, and after the book, which the learn line follows.
+                // `GetCompanionCooldown`, and after the book, which the learn line follows. Before
+                // the pet feeds: their `UNIT_PET` and `PET_BAR_UPDATE` re-test the Pets tab off
+                // `GetNumCompanions`, whose lists 12340 fills with the known spells (`0x5426a5`).
                 feed_companions
                     .in_set(UnitFeed)
                     .after(crate::ui_spellbook::BookFeed)
                     .after(crate::ui_action::SlotIdentityFeed)
+                    .before(crate::ui_pet_stats::PetSnapshot)
                     .before(crate::ui_action::CooldownEvents),
                 drain_companions.after(UiInput),
                 // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
@@ -188,7 +191,7 @@ fn identity(state: &CompanionState) -> Vec<(u32, u32, Option<&str>)> {
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn feed_companions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
     summons: Res<SummonSlots>,
@@ -405,7 +408,7 @@ pub(crate) fn dismiss(
 
 /// The dismissals `DismissCompanion` queued.
 fn drain_companions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     spells: Option<Res<Spells>>,
     summons: Res<SummonSlots>,
     commands: Res<NetCommands>,
@@ -433,7 +436,7 @@ fn drain_companions(
 /// (`0x597960`, the record's first display id), asking for a record not yet cached. The pane's
 /// rotate buttons own the yaw.
 fn feed_companion_booth(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     mut booth: ResMut<crate::portrait::CompanionBooth>,

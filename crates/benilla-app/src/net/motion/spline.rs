@@ -562,6 +562,13 @@ pub(in crate::net) fn sample_splines(
         }
         // A finished path drops its spline: `creature_anim` reads the spline's presence as moving.
         if spline.finished(now) {
+            // The done branch stops the move (`0x6eb0b0` → `0x98bd10` clears forward and back), so
+            // the per-frame draw (`0x71fd80`) puts the body level from this frame; the pitch is kept
+            // but not drawn.
+            let level = Quat::from_rotation_y(super::yaw_of(t.rotation));
+            if t.rotation != level {
+                t.rotation = level;
+            }
             if tracing {
                 benilla_assets::trace::line(
                     "spl",
@@ -1790,6 +1797,44 @@ mod tests {
         assert!(w
             .get::<super::super::facing::WalkEndFacing>(plain)
             .is_none());
+    }
+
+    /// A flyer that ends its path on a climb hovers level (`0x6eb0b0` stops the move, `0x71fd80`
+    /// then draws no pitch), keeping its heading; mid-ride it is pitched along the climb.
+    #[test]
+    fn a_flight_that_ends_on_a_climb_hovers_level() {
+        use bevy::math::EulerRot;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(Update, sample_splines);
+        let climb = |frac| spline_at(vec![[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]], false, frac).0;
+        let riding = app
+            .world_mut()
+            .spawn((Transform::default(), climb(0.5)))
+            .id();
+        let done = app
+            .world_mut()
+            .spawn((Transform::default(), climb(2.0)))
+            .id();
+        app.update();
+        let euler = |e| {
+            app.world()
+                .get::<Transform>(e)
+                .unwrap()
+                .rotation
+                .to_euler(EulerRot::YXZ)
+        };
+        let heading = std::f32::consts::FRAC_PI_4;
+        let (yaw, pitch, _) = euler(riding);
+        assert!((yaw - heading).abs() < 1e-3, "riding heading: {yaw}");
+        assert!(pitch > 0.5, "pitched along the climb mid-ride: {pitch}");
+        assert!(
+            app.world().get::<Spline>(done).is_none(),
+            "the flight is over"
+        );
+        let (yaw, pitch, roll) = euler(done);
+        assert!((yaw - heading).abs() < 1e-3, "the heading is kept: {yaw}");
+        assert_eq!((pitch, roll), (0.0, 0.0), "hovers level");
     }
 
     /// A cyclic path never ends: the spline stays and no end facing is owed.

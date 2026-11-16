@@ -177,7 +177,10 @@ pub(crate) fn reconcile_afk_mirror(
 pub(crate) fn movement_clears_afk(
     binds: Res<crate::bindings::BindingsState>,
     cvars: Res<crate::cvars::Cvars>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     commands: Res<crate::net::NetCommands>,
     mut chat: ResMut<ChatLog>,
     mut mirror: ResMut<AfkMirror>,

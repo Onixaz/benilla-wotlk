@@ -832,7 +832,10 @@ pub(super) fn latch_world_mouse(
     mut rig: ResMut<CameraControl>,
     cameras: Query<&Camera, With<FlyCam>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (mut script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     cover: Option<Res<crate::loading_screen::LoadingScreen>>,
 ) {
     let calls = script

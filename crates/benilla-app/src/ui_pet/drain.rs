@@ -251,7 +251,7 @@ pub(super) fn arm_pet_gcd(
 /// nothing and sends nothing. The stops do not; the drag's writes were gated where the VM applied
 /// them, on the answer the bar last pushed.
 pub(super) fn drain_pet_actions(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut bar: ResMut<PetBar>,
     commands: Res<NetCommands>,
     pet: PetUnit,

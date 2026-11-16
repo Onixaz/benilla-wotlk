@@ -354,9 +354,9 @@ impl UiScript {
     /// Push one [`QuadContent::Text`] per visible message of either class, its `rows` lines a block
     /// of `rows × height + (rows − 1) × spacing`, one spacing from the next: a MessageFrame steps
     /// `height + spacing` (`0x968790`), a scrolling frame anchors each message's string one spacing
-    /// past the last and the string inherits the gap (`0x969fa0`). A scrolling frame stacks up from
-    /// the bottom, `scroll_offset` choosing the bottom message. A MessageFrame does too for
-    /// `insertMode` BOTTOM, and for TOP hangs the newest off the top edge (`UIErrorsFrame.xml:4`);
+    /// past the last and the string inherits the gap (`0x969fa0`). Either class stacks up from the
+    /// bottom for `insertMode` BOTTOM, a scrolling frame's `scroll_offset` choosing the anchored
+    /// message, and for TOP hangs the newest off the top edge (`UIErrorsFrame.xml:4`);
     /// the reference's anchor per mode is untraced, and this reading reproduces both stock uses. A
     /// message that partly fits draws clipped; a faded scrolling line keeps its rows, as the
     /// reference never re-packs chat.
@@ -378,7 +378,7 @@ impl UiScript {
                 KindState::ScrollingMessage(smf) => (
                     &smf.lines,
                     smf.lines.len().saturating_sub(1 + smf.scroll_offset),
-                    false,
+                    matches!(smf.insert_mode, InsertMode::Top),
                 ),
                 KindState::Message(mf) => (
                     &mf.lines,

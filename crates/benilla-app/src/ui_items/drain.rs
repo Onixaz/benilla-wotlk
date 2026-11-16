@@ -62,7 +62,7 @@ pub(crate) fn send_auto_equip(
 /// Sends the auto-equips `AutoEquipCursorItem` queued through [`send_auto_equip`]. It takes no
 /// pending lock, so the source slot does not dim while the equip is in flight.
 pub(super) fn drain_container_autoequips(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     items: Res<Items>,
     objects: Objects,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -100,7 +100,7 @@ pub(super) fn drain_container_autoequips(
 /// slot: `CMSG_AUTOSTORE_BAG_ITEM` names `(srcbag, srcslot, dstbag)` and the server picks the slot.
 /// A split carry sends `CMSG_SPLIT_ITEM` instead. Takes no pending lock.
 pub(super) fn drain_bag_autostores(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {
@@ -614,7 +614,7 @@ impl ScriptItemUse<'_, '_> {
 
 /// Sends the repair-mode clicks, bag and paper doll, as `CMSG_REPAIR_ITEM`.
 pub(super) fn drain_container_repairs(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     merchant: Res<crate::ui_merchant::MerchantOpen>,
     objects: Objects,
@@ -702,7 +702,7 @@ struct Clicked {
 /// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, the moves
 /// through [`send_container_move`].
 pub(super) fn drain_container_moves(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
@@ -875,7 +875,7 @@ pub(crate) fn send_container_move(
 /// Sends the destroys `DeleteCursorItem` queued as `CMSG_DESTROYITEM` (count 0 is the whole stack
 /// on both sides) and locks the one slot.
 pub(super) fn drain_container_destroys(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
@@ -912,7 +912,8 @@ fn run_container_clicks(world: &mut World) {
     world.run_system_once(drain_container_repairs).unwrap();
     world
         .run_system_once(
-            |mut script: NonSendMut<UiScript>, mut items: ScriptItemUse| {
+            |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+             mut items: ScriptItemUse| {
                 crate::script_calls::in_call_order(&mut script, |script, call| {
                     if let ScriptCall::UseContainerItem { bag, slot } = call {
                         items.use_container_item(script, bag, slot);
@@ -1316,7 +1317,7 @@ mod tests {
 /// locks nothing while the question is up, because a [`PendingItemOps`] lock clears only against a
 /// wire op and a deferred action has none.
 pub(super) fn drain_bind_confirm_answers(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut pending: ResMut<PendingItemOps>,
     objects: Objects,
@@ -1403,7 +1404,7 @@ pub(super) fn drain_bind_confirm_answers(
 /// `ConfirmBindOnUse()`: re-issues the pending use through the cast ladder with `suppress` set.
 /// The pending state is one cell, taken on the first accept, so a doubled accept does nothing.
 pub(super) fn drain_bind_on_use_confirms(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
     mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,

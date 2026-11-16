@@ -1,241 +1,404 @@
-//! The `/who` filter parser: the typed string into `CMSG_WHO`'s fields, which the reference's
-//! `SendWho` builds in the engine (`0x6b5630`). `z-` names a zone the wire wants as an
-//! `AreaTable.dbc` id, so the parse needs [`crate::area::AreaTableRes`].
+//! The `/who` filter parser, the reference's `SendWho` (`0x6b5630`): the typed string into
+//! `CMSG_WHO`'s fields.
 //!
-//! `n-` name, `g-` guild, `z-` zone, `c-` class and `r-` race (the `WHO_TAG_*` strings, without
-//! case); `lo-hi` or `n` a level range; anything else a search term the server matches against
-//! name, guild and zone. Values may be quoted. Here a `z-`, `c-` or `r-` word must equal a name,
-//! and one that matches nothing becomes a search term; the reference takes every name containing
-//! the word, and sends zone 0 or an empty mask for one that matches nothing.
+//! The filter is cut to 127 bytes and split on whitespace outside double quotes; a word still
+//! inside a quote at the end is dropped. A word that starts with a tag (the `WHO_TAG_*` strings,
+//! without case) sets its field: `n-` the name and `g-` the guild, each cut to 47 bytes; `z-` every
+//! top-level `AreaTable` zone whose name contains the rest, at most ten, or zone 0 when none does;
+//! `r-` and `c-` every `ChrRaces`/`ChrClasses` row whose name contains it, a miss leaving the mask
+//! at 0. A word that starts with a digit or `-` is a level range, sent as typed: `N` is N..N, `N-`
+//! N..100, `-M` keeps the low bound and sets M, `N-M` N..M. Anything else is a search word, and the
+//! parse stops at the fourth.
 
-use benilla_formats::AreaTableCatalog;
+use benilla_formats::{AreaTableCatalog, ChrClassNames, CreateRaceRow};
 use benilla_protocol::messages::WhoRequest;
+use benilla_ui::script::{contains_utf8i, starts_with_utf8i};
 
-use crate::ui_unit::{class_names, race_names};
+/// `SStrCopy`'s cap on the filter copy (`0x6b564e`), less its terminator.
+const FILTER_MAX_BYTES: usize = 127;
+/// `SStrCopy`'s cap on the name and guild values (`0x6b578c`, `0x6b57cc`), less the terminator.
+const VALUE_MAX_BYTES: usize = 47;
+/// The search words the parse keeps before it stops (`0x6b5a52`).
+const MAX_WORDS: usize = 4;
+/// The zones a `z-` word adds (`0x6b5811`).
+const MAX_ZONES: usize = 10;
+/// The high bound an open range `N-` sends (`0x6b59f8`).
+const OPEN_LEVEL_MAX: u32 = 100;
 
-/// The 3.3.5a class ids a `c-` word can name (`class_names`' domain); 10 has no class.
-const CLASS_IDS: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11];
-/// The 3.3.5a playable race ids (`race_names`' domain).
-const RACE_IDS: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
+/// The five tags as the player's `GlobalStrings.lua` spells them (`WHO_TAG_NAME` ... `_CLASS`),
+/// tried in the reference's order: name, guild, zone, race, class.
+#[derive(Clone, Debug)]
+pub(crate) struct WhoTags {
+    pub(crate) name: String,
+    pub(crate) guild: String,
+    pub(crate) zone: String,
+    pub(crate) race: String,
+    pub(crate) class: String,
+}
 
-/// Parse a `/who` filter into the wire request. A `z-` name that `areas` cannot resolve becomes a
-/// search term, which the server still matches against zone names.
-pub(crate) fn parse(filter: &str, areas: Option<&AreaTableCatalog>) -> WhoRequest {
-    let mut request = WhoRequest::default();
-    let mut class_mask = 0u32;
-    let mut race_mask = 0u32;
-
-    for token in tokenize(filter) {
-        let (tag, value) = split_tag(&token);
-        match tag {
-            Some('n') => request.player_name = value.to_string(),
-            Some('g') => request.guild_name = value.to_string(),
-            Some('z') => match areas.and_then(|areas| zone_id(areas, value)) {
-                Some(id) => request.zones.push(id),
-                None => request.search_terms.push(value.to_string()),
-            },
-            Some('c') => match mask_bit(value, &CLASS_IDS, class_names) {
-                Some(bit) => class_mask |= bit,
-                None => request.search_terms.push(value.to_string()),
-            },
-            Some('r') => match mask_bit(value, &RACE_IDS, race_names) {
-                Some(bit) => race_mask |= bit,
-                None => request.search_terms.push(value.to_string()),
-            },
-            _ => {
-                if let Some((lo, hi)) = level_range(value) {
-                    request.level_min = lo;
-                    request.level_max = hi;
-                } else if !value.is_empty() {
-                    request.search_terms.push(value.to_string());
-                }
-            }
+impl WhoTags {
+    /// The tags through a `GetText` lookup.
+    pub(crate) fn from_text(text: impl Fn(&str) -> String) -> Self {
+        Self {
+            name: text("WHO_TAG_NAME"),
+            guild: text("WHO_TAG_GUILD"),
+            zone: text("WHO_TAG_ZONE"),
+            race: text("WHO_TAG_RACE"),
+            class: text("WHO_TAG_CLASS"),
         }
     }
+}
 
-    // No `c-` or `r-` term keeps the default all-ones mask.
-    if class_mask != 0 {
-        request.class_mask = class_mask;
-    }
-    if race_mask != 0 {
-        request.race_mask = race_mask;
+/// The tables a `z-`, `r-` or `c-` word searches, in record order.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct WhoTables<'a> {
+    pub(crate) areas: Option<&'a AreaTableCatalog>,
+    pub(crate) races: &'a [CreateRaceRow],
+    pub(crate) classes: &'a [ChrClassNames],
+}
+
+/// Parse a `/who` filter into the wire request, as `SendWho` builds it.
+pub(crate) fn parse(filter: &str, tags: &WhoTags, tables: WhoTables) -> WhoRequest {
+    let mut request = WhoRequest::default();
+    let text = clip(filter, FILTER_MAX_BYTES);
+    // The copy gets a trailing space, so the last word ends like any other.
+    let mut chars = text.chars().chain(std::iter::once(' ')).peekable();
+    while chars.next_if(|c| c.is_whitespace()).is_some() {}
+    let mut word = String::new();
+    let mut quoted = false;
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            quoted = !quoted;
+        } else if !quoted && c.is_whitespace() {
+            take_word(&std::mem::take(&mut word), tags, tables, &mut request);
+            if request.search_terms.len() >= MAX_WORDS {
+                break;
+            }
+            while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        } else {
+            word.push(c);
+        }
     }
     request
 }
 
-/// Split a filter on whitespace outside double quotes; an unterminated quote runs to the end.
-fn tokenize(filter: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    for ch in filter.chars() {
-        match ch {
-            '"' => quoted = !quoted,
-            c if c.is_whitespace() && !quoted => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
+/// One finished word into its field.
+fn take_word(word: &str, tags: &WhoTags, tables: WhoTables, request: &mut WhoRequest) {
+    if let Some(value) = strip_tag(word, &tags.name) {
+        request.player_name = clip(value, VALUE_MAX_BYTES).to_string();
+    } else if let Some(value) = strip_tag(word, &tags.guild) {
+        request.guild_name = clip(value, VALUE_MAX_BYTES).to_string();
+    } else if let Some(value) = strip_tag(word, &tags.zone) {
+        if request.zones.len() < MAX_ZONES {
+            let zones = tables.areas.into_iter().flat_map(|a| a.rows_in_order());
+            for (id, row) in zones {
+                if row.zone_id == 0
+                    && request.zones.len() < MAX_ZONES
+                    && contains_utf8i(&row.name, value)
+                {
+                    request.zones.push(id);
                 }
             }
-            c => current.push(c),
         }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
-/// Split `c-warrior` into `(Some('c'), "warrior")`. Only one ASCII letter and a `-` is a tag, so
-/// `1-10` and a hyphenated word are not.
-fn split_tag(token: &str) -> (Option<char>, &str) {
-    let mut chars = token.chars();
-    match (chars.next(), chars.next()) {
-        (Some(tag), Some('-')) if tag.is_ascii_alphabetic() => {
-            (Some(tag.to_ascii_lowercase()), &token[2..])
+        if request.zones.is_empty() {
+            request.zones.push(0);
         }
-        _ => (None, token),
+    } else if let Some(value) = strip_tag(word, &tags.race) {
+        let rows = tables
+            .races
+            .iter()
+            .map(|r| (u32::from(r.id), r.name.as_str()));
+        request.race_mask = add_matches(request.race_mask, rows, value);
+    } else if let Some(value) = strip_tag(word, &tags.class) {
+        let rows = tables.classes.iter().map(|c| (c.id, c.name.as_str()));
+        request.class_mask = add_matches(request.class_mask, rows, value);
+    } else if !level_word(word, request) {
+        request.search_terms.push(word.to_string());
     }
 }
 
-/// `1-10` is `(1, 10)` and `40` is `(40, 40)`, clamped to 1..=100 with the high bound raised to
-/// the low. The reference (`0x6b59b6`-`0x6b5a1e`) sends the numbers as typed, unclamped, and also reads `N-`
-/// as N..100 and `-M` as 0..M.
-fn level_range(value: &str) -> Option<(u32, u32)> {
-    let clamp = |n: u32| n.clamp(1, 100);
-    match value.split_once('-') {
-        Some((lo, hi)) => {
-            let (lo, hi) = (lo.parse::<u32>().ok()?, hi.parse::<u32>().ok()?);
-            Some((clamp(lo), clamp(hi.max(lo))))
+/// The value after a tag the word starts with, without case (`0x6b577d`). An empty tag, a token
+/// the string table lacks, tags nothing.
+fn strip_tag<'w>(word: &'w str, tag: &str) -> Option<&'w str> {
+    if tag.is_empty() || !starts_with_utf8i(word, tag) {
+        return None;
+    }
+    // The reference skips the tag's byte length; folded letters share theirs.
+    Some(word.get(tag.len()..).unwrap_or(""))
+}
+
+/// A race or class word: the all-ones default drops to 0 first, then every row whose name holds
+/// the word ORs in `1 << id` (`0x6b58c3`-`0x6b590b`, `0x6b5952`-`0x6b599a`).
+fn add_matches<'a>(mask: u32, rows: impl Iterator<Item = (u32, &'a str)>, value: &str) -> u32 {
+    let mut mask = if mask == u32::MAX { 0 } else { mask };
+    for (id, name) in rows {
+        if contains_utf8i(name, value) {
+            // `shl edx,cl` takes the count mod 32.
+            mask |= 1u32.wrapping_shl(id);
         }
-        None => {
-            let n = clamp(value.parse::<u32>().ok()?);
-            Some((n, n))
+    }
+    mask
+}
+
+/// A level word (`0x6b59ad`-`0x6b5a2c`), written into the request as typed; false for a word that
+/// is no range, which becomes a search word.
+fn level_word(word: &str, request: &mut WhoRequest) -> bool {
+    let bytes = word.as_bytes();
+    let (next, is_level) = match bytes.first() {
+        Some(b) if b.is_ascii_digit() => {
+            let low = str_to_int(word);
+            request.level_min = low;
+            request.level_max = low;
+            let mut i = 1 + bytes[1..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if bytes.get(i) == Some(&b'-') {
+                i += 1;
+                request.level_max = OPEN_LEVEL_MAX;
+            }
+            (i, true)
         }
+        Some(b'-') => (1, false),
+        _ => return false,
+    };
+    if bytes.get(next).is_some_and(u8::is_ascii_digit) {
+        request.level_max = str_to_int(&word[next..]);
+        true
+    } else {
+        is_level
     }
 }
 
-/// Match a class/race word against the display names and return its `1 << id` bit.
-fn mask_bit(
-    value: &str,
-    ids: &[u8],
-    names: fn(u8) -> Option<(&'static str, &'static str)>,
-) -> Option<u32> {
-    ids.iter().copied().find_map(|id| {
-        let (display, token) = names(id)?;
-        // Both spellings answer: "night elf" (the display name) and "nightelf" (the file token).
-        (display.eq_ignore_ascii_case(value) || token.eq_ignore_ascii_case(value))
-            .then_some(1u32 << id)
-    })
+/// `SStrToInt` (`0x76f0d0`) on a run of digits: wrapping, as the reference's unsigned accumulator.
+fn str_to_int(digits: &str) -> u32 {
+    digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0u32, |n, d| {
+            n.wrapping_mul(10).wrapping_add(u32::from(d - b'0'))
+        })
 }
 
-/// A zone name's `AreaTable` id, exact but without case; the catalog prefers a top-level row over
-/// a same-named subzone, and the reference skips subzones.
-fn zone_id(areas: &AreaTableCatalog, name: &str) -> Option<u32> {
-    areas.id_for_name(name)
+/// `s` cut to at most `max` bytes, at a letter boundary.
+fn clip(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn tags() -> WhoTags {
+        WhoTags {
+            name: "n-".into(),
+            guild: "g-".into(),
+            zone: "z-".into(),
+            race: "r-".into(),
+            class: "c-".into(),
+        }
+    }
+
+    fn classes() -> Vec<ChrClassNames> {
+        [
+            (1, "Warrior"),
+            (2, "Paladin"),
+            (6, "Death Knight"),
+            (9, "Warlock"),
+        ]
+        .into_iter()
+        .map(|(id, name)| ChrClassNames {
+            id,
+            name: name.into(),
+            ..Default::default()
+        })
+        .collect()
+    }
+
+    fn races() -> Vec<CreateRaceRow> {
+        [
+            (4, "Night Elf"),
+            (8, "Troll"),
+            (10, "Blood Elf"),
+            (21, "Ice Troll"),
+        ]
+        .into_iter()
+        .map(|(id, name)| CreateRaceRow {
+            id,
+            name: name.into(),
+            ..Default::default()
+        })
+        .collect()
+    }
+
+    fn area(name: &str, parent: u32) -> benilla_formats::AreaTableRow {
+        benilla_formats::AreaTableRow {
+            map_id: 0,
+            zone_id: parent,
+            explore_flag: 0,
+            flags: 0,
+            faction_group_mask: 0,
+            exploration_level: -1,
+            name: name.into(),
+        }
+    }
+
+    fn run(filter: &str) -> WhoRequest {
+        let (races, classes) = (races(), classes());
+        let areas = AreaTableCatalog::from_rows(vec![
+            (12, area("Elwynn Forest", 0)),
+            (87, area("Goldshire", 12)),
+            (1519, area("Stormwind City", 0)),
+            (40, area("Westfall", 0)),
+        ]);
+        parse(
+            filter,
+            &tags(),
+            WhoTables {
+                areas: Some(&areas),
+                races: &races,
+                classes: &classes,
+            },
+        )
+    }
+
     #[test]
     fn an_empty_filter_is_the_default_query() {
-        assert_eq!(parse("", None), WhoRequest::default());
-        assert_eq!(parse("   ", None), WhoRequest::default());
+        assert_eq!(run(""), WhoRequest::default());
+        assert_eq!(run("   "), WhoRequest::default());
     }
 
     #[test]
     fn tags_route_to_their_fields() {
-        let q = parse("n-bob g-\"Legacy of Steel\" 10-20", None);
+        let q = run("n-bob g-\"Legacy of Steel\" 10-20");
         assert_eq!(q.player_name, "bob");
         assert_eq!(q.guild_name, "Legacy of Steel");
         assert_eq!((q.level_min, q.level_max), (10, 20));
         assert!(q.search_terms.is_empty(), "tagged terms are not also terms");
+        assert_eq!(run("N-Bob").player_name, "Bob", "the tag without case");
     }
 
+    /// Every row whose name holds the word: `c-war` is Warrior and Warlock, `r-troll` both trolls.
     #[test]
-    fn a_bare_number_is_an_exact_level() {
-        let q = parse("60", None);
-        assert_eq!((q.level_min, q.level_max), (60, 60));
+    fn class_and_race_words_take_every_row_containing_them() {
+        let q = run("c-war r-TROLL");
+        assert_eq!(q.class_mask, (1 << 1) | (1 << 9));
+        assert_eq!(q.race_mask, (1 << 8) | (1 << 21));
+        assert_eq!(
+            run("r-elf c-\"death knight\"").race_mask,
+            (1 << 4) | (1 << 10)
+        );
+        assert_eq!(run("c-mage c-pal").class_mask, 1 << 2, "a miss then a hit");
+        assert!(run("c-war").search_terms.is_empty());
+    }
+
+    /// A word that matches nothing leaves the mask at 0, and is never a search word.
+    #[test]
+    fn a_class_or_race_miss_sends_an_empty_mask() {
+        let q = run("c-necromancer r-nightelf");
+        assert_eq!((q.class_mask, q.race_mask), (0, 0));
         assert!(q.search_terms.is_empty());
     }
 
-    /// By display name or file token, without case.
+    /// Top-level rows only, by substring; a miss sends zone 0.
     #[test]
-    fn class_and_race_terms_become_mask_bits() {
-        let q = parse("c-Warrior r-\"night elf\"", None);
-        assert_eq!(q.class_mask, 1 << 1, "warrior is class 1");
-        assert_eq!(q.race_mask, 1 << 4, "night elf is race 4");
-
-        let token_spelling = parse("r-nightelf", None);
-        assert_eq!(token_spelling.race_mask, 1 << 4);
-
-        // Two of a kind union rather than overwrite.
-        let both = parse("c-mage c-warlock", None);
-        assert_eq!(both.class_mask, (1 << 8) | (1 << 9));
+    fn zone_words_take_top_level_zones_containing_them() {
+        assert_eq!(run("z-elwynn").zones, vec![12]);
+        assert_eq!(run("z-gold").zones, vec![0], "a subzone is never sent");
+        assert_eq!(run("z-st").zones, vec![12, 1519, 40], "record order");
+        let miss = run("z-nowhere");
+        assert_eq!(miss.zones, vec![0]);
+        assert!(miss.search_terms.is_empty());
+        assert_eq!(
+            run("z-nowhere z-westfall").zones,
+            vec![0, 40],
+            "the miss's zone 0 stays"
+        );
     }
 
-    /// The classes and races 3.3.5a added answer too.
+    /// No area table finds nothing, so the zone goes out as 0.
     #[test]
-    fn the_3_3_5a_class_and_races_become_mask_bits() {
-        let q = parse("c-\"death knight\" r-draenei r-bloodelf", None);
-        assert_eq!(q.class_mask, 1 << 6);
-        assert_eq!(q.race_mask, (1 << 11) | (1 << 10));
-        assert!(q.search_terms.is_empty());
-    }
-
-    #[test]
-    fn an_unknown_class_word_falls_through_to_a_search_term() {
-        let q = parse("c-necromancer", None);
-        assert_eq!(q.class_mask, u32::MAX, "still every class");
-        assert_eq!(q.search_terms, vec!["necromancer".to_string()]);
+    fn a_zone_word_without_the_table_sends_zone_0() {
+        let q = parse("z-elwynn", &tags(), WhoTables::default());
+        assert_eq!(q.zones, vec![0]);
     }
 
     #[test]
-    fn an_unresolvable_zone_degrades_to_a_search_term() {
-        let q = parse("z-\"Elwynn Forest\"", None);
-        assert!(q.zones.is_empty());
-        assert_eq!(q.search_terms, vec!["Elwynn Forest".to_string()]);
+    fn levels_go_out_as_typed() {
+        let lv = |f: &str| {
+            let q = run(f);
+            (q.level_min, q.level_max)
+        };
+        assert_eq!(lv("60"), (60, 60));
+        assert_eq!(lv("70-"), (70, 100));
+        assert_eq!(lv("-30"), (0, 30));
+        assert_eq!(lv("10-20"), (10, 20));
+        assert_eq!(lv("20-10"), (20, 10), "no reorder");
+        assert_eq!(lv("0-9999"), (0, 9999), "no clamp");
+        assert_eq!(lv("10 -5"), (10, 5), "`-M` keeps the low bound");
+        assert_eq!(lv("15abc"), (15, 15), "trailing letters ignored");
+        assert!(run("60").search_terms.is_empty());
+    }
+
+    /// `-`, `-x` and a hyphenated word are search words; the level stays default.
+    #[test]
+    fn hyphens_that_are_not_ranges() {
+        assert_eq!(run("well-met").search_terms, vec!["well-met".to_string()]);
+        let q = run("- -x");
+        assert_eq!(q.search_terms, vec!["-".to_string(), "-x".to_string()]);
+        assert_eq!((q.level_min, q.level_max), (0, 100));
+    }
+
+    /// The fourth search word ends the parse: later words, tags included, are never read.
+    #[test]
+    fn the_parse_stops_at_four_words() {
+        let q = run("a b c d e n-bob");
+        assert_eq!(q.search_terms, ["a", "b", "c", "d"]);
+        assert!(q.player_name.is_empty());
     }
 
     #[test]
     fn quotes_hold_a_value_together() {
-        assert_eq!(
-            tokenize("z-\"Elwynn Forest\" 1-10"),
-            vec!["z-Elwynn Forest".to_string(), "1-10".to_string()]
-        );
-        assert_eq!(tokenize("n-\"bo"), vec!["n-bo".to_string()]);
+        assert_eq!(run("z-\"Elwynn Forest\" 1-10").zones, vec![12]);
+        assert_eq!(run("\"two words\"").search_terms, ["two words"]);
+        // The quote never closes, so the last word never ends and is dropped.
+        assert!(run("n-\"bo").player_name.is_empty());
+        // An empty quoted word is a search word.
+        assert_eq!(run("a \"\" b").search_terms, ["a", "", "b"]);
     }
 
-    /// A hyphenated word is a search term, and the reversed range `20-10` reads as level 20.
+    /// The filter is cut to 127 bytes, and a name or guild value to 47.
     #[test]
-    fn hyphens_that_are_not_tags() {
-        let q = parse("well-met", None);
-        assert_eq!(q.search_terms, vec!["well-met".to_string()]);
-
-        let reversed = parse("20-10", None);
-        assert_eq!((reversed.level_min, reversed.level_max), (20, 20));
-    }
-
-    #[test]
-    fn levels_clamp_to_the_clients_window() {
-        let q = parse("0-9999", None);
-        assert_eq!((q.level_min, q.level_max), (1, 100));
+    fn the_copies_are_capped() {
+        let long = "x".repeat(60);
+        assert_eq!(run(&format!("n-{long}")).player_name.len(), 47);
+        assert_eq!(run(&format!("g-{long}")).guild_name.len(), 47);
+        let filter = format!("{} 10", "y".repeat(126));
+        assert_eq!(run(&filter).level_max, 100, "the level fell past the cut");
     }
 
     #[test]
-    fn zone_names_resolve_against_real_area_data() {
+    fn real_tables_resolve_partial_words() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let areas = benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable.dbc");
-
-        let q = parse("z-\"elwynn forest\" 1-10", Some(&areas));
-        assert_eq!(q.zones.len(), 1, "one zone id, resolved case-insensitively");
-        assert_eq!(
-            areas.name(q.zones[0]),
-            Some("Elwynn Forest"),
-            "and it is the right row"
-        );
-        assert!(q.search_terms.is_empty(), "resolved, so not a search term");
+        let classes = benilla_formats::load_chr_classes(&mut chain).expect("ChrClasses.dbc");
+        let create = benilla_formats::CharCreateCatalog::load(&mut chain).expect("ChrRaces.dbc");
+        let tables = WhoTables {
+            areas: Some(&areas),
+            races: create.race_rows(),
+            classes: classes.names(),
+        };
+        let q = parse("z-elwynn c-war 70-", &tags(), tables);
+        assert_eq!(q.zones, vec![12], "Elwynn Forest");
+        assert_eq!(q.class_mask, (1 << 1) | (1 << 9), "Warrior and Warlock");
+        assert_eq!((q.level_min, q.level_max), (70, 100));
+        let trolls = parse("r-troll", &tags(), tables).race_mask;
+        assert_ne!(trolls & (1 << 8), 0, "Troll");
+        assert!(trolls.count_ones() > 1, "and the other troll rows");
     }
 }

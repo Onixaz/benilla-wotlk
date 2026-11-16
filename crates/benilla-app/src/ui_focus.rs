@@ -122,7 +122,7 @@ fn on_break_target(
 /// with a focus outside the group (`0x528e44`).
 #[allow(clippy::too_many_arguments)]
 fn feed_focus(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut breaks: ResMut<FocusBreaks>,
     mut edges: MessageReader<FieldChanged>,
     mut deselect: MessageWriter<DeselectGuid>,

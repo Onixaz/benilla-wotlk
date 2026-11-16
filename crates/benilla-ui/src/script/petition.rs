@@ -75,6 +75,18 @@ pub struct PetitionVendorState {
     pub has_filled_petition: bool,
 }
 
+/// The item on the petition vendor's button: its guid (`0xc0f7d8`) and the bag and 1-based slot
+/// the cursor carried it from (`0xc0f7e0`, `0xc0f7d4`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PetitionButtonItem {
+    pub item: u64,
+    pub bag: i64,
+    pub slot: u32,
+}
+
+/// An item template's petition flag, the one item the button accepts (`0x5a21af`).
+const ITEM_FLAG_PETITION: u32 = 0x2000;
+
 /// An arena charter turn-in's banner, as `TurnInArenaPetition` packs it (`0x5a26d0`): three
 /// `0xAARRGGBB` colours and two style indices, all `0xFFFFFFFF` without the eleven numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,12 +130,10 @@ pub enum PetitionRequest {
     NameRefused(&'static str),
     /// `BuyPetition(index, name)` at a petition vendor, the row 0-based, after the validator.
     VendorBuy { index: u32, name: String },
-    /// `TurnInPetition()`: the item the petition button holds, with an empty banner.
-    VendorTurnIn,
+    /// `TurnInPetition()`: the item the petition button holds, with an all-ones banner.
+    VendorTurnIn { item: u64 },
     /// `TurnInArenaPetition(...)`: the bags' arena charter of that size, with its banner.
     VendorTurnInArena(ArenaBannerChoice),
-    /// `ClickPetitionButton()`: the cursor's item onto the vendor's petition button.
-    VendorClickButton,
     /// `ClosePetitionVendor()`: the vendor's interaction ends.
     CloseVendor,
 }
@@ -137,6 +147,24 @@ impl super::UiScript {
     /// Replace the petition vendor's snapshot; the app fires its three events.
     pub fn set_petition_vendor(&mut self, state: PetitionVendorState) {
         set_field!(self, petition_vendor, state);
+    }
+
+    /// The petition list's show and the world entry (`0x5a22cb`, `0x5a1f57`): the button forgets
+    /// its item without unlocking it; the app keeps the returned item locked until its update.
+    pub fn clear_petition_button(&mut self) -> Option<PetitionButtonItem> {
+        let held = self.model_ref().petition_button?;
+        let mut model = self.model_mut();
+        model.petition_button = None;
+        // The slot reads locked until the app's next push carries the pending lock.
+        if let Some(s) = model
+            .containers
+            .get_mut(&held.bag)
+            .and_then(|c| c.slots.get_mut(&held.slot))
+            .filter(|s| s.guid == held.item)
+        {
+            s.locked = true;
+        }
+        Some(held)
     }
 
     /// Take the charter intents queued since the last drain.
@@ -490,23 +518,121 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    for (global, request) in [
-        ("TurnInPetition", PetitionRequest::VendorTurnIn),
-        ("ClickPetitionButton", PetitionRequest::VendorClickButton),
-    ] {
-        g.set(
-            global,
-            lua.create_function(move |lua, ()| {
-                let mut model = crate::script::model_mut_of(lua);
-                if model.petition_vendor.open {
-                    model.petition_requests.push(request.clone());
-                }
-                Ok(())
-            })?,
-        )?;
-    }
+    // TurnInPetition() (`0x5a2600`): with a vendor open, the button's item with five all-ones
+    // banner words; nothing with an empty button.
+    g.set(
+        "TurnInPetition",
+        lua.create_function(|lua, ()| {
+            let mut model = crate::script::model_mut_of(lua);
+            if !model.petition_vendor.open {
+                return Ok(());
+            }
+            if let Some(held) = model.petition_button {
+                model
+                    .petition_requests
+                    .push(PetitionRequest::VendorTurnIn { item: held.item });
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // ClickPetitionButton() (`0x5a2200`): the cursor's petition onto the button, the cursor
+    // cleared and any previous item handed back onto it.
+    g.set(
+        "ClickPetitionButton",
+        lua.create_function(|lua, ()| {
+            click_petition_button(&mut crate::script::model_mut_of(lua));
+            Ok(())
+        })?,
+    )?;
 
     Ok(())
+}
+
+/// Whether the button holds the item in `(bag, slot)`, which stays locked as the pickup left it.
+pub(super) fn holds_slot(model: &super::Model, bag: i64, slot: u32) -> bool {
+    model.petition_button.is_some_and(|b| {
+        b.bag == bag
+            && b.slot == slot
+            && model
+                .containers
+                .get(&bag)
+                .and_then(|c| c.slots.get(&slot))
+                .is_some_and(|s| s.guid == b.item)
+    })
+}
+
+/// The button's click (`0x5a2140`): no vendor, or a cursor item without the petition flag, does
+/// nothing. An empty cursor empties the button; either way the cursor clears without unlocking
+/// its item (`ClearCursor(0, 1)`) and the previous item goes back onto it.
+fn click_petition_button(model: &mut super::Model) {
+    use super::cursor::{CursorItem, CursorPayload};
+    if !model.petition_vendor.open {
+        return;
+    }
+    let previous = model.petition_button;
+    let held = match &model.cursor {
+        Some(CursorPayload::Item(item)) => Some(item.clone()),
+        _ => None,
+    };
+    match &held {
+        None => model.petition_button = None,
+        Some(item) => {
+            let Some(guid) = model
+                .containers
+                .get(&item.bag)
+                .and_then(|c| c.slots.get(&item.slot))
+                .filter(|s| s.guid != 0 && s.item_id == item.item_id)
+                .filter(|s| {
+                    model
+                        .item_templates
+                        .get(&s.item_id)
+                        .is_some_and(|t| t.flags & ITEM_FLAG_PETITION != 0)
+                })
+                .map(|s| s.guid)
+            else {
+                return;
+            };
+            model.petition_button = Some(PetitionButtonItem {
+                item: guid,
+                bag: item.bag,
+                slot: item.slot,
+            });
+        }
+    }
+    model
+        .pending_events
+        .push(("PETITION_VENDOR_UPDATE".to_string(), Vec::new()));
+    if held.is_some() {
+        model.cursor = None;
+        super::cursor::queue_cursor_update(model);
+    } else {
+        super::cursor::clear_cursor(model);
+    }
+    // The previous item back on the cursor, still locked (`0x5a2281`).
+    let Some(prev) = previous else {
+        return;
+    };
+    let back = model
+        .containers
+        .get(&prev.bag)
+        .and_then(|c| c.slots.get(&prev.slot))
+        .filter(|s| s.guid == prev.item)
+        .map(|s| CursorItem {
+            bag: prev.bag,
+            slot: prev.slot,
+            item_id: s.item_id,
+            texture: s.texture.clone(),
+            link: s.link.clone(),
+            count: None,
+            quality: s.quality,
+            equip_slots: s.equip_slots.clone(),
+            bar_placeable: s.bar_placeable,
+        });
+    if let Some(item) = back {
+        model.cursor = Some(CursorPayload::Item(item));
+        super::cursor::queue_cursor_update(model);
+    }
 }
 
 /// The script colour read into the packed colour (`0x5a2793`): each channel clamped to
@@ -824,6 +950,175 @@ mod tests {
             s.take_petition_requests(),
             vec![PetitionRequest::CloseVendor]
         );
+    }
+
+    /// A backpack with two charters (slots 1 and 2) and a plain item (slot 3), every template
+    /// cached, and the vendor open.
+    fn vendor_with_charters() -> UiScript {
+        use crate::script::{ContainerSlot, ContainerState, ItemTemplateView};
+        let mut s = UiScript::new().unwrap();
+        let mut slots = std::collections::HashMap::new();
+        for (slot, guid, item_id) in [(1, 0x71, 23560), (2, 0x72, 23561), (3, 0x73, 117)] {
+            slots.insert(
+                slot,
+                ContainerSlot {
+                    guid,
+                    item_id,
+                    count: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        s.set_container(
+            0,
+            Some(ContainerState {
+                num_slots: 16,
+                slots,
+                ..Default::default()
+            }),
+        );
+        for (item_id, flags) in [(23560, 0x2000), (23561, 0x2000), (117, 0)] {
+            s.set_item_template(
+                item_id,
+                ItemTemplateView {
+                    flags,
+                    ..Default::default()
+                },
+            );
+        }
+        s.set_petition_vendor(PetitionVendorState {
+            open: true,
+            ..Default::default()
+        });
+        s
+    }
+
+    fn locked(s: &UiScript, slot: u32) -> bool {
+        s.eval::<bool>(&format!(
+            "local _, _, locked = GetContainerItemInfo(0, {slot}) return locked ~= nil"
+        ))
+        .unwrap()
+    }
+
+    fn held_slot(s: &UiScript) -> Option<u32> {
+        s.cursor_item().map(|c| c.slot)
+    }
+
+    /// The button keeps the cursor's charter, still locked in its slot, and `TurnInPetition`
+    /// sends it with no banner (`0x5a2140`, `0x5a2600`).
+    #[test]
+    fn the_petition_button_takes_a_charter_and_turns_it_in() {
+        let mut s = vendor_with_charters();
+        s.run("TurnInPetition()").unwrap();
+        assert!(
+            s.take_petition_requests().is_empty(),
+            "an empty button sends nothing"
+        );
+
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        s.model_mut().pending_events.clear();
+        s.run("ClickPetitionButton()").unwrap();
+        let fired: Vec<String> = s
+            .model_ref()
+            .pending_events
+            .iter()
+            .map(|(e, _)| e.clone())
+            .collect();
+        assert!(
+            fired.contains(&"PETITION_VENDOR_UPDATE".to_string()),
+            "{fired:?}"
+        );
+        assert!(fired.contains(&"CURSOR_UPDATE".to_string()), "{fired:?}");
+        assert!(
+            !fired.contains(&"ITEM_LOCK_CHANGED".to_string()),
+            "no unlock: {fired:?}"
+        );
+        assert_eq!(held_slot(&s), None, "the cursor cleared");
+        assert!(locked(&s, 1), "the charter stays locked");
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
+
+        s.run("TurnInPetition()").unwrap();
+        assert_eq!(
+            s.take_petition_requests(),
+            vec![PetitionRequest::VendorTurnIn { item: 0x71 }]
+        );
+    }
+
+    /// A second charter swaps the first back onto the cursor; an empty cursor takes the button's
+    /// item back; a non-charter item, or no vendor, leaves everything as it was.
+    #[test]
+    fn the_petition_button_swaps_and_refuses_as_the_reference() {
+        let mut s = vendor_with_charters();
+        s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
+            .unwrap();
+        s.run("PickupContainerItem(0, 2); ClickPetitionButton()")
+            .unwrap();
+        assert_eq!(
+            held_slot(&s),
+            Some(1),
+            "the previous charter is handed back"
+        );
+        assert!(locked(&s, 1) && locked(&s, 2));
+        s.run("TurnInPetition()").unwrap();
+        assert_eq!(
+            s.take_petition_requests(),
+            vec![PetitionRequest::VendorTurnIn { item: 0x72 }]
+        );
+
+        // Slot 1 goes back to its bag, then a plain item is refused and stays held.
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert!(!locked(&s, 1));
+        s.run("PickupContainerItem(0, 3); ClickPetitionButton()")
+            .unwrap();
+        assert_eq!(held_slot(&s), Some(3), "a plain item stays on the cursor");
+        s.run("ClearCursor()").unwrap();
+
+        // An empty cursor empties the button and takes its charter.
+        s.run("ClickPetitionButton()").unwrap();
+        assert_eq!(held_slot(&s), Some(2));
+        s.run("TurnInPetition()").unwrap();
+        assert!(s.take_petition_requests().is_empty());
+        s.run("ClearCursor()").unwrap();
+        assert!(!locked(&s, 2));
+
+        // With the vendor closed the button ignores the click.
+        s.set_petition_vendor(PetitionVendorState::default());
+        s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
+            .unwrap();
+        assert_eq!(held_slot(&s), Some(1));
+    }
+
+    /// The list's show forgets the button's item but leaves it locked, with no lock event
+    /// (`0x5a22cb`); an empty button forgets nothing.
+    #[test]
+    fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
+        let mut s = vendor_with_charters();
+        assert_eq!(s.clear_petition_button(), None);
+        s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
+            .unwrap();
+        assert!(locked(&s, 1));
+        s.model_mut().pending_events.clear();
+        assert_eq!(
+            s.clear_petition_button(),
+            Some(PetitionButtonItem {
+                item: 0x71,
+                bag: 0,
+                slot: 1
+            })
+        );
+        assert!(
+            !s.model_ref()
+                .pending_events
+                .iter()
+                .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
+            "no unlock"
+        );
+        assert!(locked(&s, 1), "the forgotten charter stays locked");
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
+        s.run("TurnInPetition()").unwrap();
+        assert!(s.take_petition_requests().is_empty());
     }
 
     #[test]

@@ -41,7 +41,10 @@ const BAR_PHASE_CHUNK: &str = "return (function()\n\
 /// `OnUpdate` (`CastingBarFrame.lua:132-147`), so burst and fade last 5 and 20 frames.
 fn bar_timeline(
     time: ProbeClock,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSend<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     self_player: Query<(), With<SelfPlayer>>,
     mut last: Local<crate::ui_script::VmMemo<String>>,
 ) {
@@ -93,7 +96,10 @@ fn cast_cancel_probe(
     time: ProbeClock,
     mut probe: ResMut<ProbeCastCancel>,
     self_player: Query<(), With<SelfPlayer>>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut keys: ResMut<ButtonInput<KeyCode>>,
 ) {
     if self_player.is_empty() {

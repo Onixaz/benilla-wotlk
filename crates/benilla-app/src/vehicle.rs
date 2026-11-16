@@ -413,7 +413,7 @@ type VehicleUnits<'w, 's> = Query<
 /// seat by the party record's seat id; the seat trees, the mover and the player's seat flags.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_vehicle_view(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     units: VehicleUnits,
     mover: Query<&crate::net::Guid, With<crate::net::ActiveMover>>,
     index: Res<GuidIndex>,
@@ -573,7 +573,7 @@ fn feed_vehicle_view(
 /// allow (`0x5d46f0`, flag `0x2000000`). Otherwise the plain request.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn send_vehicle_requests(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     net: Option<Res<crate::net::NetCommands>>,
     me: Query<Option<&Passenger>, With<crate::net::SelfPlayer>>,
     mover: Query<
@@ -687,7 +687,7 @@ fn send_vehicle_requests(
 /// Turn the mover's pitch under its keys or toward its target, at its pitch rate.
 #[allow(clippy::type_complexity)] // the mover's facts, one query
 fn drive_vehicle_aim(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     net: Option<Res<crate::net::NetCommands>>,
     mover: Query<
         (
@@ -739,7 +739,10 @@ fn drive_vehicle_aim(
 }
 
 /// Fire what the frame owes, each once per token naming the unit (`0x60bb70`).
-fn feed_vehicle_signals(script: Option<NonSendMut<UiScript>>, mut signals: ResMut<VehicleSignals>) {
+fn feed_vehicle_signals(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut signals: ResMut<VehicleSignals>,
+) {
     let Some(mut script) = script else {
         return;
     };

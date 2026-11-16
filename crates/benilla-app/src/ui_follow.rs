@@ -26,7 +26,7 @@ struct FollowFeedMemo {
 }
 
 fn feed_follow(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     follow: Res<FollowState>,
     mut feed: ResMut<FollowFeed>,
 ) {
@@ -56,7 +56,10 @@ fn feed_follow(
     }
 }
 
-fn drain_follow(script: Option<NonSendMut<UiScript>>, mut out: MessageWriter<FollowRequest>) {
+fn drain_follow(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut out: MessageWriter<FollowRequest>,
+) {
     let Some(mut script) = script else {
         return;
     };

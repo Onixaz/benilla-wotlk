@@ -132,7 +132,7 @@ fn self_look(s: &ObjectStore) -> [u8; 5] {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_barber(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut shop: ResMut<BarberShop>,
     mut body: ResMut<BarberBody>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -235,7 +235,7 @@ fn feed_barber(
 
 #[allow(clippy::too_many_arguments)]
 fn drain_barber(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut shop: ResMut<BarberShop>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,

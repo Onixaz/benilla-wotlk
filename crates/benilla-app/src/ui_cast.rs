@@ -371,7 +371,7 @@ pub(crate) struct SentTarget<'w, 's> {
 /// `ToggleGameMenu` skips `ClearTarget()` (`UIParent.lua:1489-1492`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn feed_cast_bar(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut feed: ResMut<CastBarFeed>,
     mut units: ResMut<UnitCasts>,
     spells: Option<Res<Spells>>,

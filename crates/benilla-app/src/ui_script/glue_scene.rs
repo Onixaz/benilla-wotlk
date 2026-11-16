@@ -103,7 +103,7 @@ pub(crate) struct StockFeed {
 /// Feed the glue booth from the glue VM while the stock glue screens are up, and stand it down
 /// once they are not (the world entered, the VM gone).
 pub(crate) fn feed_stock_glue_preview(
-    script: Option<NonSend<UiScript>>,
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     mgr: Res<GlueMgr>,
     state: Option<Res<State<crate::char_select::ClientState>>>,
     mut preview: ResMut<GluePreview>,

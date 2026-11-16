@@ -493,7 +493,7 @@ fn port_refusal(
 /// builds the type list at the game's start (`0x54e720`), and stock `PVPBattlegroundFrame.lua`
 /// hides the PvP window's tabs at that event when no type reads `canEnter`.
 fn feed_battlemaster_rows(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     table: Option<Res<BattlemasterTable>>,
     maps: Option<Res<MapCatalogRes>>,
     states: Res<WorldStates>,
@@ -532,7 +532,7 @@ fn feed_battlemaster_rows(
 /// The VM's pushes and the handlers' lines and events.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn feed_battlefield(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<Battlefield>,
     mut queue: ResMut<BattlefieldQueue>,
     table: Option<Res<BattlemasterTable>>,
@@ -725,7 +725,7 @@ fn verdict_line(
 /// The VM's sends: the joins (`0x54cc70`), the list requests (`0x54e5b0`), the port answers
 /// (`0x54da10`), the leave (`0x54c250`), the hearth and the battle-manager answers.
 fn drain_battlefield(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<Battlefield>,
     queue: Res<BattlefieldQueue>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -806,7 +806,7 @@ pub(crate) fn reset_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     mut state: ResMut<Battlefield>,
     mut queue: ResMut<BattlefieldQueue>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
 ) {
     if cascades.read().next().is_none() {
@@ -915,8 +915,10 @@ impl Plugin for BattlefieldPlugin {
                         .before(feed_battlefield),
                     // After the scoreboard: a status 3 fires the score event before the status
                     // event (`0x54b148`, then `0x54b1a9`).
+                    // Before the unit and group feeds, whose selection colour reads the arena test.
                     feed_battlefield
                         .after(crate::ui_battlefield_score::feed_battlefield_score)
+                        .before(crate::ui_unit::UnitFeed)
                         .in_set(UiFeed),
                     feed_battlemaster_rows
                         .in_set(UiFeed)

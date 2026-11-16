@@ -65,9 +65,12 @@ definitions as `lod`, and removes its own `BenillaReferenceCapture` and
 3.3.5a does not have in a bare VM and nobody wrote down why, with no prefix excusing an engine name.
 `crates/benilla-app/src/ui_script/surface_gate.rs` fails if the production load, the core and
 benilla's layer, adds any global past 3.3.5a other than the layer's own `Benilla`-prefixed names,
-or any widget method. The shape, event and verb-event gates (`ui_script/shape_gate.rs`,
-`event_shape_gate.rs`, `verb_event_gate.rs`) read the 3.3.5a tables but still apply 1.12.1's
-rules, and are ignored until they are ported.
+or any widget method. The shape gate (`ui_script/shape_gate.rs`) holds every query binding and
+widget method to its row: arity where `arity_conf` is `exact` or `set`, kinds (a Lua boolean among
+them) only on an `agree` row without `delegated-push`. The event gate (`event_shape_gate.rs`) holds
+each literal fire site to an `advisory` row whose formats are all resolved, and the verb-event gate
+(`verb_event_gate.rs`) holds each pair of `3.3.5a-verb-events.tsv` to the verb's module or a
+declared reason.
 `crates/benilla-formats/tests/dbc_coverage.rs` fails if a table benilla reads is not one 12340
 loads at the width its loader checks, if a loader reads a table `dbc_tables.rs` does not
 register, if a table 12340 reads is neither read nor listed with what it backs, or if benilla

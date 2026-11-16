@@ -1329,15 +1329,14 @@ fn an_extra_bars_empty_well_keeps_its_bound_hotkey_label() {
     );
 }
 
-/// `ShapeshiftBar_Update`'s `SetTexCoord(0, n-2, 0, 1)` (BonusActionBarFrame.lua:140) tiles the
-/// middle strip along u only. Wrapping v too would bleed the texture's opaque last row
-/// (`ShapeshiftBarMiddle.blp` row 31) into its transparent top edge as a grey hairline.
+/// `ShapeshiftBarMiddle` tiles along u only: its XML `<TexCoords right="2">` creates the file with
+/// u wrap (`0x485f40`), so `ShapeshiftBar_Update`'s `SetTexCoord(0, n-2, 0, 1)`
+/// (BonusActionBarFrame.lua:140) repeats it. Wrapping v too would bleed the texture's opaque last
+/// row (`ShapeshiftBarMiddle.blp` row 31) into its transparent top edge as a grey hairline.
 #[test]
 fn the_middle_strip_tiles_along_its_length_only() {
     benilla_formats::wow_data_or_skip!();
-    use super::extract::tiling_axes;
-    use crate::ui_pass::UvRect;
-    use benilla_ui::script::{ShapeshiftFormView, TexCoords};
+    use benilla_ui::script::ShapeshiftFormView;
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
@@ -1359,13 +1358,9 @@ fn the_middle_strip_tiles_along_its_length_only() {
             .filter_map(|q| match q.content {
                 QuadContent::Texture {
                     path: Some(p),
-                    tex_coords,
+                    wrap,
                     ..
-                } if p.ends_with(piece) => Some(tiling_axes(&match tex_coords {
-                    Some(TexCoords::Rect(e)) => UvRect::from_tex_coords(e),
-                    Some(TexCoords::Corners(c)) => UvRect::from_corners(c),
-                    None => UvRect::FULL,
-                })),
+                } if p.ends_with(piece) => Some(wrap),
                 _ => None,
             })
             .collect()
@@ -1387,11 +1382,12 @@ fn the_middle_strip_tiles_along_its_length_only() {
         "the end caps are atlas crops and never tile"
     );
 
-    // Three forms (a warrior): one slot, the whole texture, nothing tiles.
+    // Three forms (a warrior): one slot, the whole texture. The wrap is the file's, fixed at its
+    // creation, so it stays; over `[0, 1]` it draws the same as a clamp.
     s.set_shapeshift_forms(vec![form(2457), form(71), form(2458)]);
     s.fire_event("UPDATE_SHAPESHIFT_FORMS", vec![]);
     s.resolve();
-    assert_eq!(wraps_of(&s, "ShapeshiftBarMiddle"), vec![(false, false)]);
+    assert_eq!(wraps_of(&s, "ShapeshiftBarMiddle"), vec![(true, false)]);
     assert!(
         super::test_ui::errors_but_unported(&s).is_empty(),
         "script errors: {:?}",

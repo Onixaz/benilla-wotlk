@@ -200,8 +200,8 @@ impl UiScript {
         model.arena.frame(fh)?.name.clone()
     }
 
-    /// The hyperlink span of frame `id` under `(x, y)`. A message frame with its links off has
-    /// none (`0x9699c0`).
+    /// The hyperlink span of frame `id` under `(x, y)`. A message frame or SimpleHTML with its
+    /// links off has none (`0x9699c0`, `0x96d500`).
     fn link_span_at(&self, id: u32, x: f32, y: f32) -> Option<(String, String)> {
         let model = self.model_ref();
         let fh = model.id_to_frame.get(&id).filter(|fh| {
@@ -209,7 +209,10 @@ impl UiScript {
                 model.arena.frame(**fh).map(|f| &f.kind_state),
                 Some(crate::widget::KindState::ScrollingMessage(smf))
                     if !smf.hyperlinks_enabled
-            )
+            ) && model
+                .simple_html
+                .get(*fh)
+                .is_none_or(|s| s.hyperlinks_enabled)
         })?;
         model
             .link_spans

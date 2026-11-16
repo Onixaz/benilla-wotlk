@@ -461,28 +461,35 @@ pub(super) fn show_or_hide_empty(lua: &Lua, h: FrameHandle) {
     }
 }
 
-/// New content cancels a running fade at full alpha; with no fade running, an alpha the addon set
-/// stays, since only the paths in [`full_alpha`] reset it.
-fn cancel_fade(model: &mut Model, h: FrameHandle) {
-    if let Ok(t) = tip_mut(model, h) {
-        if t.fade_start.take().is_some() {
-            model.arena.set_alpha(h, 1.0);
-        }
-    }
-}
-
 /// `SetAlpha(255)`, unconditional: the SetOwner core does it first, and Show and its self-hide (the
 /// core with no owner) reach it too.
 fn full_alpha(model: &mut Model, h: FrameHandle) {
     if let Ok(t) = tip_mut(model, h) {
-        t.fade_start = None;
+        t.fade = None;
     }
     model.arena.set_alpha(h, 1.0);
 }
 
-/// The engine's `GetTime` clock, which [`super::UiScript::tick`] advances.
-fn now(lua: &Lua) -> f64 {
-    crate::script::clock::now(lua)
+/// `FadeOut` (`0x61b290`): a cursor-mode plate takes the tooltip's own hide step at once
+/// (`0x61b2bb`), which leaves `IsShown`'s flag set; any other mode re-arms the full countdown.
+pub(in crate::script) fn fade_out(lua: &Lua, h: FrameHandle) {
+    let at_once = {
+        let mut model = crate::script::model_mut_of(lua);
+        let Ok(t) = tip_mut(&mut model, h) else {
+            return;
+        };
+        let cursor = matches!(t.anchor, TooltipAnchor::Cursor | TooltipAnchor::CursorRight);
+        if !cursor {
+            t.fade = Some(TOOLTIP_FADE_SECS);
+        }
+        cursor
+    };
+    if at_once {
+        event::hide_this(lua, h);
+        if let Ok(t) = tip_mut(&mut crate::script::model_mut_of(lua), h) {
+            t.fade = None;
+        }
+    }
 }
 
 /// Shows or hides through the live visibility cascade ([`event::set_shown`]).
@@ -604,8 +611,8 @@ fn text_of(v: Option<&Value>) -> String {
     }
 }
 
-/// Appends one line and cancels any fade, without showing the tooltip: `AddLine` callers call
-/// `Show`. The reference's line core drops a line whose sides are both empty; this appends it.
+/// Appends one line without showing the tooltip or touching a fade: `AddLine` callers call `Show`.
+/// The reference's line core drops a line whose sides are both empty; this appends it.
 pub(super) fn append_line(
     lua: &Lua,
     this: &Table,
@@ -641,7 +648,6 @@ pub(super) fn append_line(
     if let Ok(t) = tip_mut(&mut model, h) {
         t.num_lines = n;
     }
-    cancel_fade(&mut model, h);
     Ok(())
 }
 
@@ -939,11 +945,11 @@ pub(super) fn layout_tooltips(model: &mut Model) {
     }
 }
 
-/// The fade step of the tooltip's layer update (`0x61b2e0`), in the tooltip's walk slot: alpha
-/// ramps from 1 to 0 over [`TOOLTIP_FADE_SECS`], then the full hide.
-pub(super) fn update(lua: &Lua, h: FrameHandle) {
-    let t = now(lua);
-    let step = {
+/// The fade step of the tooltip's layer update (`0x61b3dd`), in the tooltip's walk slot: the
+/// countdown loses the frame time; at 0 the plate returns to full alpha and hides (`0x61b400`),
+/// else its alpha byte is the time left, capped at 1, times 255, truncated.
+pub(super) fn update(lua: &Lua, h: FrameHandle, elapsed: f32) {
+    {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model app_data");
@@ -951,17 +957,26 @@ pub(super) fn update(lua: &Lua, h: FrameHandle) {
         if !model.frame_to_id.contains_key(&h) {
             return;
         }
-        let Some(KindState::Tooltip(tip)) = model.arena.frame(h).map(|f| &f.kind_state) else {
+        let armed = matches!(
+            model.arena.frame(h).map(|f| &f.kind_state),
+            Some(KindState::Tooltip(TooltipState { fade: Some(_), .. }))
+        );
+        if !armed {
             return;
-        };
-        let Some(start) = tip.fade_start else {
-            return;
-        };
-        1.0 - ((t - start) / TOOLTIP_FADE_SECS) as f32
+        }
+    }
+    let mut model = crate::script::model_mut_of(lua);
+    let Some(left) = tip_mut(&mut model, h).ok().and_then(|t| t.fade.as_mut()) else {
+        return;
     };
-    if step <= 0.0 {
+    *left -= elapsed;
+    let left = *left;
+    if left <= 0.0 {
+        model.arena.set_alpha(h, 1.0);
+        drop(model);
         hide_tooltip(lua, h);
     } else {
-        crate::script::model_mut_of(lua).arena.set_alpha(h, step);
+        let byte = (left.min(1.0) * 255.0).trunc();
+        model.arena.set_alpha(h, byte / 255.0);
     }
 }

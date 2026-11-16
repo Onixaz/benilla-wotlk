@@ -128,11 +128,12 @@ pub(crate) const GROUP_MEMBER_SUBGROUP: u8 = 0x07;
 
 /// Push the roster and the party unit snapshots into the VM and fire the party events on their
 /// edges. A member's unit state is their live descriptor when streamed, else their roster record.
+#[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_party(
     // `ChrClasses.dbc` field 16, `UnitHasRelicSlot`'s input, and the form table the creature type
     // reads.
     tables: crate::ui_unit::SnapshotTables,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     group: Res<GroupState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
@@ -146,9 +147,12 @@ pub(super) fn feed_party(
     // The area under us, through the accessor `crate::area` uses: `terrain_stream::CurrentArea`
     // would cross the world-API wall (`tests/world_api_wall.rs`).
     here: benilla_world::world_point::WorldPoint,
-    (map_catalog, difficulties): (
+    // The selection colour's reputation leg and arena test, beside the map tables.
+    (map_catalog, difficulties, reputations, arena): (
         Option<Res<benilla_assets::MapCatalogRes>>,
         Option<Res<crate::ui_transfer::MapDifficulties>>,
+        Option<Res<crate::net::Reputations>>,
+        crate::ui_arena::ArenaInstance,
     ),
     mut fed: Local<crate::ui_script::VmMemo<FedParty>>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
@@ -200,7 +204,9 @@ pub(super) fn feed_party(
     let stores_removed = !removed_stores.is_empty();
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     let areas_changed = areas.as_ref().is_some_and(|r| r.is_changed());
-    let maps_changed = map_catalog.as_ref().is_some_and(|r| r.is_changed());
+    let maps_changed = map_catalog.as_ref().is_some_and(|r| r.is_changed())
+        || reputations.as_ref().is_some_and(|r| r.is_changed())
+        || arena.is_changed();
     gate::trace(
         "feed_party",
         &[
@@ -240,6 +246,27 @@ pub(super) fn feed_party(
         .and_then(|(_, _, store)| crate::ui_unit::faction_group(store, factions.as_deref()));
 
     let slots: Vec<&GroupMemberEntry> = group.party_slots().collect();
+
+    // `UnitSelectionColor` for a group guid (`0x521bf0` mode 0): the held object through the
+    // resolver, else its party or raid record's PvP bit (`0x521fda`).
+    let no_reps = crate::net::Reputations::default();
+    let in_arena = arena.active();
+    let selection_color = |guid: u64| match look.store(guid) {
+        Some(store) => crate::target::selection_color(
+            store,
+            factions.as_deref(),
+            reputations.as_deref().unwrap_or(&no_reps),
+            &*group,
+            self_pair.map(|(_, _, s)| s),
+            in_arena,
+        ),
+        None => crate::target::selection_color_unheld(
+            group
+                .stats
+                .get(&guid)
+                .is_some_and(|s| s.has_status(member_status::PVP)),
+        ),
+    };
 
     // Leader and master looter as party indices, 0 for us. They cover our own subgroup's slots
     // only, so a raid leader elsewhere reads 0 here; `GetRaidRosterInfo` carries every subgroup.
@@ -346,7 +373,7 @@ pub(super) fn feed_party(
     for (i, token) in PARTY_TOKENS.iter().enumerate() {
         let member = slots.get(i);
         let snap = member.map(|m| {
-            member_unit_state(
+            let mut s = member_unit_state(
                 m,
                 group.stats.get(&m.guid),
                 index.0.get(&m.guid).and_then(|e| stores.get(*e).ok()),
@@ -354,7 +381,9 @@ pub(super) fn feed_party(
                 own_group.clone(),
                 chr,
                 types,
-            )
+            );
+            s.selection_color = selection_color(m.guid);
+            s
         });
         if fed.units[i] != snap {
             gate.audit("feed_party", "a party-token snapshot");
@@ -397,7 +426,8 @@ pub(super) fn feed_party(
     // the roster event whose handler asks `UnitExists("partypetN")` (`PartyMemberFrame.lua:73`).
     for (i, token) in PARTY_PET_TOKENS.iter().enumerate() {
         let owner = slots.get(i).map_or(0, |m| m.guid);
-        let now = pets::member_pet(&look, &group, owner, look.store(owner), Roster::Party);
+        let mut now = pets::member_pet(&look, &group, owner, look.store(owner), Roster::Party);
+        now.paint(&selection_color);
         pets::feed_token(
             &mut script,
             &gate,
@@ -428,10 +458,11 @@ pub(super) fn feed_party(
                 s.faction_group = own_group.clone();
                 // A same-faction friendly player, as in `member_unit_state`.
                 s.reaction = 5;
+                s.selection_color = selection_color(*guid);
                 Some(s)
             } else {
                 let m = group.members.iter().find(|m| m.guid == *guid)?;
-                Some(member_unit_state(
+                let mut s = member_unit_state(
                     m,
                     group.stats.get(guid),
                     index.0.get(guid).and_then(|e| stores.get(*e).ok()),
@@ -439,7 +470,9 @@ pub(super) fn feed_party(
                     own_group.clone(),
                     chr,
                     types,
-                ))
+                );
+                s.selection_color = selection_color(*guid);
+                Some(s)
             }
         });
         if fed.raid_units[i] != snap {
@@ -472,7 +505,8 @@ pub(super) fn feed_party(
         } else {
             look.store(owner)
         };
-        let now = pets::member_pet(&look, &group, owner, held, Roster::Raid);
+        let mut now = pets::member_pet(&look, &group, owner, held, Roster::Raid);
+        now.paint(&selection_color);
         pets::feed_token(
             &mut script,
             &gate,
@@ -630,7 +664,7 @@ pub(super) fn feed_party(
 /// setter's name twice, the icon's number and the target's name, `UNKNOWNOBJECT` while it
 /// resolves.
 pub(super) fn feed_marks(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     group: Res<GroupState>,
     mut notices: ResMut<super::GroupNotices>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
@@ -961,15 +995,13 @@ pub(crate) fn unheld_group_state(
     types: CreatureTypeSources<'_>,
 ) -> Option<UnitState> {
     if let Some(m) = group.members.iter().find(|m| m.guid == guid) {
-        return Some(member_unit_state(
-            m,
-            group.stats.get(&guid),
-            None,
-            group,
-            own_group,
-            classes,
-            types,
-        ));
+        let stats = group.stats.get(&guid);
+        let mut s = member_unit_state(m, stats, None, group, own_group, classes, types);
+        // No object: the record's PvP bit (`0x521fda`).
+        s.selection_color = crate::target::selection_color_unheld(
+            stats.is_some_and(|r| r.has_status(member_status::PVP)),
+        );
+        return Some(s);
     }
     let owner = group
         .stats
@@ -1029,7 +1061,7 @@ fn unit_guid(
 
 /// Drain the Lua party intents into their `CMSG_*` sends.
 pub(crate) fn drain_party(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut group: ResMut<GroupState>,
     selection: Res<Selection>,
     names: Res<NameCache>,
@@ -1794,6 +1826,13 @@ mod tests {
         assert_eq!((p.owner, p.name.as_deref()), (MEMBER, Some("Grimjaw")));
         assert_eq!((p.health, p.max_health), (70, 90));
         assert!(unheld_group_state(&group, 0x5555, None, None, types).is_none());
+
+        // `UnitSelectionColor` off the record's PvP bit (`0x521fda`): blue, then green flagged.
+        assert_eq!(m.selection_color, 0xFF00_00FF);
+        group.stats.get_mut(&MEMBER).unwrap().status =
+            Some((member_status::ONLINE | member_status::PVP).into());
+        let flagged = unheld_group_state(&group, MEMBER, None, None, types).expect("a member");
+        assert_eq!(flagged.selection_color, 0xFF00_FF00);
     }
 
     #[test]

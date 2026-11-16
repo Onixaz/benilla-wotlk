@@ -115,8 +115,8 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) held: H,
     /// A held unit's aura table, by guid.
     pub(super) table_of: T,
-    /// `UnitBuff`'s unit gate on a live unit, by guid.
-    pub(super) buffs_visible: V,
+    /// `UnitAura`'s unit gate on a live unit and its table: true lists nothing.
+    pub(super) auras_hidden: V,
     pub(super) ctx: ListCtx<'a>,
     /// The spell catalog was replaced, so every list is rebuilt.
     pub(super) catalog_moved: bool,
@@ -169,7 +169,7 @@ impl UnitAuras {
     where
         H: Fn(u64) -> Option<&'a ObjectStore>,
         T: Fn(u64) -> Option<&'a AuraTable>,
-        V: Fn(u64, &ObjectStore) -> bool,
+        V: Fn(&ObjectStore, &AuraTable) -> bool,
     {
         let Inputs {
             group,
@@ -184,7 +184,7 @@ impl UnitAuras {
             arena,
             held,
             table_of,
-            buffs_visible,
+            auras_hidden,
             ctx,
             catalog_moved,
         } = inputs;
@@ -236,7 +236,7 @@ impl UnitAuras {
             }
             if guid != me {
                 let live = store.map(|s| (s, table_of(guid)));
-                self.refresh(guid, live, record_ok, group, &buffs_visible, ctx);
+                self.refresh(guid, live, record_ok, group, &auras_hidden, ctx);
             }
         }
         script.set_unit_guids(&g);
@@ -291,7 +291,7 @@ impl UnitAuras {
         live: Option<(&ObjectStore, Option<&AuraTable>)>,
         record_ok: bool,
         group: Option<&GroupState>,
-        buffs_visible: &impl Fn(u64, &ObjectStore) -> bool,
+        auras_hidden: &impl Fn(&ObjectStore, &AuraTable) -> bool,
         ctx: ListCtx,
     ) {
         if self
@@ -305,9 +305,8 @@ impl UnitAuras {
         let packets = live.and_then(|(_, t)| t).map_or(0, AuraTable::packets);
         match live {
             Some((store, table)) => {
-                if let Some(table) = table {
-                    let visible = buffs_visible(guid, store);
-                    self.scratch.extend(table_inputs(table, ctx, visible));
+                if let Some(table) = table.filter(|t| !auras_hidden(store, t)) {
+                    self.scratch.extend(table_inputs(table, ctx));
                 }
             }
             None if record_ok => {
@@ -390,8 +389,6 @@ mod tests {
     const HELP: u8 = 1;
     const HARM: u8 = benilla_protocol::messages::AURA_UPDATE_FLAG_HARMFUL | 1;
     const SUMMON: u16 = 8;
-    /// `UNIT_FIELD_FLAGS`; bit 27 is `UNIT_FLAG_AURAS_VISIBLE`, which opens `UnitBuff`'s gate.
-    const FLAGS: u16 = 46;
 
     /// The feed on a bare app with a VM, us, and a party of one, `MEMBER`, with no record.
     fn party_app() -> App {
@@ -506,15 +503,14 @@ mod tests {
             .unwrap()
     }
 
-    /// A live member reads its own aura table; `UnitBuff` keeps the unit gate, open here through
-    /// `UNIT_FLAG_AURAS_VISIBLE`.
+    /// A live member reads its own aura table, buffs and debuffs alike, whatever its reaction.
     #[test]
     fn a_live_members_auras_come_off_its_table() {
         let mut app = party_app();
         stream_with(
             &mut app,
             MEMBER,
-            &[(FLAGS, 0x0800_0000)],
+            &[],
             &[(0, 1126, HELP), (33, 589, HARM), (34, 11976, HARM)],
         );
         // A record that disagrees, to show the live object wins.
@@ -556,7 +552,7 @@ mod tests {
         assert_eq!(
             listed(&mut app, "party1", false),
             [1126, 21562],
-            "buffs, ungated: no factions, which would close the live gate"
+            "buffs off the record"
         );
         assert_eq!(listed(&mut app, "party1", true), [589]);
         let count = app
@@ -799,17 +795,17 @@ mod tests {
         }
     }
 
-    /// A raid member in view reads its own aura table under `raidN`, whatever its subgroup, and
-    /// its buffs keep the unit gate.
+    /// A raid member in view reads its own aura table under `raidN`, whatever its subgroup.
     #[test]
     fn a_live_raid_members_auras_come_off_its_table() {
         let mut app = raid_app();
         stream_with(&mut app, FAR, &[], &[(0, 1126, HELP), (33, 589, HARM)]);
         app.update();
         assert_eq!(listed(&mut app, "raid5", true), [589]);
-        assert!(
-            listed(&mut app, "raid5", false).is_empty(),
-            "no factions, so the assist check fails and the gate drops the buffs"
+        assert_eq!(
+            listed(&mut app, "raid5", false),
+            [1126],
+            "no factions, so no reaction: 12340 has no assist gate to drop the buffs"
         );
         assert_eq!(seen(&mut app), ["raid5"]);
         for token in ["party1", "party2", "raid6"] {

@@ -902,7 +902,7 @@ pub(crate) fn boot_cvar(name: &str) -> Option<String> {
 /// Per frame: seed a new VM's mirror, drain its registrations and writes into the registry, push
 /// the registry's writes into the mirror, and trigger every accepted move.
 pub(crate) fn sync_cvars(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut cvars: ResMut<Cvars>,
     adapter: Option<Res<bevy::render::renderer::RenderAdapterInfo>>,
     msaa_formats: Option<Res<benilla_world::view::MsaaFormats>>,

@@ -15,7 +15,7 @@ use super::{PetBar, PetUnit};
 
 /// What the `"pet"` feed last pushed, for its edges.
 #[derive(Default)]
-pub(super) struct PetUnitMemory {
+pub(crate) struct PetUnitMemory {
     /// The last snapshot pushed under `"pet"`, for [`fire_transitions`]' per-field diff.
     pushed: Option<UnitState>,
     /// `UNIT_PET`'s trigger; `None` until the first feed, so a pet out at login announces once.
@@ -36,8 +36,8 @@ pub(super) const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
 /// Feed the `"pet"` token and the pet frame's events. The token follows the bar's guid, as
 /// `UNIT_PET` does (the pet setter, `0x5d6900`), not our `UNIT_FIELD_SUMMON`, so a charmed unit has
 /// a frame. The reaction is 0: the pet frame reads none.
-pub(super) fn feed_pet_unit(
-    script: Option<NonSendMut<UiScript>>,
+pub(crate) fn feed_pet_unit(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     pet: PetUnit,
     // The per-field edges, for `fire_transitions`' watch-bridge arms.

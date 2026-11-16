@@ -15,14 +15,14 @@ pub(crate) struct ChatWindows {
     /// The frame's `this.defaultLanguage`, the faction tongue `GetDefaultLanguage()` answers;
     /// empty until the player and `Languages.dbc` are loaded.
     pub default_language: String,
-    /// The `LoggingChat`/`LoggingCombat` files, teed in [`route`].
-    pub logs: super::logging::ChatLogFiles,
+    /// The `LoggingChat` file, teed in [`route`].
+    pub logs: super::logging::ChatLogFile,
     /// 3.3.5a's line id, the last one handed out as a fire's arg11.
     pub line_id: u32,
 }
 
 /// Fire one event's `CHAT_MSG_*` at the VM, where the stock handler prints it, and tee its
-/// composed line to the log files, which the reference writes C-side, not from Lua.
+/// composed line to the chat log, which the reference writes C-side, not from Lua (`0x50a9a7`).
 pub(crate) fn route(
     script: &mut benilla_ui::script::UiScript,
     windows: &mut ChatWindows,
@@ -38,7 +38,7 @@ pub(crate) fn route(
     if let Some(line) = compose(event, kind, &default_language, windows.line_id, &|key| {
         script.lua().globals().get::<String>(key).ok()
     }) {
-        windows.logs.record(kind.is_combat_log(), &line);
+        windows.logs.0.record(line.as_bytes());
     }
     let args = event.script_args_with_line(windows.line_id);
     script.fire_event(event_name(kind), args);

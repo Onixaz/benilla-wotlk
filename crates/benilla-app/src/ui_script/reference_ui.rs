@@ -2379,6 +2379,92 @@ mod tests {
         assert_eq!(s.errors().len(), before, "{:?}", s.errors());
     }
 
+    /// The stock secure code's two `GetRect` callers run clean (#1270): a restricted snippet
+    /// reads its frame handle's rect (`RestrictedFrames.lua`), and the hover driver reads every
+    /// frame `RegisterAutoHide` lists, each update (`SecureHoverDriver.lua`), hiding the frame
+    /// once the cursor has been off it for the delay.
+    #[test]
+    fn the_stock_get_rect_callers_run_clean() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().expect("VM");
+        s.set_screen_size(1024.0, 768.0);
+        seat_a_player(&mut s);
+        let _ = super::super::manifest::load_default_ui(&s);
+        let before = s.errors().len();
+        s.run(
+            r#"
+            RectHeader = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
+            RectHeader:SetWidth(100) RectHeader:SetHeight(50)
+            RectHeader:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 200, 300)
+            "#,
+        )
+        .unwrap();
+        s.resolve();
+        s.run(
+            r#"
+            SecureHandlerExecute(RectHeader,
+                'local l, b, w, h = self:GetRect() self:SetAttribute("rect", l .. "," .. b .. "," .. w .. "," .. h)')
+            AutoHideBox = CreateFrame("Frame", "AutoHideBox", UIParent, "SecureHandlerBaseTemplate")
+            AutoHideBox:SetWidth(40) AutoHideBox:SetHeight(40) AutoHideBox:SetPoint("CENTER")
+            RegisterAutoHide(AutoHideBox, 0.1)
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.eval::<String>("return RectHeader:GetAttribute('rect')")
+                .unwrap(),
+            "200,300,100,50"
+        );
+        s.resolve();
+        // The countdown starts when the cursor leaves the box it was on: the driver's updates
+        // then read the box's rect and hide it after 0.1 s.
+        s.mouse_move(512.0, 384.0);
+        s.tick(0.05);
+        assert!(s.eval::<bool>("return AutoHideBox:IsShown() == 1").unwrap());
+        s.mouse_move(10.0, 10.0);
+        for _ in 0..10 {
+            s.tick(0.05);
+        }
+        assert_eq!(s.errors().len(), before, "{:?}", s.errors());
+        assert!(
+            !s.eval::<bool>("return AutoHideBox:IsShown() == 1").unwrap(),
+            "the driver hid the box"
+        );
+    }
+
+    /// The stock UI's style attributes reach the flags their getters answer: every chat window's
+    /// font is `indented` (`ChatFrame.xml:19`), and the aura and gear-set icons are `nonBlocking`
+    /// (`BuffFrame.xml:8`, `PaperDollFrame.xml:154`), the second a button's normal-texture slot.
+    #[test]
+    fn the_stock_style_attributes_reach_their_getters() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().expect("VM");
+        s.set_screen_size(1024.0, 768.0);
+        seat_a_player(&mut s);
+        let _ = super::super::manifest::load_default_ui(&s);
+        s.run(
+            r#"CreateFrame("Button", "StyleAura", UIParent, "AuraButtonTemplate")
+               CreateFrame("CheckButton", "StyleGearSet", UIParent, "GearSetPopupButtonTemplate")"#,
+        )
+        .unwrap();
+        for (lua, what) in [
+            (
+                "ChatFrame1:GetIndentedWordWrap() == 1",
+                "the chat font is indented",
+            ),
+            (
+                "StyleAuraIcon:GetNonBlocking() == 1",
+                "the aura icon is non-blocking",
+            ),
+            (
+                "StyleGearSetIcon:GetNonBlocking() == 1",
+                "the gear-set icon is non-blocking",
+            ),
+        ] {
+            assert!(s.eval::<bool>(&format!("return {lua}")).unwrap(), "{what}");
+        }
+    }
+
     /// 1.12.1 producers still to remove, each with what replaces it; the list only shrinks.
     const STILL_1_12_EVENTS: &[(&str, &str)] = &[(
         "CONFIRM_PET_UNLEARN",

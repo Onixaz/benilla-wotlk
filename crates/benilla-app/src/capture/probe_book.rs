@@ -207,7 +207,7 @@ fn book_probe(
     mut wanted: ResMut<UiCostWanted>,
     cost: Res<UiFrameCost>,
     mut reader: ResMut<ItemTextOpen>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     player: Res<Player>,
     objects: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,

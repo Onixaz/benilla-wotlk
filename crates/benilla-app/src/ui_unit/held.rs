@@ -34,6 +34,8 @@ pub(super) struct HeldUnits<'a> {
     pub(super) types: CreatureTypeSources<'a>,
     /// The corpses' looters, the dead unit's tooltip lines.
     pub(super) loot_lists: Option<&'a crate::ui_loot::LootLists>,
+    /// The active battlefield is an arena, which drops the selection colour's PvP flag.
+    pub(super) arena: bool,
 }
 
 impl HeldUnits<'_> {
@@ -68,6 +70,7 @@ impl HeldUnits<'_> {
             self.reputations,
             self.group,
             self.self_store,
+            self.arena,
         );
         s.raid_target = self.group.raid_target_index(guid);
         s.faction_group = faction_group(store, self.factions);
@@ -121,7 +124,7 @@ pub(super) struct ChainMemo {
 /// or pet record, and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`; those
 /// legs are not built for a chain's end. A token without a hop reads its own push, not these.
 pub(super) fn feed_chain_units(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: super::SnapshotTables,
     // The object manager's lookup on its own, not through [`super::UnitTokens`], whose pet-bar read
     // would order this feed against the pet feed it does not depend on.
@@ -133,6 +136,7 @@ pub(super) fn feed_chain_units(
     reputations: Res<Reputations>,
     group: Res<crate::ui_party::GroupState>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    arena: crate::ui_arena::ArenaInstance,
     changed: Query<(), (Changed<ObjectStore>, Without<crate::items::ItemObject>)>,
     mut removed: RemovedComponents<Guid>,
     mut memo: Local<VmMemo<ChainMemo>>,
@@ -153,6 +157,7 @@ pub(super) fn feed_chain_units(
     let group_changed = group.is_changed();
     let reps_changed = reputations.is_changed();
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
+    let arena_changed = arena.is_changed();
     removed.clear();
     let gate = gate::Gate::new(
         vm_reset
@@ -162,7 +167,8 @@ pub(super) fn feed_chain_units(
             || stores_removed
             || group_changed
             || reps_changed
-            || factions_changed,
+            || factions_changed
+            || arena_changed,
     );
     if gate.skip() {
         return;
@@ -178,6 +184,7 @@ pub(super) fn feed_chain_units(
         classes: tables.classes(),
         types: tables.types(&names),
         loot_lists: tables.loot_lists(),
+        arena: arena.active(),
     };
     let built: HashMap<u64, UnitState> = ends
         .iter()

@@ -55,7 +55,7 @@ pub(crate) struct FedSocial {
 
 /// Push the display snapshot to the VM, fire the list events, and print the owed result lines.
 pub(crate) fn feed_social(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut social: ResMut<SocialState>,
     names: Res<NameCache>,
     areas: Option<Res<AreaTableRes>>,
@@ -176,9 +176,10 @@ pub(crate) fn feed_social(
             // In wire order: each line is composed inside the parse loop (`0x6b887a`), before the
             // `qsort` at `0x6b88fe` orders the array `GetWhoInfo` reads.
             let printed = {
+                let (rows, count) = who_chat_answer(&social);
                 let wire_order: Vec<WhoInfo> =
-                    social.who.iter().map(|e| who_row(e, &who_names)).collect();
-                who_lines(&wire_order, social.who_sent, &|key| script.engine_text(key))
+                    rows.iter().map(|e| who_row(e, &who_names)).collect();
+                who_lines(&wire_order, count, &|key| script.engine_text(key))
             };
             crate::ui_action::show_messages(&mut script, &mut sink, "ui_social", printed);
         }
@@ -188,6 +189,23 @@ pub(crate) fn feed_social(
 /// Whether an `SMSG_WHO` answer fires `WHO_LIST_UPDATE` (true) or prints chat lines (false).
 fn answer_goes_to_the_frame(to_ui: bool, sent: u32) -> bool {
     to_ui || sent > WHO_CHAT_MAX
+}
+
+/// A chat answer's rows in wire order and the count its last line reads. The battlefield pass's
+/// rows print only when the server's total fits too, its own gate (`0x6b8317`), and the count adds
+/// them whether printed or not (`0x6b88e6`).
+fn who_chat_answer(social: &SocialState) -> (&[WhoEntry], u32) {
+    let local = social.who_local as usize;
+    let server_total = social.who_total.wrapping_sub(social.who_local);
+    let shown = if server_total <= WHO_CHAT_MAX {
+        social.who.len()
+    } else {
+        social.who.len().saturating_sub(local)
+    };
+    (
+        &social.who[..shown],
+        social.who_sent.wrapping_add(social.who_local),
+    )
 }
 
 /// Name every result line whose subject has resolved: a line that needs a name waits for the name
@@ -223,7 +241,7 @@ fn drain_result_lines(
 }
 
 /// The chat-routed `/who` output: one line per row in the order given, then the count of rows the
-/// wire carried (`[ebp-0x4]` at `0x6b890b`), not the server's total. Each template is the engine's
+/// wire carried plus the local rows (`[ebp-0x4]` at `0x6b890b`), not the server's total. Each template is the engine's
 /// `GetText` (`0x819d40`), so the count line takes `WHO_NUM_RESULTS` and its `|4` grammar.
 fn who_lines(rows: &[WhoInfo], sent: u32, text: &dyn Fn(&str) -> String) -> Vec<Shown> {
     use benilla_ui::strings::{fill, Arg};
@@ -407,10 +425,11 @@ fn index_of(order: &[u64], guid: u64) -> u32 {
 /// Turn the Lua API's social intents into their sends. A row resolves through the order the feed
 /// published, since the wire removes by guid.
 pub(crate) fn drain_social(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut social: ResMut<SocialState>,
     commands: Res<NetCommands>,
     areas: Option<Res<AreaTableRes>>,
+    (classes, races): (Option<Res<ChrClassTable>>, Option<Res<CharCreate>>),
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
     mut complaints: MessageReader<super::Complained>,
 ) {
@@ -495,7 +514,26 @@ pub(crate) fn drain_social(
                 social.selected_mute = row_guid(&social.mute_display_order, row).unwrap_or(0);
             }
             SocialRequest::Who(filter) => {
-                let request = super::who_query(&filter, areas.as_deref().map(|a| &a.0));
+                let tags = super::query::WhoTags::from_text(|key| script.engine_text(key));
+                let tables = super::query::WhoTables {
+                    areas: areas.as_deref().map(|a| &a.0),
+                    races: races.as_deref().map_or(&[], |r| r.0.race_rows()),
+                    classes: classes.as_deref().map_or(&[], |c| c.0.names()),
+                };
+                let request = super::query::parse(&filter, &tags, tables);
+                debug!(
+                    "who {filter:?}: levels {}-{} name {:?} guild {:?} races {:#x} classes {:#x} zones {:?} words {:?}",
+                    request.level_min,
+                    request.level_max,
+                    request.player_name,
+                    request.guild_name,
+                    request.race_mask,
+                    request.class_mask,
+                    request.zones,
+                    request.search_terms
+                );
+                // `SendWho` keeps the query for the local rows (`0x6b5b12` on).
+                social.who_query = request.clone();
                 send(ClientCommand::Who {
                     request: Box::new(request),
                 });
@@ -566,6 +604,10 @@ mod tests {
     }
 
     fn names(rows: &[WhoInfo]) -> Vec<&str> {
+        rows.iter().map(|r| r.name.as_str()).collect()
+    }
+
+    fn names_of(rows: &[WhoEntry]) -> Vec<&str> {
         rows.iter().map(|r| r.name.as_str()).collect()
     }
 
@@ -673,6 +715,32 @@ mod tests {
         );
         assert!(!count.is_empty());
         assert_eq!(lines[2], count, "the count comes last");
+    }
+
+    /// The local rows follow the wire's when the server's total fits the chat limit, and always
+    /// count into the last line.
+    #[test]
+    fn a_chat_answer_prints_the_local_rows_under_the_servers_total() {
+        let mut social = SocialState::default();
+        social.apply_who(WhoResults {
+            displayed: 1,
+            total: 1,
+            entries: vec![entry("Ours", 80, "")],
+        });
+        social.append_local_who(vec![entry("Theirs-Far", 80, "")]);
+        let (rows, count) = who_chat_answer(&social);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(count, 2);
+
+        social.apply_who(WhoResults {
+            displayed: 2,
+            total: 9,
+            entries: vec![entry("A", 80, ""), entry("B", 80, "")],
+        });
+        social.append_local_who(vec![entry("Theirs-Far", 80, "")]);
+        let (rows, count) = who_chat_answer(&social);
+        assert_eq!(names_of(rows), ["A", "B"], "a total over 3 keeps them off");
+        assert_eq!(count, 3);
     }
 
     /// An id with no row shows `UNKNOWN` (`0x6b4b56`), has no class file name (`0x6b4c2b`), and

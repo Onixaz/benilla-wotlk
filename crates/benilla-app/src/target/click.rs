@@ -12,7 +12,7 @@ pub(super) fn world_right_click_payload(
     mut right_clicks: MessageReader<WorldRightClick>,
     // The press pick: this leg and [`act_on_right_click`] must classify the same pick.
     press: Res<PressPick>,
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
 ) {
     if right_clicks.read().last().is_none() {
         return;
@@ -152,6 +152,7 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
+    _live: crate::ui_script::LendLive<'w, 's>,
     /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
     pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     /// The trainer arm's ask, which its list must answer.

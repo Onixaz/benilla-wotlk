@@ -811,7 +811,10 @@ pub(super) fn gesture_prevented(speaker_flags: Option<u32>) -> bool {
 
 /// Drain [`ChatLog`]: resolve names (ask-once, bounded), build the events and [`route`] them.
 pub(super) fn feed_chat(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut log: ResMut<ChatLog>,
     mut windows: ResMut<ChatWindows>,
     mut channels: ResMut<ChannelState>,
@@ -1420,7 +1423,10 @@ fn needs_name(chat_type: u8) -> bool {
 /// `TIME_PLAYED_TOTAL` and `TIME_PLAYED_LEVEL` lines (`ChatFrame.lua:1279`), so the English lines
 /// `ui_chat::net::played_time` also prints are a duplicate.
 pub(crate) fn played_time_bridge(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     commands: Res<NetCommands>,
     answer: Option<ResMut<crate::net::PlayedTimeAnswer>>,
     clock: Option<Res<crate::net::PlayedClock>>,

@@ -69,7 +69,7 @@ impl NpcSession for BinderState {
 /// Publishes `CheckBinderDist()` every frame and fires `CONFIRM_BINDER` for each packet that
 /// asked, unconditionally, as the reference's handler always reaches its event signal.
 fn feed_binder(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut binder: ResMut<BinderState>,
     world: benilla_world::world_point::WorldPoint,
     areas: Option<Res<AreaTableRes>>,
@@ -131,7 +131,7 @@ fn area_name_of(
 /// Turns the dialog's Accept into `CMSG_BINDER_ACTIVATE`, only while a question is pending: with no
 /// guid latched, the reference's `ConfirmBinder()` finds no unit and sends nothing.
 fn drain_binder(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     binder: Res<BinderState>,
     commands: Res<NetCommands>,
 ) {

@@ -579,7 +579,7 @@ type AuctionCatalogs<'w> = (
 
 /// Push the auction house into the VM and fire its events on a change, diffed against `VmMemo`s.
 fn feed_auction(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut auction: ResMut<AuctionOpen>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -830,7 +830,7 @@ impl Sender<'_> {
 
 /// Drain the Lua intents into the auction `CMSG`s.
 fn drain_auction(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut auction: ResMut<AuctionOpen>,
     commands: Res<NetCommands>,
     time: Res<Time>,

@@ -278,7 +278,7 @@ const QUEST_FLAG_DAILY: u32 = 0x1000;
 /// Push the menu into the VM and fire `GOSSIP_SHOW` or `GOSSIP_CLOSED` on a change.
 #[allow(clippy::too_many_arguments)]
 fn feed_gossip(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     state: Res<GossipState>,
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     index: Res<GuidIndex>,
@@ -361,7 +361,7 @@ fn feed_gossip(
 /// `index` and a coded option's code, a quest row its questgiver query, and `CloseGossip` clears
 /// locally, as there is no close packet. The binding has already run the client's checks.
 fn drain_gossip(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<GossipState>,
     commands: Res<NetCommands>,
 ) {

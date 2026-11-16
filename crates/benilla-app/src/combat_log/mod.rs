@@ -334,17 +334,25 @@ fn log_cast_failures(mut fails: MessageReader<SpellCastFailedLog>, mut log: Log)
     }
 }
 
-/// Hand each fired entry to the UI's store, which raises `COMBAT_LOG_EVENT`.
+/// Hand each fired entry to the UI's store, which raises `COMBAT_LOG_EVENT`, and while
+/// `LoggingCombat` is on write its packed line to the combat log file (`0x74f910`).
 fn feed_combat_log(
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mut fired: MessageReader<entries::CombatLogFired>,
+    mut file: Option<ResMut<crate::ui_chat::logging::CombatLogFile>>,
 ) {
     let Some(mut script) = script else {
         fired.clear();
         return;
     };
     for entries::CombatLogFired(entry) in fired.read() {
-        script.push_combat_log(entry.clone());
+        let line = script.push_combat_log(entry.clone());
+        if let (Some(line), Some(file)) = (line, file.as_mut()) {
+            file.record(&line);
+        }
     }
 }
 

@@ -170,6 +170,28 @@ fn in_arena(queue: &BattlefieldQueue, maps: Option<&MapCatalogRes>) -> bool {
     queue.active_map().and_then(|m| maps?.0.instance_type(m)) == Some(INSTANCE_TYPE_ARENA)
 }
 
+/// The active battlefield's arena test (`[0xbea570] == 4`) for a system outside this module: the
+/// selection colour resolver (`0x521ec2`) drops the PvP flag inside an arena.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ArenaInstance<'w> {
+    queue: Option<Res<'w, BattlefieldQueue>>,
+    maps: Option<Res<'w, MapCatalogRes>>,
+}
+
+impl ArenaInstance<'_> {
+    /// Whether the active battlefield is an arena.
+    pub(crate) fn active(&self) -> bool {
+        self.queue
+            .as_deref()
+            .is_some_and(|q| in_arena(q, self.maps.as_deref()))
+    }
+
+    /// Whether the active battlefield may have moved since this system last ran.
+    pub(crate) fn is_changed(&self) -> bool {
+        self.queue.as_ref().is_some_and(|q| q.is_changed())
+    }
+}
+
 fn on_party_stats(
     In(ev): In<SessionEvent>,
     mut arena: ResMut<ArenaOpponents>,
@@ -238,7 +260,10 @@ fn track_streamed_players(
 }
 
 /// The owed `ARENA_OPPONENT_UPDATE`s, after the aura feed pushed the tokens they name.
-fn feed_arena(script: Option<NonSendMut<UiScript>>, mut arena: ResMut<ArenaOpponents>) {
+fn feed_arena(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut arena: ResMut<ArenaOpponents>,
+) {
     let Some(mut script) = script else {
         return;
     };

@@ -4,7 +4,6 @@
 //! are built and pushed ahead of a hover by [`spell_feed`].
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 use benilla_ui::script::{TooltipTint, UiScript, UnitState};
 use benilla_ui::strings::Arg;
@@ -123,11 +122,9 @@ fn skill_lock_line(
 }
 
 fn drive_mouseover_tooltip(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     hovered: Res<Hovered>,
     hovered_go: Res<HoveredObject>,
-    // Seats the cursor-anchored GameObject plate.
-    window: Query<&Window, With<PrimaryWindow>>,
     stores: Query<&ObjectStore>,
     // The stored GAMEOBJECT_STATE the lock lines' Action gate reads.
     anims: Query<&crate::go_anim::GoAnim>,
@@ -248,7 +245,7 @@ fn drive_mouseover_tooltip(
         ) else {
             return;
         };
-        script.world_tooltip_gameobject(&plate, &[], None);
+        script.world_tooltip_gameobject(&plate, &[], false);
         *last = LastHover::Corpse(guid);
         return;
     }
@@ -259,18 +256,6 @@ fn drive_mouseover_tooltip(
             .templates
             .get(guid)
             .is_some_and(|t| t.floating_tooltip);
-        // Window px to the VM's y-up root units, as the input seam converts.
-        let cursor_ui = cursor_seated
-            .then(|| {
-                window.iter().next().and_then(|w| {
-                    let s = crate::ui_script::seam_scale(w.height());
-                    // The hover probe's aim stands in for a missing cursor; a real pointer wins.
-                    w.cursor_position()
-                        .or_else(crate::target::hover_probe_point)
-                        .map(|c| (c.x / s, (w.height() - c.y) / s))
-                })
-            })
-            .flatten();
         if *last == LastHover::Go(guid) {
             if crate::target::hover_probe_armed() {
                 let line = format!(
@@ -282,19 +267,12 @@ fn drive_mouseover_tooltip(
                     *trace = line;
                 }
             }
-            // The cursor arm follows the pointer; the corner arm has nothing to re-seat.
-            if let Some((x, y)) = cursor_ui {
-                script.world_tooltip_move(x, y);
-            }
+            // A cursor-anchored plate follows the pointer in the tooltip's own layer update.
             return;
-        }
-        if cursor_seated && cursor_ui.is_none() {
-            return; // cursor off-window: nothing to seat the plate against
         }
         if crate::target::hover_probe_armed() {
             info!(
-                "hover probe/tooltip: guid {guid:#x} cursor_seated {cursor_seated} cursor_ui \
-                 {cursor_ui:?} template {:?}",
+                "hover probe/tooltip: guid {guid:#x} cursor_seated {cursor_seated} template {:?}",
                 go_inputs.templates.get(guid).map(|t| t.name.clone()),
             );
         }
@@ -383,7 +361,7 @@ fn drive_mouseover_tooltip(
                 _ => {}
             }
         }
-        script.world_tooltip_gameobject(&template.name, &lines, cursor_ui);
+        script.world_tooltip_gameobject(&template.name, &lines, cursor_seated);
         *last = LastHover::Go(guid);
         return;
     }

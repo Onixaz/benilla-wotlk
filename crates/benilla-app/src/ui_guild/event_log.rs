@@ -78,7 +78,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut log: ResMut<GuildEventLog>) {
 /// Push the log on a change, again as missing names land, and fire `GUILD_EVENT_LOG_UPDATE` once
 /// the last name is in.
 pub(super) fn feed_guild_event_log(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut log: ResMut<GuildEventLog>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,

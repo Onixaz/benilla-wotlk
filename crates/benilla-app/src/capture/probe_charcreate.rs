@@ -80,7 +80,10 @@ struct CharCreateProbe {
 /// Drive the create, then the delete, through the stock screens as a player's clicks would.
 fn drive_charcreate_probe(
     mut probe: ResMut<CharCreateProbe>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     catalog: Option<Res<crate::entities::CharCreate>>,
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     mut results: MessageReader<CharActionResultMessage>,

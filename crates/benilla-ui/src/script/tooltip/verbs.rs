@@ -9,7 +9,7 @@ use crate::script::region::region_handle_of;
 use crate::widget::{KindState, TooltipAnchor, TOOLTIP_LINE_GAP, TOOLTIP_PAD};
 
 use super::{
-    append_line, bool_arg, clear_content, display_name, fire_cleared, hide_tooltip, now,
+    append_line, bool_arg, clear_content, display_name, fire_cleared, hide_tooltip,
     parse_line_color, parse_line_tail, reset_position, set_owner_core, set_shown, text_of, tip_mut,
     with_tip, write_cell, REG_TOOLTIP_METHODS,
 };
@@ -375,17 +375,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             with_tip(lua, &this, |t| t.padding = w.max(0.0))
         })?,
     )?;
-    // FadeOut(): alpha ramps to 0 over `TOOLTIP_FADE_SECS`, then the full hide; new content or
-    // Show cancels it.
+    // FadeOut() (`0x61d940`): the engine's fade, [`super::fade_out`].
     m.set(
         "FadeOut",
         lua.create_function(|lua, this: Table| {
-            let t = now(lua);
-            with_tip(lua, &this, |tip| {
-                if tip.fade_start.is_none() {
-                    tip.fade_start = Some(t);
-                }
-            })
+            let h = frame_handle_of(lua, &this)?;
+            super::fade_out(lua, h);
+            Ok(())
         })?,
     )?;
     // Show and Hide are the shared pair: the visibility cascade runs the tooltip's overrides

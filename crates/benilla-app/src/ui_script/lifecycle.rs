@@ -79,11 +79,13 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
         None => script.register_cvars(crate::cvars::registered_pairs()),
     }
     let start = std::time::Instant::now();
-    let failures = super::glue::load_glue(&mut script);
+    let failures = super::live::lend_world(world, &mut script, super::glue::load_glue);
     super::glue::finish_glue_load_log(&mut script);
     start_server_alert(world, &script);
     super::glue_mgr::seat_glue_vm(world, &mut script);
-    super::glue::set_glue_screen(&mut script, screen);
+    super::live::lend_world(world, &mut script, |script| {
+        super::glue::set_glue_screen(script, screen);
+    });
     info!(
         "ui_script: stock glue up in {:.0} ms on \"{}\" ({} load failure(s))",
         start.elapsed().as_secs_f32() * 1000.0,
@@ -525,29 +527,36 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     let ui_scale = world
         .get_resource::<super::UiScaleCvar>()
         .map_or(1.0, |c| c.0);
-    // No sound during the load edge, as in the reference's UI init.
+    // No sound during the load edge, as in the reference's UI init. Every call into Lua reads the
+    // client through the lent `World`.
     silenced_ui_load(&mut script, |script| {
-        let _ = load_ingame_ui(script, identity.as_ref(), &roster, version_check);
-        crate::ui_chat::commands::register_dev_commands(script, crate::run_mode::dev_affordances());
-        // The new Minimap's zoom indices from the persisted CVars, as the reference's minimap reset
-        // copies each CVar into its live index; `Minimap:SetZoom` owns them from here.
-        script.set_minimap_zoom(zoom.0, zoom.1);
+        super::live::lend_world(world, script, |script| {
+            let _ = load_ingame_ui(script, identity.as_ref(), &roster, version_check);
+            crate::ui_chat::commands::register_dev_commands(
+                script,
+                crate::run_mode::dev_affordances(),
+            );
+            // The new Minimap's zoom indices from the persisted CVars, as the reference's minimap
+            // reset copies each CVar into its live index; `Minimap:SetZoom` owns them from here.
+            script.set_minimap_zoom(zoom.0, zoom.1);
+        });
         // The saved-variables chunk runs after the files set their defaults and before
         // `VARIABLES_LOADED`, the reference's addon-load order; reversed, the defaults always win.
         // The chat cache restores after `VARIABLES_LOADED` and before any chat is routed: its
         // `UPDATE_CHAT_WINDOWS` registers each chat frame for its `CHAT_MSG_*` events
         // (`ChatFrame.lua:1261-1273`).
         finish_ui_load_with(
+            world,
             script,
             identity.as_ref(),
             // Before `VARIABLES_LOADED`: the minimap's town type restores there
             // (`0x5128d0`).
             |script| script.load_tracked_state(class_id),
-            |script| {
+            |world, script| {
                 crate::ui_chat::restore_chat_looks(world, script);
                 // `UIParent` scales last, so the whole load read a bare root (`0x52a980` runs
                 // `0x5240e0` at its end, the chat settings restored and the world not yet entered).
-                script.set_ui_scale(ui_scale);
+                super::live::lend_world(world, script, |script| script.set_ui_scale(ui_scale));
             },
         );
     });
@@ -770,9 +779,9 @@ fn close_ui_session(world: &mut World) {
     // Spent at the root: of this edge and the worldport's, the first to a departure owns it.
     let leaving_world = run_leave_world_sweep(world);
     if !ui_never_loaded {
-        if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
-            shutdown_ui_state(&mut script, identity.as_ref(), leaving_world);
-        }
+        super::live::with_live_world(world, |script| {
+            shutdown_ui_state(script, identity.as_ref(), leaving_world);
+        });
     }
     // After the shutdown events (a `PLAYER_LOGOUT` handler may `SetCVar`, which in the reference
     // lands in an engine-side store that survives) and before the VM is replaced.
@@ -839,6 +848,10 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     let calendar = world
         .get_non_send_resource_mut::<UiScript>()
         .map(|mut s| s.take_calendar());
+    // So do the logging flags (`0xb759d0`), cleared only at a logout (`0x5072b0`).
+    let logging = world
+        .get_non_send_resource::<UiScript>()
+        .map(|s| s.logging_flags());
     // So do the currency categories' open flags, set only at a world entry (`0x52b887`).
     let currency_folds = world
         .get_non_send_resource_mut::<UiScript>()
@@ -864,6 +877,11 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     ) {
         script.restore_currency_folds(folds);
     }
+    if let (Some((chat, combat)), Some(mut script)) =
+        (logging, world.get_non_send_resource_mut::<UiScript>())
+    {
+        script.set_logging_flags(chat, combat);
+    }
     // The UI init ends by re-entering the world-enter cascade, its sends included, but only with
     // the active player set: our own player's entity exists. Not the active-mover set, which only
     // the player's create runs.
@@ -881,7 +899,7 @@ pub(crate) fn run_pending_reload(world: &mut World) {
 /// `InWorld`. A quit from the character screen, or on a worldport's loading screen, finds the
 /// latch spent, so `PLAYER_LEAVING_WORLD` does not fire.
 pub(crate) fn shutdown_on_exit(
-    script: Option<NonSendMut<UiScript>>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     id: Res<AddOnIdentity>,
     pending_entry: Option<Res<PendingEntryUiLoad>>,
     mut sweep: LeaveWorldSweep,
@@ -911,7 +929,7 @@ pub(crate) fn shutdown_on_exit(
 /// runs the login leg too, as the tests have no such edge.
 #[cfg(test)]
 pub(crate) fn finish_ui_load(script: &mut UiScript) {
-    finish_ui_load_with(script, None, |_| {}, |_| {});
+    finish_ui_load_with(&mut World::new(), script, None, |_| {}, |_, _| {});
     fire_armed_player_login(script);
 }
 
@@ -931,18 +949,21 @@ pub(crate) fn fire_armed_player_login(script: &mut UiScript) {
 /// and before `PLAYER_LOGIN`, where the reference registers its reader. On a fresh login the
 /// reference's cache defers that reader until the server's account data reconciles, after the UI
 /// init has returned. Either way a `VARIABLES_LOADED` handler sees the boot chat colours, not the
-/// file's.
+/// file's. The saved variables run with `world` lent to the verbs; `between` gets it to lend itself.
 pub(crate) fn finish_ui_load_with(
+    world: &mut World,
     script: &mut UiScript,
     identity: Option<&(String, String)>,
     host_settings: impl FnOnce(&mut UiScript),
-    between: impl FnOnce(&mut UiScript),
+    between: impl FnOnce(&mut World, &mut UiScript),
 ) {
-    // Still the load edge, so still bounded: re-armed so the saved variables get the full
-    // allowance; the entry edge disarms it after.
-    script.set_instruction_budget(addons::LOAD_INSTRUCTION_BUDGET);
-    crate::ui_saved::load_saved_variables(script, identity, host_settings);
-    between(script);
+    super::live::lend_world(world, script, |script| {
+        // Still the load edge, so still bounded: re-armed so the saved variables get the full
+        // allowance; the entry edge disarms it after.
+        script.set_instruction_budget(addons::LOAD_INSTRUCTION_BUDGET);
+        crate::ui_saved::load_saved_variables(script, identity, host_settings);
+    });
+    between(world, script);
     // `0x52a9e6`: the one-shot the world entry fires and clears.
     script.arm_player_login();
 }
