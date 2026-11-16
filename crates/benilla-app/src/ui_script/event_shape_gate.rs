@@ -1,8 +1,10 @@
 //! The event argument-shape gate: every fire site with a literal name against
 //! `reference/3.3.5a-events.tsv`, since an event name is a plain string at both ends.
 //!
-//! Only `exact` rows gate: an `advisory` row's site declares more varargs than its caller pushes,
-//! and a `none` row has no producer in the census, which does not mean it has none. Only a
+//! The table's `conf` is `advisory` (a producer is attributed and its shapes are real, but another
+//! computed-id path may add one) or `none` (no producer was proved, which does not mean there is
+//! none). So only an `advisory` row gates, and only one whose every alternative is a resolved
+//! format: a `?` alternative is a literal-id site whose format pointer was not proven. Only a
 //! `ScriptValue::` element's kind is asserted; any other argument counts toward the arity alone.
 use std::collections::BTreeMap;
 
@@ -11,6 +13,9 @@ struct Row {
     /// The alternatives, each a per-slot kind list. `%s` -> `s`, `%d`/`%u`/`%f` -> `n`.
     shapes: Vec<Vec<char>>,
     producers: String,
+    /// Every alternative is a resolved format, so a fire site the shapes do not fit disagrees with
+    /// a proven producer.
+    resolved: bool,
 }
 
 fn table() -> BTreeMap<String, Row> {
@@ -26,11 +31,13 @@ fn table() -> BTreeMap<String, Row> {
         }
         let f: Vec<&str> = line.split('\t').collect();
         // name ids producers arg_formats conf note
-        if f.len() < 5 || f[4] != "exact" {
+        if f.len() < 5 || f[4] != "advisory" {
             continue;
         }
+        let resolved = !f[3].split('|').any(|alt| alt.contains('?'));
         let shapes = f[3]
             .split('|')
+            .filter(|alt| !alt.contains('?'))
             .map(|alt| {
                 if alt == "()" {
                     return Vec::new();
@@ -49,6 +56,7 @@ fn table() -> BTreeMap<String, Row> {
             Row {
                 shapes,
                 producers: f[2].to_string(),
+                resolved,
             },
         );
     }
@@ -197,13 +205,12 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
 }
 
 #[test]
-#[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn every_event_we_fire_carries_the_reference_s_arguments() {
     let table = table();
+    let gateable = table.values().filter(|r| r.resolved).count();
     assert!(
-        table.len() > 250,
-        "the events table gave only {} gateable rows — it stopped being read",
-        table.len()
+        gateable > 300,
+        "the events table gave only {gateable} gateable rows — it stopped being read"
     );
     let sites = fire_sites();
     assert!(
@@ -216,7 +223,9 @@ fn every_event_we_fire_carries_the_reference_s_arguments() {
     let mut checked = 0usize;
     let mut wrong: Vec<String> = Vec::new();
     for (name, kinds, at) in &sites {
-        let Some(row) = table.get(name) else { continue };
+        let Some(row) = table.get(name).filter(|r| r.resolved) else {
+            continue;
+        };
         checked += 1;
         let fits = row.shapes.iter().any(|want| {
             want.len() == kinds.len()
@@ -240,7 +249,7 @@ fn every_event_we_fire_carries_the_reference_s_arguments() {
         }
     }
     assert!(
-        checked >= 175,
+        checked >= 195,
         "only {checked} fires were measurable against the table — coverage collapsed"
     );
     wrong.sort();
@@ -254,19 +263,17 @@ fn every_event_we_fire_carries_the_reference_s_arguments() {
     );
 }
 
-/// The reference registers one watch per named unit-window field, so each of the 25 named event
-/// ids below `0xb6` comes from that bridge with the unit token, and each needs a producer here.
+/// The reference registers one watch per named unit-window field, so each event the table
+/// attributes to that bridge comes with the unit token, and each needs a producer here.
 #[test]
-#[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn every_unit_field_bridge_event_has_a_producer() {
-    /// Bridge events nothing here produces, each with its reason; an entry that gains a producer
-    /// fails the gate.
+    /// Bridge events nothing here produces, each with its reason; an entry that gains a producer,
+    /// or that is no bridge event, fails the gate.
     const UNPRODUCED: &[(&str, &str)] = &[(
-        "UNIT_LOYALTY",
-        "field 138, the hunter pet's loyalty level. benilla's pet-stat feed (`ui_pet_stats`) \
-         reads happiness and training points off `PET_BYTES` but never the loyalty field, and no \
-         window it feeds shows a loyalty line — `PetPaperDollFrame` does not register it either. \
-         Unbuilt, not wrong: the day the pet page grows the line, this entry goes with it",
+        "UNIT_TARGET",
+        "field 12, the unit's target. The unit snapshot the feed diffs (`UnitState`) does not \
+         carry a unit's target, so nothing sees it change; the target-of-target frame refreshes \
+         on its own update",
     )];
 
     let table = table();
@@ -276,9 +283,18 @@ fn every_unit_field_bridge_event_has_a_producer() {
         .map(|(n, _)| n)
         .collect();
     assert!(
-        bridge.len() >= 25,
+        bridge.len() >= 29,
         "only {} bridge events in the table — it stopped being read",
         bridge.len()
+    );
+    let strays: Vec<&str> = UNPRODUCED
+        .iter()
+        .map(|(e, _)| *e)
+        .filter(|e| !bridge.iter().any(|b| b == e))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "not a bridge event of the 3.3.5a table: {strays:?}"
     );
     let fired: std::collections::HashSet<String> = fire_sites()
         .into_iter()
