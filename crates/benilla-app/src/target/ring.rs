@@ -201,6 +201,8 @@ pub(super) fn update_ring(
         Res<crate::ui_party::GroupState>,
         // The friend list: the highlight's friend colour.
         Res<crate::ui_social::SocialState>,
+        // The active battlefield's arena test, which drops the highlight's PvP flag.
+        crate::ui_arena::ArenaInstance,
     ),
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     // Our auto-attack; both clear paths end it, as the reference's death and teardown edges do.
@@ -271,6 +273,7 @@ pub(super) fn update_ring(
                         &reputations,
                         &targets.2,
                         self_store.single().ok(),
+                        targets.4.active(),
                         |g| targets.3.is_friend(g),
                     )
                 });

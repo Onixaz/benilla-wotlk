@@ -132,6 +132,15 @@ pub(super) struct PetNow {
     token: Option<(u64, UnitState)>,
 }
 
+impl PetNow {
+    /// Set the token's `UnitSelectionColor` dword from its guid.
+    pub(super) fn paint(&mut self, color: &dyn Fn(u64) -> u32) {
+        if let Some((guid, state)) = &mut self.token {
+            state.selection_color = color(*guid);
+        }
+    }
+}
+
 /// One member's pet for its token and its `UNIT_PET` edge; nothing for an empty slot, `owner` 0.
 pub(super) fn member_pet(
     look: &Lookup<'_, '_, '_, '_>,

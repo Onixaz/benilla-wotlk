@@ -915,8 +915,10 @@ impl Plugin for BattlefieldPlugin {
                         .before(feed_battlefield),
                     // After the scoreboard: a status 3 fires the score event before the status
                     // event (`0x54b148`, then `0x54b1a9`).
+                    // Before the unit and group feeds, whose selection colour reads the arena test.
                     feed_battlefield
                         .after(crate::ui_battlefield_score::feed_battlefield_score)
+                        .before(crate::ui_unit::UnitFeed)
                         .in_set(UiFeed),
                     feed_battlemaster_rows
                         .in_set(UiFeed)

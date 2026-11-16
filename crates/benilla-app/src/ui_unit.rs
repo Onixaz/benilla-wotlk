@@ -1115,8 +1115,8 @@ pub(crate) fn snapshot(
             Some(1) => 3,
             _ => 0,
         },
-        // `UNIT_FIELD_FLAGS` PvP `0x1000` and Skinnable `0x04000000` (vmangos `UnitDefines.h`).
-        pvp: store.0.unit_flags() & 0x1000 != 0,
+        // `UnitIsPVP`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x1` (`0x60ceae`).
+        pvp: store.0.unit_byte2_flags() & 0x1 != 0,
         // The tooltip's unit setter adds the line for a non-player only (`0x621dd8`); the creature
         // record's kind is [`enrich_unit`]'s.
         skinnable: (store.0.unit_flags() & 0x0400_0000 != 0
@@ -1135,8 +1135,8 @@ pub(crate) fn snapshot(
             .unwrap_or(0),
         // `UnitAffectingCombat`: bit 19, the one combat bit for every token.
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
-        // Free-for-all PvP, `PLAYER_FLAGS` bit 7 (vmangos `Player.h:322`); false on a creature.
-        is_pvp_ffa: store.0.player_flags() & 0x80 != 0,
+        // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
+        is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
         // The honor rank, `PLAYER_BYTES_3` byte 3 (0..=18), public for every player in view.
         pvp_rank: store.0.player_pvp_rank().unwrap_or(0),
         // The team digit of `PVP_RANK_<rank>_<team>`, from the race ([`race_pvp_team`]).
@@ -1457,6 +1457,8 @@ struct Interactions<'w> {
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
+    /// The active battlefield's arena test, which drops the selection colour's PvP flag.
+    instance: crate::ui_arena::ArenaInstance<'w>,
 }
 
 fn feed_units(
@@ -1533,7 +1535,8 @@ fn feed_units(
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
         || interact.quest.as_ref().is_some_and(|r| r.is_changed())
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
-        || interact.arena.as_ref().is_some_and(|r| r.is_changed());
+        || interact.arena.as_ref().is_some_and(|r| r.is_changed())
+        || interact.instance.is_changed();
     gate::trace(
         "feed_units",
         &[
@@ -1584,6 +1587,7 @@ fn feed_units(
             &reputations,
             &*group,
             Some(store),
+            interact.instance.active(),
         );
         s.raid_target = group.raid_target_index(guid.0);
         s.group_roles = group.own_roles;
@@ -1607,6 +1611,7 @@ fn feed_units(
         classes: chr,
         types,
         loot_lists: tables.loot_lists(),
+        arena: interact.instance.active(),
     };
     let target = match (selection.target, selection.guid) {
         (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {
@@ -2237,6 +2242,29 @@ fn feed_option_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `UnitIsPVP` and `UnitIsPVPFreeForAll` read `UNIT_FIELD_BYTES_2` byte 1 (`0x60ceae`,
+    /// `0x60d03c`): `0x1` and `0x4`, not the `UNIT_FIELD_FLAGS` or `PLAYER_FLAGS` bits.
+    #[test]
+    fn the_pvp_predicates_read_the_bytes_2_flags() {
+        let snap = |pairs: &[(u16, u32)]| {
+            snapshot(
+                &ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs)),
+                0,
+                None,
+                0,
+                None,
+                Default::default(),
+            )
+        };
+        // `UNIT_FIELD_BYTES_2` 164, `UNIT_FIELD_FLAGS` 46.
+        let s = snap(&[(164, 0x05 << 8)]);
+        assert!(s.pvp && s.is_pvp_ffa);
+        let s = snap(&[(164, 0x01 << 8)]);
+        assert!(s.pvp && !s.is_pvp_ffa);
+        let s = snap(&[(46, 0x1000)]);
+        assert!(!s.pvp && !s.is_pvp_ffa, "the 1.12 bits are not read");
+    }
 
     /// `"mouseover"` resolves through the pick the tooltip publishes: the hovered unit, until a
     /// nearer GameObject wins it and the resolver rejects the GameObject's guid.
