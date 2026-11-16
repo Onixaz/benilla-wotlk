@@ -409,7 +409,7 @@ pub(crate) struct ActiveMover;
 
 /// The inbound event channel, drained each frame by [`apply_net_updates`].
 #[derive(Resource)]
-pub(crate) struct NetEvents(Receiver<SessionEvent>);
+pub(crate) struct NetEvents(pub(crate) Receiver<SessionEvent>);
 
 /// The outbound command channel.
 #[derive(Resource)]
