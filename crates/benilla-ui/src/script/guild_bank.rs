@@ -286,7 +286,7 @@ fn hold(model: &mut Model, tab: u8, slot: u8, split: Option<u32>) -> bool {
     else {
         return false;
     };
-    if !model.player_control {
+    if !crate::script::live::has_control() {
         return false;
     }
     cursor::clear_cursor(model);
@@ -584,7 +584,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let slot = index_arg(lua, slot, USAGE)?;
             let amount = number_arg(lua, amount, USAGE)?;
             let mut model = crate::script::model_mut_of(lua);
-            if !model.player_control
+            if !crate::script::live::has_control()
                 || usize::from(tab) >= GUILD_BANK_TABS
                 || usize::from(slot) >= GUILD_BANK_TAB_SLOTS
             {
@@ -677,7 +677,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "BuyGuildBankTab",
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
-            if !model.player_control || !model.guild_bank.open {
+            if !crate::script::live::has_control() || !model.guild_bank.open {
                 return Ok(());
             }
             let tab = model.guild_bank.num_tabs;
@@ -747,7 +747,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, amount: Value| {
             let amount = number_arg(lua, amount, "Usage: PickupGuildBankMoney(amount)")? as u32;
             let mut model = crate::script::model_mut_of(lua);
-            if amount == 0 || u64::from(amount) > model.guild.bank_money || !model.player_control {
+            if amount == 0
+                || u64::from(amount) > model.guild.bank_money
+                || !crate::script::live::has_control()
+            {
                 return Ok(());
             }
             cursor::clear_cursor(&mut model);
@@ -1123,7 +1126,6 @@ mod tests {
             100,
             [(0x7, 10), (0x1, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
         ));
-        s.set_player_control(true);
         s
     }
 

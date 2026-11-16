@@ -2080,30 +2080,41 @@ fn the_equals_one_idiom_branches_correctly_on_a_live_and_a_dead_token() {
     );
 }
 
-/// `UnitOnTaxi`, registered with the taxi module's ride flag, has the family's shape and raises
-/// `Usage:` from its gate.
+/// `UnitOnTaxi` reads the lent view's flags word for the named unit, has the family's shape and
+/// raises `Usage:` from its gate.
 #[test]
 fn unit_on_taxi_is_one_or_nil_and_raises_the_reference_usage() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player()));
+    s.set_unit_guids(&crate::script::UnitGuids {
+        player: 1,
+        target: 2,
+        held: [(1, 0), (2, 0)].into(),
+        ..Default::default()
+    });
 
     assert!(s
         .eval::<bool>(r#"return UnitOnTaxi("player") == nil"#)
         .unwrap());
-    s.set_on_taxi(true);
-    assert_eq!(
-        s.eval::<String>(r#"return type(UnitOnTaxi("player"))"#)
-            .unwrap(),
-        "number"
-    );
-    assert_eq!(s.eval::<i64>(r#"return UnitOnTaxi("player")"#).unwrap(), 1);
-    assert!(!s
-        .eval::<bool>(r#"return UnitOnTaxi("player") == true"#)
-        .unwrap());
-    // Only the player's ride is tracked: any other token is nil.
-    assert!(s
-        .eval::<bool>(r#"return UnitOnTaxi("target") == nil"#)
-        .unwrap());
+    let riding = crate::script::live::TestView {
+        units: [(1, (1 << 20, 72)), (2, (0, 1))].into(),
+        ..Default::default()
+    };
+    s.with_live(&riding, |s| {
+        assert_eq!(
+            s.eval::<String>(r#"return type(UnitOnTaxi("player"))"#)
+                .unwrap(),
+            "number"
+        );
+        assert_eq!(s.eval::<i64>(r#"return UnitOnTaxi("player")"#).unwrap(), 1);
+        assert!(!s
+            .eval::<bool>(r#"return UnitOnTaxi("player") == true"#)
+            .unwrap());
+        // The target's own flags word, which has no ride.
+        assert!(s
+            .eval::<bool>(r#"return UnitOnTaxi("target") == nil"#)
+            .unwrap());
+    });
 
     let err = s.eval::<mlua::Value>("return UnitOnTaxi()").unwrap_err();
     assert!(

@@ -102,6 +102,7 @@ pub(crate) struct Scene<'w, 's> {
     speed_changes: MessageWriter<'w, SpeedChangeMessage>,
     self_moves: MessageWriter<'w, super::SelfMoveMessage>,
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
+    control: ResMut<'w, super::ControlFlag>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -148,6 +149,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 fields,
             );
             return;
+        }
+        // Our own create re-seeds the UI's control flag with no event (`0x6e8160` -> `0x513880`).
+        if sc.self_guid.0 == Some(guid) {
+            sc.control.0 = true;
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {

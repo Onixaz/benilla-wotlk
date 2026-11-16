@@ -14,6 +14,16 @@ use super::UiScript;
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
     fn unit_flags(&self, guid: u64) -> Option<u32>;
+
+    /// A held unit's health (`UNIT_FIELD_HEALTH`); `None` for a guid that is no held unit.
+    fn unit_health(&self, guid: u64) -> Option<u32>;
+
+    /// The active player's guid (`0x4d3790`), `None` before our create names one.
+    fn active_player(&self) -> Option<u64>;
+
+    /// The UI's control flag (`0xbcfb8c`), which the control update for our own unit writes
+    /// (`0x520fe0`) and a world entry sets (`0x513880`).
+    fn has_control(&self) -> bool;
 }
 
 /// A lent view's address, its lifetime erased.
@@ -98,6 +108,12 @@ impl UiScript {
     }
 }
 
+/// The UI's control flag through the lent view; with none lent, as a VM outside the app has, the
+/// value a game start sets (`0x52b8a0`).
+pub(crate) fn has_control() -> bool {
+    read_live(|l| l.has_control()).unwrap_or(true)
+}
+
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
@@ -105,6 +121,37 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     // `LiveLoan`, which outlives this call; the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
     Some(f(live))
+}
+
+/// A view over fixed state, for the VM's own tests.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestView {
+    /// The active player's guid.
+    pub player: Option<u64>,
+    /// Each held unit's `(flags, health)`.
+    pub units: std::collections::HashMap<u64, (u32, u32)>,
+    /// The control flag; the default view has lost control.
+    pub control: bool,
+}
+
+#[cfg(test)]
+impl LiveState for TestView {
+    fn unit_flags(&self, guid: u64) -> Option<u32> {
+        self.units.get(&guid).map(|u| u.0)
+    }
+
+    fn unit_health(&self, guid: u64) -> Option<u32> {
+        self.units.get(&guid).map(|u| u.1)
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        self.player
+    }
+
+    fn has_control(&self) -> bool {
+        self.control
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +167,18 @@ mod tests {
     impl LiveState for One {
         fn unit_flags(&self, guid: u64) -> Option<u32> {
             (guid == self.guid).then_some(self.flags)
+        }
+
+        fn unit_health(&self, guid: u64) -> Option<u32> {
+            (guid == self.guid).then_some(1)
+        }
+
+        fn active_player(&self) -> Option<u64> {
+            Some(self.guid)
+        }
+
+        fn has_control(&self) -> bool {
+            true
         }
     }
 
@@ -159,9 +218,10 @@ mod tests {
         assert_eq!(ask(&s), None);
     }
 
-    /// `UnitOnTaxi` answers the pushed ride flag, for the player only, with a view lent or not.
+    /// `UnitOnTaxi` tests bit 20 of the lent view's flags word for whichever unit the token names
+    /// (`0x60f396`); nil for a unit not held, and with no view lent.
     #[test]
-    fn unit_on_taxi_answers_the_push_with_a_view_lent() {
+    fn unit_on_taxi_reads_the_lent_view_for_any_unit() {
         let mut s = UiScript::new().unwrap();
         s.set_unit_guids(&crate::script::UnitGuids {
             player: 1,
@@ -169,19 +229,61 @@ mod tests {
             held: [(1, 0), (2, 0)].into(),
             ..Default::default()
         });
-        s.set_on_taxi(true);
         let ask = |s: &UiScript| {
             s.eval::<String>(
                 r#"return tostring(UnitOnTaxi("player")) .. tostring(UnitOnTaxi("target"))"#,
             )
             .unwrap()
         };
-        assert_eq!(ask(&s), "1nil");
+        assert_eq!(ask(&s), "nilnil");
         let riding = One {
             guid: 2,
             flags: 1 << 20,
         };
-        assert_eq!(s.with_live(&riding, |s| ask(s)), "1nil");
+        assert_eq!(s.with_live(&riding, |s| ask(s)), "nil1");
+        let grounded = One {
+            guid: 1,
+            flags: !(1 << 20),
+        };
+        assert_eq!(s.with_live(&grounded, |s| ask(s)), "nilnil");
+    }
+
+    /// `HasFullControl` needs the active player held with health above zero and the control flag
+    /// set (`0x611603`-`0x611637`); with no view lent it answers the boot flag.
+    #[test]
+    fn has_full_control_reads_the_flag_and_the_players_health() {
+        let mut s = UiScript::new().unwrap();
+        let ask = |s: &mut UiScript, view: &TestView| {
+            s.with_live(view, |s| {
+                s.eval::<String>("return tostring(HasFullControl())")
+            })
+            .unwrap()
+        };
+        assert_eq!(s.eval::<i64>("return HasFullControl()").unwrap(), 1);
+        let alive = |control| TestView {
+            player: Some(1),
+            units: [(1, (0, 100))].into(),
+            control,
+        };
+        assert_eq!(ask(&mut s, &alive(true)), "1");
+        assert_eq!(ask(&mut s, &alive(false)), "nil");
+        let dead = TestView {
+            player: Some(1),
+            units: [(1, (0, 0))].into(),
+            control: true,
+        };
+        assert_eq!(ask(&mut s, &dead), "nil");
+        let nobody = TestView {
+            control: true,
+            ..Default::default()
+        };
+        assert_eq!(ask(&mut s, &nobody), "nil");
+        let unheld = TestView {
+            player: Some(1),
+            control: true,
+            ..Default::default()
+        };
+        assert_eq!(ask(&mut s, &unheld), "nil");
     }
 
     /// A loan lends until it drops, a call's loan inside it restores it, and dropping it restores

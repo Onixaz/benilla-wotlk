@@ -573,15 +573,18 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // HasFullControl(): the flag `SMSG_CLIENT_CONTROL_UPDATE` writes for the local player, which
-    // the stock unit menu greys Trade and Duel on (`UnitPopup.lua:474-477`, `:502-505`).
+    // HasFullControl(): the active player held with health above zero and the control flag set
+    // (`0x611603`-`0x611637`); the stock unit menu greys Trade and Duel on it.
     g.set(
         "HasFullControl",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.player_control))
+        lua.create_function(|_, ()| {
+            let full = crate::script::read_live(|live| {
+                live.active_player()
+                    .and_then(|p| live.unit_health(p))
+                    .is_some_and(|h| h > 0)
+                    && live.has_control()
+            });
+            Ok(flag(full.unwrap_or_else(crate::script::live::has_control)))
         })?,
     )?;
 

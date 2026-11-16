@@ -8,6 +8,9 @@ use mlua::{Lua, Table};
 use super::region::region_handle_of;
 use super::Model;
 
+/// Bit 20 of a unit's flags word, the taxi ride `UnitOnTaxi` tests (`0x60f39c`).
+const UNIT_FLAG_TAXI_FLIGHT: u32 = 1 << 20;
+
 /// A visible node's icon state (`TaxiNodeGetType`): green, white or yellow in the reference.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TaxiNodeType {
@@ -61,11 +64,6 @@ impl super::UiScript {
     /// Push (or clear, with `None`) the open taxi map's snapshot.
     pub fn set_taxi(&mut self, state: Option<TaxiUiState>) {
         set_field!(self, taxi, state);
-    }
-
-    /// Whether the player is riding a taxi, for `UnitOnTaxi("player")`.
-    pub fn set_on_taxi(&mut self, riding: bool) {
-        set_field!(self, taxi_riding, riding);
     }
 
     /// Drain the 1-based indices `TakeTaxiNode` queued; the app sends the activate for each.
@@ -215,18 +213,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // The number 1 or nil, never a boolean; an argument neither string nor number raises the
-    // reference's usage. Only the player is tracked, as the stock UI asks about no other unit.
+    // reference's usage. Bit 20 of the named unit's live flags word (`0x60f396`).
     g.set(
         "UnitOnTaxi",
         lua.create_function(|lua, unit: mlua::Value| {
             let unit =
                 crate::script::binding_abi::string_arg(lua, unit, r#"Usage: UnitOnTaxi("unit")"#)?;
-            let model = lua
+            let guid = lua
                 .app_data_ref::<crate::script::ModelCell>()
-                .expect("model");
-            Ok(crate::script::binding_abi::flag(
-                unit.eq_ignore_ascii_case("player") && model.taxi_riding,
-            ))
+                .expect("model")
+                .unit_guids
+                .guid_of(&unit);
+            let riding = crate::script::read_live(|live| {
+                guid.and_then(|g| live.unit_flags(g))
+                    .is_some_and(|f| f & UNIT_FLAG_TAXI_FLIGHT != 0)
+            });
+            Ok(crate::script::binding_abi::flag(riding == Some(true)))
         })?,
     )?;
 
