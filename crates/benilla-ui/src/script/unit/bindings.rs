@@ -13,6 +13,9 @@ use super::{
     SelectionRequest, UnitBase, UnitTokenParse,
 };
 
+/// Bit 19 of a unit's flags word, the combat state `UnitAffectingCombat` tests (`0x60f8ac`).
+const UNIT_FLAG_IN_COMBAT: u32 = 1 << 19;
+
 /// The type `UnitPower` and `UnitPowerMax` read with no type argument, the unit's own display
 /// power (`0x60ed72`, `0x60effd`).
 const OWN_POWER_TYPE: i64 = 7;
@@ -558,8 +561,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // UnitAffectingCombat(unit): 1 in combat, else nil. No such unit takes the same arm as a unit
     // out of combat, so it cannot probe existence. A missing argument, or one neither string nor
-    // number, raises `Usage:`, unlike `UnitInRaid`; a number reaches the resolver, which raises
-    // `Unknown unit name`.
+    // number, raises `Usage:`, unlike `UnitInRaid`. Bit 19 of the named unit's live flags word
+    // (`0x60f8ac`).
     g.set(
         "UnitAffectingCombat",
         lua.create_function(|lua, token: Value| {
@@ -568,8 +571,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 "Usage: UnitAffectingCombat(\"unit\")",
             )?;
-            let hot = with_unit(lua, &Some(token), false, |u| u.exists && u.in_combat)?;
-            Ok(flag(hot))
+            let guid = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .unit_guids
+                .guid_of(&token);
+            let hot = crate::script::read_live(|live| {
+                guid.and_then(|g| live.unit_flags(g))
+                    .is_some_and(|f| f & UNIT_FLAG_IN_COMBAT != 0)
+            });
+            Ok(flag(hot == Some(true)))
         })?,
     )?;
 

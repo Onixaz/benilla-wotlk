@@ -1073,33 +1073,52 @@ fn unit_classification_reads_the_five_word_table() {
 
 // ── `UnitAffectingCombat` and `TargetByName` ────────────────────────────────────────────────────
 
-/// Not in combat and no such unit share one nil arm: both jump to it in the reference.
+/// Bit 19 of the named unit's live flags word (`0x60f8ac`); not in combat and no such unit share
+/// one nil arm: both jump to it in the reference.
 #[test]
 fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
     let mut s = UiScript::new().unwrap();
-    let mut hot = player();
-    hot.in_combat = true;
-    s.set_unit("player", Some(hot));
-    s.set_unit("target", Some(player())); // exists, peaceful
-
-    assert_eq!(
-        s.eval::<i64>(r#"return UnitAffectingCombat("player")"#)
-            .unwrap(),
-        1,
-        "the number 1, never a boolean"
-    );
-    assert!(s
-        .eval::<bool>(r#"return UnitAffectingCombat("target") == nil"#)
-        .unwrap());
+    s.set_unit_guids(&crate::script::UnitGuids {
+        player: 1,
+        target: 2,
+        held: [(1, 0), (2, 0)].into(),
+        ..Default::default()
+    });
     assert!(
-        s.eval::<bool>(r#"return UnitAffectingCombat("party3") == nil"#)
+        s.eval::<bool>(r#"return UnitAffectingCombat("player") == nil"#)
             .unwrap(),
-        "an unresolvable token is the SAME nil a peaceful unit gives"
+        "no view lent reads nobody"
     );
-    // A number passes the gate as the token "5", which matches no prefix: nobody.
-    assert!(s
-        .eval::<bool>("return UnitAffectingCombat(5) == nil")
-        .unwrap());
+    let live = crate::script::live::TestView {
+        units: [(1, (1 << 19, 72)), (2, (1 << 20, 1))].into(),
+        ..Default::default()
+    };
+    s.with_live(&live, |s| {
+        assert_eq!(
+            s.eval::<String>(r#"return type(UnitAffectingCombat("player"))"#)
+                .unwrap(),
+            "number",
+            "the number 1, never a boolean"
+        );
+        assert_eq!(
+            s.eval::<i64>(r#"return UnitAffectingCombat("player")"#)
+                .unwrap(),
+            1
+        );
+        // Held, its flags word without the combat bit.
+        assert!(s
+            .eval::<bool>(r#"return UnitAffectingCombat("target") == nil"#)
+            .unwrap());
+        assert!(
+            s.eval::<bool>(r#"return UnitAffectingCombat("party3") == nil"#)
+                .unwrap(),
+            "an unresolvable token is the SAME nil a peaceful unit gives"
+        );
+        // A number passes the gate as the token "5", which matches no prefix: nobody.
+        assert!(s
+            .eval::<bool>("return UnitAffectingCombat(5) == nil")
+            .unwrap());
+    });
 }
 
 /// The usage raise is `luaL_error`, which does not return.
@@ -1900,15 +1919,6 @@ fn every_unit_predicate_is_one_or_nil_and_never_a_boolean() {
             UnitState {
                 exists: true,
                 tapped_by_player: true,
-                ..Default::default()
-            },
-        ),
-        (
-            "UnitAffectingCombat",
-            r#"UnitAffectingCombat("target")"#,
-            UnitState {
-                exists: true,
-                in_combat: true,
                 ..Default::default()
             },
         ),

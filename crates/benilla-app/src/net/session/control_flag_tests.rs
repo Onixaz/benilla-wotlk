@@ -212,3 +212,62 @@ fn our_own_create_regains_control_on_the_flags_edge() {
     assert!(seen(world, create(NEXT)).is_empty());
     assert!(world.resource::<ControlFlag>().0);
 }
+
+/// A game start gives control back (`0x52b8a0`), so a session that ended with control lost fires
+/// no `PLAYER_CONTROL_GAINED` at the next character's own create.
+#[test]
+fn a_game_start_regains_control_silently() {
+    use benilla_protocol::messages::ObjectType;
+    use benilla_protocol::{EntityKind, ObjectFields};
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"
+            SEEN = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("PLAYER_CONTROL_GAINED")
+            f:SetScript("OnEvent", function(_, e) SEEN[#SEEN + 1] = e end)
+        "#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    let world = app.world_mut();
+    world.resource_mut::<ControlFlag>().0 = false;
+    dispatch(
+        world,
+        vec![
+            SessionEvent::Connected {
+                self_guid: ME,
+                name: "Me".into(),
+                billing_time_rested: 0,
+                expansion: 2,
+                tutorial_flags: None,
+                addon_info: None,
+            },
+            SessionEvent::ObjectCreate {
+                guid: ME,
+                kind: EntityKind::Player,
+                display_id: None,
+                position: [0.0; 3],
+                orientation: 0.0,
+                scale: 1.0,
+                speeds: None,
+                mover: None,
+                transport_progress: None,
+                transport: None,
+                spline: None,
+                vehicle: None,
+                attack_target: None,
+                spawned: false,
+                fields: ObjectFields::from_pairs(&[(2, 0x19)]).into_created(ObjectType::Player),
+            },
+        ],
+    );
+    assert!(world.resource::<ControlFlag>().0);
+    let seen: Vec<String> = world
+        .non_send_resource::<UiScript>()
+        .eval("return SEEN")
+        .unwrap();
+    assert!(seen.is_empty(), "{seen:?}");
+}

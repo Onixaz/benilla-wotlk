@@ -181,7 +181,12 @@ fn on_character_list(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
     }
 }
 
-fn on_connected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
+fn on_connected(
+    In(ev): In<SessionEvent>,
+    mut e: Edges,
+    mut b: Bridge,
+    mut control: ResMut<ControlFlag>,
+) {
     if let SessionEvent::Connected {
         self_guid: guid,
         name,
@@ -192,6 +197,9 @@ fn on_connected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
     } = ev
     {
         e.account_expansion.0 = expansion;
+        // A game start gives the UI control (`0x52b8a0`), so a session that ended without it
+        // carries no loss into the next.
+        control.0 = true;
         connected(
             guid,
             name,

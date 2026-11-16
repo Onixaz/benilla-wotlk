@@ -1100,7 +1100,7 @@ pub(crate) fn snapshot(
             .or_else(|| store.0.unit_charmed_by())
             .or_else(|| store.0.unit_created_by())
             .unwrap_or(0),
-        // `UnitAffectingCombat`: bit 19, the one combat bit for every token.
+        // Bit 19, the one combat bit for every token; `UnitAffectingCombat` reads it live.
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
         // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
         is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
@@ -1351,8 +1351,9 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_FLAGS` (id 40), the per-field watch bridge: the reference registers one watch per named
     // unit field, and on any change of the dword the notifier fires, once per token naming the
-    // unit, `arg1` the token. The stock pet bar reads it.
-    if edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
+    // unit, `arg1` the token. The stock pet bar reads it. `"player"` fires from the values
+    // handler instead (`own_flags_watch`); the other tokens wait on #1266.
+    if token != "player" && edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
         script.fire_event("UNIT_FLAGS", vec![tok()]);
     }
     // `PLAYER_FLAGS_CHANGED` (id 407): no bit test after the XOR diff and above the local-GUID
