@@ -5,11 +5,15 @@
 //! Built: the TRADE_SKILL early-out, dead (leg 1), reagents and totems (3), the equipped item (4),
 //! combo points (5), shapeshift form (6), only-stealthed (7), not-in-combat (8), CasterAuraState
 //! (9), TargetAuraState and its attack-or-assist fork (10/10b, the only legs that read the current
-//! target), the bit-25 cooldown fold (11) and power (12).
+//! target), the bit-25 cooldown fold (11), the place legs (indoors or outdoors only, then the
+//! flyable zone) and power (12), which the caller runs after the walk (`0x5a8e40`'s
+//! `Spell_C_HaveSpellPower`).
 //!
 //! Not built, each answering usable: leg 2's caster aura-immunity helpers, leg 4's `AttributesEx3`
-//! sub-conditions. The assist check in leg 10b is a reaction-rank test (friendly or better), not
-//! the reference's.
+//! sub-conditions, and the legs of `0x80b5d0` between the cooldown fold and the place legs (the
+//! pet-actions check, the aura-interrupt pair on client flag `0x200000`) and after them (the
+//! battleground-only `AttributesExC & 0x800` and not-in-raid `AttributesExF & 0x800` map tests).
+//! The assist check in leg 10b is a reaction-rank test (friendly or better), not the reference's.
 
 use benilla_protocol::messages::ItemUseSpell;
 
@@ -37,6 +41,76 @@ const ATTR_EX4_WEAPON_SPEED_COST: u32 = 0x0000_0400;
 const UNARMED_COST_SPEED: u32 = 2000;
 /// The item flag that keeps a broken item usable (`0x6d71ab`).
 const ITEM_FLAG_BREAK_IGNORED: u32 = 0x0000_0008;
+
+/// `Attributes` bits 14 and 15, the place legs' first pair: indoors only and outdoors only, tested
+/// against `CGUnit_C::IsOutdoors` (`0x71b7f0`).
+const ATTR_INDOORS_ONLY: u32 = 0x0000_4000;
+const ATTR_OUTDOORS_ONLY: u32 = 0x0000_8000;
+/// `AttributesExD` bit 26: only in a flyable zone (the flying mounts and flight forms), tested
+/// against `CGPlayer_C::IsInFlyableZone(1)` (`0x7261b0`).
+const ATTR_EX4_ONLY_FLYABLE_ZONE: u32 = 0x0400_0000;
+/// Cold Weather Flying, which `IsInFlyableZone`'s continent leg asks a player to know on map 571.
+pub(crate) const COLD_WEATHER_FLYING: u32 = 54197;
+/// Northrend, the one map the continent leg names.
+const NORTHREND: u32 = 571;
+
+/// Where the caster stands, for the walk's place legs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UsablePlace {
+    /// `IsOutdoors` (`0x71b7f0`).
+    pub(crate) outdoors: bool,
+    /// `IsInFlyableZone(1)` (`0x7261b0`).
+    pub(crate) flyable_zone: bool,
+}
+
+/// What the place legs read: the player's place ([`crate::area::PlayerPlace`]) and the map.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct UsablePlaceFeed<'w> {
+    place: Option<bevy::prelude::Res<'w, crate::area::PlayerPlace>>,
+    map: Option<bevy::prelude::Res<'w, benilla_world::world_map::CurrentMap>>,
+}
+
+impl UsablePlace {
+    /// The place of a caster standing at `place` on `map`. `cold_weather_flying` is whether a
+    /// player's book holds it, `None` for a caster that is not a player.
+    ///
+    /// Flyable is `IsInFlyableArea` (`0x51a1d0`: the area's flag `0x400` without `0x20000000`, and
+    /// no area row is not flyable), then for a player on map 571 Cold Weather Flying. `IsOutdoors`
+    /// reads the caster's own world object; for a pet ours stands in the player's verdict, the one
+    /// place the client classifies.
+    pub(crate) fn of(
+        place: Option<&crate::area::PlayerPlace>,
+        map: Option<u32>,
+        cold_weather_flying: Option<bool>,
+    ) -> UsablePlace {
+        let flyable_area = place.is_some_and(|p| p.flyable_area);
+        let continent = map != Some(NORTHREND) || cold_weather_flying.unwrap_or(true);
+        UsablePlace {
+            outdoors: !place.is_some_and(|p| p.indoors),
+            flyable_zone: flyable_area && continent,
+        }
+    }
+}
+
+impl UsablePlaceFeed<'_> {
+    /// The active player's place, `knows_cold_weather_flying` from its book.
+    pub(crate) fn player(&self, knows_cold_weather_flying: bool) -> UsablePlace {
+        UsablePlace::of(
+            self.place.as_deref(),
+            self.map.as_deref().map(|m| m.0),
+            Some(knows_cold_weather_flying),
+        )
+    }
+
+    /// A pet's place.
+    pub(crate) fn pet(&self) -> UsablePlace {
+        UsablePlace::of(
+            self.place.as_deref(),
+            self.map.as_deref().map(|m| m.0),
+            None,
+        )
+    }
+}
 
 /// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single
 /// friend, asks the assist check.
@@ -69,6 +143,8 @@ pub(crate) struct UsableCtx<'a> {
     /// a unit with no table passes them.
     pub(crate) self_auras: Option<&'a crate::unit_auras::UnitAuras>,
     pub(crate) target_auras: Option<&'a crate::unit_auras::UnitAuras>,
+    /// Where the caster stands, for the place legs.
+    pub(crate) place: UsablePlace,
 }
 
 /// The aura tables the usable walk's feeds read.
@@ -640,6 +716,23 @@ pub(crate) fn spell_usable(
     if d.cooldown_on_event() && ctx.cooldowns.has_on_hold_record(spell_id, 0, d.category) {
         return (false, false);
     }
+    // The place legs (`0x80b5d0`'s tail): an indoors-only spell greys outdoors and an
+    // outdoors-only one (every mount) indoors; then a flyable-zone spell (the flying mounts, the
+    // flight forms) greys outside a flyable zone, as Dalaran City is (`AreaTable` flag
+    // `0x20000000`).
+    if d.attributes & (ATTR_INDOORS_ONLY | ATTR_OUTDOORS_ONLY) != 0 {
+        let refused = if ctx.place.outdoors {
+            ATTR_INDOORS_ONLY
+        } else {
+            ATTR_OUTDOORS_ONLY
+        };
+        if d.attributes & refused != 0 {
+            return (false, false);
+        }
+    }
+    if d.attributes_ex4 & ATTR_EX4_ONLY_FLYABLE_ZONE != 0 && !ctx.place.flyable_zone {
+        return (false, false);
+    }
     // Leg 12: power, the only notEnoughMana writer. A rune spell asks the rune table instead of a
     // pool (the power check, `0x801826`).
     let affordable = if d.power_type == POWER_RUNE {
@@ -1097,6 +1190,7 @@ mod tests {
         UsableCtx {
             self_auras: None,
             target_auras: None,
+            place: OPEN_SKY,
             store,
             target_store: None,
             factions: None,
@@ -1111,6 +1205,12 @@ mod tests {
         }
     }
 
+    /// Outdoors in a flyable zone: every place leg passes.
+    const OPEN_SKY: UsablePlace = UsablePlace {
+        outdoors: true,
+        flyable_zone: true,
+    };
+
     fn walk(d: &SpellDisplay, store: &ObjectStore) -> (bool, bool) {
         walk_with_combo(d, store, 0)
     }
@@ -1124,6 +1224,16 @@ mod tests {
         store: &ObjectStore,
         combo_points: u8,
         auto_unshift: bool,
+    ) -> (bool, bool) {
+        walk_in(d, store, combo_points, auto_unshift, OPEN_SKY)
+    }
+
+    fn walk_in(
+        d: &SpellDisplay,
+        store: &ObjectStore,
+        combo_points: u8,
+        auto_unshift: bool,
+        place: UsablePlace,
     ) -> (bool, bool) {
         let cooldowns = Cooldowns::default();
         let reputations = Reputations(Vec::new(), Vec::new());
@@ -1142,12 +1252,100 @@ mod tests {
             &UsableCtx {
                 combo_points,
                 auto_unshift,
+                place,
                 ..ctx(store, &cooldowns, &reputations, &carried, &spell_mods)
             },
             &objects,
             &items,
             &commands,
         )
+    }
+
+    /// The place legs (`0x80b5d0`'s tail) on the mounts' own rows: Brown Horse (458) and Golden
+    /// Gryphon (32235) carry `Attributes 0x10158110`, outdoors only; the gryphon also carries
+    /// `AttributesExD 0x04000000`, flyable zone only.
+    #[test]
+    fn mounts_grey_indoors_and_flying_mounts_outside_a_flyable_zone() {
+        let me = player(&[]);
+        let mount = |attributes_ex4, mana_cost| SpellDisplay {
+            attributes: 0x1015_8110,
+            attributes_ex4,
+            mana_cost,
+            ..Default::default()
+        };
+        let (horse, gryphon) = (mount(0, 0), mount(ATTR_EX4_ONLY_FLYABLE_ZONE, 0));
+        let indoors_only = SpellDisplay {
+            attributes: ATTR_INDOORS_ONLY,
+            ..Default::default()
+        };
+        let at = |outdoors, flyable_zone| UsablePlace {
+            outdoors,
+            flyable_zone,
+        };
+        let walk = |d: &SpellDisplay, place| walk_in(d, &me, 0, false, place);
+
+        // Krasus' Landing: outdoors and flyable.
+        assert_eq!(walk(&horse, at(true, true)), (true, false));
+        assert_eq!(walk(&gryphon, at(true, true)), (true, false));
+        assert_eq!(walk(&indoors_only, at(true, true)), (false, false));
+        // Dalaran City: outdoors, not flyable; the ground mount stays lit.
+        assert_eq!(walk(&horse, at(true, false)), (true, false));
+        assert_eq!(walk(&gryphon, at(true, false)), (false, false));
+        // Indoors: every mount greys, the indoors-only spell lights.
+        assert_eq!(walk(&horse, at(false, true)), (false, false));
+        assert_eq!(walk(&gryphon, at(false, true)), (false, false));
+        assert_eq!(walk(&indoors_only, at(false, false)), (true, false));
+        // A spell with neither attribute ignores the place.
+        assert_eq!(
+            walk(&SpellDisplay::default(), at(false, false)),
+            (true, false)
+        );
+        // The place legs run before power, so a gryphon without the mana is grey, not out of mana.
+        let costly = mount(ATTR_EX4_ONLY_FLYABLE_ZONE, 501);
+        assert_eq!(walk(&costly, at(true, false)), (false, false));
+        assert_eq!(walk(&costly, at(true, true)), (false, true));
+    }
+
+    /// `IsInFlyableZone(1)` (`0x7261b0`): the area's verdict, then on map 571 Cold Weather Flying
+    /// for a player alone.
+    #[test]
+    fn the_flyable_zone_asks_a_player_in_northrend_for_cold_weather_flying() {
+        use crate::area::PlayerPlace;
+        let open = PlayerPlace {
+            indoors: false,
+            flyable_area: true,
+        };
+        let city = PlayerPlace {
+            indoors: false,
+            flyable_area: false,
+        };
+        let inside = PlayerPlace {
+            indoors: true,
+            flyable_area: true,
+        };
+        let flyable = |place, map, cwf| UsablePlace::of(place, map, cwf).flyable_zone;
+
+        assert!(
+            flyable(Some(&open), Some(530), Some(false)),
+            "Outland needs no spell"
+        );
+        assert!(!flyable(Some(&open), Some(NORTHREND), Some(false)));
+        assert!(flyable(Some(&open), Some(NORTHREND), Some(true)));
+        assert!(
+            flyable(Some(&open), Some(NORTHREND), None),
+            "a pet skips the leg"
+        );
+        assert!(
+            !flyable(Some(&city), Some(NORTHREND), Some(true)),
+            "Dalaran City"
+        );
+        assert!(
+            !flyable(None, Some(530), Some(true)),
+            "no area resolved yet"
+        );
+        assert!(!UsablePlace::of(Some(&inside), Some(530), Some(true)).outdoors);
+        assert!(UsablePlace::of(Some(&open), Some(530), Some(true)).outdoors);
+        assert!(UsablePlace::of(None, None, Some(true)).outdoors);
     }
 
     /// The form leg (`0x80b5d0`): a spell its form refuses stays lit when the player can leave it.
@@ -1927,6 +2125,7 @@ mod tests {
             let ctx = UsableCtx {
                 self_auras: None,
                 target_auras: None,
+                place: OPEN_SKY,
                 store: &me,
                 target_store: Some(target),
                 factions: None,
