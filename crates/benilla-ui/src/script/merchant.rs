@@ -625,14 +625,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ShowMerchantSellCursor(index) (`0x5856d0`) and ShowBuybackSellCursor(index) (`0x585890`):
     // despite the names, the buy cursor, re-armed each frame an item is hovered. Every fail path
-    // returns without setting the cursor mode; the base-mode Point gate lives app-side. The
-    // merchant cursor's reputation, points and cost-item tests are not built: only the copper is.
+    // returns without setting the cursor mode; the base-mode Point gate lives app-side.
     g.set(
         "ShowMerchantSellCursor",
         lua.create_function(|lua, index: usize| {
-            arm_vendor_cursor(lua, |m| {
-                m.items.get(index.wrapping_sub(1)).map(|it| it.price)
-            });
+            let mut model = crate::script::model_mut_of(lua);
+            if model.spell_targeting {
+                return Ok(());
+            }
+            let Some(mode) = merchant_cursor_mode(&model, index.wrapping_sub(1)) else {
+                return Ok(());
+            };
+            model.ui_cursor = Some(mode);
+            model.ui_cursor_dirty = true;
             Ok(())
         })?,
     )?;
@@ -647,6 +652,59 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     Ok(())
+}
+
+/// A vendor row's buy cursor (`0x5856d0`): UnableBuy short of the copper or the template's
+/// reputation, Buy with no template or no extended cost, else UnableBuy short of the points, a
+/// cost item or the arena rating; `None` for no row.
+fn merchant_cursor_mode(model: &super::Model, index: usize) -> Option<UiCursorMode> {
+    let row = model
+        .merchant
+        .as_ref()?
+        .items
+        .get(index)
+        .filter(|it| it.item_id != 0)?;
+    if model.money < u64::from(row.price) {
+        return Some(UiCursorMode::UnableBuy);
+    }
+    let Some(t) = model.item_templates.get(&row.item_id) else {
+        return Some(UiCursorMode::Buy);
+    };
+    // The standing test (`0x585798`), as ranks, as the usable gate reads it.
+    if t.required_rep_faction != 0
+        && model
+            .player_req
+            .rep_ranks
+            .get(&t.required_rep_faction)
+            .map_or(0, |&r| u32::from(r))
+            < t.required_rep_rank
+    {
+        return Some(UiCursorMode::UnableBuy);
+    }
+    let Some(cost) = row.extended_cost.as_ref() else {
+        return Some(UiCursorMode::Buy);
+    };
+    let (honor, arena) = model
+        .honor
+        .as_ref()
+        .map_or((0, 0), |h| (h.honor_currency, h.arena_currency));
+    let short = honor < cost.honor
+        || arena < cost.arena
+        || cost.items.iter().any(|c| {
+            c.count > 0
+                && super::item_search::held_count(model, c.item_id, false, false) < c.count
+        })
+        // Unlike `GetMerchantItemInfo`, a bracket off 0..=2 skips the rating test (`0x58584b`).
+        || cost.required_rating != 0
+            && (0..3).contains(&cost.arena_bracket)
+            && !model
+                .arena_teams
+                .rating_met(cost.required_rating, cost.arena_bracket);
+    Some(if short {
+        UiCursorMode::UnableBuy
+    } else {
+        UiCursorMode::Buy
+    })
 }
 
 /// Arm the vendor hover cursor from a row's price: Buy(3) if the player can afford it, else the
@@ -1281,6 +1339,94 @@ mod tests {
         s.run("ShowMerchantSellCursor(99)").unwrap();
         assert_eq!(s.ui_cursor(), Some(UiCursorMode::Buy));
     }
+    /// The merchant row's buy cursor (`0x5856d0`) past the copper: the template's reputation, then
+    /// the points, the cost items and the arena rating, each a red cursor when short.
+    #[test]
+    fn the_merchant_cursor_reads_the_extended_cost_and_the_arena_rating() {
+        use crate::script::{
+            ArenaTeamRecordView, ArenaTeamSlotView, ContainerSlot, ContainerState, HonorState,
+            ItemTemplateView, PlayerReqState, UiCursorMode,
+        };
+        let mut s = UiScript::new().unwrap();
+        let mut row = token_row();
+        row.extended_cost.as_mut().unwrap().items.truncate(1); // three of item 20560
+        let mut state = stock();
+        state.items.push(row);
+        s.set_merchant(Some(state.clone()));
+        s.set_money(100);
+        let cursor = |s: &mut UiScript| {
+            s.run("ResetCursor(); ShowMerchantSellCursor(3)").unwrap();
+            s.ui_cursor()
+        };
+        // No template yet: the copper alone.
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy));
+
+        s.set_item_template(
+            42133,
+            ItemTemplateView {
+                required_rep_faction: 72,
+                required_rep_rank: 5,
+                ..Default::default()
+            },
+        );
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "reputation");
+        let mut req = PlayerReqState::default();
+        req.rep_ranks.insert(72, 5);
+        s.set_player_req_state(req);
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "honor");
+
+        s.set_honor(Some(HonorState {
+            honor_currency: 7000,
+            ..Default::default()
+        }));
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "cost item");
+        let mut slots = std::collections::HashMap::new();
+        slots.insert(
+            1,
+            ContainerSlot {
+                item_id: 20560,
+                count: 3,
+                ..Default::default()
+            },
+        );
+        s.set_container(
+            0,
+            Some(ContainerState {
+                num_slots: 16,
+                slots,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy));
+
+        // A rated row with no team is short; a bracket off 0..=2 skips the test (`0x58584b`).
+        let rated = |bracket: i32| {
+            let mut st = state.clone();
+            let c = st.items[2].extended_cost.as_mut().unwrap();
+            (c.required_rating, c.arena_bracket) = (1800, bracket);
+            st
+        };
+        s.set_merchant(Some(rated(1)));
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "no team");
+        s.set_merchant(Some(rated(3)));
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "bracket skipped");
+        s.set_merchant(Some(rated(1)));
+        s.set_arena_teams([
+            ArenaTeamSlotView {
+                info: [7, 3, 1, 0, 0, 0, 1800],
+                record: Some(ArenaTeamRecordView {
+                    team_type: 3,
+                    ..Default::default()
+                }),
+                stats: [1800, 0, 0, 0, 0, 0],
+                members: Vec::new(),
+            },
+            Default::default(),
+            Default::default(),
+        ]);
+        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "rating met");
+    }
+
     #[test]
     fn pickup_merchant_item_grabs_a_row_as_mode_5() {
         let mut s = UiScript::new().unwrap();
