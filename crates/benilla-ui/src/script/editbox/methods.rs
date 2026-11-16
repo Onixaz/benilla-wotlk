@@ -109,6 +109,17 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    crate::script::font::install_frame_indented_wrap(lua, &m, false)?;
+    // IsInIMECompositionMode (`0x976940`): 1 while an IME composition is open (`+0x354`), else
+    // nil; with no IME, as here, never.
+    m.set(
+        "IsInIMECompositionMode",
+        lua.create_function(|lua, this: Table| {
+            frame_handle_of(lua, &this)?;
+            Ok(Value::Nil)
+        })?,
+    )?;
+
     // GetInputLanguage/ToggleInputLanguage: the IME's input language, not the chat language. With
     // no IME, as here, the answer is "ROMAN" and the toggle does nothing.
     m.set(

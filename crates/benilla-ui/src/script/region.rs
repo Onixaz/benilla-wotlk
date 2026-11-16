@@ -406,6 +406,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
 
     // In any order: each only adds to the same method table.
     paint::install(lua, &m)?;
+    super::object::mouse_over::install_region(lua, &m)?;
     text::install(lua, &m)?;
     layout::install(lua, &m)?;
 

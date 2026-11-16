@@ -1,8 +1,8 @@
 //! Font objects: a `<Font name=…>` or a `CreateFont` font is a Lua object, published as the global
 //! of its name with its own method table. Stock FrameXML never calls this API; addons do.
 //!
-//! The reference's font class has a method table of 22 entries (`mov edx,0x16`), and its lookup
-//! has no base-class fallback. All are here but the `SetSpacing` pair ([`install`]);
+//! The reference's font class has a method table of 24 entries (`0xac1818`), and its lookup
+//! has no base-class fallback, so a font object has no `GetParent`. All are here ([`install`]);
 //! `CopyFontObject` is the one a FontString lacks. A named font is published by the reference
 //! through its name setter and its Lua-handle create, which leaves a non-nil `_G[name]` alone.
 //!
@@ -196,6 +196,66 @@ fn read(lua: &Lua, this: &Table) -> mlua::Result<FontObject> {
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model");
     Ok(model.font_object(&name).cloned().unwrap_or_default())
+}
+
+/// `SetIndentedWordWrap`/`GetIndentedWordWrap` on a frame class with fonts of its own (a message
+/// frame's, an edit box's, a SimpleHTML's), each pair handing the call to that font's helpers
+/// (`0x4a4a50`, `0x4a40e0`): the setter reads the boolean argument (`0x815500`, an absent one on)
+/// and answers nothing, the getter answers 1 or nil. A SimpleHTML first takes an optional `"P"`,
+/// `"H1"`, `"H2"` or `"H3"` off the stack (`0x9748f0`), choosing one of its four fonts, `P` when
+/// absent.
+pub(super) fn install_frame_indented_wrap(lua: &Lua, m: &Table, html: bool) -> mlua::Result<()> {
+    /// The receiver, the font slot and the rest of the arguments.
+    fn split(
+        lua: &Lua,
+        args: mlua::MultiValue,
+        html: bool,
+    ) -> mlua::Result<(crate::widget::FrameHandle, u8, mlua::MultiValue)> {
+        let mut args = args.into_iter();
+        let Some(Value::Table(this)) = args.next() else {
+            return Err(mlua::Error::runtime("expected a frame"));
+        };
+        let h = super::object::frame_handle_of(lua, &this)?;
+        let mut rest: mlua::MultiValue = args.collect();
+        let mut slot = 0;
+        if html {
+            if let Some(Value::String(s)) = rest.front() {
+                let pick = ["P", "H1", "H2", "H3"]
+                    .iter()
+                    .position(|t| s.as_bytes().eq_ignore_ascii_case(t.as_bytes()));
+                if let Some(i) = pick {
+                    slot = i as u8;
+                    rest.pop_front();
+                }
+            }
+        }
+        Ok((h, slot, rest))
+    }
+    m.set(
+        "SetIndentedWordWrap",
+        lua.create_function(move |lua, args: mlua::MultiValue| {
+            let (h, slot, rest) = split(lua, args, html)?;
+            let on = binding_abi::bool_or_default(rest.front(), true);
+            let mut model = crate::script::model_mut_of(lua);
+            if on {
+                model.frame_indented_wrap.insert((h, slot));
+            } else {
+                model.frame_indented_wrap.remove(&(h, slot));
+            }
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "GetIndentedWordWrap",
+        lua.create_function(move |lua, args: mlua::MultiValue| {
+            let (h, slot, _) = split(lua, args, html)?;
+            let model = crate::script::model_mut_of(lua);
+            Ok(binding_abi::flag(
+                model.frame_indented_wrap.contains(&(h, slot)),
+            ))
+        })?,
+    )?;
+    Ok(())
 }
 
 // ── install: the method table, the metatable and CreateFont ──────────────────────────────────
@@ -445,6 +505,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(justify::name_v(
                 read(lua, &this)?.justify_v.unwrap_or_default(),
             ))
+        })?,
+    )?;
+    // SetIndentedWordWrap(flag) (`0x4a4b50`): the boolean argument (`0x815500`, an absent one on)
+    // into style bit `0x20000`, then the dependents notice; GetIndentedWordWrap (`0x4a48a0`)
+    // answers 1 or nil.
+    m.set(
+        "SetIndentedWordWrap",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let Some(Value::Table(this)) = args.front() else {
+                return Err(mlua::Error::runtime("expected a font object"));
+            };
+            let on = crate::script::binding_abi::bool_or_default(args.get(1), true);
+            edit(lua, this, |fo| fo.indented_word_wrap = on)
+        })?,
+    )?;
+    m.set(
+        "GetIndentedWordWrap",
+        lua.create_function(|lua, this: Table| {
+            Ok(binding_abi::flag(read(lua, &this)?.indented_word_wrap))
         })?,
     )?;
 

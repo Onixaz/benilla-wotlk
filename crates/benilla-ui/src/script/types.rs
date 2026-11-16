@@ -312,6 +312,9 @@ pub struct FontObject {
     /// The line gap in logical px (`spacing=`, `SetSpacing`), held once set (`0x4a3f90`'s
     /// `0x1000` bit); `None` leaves an inheriting FontString's own.
     pub spacing: Option<f32>,
+    /// `SetIndentedWordWrap`, the style bit `0x20000` (`0x4a4a50`), off from the constructor's
+    /// `0x212`; an inheriting FontString answers it until it sets its own.
+    pub indented_word_wrap: bool,
 }
 
 /// One entry of [`UiScript::extract`](super::UiScript::extract)'s render list, in the client's
@@ -402,6 +405,21 @@ pub(crate) struct RegionData {
     pub(crate) anchors: Vec<Anchor>,
     /// `SetDesaturated`: the renderer greys the texel, so the binding reports support.
     pub(crate) desaturated: bool,
+    /// `SetHorizTile`/`SetVertTile`, XML `horizTile`/`vertTile`: the texture's `+0x160` bits `0x4`
+    /// and `0x8`. A set axis maps each nonzero texcoord to the region's extent over the file's
+    /// texel extent when the texture is queued (`0x4847a0`), so the art repeats at one texel per
+    /// unit.
+    pub(crate) tile: (bool, bool),
+    /// `SetNonBlocking`, `+0x160` bit `0x1`: the reference then asks for the file without waiting
+    /// on its load. Stored, not applied: benilla's loads never block the frame.
+    pub(crate) non_blocking: bool,
+    /// `SetWordWrap(false)`, the font string's style bit `0x40`. Stored, not applied: the reference
+    /// then lays the text out on one line; here it still wraps at the rect's width.
+    pub(crate) no_word_wrap: bool,
+    /// The style bit `0x20000`, the indented word wrap, set through the FontString's
+    /// `GetIndentedWordWrap` (12340 registers the pair swapped); `None` reads its font object's.
+    /// Stored, not applied: a wrapped line's indent is not drawn.
+    pub(crate) indented_word_wrap: Option<bool>,
     /// `SetNonSpaceWrap`/`CanNonSpaceWrap`, `None` on. Stored, not applied: the reference's flag
     /// `0x40` drives a mid-word wrap and the ellipsis fit count.
     pub(crate) non_space_wrap: Option<bool>,

@@ -360,8 +360,8 @@ impl Loader<'_> {
     }
 
     /// `<ScrollingMessageFrame>` and `<MessageFrame>`, two loaders: both take `displayDuration` and
-    /// `fadeDuration` (only when > 0) and `fade`; only the scrolling one has `maxLines` (> 0), only
-    /// the plain one `insertMode`. The line font and its `justifyH` come from the direct-child
+    /// `fadeDuration` (only when > 0), `fade` and `insertMode`; only the scrolling one has `maxLines`
+    /// (> 0). The line font and its `justifyH` come from the direct-child
     /// `<FontString>`.
     pub(super) fn apply_messageframe(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         let scrolling = el.tag.eq_ignore_ascii_case("ScrollingMessageFrame");
@@ -379,10 +379,15 @@ impl Loader<'_> {
                 }
             }
         }
-        if plain {
-            if let Some(mode) = el.attr("insertMode") {
-                self.call(wrapper, "SetInsertMode", mode.trim().to_string(), dbg);
-            }
+        if let Some(mode) = el.attr("insertMode").filter(|m| !m.is_empty()) {
+            // The scrolling loader (`0x96ac50`) takes "TOP" as TOP and any other value as BOTTOM,
+            // where its Lua setter raises on one; the plain setter reads it as it is.
+            let mode = if scrolling && !mode.eq_ignore_ascii_case("TOP") {
+                "BOTTOM".to_string()
+            } else {
+                mode.trim().to_string()
+            };
+            self.call(wrapper, "SetInsertMode", mode, dbg);
         }
         if let Some(s) = el
             .attr("displayDuration")

@@ -325,6 +325,91 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetStringHeight (`0x48df00`): the measured height of the wrapped text, 0 for empty text.
+    m.set(
+        "GetStringHeight",
+        lua.create_function(|lua, this: Table| {
+            let rh = region_handle_of(lua, &this)?;
+            crate::script::measure::ensure_measured(lua, rh);
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            let Some(d) = model.region_data.get(&rh) else {
+                return Ok(0.0);
+            };
+            let scale = model
+                .arena
+                .region(rh)
+                .and_then(|r| model.arena.frame(r.owner))
+                .map(|f| f.effective_scale)
+                .unwrap_or(1.0);
+            Ok(d.laid_measure()
+                .filter(|m| m.key == d.measure_key(scale))
+                .map(|m| m.h)
+                .unwrap_or(0.0))
+        })?,
+    )?;
+
+    // The style-flag pairs, each setter reading the boolean argument (`0x815500`, an absent one on)
+    // and answering nothing, each getter answering 1 or nil. `SetWordWrap` (`0x48e580`) clears bit
+    // `0x40`, which `CanWordWrap` (`0x48e080`) tests clear. 12340 registers the indented pair
+    // swapped on the FontString: `GetIndentedWordWrap` is the setter (`0x48e600`) and
+    // `SetIndentedWordWrap` the getter (`0x48e0e0`), unlike every other class's.
+    // The indented bit is one the font object carries, so an inheriting string reads its object's
+    // until it sets its own, which clears its inherit bit.
+    fn flag_arg(args: &mlua::MultiValue) -> mlua::Result<(Table, bool)> {
+        match args.front() {
+            Some(Value::Table(t)) => Ok((
+                t.clone(),
+                crate::script::binding_abi::bool_or_default(args.get(1), true),
+            )),
+            _ => Err(mlua::Error::runtime("expected a font string")),
+        }
+    }
+    m.set(
+        "SetWordWrap",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let (this, on) = flag_arg(&args)?;
+            let rh = region_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            model.region_data.entry(rh).or_default().no_word_wrap = !on;
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "CanWordWrap",
+        lua.create_function(|lua, this: Table| {
+            let rh = region_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            let off = model.region_data.get(&rh).is_some_and(|d| d.no_word_wrap);
+            Ok(crate::script::binding_abi::flag(!off))
+        })?,
+    )?;
+    m.set(
+        "GetIndentedWordWrap",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let (this, on) = flag_arg(&args)?;
+            let rh = region_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            model.region_data.entry(rh).or_default().indented_word_wrap = Some(on);
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "SetIndentedWordWrap",
+        lua.create_function(|lua, this: Table| {
+            let rh = region_handle_of(lua, &this)?;
+            let model = crate::script::model_mut_of(lua);
+            let d = model.region_data.get(&rh);
+            let on = d.and_then(|d| d.indented_word_wrap).unwrap_or_else(|| {
+                d.and_then(|d| d.font_object.as_deref())
+                    .and_then(|n| model.font_object(n))
+                    .is_some_and(|fo| fo.indented_word_wrap)
+            });
+            Ok(crate::script::binding_abi::flag(on))
+        })?,
+    )?;
+
     // GetFieldSize() (`0x48bc70`): the text buffer's size, the constant 8191 (`0x9ead70`).
     m.set(
         "GetFieldSize",

@@ -84,7 +84,7 @@ mod battlefield_queue;
 mod battlefield_score;
 mod bind_confirm;
 mod binder;
-mod binding_abi;
+pub(crate) mod binding_abi;
 mod binding_commands;
 mod dialog_verbs;
 pub mod focus;
@@ -565,7 +565,7 @@ pub(crate) const REGION_LEAF_SHARED: [&str; 9] = [
 /// Texture-only, each in the client's Texture map: `GetVertexColor` though `SetVertexColor` is
 /// shared, and `SetGradientAlpha`, not FontString's `SetAlphaGradient`. No Texture `SetSize`;
 /// 3.3.5a's `SetRotation` is `0x48c860`.
-pub(crate) const TEXTURE_ONLY_METHODS: [&str; 13] = [
+pub(crate) const TEXTURE_ONLY_METHODS: [&str; 20] = [
     "SetGradient",
     "SetGradientAlpha",
     "GetTexture",
@@ -579,12 +579,18 @@ pub(crate) const TEXTURE_ONLY_METHODS: [&str; 13] = [
     "SetDesaturated",
     "GetVertexColor",
     "SetRotation",
+    "IsDesaturated",
+    "SetHorizTile",
+    "GetHorizTile",
+    "SetVertTile",
+    "GetVertTile",
+    "SetNonBlocking",
+    "GetNonBlocking",
 ];
 
-/// FontString-only: the font, text, justify and shadow block and the string metrics.
-/// `GetStringHeight`, `SetFormattedText` and `SetSize` are not 1.12 FontString methods; 3.3.5a's
-/// `SetFormattedText` goes into the leaf alone (`region::text::install_formatted`).
-pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 24] = [
+/// FontString-only: the font, text, justify and shadow block, the string metrics and the wrap
+/// flags; `SetFormattedText` goes into the leaf alone (`region::text::install_formatted`).
+pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 29] = [
     "SetFont",
     "GetFont",
     "SetFontObject",
@@ -609,11 +615,16 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 24] = [
     "SetAlphaGradient",
     "SetSpacing",
     "GetSpacing",
+    "GetStringHeight",
+    "SetWordWrap",
+    "CanWordWrap",
+    "SetIndentedWordWrap",
+    "GetIndentedWordWrap",
 ];
 
 /// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize`,
 /// `GetSize` and `GetRect` (`0x49d7a0`, `0x49d6f0`, `0x49ce50`, registrar `0xac1480`) among them.
-pub(crate) const REGION_MAP_METHODS: [&str; 27] = [
+pub(crate) const REGION_MAP_METHODS: [&str; 29] = [
     "IsProtected",
     "CanChangeProtectedState",
     "GetObjectType",
@@ -641,6 +652,8 @@ pub(crate) const REGION_MAP_METHODS: [&str; 27] = [
     "CreateAnimationGroup",
     "GetAnimationGroups",
     "StopAnimating",
+    "IsDragging",
+    "IsMouseOver",
 ];
 const REG_WRAPPERS: &str = "__benilla_wrappers";
 const REG_SCRIPTS: &str = "__benilla_scripts";

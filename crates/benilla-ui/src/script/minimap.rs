@@ -177,6 +177,87 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
+    // The art setters: a string, else the named Usage, and a file that does not load raises. The
+    // six blip and arrow arts are each one texture every minimap shares (`0x583980`..`0x583f60`),
+    // the player arrow's is the frame's own (`0x57e100`); the usage and load-error texts are the
+    // reference's, its `SetCorspePOITexture` spelling included. Stored, not drawn: the app's
+    // minimap paints its stock art.
+    for (name, usage, load) in [
+        ("SetIconTexture", "SetIconTexture", "SetIconTexture"),
+        ("SetBlipTexture", "SetBlipTexture", "SetBlipTexture"),
+        (
+            "SetClassBlipTexture",
+            "SetClassBlipTexture",
+            "SetClassBlipTexture",
+        ),
+        ("SetPOIArrowTexture", "SetPOITexture", "SetPOITexture"),
+        (
+            "SetStaticPOIArrowTexture",
+            "SetStaticPOITexture",
+            "SetStaticPOITexture",
+        ),
+        (
+            "SetCorpsePOIArrowTexture",
+            "SetCorpsePOITexture",
+            "SetCorspePOITexture",
+        ),
+        ("SetPlayerTexture", "SetPlayerTexture", "SetPlayerTexture"),
+    ] {
+        m.set(
+            name,
+            lua.create_function(move |lua, (this, file): (Table, mlua::Value)| {
+                let who = || -> mlua::Result<String> {
+                    let n: Option<String> =
+                        this.get::<mlua::Function>("GetName")?.call(this.clone())?;
+                    Ok(n.unwrap_or_else(|| super::object::anchor_args::UNNAMED.to_string()))
+                };
+                let file = match &file {
+                    mlua::Value::String(s) => s.to_str()?.to_string(),
+                    mlua::Value::Integer(_) | mlua::Value::Number(_) => lua
+                        .coerce_string(file.clone())?
+                        .map(|s| s.to_string_lossy())
+                        .unwrap_or_default(),
+                    _ => {
+                        return Err(mlua::Error::runtime(format!(
+                            "Usage: {}:{usage}(\"file\")",
+                            who()?
+                        )))
+                    }
+                };
+                // The blip setter alone also refuses an empty name.
+                if name == "SetBlipTexture" && file.is_empty() {
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {}:{usage}(\"file\")",
+                        who()?
+                    )));
+                }
+                with_minimap(lua, &this, |_| ())?;
+                let loads = {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model
+                        .texture_size_probe
+                        .as_ref()
+                        .is_none_or(|probe| probe(&file).is_some())
+                };
+                if !loads {
+                    return Err(mlua::Error::runtime(format!(
+                        "{}:{load}(): Couldn't load the file {file}",
+                        who()?
+                    )));
+                }
+                if name == "SetPlayerTexture" {
+                    with_minimap(lua, &this, |m| m.player_texture = Some(file))
+                } else {
+                    crate::script::model_mut_of(lua)
+                        .minimap_art
+                        .insert(name, file);
+                    Ok(())
+                }
+            })?,
+        )?;
+    }
     lua.set_named_registry_value(REG_MINIMAP_METHODS, m)?;
     Ok(())
 }

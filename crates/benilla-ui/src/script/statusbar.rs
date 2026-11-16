@@ -3,11 +3,11 @@
 //! extract. Only StatusBar frames answer these, so a duck-typing addon sees nil on every other
 //! kind.
 
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, MultiValue, Table, Value};
 
 use super::object::{draw_layer_from_str, frame_handle_of};
 use super::region::region_wrapper;
-use super::{event, RegionData};
+use super::{event, RegionData, TexCoords};
 use crate::order::DrawLayer;
 use crate::widget::{KindState, RegionKind, StatusBarState};
 
@@ -133,6 +133,45 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
             };
             with_bar(lua, &this, |sb| sb.vertical = vertical)
+        })?,
+    )?;
+    // SetRotatesTexture(flag) (`0x9719d0` → `0x961d70`): the boolean argument (`0x815500`, an
+    // absent one off) into bit `0x8`; on maps the bar texture a quarter turn (UL `(0,1)`, LL
+    // `(1,1)`, UR `(0,0)`, LR `(1,0)`), off resets it to the whole texture. GetRotatesTexture
+    // (`0x971970`) answers 1 or nil.
+    m.set(
+        "SetRotatesTexture",
+        lua.create_function(|lua, args: MultiValue| {
+            let Some(Value::Table(this)) = args.front() else {
+                return Err(mlua::Error::runtime("expected a StatusBar"));
+            };
+            let on = crate::script::binding_abi::bool_or_default(args.get(1), false);
+            let bar = with_bar(lua, this, |sb| {
+                sb.rotates_texture = on;
+                sb.bar
+            })?;
+            if let Some(rh) = bar {
+                let coords = if on {
+                    TexCoords::Corners([[0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
+                } else {
+                    TexCoords::Rect([0.0, 1.0, 0.0, 1.0])
+                };
+                let mut model = crate::script::model_mut_of(lua);
+                model
+                    .paint_mut(&[crate::order::ZTarget::Region(rh)])
+                    .region_data
+                    .entry(rh)
+                    .or_default()
+                    .tex_coords = Some(coords);
+            }
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "GetRotatesTexture",
+        lua.create_function(|lua, this: Table| {
+            let on = with_bar(lua, &this, |sb| sb.rotates_texture)?;
+            Ok(crate::script::binding_abi::flag(on))
         })?,
     )?;
     m.set(

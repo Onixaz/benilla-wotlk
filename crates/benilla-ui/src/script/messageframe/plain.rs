@@ -1,8 +1,8 @@
 //! The `MessageFrame` methods over [`MessageFrameState`](crate::widget::MessageFrameState):
 //! `UIErrorsFrame`'s class and what `CreateFrame("MessageFrame")` makes. Its
 //! `AddMessage(text [, r, g, b [, a]])` takes a real alpha and reads nothing after it, where the
-//! scrolling class's takes an id there and forces alpha opaque. `SetInsertMode` and `GetInsertMode`
-//! exist on this class only.
+//! scrolling class's takes an id there and forces alpha opaque. Its `SetInsertMode` reads any
+//! name but BOTTOM as TOP, where the scrolling class's raises on one.
 
 use mlua::{Lua, Table, Value};
 
@@ -45,6 +45,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // The justify quartet, on both classes ([`super::install_justify`]).
     super::install_justify(lua, &m, "MessageFrame")?;
+    crate::script::font::install_frame_indented_wrap(lua, &m, false)?;
 
     // AddMessage(text [, r, g, b [, a]]). An unusable text is a silent no-op
     // ([`super::message_text`]). r, g and b count only as a trio, else white, and a bad colour
@@ -239,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn set_insert_mode_is_messageframe_only() {
+    fn set_insert_mode_is_on_both_message_classes() {
         let s = UiScript::new().unwrap();
         s.run(
             "CreateFrame('MessageFrame', 'MF')\n\
@@ -259,8 +260,8 @@ mod tests {
         );
         assert_eq!(
             s.eval::<String>("return type(SMF.SetInsertMode)").unwrap(),
-            "nil",
-            "the scrolling class has no SetInsertMode binding at all"
+            "function",
+            "the scrolling class has its own pair (`0x973b10`, `0x973bd0`)"
         );
         assert_eq!(
             s.eval::<String>("return MF:GetInsertMode()").unwrap(),
