@@ -44,11 +44,11 @@ const ITEM_FLAG_BREAK_IGNORED: u32 = 0x0000_0008;
 
 /// `Attributes` bits 14 and 15, the place legs' first pair: indoors only and outdoors only, tested
 /// against `CGUnit_C::IsOutdoors` (`0x71b7f0`).
-const ATTR_INDOORS_ONLY: u32 = 0x0000_4000;
-const ATTR_OUTDOORS_ONLY: u32 = 0x0000_8000;
+pub(crate) const ATTR_INDOORS_ONLY: u32 = 0x0000_4000;
+pub(crate) const ATTR_OUTDOORS_ONLY: u32 = 0x0000_8000;
 /// `AttributesExD` bit 26: only in a flyable zone (the flying mounts and flight forms), tested
 /// against `CGPlayer_C::IsInFlyableZone(1)` (`0x7261b0`).
-const ATTR_EX4_ONLY_FLYABLE_ZONE: u32 = 0x0400_0000;
+pub(crate) const ATTR_EX4_ONLY_FLYABLE_ZONE: u32 = 0x0400_0000;
 /// Cold Weather Flying, which `IsInFlyableZone`'s continent leg asks a player to know on map 571.
 pub(crate) const COLD_WEATHER_FLYING: u32 = 54197;
 /// Northrend, the one map the continent leg names.
