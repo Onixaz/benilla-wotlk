@@ -90,6 +90,7 @@ local VERBS = {
     { "bfpos", function() return GetNumBattlefieldPositions() end },
     { "bfpos1", function() return (select(3, GetBattlefieldPosition(1))) end },
     { "bfstats", function() return GetNumBattlefieldStats() end },
+    { "ap1", function() return UnitExists("arenapet1") end },
 }
 local function answers()
     local verbs = {}
@@ -1999,6 +2000,56 @@ fn an_arena_opponent_seen_before_it_streams_in_reads_its_unit_at_the_create() {
     );
 }
 
+/// The party stats' opponent signals before its pet lands (`0x6cf9fa` -> `0x54b840`, then `0x6cfc45`).
+#[test]
+fn an_arena_opponents_pet_lands_after_the_opponents_signals() {
+    let Some(mut rig) = arena_rig() else {
+        return;
+    };
+    const ARENA_PET: u64 = 0xF140_0000_0200_0001;
+    let pet = SessionEvent::ObjectCreate {
+        guid: ARENA_PET,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (2, 0x9),
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+            (FIELD_UNIT_LEVEL, 80),
+        ])
+        .into_created(ObjectType::Unit),
+    };
+    let stats = SessionEvent::PartyMemberStats {
+        guid: 0x55,
+        full: true,
+        info: Box::new(benilla_protocol::messages::PartyMemberStatsInfo {
+            arena_opponent: true,
+            pet_guid: Some(ARENA_PET),
+            ..Default::default()
+        }),
+    };
+    let seen = rig.packets(vec![pet, stats], 2);
+    assert_eq!(
+        pin(&seen, &["ARENA_OPPONENT_UPDATE"], &["opps", "ap1"]),
+        vec![
+            "ARENA_OPPONENT_UPDATE arena1 seen | opps=1 ap1=nil",
+            "ARENA_OPPONENT_UPDATE arena1 unseen | opps=1 ap1=nil",
+            "ARENA_OPPONENT_UPDATE arenapet1 seen | opps=1 ap1=1",
+        ]
+    );
+}
+
 /// Our honor watches fire from the values handler in field order (`0x6e5180`'s list):
 /// `PLAYER_BYTES_3` (`0x6e5671`), today's kills (`0x6e55fc`), the honor currency (`0x6da3c0`),
 /// each reading the update just applied; yesterday's half fires nothing.
@@ -2080,9 +2131,9 @@ fn the_inspect_honor_reply_signals_from_its_handler() {
         return;
     };
     rig.app
-        .world_mut()
-        .resource_mut::<crate::ui_inspect::InspectTarget>()
-        .guid = 0x56;
+        .world()
+        .resource::<crate::ui_inspect::InspectGuid>()
+        .set(0x56);
     let reply = |guid| {
         SessionEvent::InspectHonorStats(benilla_protocol::messages::InspectHonorStats {
             player_guid: guid,
@@ -2162,9 +2213,9 @@ fn the_inspect_arena_team_reply_signals_from_its_handler() {
         return;
     };
     rig.app
-        .world_mut()
-        .resource_mut::<crate::ui_inspect::InspectTarget>()
-        .guid = 0x56;
+        .world()
+        .resource::<crate::ui_inspect::InspectGuid>()
+        .set(0x56);
     let team = |guid| {
         SessionEvent::InspectArenaTeam(benilla_protocol::messages::InspectArenaTeam {
             player_guid: guid,
@@ -2230,6 +2281,46 @@ fn slot0(status: Option<u32>) -> SessionEvent {
         status: status.unwrap_or(0),
         ..Default::default()
     })
+}
+
+/// `PLAYER_ENTERING_WORLD` reads the held status: the world entry zeroes after it (`0x5281a6`, then `0x528230` -> `0x54cb41`).
+#[test]
+fn player_entering_world_reads_the_held_status_on_a_reload() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.packets(vec![slot0(Some(1))], 2);
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &["bf1"]),
+        vec!["PLAYER_ENTERING_WORLD | bf1=queued"]
+    );
+    assert_eq!(rig.live_now().line(&["bf1"]), "NOW | bf1=none");
+    let seen = rig.packets(vec![slot0(Some(1))], 2);
+    assert_eq!(
+        pin(&seen, &["UPDATE_BATTLEFIELD_STATUS"], &["bf1"]),
+        vec!["UPDATE_BATTLEFIELD_STATUS 1 | bf1=queued"]
+    );
+}
+
+/// The other order: a status ahead of our create at login is held at `PLAYER_ENTERING_WORLD`, then zeroed.
+#[test]
+fn player_entering_world_reads_a_status_from_before_the_login() {
+    let Some(mut rig) = Rig::login_after(vec![slot0(Some(1))], &[]) else {
+        return;
+    };
+    let seen = rig.take();
+    assert_eq!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &["bf1"]),
+        vec!["PLAYER_ENTERING_WORLD | bf1=queued"]
+    );
+    assert_eq!(rig.live_now().line(&["bf1"]), "NOW | bf1=none");
 }
 
 /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` naming `guids`, no carrier.

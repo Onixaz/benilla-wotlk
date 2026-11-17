@@ -413,7 +413,7 @@ mod net {
         mut throttle: ResMut<RosterThrottle>,
         names: Res<NameCache>,
         me: Res<SelfGuid>,
-        target: Res<crate::ui_inspect::InspectTarget>,
+        target: Res<crate::ui_inspect::InspectGuid>,
         mut ui: ResMut<UiEvents>,
     ) {
         match ev {
@@ -479,7 +479,7 @@ mod net {
             // (`0x5e7bdb`). Deviation: a slot of 3 is dropped, where the reference writes it over
             // the honor reply that follows the three.
             SessionEvent::InspectArenaTeam(t) => {
-                if t.player_guid == 0 || t.player_guid != target.guid || t.slot >= 3 {
+                if t.player_guid == 0 || t.player_guid != target.get() || t.slot >= 3 {
                     return;
                 }
                 let words = InspectArenaTeamWords {
@@ -507,7 +507,7 @@ impl Plugin for UiArenaTeamPlugin {
         crate::query_cache::register::<ArenaTeams>(app);
         app.init_resource::<ArenaTeams>()
             .init_resource::<RosterThrottle>()
-            .init_resource::<crate::ui_inspect::InspectTarget>()
+            .init_resource::<crate::ui_inspect::InspectGuid>()
             .add_systems(
                 Update,
                 (

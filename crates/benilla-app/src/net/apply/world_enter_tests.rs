@@ -1,10 +1,10 @@
 //! The world-enter sends wait for our own player's create, as the reference's do: none goes out on
 //! the login edge alone, which fires before the server seats the player; the create sends
 //! `CMSG_PLAYED_TIME` (`0x6e6e27`), `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`,
-//! `CMSG_REQUEST_PET_INFO` (with a pet out only), `MSG_QUERY_NEXT_MAIL_TIME`,
-//! `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's `CMSG_LFG_GET_STATUS` and
-//! `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's fresh create sends them all
-//! again.
+//! `CMSG_REQUEST_PET_INFO` (with a pet out only), `MSG_QUERY_NEXT_MAIL_TIME` and the dungeon
+//! finder's `CMSG_LFG_GET_STATUS` and `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a
+//! worldport's fresh create sends them all again. `CMSG_BATTLEFIELD_STATUS` waits for the UI's
+//! world entry, which this harness lacks (`0x54cc40`, after `0x5281a6`).
 
 use bevy::prelude::*;
 use crossbeam_channel::Receiver;
@@ -30,6 +30,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
         .init_resource::<ServerWallClock>()
         .init_resource::<crate::ui_mail::MailPending>()
         .init_resource::<crate::ui_battlefield::Battlefield>()
+        .init_resource::<crate::ui_battlefield::StatusRequestOwed>()
         .init_resource::<crate::ui_battlefield::BattlefieldQueue>()
         .init_resource::<crate::ui_lfg::LfgFeed>()
         .init_resource::<crate::ui_pet::PetBar>()
@@ -79,7 +80,6 @@ fn the_sends() -> Vec<String> {
         format!("SetActiveMover {ME:#x}"),
         "QueryTime".into(),
         "QueryNextMailTime".into(),
-        "BattlefieldStatusRequest".into(),
         "Lfg(GetStatus)".into(),
         "Lfg(PlayerLockInfo)".into(),
     ]

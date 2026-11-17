@@ -210,6 +210,14 @@ pub trait LiveState {
     /// `RequestBattlefieldPositions` (`0x54cf60`): the list cleared without an active slot, else
     /// the send at most every 5000 ms.
     fn request_battlefield_positions(&self) {}
+
+    /// `NotifyInspect`'s `CMSG_INSPECT` and target (`0x5228c3`, `0x52291a`); whether the target moved (`0x5e76c1`).
+    fn notify_inspect(&self, _guid: u64) -> bool {
+        true
+    }
+
+    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
+    fn clear_inspect_target(&self) {}
 }
 
 /// A lent view's address, its lifetime erased.
@@ -347,6 +355,8 @@ pub(crate) struct TestView {
     pub pvp_timer: Option<i32>,
     /// Our arena-team slots.
     pub arena_teams: [super::ArenaTeamSlotView; 3],
+    /// The inspect target the inspect verbs set.
+    pub inspect_target: Cell<u64>,
 }
 
 #[cfg(test)]
@@ -401,6 +411,14 @@ impl LiveState for TestView {
             .iter()
             .find(|s| s.info[0] == team_id)
             .and_then(|s| s.record.clone())
+    }
+
+    fn notify_inspect(&self, guid: u64) -> bool {
+        self.inspect_target.replace(guid) != guid
+    }
+
+    fn clear_inspect_target(&self) {
+        self.inspect_target.set(0);
     }
 }
 

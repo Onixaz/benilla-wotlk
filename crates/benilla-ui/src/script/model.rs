@@ -1119,7 +1119,7 @@ pub(crate) struct Model {
     /// The inspected unit's gear, from its public `PLAYER_VISIBLE_ITEM_*` fields.
     pub(crate) inspect: Option<inspect::InspectView>,
     /// `NotifyInspect` unit tokens, sent as `CMSG_INSPECT`.
-    pub(crate) inspect_notifies: Vec<String>,
+    pub(crate) inspect_notifies: Vec<(String, u64)>,
     /// `ClearInspectPlayer` ran, after this many of [`Self::inspect_notifies`]: the app drops its
     /// inspect target there, keeping the call order.
     pub(crate) inspect_clear: Option<usize>,

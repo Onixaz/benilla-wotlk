@@ -346,6 +346,10 @@ pub(crate) struct Battlefield {
     players: Vec<(u64, bool)>,
 }
 
+/// A world entry's status request, sent once its zero has run after `PLAYER_ENTERING_WORLD`.
+#[derive(Resource, Default)]
+pub(crate) struct StatusRequestOwed(bool);
+
 impl Battlefield {
     pub(crate) fn apply_list(&mut self, list: &BattlefieldList) {
         if list.battlemaster != 0 && (!list.from_anywhere || list.bg_type == RANDOM_BATTLEGROUND) {
@@ -792,44 +796,32 @@ fn drain_battlefield(
     }
 }
 
-/// The world-enter cascade's status zero (`0x54cb41`), in the net stage ahead of its request
-/// ([`request_status_on_world_enter`], `0x54cc40`), so the request's answers always land on the
-/// zeroed slots.
-pub(crate) fn zero_statuses_on_world_enter(
-    mut cascades: MessageReader<WorldEnterCascadeMessage>,
+/// A cross-map worldport leaves the world first (`0x528c30`).
+pub(crate) fn leave_world_on_worldport(
     ports: Option<MessageReader<crate::net::WorldportMessage>>,
     mut commands: Commands,
-    queue: Option<ResMut<BattlefieldQueue>>,
 ) {
-    // A cross-map worldport leaves the world first (`0x528c30`).
     if ports.is_some_and(|mut p| p.read().filter(|w| w.needs_ack).count() > 0) {
         commands.queue(leave_world);
     }
+}
+
+/// The cascade's status request (`0x54cc40`), owed to the world entry that zeroes ahead of it.
+pub(crate) fn request_status_on_world_enter(
+    mut cascades: MessageReader<WorldEnterCascadeMessage>,
+    owed: Option<ResMut<StatusRequestOwed>>,
+) {
     if cascades.read().next().is_some() {
-        if let Some(mut queue) = queue {
-            queue.zero_statuses();
+        if let Some(mut owed) = owed {
+            owed.0 = true;
         }
     }
 }
 
-/// The world-enter cascade's status request, between the mail query and the LFG entry as the
-/// cascade orders them (`0x528010`): the bodyless `CMSG_BATTLEFIELD_STATUS` of `0x54ca50`
-/// (`0x54cc40`), answered slot by slot.
-pub(crate) fn request_status_on_world_enter(
-    mut cascades: MessageReader<WorldEnterCascadeMessage>,
-    commands: Res<NetCommands>,
-) {
-    if cascades.read().next().is_some() {
-        let _ = commands.0.send(ClientCommand::BattlefieldStatusRequest);
-    }
-}
-
-/// The battlefield's world entry after `PLAYER_ENTERING_WORLD` (`0x528010` -> `0x54ca50`): the
-/// selection, type and battlemaster clear, in turn with the events around it. The statuses were
-/// zeroed with the request ([`request_status_on_world_enter`]), which an answer may follow before
-/// a deferred UI load reaches this.
+/// The battlefield's world entry after `PLAYER_ENTERING_WORLD` (`0x528230` -> `0x54ca50`).
 fn enter_world(
     state: Option<ResMut<Battlefield>>,
+    queue: Option<ResMut<BattlefieldQueue>>,
     positions: Option<ResMut<crate::ui_battlefield_positions::BattlefieldPositions>>,
     ui: Option<ResMut<UiEvents>>,
 ) {
@@ -839,19 +831,30 @@ fn enter_world(
     if let Some(mut positions) = positions {
         positions.enter_world();
     }
+    // `0x54cb41`.
+    if let Some(mut queue) = queue {
+        queue.zero_statuses();
+    }
     if let Some(mut ui) = ui {
         ui.write(UiScript::reset_battlefield_on_world_enter);
     }
 }
 
-/// The world leave's battlefield and duel parts: the instance type and list (`0x54e330`), the
-/// arbiter and the countdown (`0x5cfa10`).
-pub(crate) fn leave_world(world: &mut World) {
-    if let Some(mut queue) = world.get_resource_mut::<BattlefieldQueue>() {
-        queue.leave_world();
+/// The world entry's status request (`0x54cc40`), after its zero.
+fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<NetCommands>) {
+    if std::mem::take(&mut owed.0) {
+        let _ = commands.0.send(ClientCommand::BattlefieldStatusRequest);
     }
+}
+
+/// The world leave's inspect (`0x528cd3`), duel (`0x528d23`) and battlefield (`0x528d46`) parts.
+pub(crate) fn leave_world(world: &mut World) {
+    crate::ui_inspect::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
         duel.leave_world();
+    }
+    if let Some(mut queue) = world.get_resource_mut::<BattlefieldQueue>() {
+        queue.leave_world();
     }
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.write(UiScript::leave_battlefield_world);
@@ -868,6 +871,13 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         }
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
+        if world.contains_resource::<NetCommands>()
+            && world.contains_resource::<StatusRequestOwed>()
+        {
+            if let Err(e) = world.run_system_cached(send_owed_status_request) {
+                warn!("ui_battlefield: the status request did not go out: {e}");
+            }
+        }
         // The UI init clears the reload byte once its world entry returns (`0x52ae91`).
         if let Some(mut reload) = world.get_resource_mut::<crate::ui_script::ReloadEntry>() {
             reload.0 = false;
@@ -1096,6 +1106,7 @@ impl Plugin for BattlefieldPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<Battlefield>()
+            .init_resource::<StatusRequestOwed>()
             .init_resource::<BattlefieldQueue>()
             .init_resource::<WorldPvp>()
             .init_resource::<crate::ui_action::UiErrorKeys>()
@@ -1103,12 +1114,14 @@ impl Plugin for BattlefieldPlugin {
             .add_systems(
                 Update,
                 (
-                    zero_statuses_on_world_enter
+                    leave_world_on_worldport
                         .in_set(benilla_world::schedule::WorldStage::Net)
                         .after(crate::net::enter_world_on_self_create),
+                    // Owed ahead of the world entry, which sends it after the mail query's.
                     request_status_on_world_enter
                         .in_set(UiFeed)
-                        .after(crate::ui_mail::send_query_next_mail_time_on_enter),
+                        .after(crate::ui_mail::send_query_next_mail_time_on_enter)
+                        .before(crate::ui_unit::EnterWorldFeed),
                     // The name callbacks run as the name answers land, in the net drain.
                     announce_named_players
                         .in_set(benilla_world::schedule::WorldStage::Net)
@@ -1247,47 +1260,53 @@ mod tests {
         assert!(!q.apply_at(zero, None, now), "no active slot left to clear");
     }
 
-    /// `0x54ca50` zeroes the statuses before it sends `CMSG_BATTLEFIELD_STATUS` (`0x54cb41`,
-    /// `0x54cc40`): an answer that lands before a deferred UI load's `PLAYER_ENTERING_WORLD`
-    /// survives that entry.
+    /// The cascade only owes the request; the world entry zeroes, then sends it (`0x54cb41`, `0x54cc40`).
     #[test]
-    fn the_status_answer_outlives_a_deferred_world_entry() {
+    fn the_world_entry_zeroes_then_sends_the_owed_request() {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<BattlefieldQueue>()
             .init_resource::<Battlefield>()
+            .init_resource::<StatusRequestOwed>()
             .add_message::<WorldEnterCascadeMessage>()
-            .add_systems(
-                Update,
-                (zero_statuses_on_world_enter, request_status_on_world_enter).chain(),
-            );
+            .add_systems(Update, request_status_on_world_enter);
         let now = Instant::now();
         app.world_mut()
             .resource_mut::<BattlefieldQueue>()
             .apply_at(status(0, 1), None, now);
         app.world_mut().write_message(WorldEnterCascadeMessage);
         app.update();
+        let status_now = |app: &App| {
+            app.world().resource::<BattlefieldQueue>().slots()[0]
+                .as_ref()
+                .map(|(s, _)| s.status)
+        };
+        assert_eq!(rx.try_iter().count(), 0, "the cascade sends nothing");
+        assert_eq!(status_now(&app), Some(1), "held until the world entry");
+
+        let entry = |app: &mut App| {
+            app.world_mut().run_system_cached(enter_world).unwrap();
+            app.world_mut()
+                .run_system_cached(send_owed_status_request)
+                .unwrap();
+        };
+        entry(&mut app);
         assert!(matches!(
             rx.try_iter().collect::<Vec<_>>().as_slice(),
             [ClientCommand::BattlefieldStatusRequest]
         ));
-        let zeroed = app.world().resource::<BattlefieldQueue>().slots()[0]
-            .as_ref()
-            .map(|(s, _)| s.status);
-        assert_eq!(zeroed, Some(0), "the cascade zeroes before its request");
+        assert_eq!(status_now(&app), Some(0), "zeroed ahead of the request");
 
-        // The answer lands, then the deferred load's world entry runs.
+        // An answer lands; a world entry with no cascade owes nothing.
         app.world_mut()
             .resource_mut::<BattlefieldQueue>()
             .apply_at(status(0, 1), None, now);
         app.world_mut()
-            .run_system_cached(enter_world)
-            .expect("the world entry runs");
-        let kept = app.world().resource::<BattlefieldQueue>().slots()[0]
-            .as_ref()
-            .map(|(s, _)| s.status);
-        assert_eq!(kept, Some(1), "the world entry keeps the answer");
+            .run_system_cached(send_owed_status_request)
+            .unwrap();
+        assert_eq!(rx.try_iter().count(), 0);
+        assert_eq!(status_now(&app), Some(1));
     }
 
     #[test]

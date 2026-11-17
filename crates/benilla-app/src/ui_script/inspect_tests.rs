@@ -206,8 +206,8 @@ fn inspect_unit_refuses_out_of_range() {
     );
     assert_eq!(
         s.take_inspect_notifies(),
-        vec!["target".to_string()],
-        "in range: NotifyInspect queued the token for the app to resolve"
+        vec![("target".to_string(), TARGET)],
+        "in range: NotifyInspect sent for the token's guid"
     );
 }
 

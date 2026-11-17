@@ -226,8 +226,7 @@ impl ArenaInstance<'_> {
     }
 }
 
-/// `SMSG_PARTY_MEMBER_STATS_FULL`'s arena byte (`0x6cf9fa`): the opponent, then its pet
-/// (`0x6cfc45`), each signalled as it lands.
+/// `SMSG_PARTY_MEMBER_STATS_FULL`'s arena byte (`0x6cf9fa`): the opponent, signalled, then its pet (`0x6cfc45`).
 fn on_party_stats(
     In(ev): In<SessionEvent>,
     mut arena: ResMut<ArenaOpponents>,
@@ -241,11 +240,27 @@ fn on_party_stats(
     if !info.arena_opponent {
         return;
     }
-    let pet_of = pet_of(&index, &stores);
-    arena.add(guid, &pet_of);
+    arena.add(guid, &pet_of(&index, &stores));
+    arena.flush(&mut ui);
+    // The pet lands once the opponent's signals have run (`0x54b8ea`, `0x54b90c`, then `0x6cfc45`).
     if let Some(pet) = info.pet_guid.filter(|&p| p != 0) {
-        arena.add_pet(pet, guid, &pet_of);
+        ui.world(move |world| {
+            if let Err(e) = world.run_system_cached_with(land_pet, (pet, guid)) {
+                warn!("ui_arena: the opponent's pet did not land: {e}");
+            }
+        });
     }
+}
+
+/// The party stats' pet guid into its slot (`0x54d1c0`), signalled.
+fn land_pet(
+    In((pet, owner)): In<(u64, u64)>,
+    mut arena: ResMut<ArenaOpponents>,
+    index: Res<GuidIndex>,
+    stores: Query<&ObjectStore>,
+    mut ui: ResMut<UiEvents>,
+) {
+    arena.add_pet(pet, owner, &pet_of(&index, &stores));
     arena.flush(&mut ui);
 }
 

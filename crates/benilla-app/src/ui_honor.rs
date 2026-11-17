@@ -42,13 +42,13 @@ mod net {
     /// `INSPECT_HONOR_UPDATE` fires (`0x5e7aee`), every time.
     pub(super) fn on_inspect_stats(
         In(ev): In<SessionEvent>,
-        target: Res<crate::ui_inspect::InspectTarget>,
+        target: Res<crate::ui_inspect::InspectGuid>,
         mut ui: ResMut<UiEvents>,
     ) {
         let SessionEvent::InspectHonorStats(r) = ev else {
             return;
         };
-        if r.player_guid == 0 || r.player_guid != target.guid {
+        if r.player_guid == 0 || r.player_guid != target.get() {
             return;
         }
         let data = InspectHonorData {
@@ -71,7 +71,7 @@ impl Plugin for UiHonorPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<PvpCooldown>()
-            .init_resource::<crate::ui_inspect::InspectTarget>()
+            .init_resource::<crate::ui_inspect::InspectGuid>()
             .init_resource::<crate::nameplates::PvpNameStrings>()
             .add_systems(
                 Update,
@@ -92,20 +92,19 @@ impl Plugin for UiHonorPlugin {
 /// guid (`0x5e91a1`), none with no target (`0x5e916c`).
 fn drain_inspect_honor_requests(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    target: Res<crate::ui_inspect::InspectTarget>,
+    target: Res<crate::ui_inspect::InspectGuid>,
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     for _ in 0..script.take_inspect_honor_requests() {
-        if target.guid == 0 {
+        let target = target.get();
+        if target == 0 {
             debug!("honor: inspect-honor request with no inspect target — not sent");
             continue;
         }
-        let _ = commands.0.send(ClientCommand::InspectHonorStats {
-            target: target.guid,
-        });
+        let _ = commands.0.send(ClientCommand::InspectHonorStats { target });
     }
 }
 

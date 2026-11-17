@@ -32,6 +32,7 @@ pub(crate) struct LiveView<'w, 's> {
     honor: crate::ui_honor::HonorView<'w>,
     arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
     positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
+    inspect: crate::ui_inspect::InspectLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -258,6 +259,14 @@ impl LiveState for LiveView<'_, '_> {
     fn request_battlefield_positions(&self) {
         self.positions.request();
     }
+
+    fn notify_inspect(&self, guid: u64) -> bool {
+        self.inspect.notify(guid)
+    }
+
+    fn clear_inspect_target(&self) {
+        self.inspect.clear();
+    }
 }
 
 /// [`LiveView`] lent to every verb for the run of the system that takes it: the parameter each
@@ -388,7 +397,7 @@ impl UiEvents {
         self.0.push(UiEvent::Write(Box::new(write)));
     }
 
-    /// Run `step` over the `World` in turn with the events around it.
+    /// Run `step` over the `World` in turn with the events around it; what it queues fires next.
     pub(crate) fn world(&mut self, step: impl FnOnce(&mut World) + Send + Sync + 'static) {
         self.0.push(UiEvent::World(Box::new(step)));
     }
@@ -490,14 +499,20 @@ pub(crate) fn fire_handler_events(world: &mut World) {
     if queued.0.is_empty() {
         return;
     }
-    let events = std::mem::take(&mut queued.0);
+    let mut events = std::collections::VecDeque::from(std::mem::take(&mut queued.0));
     let mut lines = Vec::new();
     let mut batch = Vec::new();
-    for event in events {
+    while let Some(event) = events.pop_front() {
         match event {
             UiEvent::World(step) => {
                 fire_batch(world, &mut batch, &mut lines);
                 step(world);
+                // What the step queued fires in its turn, ahead of the rest.
+                if let Some(mut queued) = world.get_resource_mut::<UiEvents>() {
+                    for e in std::mem::take(&mut queued.0).into_iter().rev() {
+                        events.push_front(e);
+                    }
+                }
             }
             other => batch.push(other),
         }
