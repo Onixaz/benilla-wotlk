@@ -54,7 +54,7 @@ addon calls (#399).
 - **Knowledge base.** The help frame downloads its articles over HTTP from a Blizzard web
   service, not from the realm: the setup request builds a `getKBSetup.xml` address for the locale
   (`0x550e10`). That service is gone and no 3.3.5a server stands in for it.
-- **Voice chat.** benilla has no voice chat (see the voice opcodes above). This covers the
+- **Voice chat.** Not planned: benilla has no voice chat (see the voice opcodes above). This covers the
   channel and party silence verbs: they send `CMSG_CHANNEL_SILENCE_ALL`, `CMSG_CHANNEL_UNSILENCE_ALL`
   and `CMSG_PARTY_SILENCE`, which are voice moderation.
 - **Arena spectating, minigames and the dance studio.** Their packets are not decoded (see the
