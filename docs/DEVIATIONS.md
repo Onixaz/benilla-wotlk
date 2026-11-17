@@ -41,8 +41,9 @@ its opcode table and nowhere else, so no AzerothCore server ever sends it.
 
 ## Engine verbs
 
-Engine verbs the stock interface calls that benilla does not build, because no 3.3.5a server can
-serve what they ask for.
+Engine verbs that benilla does not build, because no 3.3.5a server can serve what they ask for or
+the feature behind them is not planned. Some are called by the stock interface. Others only an
+addon calls (#399).
 
 - **Battle.net (Real ID).** 12340 talks to Battle.net over its own login, apart from the realm. A
   3.3.5a server has no Battle.net service, so 12340 itself answers as disconnected. benilla builds
@@ -53,7 +54,11 @@ serve what they ask for.
 - **Knowledge base.** The help frame downloads its articles over HTTP from a Blizzard web
   service, not from the realm: the setup request builds a `getKBSetup.xml` address for the locale
   (`0x550e10`). That service is gone and no 3.3.5a server stands in for it.
-- **Voice chat.** benilla has no voice chat (see the voice opcodes above).
+- **Voice chat.** Not planned: benilla has no voice chat (see the voice opcodes above). This covers the
+  channel and party silence verbs: they send `CMSG_CHANNEL_SILENCE_ALL`, `CMSG_CHANNEL_UNSILENCE_ALL`
+  and `CMSG_PARTY_SILENCE`, which are voice moderation.
+- **Arena spectating, minigames and the dance studio.** Their packets are not decoded (see the
+  opcodes above), so the `Commentator*`, minigame and `PlayDance` verbs have nothing to drive.
 
 | Verb | 12340 | Why |
 |---|---|---|
@@ -79,12 +84,14 @@ serve what they ask for.
 | `BNGetSelectedToonBlock` | `0x536d40` | no Battle.net |
 | `BNGetToonInfo` | `0x539f90` | no Battle.net |
 | `BNInviteToConversation` | `0x535eb0` | no Battle.net |
+| `BNIsBlocked` | `0x5364e0` | no Battle.net |
 | `BNIsFriend` | `0x537950` | no Battle.net |
 | `BNIsSelf` | `0x5378a0` | no Battle.net |
 | `BNIsToonBlocked` | `0x536a90` | no Battle.net |
 | `BNLeaveConversation` | `0x536030` | no Battle.net |
 | `BNListConversation` | `0x53a300` | no Battle.net |
 | `BNRemoveFriend` | `0x534ed0` | no Battle.net |
+| `BNReportFriendInvite` | `0x535700` | no Battle.net |
 | `BNReportPlayer` | `0x536e40` | no Battle.net |
 | `BNRequestFOFInfo` | `0x53a660` | no Battle.net |
 | `BNSendConversationMessage` | `0x536110` | no Battle.net |
@@ -95,6 +102,7 @@ serve what they ask for.
 | `BNSetBlocked` | `0x5365b0` | no Battle.net |
 | `BNSetCustomMessage` | `0x535920` | no Battle.net |
 | `BNSetDND` | `0x535860` | no Battle.net |
+| `BNSetFocus` | `0x535c60` | no Battle.net |
 | `BNSetFriendNote` | `0x534f80` | no Battle.net |
 | `BNSetSelectedBlock` | `0x5366a0` | no Battle.net |
 | `BNSetSelectedFriend` | `0x537510` | no Battle.net |
@@ -102,21 +110,80 @@ serve what they ask for.
 | `BNSetToonBlocked` | `0x536b60` | no Battle.net |
 | `KBArticle_BeginLoading` | `0x551d60` | no knowledge-base service |
 | `KBArticle_GetData` | `0x551dd0` | no knowledge-base service |
+| `KBArticle_IsLoaded` | `0x551da0` | no knowledge-base service |
 | `KBQuery_BeginLoading` | `0x552580` | no knowledge-base service |
 | `KBQuery_GetArticleHeaderCount` | `0x551bc0` | no knowledge-base service |
+| `KBQuery_GetArticleHeaderData` | `0x551c00` | no knowledge-base service |
 | `KBQuery_GetTotalArticleCount` | `0x551d10` | no knowledge-base service |
+| `KBQuery_IsLoaded` | `0x551b90` | no knowledge-base service |
 | `KBSetup_BeginLoading` | `0x551720` | no knowledge-base service |
 | `KBSetup_GetArticleHeaderCount` | `0x5519f0` | no knowledge-base service |
+| `KBSetup_GetArticleHeaderData` | `0x551a30` | no knowledge-base service |
 | `KBSetup_GetCategoryCount` | `0x5518c0` | no knowledge-base service |
 | `KBSetup_GetCategoryData` | `0x551900` | no knowledge-base service |
+| `KBSetup_GetLanguageCount` | `0x551790` | no knowledge-base service |
+| `KBSetup_GetLanguageData` | `0x5517d0` | no knowledge-base service |
 | `KBSetup_GetSubCategoryCount` | `0x5523a0` | no knowledge-base service |
 | `KBSetup_GetSubCategoryData` | `0x552440` | no knowledge-base service |
 | `KBSetup_GetTotalArticleCount` | `0x551b40` | no knowledge-base service |
 | `KBSetup_IsLoaded` | `0x551760` | no knowledge-base service |
 | `KBSystem_GetServerNotice` | `0x551ff0` | no knowledge-base service |
+| `KBSystem_GetServerStatus` | `0x551fd0` | no knowledge-base service |
+| `ChannelSilenceAll` | `0x501250` | no voice chat |
 | `ChannelSilenceVoice` | `0x501140` | no voice chat |
+| `ChannelUnSilenceAll` | `0x501400` | no voice chat |
 | `ChannelUnSilenceVoice` | `0x5012f0` | no voice chat |
+| `ChannelVoiceOff` | `0x4fea90` | no voice chat |
+| `ChannelVoiceOn` | `0x4fea70` | no voice chat |
+| `DisplayChannelVoiceOff` | `0x4fead0` | no voice chat |
+| `DisplayChannelVoiceOn` | `0x4feab0` | no voice chat |
+| `IsVoiceChatAllowed` | `0x4fcc60` | no voice chat |
 | `SetActiveVoiceChannelBySessionID` | `0x7db280` | no voice chat |
+| `SilenceMember` | `0x52d9c0` | no voice chat |
+| `UnSilenceMember` | `0x52daf0` | no voice chat |
+| `VoiceGetCurrentCaptureDevice` | `0x7dafe0` | no voice chat |
+| `VoiceGetCurrentOutputDevice` | `0x7daf90` | no voice chat |
+| `VoicePushToTalkStart` | `0x511d20` | no voice chat |
+| `VoicePushToTalkStop` | `0x511d20` | no voice chat |
+| `CommentatorAddPlayer` | `0x56a640` | arena spectating not planned (#795) |
+| `CommentatorEnterInstance` | `0x5696e0` | arena spectating not planned (#795) |
+| `CommentatorExitInstance` | `0x5697b0` | arena spectating not planned (#795) |
+| `CommentatorFollowPlayer` | `0x569b50` | arena spectating not planned (#795) |
+| `CommentatorGetCamera` | `0x56a2a0` | arena spectating not planned (#795) |
+| `CommentatorGetCurrentMapID` | `0x56a380` | arena spectating not planned (#795) |
+| `CommentatorGetInstanceInfo` | `0x569520` | arena spectating not planned (#795) |
+| `CommentatorGetMapInfo` | `0x5693e0` | arena spectating not planned (#795) |
+| `CommentatorGetMode` | `0x569230` | arena spectating not planned (#795) |
+| `CommentatorGetNumMaps` | `0x568730` | arena spectating not planned (#795) |
+| `CommentatorGetNumPlayers` | `0x569820` | arena spectating not planned (#795) |
+| `CommentatorGetPlayerInfo` | `0x569910` | arena spectating not planned (#795) |
+| `CommentatorGetSkirmishMode` | `0x56af00` | arena spectating not planned (#795) |
+| `CommentatorGetSkirmishQueueCount` | `0x56af60` | arena spectating not planned (#795) |
+| `CommentatorGetSkirmishQueuePlayerInfo` | `0x56afc0` | arena spectating not planned (#795) |
+| `CommentatorLookatPlayer` | `0x569cd0` | arena spectating not planned (#795) |
+| `CommentatorRemovePlayer` | `0x56a860` | arena spectating not planned (#795) |
+| `CommentatorRequestSkirmishMode` | `0x56ae50` | arena spectating not planned (#795) |
+| `CommentatorRequestSkirmishQueueData` | `0x56ada0` | arena spectating not planned (#795) |
+| `CommentatorSetBattlemaster` | `0x56aa10` | arena spectating not planned (#795) |
+| `CommentatorSetCamera` | `0x56a0f0` | arena spectating not planned (#795) |
+| `CommentatorSetCameraCollision` | `0x56ab70` | arena spectating not planned (#795) |
+| `CommentatorSetMapAndInstanceIndex` | `0x569e50` | arena spectating not planned (#795) |
+| `CommentatorSetMode` | `0x5690a0` | arena spectating not planned (#795) |
+| `CommentatorSetMoveSpeed` | `0x56aaf0` | arena spectating not planned (#795) |
+| `CommentatorSetPlayerIndex` | `0x569fa0` | arena spectating not planned (#795) |
+| `CommentatorSetSkirmishMatchmakingMode` | `0x56ac90` | arena spectating not planned (#795) |
+| `CommentatorSetTargetHeightOffset` | `0x56ac10` | arena spectating not planned (#795) |
+| `CommentatorStartInstance` | `0x56a410` | arena spectating not planned (#795) |
+| `CommentatorStartSkirmishMatch` | `0x56b0b0` | arena spectating not planned (#795) |
+| `CommentatorToggleMode` | `0x569180` | arena spectating not planned (#795) |
+| `CommentatorUpdateMapInfo` | `0x569340` | arena spectating not planned (#795) |
+| `CommentatorUpdatePlayerInfo` | `0x5692a0` | arena spectating not planned (#795) |
+| `CommentatorZoomIn` | `0x568770` | arena spectating not planned (#795) |
+| `CommentatorZoomOut` | `0x568810` | arena spectating not planned (#795) |
+| `GetMinigameState` | `0x5c55f0` | minigames not planned (#806) |
+| `GetMinigameType` | `0x5c5500` | minigames not planned (#806) |
+| `MakeMinigameMove` | `0x5c5550` | minigames not planned (#806) |
+| `PlayDance` | `0x5761f0` | dance studio not planned (#801) |
 
 ## The Mac build
 
