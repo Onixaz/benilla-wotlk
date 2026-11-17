@@ -75,9 +75,9 @@ pub fn parse_m2_collision_hull(model: &M2Model) -> CollisionMesh {
 const MOPY_DETAIL: u8 = 0x04;
 /// MOPY `NOCAMCOLLIDE`, the face bit the camera and line-of-sight gather skips.
 const MOPY_NOCAMCOLLIDE: u8 = 0x02;
-/// The face bits the mouse pick's world trace skips. `CMapObj::CreateWmoIgnoreFlags`
-/// (`0x7ae140`) turns the trace's class word `0x100_0124` into the ignore mask `0x188`;
-/// `BspQuery_Segment` (`0x7c6c30`) tests its low byte against `SMOPoly::m_flags`: MOPY `0x08`
+/// The face bits the mouse pick's world trace skips. The WMO ignore-mask builder (`0x7ae140`)
+/// turns the trace's class word `0x100_0124` into the ignore mask `0x188`; the segment query's
+/// face test (`0x7c6c30`) checks its low byte against the face's MOPY flag byte: MOPY `0x08`
 /// (the collision-only faces, such as the blockers along a bank counter) and `0x80`, which the
 /// query also ORs in as its visited bit. `DETAIL` is not in it, so a detail face occludes the pick.
 const MOPY_PICK_SKIP: u8 = 0x88;

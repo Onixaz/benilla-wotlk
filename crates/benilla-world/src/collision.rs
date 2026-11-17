@@ -109,8 +109,8 @@ pub struct GroundDecalSurface;
 /// world with flags `0x1000124` and drops the object hit when the world hit is strictly nearer, so
 /// a unit behind a wall is not hoverable. Occluders are terrain and WMO group faces. Doodads
 /// occlude by their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull. The WMO
-/// term is its own face set on [`CollisionLayer::Pick`]: `CMapObj::CreateWmoIgnoreFlags`
-/// (`0x7ae140`) gives the trace the ignore mask `0x188`, so `BspQuery_Segment` (`0x7c6c30`) passes
+/// term is its own face set on [`CollisionLayer::Pick`]: the WMO ignore-mask builder (`0x7ae140`)
+/// gives the trace the ignore mask `0x188`, so the segment query's face test (`0x7c6c30`) passes
 /// MOPY `0x88` faces (the collision-only blockers, such as Dalaran's bank counters) and blended
 /// materials, and stops on DETAIL faces, which the walk collider drops.
 #[derive(Component)]
