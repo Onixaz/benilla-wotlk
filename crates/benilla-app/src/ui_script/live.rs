@@ -33,6 +33,8 @@ pub(crate) struct LiveView<'w, 's> {
     arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
     positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
     inspect: crate::ui_inspect::InspectLive<'w>,
+    companions: crate::ui_companion::CompanionLive<'w, 's>,
+    pets: crate::ui_pet_stats::PetView<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -266,6 +268,37 @@ impl LiveState for LiveView<'_, '_> {
 
     fn clear_inspect_target(&self) {
         self.inspect.clear();
+    }
+
+    fn companion_spells(&self, ty: benilla_ui::script::CompanionType) -> Vec<u32> {
+        self.companions.spells(ty)
+    }
+
+    fn companion(
+        &self,
+        ty: benilla_ui::script::CompanionType,
+        index: usize,
+    ) -> Option<benilla_ui::script::CompanionView> {
+        self.companions.info(ty, index)
+    }
+
+    fn companion_random_pool(&self) -> Vec<u32> {
+        self.companions.random_pool()
+    }
+
+    /// The pet list's head held as a unit (`0x5d3a4d`, type mask 8).
+    fn pet_stats(&self) -> (bool, benilla_ui::script::PetStats) {
+        let pet = self.pets.head().and_then(|g| self.unit(g));
+        self.pets.stats(pet, |g| self.unit(g))
+    }
+
+    fn pet_menu(&self) -> (bool, bool, bool) {
+        let pet = self.pets.head().and_then(|g| self.unit(g));
+        self.pets.menu(pet, self.active_player())
+    }
+
+    fn creature_family(&self, guid: u64) -> Option<String> {
+        self.pets.creature_family(self.unit(guid)?)
     }
 }
 

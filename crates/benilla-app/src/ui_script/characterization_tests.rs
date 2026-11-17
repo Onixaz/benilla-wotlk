@@ -55,6 +55,9 @@ local VERBS = {
     { "pet", function() return UnitExists("pet") end },
     { "petui", function() return HasPetUI() end },
     { "mounts", function() return GetNumCompanions("MOUNT") end },
+    { "critters", function() return GetNumCompanions("CRITTER") end },
+    { "mount1", function() return (select(2, GetCompanionInfo("MOUNT", 1))) end },
+    { "abandon", function() return PetCanBeAbandoned() end },
     { "popup", popup },
     { "button2", button2 },
     { "soulstone", function() return HasSoulstone() end },
@@ -2526,5 +2529,134 @@ fn the_queue_zero_arm_clears_the_active_instance_before_its_event() {
         lines[2],
         format!("UPDATE_BATTLEFIELD_STATUS 1 | bf1=none arena=nil bfpos=1 {columns}"),
         "no active slot left for the arm"
+    );
+}
+
+/// Brown Horse (458) rides creature 284, Bombay Cat (10673) summons creature 7385.
+const HORSE: u32 = 458;
+const CAT: u32 = 10673;
+
+fn creature_answer(entry: u32, name: &str) -> SessionEvent {
+    SessionEvent::CreatureName {
+        entry,
+        name: Some(name.into()),
+        subname: None,
+        cursor_name: None,
+        creature_type: None,
+        pet_family: 0,
+        rank: 0,
+        type_flags: 0,
+        display_id: 0,
+        civilian: false,
+        racial_leader: false,
+        modifiers: (0.0, 0.0),
+    }
+}
+
+fn own_aura(slot: u8, spell_id: u32) -> SessionEvent {
+    SessionEvent::AuraUpdate(benilla_protocol::messages::AuraUpdate {
+        unit: ME,
+        all: false,
+        slots: vec![(
+            slot,
+            (spell_id != 0).then_some(benilla_protocol::messages::AuraRecord {
+                spell_id,
+                flags: 0x1,
+                level: 80,
+                stacks: 1,
+                caster: None,
+                duration_ms: None,
+            }),
+        )],
+    })
+}
+
+/// The companion lists fill as the spell handlers add the known spells (`0x5426a5`) and every
+/// companion event fires from the handler that causes it: the login's update waits on the mount's
+/// record and fires from its answer (`0x53ebc0`); a live learn's line and `COMPANION_LEARNED` wait
+/// on the critter's; the mount aura's arrival and removal fire `"MOUNT"` (`0x724a6b`, `0x71e9b2`);
+/// an unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+#[test]
+fn companion_events_fire_from_the_spell_and_creature_handlers() {
+    // `OBJECT_FIELD_TYPE` with the unit bit: the aura handler skips a non-unit (`0x4d4db0`).
+    let Some(mut rig) = Rig::login(&[(2, 0x19)]) else {
+        return;
+    };
+    let events = &[
+        "COMPANION_UPDATE",
+        "COMPANION_LEARNED",
+        "COMPANION_UNLEARNED",
+        "UI_ERROR_MESSAGE",
+    ];
+    let verbs = &["mounts", "critters", "mount1"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::SpellBook {
+                spell_ids: vec![HORSE],
+                cooldowns: Vec::new(),
+            },
+            creature_answer(284, "Brown Horse"),
+            SessionEvent::SpellLearned { spell_id: CAT },
+            creature_answer(7385, "Bombay Cat"),
+            own_aura(3, HORSE),
+            own_aura(3, 0),
+            SessionEvent::SpellRemoved { spell_id: CAT },
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "COMPANION_UPDATE | mounts=1 critters=0 mount1=Brown Horse",
+            "COMPANION_UPDATE | mounts=1 critters=1 mount1=Brown Horse",
+            "COMPANION_LEARNED | mounts=1 critters=1 mount1=Brown Horse",
+            "COMPANION_UPDATE MOUNT | mounts=1 critters=1 mount1=Brown Horse",
+            "COMPANION_UPDATE MOUNT | mounts=1 critters=1 mount1=Brown Horse",
+            "COMPANION_UPDATE | mounts=1 critters=0 mount1=Brown Horse",
+            "COMPANION_UNLEARNED | mounts=1 critters=0 mount1=Brown Horse",
+        ]
+    );
+}
+
+/// The bar's `PET_BAR_UPDATE` handler re-tests the Pets tab off `GetNumCompanions` (#1244): it
+/// reads the lists the spell handler filled, whichever of the mount's record and the pet packet
+/// lands first. `COMPANION_UPDATE` fires from the record's answer; `PET_BAR_UPDATE` still fires from
+/// the bar's frame feed after every handler, so it follows in both orders.
+#[test]
+fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
+    let events = &["COMPANION_UPDATE", "PET_BAR_UPDATE"];
+    let verbs = &["mounts", "petui"];
+    let book = || SessionEvent::SpellBook {
+        spell_ids: vec![HORSE],
+        cooldowns: Vec::new(),
+    };
+    let bar = || {
+        SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+            pet_guid: PET,
+            ..Default::default()
+        }))
+    };
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let answer_last = rig.packets(vec![book(), bar(), creature_answer(284, "Brown Horse")], 3);
+    assert_eq!(
+        pin(&answer_last, events, verbs),
+        vec![
+            "COMPANION_UPDATE | mounts=1 petui=nil",
+            "PET_BAR_UPDATE | mounts=1 petui=nil",
+        ]
+    );
+    drop(rig);
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let answer_first = rig.packets(vec![book(), creature_answer(284, "Brown Horse"), bar()], 3);
+    assert_eq!(
+        pin(&answer_first, events, verbs),
+        vec![
+            "COMPANION_UPDATE | mounts=1 petui=nil",
+            "PET_BAR_UPDATE | mounts=1 petui=nil",
+        ]
     );
 }

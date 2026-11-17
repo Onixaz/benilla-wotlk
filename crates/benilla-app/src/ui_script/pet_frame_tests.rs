@@ -2,6 +2,7 @@
 //! the feed's events. `UNIT_PET` names the owner (`arg1 == "player"`) and every other `UNIT_*`
 //! names the pet: a frame that mixes the two repaints off the player's health.
 
+use super::test_live::PetAnswersExt;
 use benilla_ui::script::{
     AuraState, QuadContent, ScriptValue, SelectionRequest, UiScript, UnitState,
 };

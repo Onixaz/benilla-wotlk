@@ -10,7 +10,7 @@ use benilla_formats::{SpellCatalog, SummonPropertiesCatalog};
 use benilla_protocol::messages::{PET_ACT_COMMAND, PET_COMMAND_DISMISS};
 use benilla_ui::script::{ScriptValue, UiScript};
 
-use crate::net::{ClientCommand, NetCommands, ObjectStore};
+use crate::net::{ClientCommand, NetCommands};
 use crate::ui_action::{UiError, UiErrorKeys};
 
 use super::{PetBar, PetUnit};
@@ -25,7 +25,7 @@ const SUMMON_FLAG_NO_DISMISS: u32 = 0x20;
 const PET_DISMISS_MS: i64 = 10_000;
 
 /// `(PetCanBeAbandoned, PetCanBeRenamed)` off `UNIT_FIELD_BYTES_2` byte 2.
-pub(super) fn menu_predicates(pet_flags: u8) -> (bool, bool) {
+pub(crate) fn menu_predicates(pet_flags: u8) -> (bool, bool) {
     (
         pet_flags & PET_FLAG_ABANDON != 0,
         pet_flags & PET_FLAG_RENAME != 0,
@@ -34,45 +34,16 @@ pub(super) fn menu_predicates(pet_flags: u8) -> (bool, bool) {
 
 /// Whether the unit's summon row bars a dismiss: the unit's summon-properties lookup (`0x71d1f0`)
 /// through its `UNIT_CREATED_BY_SPELL`, flag `0x20`.
-pub(super) fn summon_bars_dismiss(
-    store: &ObjectStore,
+pub(crate) fn summon_bars_dismiss(
+    fields: &benilla_protocol::ObjectFields,
     spells: &SpellCatalog,
     summons: &SummonPropertiesCatalog,
 ) -> bool {
-    store
-        .0
+    fields
         .unit_created_by_spell()
         .and_then(|spell| spells.get(spell)?.summon_properties_row())
         .and_then(|row| summons.flags(row))
         .is_some_and(|flags| flags & SUMMON_FLAG_NO_DISMISS != 0)
-}
-
-/// Push the menu's predicates. Abandon and Rename need us as `UNIT_FIELD_SUMMONEDBY` (`0x5d37cb`),
-/// Dismiss's refusal needs us as `UNIT_FIELD_CREATEDBY` (`0x5d386b`); with no pet it answers 1.
-pub(super) fn feed_pet_menu(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    bar: Res<PetBar>,
-    pet: PetUnit,
-    spells: Option<Res<crate::ui_action::Spells>>,
-    summons: Option<Res<crate::spell::SummonSlots>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let store = (bar.spells.pet_guid != 0)
-        .then(|| pet.store(bar.spells.pet_guid))
-        .flatten();
-    let flags = store
-        .filter(|store| store.0.unit_summoned_by() == pet.self_guid.0)
-        .map_or(0, |store| store.0.unit_pet_flags());
-    let (can_be_abandoned, can_be_renamed) = menu_predicates(flags);
-    let can_be_dismissed = !store
-        .filter(|store| store.0.unit_created_by() == pet.self_guid.0)
-        .zip(spells.as_deref().zip(summons.as_deref()))
-        .is_some_and(|(store, (spells, summons))| {
-            summon_bars_dismiss(store, &spells.catalog, &summons.0)
-        });
-    script.set_pet_menu(can_be_abandoned, can_be_renamed, can_be_dismissed);
 }
 
 /// Send the menu's verbs under [`PetBar`]'s pet guid. Nothing is applied locally: the server
@@ -136,7 +107,7 @@ pub(super) fn drain_pet_menu(
             continue;
         };
         if let (Some(spells), Some(summons)) = (spells.as_deref(), summons.as_deref()) {
-            if summon_bars_dismiss(store, &spells.catalog, &summons.0) {
+            if summon_bars_dismiss(&store.0, &spells.catalog, &summons.0) {
                 debug!("ui_pet: dismiss refused, the summon cannot be dismissed — no packet");
                 continue;
             }

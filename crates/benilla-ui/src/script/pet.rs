@@ -113,23 +113,11 @@ pub(crate) struct PetBarState {
     /// with it.
     pub(crate) actions_usable: bool,
     pub(crate) slots: Vec<StoredPetAction>,
-    /// `HasPetUI`'s first return: a pet with a nonzero `UNIT_FIELD_PETNUMBER`. Not `has_bar`, whose
-    /// gate is the cached guid alone.
-    pub(crate) has_ui: bool,
-    pub(crate) stats: PetStats,
     /// `PickupPetAction`'s gate: the pet's object resolves and `UNIT_FLAG_POSSESSED` is clear,
     /// which blocks the drop as well as the pick-up. Not `actions_usable`: possession does not grey
     /// the bar, and the pick-up itself does not ask it. The writes at both ends do, so a greyed bar
     /// with its pet in view still lifts an action onto the cursor and then writes nothing.
     pub(crate) pickup_allowed: bool,
-    /// `PetCanBeAbandoned()`: a kept pet rather than a summon. It forks the pet menu: paperdoll,
-    /// rename and abandon show when true, dismiss only when false (`UnitPopup.lua:796-810`).
-    pub(crate) can_be_abandoned: bool,
-    /// `PetCanBeRenamed()`, ANDed with the above for the rename row; set until the first rename.
-    pub(crate) can_be_renamed: bool,
-    /// `PetCanBeDismissed()` answering nil: our summon whose `SummonProperties` row bars it
-    /// (`0x5d3820`). Kept negated, since with no pet it answers 1.
-    pub(crate) cannot_be_dismissed: bool,
     /// The charm or possess expiry on the `GetTime` clock, in seconds: the last `SMSG_PET_SPELLS`
     /// duration past its arrival, `None` for a packet whose duration is 0.
     pub(crate) expiry: Option<f64>,
@@ -186,14 +174,6 @@ impl super::UiScript {
             .collect();
     }
 
-    /// Push the stat block and `HasPetUI`'s first return, which move on descriptor updates rather
-    /// than with the bar.
-    pub fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats) {
-        let bar = &mut self.model_mut().pet_bar;
-        bar.has_ui = has_ui;
-        bar.stats = stats;
-    }
-
     /// Push the pet's expiry on the `GetTime` clock, `None` for none: the pet's set stores the tick
     /// count plus the duration for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
     pub fn set_pet_expiry(&mut self, expiry: Option<f64>) {
@@ -203,28 +183,6 @@ impl super::UiScript {
     /// Push the possess spell, `None` for none; the app fires `UPDATE_BONUS_ACTIONBAR` on a change.
     pub fn set_possess_spell(&mut self, possess: Option<PossessView>) {
         set_field!(self, pet_bar.possess, possess);
-    }
-
-    /// Push the menu's three predicates, which move with the pet's descriptor.
-    pub fn set_pet_menu(
-        &mut self,
-        can_be_abandoned: bool,
-        can_be_renamed: bool,
-        can_be_dismissed: bool,
-    ) {
-        {
-            let bar = &self.model_ref().pet_bar;
-            if bar.can_be_abandoned == can_be_abandoned
-                && bar.can_be_renamed == can_be_renamed
-                && bar.cannot_be_dismissed != can_be_dismissed
-            {
-                return;
-            }
-        }
-        let bar = &mut self.model_mut().pet_bar;
-        bar.can_be_abandoned = can_be_abandoned;
-        bar.can_be_renamed = can_be_renamed;
-        bar.cannot_be_dismissed = !can_be_dismissed;
     }
 
     /// Take the `CastPetAction` calls out of the call stream, as 1-based slots; the app decides
@@ -284,6 +242,16 @@ impl super::UiScript {
 }
 
 /// The stored slot at a 1-based button index.
+/// The pet stat block read live; with no view lent, no pet.
+fn live_stats() -> (bool, PetStats) {
+    super::read_live(|l| l.pet_stats()).unwrap_or_default()
+}
+
+/// The pet menu's predicates read live; with no view lent, the no-pet answers.
+fn live_menu() -> (bool, bool, bool) {
+    super::read_live(|l| l.pet_menu()).unwrap_or((false, false, true))
+}
+
 fn slot_at(model: &Model, i: u32) -> Option<&StoredPetAction> {
     usize::try_from(i.checked_sub(1)?)
         .ok()
@@ -508,15 +476,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Two returns on every path, `(nil, nil)` with no pet UI.
+    // HasPetUI() (`0x5d3960`): two returns on every path, `(nil, nil)` with no pet UI.
     g.set(
         "HasPetUI",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let bar = &model.pet_bar;
-            Ok((flag(bar.has_ui), flag(bar.has_ui && bar.stats.hunter_pet)))
+        lua.create_function(move |_, ()| {
+            let (has_ui, stats) = live_stats();
+            Ok((flag(has_ui), flag(has_ui && stats.hunter_pet)))
         })?,
     )?;
 
@@ -524,11 +489,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // and its damage percentage; `nil, 100` without a hunter's pet.
     g.set(
         "GetPetHappiness",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let s = &model.pet_bar.stats;
+        lua.create_function(move |_, ()| {
+            let (_, s) = live_stats();
             Ok(match s.happiness.filter(|_| s.hunter_pet) {
                 Some(b) => (Value::Integer(i64::from(b)), f64::from(s.damage_percentage)),
                 None => (Value::Nil, 100.0),
@@ -536,63 +498,46 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The one stat binding that fails to nil, level 0 included.
+    // 12340 has no pet loyalty: the 1.12 verb answers its no-data nil.
     g.set(
         "GetPetLoyalty",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let s = &model.pet_bar.stats;
-            Ok(match s.loyalty.as_deref().filter(|_| s.hunter_pet) {
-                Some(name) => Value::String(lua.create_string(name)?),
-                None => Value::Nil,
-            })
-        })?,
+        lua.create_function(move |_, ()| Ok(Value::Nil))?,
     )?;
 
-    // The high then low word of one packed dword; a gate failure is (0, 0), not nil.
+    // 12340's unit block has no training points: the 1.12 verb answers its gate-failure pair.
     g.set(
         "GetPetTrainingPoints",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let s = &model.pet_bar.stats;
-            let (total, spent) = if s.hunter_pet {
-                s.training_points
-            } else {
-                (0, 0)
-            };
-            Ok((f64::from(total), f64::from(spent)))
-        })?,
+        lua.create_function(move |_, ()| Ok((0.0, 0.0)))?,
     )?;
 
-    // Numbers on every path; the client reads both unsigned, so neither is negative.
+    // GetPetExperience() (`0x5d3a20`): numbers on every path, `(0, 0)` unless the pet can gain
+    // experience (`0x5d3a5d`).
     g.set(
         "GetPetExperience",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let s = &model.pet_bar.stats;
+        lua.create_function(move |_, ()| {
+            let (_, s) = live_stats();
             let (cur, next) = if s.hunter_pet { s.experience } else { (0, 0) };
             Ok((f64::from(cur), f64::from(next)))
         })?,
     )?;
 
-    // One return on every path, with no class gate. Answers the `"pet"` token only: the reference
-    // resolves any unit off its cached creature record (`[[unit+0xb30]+0x1c]`), so a wild boar's
-    // `"target"` answers "Boar" there and nil here. The pet page is the only stock caller.
+    // UnitCreatureFamily(unit) (`0x611820`): any unit's family off its cached creature record, nil
+    // without a record or a row; a non-string raises the usage.
     g.set(
         "UnitCreatureFamily",
-        lua.create_function(move |lua, token: Option<String>| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let family = token
-                .filter(|t| t.eq_ignore_ascii_case("pet"))
-                .and_then(|_| model.pet_bar.stats.family.as_deref());
+        lua.create_function(move |lua, unit: Value| {
+            let unit =
+                super::binding_abi::string_arg(lua, unit, r#"Usage: UnitCreatureFamily("unit")"#)?;
+            let guid = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                model
+                    .unit_guids
+                    .guid_of(&unit)
+                    .or_else(|| model.unit(&unit).filter(|u| u.exists).map(|u| u.guid))
+            };
+            let family = guid.and_then(|g| super::read_live(|l| l.creature_family(g)).flatten());
             Ok(match family {
                 Some(name) => Value::String(lua.create_string(name)?),
                 None => Value::Nil,
@@ -600,45 +545,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // A real nil, never "": the stable reads it as a predicate and as a texture
-    // (`PetStable.lua:51`, `161-162`), and an empty path would draw white.
+    // GetPetIcon() (`0x5d3ce0`): the family's icon for a pet that can gain experience; a real nil,
+    // never "", since the stable reads it as a predicate and as a texture (`PetStable.lua:51`).
     g.set(
         "GetPetIcon",
         lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match model.pet_bar.stats.icon.as_deref() {
+            let (_, s) = live_stats();
+            Ok(match s.icon.as_deref().filter(|_| s.hunter_pet) {
                 Some(path) => Value::String(lua.create_string(path)?),
                 None => Value::Nil,
             })
         })?,
     )?;
 
+    // GetPetTalentTree() (`0x5d3d80`).
     g.set(
         "GetPetTalentTree",
         lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match model.pet_bar.stats.talent_tree.as_deref() {
+            let (_, s) = live_stats();
+            Ok(match s.talent_tree.as_deref() {
                 Some(name) => Value::String(lua.create_string(name)?),
                 None => Value::Nil,
             })
         })?,
     )?;
 
-    // One return per diet and never a nil: an empty diet is zero values, for which
-    // `BuildListString` answers nil (`PetPaperDollFrame.xml:269`).
+    // GetPetFoodTypes() (`0x5d3bd0`): one return per diet and never a nil: an empty diet is zero
+    // values, for which `BuildListString` answers nil (`PetPaperDollFrame.xml:269`).
     g.set(
         "GetPetFoodTypes",
         lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let values: Vec<Value> = model
-                .pet_bar
-                .stats
+            let (_, s) = live_stats();
+            let values: Vec<Value> = s
                 .food_types
                 .iter()
                 .map(|f| lua.create_string(f).map(Value::String))
@@ -687,34 +625,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The pet menu ─────────────────────────────────────────────────────────
 
+    // The three predicates read the pet list's head when called (`0x5d3780`, `0x5d3820`, `0x5d38c0`).
     g.set(
         "PetCanBeAbandoned",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.pet_bar.can_be_abandoned))
-        })?,
+        lua.create_function(move |_, ()| Ok(flag(live_menu().0)))?,
     )?;
 
     g.set(
         "PetCanBeDismissed",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(!model.pet_bar.cannot_be_dismissed))
-        })?,
+        lua.create_function(move |_, ()| Ok(flag(live_menu().2)))?,
     )?;
 
     g.set(
         "PetCanBeRenamed",
-        lua.create_function(move |lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.pet_bar.can_be_renamed))
-        })?,
+        lua.create_function(move |_, ()| Ok(flag(live_menu().1)))?,
     )?;
 
     // The `ABANDON_PET` popup's OnAccept, after its confirm.
@@ -1078,7 +1002,7 @@ mod tests {
         assert_eq!(s.eval::<i64>("return PetCanBeDismissed()").unwrap(), 1);
 
         // A hunter's freshly tamed pet.
-        s.set_pet_menu(true, true, true);
+        let _live = menu_loan(true, true, true);
         assert_eq!(s.eval::<i64>("return PetCanBeAbandoned()").unwrap(), 1);
         assert!(
             s.eval::<bool>("return PetCanBeAbandoned() and PetCanBeRenamed()")
@@ -1088,15 +1012,15 @@ mod tests {
         assert!(!s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
 
         // The same pet after one rename.
-        s.set_pet_menu(true, false, true);
+        let _live = menu_loan(true, false, true);
         assert!(s.eval::<bool>("return PetCanBeAbandoned() ~= nil").unwrap());
         assert!(s.eval::<bool>("return PetCanBeRenamed() == nil").unwrap());
 
         // A warlock's demon: only Dismiss shows.
-        s.set_pet_menu(false, false, true);
+        let _live = menu_loan(false, false, true);
         assert!(s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
         // A summon whose `SummonProperties` row bars it: no Dismiss either.
-        s.set_pet_menu(false, false, false);
+        let _live = menu_loan(false, false, false);
         assert!(s.eval::<bool>("return PetCanBeDismissed() == nil").unwrap());
 
         assert_eq!(s.take_pet_gives_up(), (0, 0));
@@ -1117,27 +1041,6 @@ mod tests {
             ]
         );
         assert!(s.take_pet_renames().is_empty(), "drain empties");
-    }
-
-    #[test]
-    fn pushing_the_bar_leaves_the_stats_and_the_menu_alone() {
-        let mut s = UiScript::new().unwrap();
-        s.set_pet_menu(true, true, true);
-        s.set_pet_stats(
-            true,
-            PetStats {
-                hunter_pet: true,
-                happiness: Some(3),
-                ..Default::default()
-            },
-        );
-
-        s.set_pet_actions(true, true, true, slots());
-
-        assert_eq!(s.eval::<i64>("return PetCanBeAbandoned()").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return PetCanBeRenamed()").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return HasPetUI()").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return GetPetHappiness()").unwrap(), 3);
     }
 
     #[test]
@@ -1179,10 +1082,10 @@ mod tests {
 
     #[test]
     fn the_pet_icon_answers_a_path_or_a_real_nil() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         assert!(s.eval::<bool>("return GetPetIcon() == nil").unwrap());
 
-        s.set_pet_stats(true, hunter_stats());
+        let _live = stats_loan(true, hunter_stats());
         assert_eq!(
             s.eval::<String>("return GetPetIcon()").unwrap(),
             "Interface\\Icons\\Ability_Hunter_Pet_Boar"
@@ -1191,16 +1094,51 @@ mod tests {
         assert_eq!(s.arity("GetPetIcon()").unwrap(), 1);
     }
 
-    /// `GetPetTalentTree` is the pushed tree name, nil without one (`0x5d3d80`).
+    /// `GetPetTalentTree` is the live tree name, nil without one (`0x5d3d80`).
     #[test]
     fn the_talent_tree_is_the_pushed_name_or_nil() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         assert!(s.eval::<bool>("return GetPetTalentTree() == nil").unwrap());
-        s.set_pet_stats(true, hunter_stats());
+        let _live = stats_loan(true, hunter_stats());
         assert_eq!(
             s.eval::<String>("return GetPetTalentTree()").unwrap(),
             "Tenacity"
         );
+    }
+
+    /// `stats` lent as the pet list's head (guid 2, ours 1), for the test's length.
+    fn stats_loan(
+        has_ui: bool,
+        stats: PetStats,
+    ) -> crate::script::LiveLoan<crate::script::live::TestView> {
+        crate::script::live::lend_test(crate::script::live::TestView {
+            player: Some(1),
+            units: [(1, (0, 1)), (2, (0, 1))].into(),
+            pet_stats: (has_ui, stats),
+            ..Default::default()
+        })
+    }
+
+    /// The three menu predicates lent, for the test's length.
+    fn menu_loan(
+        abandon: bool,
+        rename: bool,
+        dismiss: bool,
+    ) -> crate::script::LiveLoan<crate::script::live::TestView> {
+        crate::script::live::lend_test(crate::script::live::TestView {
+            pet_menu: Some((abandon, rename, dismiss)),
+            ..Default::default()
+        })
+    }
+
+    /// Our guid 1 and the pet's 2 as the unit tokens name them.
+    fn pet_tokens(s: &mut UiScript) {
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            pet: 2,
+            held: [(1, 0), (2, 0)].into(),
+            ..Default::default()
+        });
     }
 
     fn hunter_stats() -> PetStats {
@@ -1227,8 +1165,8 @@ mod tests {
 
     #[test]
     fn a_hunters_pet_answers_every_stat_binding() {
-        let mut s = UiScript::new().unwrap();
-        s.set_pet_stats(true, hunter_stats());
+        let s = UiScript::new().unwrap();
+        let _live = stats_loan(true, hunter_stats());
 
         assert!(s
             .eval::<bool>(
@@ -1236,13 +1174,12 @@ mod tests {
                  return h == 3 and dmg == 125 and select('#', GetPetHappiness()) == 2"
             )
             .unwrap());
-        assert_eq!(
-            s.eval::<String>("return GetPetLoyalty()").unwrap(),
-            "(Loyalty Level 6) Best Friend",
-            "the shipped prefix is pushed verbatim — the client does no stripping"
+        assert!(
+            s.eval::<bool>("return GetPetLoyalty() == nil").unwrap(),
+            "12340 has no loyalty"
         );
         assert!(s
-            .eval::<bool>("local t, sp = GetPetTrainingPoints() return t == 170 and sp == 130")
+            .eval::<bool>("local t, sp = GetPetTrainingPoints() return t == 0 and sp == 0")
             .unwrap());
         assert!(s
             .eval::<bool>("local c, n = GetPetExperience() return c == 4200 and n == 8000")
@@ -1254,8 +1191,8 @@ mod tests {
 
     #[test]
     fn a_non_hunter_pet_fails_three_different_ways() {
-        let mut s = UiScript::new().unwrap();
-        s.set_pet_stats(
+        let s = UiScript::new().unwrap();
+        let _live = stats_loan(
             true,
             PetStats {
                 hunter_pet: false,
@@ -1285,8 +1222,8 @@ mod tests {
 
     #[test]
     fn happiness_bucket_zero_is_not_the_failure_case() {
-        let mut s = UiScript::new().unwrap();
-        s.set_pet_stats(
+        let s = UiScript::new().unwrap();
+        let _live = stats_loan(
             true,
             PetStats {
                 happiness: Some(0),
@@ -1319,13 +1256,14 @@ mod tests {
     #[test]
     fn unit_creature_family_is_nil_on_every_absent_path() {
         let mut s = UiScript::new().unwrap();
+        pet_tokens(&mut s);
         // No pet pushed.
         assert!(s
             .eval::<bool>(r#"return UnitCreatureFamily("pet") == nil"#)
             .unwrap());
 
         // Family 0 and an unanswered creature query both arrive as `None`.
-        s.set_pet_stats(
+        let _live = stats_loan(
             true,
             PetStats {
                 family: None,
@@ -1342,28 +1280,33 @@ mod tests {
              and print a bare 'Level 58 ' with a trailing space"
         );
 
-        // With a family: `"pet"` answers it, any other token nil.
-        s.set_pet_stats(true, hunter_stats());
+        // With a family: `"pet"` answers it; a token naming nobody, or a player, nil.
+        let _live = stats_loan(true, hunter_stats());
         assert_eq!(
             s.eval::<String>(r#"return UnitCreatureFamily("pet")"#)
                 .unwrap(),
             "Boar"
         );
-        for token in [r#""target""#, r#""player""#, "nil"] {
+        for token in [r#""target""#, r#""player""#] {
             assert!(
                 s.eval::<bool>(&format!("return UnitCreatureFamily({token}) == nil"))
                     .unwrap(),
                 "{token} must answer nil"
             );
         }
+        let err = s.run("UnitCreatureFamily(nil)").unwrap_err().to_string();
+        assert!(
+            err.contains(r#"Usage: UnitCreatureFamily("unit")"#),
+            "{err}"
+        );
     }
 
     #[test]
     fn get_pet_food_types_returns_one_value_per_diet() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         assert_eq!(s.arity("GetPetFoodTypes()").unwrap(), 0);
 
-        s.set_pet_stats(true, hunter_stats());
+        let _live = stats_loan(true, hunter_stats());
         assert_eq!(
             s.arity("GetPetFoodTypes()").unwrap(),
             6,
@@ -1376,7 +1319,7 @@ mod tests {
             )
             .unwrap());
 
-        s.set_pet_stats(
+        let _live = stats_loan(
             true,
             PetStats {
                 food_types: vec![],
@@ -1390,7 +1333,8 @@ mod tests {
     #[test]
     fn the_family_word_answers_for_a_non_hunter_pet() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_stats(
+        pet_tokens(&mut s);
+        let _live = stats_loan(
             true,
             PetStats {
                 hunter_pet: false,

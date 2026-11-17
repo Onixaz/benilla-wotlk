@@ -71,7 +71,11 @@ pub(crate) struct Lifecycle<'w> {
     actions: ResMut<'w, PlayerActions>,
     learned_in_tab: ResMut<'w, LearnedInTab>,
     summons: Res<'w, super::SummonSlots>,
-    companions: ResMut<'w, super::CompanionEdges>,
+    /// The companion lists the known-spell adds file into (`0x5426a5`).
+    companions: ResMut<'w, crate::ui_companion::CompanionLists>,
+    names: Res<'w, crate::names::NameCache>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     multicast: ResMut<'w, super::multicast::MultiCastLists>,
     cast_bar: ResMut<'w, CastBarFeed>,
     pending: ResMut<'w, PendingCast>,
@@ -132,6 +136,14 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
                 ranged_ms,
             },
         );
+        // The init clears, adds and updates the companions (`0x6e7f9d`, `0x6e7fe3`).
+        let me = l
+            .self_guid
+            .0
+            .and_then(|g| l.index.0.get(&g))
+            .and_then(|&e| sc.stores.get(e).ok())
+            .map(|s| race_class_of(&s.0));
+        companion_adds(&mut l, me, None);
         // The book load files the totems without a refill (`0x6e7f73`).
         l.multicast.lists = Default::default();
         if let Some(spells) = l.spells.as_deref() {
@@ -202,34 +214,75 @@ fn on_spell_learned(
             .spells
             .as_deref()
             .and_then(|s| Some((s, s.catalog.get(spell_id)?)));
-        // A live companion learn's line and `COMPANION_LEARNED` wait on its creature (`0x54278e`).
-        if learner.is_some()
-            && display.is_some_and(|(_, d)| d.in_name_cache() && d.is_companion(&l.summons.0))
-        {
-            l.companions.learned.push(spell_id);
-        }
         if let Some((spells, d)) = display.filter(|(_, d)| d.in_spellbook(&l.summons.0)) {
             let changed = l.multicast.learn(d, &spells.catalog);
             if learner.is_some() && (changed || super::multicast::CALL_SPELLS.contains(&spell_id)) {
                 l.multicast.refill_due = true;
             }
         }
+        // The add's companion arm, its line and `COMPANION_LEARNED` on a live learn (`0x5426a5`).
+        let me = self_q.iter().next().map(|s| race_class_of(&s.0));
+        companion_adds(&mut l, me, Some((spell_id, learner.is_some())));
     }
 }
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
         // The known-spell removal drops a companion from its list (`0x53fad0`).
-        let companion = l
-            .spells
-            .as_deref()
-            .and_then(|s| s.catalog.get(spell_id))
-            .is_some_and(|d| d.is_companion(&l.summons.0));
-        if companion {
-            l.companions.unlearned.push(spell_id);
+        if let Some(spells) = l.spells.as_deref() {
+            let mut cx = crate::ui_companion::CompanionCx {
+                catalog: &spells.catalog,
+                summons: &l.summons.0,
+                names: &l.names,
+                commands: &l.net,
+                ui: &mut l.ui,
+            };
+            crate::ui_companion::remove_known(&mut l.companions, spell_id, &mut cx);
         }
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
+    }
+}
+
+/// Our race and class off our fields.
+fn race_class_of(f: &benilla_protocol::ObjectFields) -> (u8, u8) {
+    (f.unit_race().unwrap_or(0), f.unit_class().unwrap_or(0))
+}
+
+/// The companion arm of the known-spell add for one learn (`Some((spell, live))`), or for every
+/// known spell at the init (`None`, `0x6e7f9d`); `me` gives the race and class the pool's skill
+/// line lookup reads (`0x6e7b00`).
+fn companion_adds(l: &mut Lifecycle, me: Option<(u8, u8)>, one: Option<(u32, bool)>) {
+    let Some(spells) = l.spells.as_deref() else {
+        return;
+    };
+    let (race, class) = me.unwrap_or((0, 0));
+    let lines = l.skill_lines.as_deref();
+    let line_of = |id: u32| lines.and_then(|s| s.catalog.spell_to_line(id, race, class));
+    let mut cx = crate::ui_companion::CompanionCx {
+        catalog: &spells.catalog,
+        summons: &l.summons.0,
+        names: &l.names,
+        commands: &l.net,
+        ui: &mut l.ui,
+    };
+    match one {
+        Some((spell_id, notify)) => crate::ui_companion::add_known(
+            &mut l.companions,
+            spell_id,
+            notify,
+            line_of(spell_id),
+            &mut cx,
+        ),
+        None => {
+            let known: Vec<_> = l
+                .actions
+                .spells
+                .iter()
+                .map(|&id| (id, line_of(id)))
+                .collect();
+            crate::ui_companion::add_initial(&mut l.companions, known, &mut cx);
+        }
     }
 }
 

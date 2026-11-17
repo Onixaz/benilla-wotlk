@@ -36,13 +36,23 @@ pub(super) fn register(app: &mut App) {
 }
 
 /// A lost socket sends no zero-guid `SMSG_PET_SPELLS`, so the session end resets the bar itself.
-fn on_session_end(In(_): In<SessionEvent>, mut bar: ResMut<PetBar>) {
+fn on_session_end(
+    In(_): In<SessionEvent>,
+    mut bar: ResMut<PetBar>,
+    mut list: ResMut<super::PetList>,
+) {
     bar.clear();
+    list.0.clear();
 }
 
-fn on_spells(In(ev): In<SessionEvent>, catalog: Option<Res<Spells>>, mut bar: ResMut<PetBar>) {
+fn on_spells(
+    In(ev): In<SessionEvent>,
+    catalog: Option<Res<Spells>>,
+    mut bar: ResMut<PetBar>,
+    mut list: ResMut<super::PetList>,
+) {
     if let SessionEvent::PetSpells(spells) = ev {
-        pet_spells(*spells, catalog.as_deref(), &mut bar);
+        pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
     }
 }
 
@@ -214,20 +224,26 @@ fn on_renameable(In(ev): In<SessionEvent>, mut renameable: ResMut<super::PetRena
     }
 }
 
-fn on_guids(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>) {
+fn on_guids(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>, mut list: ResMut<super::PetList>) {
     if let SessionEvent::PetGuids(guids) = ev {
-        pet_guids(guids, &mut bar);
+        pet_guids(guids, &mut bar, &mut list);
     }
 }
 
 /// `SMSG_PET_SPELLS`: replace the whole bar and reseed the pet's cooldowns from its tail. A zero
 /// guid is the teardown (`Player::RemovePetActionBar`), cooldowns included.
-fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
+fn pet_spells(
+    spells: PetSpells,
+    catalog: Option<&Spells>,
+    bar: &mut PetBar,
+    list: &mut super::PetList,
+) {
     if spells.pet_guid == 0 {
         if bar.spells.pet_guid != 0 {
             debug!("net: pet bar torn down");
         }
         bar.clear();
+        list.0.clear();
         return;
     }
     // A new pet guid clears the attack latch; a re-send from the same pet keeps it.
@@ -236,9 +252,9 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
     }
     // The pet setter (`0x5d6900`): a listed guid moves to the head, swapping places with it; an
     // unlisted one becomes the whole list.
-    match bar.pets.iter().position(|&g| g == spells.pet_guid) {
-        Some(i) => bar.pets.swap(0, i),
-        None => bar.pets = vec![spells.pet_guid],
+    match list.0.iter().position(|&g| g == spells.pet_guid) {
+        Some(i) => list.0.swap(0, i),
+        None => list.0 = vec![spells.pet_guid],
     }
     debug!(
         "net: pet bar for {:#x} — react {} command {} {}, {} known spell(s), {} cooldown(s)",
@@ -308,10 +324,10 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
 /// `SMSG_PET_GUIDS` (`0x5d6550`): the list replaced whole, with no event. Every pet verb reads the
 /// list's head (`0x5d3390` with index 0), so the head is the bar's guid; an empty list is no pet
 /// while the bar's words stay for the next `SMSG_PET_SPELLS`.
-fn pet_guids(guids: Vec<u64>, bar: &mut PetBar) {
+fn pet_guids(guids: Vec<u64>, bar: &mut PetBar, list: &mut super::PetList) {
     debug!("net: pet guids {guids:x?}");
     bar.spells.pet_guid = guids.first().copied().unwrap_or(0);
-    bar.pets = guids;
+    list.0 = guids;
 }
 
 /// `Attributes & 0x10`, which picks `ERR_PET_LEARN_ABILITY_S` over the spell line (`0x5d4d62`).
@@ -462,10 +478,11 @@ mod tests {
     #[test]
     fn a_zero_guid_tears_the_whole_bar_down() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         assert_eq!(bar.spells.pet_guid, 0x2A);
 
-        pet_spells(PetSpells::default(), None, &mut bar);
+        pet_spells(PetSpells::default(), None, &mut bar, &mut list);
         assert_eq!(bar.spells, PetSpells::default());
         assert!(!bar.has_bar());
     }
@@ -475,27 +492,29 @@ mod tests {
     #[test]
     fn each_pet_packet_rearms_or_clears_the_expiry() {
         let mut bar = PetBar::default();
+        let mut list = super::super::PetList::default();
         let mut charm = a_bar(0x2A);
         charm.duration_ms = 60_000;
         let before = Instant::now();
-        pet_spells(charm.clone(), None, &mut bar);
+        pet_spells(charm.clone(), None, &mut bar, &mut list);
         let left = bar.expires.expect("armed").duration_since(before);
         assert!(
             left >= std::time::Duration::from_secs(60) && left < std::time::Duration::from_secs(61)
         );
 
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         assert_eq!(bar.expires, None, "a 0 duration clears it");
-        pet_spells(charm, None, &mut bar);
+        pet_spells(charm, None, &mut bar, &mut list);
         assert!(bar.expires.is_some());
-        pet_spells(PetSpells::default(), None, &mut bar);
+        pet_spells(PetSpells::default(), None, &mut bar, &mut list);
         assert_eq!(bar.expires, None, "the teardown clears it");
     }
 
     #[test]
     fn pet_mode_only_writes_its_own_bar() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
 
         pet_mode(
             PetMode {
@@ -522,13 +541,14 @@ mod tests {
     #[test]
     fn the_attack_latch_survives_a_resend_and_dies_on_a_new_pet() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         bar.attacking = true;
 
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         assert!(bar.attacking, "the same pet re-sending keeps its attack");
 
-        pet_spells(a_bar(0x99), None, &mut bar);
+        pet_spells(a_bar(0x99), None, &mut bar, &mut list);
         assert!(!bar.attacking, "a different pet is not attacking");
     }
 
@@ -583,24 +603,25 @@ mod tests {
     #[test]
     fn the_pet_list_follows_the_setter_and_the_guid_packet() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
-        assert_eq!(bar.pets, [0x2A]);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
+        assert_eq!(list.0, [0x2A]);
 
-        pet_guids(vec![0x2A, 0x99, 0x77], &mut bar);
+        pet_guids(vec![0x2A, 0x99, 0x77], &mut bar, &mut list);
         assert_eq!(bar.spells.pet_guid, 0x2A);
-        pet_spells(a_bar(0x77), None, &mut bar);
-        assert_eq!(bar.pets, [0x77, 0x99, 0x2A], "a swap with the head");
-        pet_spells(a_bar(0x55), None, &mut bar);
-        assert_eq!(bar.pets, [0x55]);
+        pet_spells(a_bar(0x77), None, &mut bar, &mut list);
+        assert_eq!(list.0, [0x77, 0x99, 0x2A], "a swap with the head");
+        pet_spells(a_bar(0x55), None, &mut bar, &mut list);
+        assert_eq!(list.0, [0x55]);
 
-        pet_guids(vec![0x99], &mut bar);
+        pet_guids(vec![0x99], &mut bar, &mut list);
         assert_eq!(bar.spells.pet_guid, 0x99, "the head is the pet");
-        pet_guids(Vec::new(), &mut bar);
+        pet_guids(Vec::new(), &mut bar, &mut list);
         assert!(!bar.has_bar(), "an empty list is no pet");
         assert!(!bar.spells.bar[0].is_empty(), "the words stay");
 
-        pet_spells(PetSpells::default(), None, &mut bar);
-        assert!(bar.pets.is_empty());
+        pet_spells(PetSpells::default(), None, &mut bar, &mut list);
+        assert!(list.0.is_empty());
     }
 
     #[test]

@@ -253,6 +253,13 @@ impl Plugin for UnitAurasPlugin {
     }
 }
 
+/// What our own auras' effect watch reads: our guid, the catalog and the queue it fires into.
+type OwnAuraWatch<'w> = (
+    Option<Res<'w, crate::net::SelfGuid>>,
+    Option<Res<'w, crate::ui_action::Spells>>,
+    Option<ResMut<'w, crate::ui_script::live::UiEvents>>,
+);
+
 /// A packet for a unit not in the object manager is skipped whole (`0x7300f1`); a unit's first
 /// packet gives it the table.
 fn on_aura_update(
@@ -261,6 +268,7 @@ fn on_aura_update(
     mut units: Query<(&ObjectStore, Option<&mut UnitAuras>)>,
     mut commands: Commands,
     clock: Res<Time<Real>>,
+    own: OwnAuraWatch<'_>,
 ) {
     let SessionEvent::AuraUpdate(update) = ev else {
         return;
@@ -285,14 +293,48 @@ fn on_aura_update(
     if !store.is_unit() {
         return; // the lookup is unit-typed (`0x4d4db0`, mask 8)
     }
-    match auras {
-        Some(mut auras) => auras.apply(&update, now),
+    let (me, spells, ui) = own;
+    let mine = me.is_some_and(|m| m.0 == Some(update.unit));
+    let before = mine.then(|| auras.as_deref().cloned().unwrap_or_default());
+    let after = match auras {
+        Some(mut auras) => {
+            auras.apply(&update, now);
+            before.is_some().then(|| auras.clone())
+        }
         None => {
             let mut auras = UnitAuras::default();
             auras.apply(&update, now);
+            let after = before.is_some().then(|| auras.clone());
             commands.entity(entity).insert(auras);
+            after
+        }
+    };
+    // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
+    if let (Some(before), Some(after), Some(spells), Some(mut ui)) = (before, after, spells, ui) {
+        for spell_id in own_aura_moves(&before, &after) {
+            crate::ui_companion::mount_updates(spell_id, &spells.catalog, &mut ui);
         }
     }
+}
+
+/// The spells whose auras one packet removed from a slot, then those it put in one: the effect
+/// removal for each slot whose aura left, then the add for each slot whose aura arrived.
+fn own_aura_moves(before: &UnitAuras, after: &UnitAuras) -> Vec<u32> {
+    let mut slots: Vec<u8> = before
+        .by_slot
+        .keys()
+        .chain(after.by_slot.keys())
+        .copied()
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    let moved = |slot: &u8| {
+        let (old, new) = (before.by_slot.get(slot), after.by_slot.get(slot));
+        (old.map(|a| a.spell_id) != new.map(|a| a.spell_id)).then_some((old, new))
+    };
+    let removed = slots.iter().filter_map(|s| moved(s)?.0.map(|a| a.spell_id));
+    let added = slots.iter().filter_map(|s| moved(s)?.1.map(|a| a.spell_id));
+    removed.chain(added).collect()
 }
 
 #[cfg(test)]

@@ -29,7 +29,8 @@ use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{PetCast, PetPress};
-use menu::{drain_pet_menu, feed_pet_menu};
+use menu::drain_pet_menu;
+pub(crate) use menu::{menu_predicates, summon_bars_dismiss};
 pub(crate) use temp_bar::temp_slot_texture;
 pub(crate) use unit::feed_pet_unit;
 
@@ -74,9 +75,19 @@ pub(crate) struct PetBar {
     /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
     /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
     pub(crate) pending_cast: Option<(u32, Instant)>,
-    /// The controlled-pet list (`[0xc23500]`, count `[0xc234fc]`), its head `spells.pet_guid`:
-    /// written by the pet setter and replaced whole by `SMSG_PET_GUIDS`.
-    pub(crate) pets: Vec<u64>,
+}
+
+/// The controlled-pet list (`[0xc23500]`, count `[0xc234fc]`), its head `PetBar`'s guid: written
+/// by the pet setter and replaced whole by `SMSG_PET_GUIDS`, and read by every pet verb at call
+/// time (`0x5d3a24`). Apart from [`PetBar`], which the bar's presses write, so the live view lends it.
+#[derive(Resource, Default)]
+pub(crate) struct PetList(pub(crate) Vec<u64>);
+
+impl PetList {
+    /// The head the pet verbs read, `None` for an empty list (`0x5d3a2b`).
+    pub(crate) fn head(&self) -> Option<u64> {
+        self.0.first().copied()
+    }
 }
 
 /// `SMSG_PET_RENAMEABLE`s not yet fired as `PET_RENAMEABLE`.
@@ -96,6 +107,7 @@ pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut bar: ResMut<PetBar>,
+    list: Option<ResMut<PetList>>,
     player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
 ) {
@@ -107,6 +119,9 @@ pub(crate) fn request_pet_info_on_world_enter(
     };
     debug!("ui_pet: world entry with pet {pet:#x}, asking its bar");
     bar.clear();
+    if let Some(mut list) = list {
+        list.0.clear();
+    }
     let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
 }
 
@@ -134,6 +149,7 @@ impl Plugin for UiPetPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<PetBar>()
+            .init_resource::<PetList>()
             .init_resource::<PetRenameable>()
             .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
@@ -148,23 +164,17 @@ impl Plugin for UiPetPlugin {
                         .in_set(UnitFeed)
                         .before(feed_pet_bar)
                         .before(crate::ui_action::SlotIdentityFeed),
-                    // After the pet snapshot: these feeds' events reach Lua at once, and their
-                    // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
-                    // its cooldown triples before the cooldown events and the pet's flush fires after
+                    // The bar pushes its cooldown triples before the cooldown events and the pet's flush fires after
                     // them, so the buttons it wakes read the new list. After the pet unit: the
                     // bar's `PET_BAR_UPDATE` handler reads `UnitIsVisible("pet")`, the live object.
                     feed_pet_bar
                         .in_set(UnitFeed)
-                        .after(crate::ui_pet_stats::PetSnapshot)
                         .after(feed_pet_unit)
                         .before(CooldownEvents),
                     fire_pet_cooldown_events
                         .in_set(UnitFeed)
                         .after(CooldownEvents),
-                    feed_pet_unit
-                        .in_set(UnitFeed)
-                        .after(crate::ui_pet_stats::PetSnapshot),
-                    feed_pet_menu.in_set(UnitFeed),
+                    feed_pet_unit.in_set(UnitFeed),
                     // The UI's world entry asks after the time and before the mail (`0x528010`);
                     // its bar drop lands before the press and the feeds read the bar.
                     request_pet_info_on_world_enter

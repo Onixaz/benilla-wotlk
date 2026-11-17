@@ -13,7 +13,6 @@ use crate::target::UNIT_FLAG_POSSESSED;
 
 use super::bar::*;
 use super::drain::*;
-use super::menu::*;
 use super::unit::*;
 use super::*;
 

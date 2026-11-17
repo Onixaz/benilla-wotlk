@@ -2,6 +2,7 @@
 //! `UnitName("pet")` into `STABLE_PET_INFO_TEXT` (`PetStable.lua`); until the pet name query
 //! answers, `UnitName` reads `UNKNOWNOBJECT`, as in the reference.
 
+use super::test_live::PetAnswersExt;
 use benilla_ui::script::{PetStats, ScriptValue, UiScript, UnitState};
 
 /// The stock interface with a hunter seated.

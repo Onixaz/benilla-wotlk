@@ -500,7 +500,7 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
     let str = |s: &str| lua.create_string(s).map(Value::String);
     let int = |n: u32| Value::Integer(i64::from(n));
     let spell = |spell_id: u32, fallback: Option<(u32, &str)>| -> mlua::Result<Vec<Value>> {
-        if let Some((ty, at)) = model.companions.find(spell_id) {
+        if let Some((ty, at)) = super::companion::find(spell_id) {
             return Ok(vec![
                 str("companion")?,
                 int(at as u32 + 1),

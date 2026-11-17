@@ -4,7 +4,9 @@
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
-use benilla_ui::script::{LiveLoan, LiveState, UiScript};
+use benilla_ui::script::{
+    CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetStats, UiScript,
+};
 
 /// The death answers a test sets.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -31,9 +33,54 @@ pub(super) struct SummonConfirmUiState {
     pub time_left_ms: u32,
 }
 
+/// The pet and companion answers a test sets.
+#[derive(Clone, Debug, Default)]
+struct PetAnswers {
+    stats: (bool, PetStats),
+    menu: Option<(bool, bool, bool)>,
+    companions: CompanionState,
+}
+
 thread_local! {
     static DEATH: RefCell<DeathUiState> = RefCell::default();
     static SUMMON: RefCell<SummonConfirmUiState> = RefCell::default();
+    static PET: RefCell<PetAnswers> = RefCell::default();
+    /// The view lent for the rest of the thread once a pet answer is set.
+    static STICKY: RefCell<Option<LiveLoan<View>>> = const { RefCell::new(None) };
+}
+
+/// Set pet and companion answers on a bare VM, as the app's live view answers them: the first
+/// call lends [`View`] for the rest of the test's thread.
+pub(super) trait PetAnswersExt {
+    fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats);
+    fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool);
+    fn set_companions(&mut self, state: CompanionState);
+}
+
+fn sticky() {
+    STICKY.with(|s| {
+        if s.borrow().is_none() {
+            // SAFETY: held until the thread ends, made before any loan a later call nests in it.
+            *s.borrow_mut() = Some(unsafe { LiveLoan::new(View) });
+        }
+    });
+}
+
+impl PetAnswersExt for UiScript {
+    fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats) {
+        sticky();
+        PET.with(|p| p.borrow_mut().stats = (has_ui, stats));
+    }
+
+    fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool) {
+        sticky();
+        PET.with(|p| p.borrow_mut().menu = Some((abandon, rename, dismiss)));
+    }
+
+    fn set_companions(&mut self, state: CompanionState) {
+        sticky();
+        PET.with(|p| p.borrow_mut().companions = state);
+    }
 }
 
 /// The view over this thread's set answers.
@@ -110,6 +157,34 @@ impl LiveState for View {
 
     fn summon_area(&self) -> String {
         SUMMON.with(|s| s.borrow().area.clone())
+    }
+
+    fn companion_spells(&self, ty: CompanionType) -> Vec<u32> {
+        PET.with(|p| {
+            let p = p.borrow();
+            p.companions.list(ty).iter().map(|c| c.spell_id).collect()
+        })
+    }
+
+    fn companion(&self, ty: CompanionType, index: usize) -> Option<CompanionView> {
+        PET.with(|p| p.borrow().companions.list(ty).get(index).cloned())
+    }
+
+    fn companion_random_pool(&self) -> Vec<u32> {
+        PET.with(|p| p.borrow().companions.random_pool.clone())
+    }
+
+    fn pet_stats(&self) -> (bool, PetStats) {
+        PET.with(|p| p.borrow().stats.clone())
+    }
+
+    fn pet_menu(&self) -> (bool, bool, bool) {
+        PET.with(|p| p.borrow().menu.unwrap_or((false, false, true)))
+    }
+
+    /// Any unit asked answers the pet's family, as the tests name only the pet.
+    fn creature_family(&self, _: u64) -> Option<String> {
+        PET.with(|p| p.borrow().stats.1.family.clone())
     }
 
     fn summon_time_left_ms(&self) -> u32 {

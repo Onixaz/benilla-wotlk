@@ -1,7 +1,7 @@
-//! The companion bindings, over the two lists the app pushes (the spellbook's companion lists,
-//! `0xbe8df4`): critters and mounts, each resolved to creature, name, icon, active flag and
-//! cooldown. `CallCompanion` and `SummonRandomCritter` queue the spell's cast; `DismissCompanion`
-//! queues an intent the app drains ([`CompanionIntent`]).
+//! The companion bindings, over the spellbook's two companion lists (`0xbe8df4`) read through the
+//! live view when called: critters and mounts, each resolved to creature, name, icon and active
+//! flag at the call. `CallCompanion` and `SummonRandomCritter` queue the spell's cast;
+//! `DismissCompanion` queues an intent the app drains ([`CompanionIntent`]).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -38,12 +38,10 @@ pub struct CompanionView {
     pub icon: Option<String>,
     /// The active-spell test (`0x802cb0`): the critter out, or the mount aura up.
     pub active: bool,
-    /// `(start_ms on the GetTime clock, duration_ms, enabled)`, as a book slot carries it.
-    pub cooldown: Option<(i64, u32, bool)>,
 }
 
 /// The two lists, each in the reference's order (by creature name once every name is cached,
-/// `0x53cec0`).
+/// `0x53cec0`): a fixed view's shape, for tests and hosts without the app.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CompanionState {
     pub critters: Vec<CompanionView>,
@@ -60,16 +58,6 @@ impl CompanionState {
             CompanionType::Mount => &self.mounts,
         }
     }
-
-    /// The list and 0-based slot holding `spell_id` (`0x53d990`).
-    pub fn find(&self, spell_id: u32) -> Option<(CompanionType, usize)> {
-        [CompanionType::Critter, CompanionType::Mount]
-            .into_iter()
-            .find_map(|ty| {
-                let at = self.list(ty).iter().position(|c| c.spell_id == spell_id)?;
-                Some((ty, at))
-            })
-    }
 }
 
 /// What a companion verb asks of the app beyond a cast.
@@ -79,11 +67,33 @@ pub enum CompanionIntent {
     Dismiss(u32),
 }
 
+/// The live list's slot holding `spell_id` (`0x53d990`); nothing with no view lent.
+pub(crate) fn find(spell_id: u32) -> Option<(CompanionType, usize)> {
+    super::read_live(|l| {
+        [CompanionType::Critter, CompanionType::Mount]
+            .into_iter()
+            .find_map(|ty| {
+                let at = l.companion_spells(ty).iter().position(|&s| s == spell_id)?;
+                Some((ty, at))
+            })
+    })
+    .flatten()
+}
+
+/// List `ty`'s spell at `slot`, read live.
+fn spell_at(ty: CompanionType, slot: usize) -> Option<u32> {
+    super::read_live(|l| l.companion_spells(ty).get(slot).copied()).flatten()
+}
+
 impl super::UiScript {
-    /// Replace the lists; the app fires the `COMPANION_*` events itself.
-    pub fn set_companions(&mut self, state: CompanionState) {
-        if self.model_ref().companions != state {
-            self.model_mut().companions = state;
+    /// Replace the companion spells' cooldowns, `(start_ms on the GetTime clock, duration_ms,
+    /// enabled)` by spell, which `GetCompanionCooldown` reads beside the book's.
+    pub fn set_companion_cooldowns(
+        &mut self,
+        cooldowns: std::collections::HashMap<u32, (i64, u32, bool)>,
+    ) {
+        if self.model_ref().companion_cooldowns != cooldowns {
+            self.model_mut().companion_cooldowns = cooldowns;
         }
     }
 
@@ -138,8 +148,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(ty) = companion_type(lua, &ty) else {
                 return Err(mlua::Error::runtime("Usage: GetNumCompanions(type)"));
             };
-            let model = crate::script::model_mut_of(lua);
-            Ok(model.companions.list(ty).len() as i64)
+            Ok(super::read_live(|l| l.companion_spells(ty).len()).unwrap_or(0) as i64)
         })?,
     )?;
 
@@ -150,8 +159,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (ty, index): (Value, Value)| {
             let (ty, slot) =
                 type_and_index(lua, &ty, index, "Usage: GetCompanionInfo(type, index)")?;
-            let model = crate::script::model_mut_of(lua);
-            let Some(c) = model.companions.list(ty).get(slot) else {
+            let Some(c) = super::read_live(|l| l.companion(ty, slot)).flatten() else {
                 return Ok(MultiValue::new());
             };
             let text = |s: &Option<String>| -> mlua::Result<Value> {
@@ -178,11 +186,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (ty, slot) =
                 type_and_index(lua, &ty, index, "Usage: GetCompanionCooldown(type, index)")?;
             let now = crate::script::clock::now(lua);
-            let model = crate::script::model_mut_of(lua);
-            let Some(c) = model.companions.list(ty).get(slot) else {
+            let Some(spell_id) = spell_at(ty, slot) else {
                 return Ok(MultiValue::new());
             };
-            let (start, duration, enable) = match c.cooldown {
+            let model = crate::script::model_mut_of(lua);
+            let (start, duration, enable) = match model.companion_cooldowns.get(&spell_id).copied()
+            {
                 Some((start_ms, duration_ms, enabled)) => {
                     let (start, duration) =
                         (start_ms as f64 / 1000.0, f64::from(duration_ms) / 1000.0);
@@ -208,13 +217,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CallCompanion",
         lua.create_function(|lua, (ty, index): (Value, Value)| {
             let (ty, slot) = type_and_index(lua, &ty, index, "Usage: CallCompanion(type, index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            if let Some(spell_id) = model.companions.list(ty).get(slot).map(|c| c.spell_id) {
-                model.script_calls.push(ScriptCall::CastSpell {
-                    spell_id,
-                    at: CastAt::Selection,
-                    via_book: false,
-                });
+            if let Some(spell_id) = spell_at(ty, slot) {
+                crate::script::model_mut_of(lua)
+                    .script_calls
+                    .push(ScriptCall::CastSpell {
+                        spell_id,
+                        at: CastAt::Selection,
+                        via_book: false,
+                    });
             }
             Ok(())
         })?,
@@ -227,15 +237,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(ty) = companion_type(lua, &ty) else {
                 return Err(mlua::Error::runtime("Usage: DismissCompanion(type)"));
             };
-            let mut model = crate::script::model_mut_of(lua);
-            let active: Vec<u32> = model
-                .companions
-                .list(ty)
-                .iter()
-                .filter(|c| c.active)
-                .map(|c| c.spell_id)
-                .collect();
-            model
+            let active: Vec<u32> = super::read_live(|l| {
+                (0..l.companion_spells(ty).len())
+                    .filter_map(|i| l.companion(ty, i))
+                    .filter(|c| c.active)
+                    .map(|c| c.spell_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+            crate::script::model_mut_of(lua)
                 .companion_intents
                 .extend(active.into_iter().map(CompanionIntent::Dismiss));
             Ok(())
@@ -252,10 +262,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (ty, index): (Value, Value)| {
             let (ty, slot) =
                 type_and_index(lua, &ty, index, "Usage: PickupCompanion(type, index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            let Some(c) = model.companions.list(ty).get(slot).cloned() else {
+            let Some(c) = super::read_live(|l| l.companion(ty, slot)).flatten() else {
                 return Ok(());
             };
+            let mut model = crate::script::model_mut_of(lua);
             match &model.cursor {
                 Some(CursorPayload::Spell(held)) if held.spell_id == c.spell_id => {
                     model.cursor = None;
@@ -282,11 +292,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SummonRandomCritter",
         lua.create_function(|lua, ()| {
             use std::hash::BuildHasher;
-            let mut model = crate::script::model_mut_of(lua);
-            let pool = &model.companions.random_pool;
+            let pool = super::read_live(|l| l.companion_random_pool()).unwrap_or_default();
             if pool.is_empty() {
                 return Ok(());
             }
+            let mut model = crate::script::model_mut_of(lua);
             let roll = std::collections::hash_map::RandomState::new().hash_one(pool.len());
             let spell_id = pool[(roll % pool.len() as u64) as usize];
             model.script_calls.push(ScriptCall::CastSpell {
@@ -313,27 +323,33 @@ mod tests {
             spell_id,
             icon: Some(format!("Icon{spell_id}")),
             active,
-            cooldown: None,
         }
     }
 
     fn script() -> UiScript {
-        let mut s = UiScript::new().unwrap();
-        s.set_companions(CompanionState {
-            critters: vec![
-                view(10673, 7385, Some("Bombay Cat"), true),
-                view(4055, 2671, None, false),
-            ],
-            mounts: vec![view(458, 284, Some("Brown Horse"), false)],
-            random_pool: vec![4055],
-        });
-        s
+        UiScript::new().unwrap()
+    }
+
+    /// The lists lent as the live view, for the test's length.
+    fn lend() -> crate::script::LiveLoan<crate::script::live::TestView> {
+        crate::script::live::lend_test(crate::script::live::TestView {
+            companions: CompanionState {
+                critters: vec![
+                    view(10673, 7385, Some("Bombay Cat"), true),
+                    view(4055, 2671, None, false),
+                ],
+                mounts: vec![view(458, 284, Some("Brown Horse"), false)],
+                random_pool: vec![4055],
+            },
+            ..Default::default()
+        })
     }
 
     /// `GetCompanionInfo` (`0x53e2c0`): five values, the uncached name nil, active 1 or nil, and
     /// nothing past the list; the type token is case-insensitive.
     #[test]
     fn companion_info_answers_five_values_and_nothing_past_the_list() {
+        let _live = lend();
         let s = script();
         assert_eq!(
             s.eval::<i64>("return GetNumCompanions('critter')").unwrap(),
@@ -367,6 +383,7 @@ mod tests {
     /// A bad type, or an index reading 0, raises the verb's `Usage:`.
     #[test]
     fn a_bad_type_or_a_zero_index_raises() {
+        let _live = lend();
         let s = script();
         for (call, usage) in [
             ("GetNumCompanions('PET')", "Usage: GetNumCompanions(type)"),
@@ -389,6 +406,7 @@ mod tests {
     /// every active companion of its list; `PickupCompanion` holds the spell.
     #[test]
     fn call_dismiss_and_pickup_queue_their_effects() {
+        let _live = lend();
         let mut s = script();
         s.run("CallCompanion('MOUNT', 1) CallCompanion('MOUNT', 5)")
             .unwrap();
@@ -435,6 +453,7 @@ mod tests {
     /// answers a barred companion as `"companion"` (`0x5a8fa8`).
     #[test]
     fn a_mount_casts_by_name_and_answers_as_a_companion_on_the_bar() {
+        let _live = lend();
         let mut s = script();
         s.set_spellbook(SpellBookState {
             unlisted: vec![SpellSlotView {

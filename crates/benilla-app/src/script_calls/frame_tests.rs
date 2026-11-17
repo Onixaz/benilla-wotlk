@@ -1013,8 +1013,8 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
 
 /// Every feed that publishes cooldowns runs after the press and before the tick, so a GCD a press
 /// arms reaches the frame's `OnUpdate` and its cooldown widgets: the action bar's, the spellbook's,
-/// the bags', the pet bar's and book's, the runes', the forms' and the companions', and the pet's
-/// flush.
+/// the bags', the pet bar's and book's, the runes' and the forms', and the pet's flush; the
+/// companions' cooldowns ride the spellbook's.
 #[test]
 fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
     let g = graph_or_skip!();
@@ -1026,7 +1026,6 @@ fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
         "::feed_pet_book",
         "::feed_runes",
         "::feed_shapeshift_bar",
-        "::feed_companions",
         Step::PetFlush.suffix(),
     ] {
         for press in [Step::UiInput, Step::BindingDispatch, Step::ScriptCalls] {

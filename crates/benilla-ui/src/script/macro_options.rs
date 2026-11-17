@@ -245,10 +245,15 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
                 // The name or the creature family, each without regard to case (`0x5efbd0`).
                 Some(p) => args.iter().any(|a| {
                     let a = a.to_lowercase();
-                    [p.name.as_deref(), model.pet_bar.stats.family.as_deref()]
+                    let family = model
+                        .unit_guids
+                        .guid_of("pet")
+                        .and_then(|g| super::read_live(|l| l.creature_family(g)).flatten());
+                    let matched = [p.name.as_deref(), family.as_deref()]
                         .into_iter()
                         .flatten()
-                        .any(|n| n.to_lowercase() == a)
+                        .any(|n| n.to_lowercase() == a);
+                    matched
                 }),
             }
         }

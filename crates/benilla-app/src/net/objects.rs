@@ -161,6 +161,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 fields,
                 own,
             );
+            pet_token_watch(&mut sc, guid, &merged);
             own_flags_watch(&mut sc, guid, merged);
             return;
         }
@@ -640,6 +641,7 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
                     fields,
                     own,
                 );
+                pet_token_watch(&mut sc, guid, &merged);
                 own_flags_watch(&mut sc, guid, merged);
             }
             // A parked object revives with the delta (`0x4d6e80`); an unknown guid drops.
@@ -1460,11 +1462,64 @@ fn gameobject_info(
     go_templates.insert(entry, type_id, name, data);
 }
 
-/// Our own unit's watches in field order (`0x4d5550`): health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
+/// A pet stat field's unit signal.
+#[derive(Clone, Copy)]
+enum PetSignal {
+    Happiness,
+    Experience,
+}
+
+/// The unit signal a pet stat field raises: the field's index is its event slot (`0x614190`), 23
+/// `UNIT_HAPPINESS` and 71-72 `UNIT_PET_EXPERIENCE`.
+fn pet_signal(e: &FieldChanged) -> Option<PetSignal> {
+    use benilla_protocol::field::{
+        FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_POWER1,
+    };
+    if e.unit_field(FIELD_UNIT_POWER1 + 4) {
+        Some(PetSignal::Happiness)
+    } else if e.unit_field(FIELD_UNIT_PETEXPERIENCE) || e.unit_field(FIELD_UNIT_PETNEXTLEVELEXP) {
+        Some(PetSignal::Experience)
+    } else {
+        None
+    }
+}
+
+/// The unit signals of the unit the `"pet"` token names, our charm else our summon, with that
+/// token (`0x60bb70`); the fan-out to the other tokens naming it is the units' (#1289).
+fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
+    if merged.pet_signals.is_empty() {
+        return;
+    }
+    let pet = sc
+        .self_guid
+        .0
+        .and_then(|me| sc.index.0.get(&me))
+        .and_then(|&e| sc.stores.get(e).ok())
+        .and_then(|s| s.0.unit_pet_guid());
+    if pet != Some(guid) {
+        return;
+    }
+    use benilla_ui::script::ScriptValue;
+    for &event in &merged.pet_signals {
+        match event {
+            PetSignal::Happiness => sc
+                .ui
+                .fire("UNIT_HAPPINESS", vec![ScriptValue::Str("pet".into())]),
+            PetSignal::Experience => sc
+                .ui
+                .fire("UNIT_PET_EXPERIENCE", vec![ScriptValue::Str("pet".into())]),
+        }
+    }
+}
+
+/// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
     if sc.self_guid.0 != Some(guid) {
         return;
+    }
+    if merged.critter_moved {
+        crate::ui_companion::critter_update(&mut sc.ui);
     }
     let split = merged
         .death
@@ -1559,6 +1614,12 @@ fn merge_fields(
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            use benilla_protocol::field::FIELD_UNIT_CRITTER;
+            merged.critter_moved |=
+                own && (e.unit_field(FIELD_UNIT_CRITTER) || e.unit_field(FIELD_UNIT_CRITTER + 1));
+            if let Some(event) = pet_signal(&e) {
+                merged.pet_signals.push(event);
+            }
             if own
                 && (e.unit_field(FIELD_UNIT_HEALTH)
                     || e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
@@ -1592,6 +1653,10 @@ fn merge_fields(
 #[derive(Default)]
 struct Merged {
     flags_moved: bool,
+    /// Our own `UNIT_FIELD_CRITTER` moved.
+    critter_moved: bool,
+    /// The pet frame's unit signals the delta's fields raise, in field order.
+    pet_signals: Vec<PetSignal>,
     /// Our own death fields' `(index, old, new)`, in field order.
     death: Vec<(u16, u32, u32)>,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.

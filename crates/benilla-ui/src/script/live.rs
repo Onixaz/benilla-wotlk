@@ -213,6 +213,36 @@ pub trait LiveState {
 
     /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
     fn clear_inspect_target(&self) {}
+
+    /// Companion list `ty`'s spells in order (`0xbe8df4`), as the known-spell adds file them.
+    fn companion_spells(&self, _ty: super::CompanionType) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// `GetCompanionInfo`'s companion at `index` of list `ty`, read when called (`0x53e2c0`).
+    fn companion(&self, _ty: super::CompanionType, _index: usize) -> Option<super::CompanionView> {
+        None
+    }
+
+    /// The known spells of skill line 778 `SummonRandomCritter` draws from (`0x6e7b00`).
+    fn companion_random_pool(&self) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// The pet stat verbs' block for the pet list's head (`0x5d3960`), `HasPetUI`'s first return beside it.
+    fn pet_stats(&self) -> (bool, super::PetStats) {
+        (false, super::PetStats::default())
+    }
+
+    /// `(PetCanBeAbandoned, PetCanBeRenamed, PetCanBeDismissed)` for the pet list's head (`0x5d3780`, `0x5d38c0`, `0x5d3820`).
+    fn pet_menu(&self) -> (bool, bool, bool) {
+        (false, false, true)
+    }
+
+    /// A held unit's `CreatureFamily.dbc` name off its cached creature record (`0x611820`).
+    fn creature_family(&self, _guid: u64) -> Option<String> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -352,6 +382,12 @@ pub(crate) struct TestView {
     pub arena_teams: [super::ArenaTeamSlotView; 3],
     /// The inspect target the inspect verbs set.
     pub inspect_target: Cell<u64>,
+    /// The companion lists and pool.
+    pub companions: super::CompanionState,
+    /// The pet stat block and `HasPetUI`'s first return.
+    pub pet_stats: (bool, super::PetStats),
+    /// The pet menu's three predicates; `None` answers the no-pet `(nil, nil, 1)`.
+    pub pet_menu: Option<(bool, bool, bool)>,
 }
 
 #[cfg(test)]
@@ -414,6 +450,36 @@ impl LiveState for TestView {
 
     fn clear_inspect_target(&self) {
         self.inspect_target.set(0);
+    }
+
+    fn companion_spells(&self, ty: super::CompanionType) -> Vec<u32> {
+        self.companions
+            .list(ty)
+            .iter()
+            .map(|c| c.spell_id)
+            .collect()
+    }
+
+    fn companion(&self, ty: super::CompanionType, index: usize) -> Option<super::CompanionView> {
+        self.companions.list(ty).get(index).cloned()
+    }
+
+    fn companion_random_pool(&self) -> Vec<u32> {
+        self.companions.random_pool.clone()
+    }
+
+    fn pet_stats(&self) -> (bool, super::PetStats) {
+        self.pet_stats.clone()
+    }
+
+    fn pet_menu(&self) -> (bool, bool, bool) {
+        self.pet_menu.unwrap_or((false, false, true))
+    }
+
+    fn creature_family(&self, guid: u64) -> Option<String> {
+        (self.player != Some(guid) && self.units.contains_key(&guid))
+            .then(|| self.pet_stats.1.family.clone())
+            .flatten()
     }
 }
 
