@@ -453,7 +453,7 @@ pub(crate) struct Model {
     /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
     pub(crate) pvp_sets: Vec<u8>,
     /// The inspected player's arena teams by slot, resolved by the app.
-    pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamView>; 3],
+    pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamWords>; 3],
     /// The arena-team mirror: the three teams, the roster's sort and selection.
     pub(crate) arena_teams: super::arena_team::ArenaTeams,
     /// The last `MSG_INSPECT_HONOR_STATS` reply; its presence is `HasInspectHonorData`'s answer.

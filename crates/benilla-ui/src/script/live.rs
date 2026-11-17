@@ -147,6 +147,17 @@ pub trait LiveState {
     fn pvp_toggle_timer(&self) -> Option<i32> {
         None
     }
+
+    /// Our three arena-team slots when called: the field words, the team cache's record (asked on
+    /// a miss), the last stats and the last roster.
+    fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
+        Default::default()
+    }
+
+    /// The team cache's record for `team_id` when called, asked on a miss.
+    fn arena_team_record(&self, _team_id: u32) -> Option<super::ArenaTeamRecordView> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -246,6 +257,22 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     Some(f(live))
 }
 
+/// Lend `view` as the live view until the loan drops, for the VM's own tests.
+#[cfg(test)]
+pub(crate) fn lend_test(view: TestView) -> LiveLoan<TestView> {
+    // SAFETY: a test drops its loans on its own thread, the latest first.
+    unsafe { LiveLoan::new(view) }
+}
+
+/// Lend `slots` as our arena-team slots, for the VM's own tests.
+#[cfg(test)]
+pub(crate) fn lend_arena_teams(slots: [super::ArenaTeamSlotView; 3]) -> LiveLoan<TestView> {
+    lend_test(TestView {
+        arena_teams: slots,
+        ..Default::default()
+    })
+}
+
 /// A view over fixed state, for the VM's own tests.
 #[cfg(test)]
 #[derive(Default)]
@@ -266,6 +293,8 @@ pub(crate) struct TestView {
     pub honor: Option<super::HonorState>,
     /// The PvP toggle timer, `None` without the active player.
     pub pvp_timer: Option<i32>,
+    /// Our arena-team slots.
+    pub arena_teams: [super::ArenaTeamSlotView; 3],
 }
 
 #[cfg(test)]
@@ -309,6 +338,17 @@ impl LiveState for TestView {
 
     fn pvp_toggle_timer(&self) -> Option<i32> {
         self.pvp_timer
+    }
+
+    fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
+        self.arena_teams.clone()
+    }
+
+    fn arena_team_record(&self, team_id: u32) -> Option<super::ArenaTeamRecordView> {
+        self.arena_teams
+            .iter()
+            .find(|s| s.info[0] == team_id)
+            .and_then(|s| s.record.clone())
     }
 }
 

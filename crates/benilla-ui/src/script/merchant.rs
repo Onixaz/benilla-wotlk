@@ -241,9 +241,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     it.extended_cost.as_ref().is_none_or(|c| {
                         c.required_rating == 0
                             || (0..3).contains(&c.arena_bracket)
-                                && model
-                                    .arena_teams
-                                    .rating_met(c.required_rating, c.arena_bracket)
+                                && super::arena_team::rating_met(c.required_rating, c.arena_bracket)
                     }) && super::item_stats::item_usable_by_id(&model, it.item_id)
                 });
                 (item, usable)
@@ -697,9 +695,7 @@ fn merchant_cursor_mode(model: &super::Model, index: usize) -> Option<UiCursorMo
         // Unlike `GetMerchantItemInfo`, a bracket off 0..=2 skips the rating test (`0x58584b`).
         || cost.required_rating != 0
             && (0..3).contains(&cost.arena_bracket)
-            && !model
-                .arena_teams
-                .rating_met(cost.required_rating, cost.arena_bracket);
+            && !super::arena_team::rating_met(cost.required_rating, cost.arena_bracket);
     Some(if short {
         UiCursorMode::UnableBuy
     } else {
@@ -1417,19 +1413,26 @@ mod tests {
         s.set_merchant(Some(rated(3)));
         assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "bracket skipped");
         s.set_merchant(Some(rated(1)));
-        s.set_arena_teams([
-            ArenaTeamSlotView {
-                info: [7, 3, 1, 0, 0, 0, 1800],
-                record: Some(ArenaTeamRecordView {
-                    team_type: 3,
-                    ..Default::default()
-                }),
-                stats: [1800, 0, 0, 0, 0, 0],
-                members: Vec::new(),
-            },
-            Default::default(),
-            Default::default(),
-        ]);
+        let _teams = crate::script::live::lend_test(crate::script::live::TestView {
+            honor: Some(HonorState {
+                honor_currency: 7000,
+                ..Default::default()
+            }),
+            arena_teams: [
+                ArenaTeamSlotView {
+                    info: [7, 3, 1, 0, 0, 0, 1800],
+                    record: Some(ArenaTeamRecordView {
+                        team_type: 3,
+                        ..Default::default()
+                    }),
+                    stats: [1800, 0, 0, 0, 0, 0],
+                    members: Vec::new(),
+                },
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        });
         assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "rating met");
     }
 

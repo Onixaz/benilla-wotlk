@@ -57,7 +57,9 @@ fn gameobject_despawn_anim(guid: u64, commands: &mut Commands, index: &GuidIndex
 /// Registers the object layer's handlers.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
-    app.init_resource::<crate::ui_honor::PvpCooldown>();
+    app.init_resource::<crate::ui_honor::PvpCooldown>()
+        .init_resource::<crate::ui_arena_team::ArenaTeams>()
+        .init_resource::<crate::ui_arena_team::RosterThrottle>();
     app.net_handler(K::ObjectCreate, on_object_create)
         .net_handler(K::ItemCreate, on_item)
         .net_handler(K::ItemTemplate, on_item)
@@ -117,6 +119,8 @@ pub(crate) struct Scene<'w, 's> {
     arena: crate::ui_arena::ArenaInstance<'w>,
     arena_slots: ResMut<'w, crate::ui_arena::ArenaOpponents>,
     pvp: ResMut<'w, crate::ui_honor::PvpCooldown>,
+    arena_teams: ResMut<'w, crate::ui_arena_team::ArenaTeams>,
+    roster_throttle: ResMut<'w, crate::ui_arena_team::RosterThrottle>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
@@ -1484,7 +1488,35 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
     own_death_fields(sc, guid, player);
-    crate::ui_honor::own_fields_changed(&merged.honor, &mut sc.ui);
+    own_player_watches(sc, guid, &merged.watched);
+}
+
+/// Our own player watches past the flags, in field order: the honor fields and the arena-team
+/// words, whose 0x54-byte watch runs once per update (`0x6cdda0`).
+fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
+    let mut teams_done = false;
+    for &(index, old, new) in edges {
+        if !crate::ui_arena_team::is_team_info(index) {
+            crate::ui_honor::own_field_changed(index, old, new, &mut sc.ui);
+            continue;
+        }
+        if std::mem::replace(&mut teams_done, true) {
+            continue;
+        }
+        let Some(&e) = sc.index.0.get(&guid) else {
+            continue;
+        };
+        let Ok(store) = sc.stores.get(e) else {
+            continue;
+        };
+        crate::ui_arena_team::info_changed(
+            &mut sc.arena_teams,
+            &mut sc.roster_throttle,
+            &store.0,
+            &sc.net,
+            &mut sc.ui,
+        );
+    }
 }
 
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
@@ -1542,8 +1574,11 @@ fn merge_fields(
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
             }
-            if own && crate::ui_honor::is_honor_watch(e.index) {
-                merged.honor.push((e.index, e.old, e.new));
+            if own
+                && (crate::ui_honor::is_honor_watch(e.index)
+                    || crate::ui_arena_team::is_team_info(e.index))
+            {
+                merged.watched.push((e.index, e.old, e.new));
             }
             edges.write(e);
         });
@@ -1554,7 +1589,7 @@ fn merge_fields(
         commands.entity(entity).insert(ObjectStore(delta));
     }
     merged.death.sort_by_key(|&(index, ..)| index);
-    merged.honor.sort_by_key(|&(index, ..)| index);
+    merged.watched.sort_by_key(|&(index, ..)| index);
     merged
 }
 
@@ -1566,8 +1601,8 @@ struct Merged {
     death: Vec<(u16, u32, u32)>,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
-    /// Our own honor watches' `(index, old, new)`, in field order.
-    honor: Vec<(u16, u32, u32)>,
+    /// Our own honor and arena-team watches' `(index, old, new)`, in field order.
+    watched: Vec<(u16, u32, u32)>,
 }
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,

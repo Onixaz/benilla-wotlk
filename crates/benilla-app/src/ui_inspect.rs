@@ -242,9 +242,11 @@ fn feed_inspect(
         target.guid = 0;
         inspect_talents.set_target(None);
     }
-    // A new inspect target drops the honor reply and its in-flight latch, silently (`0x5e76d9`).
+    // A new inspect target drops the honor reply, its in-flight latch and the inspected teams,
+    // silently (`0x5e76d9`, `0x5e76e3`).
     if target.guid != before {
         script.set_inspect_honor(None);
+        script.clear_inspect_arena_teams();
     }
 
     // Re-resolve the latched token every frame, so the window follows a retarget as the

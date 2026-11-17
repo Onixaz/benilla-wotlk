@@ -250,7 +250,10 @@ mod net {
         use benilla_protocol::messages::NameQueryMiss;
         let guid = match ev {
             SessionEvent::PlayerName { guid, .. } => guid,
-            SessionEvent::PlayerNameMiss { miss, .. } if miss == NameQueryMiss::Retry => return,
+            SessionEvent::PlayerNameMiss {
+                miss: NameQueryMiss::Retry,
+                ..
+            } => return,
             SessionEvent::PlayerNameMiss { guid, .. } => guid,
             _ => return,
         };

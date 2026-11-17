@@ -198,6 +198,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             model.inspect_clear = Some(model.inspect_notifies.len());
             model.inspect_honor = None;
             model.inspect_honor_pending = false;
+            // The inspected teams go too (`0x5e78c2`).
+            model.inspect_arena_teams = Default::default();
             // The inspected talent tabs go at once (`0x5c9f70` with no player).
             model.inspect_talents.tabs.clear();
             model.inspect_talents.talents.clear();

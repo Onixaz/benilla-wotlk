@@ -1351,11 +1351,15 @@ fn the_arena_rating_and_medal_lines_turn_white_when_met() {
         stats: [rating, 0, 0, 0, 0, 0],
         members: Vec::new(),
     };
-    s.set_arena_teams([team(1799, 1900), Default::default(), Default::default()]);
+    let lend =
+        |a| crate::script::live::lend_arena_teams([a, Default::default(), Default::default()]);
+    let live = lend(team(1799, 1900));
     assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "personal rating short");
-    s.set_arena_teams([team(1800, 1799), Default::default(), Default::default()]);
+    drop(live);
+    let live = lend(team(1800, 1799));
     assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "team rating short");
-    s.set_arena_teams([team(1800, 1800), Default::default(), Default::default()]);
+    drop(live);
+    let _live = lend(team(1800, 1800));
     assert_eq!(read(&mut s, "[ARENA3 1800]"), white);
     // A 3v3 team does not meet a 5v5 demand.
     s.set_merchant(Some(rated_merchant(9, 2)));

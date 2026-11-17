@@ -81,6 +81,11 @@ local VERBS = {
     { "honorpts", function() return (GetHonorCurrency()) end },
     { "pvptimer", function() return GetPVPTimer() end },
     { "inspecthonor", function() return HasInspectHonorData() end },
+    { "inteam", function() return IsInArenaTeam() end },
+    { "team1", function() return (GetArenaTeam(1)) end },
+    { "rating1", function() return (select(3, GetArenaTeam(1))) end },
+    { "members1", function() return GetNumArenaTeamMembers(1) end },
+    { "inspteam", function() return (GetInspectArenaTeamData(1)) end },
     { "a2name", function() return (UnitName("arena2")) end },
 }
 local function answers()
@@ -2087,5 +2092,107 @@ fn the_inspect_honor_reply_signals_from_its_handler() {
     assert_eq!(
         pin(&seen, &["INSPECT_HONOR_UPDATE"], &["inspecthonor"]),
         vec!["INSPECT_HONOR_UPDATE | inspecthonor=1"]
+    );
+}
+
+/// Our arena-team slots read live: the cache's answer (`0x5a28c0`), our team words' watch
+/// (`0x6cdda0` -> `0x5a37a2`), the stats (`0x5a2d50`) and the roster (`0x5a3e10`) each fire from
+/// their handler, in wire order, reading what that packet applied.
+#[test]
+fn arena_team_events_fire_from_their_handlers_in_wire_order() {
+    use benilla_protocol::field::FIELD_PLAYER_FIELD_ARENA_TEAM_INFO_1_1 as INFO;
+    use benilla_protocol::messages::{
+        ArenaTeamMember, ArenaTeamRecord, ArenaTeamRoster, ArenaTeamStats,
+    };
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ArenaTeamQueryResponse(ArenaTeamRecord {
+                team_id: 9,
+                name: "Probes".into(),
+                team_type: 2,
+                ..Default::default()
+            }),
+            self_values(&[(INFO, 9), (INFO + 1, 2), (INFO + 6, 1500)]),
+            SessionEvent::ArenaTeamStats(ArenaTeamStats {
+                team_id: 9,
+                rating: 1520,
+                ..Default::default()
+            }),
+            SessionEvent::ArenaTeamRoster(ArenaTeamRoster {
+                team_id: 9,
+                team_type: 2,
+                members: vec![ArenaTeamMember {
+                    guid: 0x56,
+                    name: "Other".into(),
+                    ..Default::default()
+                }],
+            }),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &["ARENA_TEAM_UPDATE", "ARENA_TEAM_ROSTER_UPDATE"],
+            &["inteam", "team1", "rating1", "members1"]
+        ),
+        vec![
+            "ARENA_TEAM_UPDATE | inteam=false team1=nil rating1=0 members1=0",
+            "ARENA_TEAM_UPDATE | inteam=true team1=Probes rating1=0 members1=0",
+            "ARENA_TEAM_UPDATE | inteam=true team1=Probes rating1=1520 members1=0",
+            "ARENA_TEAM_ROSTER_UPDATE | inteam=true team1=Probes rating1=1520 members1=1",
+        ]
+    );
+}
+
+/// `MSG_INSPECT_ARENA_TEAMS` for the inspect target writes its slot and signals from its handler
+/// (`0x5e7b57`, `0x5e7bdb`); the team's name is the cache's when called.
+#[test]
+fn the_inspect_arena_team_reply_signals_from_its_handler() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_inspect::InspectTarget>()
+        .guid = 0x56;
+    let team = |guid| {
+        SessionEvent::InspectArenaTeam(benilla_protocol::messages::InspectArenaTeam {
+            player_guid: guid,
+            slot: 0,
+            team_id: 9,
+            rating: 1600,
+            games: 0,
+            wins: 0,
+            played: 0,
+            personal_rating: 0,
+        })
+    };
+    let seen = rig.packets(
+        vec![
+            team(0x99),
+            team(0x56),
+            SessionEvent::ArenaTeamQueryResponse(benilla_protocol::messages::ArenaTeamRecord {
+                team_id: 9,
+                name: "Probes".into(),
+                team_type: 2,
+                ..Default::default()
+            }),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &["INSPECT_HONOR_UPDATE", "ARENA_TEAM_UPDATE"],
+            &["inspteam"]
+        ),
+        vec![
+            "INSPECT_HONOR_UPDATE | inspteam=nil",
+            "ARENA_TEAM_UPDATE | inspteam=Probes",
+        ]
     );
 }

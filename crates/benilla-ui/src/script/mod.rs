@@ -451,7 +451,7 @@ pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetStats, PossessView};
 pub use pvp::{
-    pvp_name_global_keys, HonorState, InspectArenaTeamView, InspectHonorData, RankTitle,
+    pvp_name_global_keys, HonorState, InspectArenaTeamWords, InspectHonorData, RankTitle,
     PLAYER_FLAGS_PVP_TIMER,
 };
 pub use quest::{

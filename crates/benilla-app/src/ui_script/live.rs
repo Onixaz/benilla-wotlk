@@ -30,6 +30,7 @@ pub(crate) struct LiveView<'w, 's> {
     score: crate::ui_battlefield_score::ScoreView<'w>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     honor: crate::ui_honor::HonorView<'w>,
+    arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -178,6 +179,15 @@ impl LiveState for LiveView<'_, '_> {
     fn pvp_toggle_timer(&self) -> Option<i32> {
         let me = self.unit(self.active_player()?)?;
         Some(self.honor.toggle_timer(me))
+    }
+
+    fn arena_team_slots(&self) -> [benilla_ui::script::ArenaTeamSlotView; 3] {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.slots(me)
+    }
+
+    fn arena_team_record(&self, team_id: u32) -> Option<benilla_ui::script::ArenaTeamRecordView> {
+        self.arena_teams.record(team_id)
     }
 }
 

@@ -176,14 +176,22 @@ impl HonorView<'_> {
 }
 
 /// Our own honor fields' edges, `(index, old, new)` in field order, as their watches fire.
-pub(crate) fn own_fields_changed(edges: &[(u16, u32, u32)], ui: &mut UiEvents) {
+#[cfg(test)]
+fn own_fields_changed(edges: &[(u16, u32, u32)], ui: &mut UiEvents) {
+    for &(index, old, new) in edges {
+        own_field_changed(index, old, new, ui);
+    }
+}
+
+/// One of our own honor fields' edges, as its watch fires.
+pub(crate) fn own_field_changed(index: u16, old: u32, new: u32, ui: &mut UiEvents) {
     use benilla_protocol::field::{
         FIELD_PLAYER_BYTES_3, FIELD_PLAYER_FIELD_ARENA_CURRENCY, FIELD_PLAYER_FIELD_HONOR_CURRENCY,
         FIELD_PLAYER_FIELD_KILLS, FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS,
         FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION,
     };
     let player = || vec![ScriptValue::Str("player".into())];
-    for &(index, old, new) in edges {
+    {
         match index {
             FIELD_PLAYER_BYTES_3 => ui.fire("PLAYER_PVP_RANK_CHANGED", player()),
             // A two-byte watch: today's kills, not yesterday's high half.

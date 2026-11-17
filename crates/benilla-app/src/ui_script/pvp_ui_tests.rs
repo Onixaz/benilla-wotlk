@@ -104,8 +104,8 @@ fn two_v_two() -> ArenaTeamSlotView {
     }
 }
 
-/// A live view holding only our honor block, as the verbs read it off our descriptor.
-struct OurHonor(HonorState);
+/// A live view holding our honor block and arena-team slots, as the verbs read them.
+struct OurHonor(HonorState, [ArenaTeamSlotView; 3]);
 
 impl benilla_ui::script::LiveState for OurHonor {
     fn unit_flags(&self, _: u64) -> Option<u32> {
@@ -126,6 +126,9 @@ impl benilla_ui::script::LiveState for OurHonor {
     fn honor(&self) -> Option<HonorState> {
         Some(self.0)
     }
+    fn arena_team_slots(&self) -> [ArenaTeamSlotView; 3] {
+        self.1.clone()
+    }
 }
 
 /// The PvP tab paints the honor pane from the 3.3.5a block and the team banner from the slot.
@@ -136,18 +139,20 @@ fn the_pvp_tab_paints_honor_and_a_two_v_two_team() {
     let mut s = load();
     // SAFETY: dropped on this thread at the end of the test, the only loan.
     let _live = unsafe {
-        benilla_ui::script::LiveLoan::new(OurHonor(HonorState {
-            today_hk: 3,
-            today_honor: 120,
-            yesterday_hk: 7,
-            yesterday_honor: 450,
-            lifetime_hk: 900,
-            honor_currency: 12_345,
-            arena_currency: 678,
-            ..Default::default()
-        }))
+        benilla_ui::script::LiveLoan::new(OurHonor(
+            HonorState {
+                today_hk: 3,
+                today_honor: 120,
+                yesterday_hk: 7,
+                yesterday_honor: 450,
+                lifetime_hk: 900,
+                honor_currency: 12_345,
+                arena_currency: 678,
+                ..Default::default()
+            },
+            [two_v_two(), Default::default(), Default::default()],
+        ))
     };
-    s.set_arena_teams([two_v_two(), Default::default(), Default::default()]);
     s.run("TogglePVPFrame()").unwrap();
     s.tick(0.0);
     assert!(shown(&s, "PVPFrame"), "the PvP tab opens first");

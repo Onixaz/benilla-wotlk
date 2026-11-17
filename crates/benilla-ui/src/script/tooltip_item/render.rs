@@ -373,7 +373,7 @@ fn render_lines(
                 .filter(|c| c.required_rating > 0)
                 .map(|c| {
                     let bracket = c.arena_bracket.clamp(0, 3);
-                    let met = model.arena_teams.rating_met(c.required_rating, bracket);
+                    let met = crate::script::arena_team::rating_met(c.required_rating, bracket);
                     (c.required_rating, bracket, met)
                 }),
             _ => None,

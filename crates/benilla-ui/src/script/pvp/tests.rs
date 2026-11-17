@@ -816,24 +816,44 @@ fn get_inspect_honor_data_answers_six_zeros_when_no_reply_is_held() {
 fn get_inspect_arena_team_data_answers_eighteen_or_nothing() {
     let mut s = seated();
     assert_eq!(s.arity("GetInspectArenaTeamData(1)").unwrap(), 0);
-    s.set_inspect_arena_teams([
-        Some(InspectArenaTeamView {
-            name: "Probes".into(),
-            team_size: 2,
+    s.set_inspect_arena_team(
+        0,
+        InspectArenaTeamWords {
+            team_id: 7,
             rating: 1600,
             games: 20,
             wins: 12,
             played: 18,
             personal_rating: 1580,
-            background: [1.0, 0.5, 0.0],
-            emblem: 7,
-            emblem_color: [0.0, 0.0, 1.0],
-            border: 3,
-            border_color: [0.2, 0.2, 0.2],
-        }),
-        None,
-        None,
-    ]);
+        },
+    );
+    assert_eq!(
+        s.arity("GetInspectArenaTeamData(1)").unwrap(),
+        0,
+        "no cache record yet"
+    );
+    s.live = None;
+    s.live = Some(crate::script::live::lend_test(
+        crate::script::live::TestView {
+            honor: Some(honor_state()),
+            arena_teams: [
+                crate::script::ArenaTeamSlotView {
+                    info: [7, 2, 0, 0, 0, 0, 0],
+                    record: Some(crate::script::ArenaTeamRecordView {
+                        name: "Probes".into(),
+                        team_type: 2,
+                        background_color: 0xFFFF_8000,
+                        emblem_style: 7,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        },
+    ));
     assert_eq!(s.arity("GetInspectArenaTeamData(1)").unwrap(), 18);
     assert_eq!(
         s.eval::<String>(
