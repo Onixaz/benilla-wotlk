@@ -760,6 +760,7 @@ pub(crate) fn act(
             });
             giver.acted = true;
             // The send, the giver zeroed, `QUEST_FINISHED` in the call (`0x58cdc5`, `0x58cded`).
+            // With no gossip held, 12340 clears the interact target here (`0x58cdb7`, `0x58cde4` -> `0x518d50`); the giver's clear frees [`crate::ui_session::InteractNpc`], whose clear plays the goodbye and re-picks the base animation.
             giver.clear();
             QuestActOutcome {
                 finished: true,
@@ -1277,6 +1278,32 @@ mod tests {
 
     const SHARER: u64 = 0x0000_0000_0000_002A; // HIGHGUID_PLAYER: a zero high word
     const NPC: u64 = 0xF130_0000_0000_0007; // HIGHGUID_UNIT
+
+    /// `AcceptQuest` clears the interact target unless a gossip menu holds one (`0x58cdb7`, `0x58cde4` -> `0x518d50`): the giver's clear frees [`crate::ui_session::InteractNpc`], which the goodbye and the base re-pick read, and a gossip menu on the NPC keeps it.
+    #[test]
+    fn accept_clears_the_interact_target_unless_a_gossip_menu_holds_it() {
+        use crate::ui_gossip::GossipState;
+        use crate::ui_session::{feed_interact_npc, InteractNpc};
+        for gossip in [None, Some(NPC)] {
+            let (mut app, _) = drain_world(NPC, Some(0), 0, "");
+            app.init_resource::<InteractNpc>()
+                .init_resource::<GossipState>()
+                .add_systems(Update, feed_interact_npc);
+            app.world_mut().resource_mut::<GossipState>().npc = gossip;
+            app.update();
+            assert_eq!(app.world().resource::<InteractNpc>().1, Some(NPC));
+            crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+                s.run("AcceptQuest()").unwrap()
+            });
+            assert!(!app.world().non_send_resource::<QuestGiver>().is_open());
+            app.update();
+            assert_eq!(
+                app.world().resource::<InteractNpc>().1,
+                gossip,
+                "the target clears only with no gossip menu on it"
+            );
+        }
+    }
 
     /// Both verbs reach the teardown: `CloseQuest` directly, `DeclineQuest` through its player leg.
     #[test]
