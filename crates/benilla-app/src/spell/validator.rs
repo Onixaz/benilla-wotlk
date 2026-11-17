@@ -153,6 +153,41 @@ pub(super) fn cast_aura_refusal(
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
 
+/// `SPELL_FAILED_NOT_HERE`, `_NO_MOUNTS_ALLOWED`, `_ONLY_INDOORS` and `_ONLY_OUTDOORS`.
+const REASON_NOT_HERE: u8 = 60;
+const REASON_NO_MOUNTS_ALLOWED: u8 = 83;
+const REASON_ONLY_INDOORS: u8 = 90;
+const REASON_ONLY_OUTDOORS: u8 = 93;
+
+/// The cast attempt's place legs (`0x739650`, after the area leg): an indoors-only spell refuses
+/// outdoors (`ONLY_INDOORS`), an outdoors-only one indoors (`NO_MOUNTS_ALLOWED` for a spell that
+/// applies `SPELL_AURA_MOUNTED`, else `ONLY_OUTDOORS`), then a flyable-zone spell outside a
+/// flyable zone (`NOT_HERE`).
+pub(crate) fn cast_place_refusal(
+    spell: &SpellDisplay,
+    place: crate::spell::usable::UsablePlace,
+) -> Option<u8> {
+    use crate::spell::usable::{ATTR_EX4_ONLY_FLYABLE_ZONE, ATTR_INDOORS_ONLY, ATTR_OUTDOORS_ONLY};
+    if place.outdoors {
+        if spell.attributes & ATTR_INDOORS_ONLY != 0 {
+            return Some(REASON_ONLY_INDOORS);
+        }
+    } else if spell.attributes & ATTR_OUTDOORS_ONLY != 0 {
+        let mount = spell
+            .effect_apply_aura
+            .contains(&benilla_formats::SPELL_AURA_MOUNTED);
+        return Some(if mount {
+            REASON_NO_MOUNTS_ALLOWED
+        } else {
+            REASON_ONLY_OUTDOORS
+        });
+    }
+    if spell.attributes_ex4 & ATTR_EX4_ONLY_FLYABLE_ZONE != 0 && !place.flyable_zone {
+        return Some(REASON_NOT_HERE);
+    }
+    None
+}
+
 /// The mounted block of the inhibit check (`0x739e8f`): a live `UNIT_FIELD_MOUNTDISPLAYID` meets it
 /// unless Attributes bit 24 (`0x01000000`, `SPELL_ATTR_ALLOW_WHILE_MOUNTED`) is set; a spell with
 /// no record has no exemption. A caster [`can_auto_dismount`] refuses is told `0x39` "You are
@@ -345,6 +380,51 @@ pub(super) fn cast_moving_refusal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The place legs' reasons on Brown Horse's and Golden Gryphon's attributes (458, 32235).
+    #[test]
+    fn cast_place_refusal_names_the_mount_and_the_flyable_zone() {
+        use crate::spell::usable::UsablePlace;
+        let mount = |attributes_ex4| SpellDisplay {
+            attributes: 0x1015_8110,
+            attributes_ex4,
+            effect_apply_aura: [benilla_formats::SPELL_AURA_MOUNTED, 0, 0],
+            ..Default::default()
+        };
+        let (horse, gryphon) = (mount(0), mount(0x0400_0000));
+        let at = |outdoors, flyable_zone| UsablePlace {
+            outdoors,
+            flyable_zone,
+        };
+        assert_eq!(cast_place_refusal(&gryphon, at(true, true)), None);
+        assert_eq!(cast_place_refusal(&horse, at(true, false)), None);
+        assert_eq!(
+            cast_place_refusal(&gryphon, at(true, false)),
+            Some(REASON_NOT_HERE)
+        );
+        // Indoors the mount reason comes first, even outside a flyable zone.
+        assert_eq!(
+            cast_place_refusal(&gryphon, at(false, false)),
+            Some(REASON_NO_MOUNTS_ALLOWED)
+        );
+        let outdoors_only = SpellDisplay {
+            attributes: 0x8000,
+            ..Default::default()
+        };
+        assert_eq!(
+            cast_place_refusal(&outdoors_only, at(false, true)),
+            Some(REASON_ONLY_OUTDOORS)
+        );
+        let indoors_only = SpellDisplay {
+            attributes: 0x4000,
+            ..Default::default()
+        };
+        assert_eq!(
+            cast_place_refusal(&indoors_only, at(true, true)),
+            Some(REASON_ONLY_INDOORS)
+        );
+        assert_eq!(cast_place_refusal(&indoors_only, at(false, true)), None);
+    }
 
     #[test]
     fn auto_unshift_follows_its_cvar_the_taxi_flight_and_the_form() {

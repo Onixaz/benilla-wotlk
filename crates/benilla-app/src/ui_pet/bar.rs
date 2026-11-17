@@ -30,6 +30,8 @@ pub(crate) struct PetSlotWalk<'w, 's> {
     commands: Option<Res<'w, crate::net::NetCommands>>,
     combo: Option<Res<'w, crate::spell::ComboPoints>>,
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    /// Where the player stands, for the walk's place legs.
+    place: crate::spell::usable::UsablePlaceFeed<'w>,
 }
 
 impl PetSlotWalk<'_, '_> {
@@ -76,6 +78,7 @@ impl PetSlotWalk<'_, '_> {
             }),
             // The auto-unshift check asks for the active player (`0x71b130`).
             auto_unshift: false,
+            place: self.place.pet(),
         };
         crate::spell::usable::spell_usable(
             spell_id,
