@@ -218,9 +218,28 @@ impl LiveState for LiveView<'_, '_> {
         Some(self.honor.toggle_timer(me))
     }
 
-    fn arena_team_slots(&self) -> [benilla_ui::script::ArenaTeamSlotView; 3] {
+    fn arena_team_info(&self, slot: usize) -> [u32; 7] {
         let me = self.active_player().and_then(|g| self.unit(g));
-        self.arena_teams.slots(me)
+        crate::ui_arena_team::ArenaTeamView::info(me, slot)
+    }
+
+    fn arena_team_stats(&self, slot: usize) -> [u32; 6] {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.stats(me, slot)
+    }
+
+    fn arena_team_member_count(&self, slot: usize) -> usize {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.member_count(me, slot)
+    }
+
+    fn arena_team_member(
+        &self,
+        slot: usize,
+        index: usize,
+    ) -> Option<benilla_ui::script::ArenaTeamMemberRef<'_>> {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.member(me, slot, index)
     }
 
     fn arena_team_record(&self, team_id: u32) -> Option<benilla_ui::script::ArenaTeamRecordView> {

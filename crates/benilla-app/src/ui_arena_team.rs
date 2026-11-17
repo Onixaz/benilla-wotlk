@@ -12,9 +12,7 @@ use benilla_protocol::messages::{
     ArenaTeamCommandResult, ArenaTeamEvent, ArenaTeamMember, ArenaTeamRecord,
 };
 use benilla_protocol::ObjectFields;
-use benilla_ui::script::{
-    ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView, UiScript,
-};
+use benilla_ui::script::{ArenaTeamMemberRef, ArenaTeamRecordView, ArenaTeamRequest, UiScript};
 
 use crate::net::{ArenaTeamCommand, ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::query_cache::QueryCache;
@@ -111,39 +109,23 @@ impl ArenaTeams {
                 }));
         })
     }
+}
 
-    /// The three slots as the verbs read them: field words, cached record, stats and roster.
-    fn slot_views(&self, info: [[u32; 7]; 3], commands: &NetCommands) -> [ArenaTeamSlotView; 3] {
-        std::array::from_fn(|i| {
-            let s = &self.slots[i];
-            let record = (info[i][0] != 0)
-                .then(|| self.record(info[i][0], commands))
-                .flatten()
-                .map(Self::record_view);
-            ArenaTeamSlotView {
-                info: info[i],
-                record,
-                stats: s.stats,
-                members: s
-                    .members
-                    .iter()
-                    .map(|m| ArenaTeamMemberView {
-                        guid: m.guid,
-                        name: m.name.clone(),
-                        rank: m.rank,
-                        level: u32::from(m.level),
-                        class: crate::ui_unit::class_names(m.class).map(|(n, _)| n.to_string()),
-                        online: m.online,
-                        week_games: m.week_games,
-                        week_wins: m.week_wins,
-                        season_games: m.season_games,
-                        season_wins: m.season_wins,
-                        personal_rating: m.personal_rating,
-                        matchmaking: m.matchmaking,
-                    })
-                    .collect(),
-            }
-        })
+/// A roster member borrowed as the verbs read it.
+fn member_ref(m: &ArenaTeamMember) -> ArenaTeamMemberRef<'_> {
+    ArenaTeamMemberRef {
+        guid: m.guid,
+        name: &m.name,
+        rank: m.rank,
+        level: u32::from(m.level),
+        class: crate::ui_unit::class_names(m.class).map(|(n, _)| n),
+        online: m.online,
+        week_games: m.week_games,
+        week_wins: m.week_wins,
+        season_games: m.season_games,
+        season_wins: m.season_wins,
+        personal_rating: m.personal_rating,
+        matchmaking: m.matchmaking,
     }
 }
 
@@ -232,16 +214,41 @@ pub(crate) struct ArenaTeamView<'w> {
 }
 
 impl ArenaTeamView<'_> {
-    /// The three slots over our descriptor's words, empty without them.
-    pub(crate) fn slots(&self, me: Option<&ObjectFields>) -> [ArenaTeamSlotView; 3] {
-        let (Some(teams), Some(commands)) = (self.teams.as_deref(), self.commands.as_deref())
-        else {
-            return Default::default();
+    /// Slot `slot`'s field words off our descriptor, zeros without them.
+    pub(crate) fn info(me: Option<&ObjectFields>, slot: usize) -> [u32; 7] {
+        let Some(me) = me.filter(|f| f.player_arena_team_info(0, 0).is_some()) else {
+            return [0; 7];
         };
-        match me.and_then(read_info) {
-            Some(info) => teams.slot_views(info, commands),
-            None => Default::default(),
-        }
+        std::array::from_fn(|word| {
+            me.player_arena_team_info(slot as u16, word as u16)
+                .unwrap_or(0)
+        })
+    }
+
+    /// The table's slot, held only while our descriptor carries the team words.
+    fn slot(&self, me: Option<&ObjectFields>, slot: usize) -> Option<&TeamSlot> {
+        me?.player_arena_team_info(0, 0)?;
+        self.teams.as_deref()?.slots.get(slot)
+    }
+
+    /// Slot `slot`'s last stats, zeros without our team words.
+    pub(crate) fn stats(&self, me: Option<&ObjectFields>, slot: usize) -> [u32; 6] {
+        self.slot(me, slot).map_or([0; 6], |s| s.stats)
+    }
+
+    /// Slot `slot`'s roster length, 0 without our team words.
+    pub(crate) fn member_count(&self, me: Option<&ObjectFields>, slot: usize) -> usize {
+        self.slot(me, slot).map_or(0, |s| s.members.len())
+    }
+
+    /// Slot `slot`'s roster member `index` in wire order, borrowed.
+    pub(crate) fn member(
+        &self,
+        me: Option<&ObjectFields>,
+        slot: usize,
+        index: usize,
+    ) -> Option<ArenaTeamMemberRef<'_>> {
+        self.slot(me, slot)?.members.get(index).map(member_ref)
     }
 
     /// The team cache's record, asked on a miss.

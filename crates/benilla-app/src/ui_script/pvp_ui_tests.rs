@@ -125,8 +125,21 @@ impl benilla_ui::script::LiveState for OurHonor {
     fn honor(&self) -> Option<HonorState> {
         Some(self.0)
     }
-    fn arena_team_slots(&self) -> [ArenaTeamSlotView; 3] {
-        self.1.clone()
+    fn arena_team_info(&self, slot: usize) -> [u32; 7] {
+        self.1[slot].info
+    }
+    fn arena_team_stats(&self, slot: usize) -> [u32; 6] {
+        self.1[slot].stats
+    }
+    fn arena_team_member_count(&self, slot: usize) -> usize {
+        self.1[slot].members.len()
+    }
+    fn arena_team_member(
+        &self,
+        slot: usize,
+        index: usize,
+    ) -> Option<benilla_ui::script::ArenaTeamMemberRef<'_>> {
+        self.1[slot].members.get(index).map(|m| m.borrowed())
     }
 }
 
