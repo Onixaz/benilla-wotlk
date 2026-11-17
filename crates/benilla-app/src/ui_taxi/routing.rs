@@ -5,8 +5,9 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use benilla_formats::{
-    load_taxi_nodes, load_taxi_paths, load_world_map_continent_catalog, TaxiNodes, TaxiPaths,
-    WorldMapContinent, WorldMapContinentCatalog,
+    load_map_catalog, load_taxi_nodes, load_taxi_paths, load_world_map_continent_catalog,
+    load_world_map_transform_catalog, MapCatalog, TaxiNode, TaxiNodes, TaxiPaths,
+    WorldMapContinent, WorldMapContinentCatalog, WorldMapTransformCatalog,
 };
 use benilla_protocol::messages::{taxi_reply, TaxiMask};
 use bevy::prelude::*;
@@ -17,13 +18,17 @@ use benilla_assets::{LockRecover, WorldAssets};
 
 use super::TaxiOpen;
 
-/// `TaxiNodes.dbc`, `TaxiPath.dbc` (the direct hops and their fares) and `WorldMapContinent.dbc`
-/// (each continent's taxi-map rect, its `taxi_min`/`taxi_max`).
+/// `TaxiNodes.dbc`, `TaxiPath.dbc` (the direct hops and their fares), `WorldMapContinent.dbc`
+/// (each continent's taxi-map rect, its `taxi_min`/`taxi_max`), `WorldMapTransforms.dbc` (the
+/// regions of map 530 drawn on the Eastern Kingdoms and Kalimdor) and `Map.dbc` (each map's
+/// `ExpansionID`).
 #[derive(Resource)]
 pub(crate) struct TaxiCatalogs {
     nodes: TaxiNodes,
     pub(super) paths: TaxiPaths,
     continents: WorldMapContinentCatalog,
+    transforms: WorldMapTransformCatalog,
+    maps: MapCatalog,
 }
 
 impl TaxiCatalogs {
@@ -65,13 +70,26 @@ pub(super) fn load_taxi_catalogs(
 }
 
 impl TaxiCatalogs {
-    /// The three tables off the patch chain.
+    /// The five tables off the patch chain.
     pub(super) fn load(chain: &mut benilla_formats::Chain) -> anyhow::Result<Self> {
         Ok(Self {
             nodes: load_taxi_nodes(chain)?,
             paths: load_taxi_paths(chain)?,
             continents: load_world_map_continent_catalog(chain)?,
+            transforms: load_world_map_transform_catalog(chain)?,
+            maps: load_map_catalog(chain)?,
         })
+    }
+
+    /// The map a node draws on and its position there: the world map transform (`0x543920`) on
+    /// its `ContinentID` and world `(x, y)`, as the map's setup (`0x5932e0`), its node position
+    /// reads (`0x590690`, `0x5906d0`) and its route lines (`0x591ad0`) take it. Silvermoon's map
+    /// 530 position lands on the Eastern Kingdoms, the Exodar's on Kalimdor.
+    fn node_on_map(&self, node: &TaxiNode) -> (u32, f32, f32) {
+        let (map_id, x, y, _dungeon) =
+            self.transforms
+                .transform_position(node.map_id, node.pos[0], node.pos[1]);
+        (map_id, x, y)
     }
 }
 
@@ -174,46 +192,69 @@ pub(super) struct ResolvedTaxiNode {
 #[derive(Resource, Default)]
 pub(super) struct TaxiRouteCache(pub(super) Vec<ResolvedTaxiNode>);
 
-/// The listed nodes: every known node on the current node's continent, which the reference caches
-/// off the packet (the node table's `+4`), by id. The current node is `Current`, a routable one
-/// `Reachable` with its fare and route segments, and an unroutable one is left out, where the
-/// reference keeps it typed `NONE`, which stock `TaxiFrame.lua` hides; its `DISTANT` type is
-/// never produced. Returns the continent's map id, the Lua nodes and their routes, in one order.
+/// The listed nodes, as the taxi map's setup (`0x5932e0`) lists them: the map is the one the
+/// current node draws on, through `WorldMapTransforms`, and its `WorldMapContinent` row gives the
+/// rect, refusing the map without a row or with a zero span. A known node is listed, in id order,
+/// when it draws on that map and its own map's `ExpansionID` is within the account's; the setup
+/// clears every other bit from the node mask, so a route never passes through an unlisted node,
+/// as the route walk (`0x5926c0`) walks the listed table alone. Positions and route segments are
+/// the transformed ones. The current node is `Current`, a routable one `Reachable` with its fare
+/// and route segments, and an unroutable one is left out, where the reference keeps it typed
+/// `NONE`, which stock `TaxiFrame.lua` hides; its `DISTANT` type is never produced. Returns the
+/// continent's map id, the Lua nodes and their routes, in one order.
 ///
 /// A Lua node's fare takes the flight master's price `discount` ([`shown_fare`]), and is 0 with
 /// none, when the flight master or the player does not resolve; the route's fare stays the raw sum,
 /// which `CMSG_ACTIVATETAXIEXPRESS` carries.
+///
+/// `account_expansion` is the account's expansion byte from `SMSG_AUTH_RESPONSE`.
 pub(super) fn build_nodes(
     open: &TaxiOpen,
     cat: &TaxiCatalogs,
     discount: Option<f64>,
+    account_expansion: u8,
 ) -> Option<(u32, Vec<TaxiUiNode>, Vec<ResolvedTaxiNode>)> {
-    let map_id = cat.nodes.get(open.nearest_node)?.map_id;
+    let (map_id, _, _) = cat.node_on_map(cat.nodes.get(open.nearest_node)?);
     let cont = cat.continents.get(map_id)?;
-    let dist = |a: u32, b: u32| -> f32 {
-        match (cat.nodes.get(a), cat.nodes.get(b)) {
-            (Some(a), Some(b)) => {
-                let (dx, dy, dz) = (
-                    a.pos[0] - b.pos[0],
-                    a.pos[1] - b.pos[1],
-                    a.pos[2] - b.pos[2],
-                );
-                (dx * dx + dy * dy + dz * dz).sqrt()
-            }
-            _ => f32::MAX / 4.0, // an edge into a node the catalog lacks never wins
-        }
-    };
-    let mut rows: Vec<_> = cat
+    if cont.taxi_max.0 - cont.taxi_min.0 == 0.0 || cont.taxi_max.1 - cont.taxi_min.1 == 0.0 {
+        return None;
+    }
+    // The walk over the mask: each listed node with its transformed `(x, y)` and its own height.
+    let mut rows: Vec<(&TaxiNode, [f32; 3])> = cat
         .nodes
         .rows()
-        .filter(|n| n.map_id == map_id && open.known.is_known(n.id))
+        .filter(|n| open.known.is_known(n.id))
+        .filter(|n| cat.maps.expansion(n.map_id) <= u32::from(account_expansion))
+        .filter_map(|n| {
+            let (on, x, y) = cat.node_on_map(n);
+            (on == map_id).then_some((n, [x, y, n.pos[2]]))
+        })
         .collect();
-    rows.sort_by_key(|n| n.id);
+    rows.sort_by_key(|(n, _)| n.id);
+    // No listed node, no map: the setup returns before `TAXIMAP_OPENED`.
+    if rows.is_empty() {
+        return None;
+    }
+    let mut listed = TaxiMask::default();
+    let mut at: HashMap<u32, [f32; 3]> = HashMap::with_capacity(rows.len());
+    for (n, p) in &rows {
+        listed.set(n.id);
+        at.insert(n.id, *p);
+    }
+    let dist = |a: u32, b: u32| -> f32 {
+        match (at.get(&a), at.get(&b)) {
+            (Some(a), Some(b)) => {
+                let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+                (dx * dx + dy * dy + dz * dz).sqrt()
+            }
+            _ => f32::MAX / 4.0, // an edge into an unlisted node never wins
+        }
+    };
 
     let mut ui = Vec::new();
     let mut resolved = Vec::new();
-    for n in rows {
-        let pos = project(cont, n.pos[0], n.pos[1]);
+    for (n, p) in rows {
+        let pos = project(cont, p[0], p[1]);
         if n.id == open.nearest_node {
             ui.push(TaxiUiNode {
                 name: n.name.clone(),
@@ -229,7 +270,7 @@ pub(super) fn build_nodes(
             continue;
         }
         let Some((chain, cost)) = shortest_route(
-            &open.known,
+            &listed,
             |from| cat.paths.paths_from(from).map(|p| (p.to, p.cost)).collect(),
             dist,
             open.nearest_node,
@@ -237,15 +278,14 @@ pub(super) fn build_nodes(
         ) else {
             continue; // unroutable: left out
         };
-        // Each hop's segment for `GetNumRoutes` and `TaxiGetSrcX`..`TaxiGetDestY`, through this
-        // continent's rect even for a node off it.
+        // Each hop's segment for `GetNumRoutes` and `TaxiGetSrcX`..`TaxiGetDestY`, between
+        // listed nodes' transformed positions.
         let routes = chain
             .windows(2)
             .filter_map(|w| {
-                let a = cat.nodes.get(w[0])?;
-                let b = cat.nodes.get(w[1])?;
-                let (ax, ay) = project(cont, a.pos[0], a.pos[1]);
-                let (bx, by) = project(cont, b.pos[0], b.pos[1]);
+                let (a, b) = (at.get(&w[0])?, at.get(&w[1])?);
+                let (ax, ay) = project(cont, a[0], a[1]);
+                let (bx, by) = project(cont, b[0], b[1]);
                 Some([ax, ay, bx, by])
             })
             .collect();
@@ -475,17 +515,13 @@ mod tests {
     fn build_nodes_classifies_a_real_known_hop() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let cat = TaxiCatalogs {
-            nodes: load_taxi_nodes(&mut chain).expect("load TaxiNodes"),
-            paths: load_taxi_paths(&mut chain).expect("load TaxiPath"),
-            continents: load_world_map_continent_catalog(&mut chain).expect("load WMC"),
-        };
+        let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
         let open = TaxiOpen {
             flightmaster: 0x42,
             nearest_node: 2,
             known: mask_of(&[2, 4]),
         };
-        let (map_id, ui, resolved) = build_nodes(&open, &cat, Some(0.0)).expect("map builds");
+        let (map_id, ui, resolved) = build_nodes(&open, &cat, Some(0.0), 2).expect("map builds");
         assert_eq!(map_id, 0, "the continent is the nearest node's own map");
         assert_eq!(ui.len(), 2, "only the two known EK nodes are visible");
 
@@ -513,7 +549,7 @@ mod tests {
             nearest_node: 2,
             known: all_known,
         };
-        let (_, ui, _) = build_nodes(&open, &cat, Some(0.0)).expect("map builds");
+        let (_, ui, _) = build_nodes(&open, &cat, Some(0.0), 2).expect("map builds");
         let ek_known_total = cat.nodes.rows().filter(|n| n.map_id == 0).count();
         assert!(
             ui.len() < ek_known_total,
@@ -525,5 +561,124 @@ mod tests {
             ui.iter().all(|n| n.node_type != TaxiNodeType::Distant),
             "the DISTANT classification is a dead branch — never produced"
         );
+    }
+
+    /// A node's id by its `TaxiNodes` name.
+    fn node_named(cat: &TaxiCatalogs, name: &str) -> u32 {
+        cat.nodes
+            .rows()
+            .find(|n| n.name == name)
+            .unwrap_or_else(|| panic!("no TaxiNodes row {name:?}"))
+            .id
+    }
+
+    /// The map's setup (`0x5932e0`) through `WorldMapTransforms`: Silvermoon's flight master, on
+    /// map 530, opens the Eastern Kingdoms map with Tranquillien, the Exodar's opens Kalimdor with
+    /// Blood Watch, and Shattrath's Outland map lists neither even with every node known. Each
+    /// listed node sits where its transformed position projects on its map's rect.
+    #[test]
+    fn the_blood_elf_and_draenei_flight_points_open_on_their_continents() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
+        let silvermoon = node_named(&cat, "Silvermoon City");
+        let tranquillien = node_named(&cat, "Tranquillien, Ghostlands");
+        let exodar = node_named(&cat, "The Exodar");
+        let blood_watch = node_named(&cat, "Blood Watch, Bloodmyst Isle");
+        let shattrath = node_named(&cat, "Shattrath, Terokkar Forest");
+        let all_known = TaxiMask(vec![u64::MAX; cat.mask_words()]);
+        let open_at = |node: u32, known: &TaxiMask| TaxiOpen {
+            flightmaster: 0x42,
+            nearest_node: node,
+            known: known.clone(),
+        };
+        let names = |ui: &[TaxiUiNode]| ui.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
+
+        // Silvermoon: the Eastern Kingdoms, Tranquillien reachable, at its transformed spot.
+        let known = mask_of(&[silvermoon, tranquillien]);
+        let (map_id, ui, resolved) =
+            build_nodes(&open_at(silvermoon, &known), &cat, Some(0.0), 2).expect("map builds");
+        assert_eq!(
+            map_id, 0,
+            "Silvermoon's map 530 position draws on the Eastern Kingdoms"
+        );
+        assert_eq!(names(&ui), ["Silvermoon City", "Tranquillien, Ghostlands"]);
+        assert_eq!(ui[0].node_type, TaxiNodeType::Current);
+        assert_eq!(ui[1].node_type, TaxiNodeType::Reachable);
+        assert_eq!(resolved[1].chain, vec![silvermoon, tranquillien]);
+        let ek = cat.continents.get(0).expect("the Eastern Kingdoms row");
+        let n = cat.nodes.get(tranquillien).unwrap();
+        let (_, x, y, _) = cat
+            .transforms
+            .transform_position(n.map_id, n.pos[0], n.pos[1]);
+        assert_eq!(
+            ui[1].pos,
+            project(ek, x, y),
+            "the transformed position, on the EK rect"
+        );
+        for (u, v) in ui.iter().map(|n| n.pos) {
+            assert!(
+                (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v),
+                "on the map ({u}, {v})"
+            );
+        }
+        assert_eq!(
+            ui[1].routes,
+            vec![[ui[0].pos.0, ui[0].pos.1, ui[1].pos.0, ui[1].pos.1]]
+        );
+
+        // Every node known from Silvermoon: Outland's stay off the Eastern Kingdoms map.
+        let (_, ui, _) =
+            build_nodes(&open_at(silvermoon, &all_known), &cat, Some(0.0), 2).expect("map builds");
+        assert!(!names(&ui).contains(&"Shattrath, Terokkar Forest".to_string()));
+
+        // The Exodar: Kalimdor, Blood Watch reachable.
+        let known = mask_of(&[exodar, blood_watch]);
+        let (map_id, ui, _) =
+            build_nodes(&open_at(exodar, &known), &cat, Some(0.0), 2).expect("map builds");
+        assert_eq!(map_id, 1, "the Exodar's map 530 position draws on Kalimdor");
+        assert_eq!(names(&ui), ["Blood Watch, Bloodmyst Isle", "The Exodar"]);
+        assert_eq!(ui[0].node_type, TaxiNodeType::Reachable);
+
+        // Shattrath, every node known: Outland, with none of the transformed nodes.
+        let (map_id, ui, _) =
+            build_nodes(&open_at(shattrath, &all_known), &cat, Some(0.0), 2).expect("map builds");
+        assert_eq!(map_id, 530);
+        let listed = names(&ui);
+        for gone in [
+            "Silvermoon City",
+            "Tranquillien, Ghostlands",
+            "The Exodar",
+            "Blood Watch, Bloodmyst Isle",
+            "Shattered Sun Staging Area",
+        ] {
+            assert!(
+                !listed.contains(&gone.to_string()),
+                "{gone} is not on Outland's map"
+            );
+        }
+        assert!(listed.contains(&"Shattrath, Terokkar Forest".to_string()));
+    }
+
+    /// The setup clears a known node whose own map's `ExpansionID` is past the account's: on a
+    /// classic account (0) Silvermoon's map lists no node at all, and a map with none never opens.
+    #[test]
+    fn a_node_on_a_map_past_the_accounts_expansion_is_not_listed() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
+        let silvermoon = node_named(&cat, "Silvermoon City");
+        let tranquillien = node_named(&cat, "Tranquillien, Ghostlands");
+        let open = TaxiOpen {
+            flightmaster: 0x42,
+            nearest_node: silvermoon,
+            known: mask_of(&[silvermoon, tranquillien]),
+        };
+        assert!(
+            build_nodes(&open, &cat, Some(0.0), 0).is_none(),
+            "map 530 is expansion 1, so nothing is listed and the map does not open"
+        );
+        let (_, ui, _) = build_nodes(&open, &cat, Some(0.0), 1).expect("map builds");
+        assert!(ui.iter().any(|n| n.name == "Tranquillien, Ghostlands"));
     }
 }
