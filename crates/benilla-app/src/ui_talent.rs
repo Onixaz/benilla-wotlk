@@ -449,15 +449,14 @@ fn feed_inspect_talents(
     spells: Option<Res<Spells>>,
     mut inspect: ResMut<InspectTalents>,
     target: Res<InspectTalentClass>,
-    mut memory: Local<crate::ui_script::VmMemo<Option<TalentUiState>>>,
-    mut last_reset: Local<u32>,
+    mut memory: Local<crate::ui_script::VmMemo<(Option<TalentUiState>, u32)>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    let (pushed, vm_reset) = memory.get_reset(&script);
+    let ((pushed, last_reset), vm_reset) = memory.get_reset(&script);
     let class = target.get();
-    let reset = std::mem::replace(&mut *last_reset, target.resets()) != *last_reset;
+    let reset = std::mem::replace(last_reset, target.resets()) != *last_reset;
     let catalogs_changed = talents.as_ref().is_some_and(|r| r.is_changed())
         || spells.as_ref().is_some_and(|r| r.is_changed());
     if !(vm_reset || catalogs_changed || reset || inspect.is_changed()) {
