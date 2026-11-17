@@ -716,7 +716,7 @@ mod tests {
     /// read in the same chunk sees it gone; with none held it fires nothing.
     #[test]
     fn the_close_fires_inside_the_call_and_leaves_the_cursor_alone() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         let loan = lend_test(view());
         s.eval::<()>(
             "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('PET_STABLE_CLOSED')
