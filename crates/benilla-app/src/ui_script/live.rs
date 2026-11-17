@@ -35,6 +35,7 @@ pub(crate) struct LiveView<'w, 's> {
     arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
     positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
     inspect: crate::ui_inspect::InspectLive<'w>,
+    world_state_ui: crate::world_state_ui::WorldStateUiLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -165,6 +166,21 @@ impl LiveState for LiveView<'_, '_> {
 
     fn summon_time_left_ms(&self) -> u32 {
         self.summon.time_left_ms()
+    }
+
+    fn world_state_ui_count(&self) -> Option<usize> {
+        self.world_state_ui.count()
+    }
+
+    fn world_state_ui_info(
+        &self,
+        index: usize,
+    ) -> Option<Option<benilla_ui::script::WorldStateUiView>> {
+        self.world_state_ui.info(index)
+    }
+
+    fn world_state(&self, key: u32) -> Option<i32> {
+        self.world_state_ui.value(key)
     }
 
     fn quest_special_item(

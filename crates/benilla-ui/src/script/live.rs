@@ -108,6 +108,23 @@ pub trait LiveState {
         0
     }
 
+    /// The world-state readout's admitted row count at the call (`0x548720`), `None` without one.
+    fn world_state_ui_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// The `index`th admitted readout row resolved at the call (`0x548d40`); `Some(None)` past the
+    /// end, `None` without a readout.
+    fn world_state_ui_info(&self, _index: usize) -> Option<Option<super::WorldStateUiView>> {
+        None
+    }
+
+    /// One world state's value at the call, a miss reading 0 (`0x549440`'s table); `None` without
+    /// the table.
+    fn world_state(&self, _key: u32) -> Option<i32> {
+        None
+    }
+
     /// A logged quest's special item as our bags hold it now (`0x5e0da0`): the template's
     /// starting item, else under flag `0x20000` a drop item, the first carried copy that can be
     /// used; `None` for none.

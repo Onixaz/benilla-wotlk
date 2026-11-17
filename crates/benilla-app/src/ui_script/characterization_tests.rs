@@ -92,6 +92,12 @@ local VERBS = {
     { "bfpos1", function() return (select(3, GetBattlefieldPosition(1))) end },
     { "bfstats", function() return GetNumBattlefieldStats() end },
     { "ap1", function() return UnitExists("arenapet1") end },
+    { "wsui", function() return GetNumWorldStateUI() end },
+    { "ws", function()
+        local t = {}
+        for i = 1, GetNumWorldStateUI() do t[#t + 1] = (select(3, GetWorldStateUIInfo(i))) end
+        return table.concat(t, ",")
+    end },
 }
 local function answers()
     local verbs = {}
@@ -1712,6 +1718,55 @@ fn duel_and_battlefield_events_fire_in_wire_order() {
             "DUEL_FINISHED",
         ],
         "a challenger no object holds raises no popup (`0x5cfd73`)"
+    );
+}
+
+/// The world-state handler fires `ARENA_SEASON_WORLD_STATE` from the setter (`0x5494db`), refreshes
+/// the map (`0x5269c5`) and fires `UPDATE_WORLD_STATES` (`0x5269d1`, `0x526a17`) before the next
+/// packet's handler runs, and a moved phase fires it too (`0x51397f`); the readout reads the values
+/// each handler just wrote.
+#[test]
+fn world_state_events_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::WorldStates {
+                scope: Some((489, 3277, 3277)),
+                states: vec![(1581, 2), (0xc77, 8)],
+            },
+            SessionEvent::DuelOutOfBounds,
+            SessionEvent::PhaseShift { mask: 0x41 },
+            SessionEvent::PhaseShift { mask: 0x41 },
+            SessionEvent::WorldStates {
+                scope: None,
+                states: vec![(1581, 3), (0xc77, 8)],
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "ARENA_SEASON_WORLD_STATE",
+                "UPDATE_WORLD_STATES",
+                "DUEL_OUTOFBOUNDS",
+                "WORLD_MAP_UPDATE",
+            ],
+            &["ws"]
+        ),
+        vec![
+            "ARENA_SEASON_WORLD_STATE | ws=Time Remaining: 0 min.,2/0,0/0",
+            "WORLD_MAP_UPDATE | ws=Time Remaining: 0 min.,2/0,0/0",
+            "UPDATE_WORLD_STATES | ws=Time Remaining: 0 min.,2/0,0/0",
+            "DUEL_OUTOFBOUNDS | ws=Time Remaining: 0 min.,2/0,0/0",
+            "UPDATE_WORLD_STATES | ws=Time Remaining: 0 min.,2/0,0/0",
+            "WORLD_MAP_UPDATE | ws=Time Remaining: 0 min.,3/0,0/0",
+            "UPDATE_WORLD_STATES | ws=Time Remaining: 0 min.,3/0,0/0",
+        ],
+        "the second phase shift moves nothing and the second season write moves nothing"
     );
 }
 
