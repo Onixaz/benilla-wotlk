@@ -96,6 +96,7 @@ fn two_v_two() -> ArenaTeamSlotView {
             border_color: 0xFF33_3333,
         }),
         stats: [1530, 4, 3, 10, 6, 112],
+        roster_type: 2,
         members: vec![
             member(0x10, "Probesix", 0, 1512),
             member(0x11, "Probeseven", 1, 1490),
@@ -125,8 +126,30 @@ impl benilla_ui::script::LiveState for OurHonor {
     fn honor(&self) -> Option<HonorState> {
         Some(self.0)
     }
-    fn arena_team_slots(&self) -> [ArenaTeamSlotView; 3] {
-        self.1.clone()
+    fn arena_team_info(&self, slot: usize) -> [u32; 7] {
+        self.1[slot].info
+    }
+    fn arena_team_stats(&self, slot: usize) -> [u32; 6] {
+        self.1[slot].stats
+    }
+    fn arena_team_record(&self, team_id: u32) -> Option<ArenaTeamRecordView> {
+        self.1
+            .iter()
+            .find(|s| s.info[0] == team_id)
+            .and_then(|s| s.record.clone())
+    }
+    fn arena_team_roster_type(&self, slot: usize) -> u32 {
+        self.1[slot].roster_type
+    }
+    fn arena_team_member_count(&self, slot: usize) -> usize {
+        self.1[slot].members.len()
+    }
+    fn arena_team_member(
+        &self,
+        slot: usize,
+        index: usize,
+    ) -> Option<benilla_ui::script::ArenaTeamMemberRef<'_>> {
+        self.1[slot].members.get(index).map(|m| m.borrowed())
     }
 }
 

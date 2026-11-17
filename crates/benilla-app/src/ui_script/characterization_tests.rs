@@ -2817,7 +2817,7 @@ fn slot0(status: Option<u32>) -> SessionEvent {
     })
 }
 
-/// `PLAYER_ENTERING_WORLD` reads the held status: the world entry zeroes after it (`0x5281a6`, then `0x528230` -> `0x54cb41`).
+/// `PLAYER_ENTERING_WORLD` reads the held status: the world entry zeroes after it (`0x5281a6`, then `0x528230` -> `0x54cb57`, `0x54cb5d`).
 #[test]
 fn player_entering_world_reads_the_held_status_on_a_reload() {
     let Some(mut rig) = Rig::login(&[]) else {

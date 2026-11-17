@@ -58,6 +58,12 @@ impl LiveView<'_, '_> {
             .then_some(entity)
     }
 
+    /// A held player's `(race, class)`, the talent target's lookup with the player type mask (`0x5c9f8f`).
+    fn player_class(&self, guid: u64) -> Option<(u8, u8)> {
+        let fields = &self.stores.get(self.player_entity(guid)?).ok()?.0;
+        Some((fields.unit_race()?, fields.unit_class()?))
+    }
+
     /// A held player's PvP side (`0x54d074`).
     fn player_side(&self, guid: u64) -> Option<i8> {
         let entity = self.player_entity(guid)?;
@@ -272,8 +278,8 @@ impl LiveState for LiveView<'_, '_> {
         self.score.names_pending()
     }
 
-    fn arena_opponent_count(&self) -> Option<usize> {
-        self.arena.as_ref().map(|a| a.count())
+    fn arena_opponent_count(&self) -> usize {
+        self.arena.as_ref().map_or(0, |a| a.count())
     }
 
     fn honor(&self) -> Option<benilla_ui::script::HonorState> {
@@ -285,9 +291,33 @@ impl LiveState for LiveView<'_, '_> {
         Some(self.honor.toggle_timer(me))
     }
 
-    fn arena_team_slots(&self) -> [benilla_ui::script::ArenaTeamSlotView; 3] {
+    fn arena_team_info(&self, slot: usize) -> [u32; 7] {
         let me = self.active_player().and_then(|g| self.unit(g));
-        self.arena_teams.slots(me)
+        crate::ui_arena_team::ArenaTeamView::info(me, slot)
+    }
+
+    fn arena_team_stats(&self, slot: usize) -> [u32; 6] {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.stats(me, slot)
+    }
+
+    fn arena_team_roster_type(&self, slot: usize) -> u32 {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.roster_type(me, slot)
+    }
+
+    fn arena_team_member_count(&self, slot: usize) -> usize {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.member_count(me, slot)
+    }
+
+    fn arena_team_member(
+        &self,
+        slot: usize,
+        index: usize,
+    ) -> Option<benilla_ui::script::ArenaTeamMemberRef<'_>> {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.member(me, slot, index)
     }
 
     fn arena_team_record(&self, team_id: u32) -> Option<benilla_ui::script::ArenaTeamRecordView> {
@@ -328,7 +358,7 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     fn notify_inspect(&self, guid: u64) -> bool {
-        self.inspect.notify(guid)
+        self.inspect.notify(guid, || self.player_class(guid))
     }
 
     fn clear_inspect_target(&self) {
