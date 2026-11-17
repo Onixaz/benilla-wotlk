@@ -12,7 +12,7 @@ use benilla_ui::script::{ScriptValue, UiScript};
 use benilla_ui::strings::{fill, Arg};
 use bevy::prelude::*;
 
-use super::{quest_complete, CompletionInputs, QuestLog, GO_OBJECTIVE_BIT};
+use super::{quest_complete, CompletionInputs, QuestLog, QuestLogMarks, GO_OBJECTIVE_BIT};
 use crate::go_templates::GameObjectTemplates;
 use crate::items::Items;
 use crate::names::NameCache;
@@ -61,7 +61,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ItemPushResult, on_item_push);
 }
 
-fn on_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
+fn on_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
     if let SessionEvent::QuestObjectiveKill {
         quest_id,
         entry,
@@ -78,31 +78,31 @@ fn on_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
     }
 }
 
-fn on_pvp_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
+fn on_pvp_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
     if let SessionEvent::QuestObjectivePvpKill { quest_id, count } = ev {
         log.notices.push(QuestNotice::PvpKill { quest_id, count });
     }
 }
 
-fn on_complete(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
+fn on_complete(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
     if let SessionEvent::QuestObjectivesComplete { quest_id } = ev {
         log.notices.push(QuestNotice::Complete { quest_id });
     }
 }
 
-fn on_failed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
+fn on_failed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
     if let SessionEvent::QuestFailed { quest_id, timed } = ev {
         log.notices.push(QuestNotice::Failed { quest_id, timed });
     }
 }
 
-fn on_force_removed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
+fn on_force_removed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
     if let SessionEvent::QuestForceRemoved { quest_id } = ev {
         log.notices.push(QuestNotice::ForceRemoved { quest_id });
     }
 }
 
-fn on_quests_completed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
+fn on_quests_completed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
     if let SessionEvent::QuestsCompleted(ids) = ev {
         log.completed_answer = Some(ids);
     }
@@ -111,7 +111,7 @@ fn on_quests_completed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLog>) {
 /// Only a push to the player itself reaches the quest-item check (`0x6d7de8`).
 fn on_item_push(
     In(ev): In<SessionEvent>,
-    mut log: ResMut<QuestLog>,
+    mut log: ResMut<QuestLogMarks>,
     me: Query<&Guid, With<SelfPlayer>>,
 ) {
     if let SessionEvent::ItemPushResult(p) = ev {
@@ -181,7 +181,8 @@ fn line(key: &'static str, args: Vec<AnnounceArg>, watch: Option<u32>) -> Announ
 /// Resolve the queued notices into lines, in order. A notice whose quest-item check waits on a
 /// template comes back held, for the next pass.
 pub(super) fn resolve(
-    log: &mut QuestLog,
+    log: &QuestLog,
+    marks: &mut QuestLogMarks,
     notices: Vec<QuestNotice>,
     w: &Lookups<'_>,
 ) -> (Vec<Announce>, Vec<QuestNotice>) {
@@ -195,7 +196,7 @@ pub(super) fn resolve(
                 count,
                 required,
             } => {
-                if expired(log, quest_id, w) {
+                if expired(marks, quest_id, w) {
                     continue;
                 }
                 let template = log.template(quest_id, w.commands);
@@ -245,7 +246,7 @@ pub(super) fn resolve(
                 }
             }
             QuestNotice::PvpKill { quest_id, count } => {
-                if expired(log, quest_id, w) {
+                if expired(marks, quest_id, w) {
                     continue;
                 }
                 if let Some(t) = log.template(quest_id, w.commands) {
@@ -257,7 +258,7 @@ pub(super) fn resolve(
                 }
             }
             QuestNotice::Complete { quest_id } => {
-                if expired(log, quest_id, w) {
+                if expired(marks, quest_id, w) {
                     continue;
                 }
                 match log.template(quest_id, w.commands) {
@@ -275,9 +276,9 @@ pub(super) fn resolve(
             }
             QuestNotice::Failed { quest_id, timed } => {
                 // The expiry is read before the timer arm marks the quest.
-                let was_expired = expired(log, quest_id, w);
+                let was_expired = expired(marks, quest_id, w);
                 if timed {
-                    log.expired.insert(quest_id);
+                    marks.expired.insert(quest_id);
                 }
                 if was_expired {
                     continue;
@@ -308,7 +309,7 @@ pub(super) fn resolve(
                         continue;
                     };
                     let quest_id = log_slot.quest_id;
-                    if quest_id as i32 <= 0 || log.expired.contains(&quest_id) {
+                    if quest_id as i32 <= 0 || marks.expired.contains(&quest_id) {
                         continue;
                     }
                     match log.template(quest_id, w.commands) {
@@ -337,7 +338,7 @@ pub(super) fn resolve(
                 Some(t) => {
                     let entry = w
                         .slot_of(quest_id)
-                        .map(|s| (s, log.expired.contains(&quest_id)));
+                        .map(|s| (s, marks.expired.contains(&quest_id)));
                     quest_item_loot(t, Push { item, count, total }, entry, w, &mut out);
                 }
                 None if log.template_answered_unknown(quest_id) => {}
@@ -354,8 +355,8 @@ pub(super) fn resolve(
 }
 
 /// 12340's expiry test (`0x6d8030`): the client's timer mark, else the slot's fail bit.
-fn expired(log: &QuestLog, quest_id: u32, w: &Lookups<'_>) -> bool {
-    log.expired.contains(&quest_id) || w.slot_state(quest_id) & quest_slot_state::FAIL != 0
+fn expired(marks: &QuestLogMarks, quest_id: u32, w: &Lookups<'_>) -> bool {
+    marks.expired.contains(&quest_id) || w.slot_state(quest_id) & quest_slot_state::FAIL != 0
 }
 
 /// One item push: the entry, the count added and the bags' total.
@@ -424,10 +425,15 @@ fn quest_item_loot(
 
 /// `GetQuestTimers`' expiries (`0x5e6349`): each new one keeps its mark, asks every questgiver's
 /// status again (`0x5e582a`) and shows `ERR_QUEST_FAILED_S` with the quest's title.
-fn expiry_lines(log: &mut QuestLog, expiries: Vec<u32>, commands: &NetCommands) -> Vec<Announce> {
+fn expiry_lines(
+    log: &QuestLog,
+    marks: &mut QuestLogMarks,
+    expiries: Vec<u32>,
+    commands: &NetCommands,
+) -> Vec<Announce> {
     let mut out = Vec::new();
     for quest_id in expiries {
-        if !log.expired.insert(quest_id) {
+        if !marks.expired.insert(quest_id) {
             continue;
         }
         let _ = commands
@@ -451,7 +457,7 @@ fn expiry_lines(log: &mut QuestLog, expiries: Vec<u32>, commands: &NetCommands) 
 pub(super) fn announce_quest_progress(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
-    mut log: ResMut<QuestLog>,
+    (log, mut marks): (Res<QuestLog>, ResMut<QuestLogMarks>),
     names: Res<NameCache>,
     gos: Option<Res<GameObjectTemplates>>,
     items: Res<Items>,
@@ -468,11 +474,11 @@ pub(super) fn announce_quest_progress(
     }
     let expiries = script.take_quest_log_expiries();
     // Read first, so an idle frame leaves the log unmarked for the feed's change gate.
-    if log.notices.is_empty() && log.completed_answer.is_none() && expiries.is_empty() {
+    if marks.notices.is_empty() && marks.completed_answer.is_none() && expiries.is_empty() {
         return;
     }
-    let mut lines = expiry_lines(&mut log, expiries, &commands);
-    if let Some(ids) = log.completed_answer.take() {
+    let mut lines = expiry_lines(&log, &mut marks, expiries, &commands);
+    if let Some(ids) = marks.completed_answer.take() {
         script.set_quests_completed(ids);
         script.fire_event("QUEST_QUERY_COMPLETE", vec![]);
     }
@@ -499,9 +505,9 @@ pub(super) fn announce_quest_progress(
         standing: &standing,
         player_guid: me.map_or(0, |(_, g)| g.0),
     };
-    let notices = std::mem::take(&mut log.notices);
-    let (resolved, held) = resolve(&mut log, notices, &lookups);
-    log.notices = held;
+    let notices = std::mem::take(&mut marks.notices);
+    let (resolved, held) = resolve(&log, &mut marks, notices, &lookups);
+    marks.notices = held;
     lines.extend(resolved);
     for a in lines {
         let args: Vec<Arg<'_>> = a
@@ -566,7 +572,7 @@ mod tests {
     }
 
     /// Resolve `notices` with the quest in slot 0 at `state`, the template cached.
-    fn run(notices: Vec<QuestNotice>, state: u32) -> (Vec<Announce>, QuestLog) {
+    fn run(notices: Vec<QuestNotice>, state: u32) -> (Vec<Announce>, QuestLogMarks) {
         let mut log = QuestLog::default();
         log.insert_template(template());
         let store = benilla_protocol::ObjectFields::from_pairs(&[
@@ -595,9 +601,10 @@ mod tests {
             standing: &|_| 0,
             player_guid: 0x2A,
         };
-        let (out, held) = resolve(&mut log, notices, &w);
+        let mut marks = QuestLogMarks::default();
+        let (out, held) = resolve(&log, &mut marks, notices, &w);
         assert!(held.is_empty());
-        (out, log)
+        (out, marks)
     }
 
     fn s(v: &str) -> AnnounceArg {
@@ -783,7 +790,7 @@ mod tests {
                 count: 1,
                 total: in_bags,
             };
-            let (out, _) = resolve(&mut log, vec![push], &w);
+            let (out, _) = resolve(&log, &mut QuestLogMarks::default(), vec![push], &w);
             assert_eq!(out.len(), 1, "the line shows either way");
             rx.try_iter()
                 .filter_map(|c| match c {
@@ -807,7 +814,8 @@ mod tests {
         log.insert_template(template());
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let out = expiry_lines(&mut log, vec![QUEST, QUEST], &commands);
+        let mut marks = QuestLogMarks::default();
+        let out = expiry_lines(&log, &mut marks, vec![QUEST, QUEST], &commands);
         assert_eq!(
             out,
             [line(
@@ -816,7 +824,7 @@ mod tests {
                 None
             )]
         );
-        assert!(log.is_expired(QUEST));
+        assert!(marks.is_expired(QUEST));
         assert_eq!(
             rx.try_iter()
                 .filter(|c| matches!(c, ClientCommand::QuestgiverStatusMultipleQuery))
@@ -828,7 +836,7 @@ mod tests {
     /// A logged quest whose template is not cached holds the push for its own pass.
     #[test]
     fn an_item_push_waits_on_an_uncached_template() {
-        let mut log = QuestLog::default();
+        let log = QuestLog::default();
         let store = benilla_protocol::ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, 77)]);
         let names = NameCache::default();
         let items = Items::default();
@@ -845,7 +853,8 @@ mod tests {
             player_guid: 0x2A,
         };
         let (out, held) = resolve(
-            &mut log,
+            &log,
+            &mut QuestLogMarks::default(),
             vec![QuestNotice::ItemPush {
                 item: 750,
                 count: 1,

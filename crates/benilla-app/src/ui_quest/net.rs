@@ -207,11 +207,17 @@ fn on_giver_invalid(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
 fn on_giver_failed(
     In(ev): In<SessionEvent>,
     mut quest: ResMut<QuestGiver>,
-    mut quest_log: ResMut<QuestLog>,
+    (quest_log, marks): (Res<QuestLog>, Res<crate::ui_quest_log::QuestLogMarks>),
     commands: Res<NetCommands>,
 ) {
     if let SessionEvent::QuestGiverFailed { quest_id, reason } = ev {
-        quest_giver_failed(quest_id, reason, &mut quest, &mut quest_log, &commands);
+        quest_giver_failed(
+            quest_id,
+            reason,
+            &mut quest,
+            (&quest_log, &marks),
+            &commands,
+        );
     }
 }
 
@@ -395,7 +401,7 @@ fn quest_giver_failed(
     quest_id: u32,
     reason: u32,
     quest: &mut QuestGiver,
-    quest_log: &mut QuestLog,
+    (quest_log, marks): (&QuestLog, &crate::ui_quest_log::QuestLogMarks),
     net_commands: &NetCommands,
 ) {
     debug!("net: quest {quest_id} accept failed (reason {reason})");
@@ -410,7 +416,7 @@ fn quest_giver_failed(
     let key = crate::ui_quest::questgiver_failed_key(reason);
     match key {
         "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I" => quest.push_message(with_daily_cap(key)),
-        "ERR_QUEST_FAILED_S" if quest_log.is_expired(quest_id) => {}
+        "ERR_QUEST_FAILED_S" if marks.is_expired(quest_id) => {}
         _ => quest.push_message(UiError::s(key, title)),
     }
     if key == "ERR_QUEST_FAILED_BAG_FULL_S" {
@@ -615,10 +621,11 @@ mod tests {
     #[test]
     fn a_full_bag_refusal_names_the_quest_and_adds_the_inventory_line() {
         let mut giver = open_detail(373);
-        let mut log = QuestLog::default();
+        let log = QuestLog::default();
+        let marks = crate::ui_quest_log::QuestLogMarks::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        quest_giver_failed(373, 4, &mut giver, &mut log, &commands);
+        quest_giver_failed(373, 4, &mut giver, (&log, &marks), &commands);
         let msgs = giver.take_messages();
         assert_eq!(msgs.len(), 2);
         assert_eq!(
@@ -657,10 +664,11 @@ mod tests {
     #[test]
     fn a_refusal_for_another_quest_does_not_borrow_the_open_title() {
         let mut giver = open_detail(373);
-        let mut log = QuestLog::default();
+        let log = QuestLog::default();
+        let marks = crate::ui_quest_log::QuestLogMarks::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        quest_giver_failed(999, 17, &mut giver, &mut log, &commands);
+        quest_giver_failed(999, 17, &mut giver, (&log, &marks), &commands);
         let msgs = giver.take_messages();
         assert_eq!(msgs[0].key, "ERR_QUEST_FAILED_MAX_COUNT_S");
         assert_eq!(msgs[0].arg_s(), Some(""));
