@@ -31,7 +31,10 @@ fn feedable_pet(
 /// `PetFrame_OnClick`'s `DropItemOnUnit("pet")`, and a left click on the pet's model with an item
 /// held (in the world click's object leg, where the click still selects).
 pub(crate) fn drop_item_on_unit(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     self_q: Query<(&crate::net::Guid, &crate::net::ObjectStore), With<crate::net::SelfPlayer>>,
     stores: Query<&crate::net::ObjectStore>,
     index: Res<crate::net::GuidIndex>,

@@ -42,6 +42,17 @@ pub(crate) fn set_possess_spell(held: &mut PossessSpell, spell: u32, ui: &mut Ui
     }
 }
 
+/// The world leave's pet part (`0x5d3360`): the possess spell zeroed, `UPDATE_BONUS_ACTIONBAR`
+/// fired when one was held.
+pub(crate) fn leave_world(world: &mut World) {
+    let held = world
+        .get_resource_mut::<PossessSpell>()
+        .map_or(0, |mut p| std::mem::take(&mut p.0));
+    if let (true, Some(mut ui)) = (held != 0, world.get_resource_mut::<UiEvents>()) {
+        ui.fire("UPDATE_BONUS_ACTIONBAR", Vec::new());
+    }
+}
+
 /// `0x5d62a0` for the active player's fields and auras, `riding` its transport: a found spell is
 /// held, no find keeps the held one.
 pub(crate) fn find_possessed(
@@ -178,5 +189,51 @@ pub(super) fn possess_view(spell_id: u32, spells: &SpellCatalog) -> PossessView 
         }),
         cancel_icon: spells.icon(POSSESS_CANCEL_ICON).map(str::to_string),
         cancel_enabled: !spell.is_some_and(|s| s.attributes & ATTR_CANCEL_DISABLED != 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cross-map worldport runs the UI's world leave (`0x528c30`), whose pet part zeroes a held
+    /// possess spell and fires `UPDATE_BONUS_ACTIONBAR` (`0x528d14` -> `0x5d3360`); with none held
+    /// it fires nothing, and a same-map port leaves nothing.
+    #[test]
+    fn a_worldport_drops_the_possess_spell_and_fires_the_bonus_bar_once() {
+        let mut app = App::new();
+        app.add_message::<crate::net::WorldportMessage>()
+            .init_resource::<UiEvents>()
+            .insert_resource(PossessSpell(42))
+            .add_systems(Update, crate::ui_battlefield::leave_world_on_worldport);
+        let port = |needs_ack: bool| crate::net::WorldportMessage {
+            map_id: 1,
+            position: [0.0; 3],
+            orientation: 0.0,
+            needs_ack,
+            transport_entry: None,
+        };
+        app.world_mut().write_message(port(false));
+        app.update();
+        assert_eq!(
+            app.world().resource::<PossessSpell>().0,
+            42,
+            "an arrival leaves nothing"
+        );
+        app.world_mut().write_message(port(true));
+        app.update();
+        assert_eq!(app.world().resource::<PossessSpell>().0, 0);
+
+        // The pet part's event, queued in turn with the rest of the leave's.
+        let mut world = World::new();
+        world.insert_resource(PossessSpell(42));
+        world.init_resource::<UiEvents>();
+        leave_world(&mut world);
+        leave_world(&mut world);
+        assert_eq!(
+            world.resource::<UiEvents>().names(),
+            vec!["UPDATE_BONUS_ACTIONBAR"],
+            "fired for a held spell, not again with none"
+        );
     }
 }

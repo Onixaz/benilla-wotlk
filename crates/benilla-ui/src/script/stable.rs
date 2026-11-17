@@ -10,7 +10,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::live::read_live;
+use super::live::{read_live, write_live};
 
 /// The stable slots a hunter can buy, `BuyStableSlot`'s cap (`0x5a1bd0`).
 pub const NUM_STABLE_SLOTS: usize = 4;
@@ -171,13 +171,14 @@ fn drop_verb(held: i64, number: i64, list: &StableList, pet_out: bool) -> Option
     }
 }
 
-/// The family off `row`'s creature record, a miss asking it with `callback` (`0x5a13c1`).
-fn family_of(row: &StableRow, callback: StableCallback) -> Option<StableFamily> {
+/// The family off `row`'s creature record, a miss asking it with `callback`, or asking nothing
+/// with none (`0x5a13c1`, `0x67b6d0`).
+fn family_of(row: &StableRow, callback: Option<StableCallback>) -> Option<StableFamily> {
     // A zero entry is the cache's null key: no record and no ask.
     if row.entry == 0 {
         return None;
     }
-    read_live(|l| l.stable_family(row.entry, callback)).flatten()
+    write_live(|l| l.stable_family(row.entry, callback)).flatten()
 }
 
 /// Send `verb` to the held master through the lent view.
@@ -207,7 +208,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let list = live_stable();
             let Some((pet, family)) = list
                 .pick(i)
-                .and_then(|p| Some((p, family_of(p, StableCallback::Update)?)))
+                .and_then(|p| Some((p, family_of(p, Some(StableCallback::Update))?)))
             else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
@@ -239,7 +240,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 n => list.stabled(n - 1),
             };
             let diet = pet
-                .and_then(|p| family_of(p, StableCallback::Update))
+                .and_then(|p| family_of(p, Some(StableCallback::Update)))
                 .map(|f| f.diet)
                 .unwrap_or_default();
             let mut out = Vec::with_capacity(diet.len());
@@ -314,19 +315,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // PickupStablePet(i) (`0x5a0fe0`): the mode-10 cursor grab of any listed pet with a pet number,
-    // returning nothing.
+    // PickupStablePet(i) (`0x5a0fe0`): a listed pet with a pet number goes to the cursor grab
+    // (`0x520c60`), which clears the cursor, then takes the pet only with its creature record
+    // cached, asking nothing on a miss (`0x520cc1`), and a family icon (`0x520cf2`); no return.
     g.set(
         "PickupStablePet",
         lua.create_function(|lua, i: i64| {
             let list = live_stable();
-            let grabbed = list.pick(i).filter(|p| p.pet_number != 0).map(|p| {
-                family_of(p, StableCallback::Update)
-                    .map(|f| f.icon)
-                    .unwrap_or_default()
-            });
-            if let (Some(texture), Ok(slot)) = (grabbed, u8::try_from(i.max(0))) {
-                let mut model = crate::script::model_mut_of(lua);
+            let Some(pet) = list.pick(i).filter(|p| p.pet_number != 0) else {
+                return Ok(());
+            };
+            let icon = family_of(pet, None)
+                .map(|f| f.icon)
+                .filter(|icon| !icon.is_empty());
+            let mut model = crate::script::model_mut_of(lua);
+            super::cursor::clear_cursor(&mut model);
+            if let (Some(texture), Ok(slot)) = (icon, u8::try_from(i.max(0))) {
                 model.cursor = Some(super::cursor::CursorPayload::StablePet(
                     super::cursor::CursorStablePet { slot, texture },
                 ));
@@ -363,11 +367,34 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Deviation: SetPetStablePaperdoll(model) is inert, because the model pane is an app-side
-    // booth that follows the selection every frame, with no VM-side unit to point.
+    // SetPetStablePaperdoll(model) (`0x5a1530`): the selection's creature record, the current
+    // pet's live body first (`0x5a15df`-`0x5a160a`), else the row's record, whose miss asks with
+    // `PET_STABLE_UPDATE_PAPERDOLL` (`0x5a1615`, `0x5a1657`). The pane follows the selection app-side.
     g.set(
         "SetPetStablePaperdoll",
-        lua.create_function(|_, _model: Value| Ok(()))?,
+        lua.create_function(|lua, model: Value| {
+            let Value::Table(model) = model else {
+                return Err(mlua::Error::runtime(
+                    "Usage: SetPetStablePaperdoll(characterModel)",
+                ));
+            };
+            if super::object::frame_handle_of(lua, &model).is_err() {
+                return Err(mlua::Error::runtime(
+                    "SetPetStablePaperdoll(): Couldn't find 'this' in frame object",
+                ));
+            }
+            let list = live_stable();
+            let selected = crate::script::model_mut_of(lua).stable.selected;
+            let row = match selected_index(selected, &list) {
+                -1 if read_live(|l| l.stable_live_pet()).unwrap_or(false) => None,
+                -1 => Some(&list.current),
+                k => list.stabled(i64::from(k)),
+            };
+            if let Some(row) = row {
+                family_of(row, Some(StableCallback::Paperdoll));
+            }
+            Ok(())
+        })?,
     )?;
 
     // BuyStableSlot() (`0x5a1bd0`): the client's silent gates, in order: a master held, fewer than
@@ -389,11 +416,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ClosePetStables() (`0x5a1963`-`0x5a19aa`): no packet of its own; our open-stable aura is
-    // cancelled, a held master cleared and `PET_STABLE_CLOSED` fired inside the call.
+    // cancelled, a held master cleared and `PET_STABLE_CLOSED` fired twice inside the call.
     g.set(
         "ClosePetStables",
         lua.create_function(|lua, ()| {
-            if read_live(|l| l.close_stables()).unwrap_or(false) {
+            // A held master is the interact target the list set (`0x5a11d9`), so its clear runs
+            // the interaction close's stable arm, which fires first (`0x5a198a`, `0x513065`,
+            // `0x5a0f4c`), then the verb fires its own (`0x5a19aa`).
+            if write_live(|l| l.close_stables()).unwrap_or(false) {
+                super::tick::fire_event_into(lua, "PET_STABLE_CLOSED", Vec::new());
                 super::tick::fire_event_into(lua, "PET_STABLE_CLOSED", Vec::new());
             }
             Ok(())
@@ -618,10 +649,14 @@ mod tests {
     #[test]
     fn the_fork_follows_the_pet_list_not_the_record() {
         let s = UiScript::new().unwrap();
-        let mut v = view();
-        s.eval::<()>("PickupStablePet(2)").unwrap();
+        let ghost = || {
+            let v = view();
+            v.stable_families.borrow_mut().insert(3, wolf());
+            v
+        };
+        let mut v = ghost();
         {
-            let loan = lend_test(view());
+            let loan = lend_test(ghost());
             s.eval::<()>("PickupStablePet(2) ClickStablePet(0)")
                 .unwrap();
             assert_eq!(loan.view().take_sent(), vec![StableIntent::Swap(9)]);
@@ -635,6 +670,24 @@ mod tests {
             vec![StableIntent::Unstable(9)],
             "a record with no pet out unstables"
         );
+    }
+
+    /// The grab takes a pet only with its record cached: a miss clears the cursor, asks nothing
+    /// and grabs nothing (`0x520c6b`, `0x520cc1`, `0x520cc8`).
+    #[test]
+    fn a_grab_without_the_record_clears_the_cursor_and_asks_nothing() {
+        let s = UiScript::new().unwrap();
+        let loan = lend_test(view());
+        s.eval::<()>("PickupStablePet(1)").unwrap();
+        assert!(s.model_mut().cursor.is_some(), "Bruiser's record is cached");
+        s.eval::<()>("PickupStablePet(2)").unwrap();
+        assert!(
+            s.model_mut().cursor.is_none(),
+            "Ghost's miss leaves it empty"
+        );
+        assert!(loan.view().stable_asks.borrow().is_empty());
+        assert!(s.eval::<bool>("return ClickStablePet(0) and true").unwrap());
+        assert!(loan.view().take_sent().is_empty());
     }
 
     #[test]
@@ -712,8 +765,9 @@ mod tests {
         assert_eq!(loan.view().take_sent(), vec![StableIntent::Stable]);
     }
 
-    /// The close clears the master and fires `PET_STABLE_CLOSED` inside the call, so the next
-    /// read in the same chunk sees it gone; with none held it fires nothing.
+    /// The close clears the master and fires `PET_STABLE_CLOSED` inside the call, the interaction
+    /// close's then its own, so the next read in the same chunk sees it gone; with none held it
+    /// fires nothing.
     #[test]
     fn the_close_fires_inside_the_call_and_leaves_the_cursor_alone() {
         let s = UiScript::new().unwrap();
@@ -727,7 +781,7 @@ mod tests {
         assert_eq!(
             s.eval::<String>("ClosePetStables() local at = tostring(IsAtStableMaster()) ClosePetStables() return table.concat(seen, ',') .. '|' .. at")
                 .unwrap(),
-            "false|false"
+            "false,false|false"
         );
         assert_eq!(
             s.eval::<i64>("return GetNumStablePets()").unwrap(),
@@ -738,9 +792,41 @@ mod tests {
         drop(loan);
     }
 
+    /// The setter asks the selection's record with the paperdoll callback: the current pet's only
+    /// without its live body, a stabled pet's always, nothing selected nothing (`0x5a1530`).
     #[test]
-    fn the_paperdoll_setter_is_callable() {
+    fn the_paperdoll_setter_asks_the_selected_record() {
         let s = UiScript::new().unwrap();
-        s.eval::<()>("SetPetStablePaperdoll(nil)").unwrap();
+        let err = s.eval::<()>("SetPetStablePaperdoll(nil)").unwrap_err();
+        assert!(err.to_string().contains("Usage: SetPetStablePaperdoll"));
+        let mut v = view();
+        v.stable_live_pet = true;
+        v.stable.borrow_mut().current.entry = 3;
+        let loan = lend_test(v);
+        let run = |pick: &str| {
+            s.eval::<()>(&format!(
+                "{pick} SetPetStablePaperdoll(CreateFrame('PlayerModel'))"
+            ))
+            .unwrap();
+            std::mem::take(&mut *loan.view().stable_asks.borrow_mut())
+        };
+        assert!(run("").is_empty(), "nothing selected");
+        assert!(run("ClickStablePet(0)").is_empty(), "the live pet");
+        assert_eq!(
+            run("ClickStablePet(2)"),
+            vec![(3, StableCallback::Paperdoll)]
+        );
+        assert!(run("ClickStablePet(1)").is_empty(), "a cached record");
+        drop(loan);
+        let v = view();
+        v.stable.borrow_mut().current.entry = 3;
+        let loan = lend_test(v);
+        s.eval::<()>("ClickStablePet(0) SetPetStablePaperdoll(CreateFrame('PlayerModel'))")
+            .unwrap();
+        assert_eq!(
+            *loan.view().stable_asks.borrow(),
+            vec![(3, StableCallback::Paperdoll)],
+            "no live body: the current row's record"
+        );
     }
 }

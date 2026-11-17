@@ -10,7 +10,8 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
-/// What the verbs read live, implemented by the app over its state. Read-only.
+/// What the verbs read live, implemented by the app over its state; a verb that writes, as
+/// `ClosePetStables` clears the master inside its call, writes through [`write_live`].
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
     fn unit_flags(&self, guid: u64) -> Option<u32>;
@@ -278,14 +279,20 @@ pub trait LiveState {
         super::StableList::default()
     }
 
-    /// Creature `entry`'s family parts; a miss asks the record and queues `callback`'s event for
-    /// its answer (`0x5a13c1`).
+    /// Creature `entry`'s family parts; a miss with a `callback` asks the record and queues the
+    /// callback's event for its answer (`0x5a13c1`), with none asks nothing (`0x67b6d0`).
     fn stable_family(
-        &self,
+        &mut self,
         _entry: u32,
-        _callback: super::StableCallback,
+        _callback: Option<super::StableCallback>,
     ) -> Option<super::StableFamily> {
         None
+    }
+
+    /// The pet held as a hunter's unit with its creature record, the paperdoll's live arm
+    /// (`0x5a15df`-`0x5a160a`).
+    fn stable_live_pet(&self) -> bool {
+        false
     }
 
     /// `StableSlotPrices.dbc` row `slot`'s price (`0x5a14d0`).
@@ -298,7 +305,7 @@ pub trait LiveState {
 
     /// The stable close (`0x5a1971`-`0x5a19aa`): our open-stable auras cancelled and the master
     /// cleared; whether one was held, so the caller fires `PET_STABLE_CLOSED`.
-    fn close_stables(&self) -> bool {
+    fn close_stables(&mut self) -> bool {
         false
     }
 
@@ -330,12 +337,12 @@ thread_local! {
 /// Lend `live` on this thread, returning what it replaces.
 ///
 /// # Safety
-/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends.
-unsafe fn lend(live: &dyn LiveState) -> Lent {
-    let ptr: NonNull<dyn LiveState + '_> = NonNull::from(live);
+/// `live` is borrowed mutably until the caller puts the returned value back with [`restore`], and
+/// nothing else reaches it in between.
+unsafe fn lend(live: NonNull<dyn LiveState + '_>) -> Lent {
     // SAFETY: only the lifetime is erased; the caller restores the slot before the borrow ends,
-    // and `read_live` hands the view out only for the length of one closure.
-    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(ptr) };
+    // and `read_live` and `write_live` hand the view out only for the length of one closure.
+    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(live) };
     SLOT.with(|s| s.replace(Some(ptr)))
 }
 
@@ -355,8 +362,8 @@ impl Drop for Restore {
 /// A view lent to every verb on this thread until the loan drops, which puts the previous one
 /// back: the guard a host keeps for the length of a stretch of calls into Lua.
 pub struct LiveLoan<V: LiveState> {
-    /// Boxed, so the lent address holds while the loan moves.
-    view: Box<V>,
+    /// The boxed view, owned through this pointer, so the lent address holds while the loan moves.
+    view: NonNull<V>,
     previous: Lent,
 }
 
@@ -367,30 +374,39 @@ impl<V: LiveState> LiveLoan<V> {
     /// The loan is dropped, never leaked, on the thread that made it, and loans on one thread
     /// drop in the reverse order of their making.
     pub unsafe fn new(view: V) -> Self {
-        let view = Box::new(view);
+        let view = NonNull::from(Box::leak(Box::new(view)));
         // SAFETY: `Drop` restores the slot before the box, and with it the view, is freed.
-        let previous = unsafe { lend(&*view) };
+        let previous = unsafe { lend(view) };
         Self { view, previous }
     }
 
     /// The lent view.
     pub fn view(&self) -> &V {
-        &self.view
+        // SAFETY: the box lives until the drop; a verb's borrow of it ends with its closure.
+        unsafe { self.view.as_ref() }
+    }
+
+    /// The lent view, mutably, between calls into Lua: the owner of a borrow sets it here.
+    pub fn view_mut(&mut self) -> &mut V {
+        // SAFETY: as `view`; `&mut self` keeps every other borrow of the loan out.
+        unsafe { self.view.as_mut() }
     }
 }
 
 impl<V: LiveState> Drop for LiveLoan<V> {
     fn drop(&mut self) {
         restore(self.previous);
+        // SAFETY: made by `Box::leak` in `new` and no longer lent.
+        drop(unsafe { Box::from_raw(self.view.as_ptr()) });
     }
 }
 
 impl UiScript {
     /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
     /// nested call lends its own and restores the outer one.
-    pub fn with_live<R>(&mut self, live: &dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_live<R>(&mut self, live: &mut dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
         // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too.
-        let _restore = Restore(unsafe { lend(live) });
+        let _restore = Restore(unsafe { lend(NonNull::from(live)) });
         f(self)
     }
 
@@ -409,9 +425,20 @@ pub(crate) fn has_control() -> bool {
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
-    // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or
-    // `LiveLoan`, which outlives this call; the reference cannot escape `f`.
+    // SAFETY: a pointer in the slot is a mutable borrow held by an enclosing `with_live` or
+    // `LiveLoan`, which outlives this call; the view never calls back into Lua, so no other
+    // borrow of it is live, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
+    Some(f(live))
+}
+
+/// `f` over the view lent right now, mutably, for a verb that writes the state it reads; `None`
+/// with none lent.
+pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
+    let mut ptr = SLOT.with(Cell::get)?;
+    // SAFETY: as `read_live`: the lender's borrow is mutable and nothing else reaches the view
+    // for the length of `f`.
+    let live = unsafe { ptr.as_mut() };
     Some(f(live))
 }
 
@@ -479,6 +506,8 @@ pub(crate) struct TestView {
     pub charm_or_summon: bool,
     /// An open-stable aura is on us.
     pub open_stable_aura: bool,
+    /// The pet is out as a hunter's unit with its creature record.
+    pub stable_live_pet: bool,
 }
 
 #[cfg(test)]
@@ -613,15 +642,19 @@ impl LiveState for TestView {
     }
 
     fn stable_family(
-        &self,
+        &mut self,
         entry: u32,
-        callback: super::StableCallback,
+        callback: Option<super::StableCallback>,
     ) -> Option<super::StableFamily> {
         let found = self.stable_families.borrow().get(&entry).cloned();
-        if found.is_none() {
+        if let (None, Some(callback)) = (&found, callback) {
             self.stable_asks.borrow_mut().push((entry, callback));
         }
         found
+    }
+
+    fn stable_live_pet(&self) -> bool {
+        self.stable_live_pet
     }
 
     fn stable_slot_price(&self, slot: u32) -> Option<u32> {
@@ -632,7 +665,7 @@ impl LiveState for TestView {
         self.stable_sent.borrow_mut().push(verb);
     }
 
-    fn close_stables(&self) -> bool {
+    fn close_stables(&mut self) -> bool {
         std::mem::take(&mut self.stable.borrow_mut().master) != 0
     }
 
@@ -685,11 +718,11 @@ mod tests {
     fn a_view_is_lent_for_the_call_only_and_a_nested_loan_restores_the_outer() {
         let mut s = UiScript::new().unwrap();
         assert!(!s.has_live());
-        let outer = One { guid: 1, flags: 7 };
-        let inner = One { guid: 1, flags: 9 };
-        s.with_live(&outer, |s| {
+        let mut outer = One { guid: 1, flags: 7 };
+        let mut inner = One { guid: 1, flags: 9 };
+        s.with_live(&mut outer, |s| {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
-            s.with_live(&inner, |_| {
+            s.with_live(&mut inner, |_| {
                 assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(9)));
             });
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
@@ -709,11 +742,11 @@ mod tests {
         s.lua().globals().set("Flags", flags).unwrap();
         let ask = |s: &UiScript| s.eval::<Option<u32>>("return Flags(2)").unwrap();
         assert_eq!(ask(&s), None);
-        let riding = One {
+        let mut riding = One {
             guid: 2,
             flags: 1 << 20,
         };
-        assert_eq!(s.with_live(&riding, |s| ask(s)), Some(1 << 20));
+        assert_eq!(s.with_live(&mut riding, |s| ask(s)), Some(1 << 20));
         assert_eq!(ask(&s), None);
     }
 
@@ -735,16 +768,16 @@ mod tests {
             .unwrap()
         };
         assert_eq!(ask(&s), "nilnil");
-        let riding = One {
+        let mut riding = One {
             guid: 2,
             flags: 1 << 20,
         };
-        assert_eq!(s.with_live(&riding, |s| ask(s)), "nil1");
-        let grounded = One {
+        assert_eq!(s.with_live(&mut riding, |s| ask(s)), "nil1");
+        let mut grounded = One {
             guid: 1,
             flags: !(1 << 20),
         };
-        assert_eq!(s.with_live(&grounded, |s| ask(s)), "nilnil");
+        assert_eq!(s.with_live(&mut grounded, |s| ask(s)), "nilnil");
     }
 
     /// `HasFullControl` needs the active player held, not looking through far sight, with health
@@ -753,7 +786,7 @@ mod tests {
     #[test]
     fn has_full_control_reads_the_flag_and_the_players_health() {
         let mut s = UiScript::new().unwrap();
-        let ask = |s: &mut UiScript, view: &TestView| {
+        let ask = |s: &mut UiScript, view: &mut TestView| {
             s.with_live(view, |s| {
                 s.eval::<String>("return tostring(HasFullControl())")
             })
@@ -766,31 +799,31 @@ mod tests {
             control,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &alive(true)), "1");
-        assert_eq!(ask(&mut s, &alive(false)), "nil");
-        let far = TestView {
+        assert_eq!(ask(&mut s, &mut alive(true)), "1");
+        assert_eq!(ask(&mut s, &mut alive(false)), "nil");
+        let mut far = TestView {
             far_sight: true,
             ..alive(true)
         };
-        assert_eq!(ask(&mut s, &far), "nil");
-        let dead = TestView {
+        assert_eq!(ask(&mut s, &mut far), "nil");
+        let mut dead = TestView {
             player: Some(1),
             units: [(1, (0, 0))].into(),
             control: true,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &dead), "nil");
-        let nobody = TestView {
+        assert_eq!(ask(&mut s, &mut dead), "nil");
+        let mut nobody = TestView {
             control: true,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &nobody), "nil");
-        let unheld = TestView {
+        assert_eq!(ask(&mut s, &mut nobody), "nil");
+        let mut unheld = TestView {
             player: Some(1),
             control: true,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &unheld), "nil");
+        assert_eq!(ask(&mut s, &mut unheld), "nil");
     }
 
     /// A loan lends until it drops, a call's loan inside it restores it, and dropping it restores
@@ -798,11 +831,11 @@ mod tests {
     #[test]
     fn a_loan_lends_until_it_drops() {
         let mut s = UiScript::new().unwrap();
-        let outer = One { guid: 1, flags: 7 };
+        let mut outer = One { guid: 1, flags: 7 };
         // SAFETY: dropped below, on this thread, after the inner one.
         let loan = unsafe { LiveLoan::new(One { guid: 1, flags: 5 }) };
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        s.with_live(&outer, |_| {
+        s.with_live(&mut outer, |_| {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
             // SAFETY: dropped at the end of this closure, before `loan`.
             let inner = unsafe { LiveLoan::new(One { guid: 1, flags: 9 }) };
@@ -831,9 +864,9 @@ mod tests {
     #[test]
     fn an_unwinding_call_ends_the_loan() {
         let mut s = UiScript::new().unwrap();
-        let view = One { guid: 1, flags: 7 };
+        let mut view = One { guid: 1, flags: 7 };
         let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            s.with_live(&view, |_| panic!("a call that unwinds"));
+            s.with_live(&mut view, |_| panic!("a call that unwinds"));
         }));
         assert!(unwound.is_err());
         assert!(!s.has_live());

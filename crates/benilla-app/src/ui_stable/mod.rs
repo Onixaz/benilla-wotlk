@@ -6,9 +6,6 @@
 //! the creature record, whose miss asks for it and fires `PET_STABLE_UPDATE` from the answer
 //! (`0x5a0e80`).
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-
 use benilla_protocol::messages::StabledPet;
 use bevy::prelude::*;
 
@@ -37,7 +34,10 @@ impl Plugin for UiStablePlugin {
         app.init_resource::<StableOpen>().add_systems(
             Update,
             (
-                close_out_of_range,
+                // The range guard, after the drains and before the world update.
+                close_out_of_range
+                    .after(UiDrain)
+                    .before(benilla_world::schedule::WorldStage::Input),
                 // After the VM ticks: the selection is written by a click in `UiPress`
                 // and by `PetStable_Update`'s re-pick (`PetStable.lua:48-63`) inside the
                 // handlers' events, so an earlier read shows the previous pet for a frame.
@@ -62,31 +62,43 @@ impl Plugin for UiStablePlugin {
 /// (`0x5a0ec0`).
 #[derive(Resource, Default)]
 pub(crate) struct StableOpen {
-    master: AtomicU64,
+    master: u64,
     /// Slots bought (0..=4), not slots occupied.
     pub(crate) num_stable_slots: u8,
     /// The wire rows in wire order.
     pub(crate) pets: Vec<StabledPet>,
     /// The record asks a stable verb's miss queued, answered in order by the creature handler.
-    asks: Mutex<Vec<(u32, StableCallback)>>,
+    asks: Vec<(u32, StableCallback)>,
 }
 
 impl StableOpen {
     /// The list handler's writes (`0x5a11a0`).
     pub(crate) fn open(&mut self, npc: u64, num_stable_slots: u8, pets: Vec<StabledPet>) {
-        *self.master.get_mut() = npc;
+        self.master = npc;
         self.num_stable_slots = num_stable_slots;
         self.pets = pets;
     }
 
-    /// The close (`0x5a0f10`): the master cleared; whether one was held.
-    pub(crate) fn close(&self) -> bool {
-        self.master.swap(0, Ordering::Relaxed) != 0
+    /// The close (`0x5a0f10`, the verb's `0x5a1996`): the master cleared; whether one was held.
+    pub(crate) fn close(&mut self) -> bool {
+        std::mem::take(&mut self.master) != 0
+    }
+
+    /// A close that clears the held master through the interaction close first (`0x5a0f2c`,
+    /// `0x5a1174`): a held master is the interact target the list set (`0x5a11d9`), so the
+    /// interaction close's stable arm fires `PET_STABLE_CLOSED` (`0x513065`, `0x5a0f4c`) before
+    /// the caller's own. How many fire: two with one held, else `forced` alone.
+    pub(crate) fn close_through_target(&mut self, forced: bool) -> usize {
+        if self.close() {
+            2
+        } else {
+            usize::from(forced)
+        }
     }
 
     /// The world entry's reset (`0x5a0ec0`).
     pub(crate) fn clear(&mut self) {
-        *self.master.get_mut() = 0;
+        self.master = 0;
         self.num_stable_slots = 0;
         self.pets.clear();
     }
@@ -111,7 +123,7 @@ impl StableOpen {
             name: p.name.clone(),
         };
         StableList {
-            master: self.master.load(Ordering::Relaxed),
+            master: self.master,
             num_slots: u32::from(self.num_stable_slots),
             current: self.current().map(row).unwrap_or_default(),
             stabled: self.stabled().map(row).collect(),
@@ -119,10 +131,9 @@ impl StableOpen {
     }
 
     /// The asks waiting on `entry`'s record, taken in the order they were made.
-    fn take_asks(&self, entry: u32) -> Vec<StableCallback> {
-        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+    fn take_asks(&mut self, entry: u32) -> Vec<StableCallback> {
         let mut taken = Vec::new();
-        asks.retain(|&(e, cb)| {
+        self.asks.retain(|&(e, cb)| {
             let hit = e == entry;
             if hit {
                 taken.push(cb);
@@ -133,15 +144,15 @@ impl StableOpen {
     }
 
     /// Every ask dropped, as the cache's pending clear drops their callbacks (`0x66a010`).
-    fn drop_asks(&self) {
-        self.asks.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    fn drop_asks(&mut self) {
+        self.asks.clear();
     }
 }
 
 /// The portrait and the interaction close find the stable by its master.
 impl NpcSession for StableOpen {
     fn npc(&self) -> Option<u64> {
-        Some(self.master.load(Ordering::Relaxed)).filter(|&m| m != 0)
+        Some(self.master).filter(|&m| m != 0)
     }
 
     fn close(&mut self) {
@@ -158,9 +169,9 @@ pub(crate) fn fire_closed(world: &mut World) {
 }
 
 /// The interaction range guard's close (`0x513065`): a master out of the leash or gone closes the
-/// stable, read only, as the verbs read it.
+/// stable, its interact target already cleared, so `PET_STABLE_CLOSED` fires once.
 fn close_out_of_range(
-    open: Res<StableOpen>,
+    mut open: ResMut<StableOpen>,
     index: Res<crate::net::GuidIndex>,
     self_q: Query<&Transform, With<SelfPlayer>>,
     transforms: Query<&Transform>,
@@ -173,24 +184,29 @@ fn close_out_of_range(
     }
 }
 
-/// The forced close an open-stable aura's removal runs (`0x71ea25`): the master cleared and
-/// `PET_STABLE_CLOSED` fired, held or not.
+/// The forced close an open-stable aura's removal runs (`0x71ea25`): `PET_STABLE_CLOSED` fired
+/// held or not, twice with a master held.
 pub(crate) fn close_forced(world: &mut World) {
-    if let Some(open) = world.get_resource::<StableOpen>() {
-        open.close();
-    }
-    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
-        ui.fire("PET_STABLE_CLOSED", vec![]);
-    }
+    close_and_fire(world, true);
 }
 
-/// The world leave's stable part (`0x528d5a`): a held master closes, firing `PET_STABLE_CLOSED`.
+/// The world leave's stable part (`0x528d5a`, `0x5a1160`): a held master closes, firing
+/// `PET_STABLE_CLOSED` twice.
 pub(crate) fn leave_world(world: &mut World) {
-    let closed = world
-        .get_resource::<StableOpen>()
-        .is_some_and(StableOpen::close);
-    if let (true, Some(mut ui)) = (closed, world.get_resource_mut::<UiEvents>()) {
-        ui.fire("PET_STABLE_CLOSED", vec![]);
+    close_and_fire(world, false);
+}
+
+/// [`StableOpen::close_through_target`] with its events queued in turn.
+fn close_and_fire(world: &mut World, forced: bool) {
+    let fired = world
+        .get_resource_mut::<StableOpen>()
+        .map_or(usize::from(forced), |mut open| {
+            open.close_through_target(forced)
+        });
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        for _ in 0..fired {
+            ui.fire("PET_STABLE_CLOSED", vec![]);
+        }
     }
 }
 
@@ -207,7 +223,8 @@ pub(crate) fn enter_world(world: &mut World) {
 /// What the stable verbs read and send through when called, part of the VM's live view.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct StableView<'w, 's> {
-    open: Option<Res<'w, StableOpen>>,
+    /// Written inside `ClosePetStables` and by a miss's ask, through the lent view.
+    open: Option<ResMut<'w, StableOpen>>,
     names: Option<Res<'w, NameCache>>,
     commands: Option<Res<'w, NetCommands>>,
     families: Option<Res<'w, PetFamilyTables>>,
@@ -218,6 +235,11 @@ pub(crate) struct StableView<'w, 's> {
 }
 
 impl StableView<'_, '_> {
+    /// The stable globals, read by a system between its calls into Lua.
+    pub(crate) fn open(&self) -> Option<&StableOpen> {
+        self.open.as_deref()
+    }
+
     pub(crate) fn list(&self) -> StableList {
         self.open.as_ref().map(|o| o.list()).unwrap_or_default()
     }
@@ -225,21 +247,20 @@ impl StableView<'_, '_> {
     /// Creature `entry`'s family parts; a miss asks with our guid as the requester and queues
     /// `callback` (`0x5a13c1`).
     pub(crate) fn family(
-        &self,
+        &mut self,
         entry: u32,
-        callback: StableCallback,
+        callback: Option<StableCallback>,
         me: u64,
     ) -> Option<StableFamily> {
         let names = self.names.as_deref()?;
         let Some(record) = names.creature_record(entry) else {
+            // With no callback the cache asks nothing (`0x67b6d0`).
+            let callback = callback?;
             if let Some(commands) = self.commands.as_deref() {
                 let _ = names.resolve_creature(entry, me, commands);
             }
-            if let Some(open) = self.open.as_deref() {
-                open.asks
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push((entry, callback));
+            if let Some(open) = self.open.as_deref_mut() {
+                open.asks.push((entry, callback));
             }
             return None;
         };
@@ -269,6 +290,13 @@ impl StableView<'_, '_> {
                 .map(str::to_string)
                 .collect(),
         })
+    }
+
+    /// Creature `entry`'s record is cached.
+    pub(crate) fn has_record(&self, entry: u32) -> bool {
+        self.names
+            .as_deref()
+            .is_some_and(|n| n.creature_record(entry).is_some())
     }
 
     /// `StableSlotPrices.dbc` row `slot`'s price.
@@ -321,13 +349,13 @@ impl StableView<'_, '_> {
 
     /// `ClosePetStables`' writes (`0x5a1971`, `0x5a1996`): our open-stable auras cancelled, then
     /// the master cleared; whether one was held.
-    pub(crate) fn close(&self) -> bool {
+    pub(crate) fn close(&mut self) -> bool {
         if let Some(commands) = self.commands.as_deref() {
             for spell_id in self.open_stable_auras(true) {
                 let _ = commands.0.send(ClientCommand::CancelAura { spell_id });
             }
         }
-        self.open.as_deref().is_some_and(StableOpen::close)
+        self.open.as_deref_mut().is_some_and(StableOpen::close)
     }
 }
 
@@ -336,9 +364,7 @@ impl StableView<'_, '_> {
 /// anything else, or a failed live resolve, shows the row's creature display, whose late cache
 /// answer re-points the pane.
 fn feed_stable_booth(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    open: Res<StableOpen>,
-    bar: Res<crate::ui_pet::PetBar>,
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     pet: crate::ui_pet::PetUnit,
     names: Res<NameCache>,
     mut booth: ResMut<crate::portrait::StableBooth>,
@@ -353,11 +379,15 @@ fn feed_stable_booth(
     // pet the latest list no longer holds.
     let slot = script.stable_selection();
 
-    let live_pet = bar.spells.pet_guid;
+    let view = live.view();
+    let live_pet = view.pet_bar.get().map_or(0, |bar| bar.spells.pet_guid);
+    let Some(open) = view.stable.open() else {
+        return;
+    };
     let (unit, display_id) = stable_subject(
         slot,
         (live_pet != 0).then(|| pet.entity(live_pet)).flatten(),
-        &open,
+        open,
         |entry| names.creature_record(entry).map(|r| r.display_id),
     );
     booth.unit = unit;
@@ -488,8 +518,8 @@ mod tests {
     /// The asks on one entry come back in the order they were made, the others stay.
     #[test]
     fn the_asks_answer_by_entry_in_order() {
-        let open = StableOpen::default();
-        open.asks.lock().unwrap().extend([
+        let mut open = StableOpen::default();
+        open.asks.extend([
             (5, StableCallback::Update),
             (6, StableCallback::Update),
             (5, StableCallback::Paperdoll),

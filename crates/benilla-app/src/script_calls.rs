@@ -22,7 +22,10 @@ const MAX_NESTING: u8 = 8;
 /// made them and before the frame's feed, which publishes the cooldowns they arm.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 pub(crate) fn apply_script_calls(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldownsAndPetBar>,
+    ),
     mut appliers: ParamSet<(
         crate::target::ScriptSelect,
         crate::spell::ScriptCursor,

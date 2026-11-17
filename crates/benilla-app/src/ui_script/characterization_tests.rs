@@ -3073,8 +3073,13 @@ fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
 
 /// The stable master beside us, so the range guard keeps the stable open.
 fn stable_master_create() -> SessionEvent {
+    stable_master_at(STABLE_MASTER)
+}
+
+/// A stable master `guid` beside us.
+fn stable_master_at(guid: u64) -> SessionEvent {
     SessionEvent::ObjectCreate {
-        guid: STABLE_MASTER,
+        guid,
         kind: EntityKind::Unit,
         display_id: None,
         position: [-8949.0, -132.0, 83.5],
@@ -3203,7 +3208,10 @@ fn stable_events_fire_from_the_list_and_the_record_answer_in_wire_order() {
 
 /// `ClosePetStables` clears the master and fires `PET_STABLE_CLOSED` inside the call, so the next
 /// verb in the same chunk reads it gone, while the list stays (`0x5a1996`, `0x5a19aa`); a second
-/// close fires nothing. The connection's end closes a held stable (`0x528d5a`).
+/// close fires nothing. The master is the interact target the list set (`0x5a11d9`), so its clear
+/// runs the interaction close's stable arm first, which fires too (`0x5a198a`, `0x513065`,
+/// `0x5a0f4c`). The connection's end leaves the world, closing a held stable the same two ways
+/// (`0x528d5a`, `0x5a1174`, `0x5a1194`).
 #[test]
 fn the_stable_close_fires_inside_the_call_and_the_session_end_closes() {
     let Some(mut rig) = Rig::login_around(
@@ -3220,7 +3228,14 @@ fn the_stable_close_fires_inside_the_call_and_the_session_end_closes() {
         &mut rig,
         "ClosePetStables() STABLE_LOG[#STABLE_LOG + 1] = 'after ' .. tostring(IsAtStableMaster()) .. ' ' .. GetNumStablePets() ClosePetStables()",
     );
-    assert_eq!(after, vec!["PET_STABLE_CLOSED Wolf", "after false 1"]);
+    assert_eq!(
+        after,
+        vec![
+            "PET_STABLE_CLOSED Wolf",
+            "PET_STABLE_CLOSED Wolf",
+            "after false 1"
+        ]
+    );
 
     rig.packets(vec![stable_list()], 3);
     lua(&mut rig, "");
@@ -3233,7 +3248,53 @@ fn the_stable_close_fires_inside_the_call_and_the_session_end_closes() {
     );
     assert_eq!(
         pin(&seen, &["PET_STABLE_CLOSED"], &["atstable"]),
-        vec!["PET_STABLE_CLOSED | atstable=false"]
+        vec!["PET_STABLE_CLOSED | atstable=false"; 2]
+    );
+}
+
+/// A list from another master moves the interact target (`0x5a11d9` -> `0x51fd1c`), whose clear
+/// runs the interaction close's stable arm on the held master (`0x518db7` -> `0x512e60` ->
+/// `0x513065` -> `0x5a0f10`): `PET_STABLE_CLOSED` (`0x5a0f4c`) before the new list's
+/// `PET_STABLE_SHOW` (`0x5a131a`), the close with no master held, so the stock window's hide
+/// (`ClosePetStables`) clears nothing. The same master's list closes nothing.
+#[test]
+fn another_masters_list_closes_the_held_stable_before_its_show() {
+    let Some(mut rig) = Rig::login_around(
+        Vec::new(),
+        &[OBJECT_TYPE_PLAYER],
+        vec![stable_master_create(), stable_master_at(STABLE_MASTER + 1)],
+    ) else {
+        return;
+    };
+    lua(&mut rig, STABLE_LOG);
+    let events = &["PET_STABLE_SHOW", "PET_STABLE_CLOSED"];
+    rig.packets(vec![family_answer(300, 1), stable_list()], 3);
+    lua(&mut rig, "");
+    let seen = rig.packets(vec![stable_list()], 3);
+    assert_eq!(
+        pin(&seen, events, &["atstable"]),
+        vec!["PET_STABLE_SHOW | atstable=true"]
+    );
+    let SessionEvent::ListStabledPets {
+        num_stable_slots,
+        pets,
+        ..
+    } = stable_list()
+    else {
+        unreachable!()
+    };
+    let other = SessionEvent::ListStabledPets {
+        npc: STABLE_MASTER + 1,
+        num_stable_slots,
+        pets,
+    };
+    let seen = rig.packets(vec![other], 3);
+    assert_eq!(
+        pin(&seen, events, &["atstable"]),
+        vec![
+            "PET_STABLE_CLOSED | atstable=false",
+            "PET_STABLE_SHOW | atstable=true"
+        ]
     );
 }
 

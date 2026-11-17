@@ -122,8 +122,8 @@ pub(crate) struct InteractWindows<'w, 's> {
     registrar: Option<ResMut<'w, crate::ui_petition::GuildRegistrarState>>,
     tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
     auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
-    /// Read only: its master is cleared through a shared reference, with its event in turn.
-    stable: Option<Res<'w, crate::ui_stable::StableOpen>>,
+    /// Its close fires its event in turn, once the closing system's commands apply.
+    stable: Option<ResMut<'w, crate::ui_stable::StableOpen>>,
     queue: Commands<'w, 's>,
     petition_vendor: Option<ResMut<'w, crate::ui_petition::PetitionVendorState>>,
     battlemaster: Option<ResMut<'w, crate::ui_battlefield::Battlefield>>,
@@ -137,7 +137,7 @@ impl InteractWindows<'_, '_> {
         fn npc<T: NpcSession>(s: &Option<ResMut<T>>) -> Option<u64> {
             s.as_ref().and_then(|s| s.npc())
         }
-        let stable = self.stable.as_ref().and_then(|s| s.npc());
+        let stable = npc(&self.stable);
         [
             npc(&self.gossip),
             npc(&self.quest),
@@ -171,7 +171,7 @@ impl InteractWindows<'_, '_> {
             7 => close(&mut self.tabard),
             8 => close(&mut self.auction),
             9 => {
-                if self.stable.as_deref().is_some_and(|s| s.close()) {
+                if self.stable.as_deref_mut().is_some_and(|s| s.close()) {
                     self.queue.queue(crate::ui_stable::fire_closed);
                 }
             }

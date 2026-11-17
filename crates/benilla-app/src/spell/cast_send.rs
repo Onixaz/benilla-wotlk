@@ -116,7 +116,7 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) ecs: Commands<'w, 's>,
     pub(crate) pending: ResMut<'w, crate::spell::PendingCast>,
     pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
-    pub(crate) cooldowns: ResMut<'w, crate::spell::Cooldowns>,
+    pub(crate) cooldowns: crate::ui_script::OwnedMut<'w, crate::spell::Cooldowns>,
     /// The talent spell modifiers the power gate's cost goes through.
     pub(crate) spell_mods: Res<'w, crate::spell::SpellModifiers>,
     pub(crate) cast_errors: ResMut<'w, CastErrors>,

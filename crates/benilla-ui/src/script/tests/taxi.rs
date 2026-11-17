@@ -73,11 +73,13 @@ fn taxi_snapshot_surfaces_and_intents_drain() {
         held: [(1, 0)].into(),
         ..Default::default()
     });
-    let riding = crate::script::live::TestView {
+    let mut riding = crate::script::live::TestView {
         units: [(1, (1 << 20, 1))].into(),
         ..Default::default()
     };
-    s.with_live(&riding, |s| s.run(r#"assert(UnitOnTaxi("player") == 1)"#))
-        .unwrap();
+    s.with_live(&mut riding, |s| {
+        s.run(r#"assert(UnitOnTaxi("player") == 1)"#)
+    })
+    .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

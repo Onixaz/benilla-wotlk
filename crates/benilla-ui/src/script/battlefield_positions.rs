@@ -222,8 +222,8 @@ mod tests {
             0
         );
         assert_eq!(s.arity("GetBattlefieldPosition(1)").unwrap(), 3);
-        let view = view();
-        s.with_live(&view, |s| {
+        let mut view = view();
+        s.with_live(&mut view, |s| {
             assert_eq!(
                 s.eval::<i64>("return GetNumBattlefieldPositions()")
                     .unwrap(),
@@ -299,11 +299,11 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.set_arena_unit_guids([1, 2, 0, 0, 0], [0; 5], 2);
         assert_eq!(s.eval::<i64>("return GetNumArenaOpponents()").unwrap(), 0);
-        let view = View {
+        let mut view = View {
             arena: 3,
             ..Default::default()
         };
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             assert_eq!(s.eval::<i64>("return GetNumArenaOpponents()").unwrap(), 3);
         });
     }

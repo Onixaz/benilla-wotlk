@@ -153,7 +153,7 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
-    _live: crate::ui_script::LendLive<'w, 's>,
+    _live: crate::ui_script::LendLive<'w, 's, crate::ui_script::OwnsCooldowns>,
     /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
     pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     /// The trainer arm's ask, which its list must answer.

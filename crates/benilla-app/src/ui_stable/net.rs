@@ -10,6 +10,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfPlayer};
 use crate::ui_action::{PetTameFailures, Spells, UiError, UiErrorKeys};
 use crate::ui_script::live::UiEvents;
+use crate::ui_session::NpcSession;
 use crate::unit_auras::UnitAuras;
 
 /// Register the stable handlers, the creature answer's callbacks and the session-end listener.
@@ -21,15 +22,18 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Disconnected, on_session_end);
 }
 
-/// The connection's end leaves the world (`0x528d5a`): a held master closes, then the globals and
-/// the record asks go with the session.
+/// The connection's end leaves the world (`0x528d5a`): a held master closes as the world leave
+/// closes it, then the globals and the record asks go with the session.
 fn on_session_end(
     In(_): In<SessionEvent>,
     mut stable_open: ResMut<StableOpen>,
     ui: Option<ResMut<UiEvents>>,
 ) {
-    if let (true, Some(mut ui)) = (stable_open.close(), ui) {
-        ui.fire("PET_STABLE_CLOSED", vec![]);
+    let fired = stable_open.close_through_target(false);
+    if let Some(mut ui) = ui {
+        for _ in 0..fired {
+            ui.fire("PET_STABLE_CLOSED", vec![]);
+        }
     }
     stable_open.clear();
     stable_open.drop_asks();
@@ -39,7 +43,7 @@ fn on_session_end(
 /// entry fails them, which fires nothing (`0x5a0e80`, `0x5a0ea0`).
 fn on_creature_answer(
     In(ev): In<SessionEvent>,
-    stable_open: Res<StableOpen>,
+    mut stable_open: ResMut<StableOpen>,
     names: Res<NameCache>,
     ui: Option<ResMut<UiEvents>>,
 ) {
@@ -67,12 +71,29 @@ fn on_list(
         pets,
     } = ev
     {
-        list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
-        // The selection resets with the list, then `PET_STABLE_SHOW` (`0x5a11fa`, `0x5a131a`).
-        if let Some(mut ui) = ui {
-            ui.write(benilla_ui::script::UiScript::reset_stable_selection);
-            ui.fire("PET_STABLE_SHOW", vec![]);
+        // Another master's list moves the interact target, whose clear runs the interaction
+        // close's stable arm on the held one before the new master is stored (`0x5a11d9`,
+        // `0x51fd1c`, `0x513065`, `0x5a0f4c`): its event fires with none held.
+        let switched = stable_open.npc().is_some_and(|held| held != npc) && stable_open.close();
+        let Some(mut ui) = ui else {
+            list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
+            return;
+        };
+        if switched {
+            ui.fire("PET_STABLE_CLOSED", vec![]);
+            ui.world(move |world| {
+                world.resource_scope(|world, mut names: Mut<NameCache>| {
+                    if let Some(mut open) = world.get_resource_mut::<StableOpen>() {
+                        list_stabled_pets(npc, num_stable_slots, pets, &mut open, &mut names);
+                    }
+                });
+            });
+        } else {
+            list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
         }
+        // The selection resets with the list, then `PET_STABLE_SHOW` (`0x5a11fa`, `0x5a131a`).
+        ui.write(benilla_ui::script::UiScript::reset_stable_selection);
+        ui.fire("PET_STABLE_SHOW", vec![]);
     }
 }
 
@@ -153,7 +174,6 @@ fn stable_result(
     net_commands: &NetCommands,
     open_stable_aura: impl FnOnce() -> bool,
 ) -> bool {
-    use crate::ui_session::NpcSession;
     use benilla_protocol::messages::stable_result as code;
     // Before the guid test, as in the reference: the count moves even with no stable open.
     if result == code::SUCCESS_BUY_SLOT {

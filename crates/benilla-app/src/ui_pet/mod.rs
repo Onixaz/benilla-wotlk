@@ -168,8 +168,10 @@ impl Plugin for UiPetPlugin {
                     // press pass so a click is sent, and shown, that frame (a press is a script
                     // call, `PetPress`). The old-target clear precedes the bar feed so Attack goes
                     // dark the frame the selection moves.
+                    // Between the press and the feed: it writes the bar every lent view reads.
                     pet_stop_on_old_target_clear
-                        .in_set(UnitFeed)
+                        .after(crate::ui_script::UiPress)
+                        .before(crate::ui_script::UiFeed)
                         .before(feed_pet_bar)
                         .before(crate::ui_action::SlotIdentityFeed),
                     // The bar pushes its cooldown triples before the cooldown events and the pet's flush fires after

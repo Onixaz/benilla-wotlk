@@ -49,14 +49,13 @@ pub(crate) fn summon_bars_dismiss(
 /// Send the menu's verbs under [`PetBar`]'s pet guid. Nothing is applied locally: the server
 /// answers by removing the pet or moving its name timestamp.
 pub(super) fn drain_pet_menu(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     commands: Res<NetCommands>,
     mut ui_errors: ResMut<UiErrorKeys>,
     pet: PetUnit,
     spells: Option<Res<crate::ui_action::Spells>>,
     summons: Option<Res<crate::spell::SummonSlots>>,
-    stable: Option<Res<crate::ui_stable::StableOpen>>,
     renameable: Option<ResMut<super::PetRenameable>>,
     declensions: Option<ResMut<super::PetDeclensions>>,
 ) {
@@ -94,10 +93,8 @@ pub(super) fn drain_pet_menu(
         debug!("ui_pet: abandoning pet {pet_guid:#x}");
         let _ = commands.0.send(ClientCommand::PetAbandon { pet_guid });
         // `0x5d4900`: with a stable master held, the stable is listed again.
-        if let Some(npc) = stable
-            .as_ref()
-            .and_then(|s| crate::ui_session::NpcSession::npc(&**s))
-        {
+        let stable = live.view().stable.open();
+        if let Some(npc) = stable.and_then(crate::ui_session::NpcSession::npc) {
             let _ = commands.0.send(ClientCommand::ListStabledPets { npc });
         }
     }

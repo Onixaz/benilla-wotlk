@@ -144,10 +144,13 @@ fn pet_slot<'a>(
 /// Computes and diff-pushes every occupied slot's state, and fires the reference's events.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(crate) fn feed_action_state(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,
-    mut cooldowns: ResMut<Cooldowns>,
+    mut cooldowns: crate::ui_script::OwnedMut<Cooldowns>,
     clock: Res<crate::ui_script::UiClock>,
     auto_repeat: Res<AutoRepeatActive>,
     // One tuple for Bevy's 16-param ceiling: cast tracking, macro bindings, spell mods and the

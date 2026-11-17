@@ -36,15 +36,16 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::LoggedOut, on_left_world);
 }
 
-/// Leaving the world drops the possess spell (`0x5d62a0`'s holder, `[0xc234e0]`) and a world
-/// entry's lookup not yet run.
+/// Leaving the world drops the possess spell as the world leave's pet part does (`0x5d3360`),
+/// and a world entry's lookup not yet run.
 fn on_left_world(
     In(ev): In<SessionEvent>,
     mut possess: ResMut<super::possess::PossessSpell>,
     owed: Option<ResMut<super::possess::PossessLookupOwed>>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::LoggedOut = ev {
-        possess.0 = 0;
+        drop_possess(&mut possess, ui);
         if let Some(mut owed) = owed {
             owed.0 = false;
         }
@@ -58,12 +59,24 @@ fn on_session_end(
     mut list: ResMut<super::PetList>,
     mut possess: ResMut<super::possess::PossessSpell>,
     owed: Option<ResMut<super::possess::PossessLookupOwed>>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     bar.clear();
     list.0.clear();
-    possess.0 = 0;
+    drop_possess(&mut possess, ui);
     if let Some(mut owed) = owed {
         owed.0 = false;
+    }
+}
+
+/// The world leave's possess zero (`0x5d3360`), firing `UPDATE_BONUS_ACTIONBAR` when one was held.
+fn drop_possess(
+    possess: &mut super::possess::PossessSpell,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+) {
+    match ui {
+        Some(mut ui) => super::possess::set_possess_spell(possess, 0, &mut ui),
+        None => possess.0 = 0,
     }
 }
 

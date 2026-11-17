@@ -624,31 +624,6 @@ mod tests {
     use benilla_formats::SpellDisplay;
     use std::collections::HashMap;
 
-    /// The live view cannot read the cooldown history: a press applier lends it beside the cast
-    /// ladder, which writes the history, and Bevy refuses that access (B0002).
-    #[test]
-    fn the_cooldown_history_cannot_join_the_loan() {
-        use bevy::ecs::system::System;
-        let mut world = World::new();
-        let mut system = IntoSystem::into_system(
-            |_ladder: crate::spell::CastLadder, _history: Res<crate::spell::Cooldowns>| {},
-        );
-        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            system.initialize(&mut world);
-        }))
-        .expect_err("the ladder writes the history");
-        let text = refused
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| refused.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_default();
-        println!("{text}");
-        assert!(
-            text.contains("B0002") && text.contains("Cooldowns"),
-            "{text}"
-        );
-    }
-
     #[test]
     fn leading_number_scans_the_first_digit_run() {
         assert_eq!(leading_number("Rank 1"), 1);

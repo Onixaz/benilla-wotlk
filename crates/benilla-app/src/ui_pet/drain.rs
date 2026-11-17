@@ -23,7 +23,7 @@ use super::{PetBar, PetUnit};
 /// the pet book's `CastSpell(id, "pet")`.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetPress<'w, 's> {
-    pub(crate) bar: ResMut<'w, PetBar>,
+    pub(crate) bar: crate::ui_script::OwnedMut<'w, PetBar>,
     pub(crate) selection: ResMut<'w, Selection>,
     pub(crate) commands: Res<'w, NetCommands>,
     pub(crate) pet: PetUnit<'w, 's>,
@@ -251,8 +251,11 @@ pub(super) fn arm_pet_gcd(
 /// nothing and sends nothing. The stops do not; the drag's writes were gated where the VM applied
 /// them, on the answer the bar last pushed.
 pub(super) fn drain_pet_actions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut bar: ResMut<PetBar>,
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPetBar>,
+    ),
+    mut bar: crate::ui_script::OwnedMut<PetBar>,
     commands: Res<NetCommands>,
     pet: PetUnit,
 ) {

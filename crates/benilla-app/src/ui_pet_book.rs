@@ -188,8 +188,11 @@ pub(crate) fn cast_pet_spell(
 /// Drains the pet book's `ToggleSpellAutocast` intents. Each asks the usability predicate before it
 /// looks anything up, so an unusable pet's toggle flips, repaints and sends nothing.
 pub(crate) fn drain_pet_book(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut bar: ResMut<PetBar>,
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPetBar>,
+    ),
+    mut bar: crate::ui_script::OwnedMut<PetBar>,
     commands: Res<NetCommands>,
     pet: PetUnit,
 ) {

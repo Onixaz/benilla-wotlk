@@ -227,7 +227,10 @@ impl AttackPress<'_, '_> {
 /// mid-cast is the ladder's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
     // Not a `CastLadder` field: Bevy panics on a resource reachable twice from one system.

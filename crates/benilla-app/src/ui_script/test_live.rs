@@ -226,7 +226,7 @@ impl LiveState for View {
         PET.with(|p| p.borrow().stable.clone())
     }
 
-    fn stable_family(&self, entry: u32, _: StableCallback) -> Option<StableFamily> {
+    fn stable_family(&mut self, entry: u32, _: Option<StableCallback>) -> Option<StableFamily> {
         PET.with(|p| p.borrow().stable_families.get(&entry).cloned())
     }
 }
