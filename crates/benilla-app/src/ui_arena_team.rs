@@ -28,6 +28,8 @@ struct TeamSlot {
     team_id: u32,
     /// Rating, week games and wins, season games and wins, rank.
     stats: [u32; 6],
+    /// The last roster's team type (`0x5a3ea4`), which the rating check compares (`0x5a3823`).
+    roster_type: u32,
     members: Vec<ArenaTeamMember>,
 }
 
@@ -236,6 +238,11 @@ impl ArenaTeamView<'_> {
         self.slot(me, slot).map_or([0; 6], |s| s.stats)
     }
 
+    /// Slot `slot`'s last roster team type, 0 without our team words.
+    pub(crate) fn roster_type(&self, me: Option<&ObjectFields>, slot: usize) -> u32 {
+        self.slot(me, slot).map_or(0, |s| s.roster_type)
+    }
+
     /// Slot `slot`'s roster length, 0 without our team words.
     pub(crate) fn member_count(&self, me: Option<&ObjectFields>, slot: usize) -> usize {
         self.slot(me, slot).map_or(0, |s| s.members.len())
@@ -425,6 +432,7 @@ mod net {
             // `SMSG_ARENA_TEAM_ROSTER` (`0x5a3e10`): dropped for a team in no slot.
             SessionEvent::ArenaTeamRoster(r) => {
                 if let Some(slot) = teams.slot_of(r.team_id) {
+                    slot.roster_type = r.team_type;
                     slot.members = r.members;
                     ui.fire("ARENA_TEAM_ROSTER_UPDATE", Vec::new());
                 }

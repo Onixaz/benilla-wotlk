@@ -178,6 +178,11 @@ pub trait LiveState {
         [0; 6]
     }
 
+    /// Our arena-team slot's last roster team type when called (`0x5a3ea4`), 0 before a roster.
+    fn arena_team_roster_type(&self, _slot: usize) -> u32 {
+        0
+    }
+
     /// Our arena-team slot's roster length when called.
     fn arena_team_member_count(&self, _slot: usize) -> usize {
         0
@@ -422,6 +427,10 @@ impl LiveState for TestView {
 
     fn arena_team_stats(&self, slot: usize) -> [u32; 6] {
         self.arena_teams[slot].stats
+    }
+
+    fn arena_team_roster_type(&self, slot: usize) -> u32 {
+        self.arena_teams[slot].roster_type
     }
 
     fn arena_team_member_count(&self, slot: usize) -> usize {

@@ -234,6 +234,11 @@ impl LiveState for LiveView<'_, '_> {
         self.arena_teams.stats(me, slot)
     }
 
+    fn arena_team_roster_type(&self, slot: usize) -> u32 {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.roster_type(me, slot)
+    }
+
     fn arena_team_member_count(&self, slot: usize) -> usize {
         let me = self.active_player().and_then(|g| self.unit(g));
         self.arena_teams.member_count(me, slot)

@@ -90,6 +90,8 @@ pub struct ArenaTeamSlotView {
     pub record: Option<ArenaTeamRecordView>,
     /// `SMSG_ARENA_TEAM_STATS`: rating, week games, week wins, season games, season wins, rank.
     pub stats: [u32; 6],
+    /// The last roster's team type (`0x5a3ea4`), 0 before one.
+    pub roster_type: u32,
     /// The last roster, in wire order; the VM sorts it under its own order.
     pub members: Vec<ArenaTeamMemberView>,
 }
@@ -197,6 +199,11 @@ fn live_stats(slot: usize) -> [u32; 6] {
     super::live::read_live(|l| l.arena_team_stats(slot)).unwrap_or_default()
 }
 
+/// Slot `slot`'s last roster team type when called; 0 with no view lent.
+fn live_roster_type(slot: usize) -> u32 {
+    super::live::read_live(|l| l.arena_team_roster_type(slot)).unwrap_or(0)
+}
+
 /// Slot `slot`'s roster length when called; 0 with no view lent.
 fn live_member_count(slot: usize) -> usize {
     super::live::read_live(|l| l.arena_team_member_count(slot)).unwrap_or(0)
@@ -214,7 +221,7 @@ fn team_id(slot: u32) -> u32 {
     live_info(slot)[0]
 }
 
-/// The rating check (`0x5a37b0`): a slot of at least the bracket's size with both ratings at least `rating`.
+/// The rating check (`0x5a37b0`): a slot of at least the bracket's size and personal rating, and a team whose roster is that size (`0x5a3823`) rated at least `rating` (`0x5a382a`).
 pub(crate) fn rating_met(rating: u32, bracket: i32) -> bool {
     let Some(&min_size) = usize::try_from(bracket)
         .ok()
@@ -227,10 +234,7 @@ pub(crate) fn rating_met(rating: u32, bracket: i32) -> bool {
         let size = s[1];
         size >= min_size
             && s[6] >= rating
-            && (0..3).any(|t| {
-                live_record(info[t][0]).is_some_and(|r| r.team_type == size)
-                    && live_stats(t)[0] >= rating
-            })
+            && (0..3).any(|t| live_roster_type(t) == size && live_stats(t)[0] >= rating)
     })
 }
 
@@ -728,6 +732,7 @@ mod tests {
                 border_color: 0xFF_00_FF_00,
             }),
             stats: [1500, 4, 2, 10, 6, 12],
+            roster_type: 2,
             members: vec![
                 member(2, "Zed", false, 1490),
                 member(1, "Claude", true, 1520),
@@ -799,6 +804,27 @@ mod tests {
             s.eval::<i64>("return GetNumArenaTeamMembers(1, 1)")
                 .unwrap(),
             2
+        );
+    }
+
+    /// The rating check matches the size against the last roster's type (`0x5a3823`), never the cache record's.
+    #[test]
+    fn the_rating_check_reads_the_rosters_team_type() {
+        let mut slots = team();
+        {
+            let _live = crate::script::live::lend_arena_teams(slots.clone());
+            assert!(
+                rating_met(1500, 0),
+                "a 2v2 roster rated 1500, personal 1520"
+            );
+            assert!(!rating_met(1501, 0), "the team's rating short");
+            assert!(!rating_met(1500, 1), "no 3v3 slot");
+        }
+        slots[0].roster_type = 0;
+        let _live = crate::script::live::lend_arena_teams(slots);
+        assert!(
+            !rating_met(1500, 0),
+            "no roster yet, whatever the record says"
         );
     }
 
