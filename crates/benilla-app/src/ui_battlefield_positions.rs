@@ -1,83 +1,101 @@
 //! Battleground teammate and flag positions on the world map: `MSG_BATTLEGROUND_PLAYER_POSITIONS`
-//! resolved into the view behind `GetBattlefieldPosition`, `GetBattlefieldFlagPosition` and
-//! `GetBattlefieldMapIconScale`, which `WorldMapFrame.lua` and the battlefield minimap poll.
-//!
-//! The reference's getter (`0x54c2e0`) does the work per call: it skips the party and the raid
-//! roster, prefers a streamed object's live position, and projects under the active map,
-//! answering `(0, 0)` off it. The app resolves the list that way each frame. A name landing fires
-//! `WORLD_MAP_NAME_UPDATE`, as in the reference.
+//! kept as its handler writes it (`0x54b3f0`), read by the position verbs through the live view
+//! when called (`0x54a040`, `0x54c2e0`, `0x54dcc0`); a name the getter asks fires
+//! `WORLD_MAP_NAME_UPDATE` from its answer, once per ask (`0x5496c0`).
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
+use benilla_assets::LockRecover;
 use benilla_protocol::messages::{BattlefieldPosition, BattlefieldPositions as PositionsPacket};
-use benilla_ui::script::{BattlefieldFlagView, BattlefieldPositionView, UiScript};
+use benilla_ui::script::{BattlefieldFlagLive, BattlefieldPositionLive, WorldMapPoint};
 
 use crate::names::NameCache;
-use crate::net::{ClientCommand, EnteredWorldMessage, GuidIndex, NetCommands, NetEntity, SelfGuid};
+use crate::net::{ClientCommand, NetCommands, ObjectStore};
 use crate::ui_battlefield::BattlefieldQueue;
 use crate::ui_party::GroupState;
-use crate::ui_script::{UiDrain, UiFeed};
 
-/// `RequestBattlefieldPositions` (`0x54cf60`) sends at most once per 5000 ms, and only with an
-/// active queue slot; without one it clears the list.
+/// `RequestBattlefieldPositions` (`0x54cf60`) sends at most once per 5000 ms.
 pub(crate) const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
 
-/// The last positions packet and the request stamp.
+/// Eye of the Storm's `Map.dbc` row, whose one flag reverses the token (`0x54d0b5`).
+const EYE_OF_THE_STORM: u32 = 566;
+
+/// The positions the handler wrote, locked so the verbs can clear, stamp and file name asks while lent.
 #[derive(Resource, Default)]
-pub(crate) struct BattlefieldPositions {
-    packet: Option<PositionsPacket>,
-    last_request: Option<Instant>,
-    /// Guids whose name the cache has not answered yet.
-    pending_names: Vec<u64>,
+pub(crate) struct BattlefieldPositions(Mutex<Board>);
+
+#[derive(Default)]
+struct Board {
+    /// The players in wire order (`0xbea180`, count `0xbea5b0`).
+    players: Vec<BattlefieldPosition>,
+    /// The two carriers by slot, guid 0 for none.
+    carriers: [BattlefieldPosition; 2],
+    /// The request stamp (`0xbea5b4`): no send before it.
+    next_request: Option<Instant>,
+    /// One guid per name ask the getter filed, each answered by its own event.
+    name_asks: Vec<u64>,
 }
 
 impl BattlefieldPositions {
-    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` in: kept as sent, as the handler does.
+    fn board(&mut self) -> &mut Board {
+        self.0.get_mut().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` (`0x54b3f0`): players as sent, carriers by slot.
     pub(crate) fn apply(&mut self, packet: PositionsPacket) {
-        self.packet = Some(packet);
-    }
-
-    fn clear(&mut self) {
-        self.packet = None;
-        self.pending_names.clear();
-    }
-
-    /// The throttle: `true`, and the stamp moves, when a request may go out now.
-    fn request_due(&mut self, now: Instant) -> bool {
-        let due = self
-            .last_request
-            .is_none_or(|t| now.saturating_duration_since(t) >= REQUEST_THROTTLE);
-        if due {
-            self.last_request = Some(now);
+        let board = self.board();
+        board.players = packet.players;
+        board.carriers = Default::default();
+        for (slot, c) in board.carriers.iter_mut().zip(packet.carriers) {
+            *slot = c;
         }
-        due
+    }
+
+    /// The status handler's queue-0 arm on the active slot zeroes the list (`0x54b165`).
+    pub(crate) fn clear_players(&mut self) {
+        self.board().players.clear();
+    }
+
+    /// The world entry's part (`0x54cb1b`): the list, the carriers and the request stamp.
+    pub(crate) fn enter_world(&mut self) {
+        let board = self.board();
+        board.players.clear();
+        board.carriers = Default::default();
+        board.next_request = None;
+    }
+
+    /// The asks a name answer settles, each one `WORLD_MAP_NAME_UPDATE`.
+    fn take_asks(&mut self, guid: u64) -> usize {
+        let asks = &mut self.board().name_asks;
+        let before = asks.len();
+        asks.retain(|&g| g != guid);
+        before - asks.len()
+    }
+
+    /// The request (`0x54cf60`): no active slot clears the list (`0x54cf7d`), else a send at most every 5000 ms.
+    fn request(&self, active: bool, now: Instant) -> bool {
+        let mut board = self.0.lock_recover();
+        if !active {
+            board.players.clear();
+            return false;
+        }
+        if board.next_request.is_some_and(|t| now < t) {
+            return false;
+        }
+        board.next_request = Some(now + REQUEST_THROTTLE);
+        true
     }
 }
 
-/// The getter's position source (`0x54c2e0`): a streamed object's live position, else the
-/// packet's, as wow `(x, y)`.
-fn live_or_packet(
-    p: &BattlefieldPosition,
-    guids: &GuidIndex,
-    unit_pos: &Query<&GlobalTransform, With<NetEntity>>,
-) -> (f32, f32) {
-    match guids.0.get(&p.guid).and_then(|e| unit_pos.get(*e).ok()) {
-        Some(tf) => {
-            let w = bevy_to_wow(tf.translation());
-            (w[0], w[1])
-        }
-        None => (p.x, p.y),
-    }
-}
-
-/// The flag token (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, so a
-/// Horde carrier (side 0) holds the Alliance flag; Eye of the Storm (map 566) reverses it.
-fn flag_token(carrier_side: i8, map: u32) -> Option<&'static str> {
+/// The flag token (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, reversed in Eye of the Storm.
+fn flag_token(side: i8, map: u32) -> Option<&'static str> {
     const TOKENS: [&str; 2] = ["AllianceFlag", "HordeFlag"];
-    let side = usize::try_from(carrier_side).ok().filter(|&s| s < 2)?;
+    let side = usize::try_from(side).ok().filter(|&s| s < 2)?;
     Some(if map == EYE_OF_THE_STORM {
         TOKENS[usize::from(side == 0)]
     } else {
@@ -85,163 +103,217 @@ fn flag_token(carrier_side: i8, map: u32) -> Option<&'static str> {
     })
 }
 
-/// Eye of the Storm's `Map.dbc` row, whose one flag reverses the token (`0x54d0b5`).
-const EYE_OF_THE_STORM: u32 = 566;
+/// What the position verbs read when called.
+#[derive(SystemParam)]
+pub(crate) struct PositionsView<'w, 's> {
+    positions: Option<Res<'w, BattlefieldPositions>>,
+    queue: Option<Res<'w, BattlefieldQueue>>,
+    group: Option<Res<'w, GroupState>>,
+    names: Option<Res<'w, NameCache>>,
+    net: Option<Res<'w, NetCommands>>,
+    maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
+    areas: Option<Res<'w, crate::area::AreaTableRes>>,
+    map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
+    places: Query<'w, 's, &'static Transform, With<ObjectStore>>,
+}
 
-fn feed_battlefield_positions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut state: ResMut<BattlefieldPositions>,
-    queue: Res<BattlefieldQueue>,
-    maps: Option<Res<benilla_assets::MapCatalogRes>>,
-    me: Res<SelfGuid>,
-    group: Res<GroupState>,
-    guids: Res<GuidIndex>,
-    unit_pos: Query<&GlobalTransform, With<NetEntity>>,
-    stores: Query<&crate::net::ObjectStore>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    // The last empty push: with no list the engine is told on change, with one every frame.
-    mut last_empty: Local<crate::ui_script::VmMemo<Option<(bool, u32)>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let active = queue.active_map();
-    // `GetBattlefieldMapIconScale` (`0x54c740`): the active map's `MinimapIconScale`, 1 without.
-    let icon_scale = maps
-        .as_deref()
-        .map_or(1.0, |m| m.0.icon_scale(active.unwrap_or(0)));
-    let BattlefieldPositions {
-        packet,
-        pending_names,
-        ..
-    } = &mut *state;
-    let (Some(map), Some(packet)) = (active, packet.as_ref()) else {
-        let key = Some((false, icon_scale.to_bits()));
-        let last = last_empty.get(&script);
-        if *last != key {
-            *last = key;
-            script.set_battlefield_positions(Vec::new(), Vec::new(), icon_scale);
-        }
-        return;
-    };
-    *last_empty.get(&script) = Some((true, icon_scale.to_bits()));
-
-    let project = |x: f32, y: f32| {
-        script.world_map_project(benilla_ui::script::WorldMapPoint::flat(map, x, y))
-    };
-    let mut name_landed = false;
-    let mut players = Vec::with_capacity(packet.players.len());
-    for p in &packet.players {
-        if me.0 == Some(p.guid) || group.members.iter().any(|m| m.guid == p.guid) {
-            continue;
-        }
-        let (x, y) = live_or_packet(p, &guids, &unit_pos);
-        let name = names.resolve(p.guid, &commands).map(str::to_string);
-        match name {
-            None => {
-                if !pending_names.contains(&p.guid) {
-                    pending_names.push(p.guid);
-                }
-            }
-            Some(_) => {
-                if let Some(i) = pending_names.iter().position(|g| *g == p.guid) {
-                    pending_names.swap_remove(i);
-                    name_landed = true;
-                }
-            }
-        }
-        players.push(BattlefieldPositionView {
-            uv: project(x, y),
-            name,
-        });
+impl PositionsView<'_, '_> {
+    fn board(&self) -> Option<std::sync::MutexGuard<'_, Board>> {
+        Some(self.positions.as_deref()?.0.lock_recover())
     }
-    // A streamed carrier's own side; else ours, flipped when the carrier is not in our group.
-    let side_of = |guid: u64| -> i8 {
-        let race = |g: u64| {
-            guids
-                .0
-                .get(&g)
-                .and_then(|e| stores.get(*e).ok())
-                .and_then(|s| s.0.unit_race())
+
+    /// The active map id (`0xbea564`), kept past the active slot's drop.
+    fn active_map(&self) -> u32 {
+        self.queue
+            .as_deref()
+            .map_or(0, BattlefieldQueue::active_map_id)
+    }
+
+    /// Whether `guid` is ours or our party's (`0x52c680`) or in our raid (`0x5726f0`).
+    fn grouped(&self, me: Option<u64>, guid: u64) -> bool {
+        guid != 0
+            && (me == Some(guid)
+                || self
+                    .group
+                    .as_deref()
+                    .is_some_and(|g| g.in_party_or_raid(me, guid)))
+    }
+
+    /// The list's entries outside our party and raid, in wire order.
+    fn visible(&self, me: Option<u64>) -> Vec<BattlefieldPosition> {
+        let mut players = self.board().map(|b| b.players.clone()).unwrap_or_default();
+        players.retain(|p| !self.grouped(me, p.guid));
+        players
+    }
+
+    pub(crate) fn count(&self, me: Option<u64>) -> usize {
+        self.visible(me).len()
+    }
+
+    /// `0x54c2e0`: a held player's position (`0x54c3eb`), else the packet's (`0x54c41c`); a nameless row asks (`0x54c489`).
+    pub(crate) fn position(
+        &self,
+        me: Option<u64>,
+        index: usize,
+        player: impl Fn(u64) -> Option<Entity>,
+    ) -> Option<BattlefieldPositionLive> {
+        let p = *self.visible(me).get(index)?;
+        let map = self.active_map();
+        let at = match player(p.guid).and_then(|e| self.places.get(e).ok()) {
+            Some(tf) => {
+                let [x, y, z] = bevy_to_wow(tf.translation);
+                WorldMapPoint { map, x, y, z }
+            }
+            None => WorldMapPoint::flat(map, p.x, p.y),
         };
-        if let Some(r) = race(guid) {
-            return crate::ui_unit::race_pvp_team(r);
-        }
-        let mine =
-            me.0.and_then(race)
-                .map_or(-1, crate::ui_unit::race_pvp_team);
-        if group.members.iter().any(|m| m.guid == guid) {
-            mine
-        } else {
-            i8::from(mine == 0)
-        }
-    };
-    let flags = packet
-        .carriers
-        .iter()
-        .map(|c| {
-            let (x, y) = live_or_packet(c, &guids, &unit_pos);
-            BattlefieldFlagView {
-                uv: project(x, y),
-                token: flag_token(side_of(c.guid), map).map(str::to_string),
+        let name = self
+            .names
+            .as_deref()
+            .zip(self.net.as_deref())
+            .and_then(|(names, net)| names.full_name_record(p.guid, net));
+        if name.is_none() {
+            if let Some(mut board) = self.board() {
+                board.name_asks.push(p.guid);
             }
+        }
+        Some(BattlefieldPositionLive { at, name })
+    }
+
+    /// The carrier count: 2 with the second slot held, else 1 with the first (`0x54a0e0`).
+    pub(crate) fn flag_count(&self) -> usize {
+        let Some(board) = self.board() else {
+            return 0;
+        };
+        if board.carriers[1].guid != 0 {
+            2
+        } else {
+            usize::from(board.carriers[0].guid != 0)
+        }
+    }
+
+    /// `0x54dcc0`: the carrier's own or party position (`0x54dd39`), else the packet's (`0x54dd81`), and its token.
+    pub(crate) fn flag(
+        &self,
+        me: Option<u64>,
+        index: usize,
+        player: impl Fn(u64) -> Option<Entity>,
+        side: impl Fn(u64) -> Option<i8>,
+    ) -> Option<BattlefieldFlagLive> {
+        if index >= self.flag_count() {
+            return None;
+        }
+        let c = self.board()?.carriers[index];
+        let map = self.active_map();
+        let here = self.map.as_deref().map_or(0, |m| m.0);
+        let carrier = match player(c.guid) {
+            Some(e) => self.places.get(e).ok().map(|tf| {
+                let [x, y, z] = bevy_to_wow(tf.translation);
+                WorldMapPoint { map: here, x, y, z }
+            }),
+            None => self.member_point(c.guid),
+        };
+        // The carrier's side, else ours flipped unless it is in our raid, else the slot.
+        let faction = match side(c.guid) {
+            Some(s) => s,
+            None => match me.and_then(&side) {
+                Some(mine) => {
+                    let raid = self
+                        .group
+                        .as_deref()
+                        .is_some_and(|g| g.in_raid_roster(me, c.guid));
+                    if raid {
+                        mine
+                    } else {
+                        i8::from(mine == 0)
+                    }
+                }
+                None => index as i8,
+            },
+        };
+        Some(BattlefieldFlagLive {
+            carrier,
+            packet: WorldMapPoint::flat(map, c.x, c.y),
+            token: flag_token(faction, map),
         })
-        .collect();
-    script.set_battlefield_positions(players, flags, icon_scale);
-    if name_landed {
-        script.fire_event("WORLD_MAP_NAME_UPDATE", Vec::new());
+    }
+
+    /// A party record's position on its zone's map (`0x544569`-`0x5445cd`), none without one.
+    fn member_point(&self, guid: u64) -> Option<WorldMapPoint> {
+        let stats = self.group.as_deref()?.stats.get(&guid)?;
+        let area = self.areas.as_deref()?.0.get(u32::from(stats.zone?))?;
+        let (x, y) = stats.position.unwrap_or_default();
+        Some(WorldMapPoint::flat(area.map_id, f32::from(x), f32::from(y)))
+    }
+
+    /// `GetBattlefieldMapIconScale` (`0x54c740`): the active map's row, 1 without one.
+    pub(crate) fn icon_scale(&self) -> f32 {
+        self.maps
+            .as_deref()
+            .map_or(1.0, |m| m.0.icon_scale(self.active_map()))
+    }
+
+    /// `RequestBattlefieldPositions` (`0x54cf60`), sent from the verb.
+    pub(crate) fn request(&self) {
+        let (Some(positions), Some(net)) = (self.positions.as_deref(), self.net.as_deref()) else {
+            return;
+        };
+        let active = self
+            .queue
+            .as_deref()
+            .is_some_and(|q| q.active_bg_type() != 0);
+        if positions.request(active, Instant::now()) {
+            let _ = net.0.send(ClientCommand::RequestBattlefieldPositions);
+        }
     }
 }
 
-fn drain_battlefield_positions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut state: ResMut<BattlefieldPositions>,
-    queue: Res<BattlefieldQueue>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    if script.take_battlefield_position_requests() == 0 {
-        return;
-    }
-    if queue.active_map().is_none() {
-        state.clear();
-        return;
-    }
-    if state.request_due(Instant::now()) {
-        let _ = commands.0.send(ClientCommand::RequestBattlefieldPositions);
-    }
-}
-
-fn reset_on_world_enter(
-    mut entered: MessageReader<EnteredWorldMessage>,
-    mut state: ResMut<BattlefieldPositions>,
-) {
-    if entered.read().next().is_none() {
-        return;
-    }
-    state.clear();
-    state.last_request = None;
-}
-
-/// The battlefield map's packet handler.
+/// The battlefield map's packet handlers.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
     use super::BattlefieldPositions;
     use crate::net::NetHandlerApp;
+    use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
-        app.net_handler(SessionEventKind::BattlefieldPositions, on_positions);
+        use SessionEventKind as K;
+        app.net_handler(K::BattlefieldPositions, on_positions)
+            .net_handler(K::PlayerName, on_name_answer)
+            .net_handler(K::PlayerNameMiss, on_name_answer)
+            .net_handler(K::Disconnected, on_session_end);
     }
 
     fn on_positions(In(ev): In<SessionEvent>, mut positions: ResMut<BattlefieldPositions>) {
         if let SessionEvent::BattlefieldPositions(packet) = ev {
             positions.apply(packet);
         }
+    }
+
+    /// A name answer runs each world-map callback filed for it, named or denied (`0x67a2d0`).
+    fn on_name_answer(
+        In(ev): In<SessionEvent>,
+        mut positions: ResMut<BattlefieldPositions>,
+        mut ui: ResMut<UiEvents>,
+    ) {
+        use benilla_protocol::messages::NameQueryMiss;
+        let guid = match ev {
+            SessionEvent::PlayerName { guid, .. } => guid,
+            SessionEvent::PlayerNameMiss {
+                miss: NameQueryMiss::Retry,
+                ..
+            } => return,
+            SessionEvent::PlayerNameMiss { guid, .. } => guid,
+            _ => return,
+        };
+        for _ in 0..positions.take_asks(guid) {
+            ui.fire("WORLD_MAP_NAME_UPDATE", Vec::new());
+        }
+    }
+
+    /// The list and its stamp end with the session.
+    fn on_session_end(In(_): In<SessionEvent>, mut positions: ResMut<BattlefieldPositions>) {
+        *positions = BattlefieldPositions::default();
     }
 }
 
@@ -250,14 +322,7 @@ pub(crate) struct BattlefieldPositionsPlugin;
 impl Plugin for BattlefieldPositionsPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<BattlefieldPositions>().add_systems(
-            Update,
-            (
-                reset_on_world_enter.before(feed_battlefield_positions),
-                feed_battlefield_positions.in_set(UiFeed),
-                drain_battlefield_positions.in_set(UiDrain),
-            ),
-        );
+        app.init_resource::<BattlefieldPositions>();
     }
 }
 
@@ -265,14 +330,59 @@ impl Plugin for BattlefieldPositionsPlugin {
 mod tests {
     use super::*;
 
+    fn at(guid: u64, x: f32) -> BattlefieldPosition {
+        BattlefieldPosition { guid, x, y: 0.0 }
+    }
+
     #[test]
     fn the_request_throttle_is_the_references_five_seconds() {
-        let mut s = BattlefieldPositions::default();
+        let s = BattlefieldPositions::default();
         let t0 = Instant::now();
-        assert!(s.request_due(t0), "the first request goes out");
-        assert!(!s.request_due(t0 + Duration::from_millis(4999)));
-        assert!(s.request_due(t0 + REQUEST_THROTTLE));
-        assert!(!s.request_due(t0 + REQUEST_THROTTLE + Duration::from_millis(1)));
+        assert!(s.request(true, t0), "the first request goes out");
+        assert!(!s.request(true, t0 + Duration::from_millis(4999)));
+        assert!(s.request(true, t0 + REQUEST_THROTTLE));
+        assert!(!s.request(true, t0 + REQUEST_THROTTLE + Duration::from_millis(1)));
+    }
+
+    /// Without an active slot the request clears the list and sends nothing (`0x54cf7d`).
+    #[test]
+    fn a_request_without_an_active_slot_clears_the_list() {
+        let mut s = BattlefieldPositions::default();
+        s.apply(PositionsPacket {
+            players: vec![at(1, 1.0), at(2, 2.0)],
+            carriers: vec![at(3, 3.0)],
+        });
+        assert!(!s.request(false, Instant::now()));
+        let board = s.board();
+        assert!(board.players.is_empty());
+        assert_eq!(board.carriers[0].guid, 3, "the carriers stay");
+    }
+
+    /// A packet with one carrier zeroes the second slot (`0x54b3f0`).
+    #[test]
+    fn a_packet_rewrites_both_carrier_slots() {
+        let mut s = BattlefieldPositions::default();
+        s.apply(PositionsPacket {
+            players: Vec::new(),
+            carriers: vec![at(3, 3.0), at(4, 4.0)],
+        });
+        s.apply(PositionsPacket {
+            players: Vec::new(),
+            carriers: vec![at(5, 5.0)],
+        });
+        let board = s.board();
+        assert_eq!((board.carriers[0].guid, board.carriers[1].guid), (5, 0));
+    }
+
+    /// Each ask the getter filed answers with its own event; another guid's answer settles none.
+    #[test]
+    fn each_name_ask_takes_its_own_answer() {
+        let mut s = BattlefieldPositions::default();
+        s.board().name_asks = vec![7, 8, 7];
+        assert_eq!(s.take_asks(9), 0);
+        assert_eq!(s.take_asks(7), 2);
+        assert_eq!(s.take_asks(7), 0);
+        assert_eq!(s.take_asks(8), 1);
     }
 
     #[test]

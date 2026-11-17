@@ -1,8 +1,8 @@
 //! The reference arena-team table's bindings (`0x5a2930`-`0x5a3cf0`) and the arena-team verbs
 //! beside them: the PvP window's three team banners, the roster pane, and the captain's commands.
-//! The app pushes each slot's `PLAYER_FIELD_ARENA_TEAM_INFO_1_1` words, the team cache's record and
-//! the last stats and roster; the VM owns what the bindings write, the roster's sort, its offline
-//! filter and the selected member.
+//! The verbs read each slot's `PLAYER_FIELD_ARENA_TEAM_INFO_1_1` words, the team cache's record and
+//! the last stats and roster live, through [`super::LiveState::arena_team_slots`]; the VM owns what
+//! the bindings write, the roster's sort, its offline filter and the selected member.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -40,7 +40,7 @@ pub struct ArenaTeamMemberView {
     pub matchmaking: Option<(f32, f32)>,
 }
 
-/// One team slot as the app pushes it.
+/// One team slot as the verbs read it.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ArenaTeamSlotView {
     /// The slot's seven field words: team id, type, captain flag (0 the captain), games this
@@ -50,7 +50,7 @@ pub struct ArenaTeamSlotView {
     pub record: Option<ArenaTeamRecordView>,
     /// `SMSG_ARENA_TEAM_STATS`: rating, week games, week wins, season games, season wins, rank.
     pub stats: [u32; 6],
-    /// The last roster, in wire order; the VM sorts it.
+    /// The last roster, in wire order; the VM sorts it under its own order.
     pub members: Vec<ArenaTeamMemberView>,
 }
 
@@ -70,12 +70,9 @@ pub enum ArenaTeamRequest {
 /// The roster's seven sort columns (`0xc0f7fc`).
 const ROSTER_COLUMNS: usize = 7;
 
-/// The VM's mirror of the reference's arena-team table.
+/// What the VM owns of the reference's arena-team table.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ArenaTeams {
-    slots: [ArenaTeamSlotView; 3],
-    /// Each slot's members in display order, indices into its `members`.
-    order: [Vec<usize>; 3],
     /// The show-offline toggle (`0xacf834`), on until a call turns it off.
     show_offline: bool,
     /// `(column, reverse)`, most significant first.
@@ -88,8 +85,6 @@ pub(crate) struct ArenaTeams {
 impl Default for ArenaTeams {
     fn default() -> Self {
         Self {
-            slots: Default::default(),
-            order: Default::default(),
             show_offline: true,
             sort: std::array::from_fn(|i| (i as u32, false)),
             selected: 0,
@@ -127,58 +122,55 @@ impl ArenaTeams {
         Ordering::Equal
     }
 
-    fn resort(&mut self, slot: usize) {
-        let members = &self.slots[slot].members;
+    /// A slot's members in display order, as the sort last left them.
+    fn order(&self, slot: &ArenaTeamSlotView) -> Vec<usize> {
+        let members = &slot.members;
         let mut order: Vec<usize> = (0..members.len()).collect();
         order.sort_by(|&x, &y| self.compare(&members[x], &members[y]));
-        self.order[slot] = order;
+        order
     }
 
-    /// The personal and team rating check (`0x5a37b0`): a slot whose team size is at least the
-    /// bracket's (2, 3, 5) with a personal rating of `rating`, and a team of that size rated as
-    /// high. A bracket off the three never passes.
-    pub(crate) fn rating_met(&self, rating: u32, bracket: i32) -> bool {
-        let Some(&min_size) = usize::try_from(bracket)
-            .ok()
-            .and_then(|b| [2u32, 3, 5].get(b))
-        else {
-            return false;
-        };
-        self.slots.iter().any(|s| {
-            let size = s.info[1];
-            size >= min_size
-                && s.info[6] >= rating
-                && self.slots.iter().any(|t| {
-                    t.record.as_ref().is_some_and(|r| r.team_type == size) && t.stats[0] >= rating
-                })
-        })
-    }
-
-    fn member(&self, slot: u32, index: u32) -> Option<&ArenaTeamMemberView> {
-        let slot = usize::try_from(slot).ok().filter(|&s| s < 3)?;
-        let &m = self.order[slot].get(index as usize)?;
-        self.slots[slot].members.get(m)
-    }
-
-    fn team_id(&self, slot: u32) -> u32 {
-        self.slots.get(slot as usize).map_or(0, |s| s.info[0])
+    fn member<'a>(
+        &self,
+        slots: &'a [ArenaTeamSlotView; 3],
+        slot: u32,
+        index: u32,
+    ) -> Option<&'a ArenaTeamMemberView> {
+        let slot = &slots[usize::try_from(slot).ok().filter(|&s| s < 3)?];
+        let m = *self.order(slot).get(index as usize)?;
+        slot.members.get(m)
     }
 }
 
-impl super::UiScript {
-    /// Push the three slots; a changed roster re-sorts under the VM's own order.
-    pub fn set_arena_teams(&mut self, slots: [ArenaTeamSlotView; 3]) {
-        if self.model_ref().arena_teams.slots == slots {
-            return;
-        }
-        let mut model = self.model_mut();
-        let teams = &mut model.arena_teams;
-        teams.slots = slots;
-        for i in 0..3 {
-            teams.resort(i);
-        }
-    }
+/// The three slots as the verbs read them when called; empty with no view lent.
+pub(crate) fn live_slots() -> [ArenaTeamSlotView; 3] {
+    super::live::read_live(|l| l.arena_team_slots()).unwrap_or_default()
+}
 
+fn team_id(slots: &[ArenaTeamSlotView; 3], slot: u32) -> u32 {
+    slots.get(slot as usize).map_or(0, |s| s.info[0])
+}
+
+/// The rating check (`0x5a37b0`): a slot of at least the bracket's size with both ratings at least `rating`.
+pub(crate) fn rating_met(rating: u32, bracket: i32) -> bool {
+    let Some(&min_size) = usize::try_from(bracket)
+        .ok()
+        .and_then(|b| [2u32, 3, 5].get(b))
+    else {
+        return false;
+    };
+    let slots = live_slots();
+    slots.iter().any(|s| {
+        let size = s.info[1];
+        size >= min_size
+            && s.info[6] >= rating
+            && slots.iter().any(|t| {
+                t.record.as_ref().is_some_and(|r| r.team_type == size) && t.stats[0] >= rating
+            })
+    })
+}
+
+impl super::UiScript {
     pub fn take_arena_team_requests(&mut self) -> Vec<ArenaTeamRequest> {
         drain_field!(self, arena_teams.requests)
     }
@@ -223,6 +215,13 @@ fn checked_name(name: &str) -> mlua::Result<()> {
     Ok(())
 }
 
+/// One `ARENA_TEAM_ROSTER_UPDATE` per slot holding a roster, fired inside the verb (`0x5a28e0`).
+fn roster_updates(lua: &Lua, slots: &[ArenaTeamSlotView]) {
+    for _ in slots.iter().filter(|s| !s.members.is_empty()) {
+        super::tick::fire_event_into(lua, "ARENA_TEAM_ROSTER_UPDATE", Vec::new());
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -233,9 +232,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, team: Value| {
             let team = (number_arg(lua, team, "Usage: GetArenaTeam(team)")? as u32).wrapping_sub(1);
             let model = read(lua);
-            let slot = model
-                .arena_teams
-                .slots
+            let slots = live_slots();
+            let slot = slots
                 .get(team as usize)
                 .filter(|s| s.info[0] != 0 && player_exists(&model));
             let Some((s, r)) = slot.and_then(|s| Some((s, s.record.as_ref()?))) else {
@@ -281,7 +279,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let show = bool_or_default(show.as_ref(), false);
             let model = read(lua);
             let teams = &model.arena_teams;
-            let Some(s) = teams.slots.get(team as usize) else {
+            let slots = live_slots();
+            let Some(s) = slots.get(team as usize) else {
                 return Ok(0);
             };
             Ok(if teams.show_offline || show {
@@ -302,7 +301,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let index = (number_arg(lua, index, usage)? as u32).wrapping_sub(1);
             let model = read(lua);
             let n = |v: u32| Value::Number(f64::from(v));
-            let Some(m) = model.arena_teams.member(team, index) else {
+            let slots = live_slots();
+            let Some(m) = model.arena_teams.member(&slots, team, index) else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     n(0),
@@ -342,7 +342,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let team = (number_arg(lua, team, usage)? as u32).wrapping_sub(1);
             let index = (number_arg(lua, index, usage)? as u32).wrapping_sub(1);
             let model = read(lua);
-            Ok(match model.arena_teams.member(team, index) {
+            let slots = live_slots();
+            Ok(match model.arena_teams.member(&slots, team, index) {
                 Some(m) => {
                     let (before, after) = m.matchmaking.unwrap_or_default();
                     MultiValue::from_vec(vec![
@@ -362,8 +363,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let usage = "Usage: SetArenaTeamRosterSelection(team, index)";
             let team = (number_arg(lua, team, usage)? as u32).wrapping_sub(1);
             let index = (number_arg(lua, index, usage)? as u32).wrapping_sub(1);
+            let slots = live_slots();
             let mut model = crate::script::model_mut_of(lua);
-            let guid = model.arena_teams.member(team, index).map_or(0, |m| m.guid);
+            let guid = model
+                .arena_teams
+                .member(&slots, team, index)
+                .map_or(0, |m| m.guid);
             model.arena_teams.selected = guid;
             Ok(())
         })?,
@@ -380,8 +385,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if team >= 3 || teams.selected == 0 {
                 return Ok(0);
             }
-            let slot = &teams.slots[team as usize];
-            Ok(teams.order[team as usize]
+            let slots = live_slots();
+            let slot = &slots[team as usize];
+            Ok(teams
+                .order(slot)
                 .iter()
                 .position(|&m| slot.members[m].guid == teams.selected)
                 .map_or(0, |i| i as i64 + 1))
@@ -402,6 +409,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => return Err(mlua::Error::runtime("Usgae: SortArenaTeamRoster(\"type\")")),
             };
             let column = sort_column(&kind);
+            let slots = live_slots();
             let mut model = crate::script::model_mut_of(lua);
             let teams = &mut model.arena_teams;
             if let Some(i) = teams.sort.iter().position(|&(c, _)| c == column) {
@@ -412,18 +420,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 teams.sort.copy_within(0..i, 1);
                 teams.sort[0] = (column, reverse);
             }
-            let mut fired = 0;
-            for i in 0..3 {
-                if !teams.slots[i].members.is_empty() {
-                    teams.resort(i);
-                    fired += 1;
-                }
-            }
-            for _ in 0..fired {
-                model
-                    .pending_events
-                    .push(("ARENA_TEAM_ROSTER_UPDATE".to_string(), Vec::new()));
-            }
+            drop(model);
+            roster_updates(lua, &slots);
             Ok(())
         })?,
     )?;
@@ -434,24 +432,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, args: MultiValue| {
             // An explicit nil turns it off; only a missing argument takes the default.
             let show = bool_or_default(args.iter().next(), true);
+            let slots = live_slots();
             let mut model = crate::script::model_mut_of(lua);
             let teams = &mut model.arena_teams;
             if teams.show_offline == show {
                 return Ok(());
             }
             teams.show_offline = show;
-            let mut fired = 0;
-            for i in 0..3 {
-                if !teams.slots[i].members.is_empty() {
-                    teams.resort(i);
-                    fired += 1;
-                }
-            }
-            for _ in 0..fired {
-                model
-                    .pending_events
-                    .push(("ARENA_TEAM_ROSTER_UPDATE".to_string(), Vec::new()));
-            }
+            drop(model);
+            roster_updates(lua, &slots);
             Ok(())
         })?,
     )?;
@@ -471,8 +460,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, team: Value| {
             let team =
                 (number_arg(lua, team, "Usage: ArenaTeamRoster(team)")? as u32).wrapping_sub(1);
+            let team_id = team_id(&live_slots(), team);
             let mut model = crate::script::model_mut_of(lua);
-            let team_id = model.arena_teams.team_id(team);
             if team_id != 0 && player_exists(&model) {
                 model
                     .arena_teams
@@ -506,9 +495,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .wrapping_sub(1);
             let model = read(lua);
             let captain = player_exists(&model)
-                && model
-                    .arena_teams
-                    .slots
+                && live_slots()
                     .get(index as usize)
                     .is_some_and(|s| s.info[2] == 0);
             Ok(flag(captain))
@@ -520,7 +507,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsInArenaTeam",
         lua.create_function(|lua, ()| {
             let model = read(lua);
-            Ok(player_exists(&model) && model.arena_teams.slots.iter().any(|s| s.info[0] != 0))
+            Ok(player_exists(&model) && live_slots().iter().any(|s| s.info[0] != 0))
         })?,
     )?;
 
@@ -552,8 +539,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     return Ok(());
                 }
                 checked_name(&who)?;
+                let team_id = team_id(&live_slots(), team);
                 let mut model = crate::script::model_mut_of(lua);
-                let team_id = model.arena_teams.team_id(team);
                 let request = match kind {
                     0 => ArenaTeamRequest::Invite { team_id, name: who },
                     1 => ArenaTeamRequest::Remove { team_id, name: who },
@@ -573,8 +560,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, team: Value| {
                 let team = (number_arg(lua, team, usage)? as u32).wrapping_sub(1);
+                let team_id = team_id(&live_slots(), team);
                 let mut model = crate::script::model_mut_of(lua);
-                let team_id = model.arena_teams.team_id(team);
                 model.arena_teams.requests.push(if disband {
                     ArenaTeamRequest::Disband { team_id }
                 } else {
@@ -665,10 +652,10 @@ mod tests {
 
     #[test]
     fn get_arena_team_answers_twenty_two_values() {
-        let mut s = vm();
+        let s = vm();
         assert_eq!(s.arity("GetArenaTeam(1)").unwrap(), 22);
         assert!(s.eval::<bool>("return GetArenaTeam(1) == nil").unwrap());
-        s.set_arena_teams(team());
+        let _live = crate::script::live::lend_arena_teams(team());
         let got = s
             .eval::<String>(
                 "local n, size, rating, games, wins, sgames, swins, played, splayed, rank, \
@@ -685,8 +672,8 @@ mod tests {
 
     #[test]
     fn the_roster_sorts_by_name_and_selects_by_guid() {
-        let mut s = vm();
-        s.set_arena_teams(team());
+        let s = vm();
+        let _live = crate::script::live::lend_arena_teams(team());
         assert_eq!(
             s.eval::<i64>("return GetNumArenaTeamMembers(1)").unwrap(),
             2
@@ -732,7 +719,7 @@ mod tests {
     #[test]
     fn the_sends_resolve_the_team_id() {
         let mut s = vm();
-        s.set_arena_teams(team());
+        let _live = crate::script::live::lend_arena_teams(team());
         s.run(
             "ArenaTeamRoster(1) ArenaTeamRoster(2) ArenaTeamInviteByName(1, 'Claudetwo') \
              ArenaTeamInviteByName(1, '') ArenaTeamLeave(3) AcceptArenaTeam()",

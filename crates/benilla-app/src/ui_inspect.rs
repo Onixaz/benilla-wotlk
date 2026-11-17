@@ -25,9 +25,64 @@ use crate::ui_script::UiFeed;
 #[derive(Resource, Default)]
 pub(crate) struct InspectTarget {
     pub(crate) token: Option<String>,
-    /// The guid `NotifyInspect` set (`0x52291a`), 0 after `ClearInspectPlayer`; the inspect
-    /// packets read their items only for it (`0x6ce08a`, `0x6ce0da`).
-    pub(crate) guid: u64,
+}
+
+/// The inspect target (`0xc24220`): set by `NotifyInspect` (`0x5e76cb`) and cleared by `ClearInspectPlayer` (`0x5e78ae`) when called.
+#[derive(Resource, Default)]
+pub(crate) struct InspectGuid(std::sync::atomic::AtomicU64);
+
+impl InspectGuid {
+    pub(crate) fn get(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Set the target; whether it moved (`0x5e76c1`).
+    pub(crate) fn set(&self, guid: u64) -> bool {
+        self.0.swap(guid, std::sync::atomic::Ordering::Relaxed) != guid
+    }
+}
+
+/// The world leave's inspect part (`0x5eaf70`): a held target, its honor reply, latch, teams and talent target go (`0x5eaff5`-`0x5eb022`).
+pub(crate) fn leave_world(world: &mut World) {
+    if !world
+        .get_resource::<InspectGuid>()
+        .is_some_and(|g| g.set(0))
+    {
+        return;
+    }
+    if let Some(mut talents) = world.get_resource_mut::<crate::ui_talent::InspectTalents>() {
+        talents.set_target(None);
+    }
+    if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+        ui.write(|s| {
+            s.set_inspect_honor(None);
+            s.clear_inspect_arena_teams();
+        });
+    }
+}
+
+/// What the inspect verbs reach when called: the target and the send.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct InspectLive<'w> {
+    guid: Option<Res<'w, InspectGuid>>,
+    net: Option<Res<'w, NetCommands>>,
+}
+
+impl InspectLive<'_> {
+    /// `CMSG_INSPECT` (`0x5228c3`), then the target (`0x52291a`); whether it moved.
+    pub(crate) fn notify(&self, guid: u64) -> bool {
+        if let Some(net) = self.net.as_deref() {
+            let _ = net.0.send(ClientCommand::Inspect { target: guid });
+        }
+        self.guid.as_deref().is_none_or(|g| g.set(guid))
+    }
+
+    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
+    pub(crate) fn clear(&self) {
+        if let Some(g) = self.guid.as_deref() {
+            g.set(0);
+        }
+    }
 }
 
 /// `SMSG_INSPECT_TALENT`'s worn items of the last player inspected (`0x6cdf30`): their twelve
@@ -58,6 +113,7 @@ pub(crate) struct InspectUiPlugin;
 impl Plugin for InspectUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InspectTarget>()
+            .init_resource::<InspectGuid>()
             .init_resource::<InspectFeedState>()
             .init_resource::<InspectWorn>()
             .net_handler(K::InspectItems, on_inspect_items)
@@ -69,12 +125,12 @@ impl Plugin for InspectUiPlugin {
 fn on_inspect_items(
     In(ev): In<SessionEvent>,
     mut worn: ResMut<InspectWorn>,
-    target: Res<InspectTarget>,
+    target: Res<InspectGuid>,
 ) {
     let SessionEvent::InspectItems { guid, items } = ev else {
         return;
     };
-    if guid != target.guid {
+    if guid != target.get() {
         debug!("inspect: items for {guid:#x}, not the inspected player — skipped");
         return;
     }
@@ -86,7 +142,7 @@ fn on_inspect_items(
 fn on_inspect_talents(
     In(ev): In<SessionEvent>,
     mut talents: ResMut<crate::ui_talent::InspectTalents>,
-    target: Res<InspectTarget>,
+    target: Res<InspectGuid>,
 ) {
     let SessionEvent::InspectTalents {
         guid,
@@ -95,7 +151,7 @@ fn on_inspect_talents(
     else {
         return;
     };
-    if guid == target.guid {
+    if guid == target.get() {
         talents.apply(info);
     }
 }
@@ -206,9 +262,7 @@ fn feed_inspect(
     // A `/reload` keeps the latched token, and the fresh memo re-pushes the view.
     let memo = feed.vm.get(&script);
 
-    // `NotifyInspect(unit)`: send `CMSG_INSPECT` for the unit's guid and latch its token.
-    // `ClearInspectPlayer()`, from `InspectFrame_OnHide`: the resolve stops and the booth empties,
-    // in call order among the notifies, so a clear then a notify in one chunk keeps the target.
+    // The tokens `NotifyInspect` sent for, and where `ClearInspectPlayer` ran among them: the token latches, the booth follows.
     let notifies = script.take_inspect_notifies();
     let clear_at = script.take_inspect_clear();
     let notified = notifies.len();
@@ -217,28 +271,17 @@ fn feed_inspect(
         let store = stores.get(*index.0.get(&guid)?).ok()?;
         Some((store.0.unit_race()?, store.0.unit_class()?))
     };
-    for (i, token) in notifies.into_iter().enumerate() {
+    for (i, (token, guid)) in notifies.into_iter().enumerate() {
         if clear_at == Some(i) {
             target.token = None;
-            target.guid = 0;
             inspect_talents.set_target(None);
         }
-        match crate::ui_unit::player_token_guid(&token, &selection, &group) {
-            Some(guid) => {
-                debug!("inspect: {token:?} -> {guid:#x}; sending CMSG_INSPECT");
-                let _ = commands.0.send(ClientCommand::Inspect { target: guid });
-                target.token = Some(token);
-                target.guid = guid;
-                inspect_talents.set_target(class_of(guid));
-            }
-            None => {
-                debug!("inspect: {token:?} did not resolve to a player guid — nothing sent");
-            }
-        }
+        debug!("inspect: {token:?} -> {guid:#x}");
+        target.token = Some(token);
+        inspect_talents.set_target(class_of(guid));
     }
     if clear_at.is_some_and(|at| at >= notified) {
         target.token = None;
-        target.guid = 0;
         inspect_talents.set_target(None);
     }
 
@@ -320,5 +363,37 @@ fn feed_inspect(
     if memo.last_level != level {
         memo.last_level = level;
         script.fire_event("UNIT_LEVEL", vec![ScriptValue::Str(token)]);
+    }
+}
+
+#[cfg(test)]
+mod leave_tests {
+    use super::*;
+
+    /// `0x5eafeb`: the leave clears a held target and its talent tabs; with none it does nothing.
+    #[test]
+    fn the_world_leave_clears_the_inspect_target() {
+        let mut world = World::new();
+        world.init_resource::<InspectGuid>();
+        world.insert_resource(crate::ui_talent::InspectTalents {
+            class: Some((1, 1)),
+            ..Default::default()
+        });
+        world.resource::<InspectGuid>().set(0x56);
+        leave_world(&mut world);
+        assert_eq!(world.resource::<InspectGuid>().get(), 0);
+        assert_eq!(
+            world.resource::<crate::ui_talent::InspectTalents>().class,
+            None
+        );
+        world
+            .resource_mut::<crate::ui_talent::InspectTalents>()
+            .class = Some((1, 1));
+        leave_world(&mut world);
+        assert_eq!(
+            world.resource::<crate::ui_talent::InspectTalents>().class,
+            Some((1, 1)),
+            "no target held: nothing to clear"
+        );
     }
 }

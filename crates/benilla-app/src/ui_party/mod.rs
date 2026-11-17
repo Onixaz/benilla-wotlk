@@ -39,10 +39,7 @@ impl Plugin for UiPartyPlugin {
             .add_systems(
                 Update,
                 (
-                    // After the battlefield feed, whose arena test the selection colour reads.
-                    feed::feed_party
-                        .in_set(UiFeed)
-                        .after(crate::ui_battlefield::feed_battlefield),
+                    feed::feed_party.in_set(UiFeed),
                     // Gated: a notice drained into the boot VM would be lost.
                     feed::feed_marks
                         .in_set(UiFeed)
@@ -379,6 +376,19 @@ impl GroupState {
     /// Whether `guid` is listed in the group, party or raid.
     pub(crate) fn is_member(&self, guid: u64) -> bool {
         self.members.iter().any(|m| m.guid == guid)
+    }
+
+    /// A nonzero `guid` that is ours, in a party slot (`0x52c680`) or in the raid (`0x5726f0`).
+    pub(crate) fn in_party_or_raid(&self, me: Option<u64>, guid: u64) -> bool {
+        guid != 0
+            && (me == Some(guid)
+                || !self.slots_emptied && self.party_slots().any(|m| m.guid == guid)
+                || self.in_raid_roster(me, guid))
+    }
+
+    /// A nonzero `guid` in the raid roster, us included (`0x5726f0`).
+    pub(crate) fn in_raid_roster(&self, me: Option<u64>, guid: u64) -> bool {
+        guid != 0 && feed::raid_rows(self, me).any(|g| g == guid)
     }
 
     /// `SMSG_GROUP_INVITE` (`0x6df1a0`): the inviter line, and the popup only when we can accept.

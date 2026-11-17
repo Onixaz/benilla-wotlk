@@ -1,10 +1,10 @@
 //! The world-enter sends wait for our own player's create, as the reference's do: none goes out on
 //! the login edge alone, which fires before the server seats the player; the create sends
 //! `CMSG_PLAYED_TIME` (`0x6e6e27`), `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`,
-//! `CMSG_REQUEST_PET_INFO` (with a pet out only), `MSG_QUERY_NEXT_MAIL_TIME`,
-//! `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's `CMSG_LFG_GET_STATUS` and
-//! `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's fresh create sends them all
-//! again.
+//! `CMSG_REQUEST_PET_INFO` (with a pet out only), `MSG_QUERY_NEXT_MAIL_TIME` and the dungeon
+//! finder's `CMSG_LFG_GET_STATUS` and `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a
+//! worldport's fresh create sends them all again. `CMSG_BATTLEFIELD_STATUS` waits for the UI's
+//! world entry, which this harness lacks (`0x54cc40`, after `0x5281a6`).
 
 use bevy::prelude::*;
 use crossbeam_channel::Receiver;
@@ -30,6 +30,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
         .init_resource::<ServerWallClock>()
         .init_resource::<crate::ui_mail::MailPending>()
         .init_resource::<crate::ui_battlefield::Battlefield>()
+        .init_resource::<crate::ui_battlefield::StatusRequestOwed>()
         .init_resource::<crate::ui_battlefield::BattlefieldQueue>()
         .init_resource::<crate::ui_lfg::LfgFeed>()
         .init_resource::<crate::ui_pet::PetBar>()
@@ -43,7 +44,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
                 crate::net::send_query_time,
                 crate::ui_pet::request_pet_info_on_world_enter,
                 crate::ui_mail::send_query_next_mail_time_on_enter,
-                crate::ui_battlefield::reset_on_world_enter,
+                crate::ui_battlefield::request_status_on_world_enter,
                 crate::ui_lfg::lfg_enter_world,
             )
                 .chain(),
@@ -79,7 +80,6 @@ fn the_sends() -> Vec<String> {
         format!("SetActiveMover {ME:#x}"),
         "QueryTime".into(),
         "QueryNextMailTime".into(),
-        "BattlefieldStatusRequest".into(),
         "Lfg(GetStatus)".into(),
         "Lfg(PlayerLockInfo)".into(),
     ]
@@ -204,10 +204,9 @@ fn a_create_with_no_pet_field_keeps_a_bar_that_beat_it() {
     assert!(app.world().resource::<crate::ui_pet::PetBar>().has_bar());
 }
 
-/// The production schedule: the self-create edge, then the time, pet, mail, battlefield and dungeon
-/// finder sends (the UI's world entry `0x528010` runs the dungeon finder's after the
-/// battlefield's); and a `/reload` frame's sweep drops the stone's text before its cascade resets
-/// it.
+/// The production schedule: the self-create edge, then the time, pet, mail, battlefield, dungeon
+/// finder and arena-team sends (the UI's world entry `0x528010` runs them in that order); and a
+/// `/reload` frame's sweep drops the stone's text before its cascade resets it.
 #[test]
 fn the_client_schedules_the_sends_in_the_reference_order() {
     use crate::test_support::runs_before;
@@ -235,11 +234,17 @@ fn the_client_schedules_the_sends_in_the_reference_order() {
     assert!(runs_before(
         &mut app,
         crate::ui_mail::send_query_next_mail_time_on_enter,
-        crate::ui_battlefield::reset_on_world_enter
+        crate::ui_battlefield::request_status_on_world_enter
     ));
     assert!(runs_before(
         &mut app,
-        crate::ui_battlefield::reset_on_world_enter,
+        crate::ui_battlefield::request_status_on_world_enter,
         crate::ui_lfg::lfg_enter_world
+    ));
+    // The arena-team update's roster asks follow the dungeon finder's (`0x528267`, `0x52826c`).
+    assert!(runs_before(
+        &mut app,
+        crate::ui_lfg::lfg_enter_world,
+        crate::ui_arena_team::enter_world
     ));
 }

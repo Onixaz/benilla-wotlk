@@ -366,6 +366,13 @@ impl super::UiScript {
         model.unit_guids.focus = focus;
     }
 
+    /// The arena slots alone, as an arena handler writes them before its `ARENA_OPPONENT_UPDATE`.
+    pub fn set_arena_unit_guids(&mut self, arena: [u64; 5], pets: [u64; 5], count: usize) {
+        let mut model = self.model_mut();
+        let g = &mut model.unit_guids;
+        (g.arena, g.arena_pets, g.arena_count) = (arena, pets, count);
+    }
+
     /// Every token naming `guid` against the last push, for a per-token unit event (`0x60bb70`).
     pub fn unit_tokens(&self, guid: u64) -> Vec<String> {
         self.model_ref().unit_guids.tokens_naming(guid)

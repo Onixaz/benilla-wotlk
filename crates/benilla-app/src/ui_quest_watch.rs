@@ -52,7 +52,7 @@ fn on_quest_poi(
     if let SessionEvent::QuestPoi(pois) = ev {
         debug!("ui_quest_watch: POI for {} quest(s)", pois.len());
         let pois: Vec<QuestPoiView> = pois.into_iter().map(view).collect();
-        ui.run(move |script| script.apply_quest_pois(pois));
+        ui.write(move |script| script.apply_quest_pois(pois));
         signals.unique_signal("QUEST_POI_UPDATE");
     }
 }

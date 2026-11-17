@@ -55,8 +55,8 @@ pub(crate) struct ActionRanks;
 
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, keyed_line_s, reagent_totem_refusal,
-    show_messages, ui_error_text, CastErrors, CastFail, Caster, FillArg, MessageSink, MountErrors,
-    PetTameFailures, Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
+    show_in_turn, show_messages, ui_error_text, CastErrors, CastFail, Caster, FillArg, MessageSink,
+    MountErrors, PetTameFailures, Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
 };
 pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 

@@ -335,6 +335,32 @@ pub(crate) fn show_messages(
     }
 }
 
+/// Show a handler's line in turn with its events, as the message display fires synchronously (`0x5216f0`: `0x521863`, `0x52188a`).
+pub(crate) fn show_in_turn(
+    ui: &mut crate::ui_script::live::UiEvents,
+    who: &'static str,
+    line: UiError,
+) {
+    ui.world(move |world| {
+        if let Err(e) = world.run_system_cached_with(show_line_now, (who, line)) {
+            warn!("{who}: the line was not shown: {e}");
+        }
+    });
+}
+
+fn show_line_now(
+    In((who, line)): In<(&'static str, UiError)>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut sink: MessageSink,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let shown = ui_error_text(&line, &|key| script.lua().globals().get::<String>(key).ok())
+        .map(|t| Shown::keyed(line.key, t));
+    show_messages(&mut script, &mut sink, who, shown);
+}
+
 /// Where a shown message lands besides the VM: the chat log and the sound queue, one parameter
 /// because the feeds that raise messages are at Bevy's parameter limit.
 #[derive(bevy::ecs::system::SystemParam)]

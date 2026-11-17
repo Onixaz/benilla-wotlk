@@ -53,7 +53,14 @@ pub(crate) fn enter_world_on_self_create(
     created: Query<&Guid, Added<SelfPlayer>>,
     net: Res<NetCommands>,
     mut cascades: MessageWriter<WorldEnterCascadeMessage>,
+    reload: Option<ResMut<crate::ui_script::ReloadEntry>>,
 ) {
+    // A create's world entry runs outside any UI reload (`0xbd0790` clear).
+    if !created.is_empty() {
+        if let Some(mut reload) = reload {
+            reload.0 = false;
+        }
+    }
     for guid in &created {
         if benilla_assets::trace::enabled() {
             benilla_assets::trace::line(
