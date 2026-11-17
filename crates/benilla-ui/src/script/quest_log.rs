@@ -166,14 +166,9 @@ thread_local! {
     static SEEDED: std::cell::RefCell<Seed> = std::cell::RefCell::default();
 }
 
-/// The VM's `GlobalStrings.lua` lookup the leaderboard formats through.
+/// The VM's `GlobalStrings.lua` lookup the leaderboard formats through ([`crate::strings::global`]).
 fn global_strings(lua: &Lua) -> impl Fn(&str) -> Option<String> + '_ {
-    move |key| {
-        lua.globals()
-            .get::<String>(key)
-            .ok()
-            .filter(|t| !t.is_empty())
-    }
+    move |key| crate::strings::global(lua, key)
 }
 
 /// A quest's answers computed at the call from its slot and the caches (`0x5e0000`, `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`); a seeded log's where no view lends them.

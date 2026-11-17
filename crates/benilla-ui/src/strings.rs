@@ -260,13 +260,10 @@ fn parse_spec(chars: &[char], after_percent: usize) -> Option<Spec> {
     })
 }
 
-/// A string from the VM's globals, where the install's `GlobalStrings.lua` is loaded at boot;
-/// `None`, and so no line, when absent or empty. The script layer's text read returns an empty
-/// string for a missing key, and callers test both (`GetPVPRankInfo`).
+/// A string from the VM's globals, where the install's `GlobalStrings.lua` is loaded at boot, read raw as 12340's text read does (`0x81802d`), so no `__index` on `_G` runs; `None`, and so no line, when absent or empty.
 pub fn global(lua: &mlua::Lua, key: &str) -> Option<String> {
-    // Bound before the filter so `globals().get::<String>` stays one unbroken substring, which is
-    // what `benilla-app/tests/reference_strings.rs` matches as a key lookup.
-    let value = lua.globals().get::<String>(key).ok();
+    // One unbroken `globals().raw_get::<String>`, which `benilla-app/tests/reference_strings.rs` matches as a key lookup.
+    let value = lua.globals().raw_get::<String>(key).ok();
     value.filter(|s| !s.is_empty())
 }
 

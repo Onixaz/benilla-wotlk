@@ -124,6 +124,7 @@ const RESOLVERS: &[&str] = &[
     ".text(",
     "keyed_line",
     "globals().get::<String>",
+    "globals().raw_get::<String>",
     "GlueStrings",
     "by_key(",
     "UiError::key",

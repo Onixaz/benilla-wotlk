@@ -1967,6 +1967,33 @@ mod tests {
         app.world_mut().non_send_resource_mut::<UiScript>()
     }
 
+    /// The row's text lookups read the global strings raw (`0x81802d`): an addon's `__index` on `_G` that calls a verb never runs inside the row's write.
+    #[test]
+    fn a_global_index_metamethod_never_runs_inside_the_rows_write() {
+        let (mut app, _, _rx) = log_app(&[(0, 201, 7)]);
+        let mut t = quest_template([obj(100, 1, 0, 0, ""), empty(), empty(), empty()]);
+        (t.quest_id, t.zone_or_sort) = (201, 7);
+        app.world_mut()
+            .resource_mut::<QuestLog>()
+            .insert_template(t);
+        app.update();
+        let (text, calls) = live(&mut app, |s| {
+            s.eval::<(String, i64)>(
+                "local calls = 0 \
+                 setmetatable(_G, { __index = function() calls = calls + GetNumArenaOpponents() + 1 end }) \
+                 local text = GetQuestLogLeaderBoard(1, 2) \
+                 setmetatable(_G, nil) \
+                 return text, calls",
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            text, "",
+            "no QUEST_MONSTERS_KILLED in this VM: an empty line"
+        );
+        assert_eq!(calls, 0, "the lookups skip the metamethod");
+    }
+
     /// A faction with no row counts a line that reads nothing until complete (`0x5e1300`, `0x5e1460`).
     #[test]
     fn a_faction_with_no_row_counts_a_line_that_reads_nothing() {
