@@ -181,6 +181,8 @@ pub(crate) fn feed_action_state(
         usable::UsableAuras,
         // The pet bar a pet-action slot reads.
         Option<Res<crate::ui_pet::PetBar>>,
+        // Where the player stands, for the walk's place legs.
+        usable::UsablePlaceFeed,
     ),
     factions: Option<Res<crate::target::Factions>>,
     reputations: Res<crate::net::Reputations>,
@@ -188,7 +190,8 @@ pub(crate) fn feed_action_state(
     commands: Res<NetCommands>,
     mut memory: Local<crate::ui_script::VmMemo<StateMemory>>,
 ) {
-    let (units, usable_auras, pet_bar) = &units_and_auras;
+    let (units, usable_auras, pet_bar, place_feed) = &units_and_auras;
+    let place = place_feed.player(actions.spells.contains(&usable::COLD_WEATHER_FLYING));
     let Some(mut script) = script else {
         return;
     };
@@ -334,6 +337,7 @@ pub(crate) fn feed_action_state(
                             spell_mods,
                             // The pet is not the active player: no rune spell is usable on it.
                             runes: None,
+                            place: place_feed.pet(),
                             combo_points: combo
                                 .as_deref()
                                 .map_or(0, |c| c.pet.on(0, selection.guid.unwrap_or(0))),
@@ -400,6 +404,7 @@ pub(crate) fn feed_action_state(
                         runes: rune_check,
                         combo_points,
                         auto_unshift,
+                        place,
                     };
                     let (u, oom) = usable::spell_usable(
                         button.action,
@@ -495,6 +500,7 @@ pub(crate) fn feed_action_state(
                         runes: rune_check,
                         combo_points,
                         auto_unshift,
+                        place,
                     };
                     let (u, oom) = usable::item_usable(
                         button.action,
@@ -597,6 +603,7 @@ pub(crate) fn feed_action_state(
             runes: rune_check,
             combo_points,
             auto_unshift,
+            place,
         };
         for (id, was_ready) in memory.reactive.iter_mut().flatten() {
             let Some(d) = sp.catalog.get(*id) else {

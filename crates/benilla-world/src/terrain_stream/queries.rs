@@ -107,15 +107,17 @@ pub fn terrain_height_under_cached<'a>(
     benilla_formats::terrain_height_at(&adt.chunks, wow)
 }
 
-/// Tracks the `AreaTable` id under the player's feet as the reference's area lookup does: a WMO
-/// interior wins when the faces-only down-ray finds it nearer, by its `WMOAreaTable.AreaTableID`;
-/// outdoors it is the chunk's MCNK `areaId`. Holds the last value while a tile decodes.
+/// Tracks the `AreaTable` id under the player's feet as the reference's area lookup
+/// (`0x77fa00`) does: the nearest WMO group under the feet,
+/// interior or exterior, wins when the faces-only down-ray finds it nearer than terrain, by its
+/// `WMOAreaTable.AreaTableID`; otherwise it is the chunk's MCNK `areaId`. Holds the last value
+/// while a tile decodes.
 pub(super) fn update_current_area(
     mut area: ResMut<CurrentArea>,
     focus: Res<crate::terrain_stream::ViewFocus>,
     streamer: Res<TerrainStreamer>,
     adt_tiles: Res<Assets<AdtTile>>,
-    interior: Res<crate::wmo_portal::CurrentAreaInterior>,
+    standing: Res<crate::wmo_portal::CurrentAreaWmo>,
     wmo_areas: Option<Res<crate::wmo_portal::WmoAreas>>,
 ) {
     let Some(wow) = focus.body_pos() else {
@@ -132,10 +134,13 @@ pub(super) fn update_current_area(
         // loading screen for this window.
         return;
     }
-    // WMO interior first: the player's down-ray group resolved to its WMOAreaTable world area.
-    let interior_area = interior.0.zip(wmo_areas.as_ref()).and_then(|(k, cat)| {
+    // The WMO group first: the player's down-ray group's own WMOAreaTable row by exact key, as
+    // `0x77fa00` asks it; a missing row or a zero area falls to the terrain, never to the
+    // whole-WMO row (Stormwind's exterior groups 25473-25477 have area 0 under a Stormwind City
+    // default).
+    let interior_area = standing.0.zip(wmo_areas.as_ref()).and_then(|(k, cat)| {
         cat.0
-            .resolve(k.wmo_id, k.name_set, k.group_area_id)
+            .group_row(k.wmo_id, k.name_set, k.group_area_id)
             .map(|a| a.area_table_id)
             .filter(|&id| id != 0)
     });
@@ -166,7 +171,7 @@ mod tests {
         w.init_resource::<crate::terrain_stream::ViewFocus>();
         w.init_resource::<TerrainStreamer>();
         w.init_resource::<Assets<AdtTile>>();
-        w.init_resource::<crate::wmo_portal::CurrentAreaInterior>();
+        w.init_resource::<crate::wmo_portal::CurrentAreaWmo>();
         w
     }
 
