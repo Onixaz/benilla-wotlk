@@ -432,6 +432,109 @@ function S.talk(text, npc, want, done)
   }
 end
 
+-- The strikes on the main bar's keys, found by name at the first fight: pressed in turn, as a
+-- player's rotation (nothing with a long cast or a summon). Icy Touch and Death Coil reach a
+-- fleeing unit.
+local STRIKES = { ["Icy Touch"] = true, ["Plague Strike"] = true, ["Blood Strike"] = true,
+  ["Death Strike"] = true, ["Death Coil"] = true, ["Heart Strike"] = true, ["Obliterate"] = true,
+  ["Scourge Strike"] = true }
+local strikeKeys, nextStrike = nil, 1
+local function strikes()
+  if not strikeKeys then
+    strikeKeys = {}
+    for slot = 1, 12 do
+      -- A spell action's second value is its spellbook slot, its fourth the spell.
+      local kind, id, _, spell = GetActionInfo(slot)
+      local name = kind == "spell" and (spell and GetSpellInfo(spell) or GetSpellName(id, "spell"))
+      if name and STRIKES[name] then
+        table.insert(strikeKeys, slot)
+        S.log("strike key %d: %s", slot, name)
+      end
+    end
+  end
+  return strikeKeys
+end
+
+-- The nearest living unit of any of `entries`: its entry, yards and position.
+function S.nearestOf(entries)
+  local best, bd, bx, by, bz
+  for _, e in ipairs(entries) do
+    local d, x, y, z = ProbeNearest(e, true)
+    if d and (not bd or d < bd) then
+      best, bd, bx, by, bz = e, d, x, y, z
+    end
+  end
+  return best, bd, bx, by, bz
+end
+
+-- A step that fights until `done`, a player's way: right-click the nearest unit `want` names
+-- (entry, yards, x, y, z; which targets it and starts the swings), close in on the target where it
+-- runs, press the strikes in turn, and on its death take the next. A target that loses no health
+-- for 20 s (out of reach, or evading) is skipped for good; with no wanted unit in sight the step
+-- walks the `roam` spots. `progress`, when given, adds to the step's status line.
+local STALL = 20
+function S.fight(text, want, done, roam, timeout, progress)
+  local spot, guid, hp, hpAt, swungAt = 1, nil, 0, 0, 0
+  return {
+    text,
+    done = function()
+      if done() then
+        S.release()
+        return true
+      end
+      local now = GetTime()
+      local live = UnitExists("target") and not UnitIsDead("target") and UnitCanAttack("player", "target")
+      if live then
+        local g = UnitGUID("target")
+        if g ~= guid or UnitHealth("target") < hp then
+          guid, hpAt = g, now
+        end
+        hp = UnitHealth("target")
+        if now - hpAt > STALL then
+          S.log("skipping %s (%s): no damage in %d s", tostring(UnitName("target")), g, STALL)
+          ProbeSkip(g)
+          ClearTarget()
+          S.release()
+          return false
+        end
+        local x, y, z = ProbeTargetPos()
+        if x then
+          S.steer(x, y, z, 3, false, 8)
+        end
+        if now - swungAt > 1.5 then
+          swungAt = now
+          local keys = strikes()
+          if #keys > 0 then
+            nextStrike = nextStrike % #keys + 1
+            S.pressKey(keys[nextStrike])
+          end
+        end
+        return false
+      end
+      guid, hp = nil, 0
+      local e, d, x, y, z = want()
+      if e then
+        if d > 25 then
+          S.steer(x, y, z, 20, false, 10)
+        elseif now - swungAt > 1 then
+          swungAt = now
+          ProbeInteractEntry(e, true)
+        end
+        return false
+      end
+      local p = roam[spot]
+      if S.steer(p[1], p[2], p[3], 4, false, 10) then
+        spot = spot % #roam + 1
+      end
+      return false
+    end,
+    status = function()
+      return "at " .. S.where() .. (progress and (", " .. progress()) or "")
+    end,
+    timeout = timeout,
+  }
+end
+
 -- The step machine.
 local f = CreateFrame("Frame")
 local acc, setupAt, stepAt, idx, started, finished, pokedAt = 0, 0, 0, 0, false, false, 0
