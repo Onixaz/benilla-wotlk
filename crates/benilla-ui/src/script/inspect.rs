@@ -77,9 +77,8 @@ impl super::UiScript {
         set_field!(self, inspect, view);
     }
 
-    /// Drain the tokens `NotifyInspect` queued; the app sends `CMSG_INSPECT` for each, which also
-    /// sets the server-side selection (`MiscHandler.cpp:945`).
-    pub fn take_inspect_notifies(&mut self) -> Vec<String> {
+    /// Drain the tokens `NotifyInspect` sent `CMSG_INSPECT` for, each with its guid; the app latches the token.
+    pub fn take_inspect_notifies(&mut self) -> Vec<(String, u64)> {
         drain_field!(self, inspect_notifies)
     }
 
@@ -101,6 +100,15 @@ fn reach(lua: &Lua, token: &Option<String>) -> Option<UnitReach> {
     model.unit_reach.get(&guid).copied()
 }
 
+/// The inspect gate (`0x520410`): inspectable, and in range unless `100.0 < d²`, a NaN passing.
+fn inspectable(r: &UnitReach) -> bool {
+    r.inspectable
+        && matches!(
+            r.dist_sq.partial_cmp(&CAN_INSPECT_DIST_SQ),
+            Some(Ordering::Less | Ordering::Equal) | None
+        )
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -111,17 +119,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CanInspect",
         lua.create_function(|lua, unit: Option<String>| {
-            let ok = match reach(lua, &unit) {
-                Some(r) => {
-                    r.inspectable
-                        && matches!(
-                            r.dist_sq.partial_cmp(&CAN_INSPECT_DIST_SQ),
-                            Some(Ordering::Less | Ordering::Equal) | None
-                        )
-                }
-                // No live unit: nil, through the inspect check's null-`this` guard.
-                None => false,
-            };
+            // No live unit: nil, through the inspect check's null-`this` guard.
+            let ok = reach(lua, &unit).is_some_and(|r| inspectable(&r));
             Ok(if ok { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;
@@ -178,12 +177,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // NotifyInspect(unit) (`Blizzard_InspectUI.lua:9`): fire-and-forget, as nothing waits on the
-    // reply.
+    // NotifyInspect(unit) (`0x522870`): past the inspect gate (`0x5228b3`), sends and sets the target; a new one drops the honor reply, its latch and the teams (`0x5e76d9`, `0x5e76e3`).
     g.set(
         "NotifyInspect",
         lua.create_function(|lua, unit: String| {
-            crate::script::model_mut_of(lua).inspect_notifies.push(unit);
+            let guid = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let guid = model.unit_guids.resolve(&unit).ok().flatten();
+                guid.filter(|g| model.unit_reach.get(g).is_some_and(inspectable))
+            };
+            let Some(guid) = guid else {
+                return Ok(());
+            };
+            let moved = super::live::read_live(|l| l.notify_inspect(guid)).unwrap_or(true);
+            let mut model = crate::script::model_mut_of(lua);
+            model.inspect_notifies.push((unit, guid));
+            if moved {
+                model.inspect_honor = None;
+                model.inspect_honor_pending = false;
+                model.inspect_arena_teams = Default::default();
+            }
             Ok(())
         })?,
     )?;
@@ -194,10 +209,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClearInspectPlayer",
         lua.create_function(|lua, ()| {
+            super::live::read_live(|l| l.clear_inspect_target());
             let mut model = crate::script::model_mut_of(lua);
             model.inspect_clear = Some(model.inspect_notifies.len());
             model.inspect_honor = None;
             model.inspect_honor_pending = false;
+            // The inspected teams go too (`0x5e78c2`).
+            model.inspect_arena_teams = Default::default();
             // The inspected talent tabs go at once (`0x5c9f70` with no player).
             model.inspect_talents.tabs.clear();
             model.inspect_talents.talents.clear();
@@ -250,6 +268,41 @@ mod tests {
             (P1_PET, reach(2500.0, false)),
         ]));
         s
+    }
+
+    /// The target moving drops the honor reply and the teams inside the call (`0x5e76d9`, `0x5e76e3`); staying keeps them (`0x5e76c9`); a refused unit sends nothing (`0x5228bd`).
+    #[test]
+    fn notify_inspect_drops_the_honor_reply_at_the_call_when_the_target_moves() {
+        let mut s = seeded();
+        let _live = crate::script::live::lend_test(Default::default());
+        let held = |s: &UiScript, call: &str| {
+            let honor = s
+                .eval::<bool>(&format!("{call}; return HasInspectHonorData() ~= nil"))
+                .unwrap();
+            let team = s.model_ref().inspect_arena_teams[0].is_some();
+            assert_eq!(honor, team, "the reply and the teams go together");
+            honor
+        };
+        s.run(r#"NotifyInspect("party1")"#).unwrap();
+        s.set_inspect_honor(Some(crate::script::InspectHonorData::default()));
+        s.set_inspect_arena_team(
+            0,
+            crate::script::InspectArenaTeamWords {
+                team_id: 9,
+                ..Default::default()
+            },
+        );
+        assert!(held(&s, r#"NotifyInspect("party1")"#), "the same target");
+        assert!(held(&s, r#"NotifyInspect("target")"#), "the mob is refused");
+        assert!(!held(&s, r#"NotifyInspect("player")"#), "a new target");
+        assert_eq!(
+            s.take_inspect_notifies(),
+            [
+                ("party1".into(), P1),
+                ("party1".into(), P1),
+                ("player".into(), ME)
+            ]
+        );
     }
 
     fn answers(s: &UiScript, expr: &str) -> bool {

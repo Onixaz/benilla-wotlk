@@ -934,7 +934,7 @@ pub(crate) mod schedule_tests {
     ///   test reads one frame late at worst, as `ui_unit::feed_unit_reach`'s range test does
     ///   (`UiFeed` runs before `WorldStage::Input`, so it cannot follow the transport chain); and
     ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
-    ///   `ui_battlefield::feed_battlefield` and the drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
+    ///   the status handler's one-shot system and the drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
     /// - The vehicle seats (#632) add 15: `vehicle::ride::ride_seats` re-roots a passenger's rig in
     ///   the entity-visuals chain right after `reseat_mounts`, as a mount re-seat does, and shares
     ///   its unordered `RigPose` readers (the nameplate, overhead mark, combat-text and anim-event
@@ -1183,7 +1183,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 745, 737),
+        ("Update", 733, 725),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1596,24 +1596,18 @@ pub(crate) mod schedule_tests {
          "`BankErrors` answers a `BuyBankSlot` click; the OPENED edge rides `VmMemo`s"),
         ("ui_guild_bank/mod.rs", "feed_guild_bank", Because::PlayerRoundTrip,
          "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
-        ("ui_battlefield.rs", "feed_battlefield", Because::SelfHealing,
-         "`reset_on_world_enter` runs before it at each world-enter cascade, clears the session and re-sends `BattlefieldStatusRequest`"),
-        ("ui_battlefield_score.rs", "feed_battlefield_score", Because::SelfHealing,
-         "`became_active` comes from a status 3, which `reset_on_world_enter`'s `BattlefieldStatusRequest` asks for again at each world-enter cascade"),
+        ("ui_battlefield.rs", "drain_battlefield", Because::PlayerRoundTrip,
+         "`closed` ends a battlemaster session, which only a list packet answering a click on a battlemaster opens"),
         ("ui_binder.rs", "feed_binder", Because::PlayerRoundTrip,
          "`SMSG_BINDER_CONFIRM` only answers the innkeeper's gossip line"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
          "`pending` is held until the zone mask and zone id are settled, which happens on the entry VM"),
-        ("ui_duel.rs", "feed_duel", Because::PlayerRoundTrip,
-         "a duel exists only after someone's Duel cast, and the server ends any duel at logout; FINISHED/bounds ride `VmMemo<FedDuel>` (another player's act: coincidence-only residual)"),
         ("ui_follow.rs", "feed_follow", Because::MemoLatched,
          "`feed.vm: VmMemo<FollowFeedMemo>`; a fresh VM re-fires BEGIN for a follow in progress"),
         ("ui_gm_ticket.rs", "feed_gm_ticket", Because::MemoLatched,
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
-        ("ui_honor.rs", "feed_honor", Because::MemoLatched,
-         "`state.vm: VmMemo<HonorFeedMemo>`; `events_for(None, ..)` re-fires both events on a fresh VM"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,
          "the token is latched only by Lua's `NotifyInspect`, and the diffs ride a `VmMemo`"),
         ("ui_item_text.rs", "drain_item_text", Because::FilledByVm,

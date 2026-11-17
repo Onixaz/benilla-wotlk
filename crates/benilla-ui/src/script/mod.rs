@@ -310,14 +310,14 @@ pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
 pub use barber::{BarberHost, BarberIntent, BarberStyle};
-pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
+pub use battlefield_positions::{BattlefieldFlagLive, BattlefieldPositionLive};
 pub use battlefield_queue::{
-    BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
-    BattlefieldQueueSlot, BattlefieldRewardView, BattlemasterRow, WorldPvpQueueView,
-    INSTANCE_TYPE_ARENA, RANDOM_BATTLEGROUND,
+    BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
+    BattlefieldQueueSlot, BattlefieldRewardView, BattlegroundType, BattlemasterRow,
+    WorldPvpQueueView, INSTANCE_TYPE_ARENA, RANDOM_BATTLEGROUND,
 };
 pub use battlefield_score::{
-    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView,
+    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
 };
 pub use bind_confirm::PendingEquipAnswer;
 pub use calls::{CastAt, NearestMode, ScriptCall};
@@ -451,7 +451,7 @@ pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetStats, PossessView};
 pub use pvp::{
-    pvp_name_global_keys, HonorState, InspectArenaTeamView, InspectHonorData, RankTitle,
+    pvp_name_global_keys, HonorState, InspectArenaTeamWords, InspectHonorData, RankTitle,
     PLAYER_FLAGS_PVP_TIMER,
 };
 pub use quest::{

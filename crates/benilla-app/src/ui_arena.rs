@@ -5,25 +5,17 @@
 //! An opponent comes from `SMSG_PARTY_MEMBER_STATS_FULL`'s arena byte (`0x6cf9fa`), its pet guid
 //! with it (`0x6cfc45`), or from a player of the other arena side streaming in while the active
 //! battlefield is an arena (`0x6e8300`). A slot keeps its guid until a world entry clears them all
-//! (`0x54cb69`); `SMSG_ARENA_UNIT_DESTROYED` only announces the loss (`0x54ad10`).
-//!
-//! Not built: the `"unseen"` a slot's unit fires on leaving range (`0x4d7230` -> `0x54abf0`), the
-//! stats 12340 keeps for an opponent out of range (`0x5497c0`), and the forced full stats refresh
-//! of an opponent first seen streamed (`0xbe9ee0`).
+//! (`0x54cb69`); `SMSG_ARENA_UNIT_DESTROYED` only announces the loss (`0x54ad10`). Each signal
+//! fires from the handler that raised it. The out-of-range `"unseen"`, the kept stats and the
+//! forced refresh are #1301.
 
-use benilla_assets::MapCatalogRes;
-use benilla_protocol::messages::ObjectType;
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{ScriptValue, UiScript};
-use bevy::ecs::system::NonSendMut;
+use benilla_ui::script::ScriptValue;
 use bevy::prelude::*;
 
-use crate::net::{
-    Guid, GuidIndex, NetHandlerApp, ObjectStore, SelfPlayer, WorldEnterCascadeMessage,
-};
+use crate::net::{GuidIndex, NetHandlerApp, ObjectStore};
 use crate::ui_battlefield::BattlefieldQueue;
-use crate::ui_script::UiFeed;
-use crate::ui_unit::UnitFeed;
+use crate::ui_script::live::UiEvents;
 
 /// The opponent and pet slots.
 pub(crate) const ARENA_SLOTS: usize = 5;
@@ -39,10 +31,7 @@ pub(crate) const ARENA_PET_TOKENS: [&str; ARENA_SLOTS] = [
     "arenapet5",
 ];
 
-/// An arena map's `Map.dbc` `InstanceType`, the active battlefield's `[0xbea570]`.
-const INSTANCE_TYPE_ARENA: u32 = 4;
-
-/// The slots and the `ARENA_OPPONENT_UPDATE`s owed to the VM, in the order 12340 fires them.
+/// The slots and the `ARENA_OPPONENT_UPDATE`s the call in hand raised, in 12340's order.
 #[derive(Resource, Default)]
 pub(crate) struct ArenaOpponents {
     opponents: [u64; ARENA_SLOTS],
@@ -56,6 +45,42 @@ pub(crate) struct ArenaOpponents {
 type PetOf<'a> = &'a dyn Fn(u64) -> Option<u64>;
 
 impl ArenaOpponents {
+    /// Queue the raised events, the tokens' units pushed ahead so each handler reads the slots just written.
+    fn flush(&mut self, ui: &mut UiEvents) {
+        if self.owed.is_empty() {
+            return;
+        }
+        ui.world(|world| {
+            if let Err(e) = world.run_system_cached(crate::ui_unit::push_arena_units) {
+                warn!("ui_arena: the arena units were not pushed: {e}");
+            }
+        });
+        for (token, what) in self.owed.drain(..) {
+            ui.fire(
+                "ARENA_OPPONENT_UPDATE",
+                vec![
+                    ScriptValue::Str(token.into()),
+                    ScriptValue::Str(what.into()),
+                ],
+            );
+        }
+    }
+
+    /// A player's init inside an arena (`0x6e8300`): one of the other side takes a slot.
+    pub(crate) fn streamed_player(
+        &mut self,
+        side: u8,
+        arena: &ArenaInstance,
+        guid: u64,
+        pet_of: PetOf,
+        ui: &mut UiEvents,
+    ) {
+        if arena.active() && side != arena.arena_faction() {
+            self.add(guid, pet_of);
+            self.flush(ui);
+        }
+    }
+
     /// `0x54d100`: the slot whose pet entry names the guid as owner, else the first slot with no
     /// pet that is free or already this guid's.
     fn add(&mut self, guid: u64, pet_of: PetOf) {
@@ -144,30 +169,31 @@ impl ArenaOpponents {
     }
 }
 
-/// The held unit's pet as `0x60a2f0` and `0x54ad10` read it: `UNIT_FIELD_CHARM`, else
-/// `UNIT_FIELD_SUMMON`.
+/// A held unit's pet as `0x60a2f0` reads it: `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`; `None` for no unit.
+pub(crate) fn pet_of_store(store: &ObjectStore) -> Option<u64> {
+    if !store.is_unit() {
+        return None;
+    }
+    let charm = store.0.unit_charm().unwrap_or(0);
+    Some(if charm != 0 {
+        charm
+    } else {
+        store.0.unit_summon().unwrap_or(0)
+    })
+}
+
+/// [`pet_of_store`] by guid through the object manager.
 pub(crate) fn pet_of<'a, 'w, 's, 'd>(
     index: &'a GuidIndex,
     stores: &'a Query<'w, 's, &'d ObjectStore>,
 ) -> impl Fn(u64) -> Option<u64> + use<'a, 'w, 's, 'd> {
-    move |guid| {
-        let store = index.0.get(&guid).and_then(|&e| stores.get(e).ok())?;
-        if !store.is_unit() {
-            return None;
-        }
-        let charm = store.0.unit_charm().unwrap_or(0);
-        Some(if charm != 0 {
-            charm
-        } else {
-            store.0.unit_summon().unwrap_or(0)
-        })
-    }
+    move |guid| pet_of_store(index.0.get(&guid).and_then(|&e| stores.get(e).ok())?)
 }
 
 /// Whether the active battlefield is an arena: the active map's `Map.dbc` instance type, which the
 /// active status records.
-fn in_arena(queue: &BattlefieldQueue, maps: Option<&MapCatalogRes>) -> bool {
-    queue.active_map().and_then(|m| maps?.0.instance_type(m)) == Some(INSTANCE_TYPE_ARENA)
+fn in_arena(queue: &BattlefieldQueue) -> bool {
+    queue.in_arena()
 }
 
 /// The active battlefield's arena test (`[0xbea570] == 4`) for a system outside this module: the
@@ -175,28 +201,34 @@ fn in_arena(queue: &BattlefieldQueue, maps: Option<&MapCatalogRes>) -> bool {
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ArenaInstance<'w> {
     queue: Option<Res<'w, BattlefieldQueue>>,
-    maps: Option<Res<'w, MapCatalogRes>>,
 }
 
 impl ArenaInstance<'_> {
     /// Whether the active battlefield is an arena.
     pub(crate) fn active(&self) -> bool {
-        self.queue
-            .as_deref()
-            .is_some_and(|q| in_arena(q, self.maps.as_deref()))
+        self.queue.as_deref().is_some_and(in_arena)
     }
 
     /// Whether the active battlefield may have moved since this system last ran.
     pub(crate) fn is_changed(&self) -> bool {
         self.queue.as_ref().is_some_and(|q| q.is_changed())
     }
+
+    /// Our arena side (`0xbea54a`).
+    fn arena_faction(&self) -> u8 {
+        self.queue
+            .as_deref()
+            .map_or(0, BattlefieldQueue::arena_faction)
+    }
 }
 
+/// `SMSG_PARTY_MEMBER_STATS_FULL`'s arena byte (`0x6cf9fa`): the opponent, signalled, then its pet (`0x6cfc45`).
 fn on_party_stats(
     In(ev): In<SessionEvent>,
     mut arena: ResMut<ArenaOpponents>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
+    mut ui: ResMut<UiEvents>,
 ) {
     let SessionEvent::PartyMemberStats { guid, info, .. } = ev else {
         return;
@@ -204,11 +236,28 @@ fn on_party_stats(
     if !info.arena_opponent {
         return;
     }
-    let pet_of = pet_of(&index, &stores);
-    arena.add(guid, &pet_of);
+    arena.add(guid, &pet_of(&index, &stores));
+    arena.flush(&mut ui);
+    // The pet lands once the opponent's signals have run (`0x54b8ea`, `0x54b90c`, then `0x6cfc45`).
     if let Some(pet) = info.pet_guid.filter(|&p| p != 0) {
-        arena.add_pet(pet, guid, &pet_of);
+        ui.world(move |world| {
+            if let Err(e) = world.run_system_cached_with(land_pet, (pet, guid)) {
+                warn!("ui_arena: the opponent's pet did not land: {e}");
+            }
+        });
     }
+}
+
+/// The party stats' pet guid into its slot (`0x54d1c0`), signalled.
+fn land_pet(
+    In((pet, owner)): In<(u64, u64)>,
+    mut arena: ResMut<ArenaOpponents>,
+    index: Res<GuidIndex>,
+    stores: Query<&ObjectStore>,
+    mut ui: ResMut<UiEvents>,
+) {
+    arena.add_pet(pet, owner, &pet_of(&index, &stores));
+    arena.flush(&mut ui);
 }
 
 /// `SMSG_ARENA_UNIT_DESTROYED` (`0x54b5e0`): read only while the active battlefield is an arena.
@@ -216,70 +265,35 @@ fn on_unit_destroyed(
     In(ev): In<SessionEvent>,
     mut arena: ResMut<ArenaOpponents>,
     queue: Res<BattlefieldQueue>,
-    maps: Option<Res<MapCatalogRes>>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
+    mut ui: ResMut<UiEvents>,
 ) {
     let SessionEvent::ArenaUnitDestroyed(guid) = ev else {
         return;
     };
-    if in_arena(&queue, maps.as_deref()) {
+    if in_arena(&queue) {
         arena.destroyed(guid, &pet_of(&index, &stores));
+        arena.flush(&mut ui);
     } else {
         debug!("ui_arena: unit {guid:#x} destroyed outside an arena — dropped");
     }
 }
 
-/// The world-entry clear, then each player of the other arena side that streams in while in an
-/// arena (`0x6e8300`-`0x6e832c`); our own side's byte is the status's arena faction.
-#[allow(clippy::type_complexity)] // a Bevy system's full input set
-fn track_streamed_players(
-    mut cascades: MessageReader<WorldEnterCascadeMessage>,
-    mut arena: ResMut<ArenaOpponents>,
-    queue: Res<BattlefieldQueue>,
-    maps: Option<Res<MapCatalogRes>>,
-    index: Res<GuidIndex>,
-    stores: Query<&ObjectStore>,
-    added: Query<(&Guid, &ObjectStore), (Added<ObjectStore>, Without<SelfPlayer>)>,
-) {
-    if cascades.read().count() > 0 {
+/// The world entry's arena part (`0x54cb51`): skipped on a reload, else every slot cleared and `"cleared"` signalled.
+pub(crate) fn enter_world(world: &mut World) {
+    let reloading = world
+        .get_resource::<crate::ui_script::ReloadEntry>()
+        .is_some_and(|r| r.0);
+    if reloading || !world.contains_resource::<ArenaOpponents>() {
+        return;
+    }
+    world.resource_scope(|world, mut arena: Mut<ArenaOpponents>| {
         arena.clear();
-    }
-    if added.is_empty() || !in_arena(&queue, maps.as_deref()) {
-        return;
-    }
-    let pet_of = pet_of(&index, &stores);
-    for (guid, store) in &added {
-        let side = store.0.player_arena_faction();
-        if store.0.object_type() == Some(ObjectType::Player)
-            && side.is_some_and(|s| s != queue.arena_faction())
-        {
-            arena.add(guid.0, &pet_of);
+        if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+            arena.flush(&mut ui);
         }
-    }
-}
-
-/// The owed `ARENA_OPPONENT_UPDATE`s, after the aura feed pushed the tokens they name.
-fn feed_arena(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut arena: ResMut<ArenaOpponents>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    if arena.owed.is_empty() {
-        return;
-    }
-    // The drain leaves change detection to the slots, which the unit feed rebuilds on.
-    for (token, what) in std::mem::take(&mut arena.bypass_change_detection().owed) {
-        script.fire_event(
-            "ARENA_OPPONENT_UPDATE",
-            vec![
-                ScriptValue::Str(token.into()),
-                ScriptValue::Str(what.into()),
-            ],
-        );
-    }
+    });
 }
 
 pub(crate) struct UiArenaPlugin;
@@ -288,22 +302,7 @@ impl Plugin for UiArenaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ArenaOpponents>()
             .net_handler(SessionEventKind::PartyMemberStats, on_party_stats)
-            .net_handler(SessionEventKind::ArenaUnitDestroyed, on_unit_destroyed)
-            // The slots fill ahead of the unit feed, so the tokens an event names resolve when it
-            // fires, as the reference fills a slot before it signals.
-            .add_systems(
-                Update,
-                track_streamed_players
-                    .after(benilla_world::schedule::WorldStage::Net)
-                    .before(crate::ui_script::UiPress),
-            )
-            .add_systems(
-                Update,
-                feed_arena
-                    .run_if(crate::ui_script::ingame_ui_up)
-                    .in_set(UiFeed)
-                    .after(UnitFeed),
-            );
+            .net_handler(SessionEventKind::ArenaUnitDestroyed, on_unit_destroyed);
     }
 }
 

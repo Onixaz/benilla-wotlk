@@ -452,14 +452,10 @@ pub(crate) struct Model {
     pub(crate) pvp_toggles: u32,
     /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
     pub(crate) pvp_sets: Vec<u8>,
-    /// The player's PvP toggle timer (`0x6de7a0`) as the app computed it this frame, ms.
-    pub(crate) pvp_toggle_timer: i32,
     /// The inspected player's arena teams by slot, resolved by the app.
-    pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamView>; 3],
+    pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamWords>; 3],
     /// The arena-team mirror: the three teams, the roster's sort and selection.
     pub(crate) arena_teams: super::arena_team::ArenaTeams,
-    /// The player's private honor fields; before the first push the six self getters read zeros.
-    pub(crate) honor: Option<pvp::HonorState>,
     /// The last `MSG_INSPECT_HONOR_STATS` reply; its presence is `HasInspectHonorData`'s answer.
     pub(crate) inspect_honor: Option<pvp::InspectHonorData>,
     /// `RequestInspectHonorData` calls; the pending gate keeps this at 0 or 1.
@@ -656,13 +652,6 @@ pub(crate) struct Model {
     pub(crate) battlefield_score_requests: u32,
     /// The battlefield queue mirror: types, list, selection, slots and the sends.
     pub(crate) battlefield: super::battlefield_queue::BattlefieldInfo,
-    /// Teammates' map positions, the flag carriers, the icon scale and position requests.
-    pub(crate) battlefield_positions: Vec<super::battlefield_positions::BattlefieldPositionView>,
-    pub(crate) battlefield_flags: Vec<super::battlefield_positions::BattlefieldFlagView>,
-    pub(crate) battlefield_icon_scale: f32,
-    /// A `Cell`: the stock `UIParent` OnUpdate calls the verb every frame and the app drains it
-    /// every frame, and neither is anything drawn (`ModelCell`).
-    pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
     /// Acknowledged tutorials, `None` before `SMSG_TUTORIAL_FLAGS`; all `TutorialsEnabled()` reads.
     pub(crate) tutorial_bank: Option<Vec<u8>>,
     /// The completed tutorials, in completion order, `id + 1` each.
@@ -1130,7 +1119,7 @@ pub(crate) struct Model {
     /// The inspected unit's gear, from its public `PLAYER_VISIBLE_ITEM_*` fields.
     pub(crate) inspect: Option<inspect::InspectView>,
     /// `NotifyInspect` unit tokens, sent as `CMSG_INSPECT`.
-    pub(crate) inspect_notifies: Vec<String>,
+    pub(crate) inspect_notifies: Vec<(String, u64)>,
     /// `ClearInspectPlayer` ran, after this many of [`Self::inspect_notifies`]: the app drops its
     /// inspect target there, keeping the call order.
     pub(crate) inspect_clear: Option<usize>,
@@ -1540,10 +1529,8 @@ impl Model {
             glue: Default::default(),
             pvp_toggles: 0,
             pvp_sets: Vec::new(),
-            pvp_toggle_timer: 0,
             inspect_arena_teams: Default::default(),
             arena_teams: Default::default(),
-            honor: None,
             inspect_honor: None,
             inspect_honor_requests: 0,
             inspect_honor_pending: false,
@@ -1628,10 +1615,6 @@ impl Model {
             battlefield_board: Default::default(),
             battlefield_score_requests: 0,
             battlefield: Default::default(),
-            battlefield_positions: Vec::new(),
-            battlefield_flags: Vec::new(),
-            battlefield_icon_scale: 1.0,
-            battlefield_position_requests: std::cell::Cell::new(0),
             tutorial_bank: None,
             tutorials_completed: Vec::new(),
             tutorial_flag_requests: Vec::new(),

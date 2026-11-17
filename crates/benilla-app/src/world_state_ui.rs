@@ -132,7 +132,8 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
 pub(crate) fn feed_world_state_ui(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     catalog: Option<Res<WorldStateUiRes>>,
-    mut states: ResMut<WorldStates>,
+    states: Res<WorldStates>,
+    mut owed: ResMut<WorldStateOwed>,
     mut last: Local<crate::ui_script::VmMemo<Option<u64>>>,
 ) {
     let Some(mut script) = script else {
@@ -145,11 +146,26 @@ pub(crate) fn feed_world_state_ui(
             script.set_world_state_ui(build(&catalog.0, &states));
         }
     }
-    // The drain leaves change detection alone: readers rebuild on the table, not on the queue.
+    for event in owed.take() {
+        script.queue_event(event.name(), Vec::new());
+    }
+}
+
+/// The world-state events owed, moved off the table so the VM's lenders only read it.
+#[derive(Resource, Default)]
+pub(crate) struct WorldStateOwed(Vec<crate::world_state::WorldStateEvent>);
+
+impl WorldStateOwed {
+    /// The events owed, in packet order.
+    fn take(&mut self) -> Vec<crate::world_state::WorldStateEvent> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+/// Move what the table owes into [`WorldStateOwed`], leaving the table's change detection alone.
+fn take_world_state_owed(mut states: ResMut<WorldStates>, mut owed: ResMut<WorldStateOwed>) {
     if states.has_owed() {
-        for event in states.bypass_change_detection().take_owed() {
-            script.queue_event(event.name(), Vec::new());
-        }
+        owed.0.extend(states.bypass_change_detection().take_owed());
     }
 }
 
@@ -157,10 +173,16 @@ pub(crate) struct WorldStateUiPlugin;
 
 impl Plugin for WorldStateUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_world_state_ui.after(AssetSet::Open))
+        app.init_resource::<WorldStateOwed>()
+            .add_systems(Startup, load_world_state_ui.after(AssetSet::Open))
             .add_systems(
                 Update,
-                feed_world_state_ui.in_set(crate::ui_script::UiDrain),
+                (
+                    take_world_state_owed
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::apply_net_updates),
+                    feed_world_state_ui.in_set(crate::ui_script::UiDrain),
+                ),
             );
     }
 }

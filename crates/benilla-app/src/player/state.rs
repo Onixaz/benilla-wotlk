@@ -585,6 +585,11 @@ impl Player {
         self.airborne_since.is_some()
     }
 
+    /// On a transport: `AcceptBattlefieldPort`'s transport refusal (`0x54db82`).
+    pub(crate) fn on_transport(&self) -> bool {
+        self.ride.is_some()
+    }
+
     /// A player whose last streamed movement word is `flags`, for the gates that read it.
     #[cfg(test)]
     pub(crate) fn with_move_flags(flags: u32) -> Self {

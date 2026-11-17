@@ -483,6 +483,7 @@ impl Plugin for UiScriptPlugin {
             // A queued `ReloadUI()` runs in `PreUpdate`, a frame after its drain (the reference's
             // deferral) and before every `Update` seed or feed.
             .init_resource::<ReloadUiPending>()
+            .init_resource::<ReloadEntry>()
             // Both are exclusive edges on the VM and must not interleave.
             .add_systems(
                 PreUpdate,
@@ -500,6 +501,13 @@ impl Plugin for UiScriptPlugin {
                     UiPaint,
                 )
                     .chain(),
+            )
+            // The area resolves after the input's calls drain and before the paint (`0x47f15b`, `0x47f163`).
+            .configure_sets(
+                Update,
+                benilla_world::terrain_stream::AreaAuthoritySet
+                    .after(UiDrain)
+                    .before(UiPaint),
             )
             // In the feed phase, so an `OnUpdate` reads this frame's `GetFramerate()`.
             .add_systems(Update, feed_framerate.in_set(UiFeed))
@@ -567,7 +575,7 @@ fn arbitrate_pointer_over_ui(
 mod lifecycle;
 pub(crate) use lifecycle::{
     end_ui_session, fire_armed_player_login, ingame_ui_up, run_pending_reload, setup_script,
-    strings_vm, AddOnIdentity, LeaveWorldSweep, LeavingWorldArmed, PendingEntryUiLoad,
+    strings_vm, AddOnIdentity, LeaveWorldSweep, LeavingWorldArmed, PendingEntryUiLoad, ReloadEntry,
     ReloadUiPending, WorldLeaveSweepMessage,
 };
 // Test-only: other modules' tests consume these, and a plain re-export would warn unused.

@@ -44,8 +44,9 @@ pub(crate) fn feed_pet_unit(
     mut field_edges: MessageReader<crate::net::FieldChanged>,
     changed_stores: Query<(), Changed<ObjectStore>>,
     mut removed_stores: RemovedComponents<ObjectStore>,
-    mut names: ResMut<NameCache>,
+    names: Res<NameCache>,
     commands: Res<NetCommands>,
+    mut evict: Commands,
     // The form table, the creature-type resolver's first stage.
     spells: Option<Res<crate::ui_action::Spells>>,
     mut memory: Local<crate::ui_script::VmMemo<PetUnitMemory>>,
@@ -76,14 +77,16 @@ pub(crate) fn feed_pet_unit(
         return;
     }
     let pet_guid = bar.spells.pet_guid;
-    watch_name_timestamp(pet_guid, &mut script, &pet, &mut names, memory);
+    let renamed = watch_name_timestamp(pet_guid, &mut script, &pet, &mut evict, memory);
     // An unstreamed pet pushes nothing: `UnitExists("pet")` reads false and the frame hides.
     let fresh = (pet_guid != 0)
         .then(|| pet.store(pet_guid))
         .flatten()
         .map(|store| {
-            let name = names
-                .resolve_unit(pet_guid, Some(store), &commands)
+            // An evicted name reads as unknown; the eviction's generation step re-asks it.
+            let name = (!renamed)
+                .then(|| names.resolve_unit(pet_guid, Some(store), &commands))
+                .flatten()
                 .map(str::to_string);
             // No `ChrClasses.dbc`: the reference reads a class only for TYPEMASK_PLAYER.
             let types = CreatureTypeSources::of_resources(&names, spells.as_deref());
@@ -170,21 +173,23 @@ fn watch_name_timestamp(
     pet_guid: u64,
     script: &mut UiScript,
     pet: &PetUnit,
-    names: &mut NameCache,
+    evict: &mut Commands,
     memory: &mut PetUnitMemory,
-) {
+) -> bool {
     let Some(store) = (pet_guid != 0).then(|| pet.store(pet_guid)).flatten() else {
         memory.name_stamp = None;
-        return;
+        return false;
     };
     let now = store.0.unit_pet_name_timestamp();
     let previous = memory.name_stamp.replace((pet_guid, now));
     if !was_renamed(previous, (pet_guid, now)) {
-        return;
+        return false;
     }
     if let Some(pet_number) = benilla_protocol::guid::pet_number(pet_guid) {
         debug!("ui_pet: pet {pet_guid:#x} was renamed (stamp → {now:?}) — re-asking its name");
-        names.forget_pet(pet_number);
+        evict.queue(move |world: &mut World| {
+            world.resource_mut::<NameCache>().forget_pet(pet_number);
+        });
     }
     // The reference's name watcher evicts for any owner but fires the event only for our charm or
     // summon.
@@ -195,6 +200,7 @@ fn watch_name_timestamp(
     {
         script.fire_event("LOCALPLAYER_PET_RENAMED", vec![]);
     }
+    true
 }
 
 /// Whether the same pet's name timestamp moved; a new guid is never a rename.

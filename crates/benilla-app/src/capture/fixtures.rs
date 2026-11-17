@@ -25,6 +25,27 @@ const SUBJECT_YAW: f32 = 2.36;
 
 /// A landed item template, written with the fixture's commands: the system lends the VM, whose
 /// verbs read the cache, so it holds no write to it.
+/// The name cache's seeds, queued: the fixture system lends the live view, which reads the cache.
+struct NameSeeds<'a, 'w, 's>(&'a mut Commands<'w, 's>);
+
+impl NameSeeds<'_, '_, '_> {
+    fn insert_creature(&mut self, entry: u32, record: Option<crate::names::CreatureRecord>) {
+        self.0.queue(move |world: &mut World| {
+            world
+                .resource_mut::<crate::names::NameCache>()
+                .insert_creature(entry, record);
+        });
+    }
+
+    fn insert_player(&mut self, guid: u64, name: String, traits: Option<(u8, u8, u8)>) {
+        self.0.queue(move |world: &mut World| {
+            world
+                .resource_mut::<crate::names::NameCache>()
+                .insert_player(guid, name, traits);
+        });
+    }
+}
+
 fn seed_template(commands: &mut Commands, entry: u32, t: benilla_protocol::messages::ItemInfo) {
     commands.queue(move |w: &mut World| {
         w.resource_mut::<crate::items::Items>()
@@ -59,8 +80,7 @@ pub(super) fn seed_ui_fixture(
     mut quest: ResMut<crate::ui_quest::QuestGiver>,
     mut quest_log: ResMut<crate::ui_quest_log::QuestLog>,
     mut loot: ResMut<crate::ui_loot::LootState>,
-    mut names: ResMut<crate::names::NameCache>,
-    icons: Option<Res<crate::entities::ItemDisplays>>,
+    (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut script, _live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
         crate::ui_script::LendLive,
@@ -74,6 +94,7 @@ pub(super) fn seed_ui_fixture(
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
 ) {
+    let mut names = NameSeeds(&mut name_seeds);
     // A glue-screen capture has no world scenario, and no glue screen opens a UI fixture.
     let Some(scenario) = ctx.scenario else {
         return;

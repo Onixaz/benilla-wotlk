@@ -747,7 +747,10 @@ pub(crate) fn raid_row_guids(group: &GroupState, self_guid: Option<u64>) -> Vec<
 }
 
 /// [`raid_row_guids`] as an iterator, so a per-token lookup allocates nothing.
-fn raid_rows(group: &GroupState, self_guid: Option<u64>) -> impl Iterator<Item = u64> + '_ {
+pub(super) fn raid_rows(
+    group: &GroupState,
+    self_guid: Option<u64>,
+) -> impl Iterator<Item = u64> + '_ {
     let in_raid = group.group_type == GROUPTYPE_RAID;
     self_guid.filter(|_| in_raid).into_iter().chain(
         group
@@ -1059,24 +1062,52 @@ fn unit_guid(
         .map(|m| m.guid)
 }
 
-/// Drain the Lua party intents into their `CMSG_*` sends.
+/// What the party intents apply against.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct PartyDrain<'w, 's> {
+    group: ResMut<'w, GroupState>,
+    selection: Res<'w, Selection>,
+    names: Res<'w, NameCache>,
+    self_q: Query<'w, 's, &'static Guid, With<SelfPlayer>>,
+    commands: Res<'w, NetCommands>,
+    tutorials: Option<MessageWriter<'w, crate::tutorial::TutorialEvent>>,
+    ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
+    raid_map: super::net::CurrentRaidMap<'w>,
+}
+
+/// Drain the Lua party intents into sends, through the command queue, since the lent view reads the group.
 pub(crate) fn drain_party(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut group: ResMut<GroupState>,
-    selection: Res<Selection>,
-    names: Res<NameCache>,
-    self_q: Query<&Guid, With<SelfPlayer>>,
-    commands: Res<NetCommands>,
-    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
-    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
-    raid_map: super::net::CurrentRaidMap,
+    mut deferred: Commands,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    let requests = script.take_party_requests();
+    if requests.is_empty() {
+        return;
+    }
+    deferred.queue(move |world: &mut World| {
+        let mut state = bevy::ecs::system::SystemState::<PartyDrain>::new(world);
+        apply_party_requests(state.get_mut(world), requests);
+        state.apply(world);
+    });
+}
+
+fn apply_party_requests(p: PartyDrain, requests: Vec<PartyRequest>) {
+    let PartyDrain {
+        mut group,
+        selection,
+        names,
+        self_q,
+        commands,
+        mut tutorials,
+        mut ui_errors,
+        raid_map,
+    } = p;
     let self_guid = self_q.iter().next().map(|g| g.0);
     let self_name = self_guid.and_then(|g| names.peek(g)).map(str::to_string);
-    for req in script.take_party_requests() {
+    for req in requests {
         // In the sandbox the server holds no group, so the group-changing intents apply to the
         // mirror as its echo would. Invites and accept/decline stay real: a real group ends it.
         if group.test && test_apply_local(&mut group, &req, self_guid, selection.guid) {

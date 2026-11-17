@@ -49,8 +49,53 @@ fn player() -> UnitState {
     }
 }
 
-fn seated() -> UiScript {
-    let mut s = UiScript::new().expect("VM");
+/// A VM with our player seated and our honor block lent as the live view.
+struct Seated {
+    // Ahead of the loan, which drops after it.
+    s: UiScript,
+    live: Option<crate::script::LiveLoan<crate::script::live::TestView>>,
+}
+
+impl Seated {
+    /// Lend `honor` and `timer` as the active player's from now on.
+    fn lend(&mut self, honor: Option<HonorState>, timer: Option<i32>) {
+        self.live = None;
+        let view = crate::script::live::TestView {
+            honor,
+            pvp_timer: timer,
+            ..Default::default()
+        };
+        // SAFETY: dropped on this thread, the previous loan first.
+        self.live = Some(unsafe { crate::script::LiveLoan::new(view) });
+    }
+
+    fn set_honor(&mut self, honor: Option<HonorState>) {
+        self.lend(honor, None);
+    }
+
+    fn set_pvp_toggle_timer(&mut self, ms: i32) {
+        self.lend(Some(honor_state()), Some(ms));
+    }
+}
+
+impl std::ops::Deref for Seated {
+    type Target = UiScript;
+    fn deref(&self) -> &UiScript {
+        &self.s
+    }
+}
+
+impl std::ops::DerefMut for Seated {
+    fn deref_mut(&mut self) -> &mut UiScript {
+        &mut self.s
+    }
+}
+
+fn seated() -> Seated {
+    let mut s = Seated {
+        s: UiScript::new().expect("VM"),
+        live: None,
+    };
     s.set_honor(Some(honor_state()));
     s.set_unit("player", Some(player()));
     s
@@ -771,24 +816,44 @@ fn get_inspect_honor_data_answers_six_zeros_when_no_reply_is_held() {
 fn get_inspect_arena_team_data_answers_eighteen_or_nothing() {
     let mut s = seated();
     assert_eq!(s.arity("GetInspectArenaTeamData(1)").unwrap(), 0);
-    s.set_inspect_arena_teams([
-        Some(InspectArenaTeamView {
-            name: "Probes".into(),
-            team_size: 2,
+    s.set_inspect_arena_team(
+        0,
+        InspectArenaTeamWords {
+            team_id: 7,
             rating: 1600,
             games: 20,
             wins: 12,
             played: 18,
             personal_rating: 1580,
-            background: [1.0, 0.5, 0.0],
-            emblem: 7,
-            emblem_color: [0.0, 0.0, 1.0],
-            border: 3,
-            border_color: [0.2, 0.2, 0.2],
-        }),
-        None,
-        None,
-    ]);
+        },
+    );
+    assert_eq!(
+        s.arity("GetInspectArenaTeamData(1)").unwrap(),
+        0,
+        "no cache record yet"
+    );
+    s.live = None;
+    s.live = Some(crate::script::live::lend_test(
+        crate::script::live::TestView {
+            honor: Some(honor_state()),
+            arena_teams: [
+                crate::script::ArenaTeamSlotView {
+                    info: [7, 2, 0, 0, 0, 0, 0],
+                    record: Some(crate::script::ArenaTeamRecordView {
+                        name: "Probes".into(),
+                        team_type: 2,
+                        background_color: 0xFFFF_8000,
+                        emblem_style: 7,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        },
+    ));
     assert_eq!(s.arity("GetInspectArenaTeamData(1)").unwrap(), 18);
     assert_eq!(
         s.eval::<String>(

@@ -57,6 +57,9 @@ fn gameobject_despawn_anim(guid: u64, commands: &mut Commands, index: &GuidIndex
 /// Registers the object layer's handlers.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
+    app.init_resource::<crate::ui_honor::PvpCooldown>()
+        .init_resource::<crate::ui_arena_team::ArenaTeams>()
+        .init_resource::<crate::ui_arena_team::RosterThrottle>();
     app.net_handler(K::ObjectCreate, on_object_create)
         .net_handler(K::ItemCreate, on_item)
         .net_handler(K::ItemTemplate, on_item)
@@ -114,6 +117,10 @@ pub(crate) struct Scene<'w, 's> {
     death_globals: ResMut<'w, crate::death::DeathGlobals>,
     player_init: ResMut<'w, crate::death::ActivePlayerInit>,
     arena: crate::ui_arena::ArenaInstance<'w>,
+    arena_slots: ResMut<'w, crate::ui_arena::ArenaOpponents>,
+    pvp: ResMut<'w, crate::ui_honor::PvpCooldown>,
+    arena_teams: ResMut<'w, crate::ui_arena_team::ArenaTeams>,
+    roster_throttle: ResMut<'w, crate::ui_arena_team::RosterThrottle>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
@@ -166,6 +173,9 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // (`0x6e818b`).
         if sc.self_guid.0 == Some(guid) {
             sc.player_init.0 = true;
+            // The init's PvP cooldown stamp (`0x6e8378` -> `0x6e81f2`).
+            sc.pvp
+                .enter(fields.player_flags(), std::time::Instant::now());
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {
@@ -216,6 +226,17 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             std::time::Instant::now(),
             ALLOC_EXPIRE,
         );
+        let arena_side = (kind == EntityKind::Player && sc.self_guid.0 != Some(guid))
+            .then(|| fields.player_arena_faction())
+            .flatten();
+        let own_pet = {
+            let charm = fields.unit_charm().unwrap_or(0);
+            if charm != 0 {
+                charm
+            } else {
+                fields.unit_summon().unwrap_or(0)
+            }
+        };
         object_create(
             guid,
             kind,
@@ -247,6 +268,18 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
             sc.commands.entity(e).insert(FreshSpawn);
+        }
+        // A player of the other arena side, as its init runs inside an arena (`0x6e8300`).
+        if let Some(side) = arena_side {
+            let (index, stores) = (&sc.index, &sc.stores);
+            let pet_of = |g: u64| {
+                if g == guid {
+                    return Some(own_pet);
+                }
+                crate::ui_arena::pet_of_store(stores.get(*index.0.get(&g)?).ok()?)
+            };
+            sc.arena_slots
+                .streamed_player(side, &sc.arena, guid, &pet_of, &mut sc.ui);
         }
     }
 }
@@ -1427,17 +1460,15 @@ fn gameobject_info(
     go_templates.insert(entry, type_id, name, data);
 }
 
-/// Our own unit's watched fields in field order, as the mirror handlers run (`0x4d5550`): health
-/// (`0x73f330`) ahead of the flags word, whose `UNIT_FLAGS` for `"player"` comes from its watch
-/// (`0x60c240` -> `0x60bf10`), then the dynamic and player flags; each keeps wire order with the
-/// next handler's events.
+/// Our own unit's watches in field order (`0x4d5550`): health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
+    use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
     if sc.self_guid.0 != Some(guid) {
         return;
     }
     let split = merged
         .death
-        .partition_point(|&(index, ..)| index < benilla_protocol::field::FIELD_UNIT_FLAGS);
+        .partition_point(|&(index, ..)| index < FIELD_UNIT_FLAGS);
     let (before, after) = merged.death.split_at(split);
     own_death_fields(sc, guid, before);
     if merged.flags_moved {
@@ -1446,7 +1477,41 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
-    own_death_fields(sc, guid, after);
+    let split = after.partition_point(|&(index, ..)| index < FIELD_PLAYER_FLAGS);
+    let (unit, player) = after.split_at(split);
+    own_death_fields(sc, guid, unit);
+    if let Some((old, new)) = merged.pvp_flags {
+        sc.pvp.watch(old, new, std::time::Instant::now());
+    }
+    own_death_fields(sc, guid, player);
+    own_player_watches(sc, guid, &merged.watched);
+}
+
+/// Our player watches past the flags in field order: honor, then the arena-team words once per update (`0x6cdda0`).
+fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
+    let mut teams_done = false;
+    for &(index, old, new) in edges {
+        if !crate::ui_arena_team::is_team_info(index) {
+            crate::ui_honor::own_field_changed(index, old, new, &mut sc.ui);
+            continue;
+        }
+        if std::mem::replace(&mut teams_done, true) {
+            continue;
+        }
+        let Some(&e) = sc.index.0.get(&guid) else {
+            continue;
+        };
+        let Ok(store) = sc.stores.get(e) else {
+            continue;
+        };
+        crate::ui_arena_team::info_changed(
+            &mut sc.arena_teams,
+            &mut sc.roster_throttle,
+            &store.0,
+            &sc.net,
+            &mut sc.ui,
+        );
+    }
 }
 
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
@@ -1501,6 +1566,15 @@ fn merge_fields(
             {
                 merged.death.push((e.index, e.old, e.new));
             }
+            if own && e.unit_field(FIELD_PLAYER_FLAGS) {
+                merged.pvp_flags = Some((e.old, e.new));
+            }
+            if own
+                && (crate::ui_honor::is_honor_watch(e.index)
+                    || crate::ui_arena_team::is_team_info(e.index))
+            {
+                merged.watched.push((e.index, e.old, e.new));
+            }
             edges.write(e);
         });
     } else {
@@ -1510,6 +1584,7 @@ fn merge_fields(
         commands.entity(entity).insert(ObjectStore(delta));
     }
     merged.death.sort_by_key(|&(index, ..)| index);
+    merged.watched.sort_by_key(|&(index, ..)| index);
     merged
 }
 
@@ -1519,6 +1594,10 @@ struct Merged {
     flags_moved: bool,
     /// Our own death fields' `(index, old, new)`, in field order.
     death: Vec<(u16, u32, u32)>,
+    /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
+    pvp_flags: Option<(u32, u32)>,
+    /// Our own honor and arena-team watches' `(index, old, new)`, in field order.
+    watched: Vec<(u16, u32, u32)>,
 }
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,

@@ -62,25 +62,16 @@ pub struct InspectHonorData {
     pub highest_rank: u8,
 }
 
-/// One of the inspected player's arena teams, `GetInspectArenaTeamData`'s eighteen (`0x5e8030`):
-/// the reply's six words and the team cache's name, size and banner.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct InspectArenaTeamView {
-    pub name: String,
-    pub team_size: u32,
+/// An inspected arena team as `MSG_INSPECT_ARENA_TEAMS` wrote it (`0x5e7b57`), joined with the cache when called (`0x5e8030`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InspectArenaTeamWords {
+    pub team_id: u32,
     pub rating: u32,
-    /// The reply's third to sixth words, pushed in their order.
+    /// The reply's third to sixth words, in their order.
     pub games: u32,
     pub wins: u32,
     pub played: u32,
     pub personal_rating: u32,
-    /// The banner: background colour, emblem style and colour, border style and colour, each
-    /// colour three 0..1 channels.
-    pub background: [f64; 3],
-    pub emblem: u32,
-    pub emblem_color: [f64; 3],
-    pub border: u32,
-    pub border_color: [f64; 3],
 }
 
 impl super::UiScript {
@@ -90,32 +81,27 @@ impl super::UiScript {
         drain_field!(self, pvp_toggles)
     }
 
-    /// Push the PvP toggle timer (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
-    /// on the flag watch's five-minute stamp, or -1 once it passed.
-    pub fn set_pvp_toggle_timer(&mut self, ms: i32) {
-        set_field!(self, pvp_toggle_timer, ms);
-    }
-
     /// Drain the queued `SetPVP` calls, the one-byte `CMSG_TOGGLE_PVP` each sends.
     pub fn take_pvp_sets(&mut self) -> Vec<u8> {
         drain_field!(self, pvp_sets)
     }
 
-    /// Push the inspected player's arena teams by slot; the app fires `INSPECT_HONOR_UPDATE`.
-    pub fn set_inspect_arena_teams(&mut self, teams: [Option<InspectArenaTeamView>; 3]) {
-        set_field!(self, inspect_arena_teams, teams);
+    /// Write one of the inspected player's arena teams, as its reply's handler does (`0x5e7b57`).
+    pub fn set_inspect_arena_team(&mut self, slot: usize, words: InspectArenaTeamWords) {
+        if let Some(t) = self.model_mut().inspect_arena_teams.get_mut(slot) {
+            *t = Some(words);
+        }
+    }
+
+    /// Drop the inspected player's arena teams, as a new inspect target does (`0x5e76e3`).
+    pub fn clear_inspect_arena_teams(&mut self) {
+        self.model_mut().inspect_arena_teams = Default::default();
     }
 
     /// Queue a toggle for `/pvp`, which benilla parses in Rust; the reference's `/pvp` is Lua over
     /// `TogglePVP`.
     pub fn queue_pvp_toggle(&mut self) {
         self.model_mut().pvp_toggles += 1;
-    }
-
-    /// Push or clear the local player's honor snapshot, the self getters' only source. It fires
-    /// no event: the app fires `PLAYER_PVP_KILLS_CHANGED`/`PLAYER_PVP_RANK_CHANGED` alongside.
-    pub fn set_honor(&mut self, honor: Option<HonorState>) {
-        set_field!(self, honor, honor);
     }
 
     /// Push or clear the last `MSG_INSPECT_HONOR_STATS` reply, paired with the pane's
@@ -166,10 +152,9 @@ fn visual_rank(rank: i64) -> i64 {
     }
 }
 
-fn honor(lua: &Lua) -> Option<HonorState> {
-    lua.app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data")
-        .honor
+/// Our honor block, read off the active player when called.
+fn honor(_lua: &Lua) -> Option<HonorState> {
+    crate::script::live::read_live(|l| l.honor()).flatten()
 }
 
 fn read(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {
@@ -339,12 +324,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms.
+    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms, 0 without the active player (`0x51bd34`).
     g.set(
         "GetPVPTimer",
-        lua.create_function(|lua, ()| {
-            let model = read(lua);
-            Ok(f64::from(model.pvp_toggle_timer.wrapping_add(1000)))
+        lua.create_function(|_, ()| {
+            let timer = crate::script::live::read_live(|l| l.pvp_toggle_timer()).flatten();
+            Ok(timer.map_or(0.0, |t| f64::from(t.wrapping_add(1000))))
         })?,
     )?;
 
@@ -570,26 +555,34 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let team = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
-                .and_then(|i| model.inspect_arena_teams.get(i))
-                .and_then(Option::as_ref);
-            let Some(t) = team else {
+                .and_then(|i| model.inspect_arena_teams.get(i).copied().flatten())
+                .filter(|t| t.team_id != 0);
+            drop(model);
+            // The team cache's record when called.
+            let Some((t, r)) = team.and_then(|t| {
+                let r = crate::script::live::read_live(|l| l.arena_team_record(t.team_id))??;
+                Some((t, r))
+            }) else {
                 return Ok(MultiValue::new());
             };
             let n = |v: u32| Value::Number(f64::from(v as i32));
+            let rgb = |c: u32| {
+                [16, 8, 0].map(|s| Value::Number(f64::from((c >> s) & 0xFF) * 0.003_921_568_9))
+            };
             let mut out = vec![
-                Value::String(lua.create_string(&t.name)?),
-                n(t.team_size),
+                Value::String(lua.create_string(&r.name)?),
+                n(r.team_type),
                 n(t.rating),
                 n(t.games),
                 n(t.wins),
                 n(t.played),
                 n(t.personal_rating),
             ];
-            out.extend(t.background.iter().map(|&c| Value::Number(c)));
-            out.push(n(t.emblem));
-            out.extend(t.emblem_color.iter().map(|&c| Value::Number(c)));
-            out.push(n(t.border));
-            out.extend(t.border_color.iter().map(|&c| Value::Number(c)));
+            out.extend(rgb(r.background_color));
+            out.push(n(r.emblem_style));
+            out.extend(rgb(r.emblem_color));
+            out.push(n(r.border_style));
+            out.extend(rgb(r.border_color));
             Ok(MultiValue::from_vec(out))
         })?,
     )?;

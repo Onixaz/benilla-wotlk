@@ -443,7 +443,7 @@ impl WorldMapState {
     }
 
     /// [`Self::project_on`] with no floor passed in.
-    fn project(&self, p: WorldMapPoint) -> ((f32, f32), bool) {
+    pub(crate) fn project(&self, p: WorldMapPoint) -> ((f32, f32), bool) {
         self.project_on(p, 0)
     }
 
@@ -525,7 +525,7 @@ impl WorldMapState {
     }
 
     /// A unit's blip (`0x5444f0`): the projection, hidden on the Outland flag.
-    fn blip(&self, p: Option<WorldMapPoint>) -> (f32, f32) {
+    pub(crate) fn blip(&self, p: Option<WorldMapPoint>) -> (f32, f32) {
         match p.map(|p| self.project(p)) {
             Some((uv, false)) => uv,
             _ => (0.0, 0.0),
@@ -1268,7 +1268,7 @@ pub(crate) struct QuestPoiPlace {
     pub(crate) y: f32,
 }
 
-fn with_map<R>(lua: &Lua, f: impl FnOnce(&WorldMapState) -> R) -> R {
+pub(super) fn with_map<R>(lua: &Lua, f: impl FnOnce(&WorldMapState) -> R) -> R {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");

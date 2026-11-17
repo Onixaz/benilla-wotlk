@@ -76,9 +76,11 @@ impl Plugin for UiLfgPlugin {
             .add_systems(
                 Update,
                 (
+                    // After the world entry's status request (`0x528230`, then `0x528267`).
                     lfg_enter_world
                         .in_set(UiFeed)
-                        .after(crate::ui_battlefield::reset_on_world_enter),
+                        .after(crate::ui_battlefield::request_status_on_world_enter)
+                        .after(crate::ui_unit::EnterWorldFeed),
                     // Gated, so a frameless boot VM never takes a packet the in-game VM needs.
                     // After a map change's cache eviction, which writes the icon catalog's holder.
                     feed_lfg

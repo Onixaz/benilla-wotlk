@@ -107,6 +107,112 @@ pub trait LiveState {
     fn summon_time_left_ms(&self) -> u32 {
         0
     }
+
+    /// Queue slot `index` (`0xbea4b8`) at the call, `None` off the two.
+    fn battlefield_slot(&self, index: usize) -> Option<super::BattlefieldQueueSlot> {
+        (index < 2).then(Default::default)
+    }
+
+    /// The active instance's globals at the call (`0xacd16c`, `0xbea570`).
+    fn battlefield_instance(&self) -> super::BattlefieldInstance {
+        super::BattlefieldInstance::default()
+    }
+
+    /// The world-PvP queue (`0xbea4a8`) at the call.
+    fn world_pvp_queue(&self) -> super::WorldPvpQueueView {
+        super::WorldPvpQueueView::default()
+    }
+
+    /// The current area's flags carry `0x8000000` (`0x54c810`).
+    fn can_hearth_and_resurrect(&self) -> bool {
+        false
+    }
+
+    /// The first of `AcceptBattlefieldPort`'s refusals we now meet (`0x54da10`).
+    fn battlefield_port_refusal(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// `BattlemasterList.dbc`'s row `id` resolved for the player at the call.
+    fn battlemaster_row(&self, _id: u32) -> Option<super::BattlemasterRow> {
+        None
+    }
+
+    /// The battleground rows the type list sorts (`0x54a650`).
+    fn battleground_types(&self) -> Vec<super::BattlegroundType> {
+        Vec::new()
+    }
+
+    /// A scoreboard row's name-cache record when called (`0x54be90`), `None` while uncached.
+    fn score_name(&self, _guid: u64) -> Option<super::ScoreName> {
+        None
+    }
+
+    /// The scoreboard has pending names (`0xbea590`): the rebuild and sort wait (`0x54aa39`, `0x54cee3`).
+    fn battlefield_score_names_pending(&self) -> bool {
+        false
+    }
+
+    /// The leading arena slots holding an opponent or a pet (`0x549630`), `None` without slots.
+    fn arena_opponent_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// Our honor block when called, `None` before its private fields stream.
+    fn honor(&self) -> Option<super::HonorState> {
+        None
+    }
+
+    /// The PvP toggle timer (`0x6de7a0`) when called, `None` without the active player.
+    fn pvp_toggle_timer(&self) -> Option<i32> {
+        None
+    }
+
+    /// Our three arena-team slots when called.
+    fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
+        Default::default()
+    }
+
+    /// The team cache's record for `team_id` when called, asked on a miss.
+    fn arena_team_record(&self, _team_id: u32) -> Option<super::ArenaTeamRecordView> {
+        None
+    }
+
+    /// The positions list's entries outside our party and raid (`0x54a040`).
+    fn battlefield_position_count(&self) -> usize {
+        0
+    }
+
+    /// The `index`th entry outside our party and raid (`0x54c2e0`), its name asked on a miss.
+    fn battlefield_position(&self, _index: usize) -> Option<super::BattlefieldPositionLive> {
+        None
+    }
+
+    /// The flag carriers held, 2 when the second is (`0x54a0e0`).
+    fn battlefield_flag_count(&self) -> usize {
+        0
+    }
+
+    /// The `index`th flag carrier's sources and token (`0x54dcc0`).
+    fn battlefield_flag(&self, _index: usize) -> Option<super::BattlefieldFlagLive> {
+        None
+    }
+
+    /// The active map's `MinimapIconScale`, 1 without a row (`0x54c740`).
+    fn battlefield_icon_scale(&self) -> f32 {
+        1.0
+    }
+
+    /// `RequestBattlefieldPositions` (`0x54cf60`): cleared without an active slot, else sent at most every 5000 ms.
+    fn request_battlefield_positions(&self) {}
+
+    /// `NotifyInspect`'s `CMSG_INSPECT` and target (`0x5228c3`, `0x52291a`); whether the target moved (`0x5e76c1`).
+    fn notify_inspect(&self, _guid: u64) -> bool {
+        true
+    }
+
+    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
+    fn clear_inspect_target(&self) {}
 }
 
 /// A lent view's address, its lifetime erased.
@@ -206,6 +312,22 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     Some(f(live))
 }
 
+/// Lend `view` as the live view until the loan drops, for the VM's own tests.
+#[cfg(test)]
+pub(crate) fn lend_test(view: TestView) -> LiveLoan<TestView> {
+    // SAFETY: a test drops its loans on its own thread, the latest first.
+    unsafe { LiveLoan::new(view) }
+}
+
+/// Lend `slots` as our arena-team slots, for the VM's own tests.
+#[cfg(test)]
+pub(crate) fn lend_arena_teams(slots: [super::ArenaTeamSlotView; 3]) -> LiveLoan<TestView> {
+    lend_test(TestView {
+        arena_teams: slots,
+        ..Default::default()
+    })
+}
+
 /// A view over fixed state, for the VM's own tests.
 #[cfg(test)]
 #[derive(Default)]
@@ -222,6 +344,14 @@ pub(crate) struct TestView {
     pub dynamic_flags: std::collections::HashMap<u64, u32>,
     /// Each held player's `PLAYER_FLAGS`; a held unit absent here is no player.
     pub player_flags: std::collections::HashMap<u64, u32>,
+    /// Our honor block.
+    pub honor: Option<super::HonorState>,
+    /// The PvP toggle timer, `None` without the active player.
+    pub pvp_timer: Option<i32>,
+    /// Our arena-team slots.
+    pub arena_teams: [super::ArenaTeamSlotView; 3],
+    /// The inspect target the inspect verbs set.
+    pub inspect_target: Cell<u64>,
 }
 
 #[cfg(test)]
@@ -257,6 +387,33 @@ impl LiveState for TestView {
 
     fn far_sight(&self) -> bool {
         self.far_sight
+    }
+
+    fn honor(&self) -> Option<super::HonorState> {
+        self.honor
+    }
+
+    fn pvp_toggle_timer(&self) -> Option<i32> {
+        self.pvp_timer
+    }
+
+    fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
+        self.arena_teams.clone()
+    }
+
+    fn arena_team_record(&self, team_id: u32) -> Option<super::ArenaTeamRecordView> {
+        self.arena_teams
+            .iter()
+            .find(|s| s.info[0] == team_id)
+            .and_then(|s| s.record.clone())
+    }
+
+    fn notify_inspect(&self, guid: u64) -> bool {
+        self.inspect_target.replace(guid) != guid
+    }
+
+    fn clear_inspect_target(&self) {
+        self.inspect_target.set(0);
     }
 }
 

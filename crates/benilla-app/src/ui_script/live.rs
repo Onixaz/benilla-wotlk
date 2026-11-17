@@ -26,6 +26,13 @@ pub(crate) struct LiveView<'w, 's> {
     far_sight_clear: Option<Res<'w, crate::player::view_subject::FarSightClear>>,
     death: crate::death::DeathView<'w, 's>,
     summon: crate::ui_summon::SummonView<'w>,
+    battlefield: crate::ui_battlefield::BattlefieldView<'w, 's>,
+    score: crate::ui_battlefield_score::ScoreView<'w>,
+    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
+    honor: crate::ui_honor::HonorView<'w>,
+    arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
+    positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
+    inspect: crate::ui_inspect::InspectLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -35,6 +42,21 @@ impl LiveView<'_, '_> {
         let &entity = self.index.as_ref()?.0.get(&guid)?;
         let fields = &self.stores.get(entity).ok()?.0;
         fields.is_unit().then_some(fields)
+    }
+
+    /// A held player's entity, the object lookup with the player type mask (`0x54c3e7`).
+    fn player_entity(&self, guid: u64) -> Option<Entity> {
+        let &entity = self.index.as_ref()?.0.get(&guid)?;
+        let fields = &self.stores.get(entity).ok()?.0;
+        (fields.object_type() == Some(benilla_protocol::messages::ObjectType::Player))
+            .then_some(entity)
+    }
+
+    /// A held player's PvP side (`0x54d074`).
+    fn player_side(&self, guid: u64) -> Option<i8> {
+        let entity = self.player_entity(guid)?;
+        let race = self.stores.get(entity).ok()?.0.unit_race()?;
+        Some(crate::ui_unit::race_pvp_team(race))
     }
 }
 
@@ -142,6 +164,109 @@ impl LiveState for LiveView<'_, '_> {
     fn summon_time_left_ms(&self) -> u32 {
         self.summon.time_left_ms()
     }
+
+    fn battlefield_slot(&self, index: usize) -> Option<benilla_ui::script::BattlefieldQueueSlot> {
+        self.battlefield.slot(index)
+    }
+
+    fn battlefield_instance(&self) -> benilla_ui::script::BattlefieldInstance {
+        self.battlefield.instance()
+    }
+
+    fn world_pvp_queue(&self) -> benilla_ui::script::WorldPvpQueueView {
+        self.battlefield.world_pvp()
+    }
+
+    fn can_hearth_and_resurrect(&self) -> bool {
+        self.battlefield.can_hearth_and_resurrect()
+    }
+
+    fn battlefield_port_refusal(&self) -> Option<&'static str> {
+        self.battlefield.port_refusal()
+    }
+
+    fn battlemaster_row(&self, id: u32) -> Option<benilla_ui::script::BattlemasterRow> {
+        self.battlefield.row(id)
+    }
+
+    fn battleground_types(&self) -> Vec<benilla_ui::script::BattlegroundType> {
+        self.battlefield.types()
+    }
+
+    /// A held unit's own race and class stand in where the name answer carried none.
+    fn score_name(&self, guid: u64) -> Option<benilla_ui::script::ScoreName> {
+        self.score.name(guid, |g| {
+            let f = self.unit(g)?;
+            Some((f.unit_race()?, f.unit_class()?))
+        })
+    }
+
+    fn battlefield_score_names_pending(&self) -> bool {
+        self.score.names_pending()
+    }
+
+    fn arena_opponent_count(&self) -> Option<usize> {
+        self.arena.as_ref().map(|a| a.count())
+    }
+
+    fn honor(&self) -> Option<benilla_ui::script::HonorState> {
+        crate::ui_honor::honor_of(self.unit(self.active_player()?)?)
+    }
+
+    fn pvp_toggle_timer(&self) -> Option<i32> {
+        let me = self.unit(self.active_player()?)?;
+        Some(self.honor.toggle_timer(me))
+    }
+
+    fn arena_team_slots(&self) -> [benilla_ui::script::ArenaTeamSlotView; 3] {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        self.arena_teams.slots(me)
+    }
+
+    fn arena_team_record(&self, team_id: u32) -> Option<benilla_ui::script::ArenaTeamRecordView> {
+        self.arena_teams.record(team_id)
+    }
+
+    fn battlefield_position_count(&self) -> usize {
+        self.positions.count(self.active_player())
+    }
+
+    fn battlefield_position(
+        &self,
+        index: usize,
+    ) -> Option<benilla_ui::script::BattlefieldPositionLive> {
+        self.positions
+            .position(self.active_player(), index, |g| self.player_entity(g))
+    }
+
+    fn battlefield_flag_count(&self) -> usize {
+        self.positions.flag_count()
+    }
+
+    fn battlefield_flag(&self, index: usize) -> Option<benilla_ui::script::BattlefieldFlagLive> {
+        self.positions.flag(
+            self.active_player(),
+            index,
+            |g| self.player_entity(g),
+            |g| self.player_side(g),
+        )
+    }
+
+    fn battlefield_icon_scale(&self) -> f32 {
+        self.positions.icon_scale()
+    }
+
+    fn request_battlefield_positions(&self) {
+        self.positions.request();
+    }
+
+    fn notify_inspect(&self, guid: u64) -> bool {
+        self.inspect.notify(guid)
+    }
+
+    fn clear_inspect_target(&self) {
+        self.inspect.clear();
+    }
 }
 
 /// [`LiveView`] lent to every verb for the run of the system that takes it: the parameter each
@@ -221,11 +346,29 @@ unsafe impl SystemParam for LendLive<'_, '_> {
 // SAFETY: `LiveView` reads only.
 unsafe impl ReadOnlySystemParam for LendLive<'_, '_> {}
 
+/// A handler's write to state the VM owns, run in turn with the events around it.
+type VmWrite = Box<dyn FnOnce(&mut UiScript) + Send + Sync>;
+
+/// A step that needs the whole `World`, run in turn with the events around it.
+type WorldStep = Box<dyn FnOnce(&mut World) + Send + Sync>;
+
 /// One queued call into the VM.
 enum UiEvent {
     Fire(&'static str, Vec<ScriptValue>),
     /// The cursor clear a handler runs beside its event (`0x520fab`).
     ClearCursor,
+    /// A write to what the VM owns, such as the battlefield list a list packet fills (`0x54e390`).
+    Write(VmWrite),
+    /// A system chat line, its template read off the VM and filled (`0x5498f6`, `0x5cfb20`).
+    SystemLine(&'static str, Vec<LineArg>),
+    /// A step over the `World`, such as the unit pushes an event's tokens read.
+    World(WorldStep),
+}
+
+/// An argument a system line's template takes.
+pub(crate) enum LineArg {
+    S(String),
+    D(i64),
 }
 
 /// The events this frame's handlers fired, in order; the drain empties it after each handler.
@@ -243,6 +386,21 @@ impl UiEvents {
         self.0.push(UiEvent::ClearCursor);
     }
 
+    /// Add the system chat line `key`'s template names, filled with `args` as the handler runs.
+    pub(crate) fn system_line(&mut self, key: &'static str, args: Vec<LineArg>) {
+        self.0.push(UiEvent::SystemLine(key, args));
+    }
+
+    /// Write state the VM owns in turn with the events around it; `write` may fire its own.
+    pub(crate) fn write(&mut self, write: impl FnOnce(&mut UiScript) + Send + Sync + 'static) {
+        self.0.push(UiEvent::Write(Box::new(write)));
+    }
+
+    /// Run `step` over the `World` in turn with the events around it; what it queues fires next.
+    pub(crate) fn world(&mut self, step: impl FnOnce(&mut World) + Send + Sync + 'static) {
+        self.0.push(UiEvent::World(Box::new(step)));
+    }
+
     /// The fired event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
@@ -251,6 +409,9 @@ impl UiEvents {
             .map(|e| match e {
                 UiEvent::Fire(name, _) => *name,
                 UiEvent::ClearCursor => "<clear cursor>",
+                UiEvent::Write(_) => "<write>",
+                UiEvent::SystemLine(key, _) => key,
+                UiEvent::World(_) => "<world>",
             })
             .collect()
     }
@@ -337,12 +498,60 @@ pub(crate) fn fire_handler_events(world: &mut World) {
     if queued.0.is_empty() {
         return;
     }
-    let events = std::mem::take(&mut queued.0);
+    let mut events = std::collections::VecDeque::from(std::mem::take(&mut queued.0));
+    let mut lines = Vec::new();
+    let mut batch = Vec::new();
+    while let Some(event) = events.pop_front() {
+        match event {
+            UiEvent::World(step) => {
+                fire_batch(world, &mut batch, &mut lines);
+                step(world);
+                // What the step queued fires in its turn, ahead of the rest.
+                if let Some(mut queued) = world.get_resource_mut::<UiEvents>() {
+                    for e in std::mem::take(&mut queued.0).into_iter().rev() {
+                        events.push_front(e);
+                    }
+                }
+            }
+            other => batch.push(other),
+        }
+    }
+    fire_batch(world, &mut batch, &mut lines);
+    // The chat log carries the line to the chat frame, as the chat feed's other system lines go.
+    if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
+        for line in lines {
+            crate::ui_chat::away::push_system(&mut chat, line);
+        }
+    }
+}
+
+/// Fire `batch` into the VM, in order, with the `World` lent, collecting the system lines.
+fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<String>) {
+    if batch.is_empty() {
+        return;
+    }
+    let events = std::mem::take(batch);
     with_live_world(world, |script| {
         for event in events {
             match event {
                 UiEvent::Fire(event, args) => script.fire_event(event, args),
                 UiEvent::ClearCursor => script.clear_cursor_payload(),
+                UiEvent::Write(write) => write(script),
+                UiEvent::SystemLine(key, args) => {
+                    use benilla_ui::strings::Arg;
+                    let args: Vec<Arg> = args
+                        .iter()
+                        .map(|a| match a {
+                            LineArg::S(s) => Arg::S(s),
+                            LineArg::D(d) => Arg::D(*d),
+                        })
+                        .collect();
+                    let text = crate::ui_chat::combat::global_string(script, key)
+                        .map(|t| benilla_ui::strings::fill(&t, &args));
+                    lines.extend(text.filter(|t| !t.is_empty()));
+                }
+                // Split out by the caller.
+                UiEvent::World(_) => {}
             }
         }
     });

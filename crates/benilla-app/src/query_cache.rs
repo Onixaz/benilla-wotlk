@@ -152,7 +152,7 @@ pub(crate) fn register<T: AskOnce>(app: &mut App) {
     );
 }
 
-fn release_on_enter<T: AskOnce>(
+pub(crate) fn release_on_enter<T: AskOnce>(
     mut entered: MessageReader<EnteredWorldMessage>,
     mut cache: ResMut<T>,
 ) {

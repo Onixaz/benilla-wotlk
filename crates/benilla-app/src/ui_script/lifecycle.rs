@@ -822,6 +822,10 @@ fn close_ui_session(world: &mut World) {
 #[derive(Resource, Default)]
 pub(crate) struct ReloadUiPending(pub(crate) bool);
 
+/// The reload byte (`0xbd0790`): from `ReloadUI()` (`0x52b00c`) to the world entry it re-enters.
+#[derive(Resource, Default)]
+pub(crate) struct ReloadEntry(pub(crate) bool);
+
 /// Run a pending `ReloadUI()`: the reference's teardown and rebuild, for us [`end_ui_session`] then
 /// [`load_ingame_ui_on_world_entry`] without leaving the world, so a `DisableAddOn` staged in the
 /// dying VM reaches `AddOns.txt` before the rebuild reads it. `PLAYER_ENTERING_WORLD` then refires
@@ -840,6 +844,8 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         return;
     }
     info!("ui_script: ReloadUI — ending the UI session and building a new one");
+    // The teardown leaves the world (`0x528c30`).
+    crate::ui_battlefield::leave_world(world);
     // The combat log's store outlives a reload, as the reference keeps it outside the VM.
     let combat_log = world
         .get_non_send_resource_mut::<UiScript>()
@@ -892,6 +898,7 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         .is_some();
     if seated {
         world.write_message(crate::net::WorldEnterCascadeMessage);
+        world.get_resource_or_init::<ReloadEntry>().0 = true;
     }
 }
 

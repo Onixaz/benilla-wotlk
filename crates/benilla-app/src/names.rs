@@ -431,6 +431,17 @@ impl NameCache {
         self.player_realms.get(&guid).map(String::as_str)
     }
 
+    /// A player's full name off the name record (`0x67d770`), asked on a miss and again after a deny (`0x67a2d0`).
+    pub(crate) fn full_name_record(&self, guid: u64, commands: &NetCommands) -> Option<String> {
+        if self.players.answered_unknown(guid) {
+            self.players.ask_again(guid, || {
+                let _ = commands.0.send(ClientCommand::NameQuery { guid });
+            });
+            return None;
+        }
+        self.full_name(guid, commands)
+    }
+
     /// A player's name as the reference's realm-aware callers format it: `name-realm` when the
     /// record holds a realm (`"%s-%s"`, `0x54b58a`), else the bare name. Asks once on a miss.
     pub(crate) fn full_name(&self, guid: u64, commands: &NetCommands) -> Option<String> {

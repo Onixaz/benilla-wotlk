@@ -33,7 +33,7 @@ fn partner_probe(
             .0
             .send(crate::net::ClientCommand::GroupAccept { roles: 0 });
     }
-    // Taking the challenger discharges the DUEL_REQUESTED popup, as the UI feed would.
+    // Accept the stored challenge the frame it lands.
     let arbiter = duel.arbiter;
     if let Some(challenger) = duel.take_challenger() {
         info!("partner probe: accepting duel from {challenger:#018x} (arbiter {arbiter:#018x})");
