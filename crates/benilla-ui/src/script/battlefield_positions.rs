@@ -119,18 +119,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNumBattlefieldVehicles",
         lua.create_function(|_, ()| Ok(0))?,
     )?;
-    // GetNumArenaOpponents() (`0x54a2c0`): the leading opponent slots holding an opponent or a pet
-    // (`0x549630`), read when called; with no view lent, as pushed with the unit tokens.
+    // GetNumArenaOpponents() (`0x54a2c0`): the leading slots holding an opponent or a pet (`0x549630`), 0 without them.
     g.set(
         "GetNumArenaOpponents",
-        lua.create_function(|lua, ()| {
-            if let Some(n) = super::live::read_live(|l| l.arena_opponent_count()).flatten() {
-                return Ok(n as i64);
-            }
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.unit_guids.arena_count as i64)
+        lua.create_function(|_, ()| {
+            Ok(super::live::read_live(|l| l.arena_opponent_count()).unwrap_or(0) as i64)
         })?,
     )?;
     g.set(
@@ -156,6 +149,7 @@ mod tests {
         rows: Vec<BattlefieldPositionLive>,
         flags: Vec<BattlefieldFlagLive>,
         requests: Cell<u32>,
+        arena: usize,
     }
 
     impl LiveState for View {
@@ -191,6 +185,9 @@ mod tests {
         }
         fn request_battlefield_positions(&self) {
             self.requests.set(self.requests.get() + 1);
+        }
+        fn arena_opponent_count(&self) -> usize {
+            self.arena
         }
     }
 
@@ -294,5 +291,20 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    /// The opponent count reads the view at the call; with none lent it answers 0, never the token push.
+    #[test]
+    fn the_opponent_count_reads_the_view_at_the_call() {
+        let mut s = UiScript::new().unwrap();
+        s.set_arena_unit_guids([1, 2, 0, 0, 0], [0; 5], 2);
+        assert_eq!(s.eval::<i64>("return GetNumArenaOpponents()").unwrap(), 0);
+        let view = View {
+            arena: 3,
+            ..Default::default()
+        };
+        s.with_live(&view, |s| {
+            assert_eq!(s.eval::<i64>("return GetNumArenaOpponents()").unwrap(), 3);
+        });
     }
 }

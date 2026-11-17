@@ -299,7 +299,8 @@ pub use addon::AddOnInfo;
 pub use addon_enable::{EnableHash, EnableLists};
 pub use addon_message::{AddonDistribution, AddonSend};
 pub use arena_team::{
-    ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView,
+    ArenaTeamMemberRef, ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest,
+    ArenaTeamSlotView,
 };
 pub use auction::{
     AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,

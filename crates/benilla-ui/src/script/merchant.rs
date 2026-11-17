@@ -1426,6 +1426,7 @@ mod tests {
                         ..Default::default()
                     }),
                     stats: [1800, 0, 0, 0, 0, 0],
+                    roster_type: 3,
                     members: Vec::new(),
                 },
                 Default::default(),
