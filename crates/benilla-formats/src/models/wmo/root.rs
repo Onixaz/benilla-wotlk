@@ -119,6 +119,16 @@ impl WmoRoot {
         }
     }
 
+    /// Per-material whether MOMT `blendMode` (`+0x08`) is nonzero, by MOPY material id: the
+    /// blended class the segment query's face test (`0x7c6c30`) checks, which the mouse pick's
+    /// trace skips.
+    pub fn material_blended(&self) -> Vec<bool> {
+        match &self.parsed {
+            ParsedWmo::Root(r) => r.materials.iter().map(|m| m.blend_mode != 0).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The portal graph (MOPV/MOPT/MOPR); empty for most single-group props.
     pub fn portals(&self) -> &WmoPortals {
         &self.portals

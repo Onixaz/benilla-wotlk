@@ -20,7 +20,9 @@ use benilla_formats::{world_to_tile, M2Bounds};
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
-use crate::collision::{camera_layers, walk_layers, GroundDecalSurface, PickOccluder};
+use crate::collision::{
+    camera_layers, pick_layers, walk_layers, GroundDecalSurface, PickOccluder, WalkGround,
+};
 use crate::doodad_anim::wants_rig;
 use crate::interact::WorldObject;
 use crate::lighting::SharedLightBuffer;
@@ -708,8 +710,11 @@ pub(super) fn spawn_loaded_placements(
                             }
                         }
                     }
-                    // Two colliders, each on its layer: the reference gathers different faces for
-                    // the body (drops DETAIL) and the camera (drops NOCAMCOLLIDE, keeps DETAIL).
+                    // A collider per audience, each on its layer: the reference gathers different
+                    // faces for the body (drops DETAIL), the camera (drops NOCAMCOLLIDE, keeps
+                    // DETAIL), the mouse pick (drops MOPY `0x88` and blended faces, keeps DETAIL)
+                    // and the ground decals (drop MOPY `0x88` alone: the pick's faces and the
+                    // blended rest).
                     if let Some((verts, tris)) =
                         placement_collider_data(m.collision.as_ref(), &p.transform)
                     {
@@ -721,11 +726,8 @@ pub(super) fn spawn_loaded_placements(
                                         Some(walk_layers()),
                                         true,
                                     ),
-                                    // The walk faces take the selection ring (floors, steps).
-                                    GroundDecalSurface,
-                                    // Clamps the mouse pick, standing in for the trace's own
-                                    // face set (the deviation on `PickOccluder`).
-                                    PickOccluder,
+                                    // The body's ground, which the conform tilt reads.
+                                    WalkGround,
                                 ))
                                 .id(),
                         );
@@ -739,6 +741,44 @@ pub(super) fn spawn_loaded_placements(
                                     build_collider_task(verts, tris),
                                     Some(camera_layers()),
                                     true,
+                                ))
+                                .id(),
+                        );
+                    }
+                    // The mouse pick's occluder, on a layer of its own: the world trace passes the
+                    // collision-only and blended faces the body stops on (`PickOccluder`). Its
+                    // faces take the ground decals too, so the reticle drapes where the pick lands.
+                    if let Some((verts, tris)) =
+                        placement_collider_data(m.collision_pick.as_ref(), &p.transform)
+                    {
+                        ents.push(
+                            commands
+                                .spawn((
+                                    PendingCollider::new(
+                                        build_collider_task(verts, tris),
+                                        Some(pick_layers()),
+                                        true,
+                                    ),
+                                    PickOccluder,
+                                    GroundDecalSurface,
+                                ))
+                                .id(),
+                        );
+                    }
+                    // The blended faces the pick passes: a decal receiver alone, on the pick layer,
+                    // which only the pick's trace asks for and its `PickOccluder` test then skips.
+                    if let Some((verts, tris)) =
+                        placement_collider_data(m.collision_decal_blended.as_ref(), &p.transform)
+                    {
+                        ents.push(
+                            commands
+                                .spawn((
+                                    PendingCollider::new(
+                                        build_collider_task(verts, tris),
+                                        Some(pick_layers()),
+                                        true,
+                                    ),
+                                    GroundDecalSurface,
                                 ))
                                 .id(),
                         );

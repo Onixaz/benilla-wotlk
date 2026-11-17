@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 
 use crate::clutter::{scatter_tile_clutter, ClutterConfig, GroundClutter};
-use crate::collision::{walk_layers, GroundDecalSurface, PickOccluder};
+use crate::collision::{walk_layers, GroundDecalSurface, PickOccluder, WalkGround};
 use crate::interior::WmoResidency;
 use crate::lighting::SharedLightBuffer;
 use crate::liquid::{spawn_liquids, LiquidAssets};
@@ -768,11 +768,13 @@ fn stream_terrain(
         let mut tile_ent = commands.spawn((Transform::IDENTITY, Visibility::default()));
         tile_ent.vis_chain_only();
         if let Some((verts, tris)) = collider_data {
-            // Terrain takes the selection ring and clamps the pick (the reference's world trace).
+            // Terrain takes the selection ring, clamps the pick (the reference's world trace) and
+            // is the body's ground.
             tile_ent.insert((
                 PendingCollider::new(build_collider_task(verts, tris), None, true),
                 GroundDecalSurface,
                 PickOccluder,
+                WalkGround,
             ));
         }
         tile.entity = Some(tile_ent.id());
