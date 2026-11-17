@@ -401,7 +401,7 @@ impl Drop for Restore {
 /// back: the guard a host keeps for the length of a stretch of calls into Lua.
 pub struct LiveLoan<V: LiveState> {
     /// Boxed, so the lent address holds while the loan moves; held raw, so the lent pointer and
-    /// [`Self::view_mut`] share one borrow.
+    /// [`Self::with_view_mut`] share one borrow.
     view: NonNull<V>,
     previous: Lent,
 }
@@ -419,16 +419,31 @@ impl<V: LiveState> LiveLoan<V> {
         Self { view, previous }
     }
 
-    /// The lent view.
-    pub fn view(&self) -> &V {
-        // SAFETY: the box lives until the drop, and no verb writes while `self` is borrowed here.
-        unsafe { self.view.as_ref() }
+    /// `f` over the lent view; a verb writing through a loan from inside `f`, as a call into Lua
+    /// made there would, panics instead of aliasing the reference `f` holds.
+    pub fn with_view<R>(&self, f: impl FnOnce(&V) -> R) -> R {
+        let held = HELD.with(Cell::get);
+        assert_ne!(held, WRITING, "a loan's view was read inside a write");
+        HELD.with(|h| h.set(held + 1));
+        let _release = Release(held);
+        // SAFETY: the box lives until the drop, and the hold count keeps every writer out while
+        // the reference, which cannot escape `f`, is out.
+        f(unsafe { self.view.as_ref() })
     }
 
-    /// The lent view, to change between calls into Lua: a borrow of the loan cannot span one.
-    pub fn view_mut(&mut self) -> &mut V {
-        // SAFETY: as `view`; `&mut self` keeps any call into Lua, the only other user, out.
-        unsafe { self.view.as_mut() }
+    /// `f` over the lent view, to change it between calls into Lua; a verb reading or writing
+    /// through a loan from inside `f` panics instead of aliasing the reference `f` holds.
+    pub fn with_view_mut<R>(&mut self, f: impl FnOnce(&mut V) -> R) -> R {
+        let held = HELD.with(Cell::get);
+        assert_eq!(
+            held, FREE,
+            "a loan's view was written while a reference into it was out"
+        );
+        HELD.with(|h| h.set(WRITING));
+        let _release = Release(FREE);
+        // SAFETY: the box lives until the drop, and the hold count keeps every reader and writer
+        // out while the reference, which cannot escape `f`, is out.
+        f(unsafe { self.view.as_mut() })
     }
 }
 
@@ -874,7 +889,7 @@ mod tests {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
         });
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        assert_eq!(loan.view().flags, 5);
+        assert_eq!(loan.with_view(|v| v.flags), 5);
         drop(loan);
         assert!(!s.has_live());
     }
@@ -889,6 +904,46 @@ mod tests {
             .unwrap();
         assert_eq!(elsewhere, None);
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
+    }
+
+    /// A reference out of a loan shuts every verb out of it: a call into Lua made while the host
+    /// reads the view cannot write it, and one made while the host writes it cannot reach it at all,
+    /// so no verb's reference ever aliases the host's; both work again once the reference is back.
+    #[test]
+    fn a_reference_out_of_a_loan_shuts_the_verbs_out() {
+        let s = UiScript::new().unwrap();
+        let lua = s.lua();
+        let write = lua
+            .create_function(|_, ()| Ok(write_live(|_| ()).is_some()))
+            .unwrap();
+        let read = lua
+            .create_function(|_, ()| Ok(read_live(|l| l.unit_flags(1)).flatten()))
+            .unwrap();
+        lua.globals().set("Write", write).unwrap();
+        lua.globals().set("Read", read).unwrap();
+        let reached = |s: &UiScript, chunk: &str| {
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                s.eval::<mlua::Value>(chunk)
+                    .map(|v| !matches!(v, mlua::Value::Nil))
+            }));
+            matches!(run, Ok(Ok(true)))
+        };
+        // SAFETY: dropped at the end of this test, on this thread.
+        let mut loan = unsafe { LiveLoan::new(One { guid: 1, flags: 5 }) };
+        loan.with_view(|v| {
+            assert_eq!(v.flags, 5);
+            assert!(!reached(&s, "return Write() or nil"));
+            assert!(reached(&s, "return Read()"));
+            assert_eq!(v.flags, 5);
+        });
+        loan.with_view_mut(|v| {
+            v.flags = 6;
+            assert!(!reached(&s, "return Write() or nil"));
+            assert!(!reached(&s, "return Read()"));
+            v.flags = 7;
+        });
+        assert!(reached(&s, "return Write() or nil"));
+        assert_eq!(s.eval::<Option<u32>>("return Read()").unwrap(), Some(7));
     }
 
     #[test]

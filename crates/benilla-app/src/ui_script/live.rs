@@ -618,30 +618,34 @@ impl<'w, 's, const OWN: u8> LendLive<'w, 's, OWN> {
             OWN & T::BIT != 0,
             "a system lends only the state it leaves out of `LendLive`"
         );
-        T::slot(&mut self.loan.view_mut().lent).overlay = Some(NonNull::from(state));
+        self.loan
+            .with_view_mut(|v| T::slot(&mut v.lent).overlay = Some(NonNull::from(state)));
         let _clear = ClearOverlay::<'_, 'w, 's, T>(&mut self.loan, std::marker::PhantomData);
         f()
     }
 
-    /// The quest giver this parameter borrows, read by its system between calls into Lua.
-    pub(crate) fn giver(&mut self) -> Option<&QuestGiver> {
-        self.loan.view_mut().lent.giver.get()
+    /// `f` over the quest giver this parameter borrows, read by its system between calls into
+    /// Lua; a verb reached from inside `f` panics rather than write the giver `f` reads.
+    pub(crate) fn with_giver<R>(&self, f: impl FnOnce(Option<&QuestGiver>) -> R) -> R {
+        self.loan.with_view(|v| f(v.lent.giver.get()))
     }
 
     /// Whether the quest giver changed since this parameter's system last ran.
-    pub(crate) fn giver_changed(&mut self) -> bool {
-        self.loan.view_mut().lent.giver.changed()
+    pub(crate) fn giver_changed(&self) -> bool {
+        self.loan.with_view(|v| v.lent.giver.changed())
     }
 
-    /// The quest giver this parameter borrows, written by its system between calls into Lua.
-    pub(crate) fn giver_mut(&mut self) -> Option<&mut QuestGiver> {
-        self.loan.view_mut().lent.giver.get_mut()
+    /// `f` over the quest giver this parameter borrows, written by its system between calls into
+    /// Lua; a verb reached from inside `f` panics rather than alias the giver `f` writes.
+    pub(crate) fn with_giver_mut<R>(&mut self, f: impl FnOnce(Option<&mut QuestGiver>) -> R) -> R {
+        self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
     }
 
     /// The overlay of `T`, set only inside [`Self::lending`].
     #[cfg(test)]
     pub(crate) fn overlay<T: Lendable>(&mut self) -> bool {
-        T::slot(&mut self.loan.view_mut().lent).overlay.is_some()
+        self.loan
+            .with_view_mut(|v| T::slot(&mut v.lent).overlay.is_some())
     }
 }
 
@@ -653,7 +657,8 @@ struct ClearOverlay<'a, 'w, 's, T: Lendable>(
 
 impl<T: Lendable> Drop for ClearOverlay<'_, '_, '_, T> {
     fn drop(&mut self) {
-        T::slot(&mut self.0.view_mut().lent).overlay = None;
+        self.0
+            .with_view_mut(|v| T::slot(&mut v.lent).overlay = None);
     }
 }
 

@@ -335,11 +335,11 @@ fn lend() -> benilla_ui::script::LiveLoan<PvpView> {
 }
 
 fn set_rows(view: &benilla_ui::script::LiveLoan<PvpView>, rows: Vec<BattlemasterRow>) {
-    *view.view().rows.borrow_mut() = rows;
+    view.with_view(|v| *v.rows.borrow_mut() = rows);
 }
 
 fn set_frame(view: &benilla_ui::script::LiveLoan<PvpView>, frame: BattlefieldFrame) {
-    *view.view().frame.borrow_mut() = frame;
+    view.with_view(|v| *v.frame.borrow_mut() = frame);
 }
 
 fn tabs_shown(s: &UiScript) -> [bool; 2] {

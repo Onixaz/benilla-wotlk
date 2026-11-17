@@ -1503,7 +1503,7 @@ struct Interactions<'w> {
 }
 
 fn feed_units(
-    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
 
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -1764,8 +1764,7 @@ fn feed_units(
     // `"questnpc"`: the questgiver window's source (`0x6081b0`), which `QuestFrame_SetPortrait`
     // titles the window with. A GameObject or item source is held like a unit.
     let quest_npc = live
-        .giver()
-        .and_then(crate::ui_quest::QuestGiver::quest_npc)
+        .with_giver(|g| g.and_then(crate::ui_quest::QuestGiver::quest_npc))
         .and_then(|guid| {
             let entity = *index.as_deref()?.0.get(&guid)?;
             Some(held.state(stores.all.get(entity).ok()?, guid))

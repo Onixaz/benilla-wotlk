@@ -201,7 +201,7 @@ mod tests {
     }
 
     fn cache(loan: &mut LiveLoan<Caches>, read: QuestTooltipRead) {
-        loan.view_mut().0.insert(176, read);
+        loan.with_view_mut(|v| v.0.insert(176, read));
     }
 
     /// A template miss leaves the tooltip cleared; its answer builds it (`0x61de20`), and a second click hides it.

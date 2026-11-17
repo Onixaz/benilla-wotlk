@@ -2493,7 +2493,7 @@ mod tests {
         assert!(s
             .eval::<bool>("local _, _, _, _, _, _, done = GetQuestLogTitle(2) return done == 1")
             .unwrap());
-        assert_eq!(clock.view().expired, vec![783]);
+        assert_eq!(clock.with_view(|v| v.expired.clone()), vec![783]);
         assert_eq!(
             s.take_ui_errors_s(),
             vec![("ERR_QUEST_FAILED_S", "The Fargodeep Mine".to_string())]
@@ -2505,7 +2505,7 @@ mod tests {
             .any(|(e, _)| e == "QUEST_LOG_UPDATE"));
         // Marked once: the next call finds it failed.
         s.run("GetQuestTimers()").unwrap();
-        assert_eq!(clock.view().expired, vec![783]);
+        assert_eq!(clock.with_view(|v| v.expired.clone()), vec![783]);
         assert!(s.take_ui_errors_s().is_empty());
     }
 }

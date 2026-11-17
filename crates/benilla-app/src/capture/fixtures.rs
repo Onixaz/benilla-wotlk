@@ -479,27 +479,29 @@ pub(super) fn seed_ui_fixture(
                 count: 1,
                 display_id: disp,
             };
-            live.giver_mut().expect("the quest window").open(
-                NPC_GUID,
-                crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
-                    npc: NPC_GUID,
-                    quest_id: 783,
-                    title: "A Threat Within".into(),
-                    details:
-                        "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
+            live.with_giver_mut(|g| {
+                g.expect("the quest window").open(
+                    NPC_GUID,
+                    crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
+                        npc: NPC_GUID,
+                        quest_id: 783,
+                        title: "A Threat Within".into(),
+                        details:
+                            "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
                               and return to me."
-                            .into(),
-                    objectives: "Kill 8 Kobold Vermin.".into(),
-                    auto_launched: true,
-                    choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
-                    rewards: vec![choice(92_003, DISP_SHIELD)],
-                    extra: benilla_protocol::messages::QuestExtraRewards {
-                        money: 1234, // 12s 34c
+                                .into(),
+                        objectives: "Kill 8 Kobold Vermin.".into(),
+                        auto_launched: true,
+                        choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
+                        rewards: vec![choice(92_003, DISP_SHIELD)],
+                        extra: benilla_protocol::messages::QuestExtraRewards {
+                            money: 1234, // 12s 34c
+                            ..Default::default()
+                        },
                         ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-            );
+                    }),
+                )
+            });
             // The panel's publish and event, as its packet's handler runs them.
             commands.queue(crate::ui_quest::publish_panel);
         }
@@ -521,31 +523,36 @@ pub(super) fn seed_ui_fixture(
                 }),
             );
             // The multi-quest greeting: two available quests, bullet rows under "Available Quests".
-            live.giver_mut().expect("the quest window").open(
-                NPC_GUID,
-                crate::ui_quest::QuestView::Greeting(benilla_protocol::messages::QuestGiverList {
-                    npc: NPC_GUID,
-                    greeting: "Greetings, $N. The town of Goldshire needs able hands.".into(),
-                    emote_delay: 0,
-                    emote: 0,
-                    quests: vec![
-                        benilla_protocol::messages::QuestListEntry {
-                            quest_id: 84,
-                            icon: 0,
-                            level: 4,
-                            title: "Brotherhood of Thieves".into(),
-                            ..Default::default()
+            live.with_giver_mut(|g| {
+                g.expect("the quest window").open(
+                    NPC_GUID,
+                    crate::ui_quest::QuestView::Greeting(
+                        benilla_protocol::messages::QuestGiverList {
+                            npc: NPC_GUID,
+                            greeting: "Greetings, $N. The town of Goldshire needs able hands."
+                                .into(),
+                            emote_delay: 0,
+                            emote: 0,
+                            quests: vec![
+                                benilla_protocol::messages::QuestListEntry {
+                                    quest_id: 84,
+                                    icon: 0,
+                                    level: 4,
+                                    title: "Brotherhood of Thieves".into(),
+                                    ..Default::default()
+                                },
+                                benilla_protocol::messages::QuestListEntry {
+                                    quest_id: 40,
+                                    icon: 0,
+                                    level: 3,
+                                    title: "Eagan Peltskinner".into(),
+                                    ..Default::default()
+                                },
+                            ],
                         },
-                        benilla_protocol::messages::QuestListEntry {
-                            quest_id: 40,
-                            icon: 0,
-                            level: 3,
-                            title: "Eagan Peltskinner".into(),
-                            ..Default::default()
-                        },
-                    ],
-                }),
-            );
+                    ),
+                )
+            });
             commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestLog => {

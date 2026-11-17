@@ -426,9 +426,7 @@ fn service_probe(
             // A stale window from the previous leg would answer this one's question. The
             // reference's own close sends no packet, so a local clear is the whole of it.
             gossip.clear();
-            if let Some(giver) = live.giver_mut() {
-                giver.clear();
-            }
+            live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
 
             // The first click must get through: nothing is open, and the reference arms only from
@@ -491,10 +489,15 @@ fn service_probe(
         }
         Phase::Await { i, since, guid } => {
             let leg = &LEGS[i];
-            let Some(giver) = live.giver() else {
+            let Some((window, quest_view)) = live.with_giver(|giver| {
+                giver.map(|g| {
+                    let window = open_window(guid, &gossip, g, &trainer);
+                    (window, g.view.as_ref().map(discr))
+                })
+            }) else {
                 return;
             };
-            match open_window(guid, &gossip, giver, &trainer) {
+            match window {
                 Some(open) if open == leg.want_window => {
                     info!(
                         "PROBE_SERVICE: PASS ({}) — {:?} window open on {guid:#x}{}",
@@ -507,7 +510,7 @@ fn service_probe(
                                 gossip.quests.len(),
                                 gossip.greeting.as_deref().unwrap_or("")
                             ),
-                            Window::Quest => format!(" ({:?})", giver.view.as_ref().map(discr)),
+                            Window::Quest => format!(" ({quest_view:?})"),
                             Window::Trainer => format!(
                                 " ({} service(s), type {})",
                                 trainer.services.len(),
@@ -606,9 +609,7 @@ fn service_probe(
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
             gossip.clear();
-            if let Some(giver) = live.giver_mut() {
-                giver.clear();
-            }
+            live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
             merchant.clear();
 
