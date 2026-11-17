@@ -77,6 +77,17 @@ impl super::UiScript {
     }
 }
 
+/// One quest's POI lines read at the call; the pushed table where no view lends them.
+fn poi_lines(
+    model: &Model,
+    quest_id: u32,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<QuestPoiLines> {
+    super::read_live(|l| l.quest_poi_lines(quest_id, get))
+        .flatten()
+        .unwrap_or_else(|| model.quest_poi.lines.get(&quest_id).cloned())
+}
+
 /// The quest at a 1-based log row, 0 for a header or no row.
 fn quest_at_row(model: &Model, row: i64) -> u32 {
     usize::try_from(row - 1)
@@ -334,11 +345,7 @@ fn quest_area(model: &Model, quest_id: u32) -> (u32, i32) {
             return found;
         }
     }
-    let top = model
-        .quest_poi
-        .lines
-        .get(&quest_id)
-        .map_or(0, |l| l.top_area);
+    let top = poi_lines(model, quest_id, &|_| None).map_or(0, |l| l.top_area);
     if top == 0 {
         return (0, 0);
     }
@@ -434,14 +441,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if quest == 0 {
                 quest = selected_quest(&model);
             }
-            let line = usize::try_from(index).ok().and_then(|i| {
-                model
-                    .quest_poi
-                    .lines
-                    .get(&quest)
-                    .and_then(|l| l.board.get(i))
-                    .and_then(Option::as_ref)
-            });
+            let get = |key: &str| crate::strings::global(lua, key);
+            let lines = poi_lines(&model, quest, &get);
+            let line = usize::try_from(index)
+                .ok()
+                .and_then(|i| lines.as_ref()?.board.get(i)?.as_ref());
             line_values(lua, line)
         })?,
     )?;
@@ -457,12 +461,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(n) => quest_at_row(&model, n as i64),
                 None => selected_quest(&model),
             };
+            let get = |key: &str| crate::strings::global(lua, key);
             Ok(i64::from(
-                model
-                    .quest_poi
-                    .lines
-                    .get(&quest)
-                    .map_or(0, |l| l.drops_needed),
+                poi_lines(&model, quest, &get).map_or(0, |l| l.drops_needed),
             ))
         })?,
     )?;
@@ -480,13 +481,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if quest == 0 {
                 quest = selected_quest(&model);
             }
-            let line = usize::try_from(index - 1).ok().and_then(|i| {
-                model
-                    .quest_poi
-                    .lines
-                    .get(&quest)
-                    .and_then(|l| l.drops.get(i))
-            });
+            let get = |key: &str| crate::strings::global(lua, key);
+            let lines = poi_lines(&model, quest, &get);
+            let line = usize::try_from(index - 1)
+                .ok()
+                .and_then(|i| lines.as_ref()?.drops.get(i));
             line_values(lua, line)
         })?,
     )?;

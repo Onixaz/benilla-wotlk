@@ -1178,7 +1178,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 733, 725),
+        ("Update", 722, 714),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1479,7 +1479,7 @@ pub(crate) mod schedule_tests {
                 continue;
             }
             let s = &c.systems[k];
-            let phase = ["UiPress", "UiFeed"]
+            let phase = ["UiPress", "UiFeed", "UiSignals"]
                 .into_iter()
                 .find(|phase| s.sets.iter().any(|set| set == phase));
             let in_feed = phase.is_some();
@@ -1631,8 +1631,8 @@ pub(crate) mod schedule_tests {
          "a buy/sell refusal answers a click on an open merchant; show/update ride `VmMemo`s"),
         ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
          "every line answers a charter action of ours; the window edges ride the `fed` memo"),
-        ("ui_quest_share.rs", "feed_quest_share", Because::PlayerRoundTrip,
-         "a verdict answers our own push and a confirm follows a party member's escort accept, both held until the name resolves (the confirm is another player's act: coincidence-only residual)"),
+        ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
+         "runs in the progress packet's handler turn, as 12340's handler shows its line (`0x6d82e9`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_script/extract/mod.rs", "paint_script", Because::Deliberate,
          "per-frame paint and cost state, not a queue"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,

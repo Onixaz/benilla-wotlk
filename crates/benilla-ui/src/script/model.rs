@@ -1023,7 +1023,7 @@ pub(crate) struct Model {
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
     pub(crate) quest_tooltips: HashMap<u32, super::QuestTooltipView>,
     pub(crate) quest_tooltip_asks: HashSet<u32>,
-    pub(crate) quest_tooltip_waits: HashMap<FrameHandle, u32>,
+    pub(crate) quest_tooltip_waits: HashMap<FrameHandle, Vec<super::QuestRecord>>,
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.

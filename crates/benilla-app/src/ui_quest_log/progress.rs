@@ -18,8 +18,9 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, Guid, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
 use crate::ui_action::{show_messages, MessageSink, Shown};
+use crate::ui_script::live::UiEvents;
 
-/// One progress packet, queued in arrival order for [`announce_quest_progress`].
+/// One progress packet, announced in its handler's turn by [`announce_notices`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum QuestNotice {
     /// `SMSG_QUESTUPDATE_ADD_KILL`: `entry` a creature, or `(-id)|0x80000000` for a GameObject.
@@ -58,10 +59,40 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::QuestFailed, on_failed)
         .net_handler(K::QuestForceRemoved, on_force_removed)
         .net_handler(K::QuestsCompleted, on_quests_completed)
-        .net_handler(K::ItemPushResult, on_item_push);
+        .net_handler(K::ItemPushResult, on_item_push)
+        // The template callback finishes an item push held for it (`0x6d7d70`), registered after
+        // the cache's own handler.
+        .net_handler(K::QuestTemplate, on_template_landed);
 }
 
-fn on_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
+/// Announce the queued notices in the calling handler's turn: the line and `QUEST_WATCH_UPDATE`
+/// fire from the packet (`0x6d82e9`, `0x6d8241`), ahead of the frame's `QUEST_LOG_UPDATE`.
+fn announce_in_turn(ui: &mut UiEvents) {
+    ui.world(|world| {
+        if let Err(e) = world.run_system_cached(announce_notices) {
+            warn!("ui_quest_log: the progress lines were not shown: {e}");
+        }
+    });
+}
+
+fn on_template_landed(
+    In(ev): In<SessionEvent>,
+    marks: Res<QuestLogMarks>,
+    mut ui: ResMut<UiEvents>,
+) {
+    let SessionEvent::QuestTemplate(t) = ev else {
+        return;
+    };
+    let held = marks
+        .notices
+        .iter()
+        .any(|n| matches!(n, QuestNotice::ItemPushFor { quest_id, .. } if *quest_id == t.quest_id));
+    if held {
+        announce_in_turn(&mut ui);
+    }
+}
+
+fn on_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::QuestObjectiveKill {
         quest_id,
         entry,
@@ -75,36 +106,48 @@ fn on_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
             count,
             required,
         });
+        announce_in_turn(&mut ui);
     }
 }
 
-fn on_pvp_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
+fn on_pvp_kill(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::QuestObjectivePvpKill { quest_id, count } = ev {
         log.notices.push(QuestNotice::PvpKill { quest_id, count });
+        announce_in_turn(&mut ui);
     }
 }
 
-fn on_complete(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
+fn on_complete(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::QuestObjectivesComplete { quest_id } = ev {
         log.notices.push(QuestNotice::Complete { quest_id });
+        announce_in_turn(&mut ui);
     }
 }
 
-fn on_failed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
+fn on_failed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::QuestFailed { quest_id, timed } = ev {
         log.notices.push(QuestNotice::Failed { quest_id, timed });
+        announce_in_turn(&mut ui);
     }
 }
 
-fn on_force_removed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
+fn on_force_removed(
+    In(ev): In<SessionEvent>,
+    mut log: ResMut<QuestLogMarks>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::QuestForceRemoved { quest_id } = ev {
         log.notices.push(QuestNotice::ForceRemoved { quest_id });
+        announce_in_turn(&mut ui);
     }
 }
 
-fn on_quests_completed(In(ev): In<SessionEvent>, mut log: ResMut<QuestLogMarks>) {
+/// The completed-quest answer stores the ids and fires `QUEST_QUERY_COMPLETE` from the packet
+/// (`0x5b5190`, `0x5b5270`).
+fn on_quests_completed(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::QuestsCompleted(ids) = ev {
-        log.completed_answer = Some(ids);
+        ui.write(move |script| script.set_quests_completed(ids));
+        ui.fire("QUEST_QUERY_COMPLETE", vec![]);
     }
 }
 
@@ -113,10 +156,12 @@ fn on_item_push(
     In(ev): In<SessionEvent>,
     mut log: ResMut<QuestLogMarks>,
     me: Query<&Guid, With<SelfPlayer>>,
+    mut ui: ResMut<UiEvents>,
 ) {
     if let SessionEvent::ItemPushResult(p) = ev {
         if me.iter().next().is_some_and(|g| g.0 == p.player_guid) {
             log.notices.push(item_push(&p));
+            announce_in_turn(&mut ui);
         }
     }
 }
@@ -450,11 +495,32 @@ fn expiry_lines(
     out
 }
 
-/// Drains the notices, the completed-quest answer and the timer expiries, and sends
-/// `QueryQuestsCompleted()`'s requests. Before the log feed: `QUEST_WATCH_UPDATE` fires from the
-/// packet, ahead of the frame's `QUEST_LOG_UPDATE`, which the reference flushes after the packets.
+/// `QueryQuestsCompleted()`'s requests and `GetQuestTimers`' expiries, drained after the tick that
+/// made them: each expiry's line shows here (`0x5e6349`).
+pub(super) fn drain_quest_progress_sends(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (log, mut marks): (Res<QuestLog>, ResMut<QuestLogMarks>),
+    commands: Res<NetCommands>,
+    mut sink: MessageSink,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    for _ in 0..script.take_quests_completed_queries() {
+        let _ = commands.0.send(ClientCommand::QueryQuestsCompleted);
+    }
+    let expiries = script.take_quest_log_expiries();
+    if expiries.is_empty() {
+        return;
+    }
+    let lines = expiry_lines(&log, &mut marks, expiries, &commands);
+    show_announces(&mut script, &mut sink, lines);
+}
+
+/// Announce the queued notices in the handler's turn; a notice whose quest-item check waits on a
+/// template stays queued for that template's answer.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
-pub(super) fn announce_quest_progress(
+fn announce_notices(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     (log, mut marks): (Res<QuestLog>, ResMut<QuestLogMarks>),
@@ -467,20 +533,12 @@ pub(super) fn announce_quest_progress(
     (objects, rewards): (crate::net::Objects, crate::ui_quest::rewards::RewardInputs),
 ) {
     let Some(mut script) = script else {
+        // No interface to show them: the reference has no listener before its UI loads.
+        marks.notices.clear();
         return;
     };
-    for _ in 0..script.take_quests_completed_queries() {
-        let _ = commands.0.send(ClientCommand::QueryQuestsCompleted);
-    }
-    let expiries = script.take_quest_log_expiries();
-    // Read first, so an idle frame leaves the log unmarked for the feed's change gate.
-    if marks.notices.is_empty() && marks.completed_answer.is_none() && expiries.is_empty() {
+    if marks.notices.is_empty() {
         return;
-    }
-    let mut lines = expiry_lines(&log, &mut marks, expiries, &commands);
-    if let Some(ids) = marks.completed_answer.take() {
-        script.set_quests_completed(ids);
-        script.fire_event("QUEST_QUERY_COMPLETE", vec![]);
     }
     let me = self_q.iter().next();
     let store = me.map(|(s, _)| &s.0);
@@ -508,7 +566,11 @@ pub(super) fn announce_quest_progress(
     let notices = std::mem::take(&mut marks.notices);
     let (resolved, held) = resolve(&log, &mut marks, notices, &lookups);
     marks.notices = held;
-    lines.extend(resolved);
+    show_announces(&mut script, &mut sink, resolved);
+}
+
+/// Each line, then its `QUEST_WATCH_UPDATE` with the quest's log row.
+fn show_announces(script: &mut UiScript, sink: &mut MessageSink, lines: Vec<Announce>) {
     for a in lines {
         let args: Vec<Arg<'_>> = a
             .args
@@ -526,12 +588,7 @@ pub(super) fn announce_quest_progress(
             .map(|t| fill(&t, &args))
             .filter(|t| !t.is_empty());
         if let Some(text) = text {
-            show_messages(
-                &mut script,
-                &mut sink,
-                "ui_quest_log",
-                [Shown::keyed(a.key, text)],
-            );
+            show_messages(script, sink, "ui_quest_log", [Shown::keyed(a.key, text)]);
         }
         if let Some(quest_id) = a.watch {
             let index = script.quest_log_index(quest_id);

@@ -1,6 +1,7 @@
 //! The quest tooltip (`0x622960`): `SetHyperlink` on a `quest:` link, for any quest the template
-//! cache can answer, in the log or not. The app reads the cache; a miss leaves the tooltip cleared
-//! until the record lands, when the tooltip's quest callback (`0x61de20`) builds it again.
+//! cache can answer, in the log or not, read at the call. A template miss leaves the tooltip
+//! cleared; each record the build missed (the template, a name in the leaderboard) builds it again
+//! when it lands, through the tooltip's quest callback (`0x61de20`).
 
 use mlua::{Lua, Table};
 
@@ -22,7 +23,56 @@ pub struct QuestTooltipView {
     pub requirements: Vec<String>,
 }
 
+/// A cache record a quest tooltip's build looked up and missed, whose arrival builds it again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum QuestRecord {
+    Quest(u32),
+    Creature(u32),
+    GameObject(u32),
+    Item(u32),
+}
+
+/// A quest tooltip's build as the caches answer at the call.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuestTooltipRead {
+    /// `None` while the template is not cached.
+    pub view: Option<QuestTooltipView>,
+    /// The records looked up and still in flight.
+    pub waits: Vec<QuestRecord>,
+}
+
 impl super::UiScript {
+    /// A cache record landed (`0x61de20`, found): every tooltip whose build missed it builds
+    /// again for the quest it shows.
+    pub fn quest_record_landed(&mut self, record: QuestRecord) {
+        let waiting: Vec<FrameHandle> = {
+            let model = self.model_ref();
+            if model.quest_tooltip_waits.is_empty() {
+                return;
+            }
+            model
+                .quest_tooltip_waits
+                .iter()
+                .filter(|(_, w)| w.contains(&record))
+                .map(|(h, _)| *h)
+                .collect()
+        };
+        for h in waiting {
+            let quest_id = {
+                let mut model = self.model_mut();
+                model.quest_tooltip_waits.remove(&h);
+                tip_mut(&mut model, h).map_or(0, |t| t.quest_id)
+            };
+            // The callback builds only a tooltip still showing a quest (`0x61de2d`).
+            if quest_id == 0 {
+                continue;
+            }
+            if let Err(e) = rebuild(&self.lua, h, quest_id) {
+                self.push_error(e);
+            }
+        }
+    }
+
     /// The quests a tooltip is waiting on, oldest answer first; the asks stay until answered.
     pub fn quest_tooltip_asks(&self) -> Vec<u32> {
         self.model_ref()
@@ -32,31 +82,23 @@ impl super::UiScript {
             .collect()
     }
 
-    /// A record landed: every tooltip waiting on `quest_id` builds again.
+    /// Where no view lends the caches: a pushed record, building every tooltip waiting on it.
     pub fn set_quest_tooltip(&mut self, quest_id: u32, view: QuestTooltipView) {
-        let waiting: Vec<FrameHandle> = {
+        {
             let mut model = self.model_mut();
             model.quest_tooltip_asks.remove(&quest_id);
             model.quest_tooltips.insert(quest_id, view);
-            model
-                .quest_tooltip_waits
-                .iter()
-                .filter(|(_, &q)| q == quest_id)
-                .map(|(h, _)| *h)
-                .collect()
-        };
-        for h in waiting {
-            if let Err(e) = rebuild(&self.lua, h, quest_id) {
-                self.push_error(e);
-            }
         }
+        self.quest_record_landed(QuestRecord::Quest(quest_id));
     }
 
     /// The server does not know `quest_id`: the ask closes and the tooltip stays cleared.
     pub fn drop_quest_tooltip_ask(&mut self, quest_id: u32) {
         let mut model = self.model_mut();
         model.quest_tooltip_asks.remove(&quest_id);
-        model.quest_tooltip_waits.retain(|_, q| *q != quest_id);
+        model
+            .quest_tooltip_waits
+            .retain(|_, w| !w.contains(&QuestRecord::Quest(quest_id)));
     }
 }
 
@@ -70,14 +112,31 @@ fn rebuild(lua: &Lua, h: FrameHandle, quest_id: u32) -> mlua::Result<()> {
 /// the requirements, then `OnTooltipSetQuest` before the show.
 pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
+    // The caches at the call, each miss asked with the tooltip's callback (`0x622984`,
+    // `0x622a62`).
+    let get = |key: &str| crate::strings::global(lua, key);
+    let read = super::read_live(|l| l.quest_tooltip(quest_id, &get)).flatten();
     let (view, active) = {
         let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
         tip_mut(&mut model, h)?.quest_id = quest_id;
-        let view = model.quest_tooltips.get(&quest_id).cloned();
-        if view.is_none() {
-            model.quest_tooltip_asks.insert(quest_id);
-            model.quest_tooltip_waits.insert(h, quest_id);
+        let (view, waits) = match read {
+            Some(read) => (read.view, read.waits),
+            None => {
+                let view = model.quest_tooltips.get(&quest_id).cloned();
+                if view.is_none() {
+                    model.quest_tooltip_asks.insert(quest_id);
+                }
+                let waits = view
+                    .is_none()
+                    .then_some(QuestRecord::Quest(quest_id))
+                    .into_iter()
+                    .collect();
+                (view, waits)
+            }
+        };
+        if !waits.is_empty() {
+            model.quest_tooltip_waits.insert(h, waits);
         }
         let active = model
             .quest_log

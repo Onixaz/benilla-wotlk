@@ -5,7 +5,7 @@
 //! header folds re-sort in the VM, and the rebuild carries their `questLogCollapseFilter`.
 
 mod progress;
-mod tooltip;
+pub(crate) mod tooltip;
 
 use crate::ui_items::{count_of, InventoryScope};
 use std::cell::RefCell;
@@ -64,8 +64,6 @@ pub(crate) struct QuestLogMarks {
     /// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client
     /// (`0x5e57e0`), until they leave the log.
     expired: HashSet<u32>,
-    /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`, not yet pushed.
-    completed_answer: Option<Vec<u32>>,
 }
 
 /// `questcache.wdb`.
@@ -121,7 +119,6 @@ impl QuestLogMarks {
         self.sort_types.clear();
         self.notices.clear();
         self.expired.clear();
-        self.completed_answer = None;
     }
 }
 
@@ -182,6 +179,7 @@ impl Plugin for UiQuestLogPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         progress::register(app);
+        tooltip::register(app);
         crate::query_cache::register::<QuestLog>(app);
         app.init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
@@ -197,17 +195,14 @@ impl Plugin for UiQuestLogPlugin {
             .add_systems(
                 Update,
                 (
-                    progress::announce_quest_progress
-                        .in_set(UnitFeed)
-                        .before(feed_quest_log),
                     // After the unit feed: `UNIT_QUEST_LOG_CHANGED` fires as the values apply
                     // (`0x60c280`), `QUEST_LOG_UPDATE` after the frame's packets (`0x614760`).
                     feed_quest_log
                         .in_set(UnitFeed)
                         .after(crate::ui_unit::EnterWorldFeed),
-                    tooltip::feed_quest_tooltips.in_set(UnitFeed),
                     drain_quest_log_abandons.in_set(UiDrain),
                     drain_quest_log_pushes.in_set(UiDrain),
+                    progress::drain_quest_progress_sends.in_set(UiDrain),
                 ),
             );
     }

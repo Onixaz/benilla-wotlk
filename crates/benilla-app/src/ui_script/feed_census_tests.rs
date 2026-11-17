@@ -91,10 +91,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_quest::feed_quest",
     "benilla_app::ui_quest::lines::feed_quest_lines",
     "benilla_app::ui_quest_log::feed_quest_log",
-    "benilla_app::ui_quest_log::progress::announce_quest_progress",
-    "benilla_app::ui_quest_log::tooltip::feed_quest_tooltips",
-    "benilla_app::ui_quest_share::feed_quest_share",
-    "benilla_app::ui_quest_watch::feed_quest_poi_lines",
     "benilla_app::ui_reputation::feed_reputation",
     "benilla_app::ui_rune::feed_runes",
     "benilla_app::ui_script::demo_unit_feed",
@@ -149,10 +145,6 @@ const KEPT: &[(&str, &str)] = &[
     (
         "benilla_app::death::update_corpse_distance",
         "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
-    ),
-    (
-        "benilla_app::ui_script::live::flush_unique_signals",
-        "12340 queues each unique signal once (0x6143f0) and fires the queue once per frame after the packets (0x52b247 -> 0x614760)",
     ),
 ];
 

@@ -136,6 +136,28 @@ pub trait LiveState {
         None
     }
 
+    /// A quest tooltip's build from the caches at the call (`0x622960`), its title, objectives
+    /// paragraph and no-progress leaderboard formatted through `get`, each miss asked; `None`
+    /// where no view lends them.
+    fn quest_tooltip(
+        &self,
+        _quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::QuestTooltipRead> {
+        None
+    }
+
+    /// A logged quest's POI lines as the slot, the bags and the caches read now (`0x5e58c0`,
+    /// `0x5e20a0`, `0x5e1ff0`), formatted through `get`; `Some(None)` for a quest not logged or
+    /// not cached, `None` where no view lends them.
+    fn quest_poi_lines(
+        &self,
+        _quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<super::QuestPoiLines>> {
+        None
+    }
+
     /// A logged quest's special item as our bags hold it now (`0x5e0da0`): the template's
     /// starting item, else under flag `0x20000` a drop item, the first carried copy that can be
     /// used; `None` for none.
