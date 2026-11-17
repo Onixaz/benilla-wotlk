@@ -111,38 +111,20 @@ fn the_self_create_sends_them_in_the_reference_order() {
     assert_eq!(sent(&rx), Vec::<String>::new());
 }
 
-/// An answer arms the re-ask at the earlier of an hour and the daily reset (`0x5dff7e`); it goes
-/// out once and waits for the next answer (`0x5e6daa`).
+/// Frames never ask the time: the world entry asks it (`0x5e6fa9`), the log's rebuild re-asks (`0x5e6d79`).
 #[test]
-fn a_time_answer_re_asks_at_the_reset_once() {
+fn a_due_reask_waits_for_the_logs_rebuild() {
     let (mut app, rx) = app();
     log_in(&mut app);
     self_create(&mut app);
     app.update();
     assert_eq!(sent(&rx), the_sends());
-
-    app.world_mut()
-        .resource_mut::<ServerWallClock>()
-        .sample(1_000, 3_000);
-    app.update();
-    assert_eq!(
-        sent(&rx),
-        Vec::<String>::new(),
-        "the reset is 50 minutes out"
-    );
-
-    // The reset is due now.
     app.world_mut()
         .resource_mut::<ServerWallClock>()
         .sample(1_000, 0);
     app.update();
-    assert_eq!(sent(&rx), vec!["QueryTime".to_string()]);
     app.update();
-    assert_eq!(
-        sent(&rx),
-        Vec::<String>::new(),
-        "disarmed until the next answer"
-    );
+    assert_eq!(sent(&rx), Vec::<String>::new());
 }
 
 /// A cross-map worldport purges the streamed world and the server creates us afresh (the reference

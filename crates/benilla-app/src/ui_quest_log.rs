@@ -13,6 +13,8 @@ use bevy::prelude::*;
 
 use benilla_protocol::messages::{quest_slot_state, QuestLogSlot, QuestObjective, QuestTemplate};
 use benilla_protocol::ObjectFields;
+#[cfg(test)]
+use benilla_ui::script::carry_collapse_filter;
 use benilla_ui::script::{QuestItemView, QuestLogDetail, QuestLogObjectiveView, UiScript};
 use benilla_ui::strings::{fill, Arg};
 
@@ -35,17 +37,11 @@ pub(crate) struct QuestLog {
     templates: QueryCache<u32, QuestTemplate>,
 }
 
-/// The log's marks beside the templates: the sort types, the templates the rebuild waits on, the
-/// accepts waiting on theirs and the progress packets not yet announced.
+/// The log's marks beside the templates: the accepts waiting on theirs and the progress packets not yet announced.
 #[derive(Resource, Default)]
 pub(crate) struct QuestLogMarks {
-    /// The templates the last rebuild missed (`0x5e6a98`); every rebuild skips while one is (`0x5e6973`).
-    pending: HashSet<u32>,
     /// The accepts whose template the slot watch asked for (`0x6df414`).
     accepts: HashSet<u32>,
-    /// The last rebuild's sort types in their sorted order (`0x5e6b47`): bit `i` of the collapse
-    /// filter is `sort_types[i]`'s, carried to the next rebuild's order.
-    sort_types: Vec<i32>,
     /// The progress packets not yet announced, in arrival order.
     notices: Vec<progress::QuestNotice>,
 }
@@ -174,9 +170,7 @@ impl QuestLog {
 impl QuestLogMarks {
     /// Disconnect: drops every mark.
     pub(crate) fn clear_session(&mut self) {
-        self.pending.clear();
         self.accepts.clear();
-        self.sort_types.clear();
         self.notices.clear();
     }
 }
@@ -187,7 +181,7 @@ mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::rows::{QuestAsk, QuestAsks};
+    use super::rows::{QuestAsk, QuestAsks, RebuildMarks};
     use super::{QuestExpiries, QuestLog, QuestLogMarks};
     use crate::net::NetHandlerApp;
     use crate::ui_script::live::{UiEvents, UniqueSignals};
@@ -241,13 +235,13 @@ mod net {
         In(ev): In<SessionEvent>,
         mut quest_log: ResMut<QuestLog>,
         (expiries, asks, signals): (Res<QuestExpiries>, Res<QuestAsks>, Res<UniqueSignals>),
-        mut marks: ResMut<QuestLogMarks>,
+        (mut marks, rebuild): (ResMut<QuestLogMarks>, Res<RebuildMarks>),
         mut ui: ResMut<UiEvents>,
     ) {
         if let SessionEvent::QuestTemplate(t) = ev {
             let (id, title) = (t.quest_id, t.title.clone());
             quest_template(t, &mut quest_log);
-            super::rows::template_landed(id, &mut marks, &asks, &signals, &mut ui);
+            super::rows::template_landed(id, &mut marks, &rebuild, &asks, &signals, &mut ui);
             if expiries.take_waiting(id) {
                 crate::ui_action::show_in_turn(
                     &mut ui,
@@ -263,12 +257,18 @@ mod net {
         In(_): In<SessionEvent>,
         mut quest_log: ResMut<QuestLog>,
         mut marks: ResMut<QuestLogMarks>,
-        (expiries, asks): (Res<QuestExpiries>, Res<QuestAsks>),
+        (expiries, asks, rebuild): (Res<QuestExpiries>, Res<QuestAsks>, Res<RebuildMarks>),
+        clock: Option<Res<crate::net::ServerWallClock>>,
     ) {
         quest_log.clear_session();
         marks.clear_session();
         expiries.clear();
         asks.clear();
+        rebuild.clear();
+        // The next game UI's start disarms the re-ask (`0x5e71ee`).
+        if let Some(clock) = clock {
+            clock.disarm_reask();
+        }
     }
 
     /// `SMSG_QUEST_QUERY_RESPONSE`, the answer to our `CMSG_QUEST_QUERY`, cached by quest id.
@@ -288,6 +288,7 @@ impl Plugin for UiQuestLogPlugin {
         crate::query_cache::register::<QuestLog>(app);
         app.init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
+            .init_resource::<rows::RebuildMarks>()
             .init_resource::<QuestExpiries>()
             .init_resource::<rows::QuestAsks>()
             .add_systems(
@@ -605,26 +606,6 @@ fn abandon_items(
         .filter_map(|&id| item(id).map(|(n, _)| n))
         .collect();
     (!names.is_empty()).then(|| names.join(", "))
-}
-
-/// The rebuild's carry of the collapse filter to its new sort types (`0x5e69a7`-`0x5e6bfc`): a
-/// sort type kept keeps its bit, a new one opens, and bits past the sort types keep their value.
-/// Deviation: the reference keys its old list by signed id, negated when open, so the id-0 header
-/// reads folded after every rebuild; here the old bit is read by position.
-fn carry_collapse_filter(filter: i32, old: &[i32], new: &[i32]) -> i32 {
-    let mut out = filter;
-    for (i, st) in new.iter().enumerate().take(25) {
-        let open = old
-            .iter()
-            .position(|o| o == st)
-            .is_none_or(|j| filter & (1 << j) != 0);
-        if open {
-            out |= 1 << i;
-        } else {
-            out &= !(1 << i);
-        }
-    }
-    out
 }
 
 /// One quest's objective lines, for every quest, as the watch frame reads any quest's. The
@@ -1538,6 +1519,7 @@ mod tests {
         }
         app.insert_resource(log)
             .init_resource::<QuestLogMarks>()
+            .init_resource::<rows::RebuildMarks>()
             .init_resource::<QuestExpiries>();
         app.world_mut().spawn((
             ObjectStore(ObjectFields::from_pairs(&pairs)),
@@ -1619,6 +1601,7 @@ mod tests {
             .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
+            .init_resource::<rows::RebuildMarks>()
             .init_resource::<QuestExpiries>();
         app.world_mut().spawn((
             ObjectStore(ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, 7)])),
@@ -1977,6 +1960,7 @@ mod tests {
         }
         app.insert_resource(log)
             .init_resource::<QuestLogMarks>()
+            .init_resource::<rows::RebuildMarks>()
             .init_resource::<QuestExpiries>();
         let player = app
             .world_mut()
@@ -2100,6 +2084,96 @@ mod tests {
             vec![201],
             "the fold never prunes the watch"
         );
+    }
+
+    fn time_asks(rx: &crossbeam_channel::Receiver<ClientCommand>) -> usize {
+        rx.try_iter()
+            .filter(|c| matches!(c, ClientCommand::QueryTime))
+            .count()
+    }
+
+    /// The rebuild's tail asks the time once the answer's re-ask is due, then disarms it (`0x5e6d60`-`0x5e6daa`); frames alone ask nothing.
+    #[test]
+    fn the_rebuild_asks_the_time_once_its_reask_is_due() {
+        let (mut app, _, rx) = log_app(&[(0, 201, 7)]);
+        app.world_mut()
+            .resource_mut::<crate::net::ServerWallClock>()
+            .sample(1_000_000, 3_000);
+        app.update();
+        assert_eq!(time_asks(&rx), 0, "the reset is 50 minutes out");
+        app.world_mut()
+            .resource_mut::<crate::net::ServerWallClock>()
+            .sample(1_000_000, 0);
+        app.update();
+        assert_eq!(time_asks(&rx), 1, "due: the rebuild asks");
+        app.update();
+        assert_eq!(time_asks(&rx), 0, "disarmed until the next answer");
+    }
+
+    /// `GetQuestResetTime` runs a due rebuild inside its call (`0x5e6dfa`, `0x5e6e00`): the rows a later verb in the same chunk reads are the rebuilt ones, `QUEST_LOG_UPDATE` waits, the time is asked once.
+    #[test]
+    fn get_quest_reset_time_runs_a_due_rebuild_inside_the_call() {
+        let (mut app, player, rx) = log_app(&[(0, 201, 7)]);
+        app.update();
+        let _ = time_asks(&rx);
+        // A second quest lands in a slot with no rebuild yet, and the reset is due.
+        app.world_mut()
+            .entity_mut(player)
+            .insert(ObjectStore(store_of(&[(0, 201, 7), (1, 202, 7)])));
+        app.world_mut().resource_mut::<QuestLog>().insert_template({
+            let mut t = quest_template([empty(), empty(), empty(), empty()]);
+            (t.quest_id, t.zone_or_sort) = (202, 7);
+            t
+        });
+        app.world_mut()
+            .resource_mut::<crate::net::ServerWallClock>()
+            .sample(1_000_000, 0);
+        app.world()
+            .resource::<crate::ui_script::live::UniqueSignals>()
+            .clear();
+        let counts = live(&mut app, |s| {
+            s.eval::<(i64, i64, i64)>(
+                "local before = select(2, GetNumQuestLogEntries()) \
+                 local left = GetQuestResetTime() \
+                 return before, select(2, GetNumQuestLogEntries()), left",
+            )
+            .unwrap()
+        });
+        assert_eq!(counts, (1, 2, 0), "the call rebuilt the rows");
+        assert_eq!(time_asks(&rx), 1);
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_script::live::UniqueSignals>()
+                .names(),
+            ["QUEST_LOG_UPDATE"]
+        );
+        live(&mut app, |s| {
+            s.eval::<i64>("return GetQuestResetTime()").unwrap()
+        });
+        assert_eq!(time_asks(&rx), 0, "the call's rebuild disarmed the re-ask");
+    }
+
+    /// A rebuild skipped on a pending template leaves the re-ask armed (`0x5e6973`), so the next call retries it.
+    #[test]
+    fn a_skipped_rebuild_keeps_the_reask_armed() {
+        let (mut app, player, rx) = log_app(&[(0, 201, 7)]);
+        app.update();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(ObjectStore(store_of(&[(0, 201, 7), (1, 303, 7)])));
+        app.update();
+        let _ = time_asks(&rx);
+        app.world_mut()
+            .resource_mut::<crate::net::ServerWallClock>()
+            .sample(1_000_000, 0);
+        live(&mut app, |s| {
+            s.eval::<i64>("return GetQuestResetTime()").unwrap()
+        });
+        assert_eq!(time_asks(&rx), 0, "303's template is pending");
+        assert!(app
+            .world()
+            .resource::<crate::net::ServerWallClock>()
+            .reask_due(std::time::Instant::now()));
     }
 
     /// A timer run out marks its quest expired at the rebuild (`0x5e6b15` -> `0x5e57e0`): it reads

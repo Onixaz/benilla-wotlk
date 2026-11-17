@@ -703,10 +703,14 @@ pub(crate) fn publish_world_time(
 
 /// The server's unix wall clock (`SMSG_QUERY_TIME_RESPONSE`), advanced monotonically. Descriptor
 /// deadlines are absolute server stamps (a timed quest's is `time(nullptr) + limitTime`, vmangos
-/// `Player::AddQuest`), so a countdown reads this, never the local clock. `answers` counts the
-/// responses, each owing a `QUEST_LOG_UPDATE` (`0x5dff89`).
+/// `Player::AddQuest`), so a countdown reads this, never the local clock. The re-ask sits behind a
+/// lock, so the log's rebuild disarms it inside a verb's call (`0x5e6daa`).
 #[derive(Resource, Default)]
-pub(crate) struct ServerWallClock(pub(crate) Option<WallClockSample>, pub(crate) u64);
+pub(crate) struct ServerWallClock {
+    sample: Option<WallClockSample>,
+    /// When the log's rebuild next asks the time (`0x5dff77`), `None` once asked (`0x5e6daa`).
+    reask: std::sync::Mutex<Option<Instant>>,
+}
 
 /// One `SMSG_QUERY_TIME_RESPONSE` sample and the monotonic instant it arrived.
 #[derive(Debug, Clone, Copy)]
@@ -716,8 +720,6 @@ pub(crate) struct WallClockSample {
     /// The seconds to the daily quest reset at `received`.
     reset_in: u32,
     received: Instant,
-    /// When the next `CMSG_QUERY_TIME` goes out.
-    ask_at: Instant,
 }
 
 impl ServerWallClock {
@@ -726,54 +728,67 @@ impl ServerWallClock {
     pub(crate) fn sample(&mut self, unix_time: u32, reset_in: u32) {
         let received = Instant::now();
         let wait = RESYNC_AFTER.min(Duration::from_secs(u64::from(reset_in)));
-        self.0 = Some(WallClockSample {
+        self.sample = Some(WallClockSample {
             base_unix: unix_time,
             reset_in,
             received,
-            ask_at: received + wait,
         });
-        self.1 += 1;
+        *self.reask_at() = Some(received + wait);
+    }
+
+    fn reask_at(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
+        self.reask
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether the re-ask is armed and due (`0x5e6df6`-`0x5e6dfc`, `0x5e6d60`-`0x5e6d77`).
+    pub(crate) fn reask_due(&self, now: Instant) -> bool {
+        self.reask_at().is_some_and(|at| now >= at)
+    }
+
+    /// The rebuild's tail: a due re-ask is disarmed (`0x5e6daa`); whether it was, so the caller sends `CMSG_QUERY_TIME` (`0x5e6d79`).
+    pub(crate) fn take_due_reask(&self, now: Instant) -> bool {
+        let mut at = self.reask_at();
+        let due = at.is_some_and(|a| now >= a);
+        if due {
+            *at = None;
+        }
+        due
+    }
+
+    /// The game UI's start disarms it (`0x5e71ee`).
+    pub(crate) fn disarm_reask(&self) {
+        *self.reask_at() = None;
+    }
+
+    /// Whether an answer has landed.
+    pub(crate) fn is_set(&self) -> bool {
+        self.sample.is_some()
     }
 
     /// The daily quest reset in server unix seconds, as the sample placed it.
     pub(crate) fn quest_reset_unix(&self) -> Option<f64> {
-        self.0
+        self.sample
             .map(|s| f64::from(s.base_unix) + f64::from(s.reset_in))
     }
 
     /// Server unix seconds now, fractional.
     pub(crate) fn now_unix(&self) -> Option<f64> {
-        self.0
+        self.sample
             .map(|s| f64::from(s.base_unix) + s.received.elapsed().as_secs_f64())
-    }
-
-    /// Whether the last answer's re-ask is due (`0x5e6d71`).
-    fn ask_due(&self, now: Instant) -> bool {
-        self.0.is_some_and(|s| now >= s.ask_at)
     }
 }
 
 /// The wall-clock resync interval: the reference re-asks after an hour (armed `now + 0xe10`).
 const RESYNC_AFTER: Duration = Duration::from_secs(3600);
 
-/// Ask for the server's wall clock at each world-enter cascade, then whenever the last answer's
-/// re-ask falls due, which tracks a server re-clocked under us and the daily reset.
+/// The world entry asks for the server's wall clock (`0x5e6fa9`); its re-ask goes out from the log's rebuild (`0x5e6d79`).
 pub(crate) fn send_query_time(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     commands: Res<NetCommands>,
-    clock: Res<ServerWallClock>,
-    status: Res<NetStatus>,
-    mut seated: Local<bool>,
-    // The answer whose re-ask went out: the send disarms it until the next answer (`0x5e6daa`).
-    mut spent: Local<u64>,
 ) {
-    let entering = cascades.read().next().is_some();
-    // `connected` rises at `CMSG_PLAYER_LOGIN`, before the server seats us, so the resync waits
-    // for the first cascade; a logout or a disconnect clears `connected` and so the wait re-arms.
-    *seated = status.connected && (*seated || entering);
-    let due = *seated && *spent != clock.1 && clock.ask_due(Instant::now());
-    if entering || due {
-        *spent = clock.1;
+    if cascades.read().next().is_some() {
         let _ = commands.0.send(ClientCommand::QueryTime);
     }
 }

@@ -298,6 +298,62 @@ pub fn fold_quest_log(rows: &mut [QuestLogRow], filter: i32) {
     rows.sort_by_key(|e| (e.hidden, e.sort_index, !e.is_header));
 }
 
+/// A rebuild's rows before the fold, and the sort types it carries the collapse filter between (`0x5e6940`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuestLogPlan {
+    pub rows: Vec<QuestLogRow>,
+    pub old_sort_types: Vec<i32>,
+    pub new_sort_types: Vec<i32>,
+}
+
+/// The rebuild's carry of the collapse filter to its new sort types (`0x5e69a7`-`0x5e6bfc`): a
+/// sort type kept keeps its bit, a new one opens, and bits past the sort types keep their value.
+/// Deviation: the reference keys its old list by signed id, negated when open, so the id-0 header
+/// reads folded after every rebuild; here the old bit is read by position.
+pub fn carry_collapse_filter(filter: i32, old: &[i32], new: &[i32]) -> i32 {
+    let mut out = filter;
+    for (i, st) in new.iter().enumerate().take(25) {
+        let open = old
+            .iter()
+            .position(|o| o == st)
+            .is_none_or(|j| filter & (1 << j) != 0);
+        if open {
+            out |= 1 << i;
+        } else {
+            out &= !(1 << i);
+        }
+    }
+    out
+}
+
+/// The selection's 1-based row in the new rows: a quest id (`0x5dffa0`) follows its quest, a quest gone leaves none.
+pub fn remap_selection(selected: u32, rows: &[QuestLogRow]) -> u32 {
+    if selected == 0 {
+        return 0;
+    }
+    rows.iter()
+        .position(|r| !r.is_header && r.quest_id == selected)
+        .map_or(0, |i| i as u32 + 1)
+}
+
+/// The rebuild's VM half: the filter carried and set (`0x5e6c0e`), the rows folded (`0x5e6c13`) and written.
+pub(crate) fn apply_plan(model: &mut Model, plan: QuestLogPlan) {
+    let filter = carry_collapse_filter(
+        collapse_filter(model),
+        &plan.old_sort_types,
+        &plan.new_sort_types,
+    );
+    let mut rows = plan.rows;
+    fold_quest_log(&mut rows, filter);
+    let selection = remap_selection(selected_id(model), &rows);
+    if collapse_filter(model) != filter {
+        set_collapse_filter(model, filter);
+    }
+    model.quest_log_selection = selection;
+    model.quest_log = rows;
+    super::quest_watch::on_quest_log(model);
+}
+
 /// Leaderboard line count (`0x5e1300`): the lines, the template's faction apart, or 1 if complete.
 fn leader_board_count(e: &QuestLogEntryView) -> i64 {
     let built = e
@@ -391,6 +447,11 @@ fn collapse_header(model: &mut Model, index: i64, collapse: bool) {
 }
 
 impl super::UiScript {
+    /// Run a rebuild's VM half ([`QuestLogPlan`]).
+    pub fn apply_quest_log_plan(&mut self, plan: QuestLogPlan) {
+        apply_plan(&mut self.model_mut(), plan);
+    }
+
     /// Write the rebuilt row table (`0x5e6940`). A watch holds while any quest row, shown or
     /// folded, carries its id, so a collapse never prunes.
     pub fn set_quest_log_rows(&mut self, rows: Vec<QuestLogRow>) {
@@ -1165,7 +1226,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `SMSG_QUERY_TIME_RESPONSE` placed; 0 before the first.
     g.set(
         "GetQuestResetTime",
-        lua.create_function(|_, ()| {
+        lua.create_function(|lua, ()| {
+            // A due re-ask runs the rebuild inside the call first (`0x5e6dfa`, `0x5e6e00`).
+            if let Some(Some(plan)) = super::read_live(|l| l.rebuild_quest_log_if_reask_due()) {
+                apply_plan(&mut crate::script::model_mut_of(lua), plan);
+            }
             let reset = super::read_live(|l| l.quest_reset_unix()).flatten();
             Ok(reset
                 .zip(server_now())

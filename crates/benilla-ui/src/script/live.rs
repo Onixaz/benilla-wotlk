@@ -208,6 +208,13 @@ pub trait LiveState {
     fn quest_reset_unix(&self) -> Option<f64> {
         None
     }
+
+    /// `GetQuestResetTime`'s first step (`0x5e6dee`-`0x5e6e00`): with the time response's re-ask
+    /// due, the log's rebuild runs, its tail asking the time again (`0x5e6d79`); its rows to write,
+    /// `None` when not due, the rebuild skipped or no view lends it.
+    fn rebuild_quest_log_if_reask_due(&self) -> Option<super::QuestLogPlan> {
+        None
+    }
     /// Queue slot `index` (`0xbea4b8`) at the call, `None` off the two.
     fn battlefield_slot(&self, index: usize) -> Option<super::BattlefieldQueueSlot> {
         (index < 2).then(Default::default)

@@ -264,6 +264,10 @@ impl LiveState for LiveView<'_, '_> {
         self.clock.as_ref()?.quest_reset_unix()
     }
 
+    fn rebuild_quest_log_if_reask_due(&self) -> Option<benilla_ui::script::QuestLogPlan> {
+        self.quest_rows.rebuild_if_reask_due()
+    }
+
     fn battlefield_slot(&self, index: usize) -> Option<benilla_ui::script::BattlefieldQueueSlot> {
         self.battlefield.slot(index)
     }

@@ -461,8 +461,8 @@ pub use quest::{
     QuestState,
 };
 pub use quest_log::{
-    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogRow,
-    QuestLogState,
+    carry_collapse_filter, fold_quest_log, remap_selection, QuestLogDetail, QuestLogEntryView,
+    QuestLogObjectiveView, QuestLogPlan, QuestLogRow, QuestLogState,
 };
 pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};

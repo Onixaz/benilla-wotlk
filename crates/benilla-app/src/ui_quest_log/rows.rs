@@ -7,14 +7,14 @@ use bevy::prelude::*;
 
 use benilla_protocol::messages::{quest_flags, quest_slot_state, PLAYER_QUEST_LOG_SLOTS};
 use benilla_ui::script::{
-    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogRow, ScriptValue, UiScript,
+    QuestLogDetail, QuestLogEntryView, QuestLogPlan, QuestLogRow, ScriptValue, UiScript,
 };
 
 use super::{
-    abandon_items, build_detail, build_objectives, carry_collapse_filter, completion_text,
-    no_objectives, order_groups, poi_objectives, quest_complete, quest_level, timer_run_out,
-    CompletionInputs, GroupRow, ObjectiveExtras, QuestExpiries, QuestHeaderNamesRes, QuestLog,
-    QuestLogMarks, QuestTagNamesRes, MISSING_HEADER,
+    abandon_items, build_detail, build_objectives, completion_text, no_objectives, order_groups,
+    poi_objectives, quest_complete, quest_level, timer_run_out, CompletionInputs, GroupRow,
+    ObjectiveExtras, QuestExpiries, QuestHeaderNamesRes, QuestLog, QuestLogMarks, QuestTagNamesRes,
+    MISSING_HEADER,
 };
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -60,6 +60,42 @@ impl QuestAsks {
     }
 }
 
+/// The rebuild's own state, behind a lock so the rebuild also runs inside a verb's call (`0x5e6e00`).
+#[derive(Resource, Default)]
+pub(crate) struct RebuildMarks(std::sync::Mutex<RebuildState>);
+
+#[derive(Default)]
+struct RebuildState {
+    /// The templates the last rebuild missed (`0x5e6a98`); every rebuild skips while one is (`0x5e6973`).
+    pending: HashSet<u32>,
+    /// The last rebuild's sort types in their sorted order (`0x5e6b47`), which the collapse filter's bits follow.
+    sort_types: Vec<i32>,
+}
+
+impl RebuildMarks {
+    fn state(&self) -> std::sync::MutexGuard<'_, RebuildState> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Disconnect: drops every mark.
+    pub(crate) fn clear(&self) {
+        *self.state() = RebuildState::default();
+    }
+
+    /// The world entry zeroes the pending count (`0x5e6fde`).
+    fn clear_pending(&self) {
+        self.state().pending.clear();
+    }
+
+    /// A template answer's count down (`0x5de913`); whether it was the last pending one (`0x5de91d`).
+    fn landed_last(&self, quest_id: u32) -> bool {
+        let mut st = self.state();
+        st.pending.remove(&quest_id) && st.pending.is_empty()
+    }
+}
+
 /// What the per-row verbs read at the call: our slots, the caches and the bags, none sampled.
 #[derive(SystemParam)]
 pub(crate) struct QuestRowLive<'w, 's> {
@@ -77,9 +113,37 @@ pub(crate) struct QuestRowLive<'w, 's> {
     states: Option<Res<'w, crate::world_state::WorldStates>>,
     rewards: crate::ui_quest::rewards::RewardInputs<'w, 's>,
     spells: Option<Res<'w, Spells>>,
+    rebuild: Option<Res<'w, RebuildMarks>>,
+    headers: Option<Res<'w, QuestHeaderNamesRes>>,
+    clock: Option<Res<'w, crate::net::ServerWallClock>>,
+    signals: Option<Res<'w, UniqueSignals>>,
 }
 
 impl QuestRowLive<'_, '_> {
+    /// `GetQuestResetTime`'s due re-ask runs the rebuild in the call (`0x5e6dee`-`0x5e6e00`).
+    pub(crate) fn rebuild_if_reask_due(&self) -> Option<QuestLogPlan> {
+        let clock = self.clock.as_deref()?;
+        if !clock.reask_due(std::time::Instant::now()) {
+            return None;
+        }
+        let (Some((store, _)), Some(objects)) = (self.me.iter().next(), self.objects.as_ref())
+        else {
+            return None;
+        };
+        plan(&PlanInputs {
+            store,
+            quest_log: self.quest_log.as_deref()?,
+            marks: self.rebuild.as_deref()?,
+            expiries: self.expiries.as_deref()?,
+            headers: self.headers.as_deref(),
+            net: self.net.as_deref()?,
+            clock: Some(clock),
+            objects,
+            rewards: &self.rewards,
+            signals: self.signals.as_deref()?,
+        })
+    }
+
     /// Note a miss for its answer's `QUEST_LOG_UPDATE`.
     fn miss(&self, ask: QuestAsk) {
         if let Some(asks) = self.asks.as_deref() {
@@ -285,37 +349,41 @@ impl QuestRowLive<'_, '_> {
     }
 }
 
-/// The rebuild's rows before the fold, and the sort types it carries the filter between.
-struct Plan {
-    rows: Vec<QuestLogRow>,
-    old_sort_types: Vec<i32>,
-    new_sort_types: Vec<i32>,
+/// What the rebuild reads: our slots, the caches, the bags and standings, the clock.
+struct PlanInputs<'a, 'w, 's> {
+    store: &'a ObjectStore,
+    quest_log: &'a QuestLog,
+    marks: &'a RebuildMarks,
+    expiries: &'a QuestExpiries,
+    headers: Option<&'a QuestHeaderNamesRes>,
+    net: &'a NetCommands,
+    clock: Option<&'a crate::net::ServerWallClock>,
+    objects: &'a crate::net::Objects<'w, 's>,
+    rewards: &'a crate::ui_quest::rewards::RewardInputs<'w, 's>,
+    signals: &'a UniqueSignals,
 }
 
-/// The rebuild's walk (`0x5e6940`): skipped while a template is pending (`0x5e6973`), cached quests only (`0x5e6a98`), `QUEST_LOG_UPDATE` queued (`0x5e6cb9`).
-#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
-fn plan_rows(
-    me: Query<&ObjectStore, With<SelfPlayer>>,
-    quest_log: Res<QuestLog>,
-    mut marks: ResMut<QuestLogMarks>,
-    expiries: Res<QuestExpiries>,
-    headers: Option<Res<QuestHeaderNamesRes>>,
-    net: Res<NetCommands>,
-    clock: Option<Res<crate::net::ServerWallClock>>,
-    objects: crate::net::Objects,
-    rewards: crate::ui_quest::rewards::RewardInputs,
-    signals: Res<UniqueSignals>,
-) -> Option<Plan> {
+/// The rebuild's walk (`0x5e6940`): skipped while a template is pending (`0x5e6973`), cached quests only (`0x5e6a98`), `QUEST_LOG_UPDATE` queued (`0x5e6cb9`), then a due re-ask sent (`0x5e6d60`-`0x5e6daa`).
+fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
+    let PlanInputs {
+        store,
+        quest_log,
+        expiries,
+        net,
+        objects,
+        rewards,
+        ..
+    } = *p;
+    let mut marks = p.marks.state();
     if !marks.pending.is_empty() {
         return None;
     }
-    let store = me.iter().next()?;
     let mut rows = Vec::new();
     for slot in 0..PLAYER_QUEST_LOG_SLOTS {
         let Some(log_slot) = store.0.player_quest_log(slot).filter(|s| s.quest_id != 0) else {
             continue;
         };
-        if quest_log.template(log_slot.quest_id, &net).is_none() {
+        if quest_log.template(log_slot.quest_id, net).is_none() {
             marks.pending.insert(log_slot.quest_id);
             continue;
         }
@@ -327,8 +395,8 @@ fn plan_rows(
             .filter_map(|s| store.0.player_quest_log(s))
             .any(|s| s.quest_id == id)
     });
-    let now = clock.as_ref().and_then(|c| c.now_unix());
-    let carried = |id: u32| count_of(&store.0, &objects, id, InventoryScope::QUEST_ITEMS);
+    let now = p.clock.and_then(|c| c.now_unix());
+    let carried = |id: u32| count_of(&store.0, objects, id, InventoryScope::QUEST_ITEMS);
     let standing = |faction: u32| rewards.standing(&store.0, faction);
     let completion = CompletionInputs {
         carried: &carried,
@@ -362,8 +430,7 @@ fn plan_rows(
                 header: if zos == 0 {
                     MISSING_HEADER.to_string()
                 } else {
-                    headers
-                        .as_ref()
+                    p.headers
                         .and_then(|h| h.0.resolve(zos))
                         .unwrap_or_default()
                         .to_string()
@@ -396,40 +463,50 @@ fn plan_rows(
         }
     }
     let old_sort_types = std::mem::replace(&mut marks.sort_types, new_sort_types.clone());
-    signals.unique_signal("QUEST_LOG_UPDATE");
-    Some(Plan {
+    drop(marks);
+    p.signals.unique_signal("QUEST_LOG_UPDATE");
+    if p.clock
+        .is_some_and(|c| c.take_due_reask(std::time::Instant::now()))
+    {
+        let _ = net.0.send(crate::net::ClientCommand::QueryTime);
+    }
+    Some(QuestLogPlan {
         rows: table,
         old_sort_types,
         new_sort_types,
     })
 }
 
-/// The rebuild's VM half: the filter carried and set (`0x5e6c0e`), the rows folded (`0x5e6c13`) and written.
-fn write_rows(plan: Plan, script: &mut UiScript) {
-    let filter = carry_collapse_filter(
-        script.quest_log_collapse_filter(),
-        &plan.old_sort_types,
-        &plan.new_sort_types,
-    );
-    let mut rows = plan.rows;
-    fold_quest_log(&mut rows, filter);
-    let selection = remap_selection(script.quest_log_selected_id(), &rows);
-    script.set_quest_log_collapse_filter(filter);
-    if selection != script.quest_log_selection() {
-        script.set_quest_log_selection(selection);
-    }
-    script.set_quest_log_rows(rows);
+/// [`plan`] over the `World`'s resources.
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+fn plan_rows(
+    me: Query<&ObjectStore, With<SelfPlayer>>,
+    quest_log: Res<QuestLog>,
+    marks: Res<RebuildMarks>,
+    expiries: Res<QuestExpiries>,
+    headers: Option<Res<QuestHeaderNamesRes>>,
+    net: Res<NetCommands>,
+    clock: Option<Res<crate::net::ServerWallClock>>,
+    objects: crate::net::Objects,
+    rewards: crate::ui_quest::rewards::RewardInputs,
+    signals: Res<UniqueSignals>,
+) -> Option<QuestLogPlan> {
+    plan(&PlanInputs {
+        store: me.iter().next()?,
+        quest_log: &quest_log,
+        marks: &marks,
+        expiries: &expiries,
+        headers: headers.as_deref(),
+        net: &net,
+        clock: clock.as_deref(),
+        objects: &objects,
+        rewards: &rewards,
+        signals: &signals,
+    })
 }
 
-/// The selection's 1-based row in the new rows: a quest id (`0x5dffa0`) follows its quest, a quest gone leaves none.
-pub(super) fn remap_selection(selected: u32, rows: &[QuestLogRow]) -> u32 {
-    if selected == 0 {
-        return 0;
-    }
-    rows.iter()
-        .position(|r| !r.is_header && r.quest_id == selected)
-        .map_or(0, |i| i as u32 + 1)
-}
+#[cfg(test)]
+pub(super) use benilla_ui::script::remap_selection;
 
 /// The rebuild with argument 1 (`0x5e6940`), over the `World` with the VM lent.
 pub(crate) fn rebuild(world: &mut World) {
@@ -441,7 +518,9 @@ pub(crate) fn rebuild(world: &mut World) {
         }
     };
     if let Some(plan) = plan {
-        crate::ui_script::live::with_live_world(world, |script| write_rows(plan, script));
+        crate::ui_script::live::with_live_world(world, |script: &mut UiScript| {
+            script.apply_quest_log_plan(plan)
+        });
     }
 }
 
@@ -502,8 +581,8 @@ pub(crate) fn announce_accept(world: &mut World, quest_id: u32) {
 /// The world entry's log part (`0x5e6fa0`): the pending count zeroed (`0x5e6fde`), then the rebuild (`0x5e6fe4`).
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
-        if let Some(mut marks) = world.get_resource_mut::<QuestLogMarks>() {
-            marks.pending.clear();
+        if let Some(marks) = world.get_resource::<RebuildMarks>() {
+            marks.clear_pending();
         }
         rebuild(world);
         crate::ui_script::live::fire_handler_events(world);
@@ -514,6 +593,7 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
 pub(super) fn template_landed(
     quest_id: u32,
     marks: &mut QuestLogMarks,
+    rebuild_marks: &RebuildMarks,
     asks: &QuestAsks,
     signals: &UniqueSignals,
     ui: &mut UiEvents,
@@ -524,7 +604,7 @@ pub(super) fn template_landed(
     if marks.accepts.remove(&quest_id) {
         ui.world(move |world| announce_accept(world, quest_id));
     }
-    if marks.pending.remove(&quest_id) && marks.pending.is_empty() {
+    if rebuild_marks.landed_last(quest_id) {
         ui.world(rebuild);
     }
 }
