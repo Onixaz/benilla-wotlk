@@ -34,7 +34,7 @@ use menu::drain_pet_menu;
 pub(crate) use menu::PET_FLAG_ABANDON;
 pub(crate) use menu::{menu_predicates, summon_bars_dismiss};
 pub(crate) use temp_bar::temp_slot_texture;
-pub(crate) use unit::feed_pet_unit;
+pub(crate) use unit::{feed_pet_unit, pet_combat_flag};
 
 #[cfg(test)]
 mod flush_tests;

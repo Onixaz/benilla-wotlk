@@ -1488,6 +1488,8 @@ fn gameobject_info(
 enum PetSignal {
     Happiness,
     Experience,
+    /// `UNIT_FIELD_FLAGS` `0x800` moved to set or clear: the flags callback's pet arm (`0x73c503`).
+    Attack(bool),
 }
 
 /// The unit signal a pet stat field raises: the field's index is its event slot (`0x614190`), 23
@@ -1506,7 +1508,9 @@ fn pet_signal(e: &FieldChanged) -> Option<PetSignal> {
 }
 
 /// The unit signals of the unit the `"pet"` token names, our charm else our summon, with that
-/// token (`0x60bb70`); the fan-out to the other tokens naming it is the units' (#1289).
+/// token (`0x60bb70`); the fan-out to the other tokens naming it is the units' (#1289). The flags
+/// callback's pet arm (`0x73c503`-`0x73c53d`) fires `PET_ATTACK_START`/`STOP` for a unit whose
+/// charmer, else summoner, is us (`0x5d30a0`), in field order with the others.
 fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
     if merged.pet_signals.is_empty() {
         return;
@@ -1517,18 +1521,32 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
         .and_then(|me| sc.index.0.get(&me))
         .and_then(|&e| sc.stores.get(e).ok())
         .and_then(|s| s.0.unit_pet_guid());
-    if pet != Some(guid) {
-        return;
-    }
+    let ours = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .is_some_and(|s| {
+            sc.self_guid.0.is_some() && crate::ui_pet::pet_combat_flag(s, sc.self_guid.0).is_some()
+        });
     use benilla_ui::script::ScriptValue;
     for &event in &merged.pet_signals {
         match event {
-            PetSignal::Happiness => sc
+            PetSignal::Happiness if pet == Some(guid) => sc
                 .ui
                 .fire("UNIT_HAPPINESS", vec![ScriptValue::Str("pet".into())]),
-            PetSignal::Experience => sc
+            PetSignal::Experience if pet == Some(guid) => sc
                 .ui
                 .fire("UNIT_PET_EXPERIENCE", vec![ScriptValue::Str("pet".into())]),
+            PetSignal::Attack(on) if ours => sc.ui.fire(
+                if on {
+                    "PET_ATTACK_START"
+                } else {
+                    "PET_ATTACK_STOP"
+                },
+                Vec::new(),
+            ),
+            _ => {}
         }
     }
 }
@@ -1694,6 +1712,14 @@ fn merge_fields(
                 own && (e.unit_field(FIELD_UNIT_CRITTER) || e.unit_field(FIELD_UNIT_CRITTER + 1));
             if let Some(event) = pet_signal(&e) {
                 merged.pet_signals.push(event);
+            }
+            // The flags callback's changed mask, then the new word's bit (`0x73c503`, `0x73c536`).
+            if e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS)
+                && (e.old ^ e.new) & 0x800 != 0
+            {
+                merged
+                    .pet_signals
+                    .push(PetSignal::Attack(e.new & 0x800 != 0));
             }
             if own
                 && (e.unit_field(FIELD_UNIT_HEALTH)

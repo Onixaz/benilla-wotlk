@@ -20,9 +20,6 @@ pub(crate) struct PetUnitMemory {
     pushed: Option<UnitState>,
     /// `UNIT_PET`'s trigger; `None` until the first feed, so a pet out at login announces once.
     guid: Option<u64>,
-    /// The pet's last in-combat flag, `PET_ATTACK_*`'s trigger; `None` until a pet resolves, so a
-    /// pet already fighting at login announces once.
-    in_combat: Option<bool>,
     /// The last `(pet guid, UNIT_FIELD_PET_NAME_TIMESTAMP)`: the rename signal.
     name_stamp: Option<(u64, Option<u32>)>,
     /// The name cache's counter, which catches a `resolve` answer landing frames later.
@@ -125,7 +122,7 @@ pub(crate) fn feed_pet_unit(
     // move of our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON`, the unit watches behind event slots 0
     // and 2 (registered through `0x614190`): a pet that leaves with no `SMSG_PET_SPELLS` still
     // repaints the frame. Deviation: only the `"player"` token hears the watch, not another token
-    // naming us.
+    // naming us. Its handlers read the `"pet"` token, so it moves with the units (#1289).
     let summon_moved = pet.self_guid.0.is_some_and(|me| {
         use benilla_protocol::field::{FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON};
         [FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON]
@@ -137,31 +134,6 @@ pub(crate) fn feed_pet_unit(
         memory.guid = Some(pet_guid);
         debug!("ui_pet: UNIT_PET — pet is now {pet_guid:#x} (summon field moved: {summon_moved})");
         script.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
-    }
-
-    // PET_ATTACK_START/STOP (334/335), the pet frame's attack glow, fire on the pet's
-    // `UNIT_FIELD_FLAGS & 0x800` edge: a field callback, not the Attack button's latch.
-    let in_combat = fresh
-        .as_ref()
-        .and_then(|_| pet_combat_flag(pet.store(pet_guid)?, pet.self_guid.0));
-    if let Some(now) = in_combat {
-        if memory.in_combat != Some(now) {
-            gate.audit("feed_pet_unit", "the pet combat-flag edge");
-            memory.in_combat = Some(now);
-            debug!("ui_pet: pet in-combat flag → {now}");
-            script.fire_event(
-                if now {
-                    "PET_ATTACK_START"
-                } else {
-                    "PET_ATTACK_STOP"
-                },
-                vec![],
-            );
-        }
-    } else {
-        // No pet, or not ours: forget the edge; the reference's field callback is not called when a
-        // unit leaves.
-        memory.in_combat = None;
     }
 }
 
@@ -210,7 +182,7 @@ pub(super) fn was_renamed(previous: Option<(u64, Option<u32>)>, now: (u64, Optio
 
 /// The in-combat flag as the reference's field callback sees it: `None` unless the unit is ours by
 /// CHARMEDBY, else SUMMONEDBY (not the possessed-unit lookup's CREATEDBY fallback); then the flag.
-pub(super) fn pet_combat_flag(store: &ObjectStore, self_guid: Option<u64>) -> Option<bool> {
+pub(crate) fn pet_combat_flag(store: &ObjectStore, self_guid: Option<u64>) -> Option<bool> {
     (store
         .0
         .unit_owner(benilla_protocol::OwnerFallback::SummonedBy)

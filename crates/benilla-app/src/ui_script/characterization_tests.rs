@@ -2882,6 +2882,53 @@ fn pet_stat_events_fire_from_the_pets_field_handler() {
     );
 }
 
+/// `PET_ATTACK_START`/`STOP` fire from the flags field handler of a unit we charm, else summon,
+/// on each move of its `0x800` bit, in field order with the pet's other signals (`0x73f29b` ->
+/// `0x73c503`-`0x73c53d` -> `0x5d30a0`); another bit, or another owner's unit, fires none.
+#[test]
+fn pet_attack_events_fire_from_the_flags_field_handler() {
+    use benilla_protocol::field::{FIELD_UNIT_POWER1, FIELD_UNIT_SUMMONEDBY};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            })),
+        ],
+        3,
+    );
+    let pet_values = |pairs: &[(u16, u32)]| SessionEvent::ObjectValues {
+        guid: PET,
+        fields: ObjectFields::from_pairs(pairs),
+    };
+    let events = &["PET_ATTACK_START", "PET_ATTACK_STOP", "UNIT_HAPPINESS"];
+    let seen = rig.packets(
+        vec![
+            pet_values(&[(FIELD_UNIT_FLAGS, 0x800), (FIELD_UNIT_POWER1 + 4, 999_999)]),
+            pet_values(&[(FIELD_UNIT_FLAGS, 0x1800)]),
+            pet_values(&[(FIELD_UNIT_FLAGS, 0x1000)]),
+            pet_values(&[
+                (FIELD_UNIT_SUMMONEDBY, 0x99),
+                (FIELD_UNIT_SUMMONEDBY + 1, 0),
+                (FIELD_UNIT_FLAGS, 0x800),
+            ]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, &[]),
+        vec!["UNIT_HAPPINESS pet", "PET_ATTACK_START", "PET_ATTACK_STOP"]
+    );
+}
+
 /// `COMPANION_UPDATE "CRITTER"` fires from our `UNIT_FIELD_CRITTER` watch after the field applies
 /// (`0x6cf722`), so the critter's active flag reads the new critter at it.
 #[test]

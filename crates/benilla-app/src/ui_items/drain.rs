@@ -912,7 +912,10 @@ fn run_container_clicks(world: &mut World) {
     world.run_system_once(drain_container_repairs).unwrap();
     world
         .run_system_once(
-            |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+            |(mut script, _live): (
+                NonSendMut<UiScript>,
+                crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+            ),
              mut items: ScriptItemUse| {
                 crate::script_calls::in_call_order(&mut script, |script, call| {
                     if let ScriptCall::UseContainerItem { bag, slot } = call {
