@@ -143,26 +143,29 @@ pub fn accumulate_wmo_group_camera_only_collision(
     );
 }
 
-/// Append one WMO group file's mouse-pick occluder triangles: every face but MOPY `0x88`
-/// ([`MOPY_PICK_SKIP`]) and every face whose material blends. `BspQuery_Segment` (`0x7c6c30`)
-/// classes a face opaque (`0x200`) when its material id is `0xFF` or its MOMT `blendMode` is 0,
-/// else blended (`0x100`), and the pick's mask `0x188` carries only `0x100`. `blended` is
+/// Append one WMO group file's faces past MOPY `0x88` ([`MOPY_PICK_SKIP`]) in one walk, split by
+/// material class: the opaque ones are the mouse pick's occluders, the blended ones go apart. The
+/// pick trace's segment test (`0x7c6c30`) classes a face opaque (`0x200`) when its material id is
+/// `0xFF` or its MOMT `blendMode` is 0, else blended (`0x100`), and its mask `0x188` carries only
+/// `0x100`. The ground-decal gather's box and frustum tests (`0x7c9b10`, `0x7c7660`) read the flag
+/// byte alone under the mask `0x88`, so a decal drapes both halves. `blended` is
 /// [`super::WmoRoot::material_blended`], by MOPY material id; an id past it counts as opaque.
 pub fn accumulate_wmo_group_pick_collision(
     group_bytes: &[u8],
     blended: &[bool],
-    positions: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
+    (positions, indices): (&mut Vec<[f32; 3]>, &mut Vec<u32>),
+    (blended_positions, blended_indices): (&mut Vec<[f32; 3]>, &mut Vec<u32>),
 ) {
-    accumulate_wmo_group_faces_where(
+    accumulate_wmo_group_faces_routed(
         group_bytes,
         |flags, material| {
-            flags & MOPY_PICK_SKIP == 0
-                && (material == 0xFF
-                    || !blended.get(usize::from(material)).copied().unwrap_or(false))
+            (flags & MOPY_PICK_SKIP == 0).then(|| {
+                let is_blended = material != 0xFF
+                    && blended.get(usize::from(material)).copied().unwrap_or(false);
+                usize::from(is_blended)
+            })
         },
-        positions,
-        indices,
+        [(positions, indices), (blended_positions, blended_indices)],
     );
 }
 
@@ -190,18 +193,33 @@ fn accumulate_wmo_group_faces_where(
     positions: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
 ) {
+    accumulate_wmo_group_faces_routed(
+        group_bytes,
+        |flags, material| keep(flags, material).then_some(0),
+        [(positions, indices)],
+    );
+}
+
+/// Append each triangle to the output `route(flags, material_id)` names (`None` drops it), in one
+/// parse of the group, its vertices remapped per group and per output.
+fn accumulate_wmo_group_faces_routed<const N: usize>(
+    group_bytes: &[u8],
+    route: impl Fn(u8, u8) -> Option<usize>,
+    mut outs: [(&mut Vec<[f32; 3]>, &mut Vec<u32>); N],
+) {
     let Ok(ParsedWmo::Group(group)) = parse_wmo(&mut Cursor::new(group_bytes)) else {
         return;
     };
     let n_tri = group.vertex_indices.len() / 3;
-    let mut map: HashMap<u16, u32> = HashMap::new();
+    let mut maps: [HashMap<u16, u32>; N] = std::array::from_fn(|_| HashMap::new());
     for t in 0..n_tri {
         let Some(mopy) = group.material_info.get(t) else {
             continue;
         };
-        if !keep(mopy.flags, mopy.material_id) {
+        let Some(o) = route(mopy.flags, mopy.material_id) else {
             continue;
-        }
+        };
+        let ((positions, indices), map) = (&mut outs[o], &mut maps[o]);
         for k in 0..3 {
             let Some(&vidx) = group.vertex_indices.get(t * 3 + k) else {
                 continue;
@@ -247,10 +265,21 @@ mod tests {
         chunk(b"PGOM", &mogp)
     }
 
-    fn pick_faces(faces: &[(u8, u8)], blended: &[bool]) -> usize {
+    /// The (pick occluder, blended decal-only) triangle counts for `faces`.
+    fn pick_split(faces: &[(u8, u8)], blended: &[bool]) -> (usize, usize) {
         let (mut pos, mut idx) = (Vec::new(), Vec::new());
-        accumulate_wmo_group_pick_collision(&group(faces), blended, &mut pos, &mut idx);
-        idx.len() / 3
+        let (mut bpos, mut bidx) = (Vec::new(), Vec::new());
+        accumulate_wmo_group_pick_collision(
+            &group(faces),
+            blended,
+            (&mut pos, &mut idx),
+            (&mut bpos, &mut bidx),
+        );
+        (idx.len() / 3, bidx.len() / 3)
+    }
+
+    fn pick_faces(faces: &[(u8, u8)], blended: &[bool]) -> usize {
+        pick_split(faces, blended).0
     }
 
     /// The pick passes Dalaran's counter blockers (MOPY `0x48`, no material) and a blended pane,
@@ -280,6 +309,20 @@ mod tests {
             pick_faces(&[(0x20, 7)], &blended),
             1,
             "an id past MOMT is opaque"
+        );
+
+        // The decal half: a blended face past `0x88` goes apart, a collision-only one nowhere.
+        assert_eq!(pick_split(&[(0x20, 1)], &blended), (0, 1), "blended");
+        assert_eq!(pick_split(&[(0x24, 1)], &blended), (0, 1), "blended DETAIL");
+        assert_eq!(
+            pick_split(&[(0x48, 1)], &blended),
+            (0, 0),
+            "blended blocker"
+        );
+        assert_eq!(
+            pick_split(&[(0x20, 0), (0x20, 1), (0x24, 0)], &blended),
+            (2, 1),
+            "one walk splits a mixed group"
         );
 
         let (mut pos, mut idx) = (Vec::new(), Vec::new());

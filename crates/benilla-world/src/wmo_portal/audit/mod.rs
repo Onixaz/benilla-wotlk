@@ -264,6 +264,7 @@ fn load_subject(internal: &str, site: Option<&Site>) -> Subject {
         collision: None,
         collision_camera: None,
         collision_pick: None,
+        collision_decal_blended: None,
         doodads: Vec::new(),
         doodad_sets: Vec::new(),
         lights: Vec::new(),
