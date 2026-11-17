@@ -1024,9 +1024,6 @@ mod tests {
     };
     use benilla_protocol::messages::ObjectFields;
 
-    /// `PLAYER_FIELD_BYTES`.
-    const F_BYTES: u16 = 1222;
-
     struct Rig {
         globals: DeathGlobals,
         death_net: DeathNet,
@@ -1076,8 +1073,13 @@ mod tests {
     /// and the reclaim deadline with them.
     #[test]
     fn the_release_timer_derives_from_the_window_bits_and_the_bounds_flag() {
-        let player =
-            |bytes: u32, flags: u32| ObjectFields::from_pairs(&[(F_BYTES, bytes), (190, flags)]);
+        // `PLAYER_FIELD_BYTES` and `PLAYER_FLAGS`.
+        let player = |bytes: u32, flags: u32| {
+            ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES, bytes),
+                (benilla_protocol::field::FIELD_PLAYER_FLAGS, flags),
+            ])
+        };
         let mut g = DeathGlobals::default();
         assert_eq!(g.release_left_ms(5.0), Some(0), "a fresh UI reads 0");
         g.update_repop_timer(&player(0x10 | 0x08, 0), 5.0);
@@ -1393,12 +1395,12 @@ mod self_res_tests {
     /// Reincarnation's effect spell, what the server writes into the field.
     const REINCARNATION: u32 = 21169;
     /// `PLAYER_SELF_RES_SPELL`.
-    const F_SELF_RES: u16 = 1224;
+    const F_SELF_RES: u16 = benilla_protocol::field::FIELD_PLAYER_SELF_RES_SPELL;
     /// `UNIT_FIELD_HEALTH` and `UNIT_FIELD_MAXHEALTH`: `unit_is_dead()` also needs a non-zero max.
-    const F_HEALTH: u16 = 22;
-    const F_MAXHEALTH: u16 = 28;
+    const F_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const F_MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
     /// `PLAYER_FIELD_PACK_SLOT_1`: the backpack's 16 slots, two dwords per guid.
-    const F_PACK_1: u16 = 532;
+    const F_PACK_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
 
     fn commands() -> (NetCommands, crossbeam_channel::Receiver<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -1516,7 +1518,10 @@ mod self_res_tests {
             Some(item("Ankh of Reincarnation", vec![block(3026, 0)])),
         );
         for (guid, entry) in [(0xA0_u64, 10_u32), (0xA1, 11), (0xA2, 12)] {
-            objs.spawn(guid, ObjectFields::from_pairs(&[(3, entry)]));
+            objs.spawn(
+                guid,
+                ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_OBJECT_ENTRY, entry)]),
+            );
         }
         let objects = objs.get();
         let spells = catalog([

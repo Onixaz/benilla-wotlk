@@ -1509,13 +1509,13 @@ mod find_item_tests {
     use benilla_protocol::ObjectFields;
 
     // Descriptor field indices, raw.
-    const ENTRY: u16 = 3; // OBJECT_FIELD_ENTRY
-    const CHARGES: u16 = 16; // ITEM_FIELD_SPELL_CHARGES[0]
-    const NUM_SLOTS: u16 = 78; // CONTAINER_FIELD_NUM_SLOTS
-    const SLOT_1: u16 = 80; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
-    const INV_SLOT_HEAD: u16 = 486; // PLAYER_FIELD_INV_SLOT_HEAD (2 per guid, 23 slots)
-    const PACK_SLOT_1: u16 = 532; // PLAYER_FIELD_PACK_SLOT_1 (2 per guid, 16 slots)
-    const KEYRING_SLOT_1: u16 = 648; // PLAYER_FIELD_KEYRING_SLOT_1 (2 per guid, player slots 86..)
+    const ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY; // OBJECT_FIELD_ENTRY
+    const CHARGES: u16 = benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES; // ITEM_FIELD_SPELL_CHARGES[0]
+    const NUM_SLOTS: u16 = benilla_protocol::field::FIELD_CONTAINER_NUM_SLOTS; // CONTAINER_FIELD_NUM_SLOTS
+    const SLOT_1: u16 = benilla_protocol::field::FIELD_CONTAINER_SLOT_1; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
+    const INV_SLOT_HEAD: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD; // PLAYER_FIELD_INV_SLOT_HEAD (2 per guid, 23 slots)
+    const PACK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1; // PLAYER_FIELD_PACK_SLOT_1 (2 per guid, 16 slots)
+    const KEYRING_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_KEYRING_SLOT_1; // PLAYER_FIELD_KEYRING_SLOT_1 (2 per guid, player slots 86..)
 
     const TRINKET: u32 = 12_930;
     const BAG: u32 = 4_500;
@@ -1724,7 +1724,7 @@ mod find_item_tests {
 
     /// A player with items in the bank band (`PLAYER_FIELD_BANK_SLOT_1`).
     fn bank_player(slots: &std::collections::HashMap<u16, u64>) -> ObjectFields {
-        const BANK_SLOT_1: u16 = 1516; // PLAYER_FIELD_BANK_SLOT_1 (2 per guid, player slots 39..66)
+        const BANK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1; // PLAYER_FIELD_BANK_SLOT_1 (2 per guid, player slots 39..66)
         let mut pairs = Vec::new();
         for (&idx, &guid) in slots {
             let base = BANK_SLOT_1 + 2 * (idx - 39);
@@ -1743,15 +1743,15 @@ mod count_of_tests {
     use benilla_protocol::ObjectFields;
 
     // Descriptor field indices, raw.
-    const ENTRY: u16 = 3; // OBJECT_FIELD_ENTRY
-    const STACK: u16 = 14; // ITEM_FIELD_STACK_COUNT
-    const NUM_SLOTS: u16 = 78; // CONTAINER_FIELD_NUM_SLOTS
-    const SLOT_1: u16 = 80; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
-    const INV_SLOT_HEAD: u16 = 486; // player slots 0..22
-    const PACK_SLOT_1: u16 = 532; // player slots 23..38
-    const BANK_SLOT_1: u16 = 1516; // player slots 39..66
-    const BANK_BAG_SLOT_1: u16 = 1572; // player slots 67..73
-    const KEYRING_SLOT_1: u16 = 648; // player slots 86..117
+    const ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY; // OBJECT_FIELD_ENTRY
+    const STACK: u16 = benilla_protocol::field::FIELD_ITEM_STACK_COUNT; // ITEM_FIELD_STACK_COUNT
+    const NUM_SLOTS: u16 = benilla_protocol::field::FIELD_CONTAINER_NUM_SLOTS; // CONTAINER_FIELD_NUM_SLOTS
+    const SLOT_1: u16 = benilla_protocol::field::FIELD_CONTAINER_SLOT_1; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
+    const INV_SLOT_HEAD: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD; // player slots 0..22
+    const PACK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1; // player slots 23..38
+    const BANK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1; // player slots 39..66
+    const BANK_BAG_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_BANK_BAG_SLOT_1; // player slots 67..73
+    const KEYRING_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_KEYRING_SLOT_1; // player slots 86..117
 
     const AMMO: u32 = 3_030; // the collect-quest item under test
 

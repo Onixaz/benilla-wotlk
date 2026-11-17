@@ -265,11 +265,14 @@ mod tests {
             .add_message::<EmoteAnim>()
             .add_systems(Update, drive_gestures);
 
-        // A plain unit and one flagged in combat (`UNIT_FIELD_FLAGS` is field 46).
+        // A plain unit and one flagged in combat (`UNIT_FIELD_FLAGS`).
         let speaker = app.world_mut().spawn(ObjectStore::default()).id();
         let fighter = app
             .world_mut()
-            .spawn(ObjectStore(ObjectFields::from_pairs(&[(46, 0x800)])))
+            .spawn(ObjectStore(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                0x800,
+            )])))
             .id();
         {
             let mut index = app.world_mut().resource_mut::<GuidIndex>();

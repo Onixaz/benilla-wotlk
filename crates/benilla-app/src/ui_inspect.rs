@@ -127,9 +127,8 @@ fn inspect_gem_counts(
 
 /// One inspected slot from the target's visible-item entry; `slot0` is the 0-based
 /// `EQUIPMENT_SLOT_*` index, `slot0 + 1` in Lua. With no item object the count is the reference's
-/// always-1 and durability, flags, locks and creator stay inert. Only the enchants broadcast, at
-/// `PLAYER_VISIBLE_ITEM_<slot>_0 + 1 + j`, and 1.12 fills PERM and TEMP alone (vmangos
-/// `SetVisibleItemSlot`, `MAX_INSPECTED_ENCHANTMENT_SLOT`).
+/// always-1 and durability, flags, locks and creator stay inert. Only the permanent and temporary
+/// enchants broadcast, the two `u16` halves of `PLAYER_VISIBLE_ITEM_<slot>_ENCHANTMENT`.
 fn inspect_slot_view(
     store: &ObjectStore,
     items: &Items,
@@ -139,9 +138,9 @@ fn inspect_slot_view(
     slot0: u8,
 ) -> Option<InvSlotView> {
     let entry = store.0.player_visible_item_entry(slot0)?;
-    // The roll, the properties field's low word as the reference's inspect leg reads it into
-    // `+0x424`, names the suffix only: the visible item carries no enchant slots past 1.
-    let roll = store.0.player_visible_item_properties(slot0);
+    // 12340's visible-item slot is the entry and two enchants; no random-property roll streams, so
+    // the name carries no suffix.
+    let roll = 0;
     // By entry alone (guid 0), as the reference's item cache asks: there is no item object.
     let (name, quality, display) = match items.template(entry, 0, commands) {
         Some(t) => (
@@ -169,10 +168,9 @@ fn inspect_slot_view(
         // The reference reads an item object's `ITEM_FIELD_FLAGS`, which inspected gear lacks, so
         // the tooltip prints the template's bind line, as the reference's does.
         already_bound: false,
-        // All 7 slots, as the reference's inspect leg copies them, with no charges and no
-        // countdown: there is no item object.
+        // The two broadcast enchants, with no charges and no countdown: there is no item object.
         enchants: crate::items::enchant_lines(
-            (0..7).map(|j| {
+            (0..2).map(|j| {
                 let id = store.0.player_visible_item_enchant(slot0, j).unwrap_or(0);
                 (j, id as i32, 0, None)
             }),

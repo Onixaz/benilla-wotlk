@@ -1013,7 +1013,10 @@ mod tests {
                     &mut commands,
                     &mut index,
                     GUID,
-                    ObjectFields::from_pairs(&[(3, 117), (14, 5)]),
+                    ObjectFields::from_pairs(&[
+                        (benilla_protocol::field::FIELD_OBJECT_ENTRY, 117),
+                        (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, 5),
+                    ]),
                     false,
                 );
             })
@@ -1046,7 +1049,10 @@ mod tests {
             .get_mut::<ObjectStore>(e)
             .unwrap()
             .0
-            .merge(ObjectFields::from_pairs(&[(14, 4)]));
+            .merge(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_ITEM_STACK_COUNT,
+                4,
+            )]));
         assert_eq!(world.run_system(read).unwrap(), (Some(117), Some(4), true));
         assert!(!world.run_system(read).unwrap().2);
         // A countdown landing is the item's own change, and its cell joins the step sum.
@@ -1156,7 +1162,10 @@ mod tests {
 
     /// One item object with the given `ITEM_FIELD_FLAGS` and enchant slot 0.
     fn item(flags: u32, slot0: u32) -> ObjectFields {
-        ObjectFields::from_pairs(&[(21, flags), (22, slot0)])
+        ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_ITEM_FLAGS, flags),
+            (benilla_protocol::field::FIELD_ITEM_ENCHANTMENT_1_1, slot0),
+        ])
     }
 
     /// Against the install: a use enchant that asks a skill answers it from its slot; a negative

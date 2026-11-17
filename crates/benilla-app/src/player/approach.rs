@@ -798,9 +798,9 @@ mod tests {
             SelfPlayer,
             Guid(ME),
             ObjectStore(ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
-                (138, stand_state),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_1, stand_state),
             ])),
         ));
         let vendor = app
@@ -1578,10 +1578,13 @@ mod tests {
     fn a_dead_or_flying_followee_ends_the_follow() {
         let flags = benilla_protocol::field::FIELD_UNIT_FLAGS;
         for pairs in [
-            vec![(22, 0), (28, 100)],
             vec![
-                (22, 100),
-                (28, 100),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ],
+            vec![
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
                 (flags, super::super::UNIT_FLAG_TAXI_FLIGHT),
             ],
         ] {

@@ -901,7 +901,7 @@ fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
     use benilla_protocol::ObjectFields;
 
     /// `UNIT_FIELD_BYTES_0`, absolute descriptor index.
-    const BYTES_0: u16 = 36;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let mut s = UiScript::new().unwrap();

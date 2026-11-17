@@ -5,7 +5,7 @@
 //! |---|---|---|---|
 //! | `TargetByName` | 8, creatures and players | 0 | Lua arg 2 |
 //! | `AssistByName` | 0x10, players only | 0 | 0 |
-//! | `FollowByName` | 0x10, players only | 2, assistable and alive | Lua arg 2 |
+//! | `FollowUnit` | 0x10, players only, then 8 | 3, assistable and alive, then 0 | Lua arg 2 |
 //!
 //! Filter mode 0 underflows the reference's jump table into accept-all: no range, facing, reaction,
 //! liveness, visibility or self test. A name matches when it starts with the whole query, compared
@@ -34,7 +34,7 @@ use super::{scan, Selection};
 pub(crate) enum NameSearch {
     /// Typemask 8, creatures and players (a player carries the UNIT bit): `/target`.
     AnyUnit,
-    /// Typemask 0x10, players only: `/assist <name>` and `/follow <name>`.
+    /// Typemask 0x10, players only: `/assist <name>` and `FollowUnit`'s first pass.
     PlayerOnly,
 }
 
@@ -174,7 +174,7 @@ pub(crate) struct ByNameScan<'w, 's> {
 enum Filter {
     /// Mode 0, which underflows the jump table's bound into accept-all: `/target`, `/assist`.
     AcceptAll,
-    /// Mode 2, the assist check and `UNIT_FIELD_HEALTH > 0`: `/follow`.
+    /// Mode 3, the assist check and `UNIT_FIELD_HEALTH > 0`: `FollowUnit`'s first pass.
     AssistableAlive,
     /// Mode 1, the attack check and alive: `StartAttack`'s name.
     AttackableAlive,
@@ -195,7 +195,7 @@ impl ByNameScan<'_, '_> {
         self.self_q.single().ok().map(|(_, g, _, _)| g.0)
     }
 
-    /// The mode-2 arm: alive, and the assist check as a friendly reaction (4+).
+    /// The mode-3 arm: alive, and the assist check as a friendly reaction (4+).
     fn assistable_alive(&self, store: Option<&ObjectStore>) -> bool {
         if store.is_some_and(|s| s.0.unit_is_dead()) {
             return false;
@@ -259,7 +259,7 @@ impl ByNameScan<'_, '_> {
     }
 
     /// The follow start gate ([`follow_refusal_key`]): the key of the first refusal, for the UI's
-    /// error display. `FollowUnit` skips the resolver but not this gate.
+    /// error display.
     fn follow_refusal(
         &self,
         followee: u64,
@@ -622,13 +622,49 @@ pub(super) fn assist_named(
     commit.assist(basis, how)
 }
 
-/// Drain `/follow [name]` into [`crate::player`]; follow sends nothing on the wire. The followee's
-/// name is latched here for `AUTOFOLLOW_BEGIN` ([`crate::ui_follow`]).
+/// `FollowUnit`'s subject (`0x5224c0`): the resolver's players-only pass with filter mode 3, the
+/// assist check and alive, then its any-unit pass with mode 0, both with the exact flag. Each pass
+/// takes a unit token first, the empty string naming the target, and a token naming nobody falls
+/// to the name scan; the subject must be a held unit. A miss is the error key the binding shows.
+fn follow_subject(
+    scan_params: &ByNameScan,
+    tokens: &crate::ui_unit::UnitTokens,
+    selection: &Selection,
+    name: &str,
+    exact: bool,
+) -> Result<u64, &'static str> {
+    let token = if name.is_empty() { "target" } else { name };
+    let found = match tokens.guid_of(token, selection) {
+        // A player the first pass filters out the second takes, so a token's subject is any held
+        // unit; one the object manager does not hold is no subject.
+        Some(guid) => tokens
+            .held(guid)
+            .map(|(_, guid)| guid)
+            .filter(|&guid| NameSearch::AnyUnit.accepts(guid)),
+        None if name.is_empty() => None,
+        None => {
+            let mode = if exact {
+                Match::ExactOnly
+            } else {
+                Match::PrefixOk
+            };
+            scan_params
+                .resolve(name, NameSearch::PlayerOnly, Filter::AssistableAlive, mode)
+                .or_else(|| scan_params.resolve(name, NameSearch::AnyUnit, Filter::AcceptAll, mode))
+                .map(|(_, guid, _)| guid)
+        }
+    };
+    found.ok_or_else(|| super::script::unit_miss_key(name))
+}
+
+/// Drain `FollowUnit` and `/follow [name]` into [`crate::player`]; follow sends nothing on the
+/// wire. The followee's name is latched here for `AUTOFOLLOW_BEGIN` ([`crate::ui_follow`]).
+#[allow(clippy::too_many_arguments)] // one system, the arm's whole read set
 pub(super) fn follow_requests(
     mut requests: MessageReader<crate::player::FollowRequest>,
     scan_params: ByNameScan,
+    tokens: crate::ui_unit::UnitTokens,
     selection: Res<Selection>,
-    group: Res<crate::ui_party::GroupState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     places: Query<&Transform>,
@@ -639,68 +675,55 @@ pub(super) fn follow_requests(
     mut stand: MessageWriter<crate::player::StandStateRequest>,
 ) {
     for request in requests.read() {
-        let resolved = match request {
-            crate::player::FollowRequest::Name { name, exact } => scan_params
-                .resolve(
-                    name,
-                    NameSearch::PlayerOnly,
-                    Filter::AssistableAlive,
-                    if *exact {
-                        Match::ExactOnly
-                    } else {
-                        Match::PrefixOk
-                    },
-                )
-                .map(|(_, guid, name)| (guid, name)),
-            // `"target"` skips `player_token_guid`, whose players-only filter would make a
-            // creature a silent miss: the start gate must refuse it with its error line.
-            crate::player::FollowRequest::Unit(token) => match token.as_str() {
-                "target" => selection.guid,
-                tok => crate::ui_unit::player_token_guid(tok, &selection, &group),
-            }
-            .map(|guid| {
-                let name = scan_params.names.peek(guid).unwrap_or_default().to_string();
-                (guid, name)
-            }),
-        };
-        // The start gate, whichever way the subject was found.
-        if let Some((guid, _)) = &resolved {
-            let entity = index.0.get(guid);
-            let followee = entity.and_then(|e| stores.get(*e).ok());
-            let at = entity.and_then(|e| places.get(*e).ok().map(|t| t.translation));
-            if let Some(key) = scan_params.follow_refusal(
-                *guid,
-                followee,
-                cast.in_flight(std::time::Instant::now()),
-                at,
-            ) {
-                info!("follow: refused — {key}");
+        let guid = match follow_subject(
+            &scan_params,
+            &tokens,
+            &selection,
+            &request.name,
+            request.exact,
+        ) {
+            Ok(guid) => guid,
+            Err(key) => {
+                // A follow in progress is left alone.
+                info!("follow: \"{}\" names no unit — {key}", request.name);
                 errors.0.push(crate::ui_action::UiError::key(key));
-                if key == FOLLOW_TOO_FAR {
-                    approach.stop();
-                    follow.stop();
-                }
                 continue;
             }
+        };
+        // Ourselves: the arm refuses silently (`0x72b4a0`).
+        if scan_params.me() == Some(guid) {
+            info!("follow: refused — the subject is ourselves");
+            continue;
         }
-        match resolved {
-            Some((guid, name)) => {
-                info!("follow: now following \"{name}\" guid {guid:#x}");
-                // The arm cancels what runs first, one auto-move cell, and stands us up.
+        // The start gate.
+        let entity = index.0.get(&guid);
+        let followee = entity.and_then(|e| stores.get(*e).ok());
+        let at = entity.and_then(|e| places.get(*e).ok().map(|t| t.translation));
+        if let Some(key) = scan_params.follow_refusal(
+            guid,
+            followee,
+            cast.in_flight(std::time::Instant::now()),
+            at,
+        ) {
+            info!("follow: refused — {key}");
+            errors.0.push(crate::ui_action::UiError::key(key));
+            if key == FOLLOW_TOO_FAR {
                 approach.stop();
-                follow.start(guid, name);
-                let seated = scan_params
-                    .self_q
-                    .single()
-                    .is_ok_and(|(_, _, _, s)| s.is_some_and(|s| s.0.unit_stand_state() != 0));
-                if seated {
-                    stand.write(crate::player::StandStateRequest { state: 0 });
-                }
+                follow.stop();
             }
-            None => {
-                // No subject by name or token: a follow in progress is left alone.
-                info!("follow: nothing to follow");
-            }
+            continue;
+        }
+        let name = scan_params.names.peek(guid).unwrap_or_default().to_string();
+        info!("follow: now following \"{name}\" guid {guid:#x}");
+        // The arm cancels what runs first, one auto-move cell, and stands us up.
+        approach.stop();
+        follow.start(guid, name);
+        let seated = scan_params
+            .self_q
+            .single()
+            .is_ok_and(|(_, _, _, s)| s.is_some_and(|s| s.0.unit_stand_state() != 0));
+        if seated {
+            stand.write(crate::player::StandStateRequest { state: 0 });
         }
     }
 }

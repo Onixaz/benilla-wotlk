@@ -329,14 +329,17 @@ pub(super) fn seed_ui_fixture(
                 }),
             );
             // Vault items (bank slots 0, 1, 2, 7 at fields 1516+2i) and the bank bag in bag slot 0
-            // (field 1572); the bag borrows the hearthstone display as a stand-in.
+            // (`PLAYER_FIELD_BANKBAG_SLOT_1`); the bag borrows the hearthstone display as a stand-in.
             const G_SHIELD: u64 = 0x2001;
             const G_JERKY: u64 = 0x2002;
             const G_SWORD: u64 = 0x2003;
             const G_STONE: u64 = 0x2004;
             const G_BANKBAG: u64 = 0x2005;
             let obj = |entry: u32, stack: u32| {
-                ObjectFields::from_pairs(&[(3, entry), (14, stack)]) // OBJECT_ENTRY, STACK_COUNT
+                ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
+                    (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, stack),
+                ]) // OBJECT_ENTRY, STACK_COUNT
             };
             for (guid, entry, stack, name, disp, quality) in [
                 (G_SHIELD, 94_001, 1, "Small Shield", DISP_SHIELD, 2),
@@ -360,10 +363,13 @@ pub(super) fn seed_ui_fixture(
                 &mut commands,
                 G_BANKBAG,
                 ObjectFields::from_pairs(&[
-                    (3, 94_005),
-                    (14, 1),
-                    (78, 6),              // CONTAINER_NUM_SLOTS
-                    (80, G_JERKY as u32), // CONTAINER_SLOT_1
+                    (benilla_protocol::field::FIELD_OBJECT_ENTRY, 94_005),
+                    (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, 1),
+                    (benilla_protocol::field::FIELD_CONTAINER_NUM_SLOTS, 6), // CONTAINER_NUM_SLOTS
+                    (
+                        benilla_protocol::field::FIELD_CONTAINER_SLOT_1,
+                        G_JERKY as u32,
+                    ), // CONTAINER_SLOT_1
                 ]),
                 true,
             );
@@ -372,13 +378,28 @@ pub(super) fn seed_ui_fixture(
             // purse, under which the 10g third-slot cost (`BankBagSlotPrices.dbc`) is affordable.
             const PLAYER_GUID: u64 = 0x51;
             let fields = ObjectFields::from_pairs(&[
-                (194, 2 << 16),           // PLAYER_BYTES_2: bankBagSlots (byte 2) = 2
-                (1516, G_SHIELD as u32),  // BANK_SLOT_1 (vault slot 0)
-                (1518, G_JERKY as u32),   // vault slot 1
-                (1520, G_SWORD as u32),   // vault slot 2
-                (1530, G_STONE as u32),   // vault slot 7, after a gap
-                (1572, G_BANKBAG as u32), // BANK_BAG_SLOT_1: bag button 1's icon
-                (1176, 123_456),          // PLAYER_FIELD_COINAGE
+                (benilla_protocol::field::FIELD_PLAYER_BYTES_2, 2 << 16), // PLAYER_BYTES_2: bankBagSlots (byte 2) = 2
+                (
+                    benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1,
+                    G_SHIELD as u32,
+                ), // BANK_SLOT_1 (vault slot 0)
+                (
+                    benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1 + 2,
+                    G_JERKY as u32,
+                ), // vault slot 1
+                (
+                    benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1 + 4,
+                    G_SWORD as u32,
+                ), // vault slot 2
+                (
+                    benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1 + 14,
+                    G_STONE as u32,
+                ), // vault slot 7, after a gap
+                (
+                    benilla_protocol::field::FIELD_PLAYER_BANK_BAG_SLOT_1,
+                    G_BANKBAG as u32,
+                ), // BANK_BAG_SLOT_1: bag button 1's icon
+                (benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE, 123_456), // PLAYER_FIELD_COINAGE
             ]);
             names.insert_player(PLAYER_GUID, "Benilla".into(), None);
             commands.spawn((
@@ -862,53 +883,98 @@ pub(super) fn seed_ui_fixture(
             const G_ARROWS: u64 = 0x1004;
 
             let fields = ObjectFields::from_pairs(&[
-                (34, 12),                 // UNIT_FIELD_LEVEL
-                (36, 4 | 1 << 8),         // UNIT_FIELD_BYTES_0: night elf warrior, male, mana
-                (126, 2400),              // BASEATTACKTIME[0] ms
-                (128, 2000),              // RANGEDATTACKTIME ms
-                (134, 13.0f32.to_bits()), // MINDAMAGE
-                (135, 19.0f32.to_bits()), // MAXDAMAGE
+                (benilla_protocol::field::FIELD_UNIT_LEVEL, 12), // UNIT_FIELD_LEVEL
+                (benilla_protocol::field::FIELD_UNIT_BYTES_0, 4 | 1 << 8), // UNIT_FIELD_BYTES_0: night elf warrior, male, mana
+                (benilla_protocol::field::FIELD_UNIT_BASEATTACKTIME, 2400), // BASEATTACKTIME[0] ms
+                (benilla_protocol::field::FIELD_UNIT_RANGEDATTACKTIME, 2000), // RANGEDATTACKTIME ms
+                (
+                    benilla_protocol::field::FIELD_UNIT_MINDAMAGE,
+                    13.0f32.to_bits(),
+                ), // MINDAMAGE
+                (
+                    benilla_protocol::field::FIELD_UNIT_MAXDAMAGE,
+                    19.0f32.to_bits(),
+                ), // MAXDAMAGE
                 // Stats: str/agi/sta/int/spi.
-                (150, 45),
-                (151, 25),
-                (152, 40),
-                (153, 15),
-                (154, 20),
+                (benilla_protocol::field::FIELD_UNIT_STAT0, 45),
+                (benilla_protocol::field::FIELD_UNIT_STAT0 + 1, 25),
+                (benilla_protocol::field::FIELD_UNIT_STAT0 + 2, 40),
+                (benilla_protocol::field::FIELD_UNIT_STAT0 + 3, 15),
+                (benilla_protocol::field::FIELD_UNIT_STAT0 + 4, 20),
                 // Resistances: armor + fire/nature/frost/arcane.
-                (155, 250),
-                (157, 10),
-                (158, 5),
-                (159, 10),
-                (161, 15),
-                (165, 78),                // ATTACK_POWER
-                (168, 30),                // RANGED_ATTACK_POWER
-                (171, 9.0f32.to_bits()),  // MINRANGEDDAMAGE
-                (172, 14.5f32.to_bits()), // MAXRANGEDDAMAGE
+                (benilla_protocol::field::FIELD_UNIT_RESISTANCES, 250),
+                (benilla_protocol::field::FIELD_UNIT_RESISTANCES + 2, 10),
+                (benilla_protocol::field::FIELD_UNIT_RESISTANCES + 3, 5),
+                (benilla_protocol::field::FIELD_UNIT_RESISTANCES + 4, 10),
+                (benilla_protocol::field::FIELD_UNIT_RESISTANCES + 6, 15),
+                (benilla_protocol::field::FIELD_UNIT_ATTACK_POWER, 78), // ATTACK_POWER
+                (benilla_protocol::field::FIELD_UNIT_RANGED_ATTACK_POWER, 30), // RANGED_ATTACK_POWER
+                (
+                    benilla_protocol::field::FIELD_UNIT_MINRANGEDDAMAGE,
+                    9.0f32.to_bits(),
+                ), // MINRANGEDDAMAGE
+                (
+                    benilla_protocol::field::FIELD_UNIT_MAXRANGEDDAMAGE,
+                    14.5f32.to_bits(),
+                ), // MAXRANGEDDAMAGE
                 // PLAYER_SKILL_INFO triplets: swords 58/60, unarmed 24/60, bows 55/60.
-                (718, 43),
-                (719, 58 | 60 << 16),
-                (721, 162),
-                (722, 24 | 60 << 16),
-                (724, 45),
-                (725, 55 | 60 << 16),
+                (benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1, 43),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1 + 1,
+                    58 | 60 << 16,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1 + 3,
+                    162,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1 + 4,
+                    24 | 60 << 16,
+                ),
+                (benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1 + 6, 45),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1 + 7,
+                    55 | 60 << 16,
+                ),
                 // Stat buffs (INT on the wire): +10 stamina, -5 spirit, +10 fire resistance. The
                 // -5 is the two's-complement word an x86 server sends; an arm64 one sends 0.
-                (1179, 10),             // POSSTAT2
-                (1186, (-5i32) as u32), // NEGSTAT4
-                (1189, 10),             // RESISTANCEBUFFMODSPOSITIVE[2] (fire)
+                (benilla_protocol::field::FIELD_UNIT_POSSTAT0 + 2, 10), // POSSTAT2
+                (
+                    benilla_protocol::field::FIELD_UNIT_NEGSTAT0 + 4,
+                    (-5i32) as u32,
+                ), // NEGSTAT4
+                (
+                    benilla_protocol::field::FIELD_UNIT_RESISTANCEBUFFMODSPOSITIVE + 2,
+                    10,
+                ), // RESISTANCEBUFFMODSPOSITIVE[2] (fire)
                 // Equipment guids (INV_SLOT_HEAD base 486 + 2·slot): chest 4, main hand 15,
                 // ranged 17; the first backpack slot (PACK_SLOT_1, 532) holds the arrows.
-                (494, G_CHEST as u32),
-                (516, G_SWORD as u32),
-                (520, G_BOW as u32),
-                (532, G_ARROWS as u32),
-                (1223, 93_012), // PLAYER_AMMO_ID: the arrows' entry
+                (
+                    benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 8,
+                    G_CHEST as u32,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 30,
+                    G_SWORD as u32,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 34,
+                    G_BOW as u32,
+                ),
+                (
+                    benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                    G_ARROWS as u32,
+                ),
+                (benilla_protocol::field::FIELD_PLAYER_AMMO_ID, 93_012), // PLAYER_AMMO_ID: the arrows' entry
             ]);
 
             // The item objects and their templates; the bow borrows the hearthstone display as a
             // stand-in.
             let obj = |entry: u32, stack: u32| {
-                ObjectFields::from_pairs(&[(3, entry), (14, stack)]) // OBJECT_ENTRY, STACK_COUNT
+                ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
+                    (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, stack),
+                ]) // OBJECT_ENTRY, STACK_COUNT
             };
             seed_item(&mut commands, G_CHEST, obj(93_010, 1), false);
             seed_item(&mut commands, G_SWORD, obj(93_011, 1), false);
@@ -961,12 +1027,12 @@ pub(super) fn seed_ui_fixture(
             names.insert_player(PLAYER_GUID, "Benilla".into(), None);
             commands.spawn((
                 crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                    (34, 2),      // UNIT_FIELD_LEVEL
-                    (35, 1),      // UNIT_FIELD_FACTIONTEMPLATE: human
-                    (36, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
+                    (benilla_protocol::field::FIELD_UNIT_LEVEL, 2), // UNIT_FIELD_LEVEL
+                    (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1), // UNIT_FIELD_FACTIONTEMPLATE: human
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
                     // UNIT_FIELD_FLAGS bit 3 (`PLAYER_CONTROLLED`), which every player carries; the
                     // attack check picks its arm on it, and without it no plate draws on the wolf.
-                    (46, 0x8),
+                    (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
                 ])),
                 crate::net::SelfPlayer,
                 crate::net::Guid(PLAYER_GUID),
@@ -998,10 +1064,13 @@ pub(super) fn seed_ui_fixture(
                         scale: 1.0,
                     },
                     crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                        (22, 100),          // UNIT_FIELD_HEALTH
-                        (28, 100),          // UNIT_FIELD_MAXHEALTH
-                        (34, 2),            // UNIT_FIELD_LEVEL
-                        (35, WOLF_FACTION), // UNIT_FIELD_FACTIONTEMPLATE
+                        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100), // UNIT_FIELD_HEALTH
+                        (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100), // UNIT_FIELD_MAXHEALTH
+                        (benilla_protocol::field::FIELD_UNIT_LEVEL, 2),       // UNIT_FIELD_LEVEL
+                        (
+                            benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                            WOLF_FACTION,
+                        ), // UNIT_FIELD_FACTIONTEMPLATE
                     ])),
                     Transform {
                         translation: wow_to_bevy(WOLF_POS),
@@ -1110,9 +1179,12 @@ pub(super) fn seed_ui_fixture(
             names.insert_player(PLAYER_GUID, "Benilla".into(), None);
             commands.spawn((
                 crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                    (34, 12),              // UNIT_FIELD_LEVEL
-                    (36, 1 | 1 << 8),      // UNIT_FIELD_BYTES_0: human (race 1), warrior (class 1)
-                    (516, G_SWORD as u32), // main-hand item guid (INV_SLOT_HEAD 486 + 15·2)
+                    (benilla_protocol::field::FIELD_UNIT_LEVEL, 12), // UNIT_FIELD_LEVEL
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_0, 1 | 1 << 8), // UNIT_FIELD_BYTES_0: human (race 1), warrior (class 1)
+                    (
+                        benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 30,
+                        G_SWORD as u32,
+                    ), // main-hand item guid (INV_SLOT_HEAD 486 + 15·2)
                 ])),
                 crate::net::SelfPlayer,
                 crate::net::Guid(PLAYER_GUID),
@@ -1121,7 +1193,10 @@ pub(super) fn seed_ui_fixture(
             seed_item(
                 &mut commands,
                 G_SWORD,
-                ObjectFields::from_pairs(&[(3, 93_011), (14, 1)]),
+                ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_OBJECT_ENTRY, 93_011),
+                    (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, 1),
+                ]),
                 false,
             );
             let mut sword = template("Militia Shortsword", 2);
@@ -1293,9 +1368,9 @@ pub(super) fn seed_ui_fixture(
             names.insert_player(SELF_GUID, "Benilla".into(), None);
             commands.spawn((
                 crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                    (34, 2),      // UNIT_FIELD_LEVEL
-                    (35, 1),      // UNIT_FIELD_FACTIONTEMPLATE: human
-                    (36, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
+                    (benilla_protocol::field::FIELD_UNIT_LEVEL, 2), // UNIT_FIELD_LEVEL
+                    (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1), // UNIT_FIELD_FACTIONTEMPLATE: human
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
                 ])),
                 crate::net::SelfPlayer,
                 crate::net::Guid(SELF_GUID),
@@ -1327,10 +1402,13 @@ pub(super) fn seed_ui_fixture(
                     scale: 1.0,
                 },
                 crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                    (22, 100),          // UNIT_FIELD_HEALTH
-                    (28, 100),          // UNIT_FIELD_MAXHEALTH
-                    (34, 2),            // UNIT_FIELD_LEVEL
-                    (35, WOLF_FACTION), // UNIT_FIELD_FACTIONTEMPLATE
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100), // UNIT_FIELD_HEALTH
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100), // UNIT_FIELD_MAXHEALTH
+                    (benilla_protocol::field::FIELD_UNIT_LEVEL, 2),    // UNIT_FIELD_LEVEL
+                    (
+                        benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                        WOLF_FACTION,
+                    ), // UNIT_FIELD_FACTIONTEMPLATE
                 ])),
                 Transform {
                     translation: wow_to_bevy(NAME_WATER_POS),
@@ -1349,9 +1427,9 @@ pub(super) fn seed_ui_fixture(
             names.insert_player(SELF_GUID, "Benilla".into(), None);
             commands.spawn((
                 crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                    (34, 2),      // UNIT_FIELD_LEVEL
-                    (35, 1),      // UNIT_FIELD_FACTIONTEMPLATE: human
-                    (36, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
+                    (benilla_protocol::field::FIELD_UNIT_LEVEL, 2), // UNIT_FIELD_LEVEL
+                    (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1), // UNIT_FIELD_FACTIONTEMPLATE: human
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
                 ])),
                 crate::net::SelfPlayer,
                 crate::net::Guid(SELF_GUID),
@@ -1372,10 +1450,10 @@ pub(super) fn seed_ui_fixture(
                     scale: 1.0,
                 },
                 crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                    (34, 60),       // UNIT_FIELD_LEVEL
-                    (35, 1),        // UNIT_FIELD_FACTIONTEMPLATE: human
-                    (36, 0x0101),   // UNIT_FIELD_BYTES_0: race human, class warrior, male
-                    (195, 7 << 24), // PLAYER_BYTES_3 byte 3: the current honor rank, internal 7
+                    (benilla_protocol::field::FIELD_UNIT_LEVEL, 60), // UNIT_FIELD_LEVEL
+                    (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1), // UNIT_FIELD_FACTIONTEMPLATE: human
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_0, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior, male
+                    (benilla_protocol::field::FIELD_PLAYER_BYTES_3, 7 << 24), // PLAYER_BYTES_3 byte 3: the current honor rank, internal 7
                 ])),
                 Transform {
                     translation: wow_to_bevy(WOLF_POS),
@@ -1405,10 +1483,13 @@ pub(super) fn seed_ui_fixture(
                             scale: 1.0,
                         },
                         crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                            (22, 100),          // UNIT_FIELD_HEALTH
-                            (28, 100),          // UNIT_FIELD_MAXHEALTH
-                            (34, 2),            // UNIT_FIELD_LEVEL
-                            (35, WOLF_FACTION), // UNIT_FIELD_FACTIONTEMPLATE
+                            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100), // UNIT_FIELD_HEALTH
+                            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100), // UNIT_FIELD_MAXHEALTH
+                            (benilla_protocol::field::FIELD_UNIT_LEVEL, 2), // UNIT_FIELD_LEVEL
+                            (
+                                benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                                WOLF_FACTION,
+                            ), // UNIT_FIELD_FACTIONTEMPLATE
                         ])),
                         transform,
                         Visibility::default(),

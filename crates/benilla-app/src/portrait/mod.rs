@@ -2417,8 +2417,11 @@ mod tests {
         let held = world.spawn_empty().id();
         let summon = |guid: u64| {
             crate::net::ObjectStore(ObjectFields::from_pairs(&[
-                (8, guid as u32),
-                (9, (guid >> 32) as u32),
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, guid as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (guid >> 32) as u32,
+                ),
             ]))
         };
         let group = |status: u8| {

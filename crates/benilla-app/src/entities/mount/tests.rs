@@ -9,7 +9,7 @@ use crate::entities::{BoneAttach, VisualAttached};
 use crate::net::ObjectStore;
 
 /// `UNIT_FIELD_MOUNTDISPLAYID` (index 133), the wire's one mounted signal.
-const FIELD_MOUNTDISPLAYID: u16 = 133;
+const FIELD_MOUNTDISPLAYID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
 /// The mount's attachment-0 bone in the fixture mount rig.
 const SEAT_BONE: u16 = 3;
 

@@ -362,11 +362,10 @@ pub use unit_state::{MirrorImage, MirrorLook};
 pub use update_object::field;
 pub use update_object::{
     power_display_scale, quest_slot_state, CorpseLook, CreateSpline, MovementBlock, MoverState,
-    Object, ObjectFields, ObjectType, OwnerFallback, PlayerSkillSlot, QuestLogSlot, UnitAuraSlot,
-    AURA_FLAG_CANCELABLE, AURA_FLAG_EFF_INDEX_MASK, CURRENCY_TOKEN_SLOTS,
-    FIELD_PLAYER_SKILL_INFO_1_1, PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS,
-    PLAYER_GLYPH_SOCKETS, PLAYER_KNOWN_TITLE_BITS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS,
-    QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS, UNIT_AURA_SLOTS,
+    Object, ObjectFields, ObjectType, OwnerFallback, PlayerSkillSlot, QuestLogSlot,
+    CURRENCY_TOKEN_SLOTS, FIELD_PLAYER_SKILL_INFO_1_1, PLAYER_COMBAT_RATINGS,
+    PLAYER_EXPLORED_ZONES_SLOTS, PLAYER_GLYPH_SOCKETS, PLAYER_KNOWN_TITLE_BITS,
+    PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS, QUEST_LOG_SLOT_FIELDS,
 };
 pub use vehicle::{
     change_seats_on_controlled_vehicle, dismiss_controlled_vehicle, request_vehicle_switch_seat,

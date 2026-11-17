@@ -28,10 +28,10 @@ pub(super) const ME: u64 = 0x10;
 pub(super) const PET: u64 = 0x2A;
 /// `UNIT_FIELD_CHARMEDBY`, `UNIT_FIELD_SUMMONEDBY` and `UNIT_FIELD_CREATEDBY`, low words; the high
 /// words stay 0.
-pub(super) const CHARMEDBY: u16 = 10;
-pub(super) const SUMMONEDBY: u16 = 12;
-pub(super) const CREATEDBY: u16 = 14;
-pub(super) const FLAGS: u16 = 46;
+pub(super) const CHARMEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CHARMEDBY;
+pub(super) const SUMMONEDBY: u16 = benilla_protocol::field::FIELD_UNIT_SUMMONEDBY;
+pub(super) const CREATEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CREATEDBY;
+pub(super) const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
 /// Gives the rig's pet one live, cancelable aura of `spell`, as its aura packet would.
 fn pet_running(rig: &mut Rig, spell: u32) {
     let pet = rig.app.world().resource::<GuidIndex>().0[&PET];
@@ -546,9 +546,9 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
     world
         .entity_mut(me)
         .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (2, 0x19),
-            (22, 100),
-            (28, 100),
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
             (FLAGS, 0x8),
         ])));
     let foe = world
@@ -556,8 +556,8 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
             Guid(FOE),
             Transform::default(),
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
             ])),
         ))
         .id();
@@ -580,7 +580,13 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
     // Attack raises no latch.
     let world = rig.app.world_mut();
     let pet = world
-        .spawn((Guid(PET), owned_pet_with(&[(22, 100), (28, 100)])))
+        .spawn((
+            Guid(PET),
+            owned_pet_with(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ]),
+        ))
         .id();
     world.resource_mut::<GuidIndex>().0.insert(PET, pet);
 

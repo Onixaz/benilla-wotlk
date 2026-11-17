@@ -1273,9 +1273,9 @@ mod tests {
         // The side reads the player's race template's group mask, `& 4` first.
         let fx_factions = crate::spell::targeting::corpse_fixture::factions();
         let of_race = |race: u8| {
-            // `UNIT_FIELD_BYTES_0` (field 36) byte 0, the race.
+            // `UNIT_FIELD_BYTES_0` byte 0, the race.
             let store = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-                36,
+                benilla_protocol::field::FIELD_UNIT_BYTES_0,
                 u32::from(race),
             )]));
             pvp_faction_index(&store, Some(&fx_factions))
@@ -1853,7 +1853,7 @@ mod tests {
     fn the_service_reach_follows_the_units_combat_reach() {
         let unit = |reach: f32| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-                130, // UNIT_FIELD_COMBATREACH
+                benilla_protocol::field::FIELD_UNIT_COMBATREACH, // UNIT_FIELD_COMBATREACH
                 reach.to_bits(),
             )]))
         };

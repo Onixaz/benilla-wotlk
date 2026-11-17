@@ -314,10 +314,13 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
     let unit = |field: UnitField| inputs.unit & field.bit() != 0;
     // Health, and the unit fields at one value on the empty side and another on the populated one.
     let mut pairs: Vec<(u16, u32)> = vec![
-        (22, 3500),
-        (34, if unit(UnitField::Level) { 60 } else { 20 }),
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 3500),
         (
-            162,
+            benilla_protocol::field::FIELD_UNIT_LEVEL,
+            if unit(UnitField::Level) { 60 } else { 20 },
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_BASE_MANA,
             if unit(UnitField::BaseMana) {
                 2100
             } else {
@@ -325,7 +328,7 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
             },
         ),
         (
-            163,
+            benilla_protocol::field::FIELD_UNIT_BASE_HEALTH,
             if unit(UnitField::BaseHealth) {
                 1900
             } else {
@@ -333,33 +336,48 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
             },
         ),
         (
-            128,
+            benilla_protocol::field::FIELD_UNIT_RANGEDATTACKTIME,
             if unit(UnitField::RangedTime) {
                 3000
             } else {
                 2000
             },
         ),
-        (1262, if unit(UnitField::CostRuns) { 7 } else { 0 }),
+        (
+            benilla_protocol::field::FIELD_UNIT_POWER_COST_MODIFIER,
+            if unit(UnitField::CostRuns) { 7 } else { 0 },
+        ),
     ];
     if inputs.disarm {
-        pairs.push((46, 0x0020_0000));
+        pairs.push((benilla_protocol::field::FIELD_UNIT_FLAGS, 0x0020_0000));
     }
     if inputs.gender {
-        pairs.push((36, 1 << 16));
+        pairs.push((benilla_protocol::field::FIELD_UNIT_BYTES_0, 1 << 16));
     }
     let form = if inputs.form { p.form } else { 0 };
     if form != 0 {
-        pairs.push((164, u32::from(form) << 24));
+        pairs.push((
+            benilla_protocol::field::FIELD_UNIT_BYTES_2,
+            u32::from(form) << 24,
+        ));
     }
     // Block, dodge, parry and crit percent.
+    let avoidance = [
+        benilla_protocol::field::FIELD_PLAYER_BLOCK_PERCENTAGE,
+        benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+        benilla_protocol::field::FIELD_PLAYER_PARRY_PERCENTAGE,
+        benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+    ];
     for (i, pct) in [7.5f32, 6.25, 5.5, 3.75].into_iter().enumerate() {
         if inputs.avoid >> i & 1 == 1 {
-            pairs.push((1106 + i as u16, pct.to_bits()));
+            pairs.push((avoidance[i], pct.to_bits()));
         }
     }
     if inputs.reach {
-        pairs.push((130, 4.0f32.to_bits()));
+        pairs.push((
+            benilla_protocol::field::FIELD_UNIT_COMBATREACH,
+            4.0f32.to_bits(),
+        ));
     }
     let motion = if inputs.pace {
         UnitMotion {
@@ -381,8 +399,14 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
     }
     for s in (0..EQUIPMENT_SLOTS.into()).filter(|s| inputs.worn >> s & 1 == 1) {
         let guid = Layout::guid(p.kind, s);
-        pairs.push((486 + 2 * s as u16, guid as u32));
-        pairs.push((487 + 2 * s as u16, (guid >> 32) as u32));
+        pairs.push((
+            benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * s as u16,
+            guid as u32,
+        ));
+        pairs.push((
+            benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 1 + 2 * s as u16,
+            (guid >> 32) as u32,
+        ));
     }
     if let Some((first, count)) = inputs.poke {
         pairs.extend((first..first + count).map(|field| (field, POKE)));
@@ -494,7 +518,10 @@ impl Rig {
             for slot in 0..u32::from(EQUIPMENT_SLOTS) {
                 objs.spawn(
                     Layout::guid(kind, slot),
-                    ObjectFields::from_pairs(&[(3, Layout::entry(kind))]),
+                    ObjectFields::from_pairs(&[(
+                        benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                        Layout::entry(kind),
+                    )]),
                 );
             }
         }
@@ -502,7 +529,10 @@ impl Rig {
         for (i, &entry) in reagents.iter().enumerate() {
             objs.spawn(
                 0x2_0000 + i as u64,
-                ObjectFields::from_pairs(&[(3, entry), (14, 5)]),
+                ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
+                    (benilla_protocol::field::FIELD_UNIT_CREATEDBY, 5),
+                ]),
             );
         }
         Some(Rig {
@@ -912,7 +942,10 @@ fn a_reagent_moving_requeues_the_views_that_list_it() {
     };
 
     // The names stream in: every reagent line appears, and each view that has one is due.
-    let empty = mat_of(ObjectStore(ObjectFields::from_pairs(&[(22, 100)])));
+    let empty = mat_of(ObjectStore(ObjectFields::from_pairs(&[(
+        benilla_protocol::field::FIELD_UNIT_HEALTH,
+        100,
+    )])));
     let unnamed = states(t, &empty.store);
     let before: Vec<_> = listing
         .iter()
@@ -944,11 +977,17 @@ fn a_reagent_moving_requeues_the_views_that_list_it() {
         .collect();
     let mut moved = 0;
     for (group, entries) in reagents.chunks(16).enumerate() {
-        let mut pairs: Vec<(u16, u32)> = vec![(22, 100)];
+        let mut pairs: Vec<(u16, u32)> = vec![(benilla_protocol::field::FIELD_UNIT_HEALTH, 100)];
         for slot in 0..entries.len() {
             let guid = 0x2_0000 + (group * 16 + slot) as u64;
-            pairs.push((532 + 2 * slot as u16, guid as u32));
-            pairs.push((533 + 2 * slot as u16, (guid >> 32) as u32));
+            pairs.push((
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 2 * slot as u16,
+                guid as u32,
+            ));
+            pairs.push((
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1 + 2 * slot as u16,
+                (guid >> 32) as u32,
+            ));
         }
         let carrying = mat_of(ObjectStore(ObjectFields::from_pairs(&pairs)));
         let changes = Changes::default().with_reagents(&named, &states(t, &carrying.store));
@@ -992,7 +1031,10 @@ fn a_pet_view_reads_no_player_form_equipment_reach_or_unit_field_but_the_ranged_
         ..
     } = &mut rig;
     let objects = objs.get();
-    let pet = ObjectFields::from_pairs(&[(34, 30), (162, 900)]);
+    let pet = ObjectFields::from_pairs(&[
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, 30),
+        (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 900),
+    ]);
     let m = mat(
         layout,
         Inputs::default(),
@@ -1037,22 +1079,34 @@ fn the_pets_cost_bases_are_its_inputs_and_its_max_pools_are_not() {
             RangeSeen::of(&unit, None),
         )
     };
-    let base = inputs(&[(34, 30), (162, 900), (163, 600)]);
+    let base = inputs(&[
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, 30),
+        (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 900),
+        (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 600),
+    ]);
     assert!(
-        inputs(&[(34, 30), (162, 901), (163, 600)]) != base,
+        inputs(&[
+            (benilla_protocol::field::FIELD_UNIT_LEVEL, 30),
+            (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 901),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 600)
+        ]) != base,
         "base mana"
     );
     assert!(
-        inputs(&[(34, 30), (162, 900), (163, 601)]) != base,
+        inputs(&[
+            (benilla_protocol::field::FIELD_UNIT_LEVEL, 30),
+            (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 900),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 601)
+        ]) != base,
         "base health"
     );
     let pools = [
-        (34, 30),
-        (162, 900),
-        (163, 600),
-        (28, 4000),
-        (29, 2000),
-        (32, 100),
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, 30),
+        (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 900),
+        (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 600),
+        (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4000),
+        (benilla_protocol::field::FIELD_UNIT_MAXPOWER1, 2000),
+        (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 3, 100),
     ];
     assert!(inputs(&pools) == base, "max health and max pools");
 }
@@ -1083,8 +1137,15 @@ fn no_pet_field_moves_a_pet_view_unwatched() {
         },
     );
     // Level, reach, base mana, base health.
-    let base_pairs: Vec<(u16, u32)> =
-        vec![(34, 30), (130, 2.0f32.to_bits()), (162, 900), (163, 600)];
+    let base_pairs: Vec<(u16, u32)> = vec![
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, 30),
+        (
+            benilla_protocol::field::FIELD_UNIT_COMBATREACH,
+            2.0f32.to_bits(),
+        ),
+        (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 900),
+        (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 600),
+    ];
     let pet_with = |poke: std::ops::Range<u16>| {
         let mut pairs = base_pairs.clone();
         pairs.extend(poke.map(|field| (field, POKE)));
@@ -1243,7 +1304,10 @@ fn the_search_answers_the_same_wherever_the_watched_state_is_the_same() {
             {
                 let mut pairs = vec![(3u16, entry(template))];
                 if let Some((now, max)) = DURABILITY[durability] {
-                    pairs.extend([(46, now), (47, max)]);
+                    pairs.extend([
+                        (benilla_protocol::field::FIELD_ITEM_DURABILITY, now),
+                        (benilla_protocol::field::FIELD_ITEM_MAXDURABILITY, max),
+                    ]);
                 }
                 objs.spawn(guid(slot, i), ObjectFields::from_pairs(&pairs));
             }
@@ -1296,11 +1360,19 @@ fn the_search_answers_the_same_wherever_the_watched_state_is_the_same() {
                             Held::GuidOnly => 0x8_0000 + slot,
                             Held::Object { .. } => guid(slot, i),
                         };
-                        pairs.push((486 + 2 * slot as u16, g as u32));
-                        pairs.push((487 + 2 * slot as u16, (g >> 32) as u32));
+                        pairs.push((
+                            benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * slot as u16,
+                            g as u32,
+                        ));
+                        pairs.push((
+                            benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD
+                                + 1
+                                + 2 * slot as u16,
+                            (g >> 32) as u32,
+                        ));
                     }
                     if disarmed {
-                        pairs.push((46, 0x0020_0000));
+                        pairs.push((benilla_protocol::field::FIELD_UNIT_FLAGS, 0x0020_0000));
                     }
                     let store = ObjectStore(ObjectFields::from_pairs(&pairs));
                     for id in ids {
@@ -1416,9 +1488,20 @@ fn the_seen_diff_names_each_input_it_saw_move() {
         )
     };
     let seen = |s: &ObjectStore| seen_with(s, UnitMotion::default(), None);
-    let base = player(&[(22, 100)]);
-    for (i, field) in [1106u16, 1107, 1108, 1109].into_iter().enumerate() {
-        let now = player(&[(22, 100), (field, 4.5f32.to_bits())]);
+    let base = player(&[(benilla_protocol::field::FIELD_UNIT_HEALTH, 100)]);
+    for (i, field) in [
+        benilla_protocol::field::FIELD_PLAYER_BLOCK_PERCENTAGE,
+        benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+        benilla_protocol::field::FIELD_PLAYER_PARRY_PERCENTAGE,
+        benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let now = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (field, 4.5f32.to_bits()),
+        ]);
         let c = seen(&now).changes_since(&seen(&base));
         assert_eq!(c.avoidance, 1 << i, "percentage field {field}");
         assert_eq!(
@@ -1428,17 +1511,32 @@ fn the_seen_diff_names_each_input_it_saw_move() {
         assert_eq!((c.unit, c.disarm), (0, false));
     }
     // A guid the object index does not hold is an unresolved item: the slot moved.
-    let now = player(&[(22, 100), (486 + 2 * 15, 7)]);
+    let now = player(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 30, 7),
+    ]);
     assert_eq!(seen(&now).changes_since(&seen(&base)).worn, 1 << 15);
-    let now = player(&[(22, 100), (486 + 2 * 22, 7)]);
+    let now = player(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 44, 7),
+    ]);
     assert_eq!(
         seen(&now).changes_since(&seen(&base)).worn,
         1 << 22,
         "a bag"
     );
-    let now = player(&[(22, 100), (164, 1 << 24)]);
+    let now = player(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (benilla_protocol::field::FIELD_UNIT_BYTES_2, 1 << 24),
+    ]);
     assert!(seen(&now).changes_since(&seen(&base)).form);
-    let now = player(&[(22, 100), (130, 3.0f32.to_bits())]);
+    let now = player(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (
+            benilla_protocol::field::FIELD_UNIT_COMBATREACH,
+            3.0f32.to_bits(),
+        ),
+    ]);
     assert!(seen(&now).changes_since(&seen(&base)).range_units);
     // The auto-attack target: engaged, its reach, then each unit starting to run on its own.
     let target = RangeUnit::still(2.0);
@@ -1496,39 +1594,80 @@ fn the_seen_diff_names_each_input_it_saw_move() {
     assert_eq!(gone.changes_since(&seen(&base)).worn, EQUIPMENT_MASK);
     assert!(seen(&base).changes_since(&seen(&base)).is_empty());
     // The disarm flag, and no other flag.
-    let now = player(&[(22, 100), (46, 0x0020_0000)]);
+    let now = player(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x0020_0000),
+    ]);
     let c = seen(&now).changes_since(&seen(&base));
     assert!(c.disarm);
-    let now = player(&[(22, 100), (46, 0x0000_0008)]);
+    let now = player(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x0000_0008),
+    ]);
     assert!(seen(&now).changes_since(&seen(&base)).is_empty());
     // The gender byte, `UNIT_FIELD_BYTES_0` byte 2, and no other byte of the field.
-    let bytes_0 = |bytes: u32| player(&[(22, 100), (36, bytes)]);
+    let bytes_0 = |bytes: u32| {
+        player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_0, bytes),
+        ])
+    };
     let c = seen(&bytes_0(1 << 16)).changes_since(&seen(&base));
     assert!(c.gender && !c.is_empty());
     let race_class_power = bytes_0(4 | 1 << 8 | 1 << 24);
     assert!(seen(&race_class_power)
         .changes_since(&seen(&base))
         .is_empty());
-    // Each unit field on its own bit: level 34, base mana 162, base health 163, ranged attack
-    // time 128; max health 28 and the max pools 29-33 on none, which no cost reads.
+    // Each unit field on its own bit: level, base mana, base health, ranged attack time and the
+    // two cost runs; max health and the max pools on none, which no cost reads.
     let unit = [
-        (34u16, UnitField::Level.bit()),
-        (162, UnitField::BaseMana.bit()),
-        (163, UnitField::BaseHealth.bit()),
-        (128, UnitField::RangedTime.bit()),
-        (1262, UnitField::CostRuns.bit()),
-        (1275, UnitField::CostRuns.bit()),
-        (28, 0),
-        (29, 0),
-        (33, 0),
+        (
+            benilla_protocol::field::FIELD_UNIT_LEVEL,
+            UnitField::Level.bit(),
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_BASE_MANA,
+            UnitField::BaseMana.bit(),
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_BASE_HEALTH,
+            UnitField::BaseHealth.bit(),
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_RANGEDATTACKTIME,
+            UnitField::RangedTime.bit(),
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_POWER_COST_MODIFIER,
+            UnitField::CostRuns.bit(),
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_POWER_COST_MULTIPLIER + 6,
+            UnitField::CostRuns.bit(),
+        ),
+        (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 0),
+        (benilla_protocol::field::FIELD_UNIT_MAXPOWER1, 0),
+        (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 4, 0),
     ];
     for (field, bit) in unit {
-        let now = player(&[(22, 100), (field, 77)]);
+        let now = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (field, 77),
+        ]);
         let c = seen(&now).changes_since(&seen(&base));
         assert_eq!(c.unit, bit, "unit field {field}");
     }
     // A line's value moving names the line.
-    let line = |value: u32| player(&[(22, 100), (718, 43), (719, value | 300 << 16)]);
+    let line = |value: u32| {
+        player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1, 43),
+            (
+                benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1 + 1,
+                value | 300 << 16,
+            ),
+        ])
+    };
     assert_eq!(
         seen(&line(40)).changes_since(&seen(&line(39))).skill_lines,
         [43]

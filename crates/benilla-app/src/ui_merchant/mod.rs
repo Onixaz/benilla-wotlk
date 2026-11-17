@@ -922,10 +922,9 @@ pub(crate) mod purse_fixture {
     pub(crate) const SWORD: u64 = 0x4000_0000_0000_0707;
     pub(crate) const SWORD_ENTRY: u32 = 2488;
     /// Absolute descriptor indices.
-    const OBJECT_ENTRY: u16 = 3;
-    const ITEM_DURABILITY: u16 = 46;
-    const ITEM_MAXDURABILITY: u16 = 47;
-    const PLAYER_BYTES_3: u16 = 195;
+    const OBJECT_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+    const ITEM_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_DURABILITY;
+    const ITEM_MAXDURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_MAXDURABILITY;
     /// The string `ERR_NOT_ENOUGH_MONEY` holds in 1.12's `GlobalStrings.lua`.
     pub(crate) const NOT_ENOUGH_MONEY: &str = "You don't have enough money.";
 
@@ -937,16 +936,10 @@ pub(crate) mod purse_fixture {
         benilla_formats::DurabilityTables::from_rows([(20, row)], [(3, 1.0)])
     }
 
-    /// The sword's repair in full, and after the two honor steps an honor rank byte of 8 earns at
-    /// this vendor; a test at the discounted price discriminates the discount only while the two
-    /// differ.
-    pub(crate) fn sword_prices() -> (u32, u32) {
-        let t = tables();
-        let steps = f64::from(0.05f32) + f64::from(0.05f32);
-        let full = t.repair_cost(40, 20, 1, 2, 7, 0.0);
-        let discounted = t.repair_cost(40, 20, 1, 2, 7, steps);
-        assert!(discounted < full, "{discounted} of {full}");
-        (full, discounted)
+    /// The sword's repair at this vendor, undiscounted: the vendor is neutral and no 3.3.5a player
+    /// field carries an honor rank.
+    pub(crate) fn sword_price() -> u32 {
+        tables().repair_cost(40, 20, 1, 2, 7, 0.0)
     }
 
     /// The merchant open on the vendor, whose unit is streamed, the tables, and the sword's
@@ -980,14 +973,12 @@ pub(crate) mod purse_fixture {
         );
     }
 
-    /// The player's fields: the sword in the guid pair at `slot_field`, `money` copper, and the
-    /// honor rank byte at 8.
+    /// The player's fields: the sword in the guid pair at `slot_field` and `money` copper.
     pub(crate) fn player(slot_field: u16, money: u32) -> ObjectStore {
         ObjectStore(ObjectFields::from_pairs(&[
             (slot_field, SWORD as u32),
             (slot_field + 1, (SWORD >> 32) as u32),
             (FIELD_PLAYER_FIELD_COINAGE, money),
-            (PLAYER_BYTES_3, 8 << 24),
         ]))
     }
 
@@ -1088,9 +1079,9 @@ mod tests {
         ));
     }
 
-    /// `GetRepairAllCost` sums each item's cost after the open merchant's discount: at Honored with
-    /// a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before its rounding, and
-    /// the undiscounted total is not what the VM reads.
+    /// `GetRepairAllCost` sums each item's cost after the open merchant's discount: at Honored, 0.1
+    /// comes off each item before its rounding, and the undiscounted total is not what the VM
+    /// reads.
     #[test]
     fn the_repair_all_total_takes_the_merchants_discount() {
         use benilla_protocol::field::{
@@ -1101,11 +1092,10 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
 
         /// Absolute descriptor indices.
-        const OBJECT_ENTRY: u16 = 3;
-        const ITEM_DURABILITY: u16 = 46;
-        const ITEM_MAXDURABILITY: u16 = 47;
-        const BYTES_0: u16 = 36;
-        const PLAYER_BYTES_3: u16 = 195;
+        const OBJECT_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+        const ITEM_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_DURABILITY;
+        const ITEM_MAXDURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_MAXDURABILITY;
+        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
         const VENDOR: u64 = 0xF130_0000_0000_0042;
         const SWORD: u64 = 0x4000_0000_0000_0007;
         const SWORD_ENTRY: u32 = 2488;
@@ -1115,7 +1105,7 @@ mod tests {
         let tables = benilla_formats::load_durability_tables(&mut chain).expect("durability");
         let (factions, template, reps) = crate::target::stormwind_fixture(&mut chain, 9000);
         // A level 20 green sword (class 2, subclass 7) 40 points down.
-        let disc = f64::from(0.1f32) + f64::from(0.05f32) + f64::from(0.05f32);
+        let disc = f64::from(0.1f32);
         let want = tables.repair_cost(40, 20, 2, 2, 7, disc);
         let full = tables.repair_cost(40, 20, 2, 2, 7, 0.0);
         assert!(
@@ -1149,13 +1139,12 @@ mod tests {
             ]),
             false,
         );
-        // The sword in the main hand (slot 15); the current honor rank byte 8.
+        // The sword in the main hand (slot 15).
         let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
         app.world_mut().spawn((
             SelfPlayer,
             ObjectStore(ObjectFields::from_pairs(&[
                 (BYTES_0, crate::target::HUMAN_WARRIOR),
-                (PLAYER_BYTES_3, 8 << 24),
                 (main_hand, SWORD as u32),
                 (main_hand + 1, (SWORD >> 32) as u32),
             ])),
@@ -1249,9 +1238,9 @@ mod tests {
         use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
         use purse_fixture::*;
 
-        let (_, discounted) = sword_prices();
+        let price = sword_price();
         let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
-        for money in [discounted, discounted - 1] {
+        for money in [price, price - 1] {
             let (sent, lines, rows) = repair_all(NPC_FLAG_VENDOR, main_hand, money);
             assert!(sent.is_empty(), "{money} copper: no repair goes out");
             assert!(
@@ -1259,7 +1248,7 @@ mod tests {
                 "{money} copper: no purse refusal"
             );
         }
-        let (sent, ..) = repair_all(NPC_FLAG_VENDOR | NPC_FLAG_REPAIR, main_hand, discounted);
+        let (sent, ..) = repair_all(NPC_FLAG_VENDOR | NPC_FLAG_REPAIR, main_hand, price);
         assert!(matches!(
             sent.as_slice(),
             [ClientCommand::RepairItem {
@@ -1278,11 +1267,11 @@ mod tests {
         use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
         use purse_fixture::*;
 
-        let (_, discounted) = sword_prices();
+        let price = sword_price();
         // The main hand (slot 15), then backpack slot 1 (inventory slot 23).
         for slot in [15, 23] {
             let field = FIELD_PLAYER_INV_SLOT_HEAD + 2 * slot;
-            let (sent, lines, rows) = repair_all(NPC_FLAG_REPAIR, field, discounted - 1);
+            let (sent, lines, rows) = repair_all(NPC_FLAG_REPAIR, field, price - 1);
             assert!(
                 sent.is_empty(),
                 "slot {slot}, one copper short: nothing goes out"
@@ -1316,14 +1305,15 @@ mod tests {
         assert!(lines.is_empty() && rows.is_empty());
     }
 
-    /// An item's cost is discounted at the vendor and full once it closes (`0x584b20`).
+    /// An item's cost is priced at the vendor, with its discount, and once it closes, without
+    /// (`0x584b20`); this neutral vendor earns none.
     #[test]
     fn each_items_cost_takes_the_open_vendors_discount() {
         use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
         use bevy::ecs::system::RunSystemOnce;
         use purse_fixture::*;
 
-        let (full, discounted) = sword_prices();
+        let full = sword_price();
         let priced = |slot_field: u16, read: &str| {
             let (mut app, _) = repair_app(slot_field);
             app.insert_non_send_resource(sword_vm());
@@ -1336,7 +1326,7 @@ mod tests {
             app.world_mut().resource_mut::<MerchantOpen>().clear();
             (at_vendor, read_cost(&mut app))
         };
-        let want = (i64::from(discounted), i64::from(full));
+        let want = (i64::from(full), i64::from(full));
 
         // Main hand, inventory slot 15.
         let worn = priced(
@@ -1364,11 +1354,11 @@ mod tests {
         use purse_fixture::*;
 
         /// `ITEM_FIELD_DURABILITY`, absolute.
-        const ITEM_DURABILITY: u16 = 46;
+        const ITEM_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_DURABILITY;
         let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
         let backpack_1 = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 23;
-        // `PLAYER_FIELD_BANK_SLOT_1`, inventory slot 39, in the shared space past the player end.
-        let bank_1 = 1516;
+        // `PLAYER_FIELD_BANK_SLOT_1`, inventory slot 39.
+        let bank_1 = benilla_protocol::field::FIELD_PLAYER_BANK_SLOT_1;
 
         let (mut app, me) = repair_app(main_hand);
         app.add_systems(Update, feed_repair_costs);
@@ -1411,29 +1401,29 @@ mod tests {
             |from: u16, to: u16| [(from, 0), (from + 1, 0), (to, SWORD as u32), (to + 1, hi)];
 
         assert_eq!(frame(&mut app), (0, 0, 0, 0), "no tables, no prices");
-        // 1 copper a point, less 0.1: 40 points cost 36.
+        // 1 copper a point: 40 points cost 40.
         app.insert_resource(tables);
-        assert_eq!(frame(&mut app), (36, 0, 0, 36), "the tables arrive");
+        assert_eq!(frame(&mut app), (40, 0, 0, 40), "the tables arrive");
         let sword = entity(&app, SWORD);
         write(&mut app, sword, &[(ITEM_DURABILITY, 55)]);
         assert_eq!(
             frame(&mut app),
-            (18, 0, 0, 18),
+            (20, 0, 0, 20),
             "a repair's write: 20 points"
         );
         write(&mut app, me, &moved(main_hand, bank_1));
         assert_eq!(
             frame(&mut app),
-            (0, 0, 18, 0),
+            (0, 0, 20, 0),
             "banked: priced, not in the total"
         );
         write(&mut app, me, &moved(bank_1, backpack_1));
-        assert_eq!(frame(&mut app), (0, 18, 0, 18), "the sword in the backpack");
+        assert_eq!(frame(&mut app), (0, 20, 0, 20), "the sword in the backpack");
         write(&mut app, vendor, &[(FIELD_UNIT_FLAGS, 0)]);
         assert_eq!(
             frame(&mut app),
             (0, 20, 0, 20),
-            "no PvP flag, no honor discount"
+            "the vendor's flags moved: the same price"
         );
         app.world_mut().resource_mut::<MerchantOpen>().clear();
         assert_eq!(

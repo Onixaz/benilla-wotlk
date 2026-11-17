@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn every_death_knight_body_has_a_chain_that_runs() {
         // `UNIT_FIELD_BYTES_0` (race, class, gender) in the 3.3.5a descriptor.
-        const FIELD_UNIT_BYTES_0: u16 = 0x24;
+        const FIELD_UNIT_BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let catalog = benilla_formats::load_sound_filter_catalog(&mut chain).expect("filters");

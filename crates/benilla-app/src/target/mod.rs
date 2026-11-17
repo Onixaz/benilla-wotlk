@@ -449,11 +449,12 @@ impl Plugin for TargetPlugin {
                     // The loot close's guid-scoped deselect.
                     click::clear_target_requests,
                     // The chat layer's by-name asks: `/target` and `/assist` commit through
-                    // `scan::commit`; `/follow` hands its subject to `crate::player`.
+                    // `scan::commit`; `/follow` hands its subject to `crate::player`, after the
+                    // quest drain closes a giver, so `FollowUnit("questnpc")` reads this frame's.
                     (
                         script::target_by_name_requests,
                         script::assist_requests,
-                        by_name::follow_requests,
+                        by_name::follow_requests.after(crate::ui_quest::drain_quest),
                     )
                         .chain(),
                     scan::auto_acquire_attacker,

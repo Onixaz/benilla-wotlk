@@ -3068,9 +3068,9 @@ mod tests {
     }
 
     /// `UNIT_FIELD_CHARMEDBY` / `SUMMONEDBY` / `CREATEDBY`, two dwords each.
-    const CHARMEDBY: u16 = 10;
-    const SUMMONEDBY: u16 = 12;
-    const CREATEDBY: u16 = 14;
+    const CHARMEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CHARMEDBY;
+    const SUMMONEDBY: u16 = benilla_protocol::field::FIELD_UNIT_SUMMONEDBY;
+    const CREATEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CREATEDBY;
 
     /// A unit store whose `field` pair names `owner`.
     fn owned(field: u16, owner: u64) -> ObjectStore {
@@ -3297,7 +3297,10 @@ mod tests {
         assert_eq!(go_cooldowns(10, own, None, display, mods()).0, 3000);
         let pet = go_cooldowns(20, owned(SUMMONEDBY, 10), None, display, mods());
         assert_eq!(pet.1, 3000, "the pet leg takes the player's op 11");
-        let item = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(3, 6948)]));
+        let item = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_OBJECT_ENTRY,
+            6948,
+        )]));
         let used = go_cooldowns(
             10,
             ObjectStore::default(),

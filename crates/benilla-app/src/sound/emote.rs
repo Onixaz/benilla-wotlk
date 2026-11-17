@@ -408,7 +408,7 @@ mod tests {
         use benilla_protocol::ObjectFields;
         let store = |type_mask, health| {
             ObjectStore(ObjectFields::from_pairs(&[
-                (2, type_mask),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, type_mask),
                 (FIELD_UNIT_HEALTH, health),
             ]))
         };

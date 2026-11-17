@@ -836,7 +836,11 @@ mod tests {
     fn player(pairs: &[(u16, u32)]) -> ObjectStore {
         // `UNIT_FLAG_PVP_ATTACKABLE` (bit 3), which every player carries: the attack check picks
         // its arm on that bit for both parties.
-        let mut base = vec![(22u16, 100u32), (23, 500), (46, 1 << 3)];
+        let mut base = vec![
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100u32),
+            (benilla_protocol::field::FIELD_UNIT_POWER1, 500),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 1 << 3),
+        ];
         base.extend_from_slice(pairs);
         ObjectStore(ObjectFields::from_pairs(&base))
     }
@@ -847,8 +851,8 @@ mod tests {
         use crate::items::TestDeps;
 
         // `PLAYER_FIELD_INV_SLOT_HEAD + 2 * slot` for equipment slots 15 and 16.
-        const INV_MAINHAND: u16 = 486 + 2 * 15;
-        const INV_OFFHAND: u16 = 486 + 2 * 16;
+        const INV_MAINHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+        const INV_OFFHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 16;
         const DISARMED: u32 = 0x0020_0000;
 
         // A class-2 weapon requirement.
@@ -860,11 +864,20 @@ mod tests {
         };
         let fits = |disarmed: bool, hands: &[(u16, u64)]| {
             let mut deps = TestDeps::new();
-            let mut pairs = vec![(46u16, (1 << 3) | if disarmed { DISARMED } else { 0 })];
+            let mut pairs = vec![(
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                (1 << 3) | if disarmed { DISARMED } else { 0 },
+            )];
             for (i, (field, guid)) in hands.iter().enumerate() {
                 pairs.push((*field, *guid as u32));
                 let entry = 500 + i as u32;
-                deps.spawn_item(*guid, ObjectFields::from_pairs(&[(3, entry)]));
+                deps.spawn_item(
+                    *guid,
+                    ObjectFields::from_pairs(&[(
+                        benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                        entry,
+                    )]),
+                );
                 deps.items.insert_template(
                     entry,
                     Some(benilla_protocol::messages::ItemInfo {
@@ -894,11 +907,11 @@ mod tests {
     fn the_equipped_item_search_masks_by_hand_and_rejects_broken_gear() {
         use crate::items::TestDeps;
 
-        const INV_MAINHAND: u16 = 486 + 2 * 15;
-        const INV_OFFHAND: u16 = 486 + 2 * 16;
+        const INV_MAINHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+        const INV_OFFHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 16;
         // `ITEM_FIELD_DURABILITY` / `_MAXDURABILITY`, instance fields.
-        const ITEM_DURABILITY: u16 = 46;
-        const ITEM_MAX_DURABILITY: u16 = 47;
+        const ITEM_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_DURABILITY;
+        const ITEM_MAX_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_MAXDURABILITY;
 
         let spell = |ex3: u32| SpellDisplay {
             equipped_item_class: 2,
@@ -909,14 +922,14 @@ mod tests {
         // `hands`: (inv field, guid, template flags, max durability, durability).
         let fits = |d: &SpellDisplay, hands: &[(u16, u64, u32, u32, u32)]| {
             let mut deps = TestDeps::new();
-            let mut pairs = vec![(46u16, 1u32 << 3)];
+            let mut pairs = vec![(benilla_protocol::field::FIELD_UNIT_FLAGS, 1u32 << 3)];
             for (i, (field, guid, flags, max_dur, dur)) in hands.iter().enumerate() {
                 pairs.push((*field, *guid as u32));
                 let entry = 500 + i as u32;
                 deps.spawn_item(
                     *guid,
                     ObjectFields::from_pairs(&[
-                        (3, entry),
+                        (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
                         (ITEM_DURABILITY, *dur),
                         (ITEM_MAX_DURABILITY, *max_dur),
                     ]),
@@ -974,18 +987,27 @@ mod tests {
     fn a_main_hand_only_ability_is_dead_while_that_hand_is_disarmed() {
         use crate::items::TestDeps;
 
-        const INV_MAINHAND: u16 = 486 + 2 * 15;
-        const INV_OFFHAND: u16 = 486 + 2 * 16;
+        const INV_MAINHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+        const INV_OFFHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 16;
         const DISARMED: u32 = 0x0020_0000;
 
         let fits = |ex3: u32, disarmed: bool| {
             let mut deps = TestDeps::new();
-            let mut pairs = vec![(46u16, (1 << 3) | if disarmed { DISARMED } else { 0 })];
+            let mut pairs = vec![(
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                (1 << 3) | if disarmed { DISARMED } else { 0 },
+            )];
             for (i, field) in [INV_MAINHAND, INV_OFFHAND].iter().enumerate() {
                 let guid = 0x2a + i as u64;
                 pairs.push((*field, guid as u32));
                 let entry = 500 + i as u32;
-                deps.spawn_item(guid, ObjectFields::from_pairs(&[(3, entry)]));
+                deps.spawn_item(
+                    guid,
+                    ObjectFields::from_pairs(&[(
+                        benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                        entry,
+                    )]),
+                );
                 deps.items.insert_template(
                     entry,
                     Some(benilla_protocol::messages::ItemInfo {
@@ -1132,9 +1154,9 @@ mod tests {
     #[test]
     fn a_form_refused_spell_stays_usable_when_the_form_can_be_left() {
         let shifted = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (22, 100),
-            (28, 100),
-            (164, 15 << 24),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_2, 15 << 24),
         ]));
         let no_form = SpellDisplay {
             attributes: 0x0001_0000,
@@ -1220,8 +1242,8 @@ mod tests {
     }
 
     // The shared places of the two cost runs, seven schools each.
-    const COST_MODIFIER: u16 = 1262;
-    const COST_MULTIPLIER: u16 = 1269;
+    const COST_MODIFIER: u16 = benilla_protocol::field::FIELD_UNIT_POWER_COST_MODIFIER;
+    const COST_MULTIPLIER: u16 = benilla_protocol::field::FIELD_UNIT_POWER_COST_MULTIPLIER;
 
     fn pct(value: f32) -> u32 {
         value.to_bits()
@@ -1315,10 +1337,17 @@ mod tests {
             ..Default::default()
         };
         let mods = SpellModifiers::default();
-        let store = player(&[(23, 80), (COST_MULTIPLIER + 2, pct(-0.25))]);
+        let store = player(&[
+            (benilla_protocol::field::FIELD_UNIT_POWER1, 80),
+            (COST_MULTIPLIER + 2, pct(-0.25)),
+        ]);
         assert_eq!(power_cost(&d, &store, &mods), 75);
         assert!(can_afford(&d, &store, &mods));
-        assert!(!can_afford(&d, &player(&[(23, 80)]), &mods));
+        assert!(!can_afford(
+            &d,
+            &player(&[(benilla_protocol::field::FIELD_UNIT_POWER1, 80)]),
+            &mods
+        ));
     }
 
     /// A pet spell of level 20 cast at another level; the table's values are the test's own.
@@ -1328,8 +1357,8 @@ mod tests {
         mods
     }
 
-    const OBJECT_TYPE: u16 = 2;
-    const UNIT_LEVEL: u16 = 34;
+    const OBJECT_TYPE: u16 = benilla_protocol::field::FIELD_OBJECT_TYPE;
+    const UNIT_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
     const TYPE_UNIT: u32 = 0x9;
     const TYPE_PLAYER: u32 = 0x19;
 
@@ -1378,7 +1407,7 @@ mod tests {
             ObjectStore(ObjectFields::from_pairs(&[
                 (OBJECT_TYPE, TYPE_UNIT),
                 (UNIT_LEVEL, 30),
-                (23, mana),
+                (benilla_protocol::field::FIELD_UNIT_POWER1, mana),
             ]))
         };
         assert!(!can_afford(&spell, &pet(134), &mods));
@@ -1397,12 +1426,12 @@ mod tests {
     }
 
     const MY_GUID: u64 = 0x77;
-    const OBJECT_GUID: u16 = 0;
-    const UNIT_FLAGS: u16 = 46;
-    const UNIT_FLAGS2: u16 = 44;
-    const UNIT_BYTES_2: u16 = 164;
-    const INV_MAINHAND: u16 = 486 + 2 * 15;
-    const INV_OFFHAND: u16 = 486 + 2 * 16;
+    const OBJECT_GUID: u16 = benilla_protocol::field::FIELD_OBJECT_GUID;
+    const UNIT_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const UNIT_FLAGS2: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS_2;
+    const UNIT_BYTES_2: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_2;
+    const INV_MAINHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+    const INV_OFFHAND: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 16;
     const DISARMED: u32 = 0x0020_0000;
 
     /// The term adds speed / 100 for the active player alone, by the spell's hand.
@@ -1441,10 +1470,10 @@ mod tests {
         use crate::items::TestDeps;
         const MAIN: u64 = 0x100;
         const OFF: u64 = 0x101;
-        const ITEM_ENTRY: u16 = 3;
-        const ITEM_FLAGS: u16 = 21;
-        const ITEM_DURABILITY: u16 = 46;
-        const ITEM_MAX_DURABILITY: u16 = 47;
+        const ITEM_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+        const ITEM_FLAGS: u16 = benilla_protocol::field::FIELD_ITEM_FLAGS;
+        const ITEM_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_DURABILITY;
+        const ITEM_MAX_DURABILITY: u16 = benilla_protocol::field::FIELD_ITEM_MAXDURABILITY;
 
         struct Weapon {
             delay: u32,
@@ -1579,20 +1608,36 @@ mod tests {
             ..Default::default()
         };
         let mods = SpellModifiers::default();
-        let with_gear = player(&[(22, 400), (28, 4_000), (163, 1_689)]);
+        let with_gear = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 400),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4_000),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 1_689),
+        ]);
         assert_eq!(power_cost(&bloodrage, &with_gear, &mods), 337);
         assert!(can_afford(&bloodrage, &with_gear, &mods));
         assert_eq!(walk(&bloodrage, &with_gear), (true, false));
 
-        let below_cost = player(&[(22, 336), (28, 4_000), (163, 1_689)]);
+        let below_cost = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 336),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4_000),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 1_689),
+        ]);
         assert!(!can_afford(&bloodrage, &below_cost, &mods));
         assert_eq!(walk(&bloodrage, &below_cost), (false, true));
 
-        let equal_cost = player(&[(22, 337), (28, 4_000), (163, 1_689)]);
+        let equal_cost = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 337),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4_000),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 1_689),
+        ]);
         assert!(!can_afford(&bloodrage, &equal_cost, &mods));
         assert_eq!(walk(&bloodrage, &equal_cost), (false, true));
 
-        let without_gear = player(&[(22, 400), (28, 1_689), (163, 1_689)]);
+        let without_gear = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 400),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 1_689),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 1_689),
+        ]);
         assert_eq!(power_cost(&bloodrage, &without_gear, &mods), 337);
     }
 
@@ -1606,17 +1651,32 @@ mod tests {
             mana_cost: 100,
             ..Default::default()
         };
-        let health = |hp: u32| player(&[(22, hp), (23, 0)]);
+        let health = |hp: u32| {
+            player(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, hp),
+                (benilla_protocol::field::FIELD_UNIT_POWER1, 0),
+            ])
+        };
         assert!(can_afford(&flat(-2), &health(101), &mods));
         assert!(!can_afford(&flat(-2), &health(100), &mods));
         assert!(!can_afford(&flat(-2), &health(99), &mods));
         assert!(can_afford(&flat(-1), &health(101), &mods));
         assert!(can_afford(&flat(-1), &health(100), &mods));
         assert!(!can_afford(&flat(-1), &health(99), &mods));
-        assert!(can_afford(&flat(0), &player(&[(22, 0), (23, 100)]), &mods));
+        assert!(can_afford(
+            &flat(0),
+            &player(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+                (benilla_protocol::field::FIELD_UNIT_POWER1, 100)
+            ]),
+            &mods
+        ));
         assert!(!can_afford(
             &flat(0),
-            &player(&[(22, 1_000), (23, 99)]),
+            &player(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 1_000),
+                (benilla_protocol::field::FIELD_UNIT_POWER1, 99)
+            ]),
             &mods
         ));
     }
@@ -1630,7 +1690,7 @@ mod tests {
             mana_cost: 100,
             ..Default::default()
         };
-        let mut store = player(&[(22, 100)]);
+        let mut store = player(&[(benilla_protocol::field::FIELD_UNIT_HEALTH, 100)]);
         assert!(!can_afford(&spell, &store, &mods));
         assert!(store.0.set_predicted_health(101));
         assert!(can_afford(&spell, &store, &mods));
@@ -1641,14 +1701,14 @@ mod tests {
     #[test]
     fn percentage_cost_bases_follow_power_type() {
         let store = player(&[
-            (28, 4_000), // max health
-            (29, 2_000), // max mana
-            (30, 800),   // max rage
-            (31, 80),    // max focus
-            (32, 120),   // max energy
-            (33, 500),   // max happiness
-            (162, 1_500),
-            (163, 1_689),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4_000), // max health
+            (benilla_protocol::field::FIELD_UNIT_MAXPOWER1, 2_000), // max mana
+            (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 1, 800), // max rage
+            (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 2, 80), // max focus
+            (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 3, 120), // max energy
+            (benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 4, 500), // max happiness
+            (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 1_500),
+            (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 1_689),
         ]);
         let mods = SpellModifiers::default();
         let cases = [
@@ -1682,7 +1742,10 @@ mod tests {
             mana_cost: 100,
             ..Default::default()
         };
-        let store = ObjectStore(ObjectFields::from_pairs(&[(23, 80)]));
+        let store = ObjectStore(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_POWER1,
+            80,
+        )]));
 
         let mut mods = SpellModifiers::default();
         mods.set_class_family(3);
@@ -1719,9 +1782,16 @@ mod tests {
         assert_eq!(walk(&d, &alive), (true, false));
 
         // Leg 1: dead, or a ghost at health 1 (field 190 bit `0x10`); the attribute waives it.
-        let dead = player(&[(22, 0), (28, 100)]);
+        let dead = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        ]);
         assert_eq!(walk(&d, &dead), (false, false));
-        let ghost = player(&[(22, 1), (28, 100), (190, 0x10)]);
+        let ghost = player(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 1),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_PLAYER_FLAGS, 0x10),
+        ]);
         assert_eq!(walk(&d, &ghost), (false, false));
         let while_dead = SpellDisplay {
             attributes: ATTR_CASTABLE_WHILE_DEAD,
@@ -1755,7 +1825,10 @@ mod tests {
         assert_eq!(walk(&overpower, &alive), (false, false));
         assert_eq!(walk_with_combo(&overpower, &alive, 1), (true, false));
         // `PLAYER_FIELD_BYTES` byte 1 is not combo points on 3.3.5a.
-        let ranked = player(&[(1222, 0x05_03_01_01)]);
+        let ranked = player(&[(
+            benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES,
+            0x05_03_01_01,
+        )]);
         assert_eq!(walk(&overpower, &ranked), (false, false));
 
         // Leg 6: a cat-form spell out of form.
@@ -1764,7 +1837,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(walk(&claw, &alive), (false, false));
-        let in_cat = player(&[(164, 1 << 24)]);
+        let in_cat = player(&[(benilla_protocol::field::FIELD_UNIT_BYTES_2, 1 << 24)]);
         assert_eq!(walk(&claw, &in_cat), (true, false));
 
         // Leg 7: only-stealthed vs the CREEP byte.
@@ -1773,7 +1846,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(walk(&ambush, &alive), (false, false));
-        let sneaking = player(&[(138, 0x2 << 24)]);
+        let sneaking = player(&[(benilla_protocol::field::FIELD_UNIT_BYTES_1, 0x2 << 16)]);
         assert_eq!(walk(&ambush, &sneaking), (true, false));
 
         // Leg 8: not-in-combat vs UNIT_FLAG_IN_COMBAT.
@@ -1782,7 +1855,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(walk(&mount, &alive), (true, false));
-        let fighting = player(&[(46, UNIT_FLAG_IN_COMBAT)]);
+        let fighting = player(&[(
+            benilla_protocol::field::FIELD_UNIT_FLAGS,
+            UNIT_FLAG_IN_COMBAT,
+        )]);
         assert_eq!(walk(&mount, &fighting), (false, false));
 
         // Leg 9: CasterAuraState (defense = 1 → bit 0).
@@ -1791,7 +1867,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(walk(&revenge, &alive), (false, false));
-        let defended = player(&[(125, 0x1)]);
+        let defended = player(&[(benilla_protocol::field::FIELD_UNIT_AURASTATE, 0x1)]);
         assert_eq!(walk(&revenge, &defended), (true, false));
 
         // Leg 10: TargetAuraState with no current target.
@@ -1836,8 +1912,14 @@ mod tests {
             ..Default::default()
         };
 
-        let healthy = ObjectStore(ObjectFields::from_pairs(&[(22, 100), (125, 0)]));
-        let low = ObjectStore(ObjectFields::from_pairs(&[(22, 10), (125, 0x2)]));
+        let healthy = ObjectStore(ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_AURASTATE, 0),
+        ]));
+        let low = ObjectStore(ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 10),
+            (benilla_protocol::field::FIELD_UNIT_AURASTATE, 0x2),
+        ]));
         let mut objs = crate::ui_items::TestObjects::new();
         let objects = objs.get();
         let carried = crate::ui_items::carried_counts(&me.0, &objects);

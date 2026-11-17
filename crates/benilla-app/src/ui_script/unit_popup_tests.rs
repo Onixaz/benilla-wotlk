@@ -323,7 +323,7 @@ fn solo_target_trade_click_queues_an_initiate() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Clicking Follow calls `FollowByName("Ally", 1)` (`UnitPopup.lua:623`): the `1` asks for an
+/// Clicking Follow calls `FollowUnit("Ally", 1)` (`UnitPopup.lua:1325`): the `1` asks for an
 /// exact match, so the menu never prefix-matches onto a bystander as `/follow rag` may.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
@@ -381,11 +381,11 @@ fn solo_target_follow_click_queues_an_exact_by_name_follow() {
     s.mouse_button(fx as f32, fy as f32, "LeftButton", false);
     assert_eq!(
         s.take_follow_requests(),
-        vec![FollowRequest::ByName {
+        vec![FollowRequest {
             name: "Ally".into(),
             exact: true,
         }],
-        "the popup follows by NAME and exactly — not by unit token, and not prefix-matched"
+        "the popup follows by NAME and exactly, not prefix-matched"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

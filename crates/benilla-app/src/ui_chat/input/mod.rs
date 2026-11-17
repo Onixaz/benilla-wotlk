@@ -651,13 +651,12 @@ pub(super) fn drain_chat_input(
             ParsedChat::Assist { name } => {
                 chat_out.assist.write(crate::target::AssistRequest { name });
             }
-            // Bare is `FollowUnit("target")`, where the stock handler (`ChatFrame.lua:754`) first
-            // tries a selected player's name; named is a follow by name with no exact flag, so
-            // prefix matching.
+            // The stock handler's `FollowUnit(msg)` (`ChatFrame.lua:1507`): bare is the empty
+            // string, the target, and a name has no exact flag, so prefix matching.
             ParsedChat::Follow { name } => {
-                chat_out.follow.write(match name {
-                    Some(name) => crate::player::FollowRequest::Name { name, exact: false },
-                    None => crate::player::FollowRequest::Unit("target".into()),
+                chat_out.follow.write(crate::player::FollowRequest {
+                    name: name.unwrap_or_default(),
+                    exact: false,
                 });
             }
             // `SlashCmdList["PVP"]` is `TogglePVP()`, the popup row's intent queue.

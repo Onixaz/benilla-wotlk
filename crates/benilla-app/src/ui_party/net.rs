@@ -756,13 +756,13 @@ mod tests {
     // ── The out-of-range record ──────────────────────────────────────────────
 
     /// Unit descriptor field indices, build 5875.
-    const HEALTH: u16 = 22;
-    const MAXHEALTH: u16 = 28;
+    const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
     /// `UNIT_FIELD_POWER2`/`MAXPOWER2`, the rage slot (`POWER1 + POWER_RAGE`).
-    const POWER2: u16 = 24;
-    const MAXPOWER2: u16 = 30;
-    const LEVEL: u16 = 34;
-    const BYTES_0: u16 = 36;
+    const POWER2: u16 = benilla_protocol::field::FIELD_UNIT_POWER1 + 1;
+    const MAXPOWER2: u16 = benilla_protocol::field::FIELD_UNIT_MAXPOWER1 + 1;
+    const LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
 
     fn asked(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<u64> {
         rx.try_iter()
@@ -823,8 +823,8 @@ mod tests {
     /// (`0x6e14fc`-`0x6e151e`), and the status takes the AFK and DND player flags (`0x6e1354`).
     #[test]
     fn a_members_despawn_snapshots_their_auras_and_only_their_pets_guid() {
-        const SUMMON: u16 = 8;
-        const PLAYER_FLAGS: u16 = 190;
+        const SUMMON: u16 = benilla_protocol::field::FIELD_UNIT_SUMMON;
+        const PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
         let (tx, _rx) = crossbeam_channel::unbounded();
         let net = NetCommands(tx);
         let guid = 0x1234;

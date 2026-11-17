@@ -213,7 +213,8 @@ fn honor_snapshot(store: &ObjectStore) -> Option<HonorState> {
         lifetime_hk: f.player_lifetime_honorable_kills().unwrap_or(0),
         // The highest lifetime rank, private `PLAYER_FIELD_BYTES` byte 3 (`0x611bc4`).
         highest_rank: f.player_honor_rank().unwrap_or(0),
-        rank: f.player_pvp_rank().unwrap_or(0),
+        // No current rank streams: 3.3.5a's `PLAYER_BYTES_3` byte 3 is the arena faction.
+        rank: 0,
         honor_currency: f.player_honor_currency().unwrap_or(0),
         arena_currency: f.player_arena_currency().unwrap_or(0),
     })

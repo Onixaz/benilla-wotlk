@@ -21,8 +21,8 @@ const VEHICLE: u32 = 900;
 const DUMMY: u32 = 901;
 const ROW_POSSESSED: u32 = 65;
 const ROW_GUARDIAN: u32 = 61;
-const CHARM: u16 = 6;
-const FARSIGHT: u16 = 712;
+const CHARM: u16 = benilla_protocol::field::FIELD_UNIT_CHARM;
+const FARSIGHT: u16 = benilla_protocol::field::FIELD_PLAYER_FARSIGHT;
 
 fn spell(name: &str, effects: [u32; 3], auras: [u32; 3], misc_b: [i32; 3]) -> SpellDisplay {
     SpellDisplay {

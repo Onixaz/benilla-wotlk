@@ -500,9 +500,15 @@ mod tests {
                 (0, guid as u32),
                 (1, (guid >> 32) as u32),
                 (2, if player { 0x19 } else { 0x9 }),
-                (35, 1),
-                (46, UNIT_FLAG_PLAYER_CONTROLLED),
-                (164, u32::from(byte2 | BYTE2_FFA_PVP) << 8),
+                (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FLAGS,
+                    UNIT_FLAG_PLAYER_CONTROLLED,
+                ),
+                (
+                    benilla_protocol::field::FIELD_UNIT_BYTES_2,
+                    u32::from(byte2 | BYTE2_FFA_PVP) << 8,
+                ),
             ];
             pairs.extend_from_slice(extra);
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&pairs))
@@ -514,7 +520,13 @@ mod tests {
                 guid,
                 false,
                 0,
-                &[(14, owner as u32), (15, (owner >> 32) as u32)],
+                &[
+                    (benilla_protocol::field::FIELD_UNIT_CREATEDBY, owner as u32),
+                    (
+                        benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1,
+                        (owner >> 32) as u32,
+                    ),
+                ],
             )
         }
 
@@ -665,10 +677,13 @@ mod tests {
             assert_eq!(s.ring, RingVariant::Hostile);
             // The same stranger out of the FFA area is a friendly Human again.
             let calm = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (0, STRANGER as u32),
-                (2, 0x19),
-                (35, 1),
-                (46, UNIT_FLAG_PLAYER_CONTROLLED),
+                (benilla_protocol::field::FIELD_OBJECT_GUID, STRANGER as u32),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FLAGS,
+                    UNIT_FLAG_PLAYER_CONTROLLED,
+                ),
             ]));
             assert_eq!(seen(&calm, &me, &group()).toward_us, FRIENDLY);
         }
@@ -676,7 +691,12 @@ mod tests {
         #[test]
         fn a_duel_outranks_the_party() {
             // `PLAYER_DUEL_ARBITER` 188-189 shared, `PLAYER_DUEL_TEAM` 196 opposed.
-            let duel = |team: u32| [(188, 0xD0), (196, team)];
+            let duel = |team: u32| {
+                [
+                    (benilla_protocol::field::FIELD_PLAYER_DUEL_ARBITER, 0xD0),
+                    (benilla_protocol::field::FIELD_PLAYER_DUEL_TEAM, team),
+                ]
+            };
             let me = unit(ME, true, 0, &duel(1));
             let s = seen(&unit(MEMBER, true, 0, &duel(2)), &me, &group());
             assert_eq!((s.toward_us, s.from_us), (HOSTILE, HOSTILE));
@@ -694,10 +714,13 @@ mod tests {
             );
             let calm = |guid: u64| {
                 ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (0, guid as u32),
-                    (2, 0x19),
-                    (35, 1),
-                    (46, UNIT_FLAG_PLAYER_CONTROLLED),
+                    (benilla_protocol::field::FIELD_OBJECT_GUID, guid as u32),
+                    (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                    (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+                    (
+                        benilla_protocol::field::FIELD_UNIT_FLAGS,
+                        UNIT_FLAG_PLAYER_CONTROLLED,
+                    ),
                 ]))
             };
             let calm_me = calm(ME);
@@ -718,10 +741,10 @@ mod tests {
             let reps = Reputations::default();
             // Health 22 zero against max health 28.
             let dead_npc = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x9),
-                (22, 0),
-                (28, 100),
-                (35, 1),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
             ]));
             assert_eq!(
                 highlight_variant(
@@ -735,7 +758,15 @@ mod tests {
                 ),
                 RingVariant::Dead
             );
-            let dead_member = unit(MEMBER, true, 0, &[(22, 0), (28, 100)]);
+            let dead_member = unit(
+                MEMBER,
+                true,
+                0,
+                &[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                ],
+            );
             assert_eq!(seen(&dead_member, &me, &group()).ring, RingVariant::Party);
         }
     }
@@ -770,10 +801,19 @@ mod tests {
         // `OBJECT_FIELD_TYPE` 2, the template 35, `UNIT_FIELD_FLAGS` 46, `UNIT_FIELD_BYTES_2` 164.
         let unit = |template: u32, flags: u32, byte2: u8, player: bool| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, if player { 0x19 } else { 0x9 }),
-                (35, template),
-                (46, flags),
-                (164, u32::from(byte2) << 8),
+                (
+                    benilla_protocol::field::FIELD_OBJECT_TYPE,
+                    if player { 0x19 } else { 0x9 },
+                ),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                    template,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+                (
+                    benilla_protocol::field::FIELD_UNIT_BYTES_2,
+                    u32::from(byte2) << 8,
+                ),
             ]))
         };
         let me = unit(1, UNIT_FLAG_PLAYER_CONTROLLED, 0, true);
@@ -923,11 +963,17 @@ mod tests {
         let pc = UNIT_FLAG_PLAYER_CONTROLLED;
         let unit = |template: u32, byte2: u8, player_flags: u32| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x19),
-                (35, template),
-                (46, pc),
-                (164, u32::from(byte2) << 8),
-                (190, player_flags),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                    template,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, pc),
+                (
+                    benilla_protocol::field::FIELD_UNIT_BYTES_2,
+                    u32::from(byte2) << 8,
+                ),
+                (benilla_protocol::field::FIELD_PLAYER_FLAGS, player_flags),
             ]))
         };
         let attack = |target: &ObjectStore, me: &ObjectStore| {
@@ -1005,21 +1051,36 @@ mod tests {
         // `UNIT_FIELD_BYTES_2` 164, `PLAYER_DUEL_ARBITER` 188, `PLAYER_DUEL_TEAM` 196.
         let npc = |entry: u32, template: u32, flags: u32, byte2: u8| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x9),
-                (3, entry),
-                (35, template),
-                (46, flags),
-                (164, u32::from(byte2) << 8),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                    template,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+                (
+                    benilla_protocol::field::FIELD_UNIT_BYTES_2,
+                    u32::from(byte2) << 8,
+                ),
             ]))
         };
         let player = |template: u32, byte2: u8, duel: (u32, u32)| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x19),
-                (35, template),
-                (46, UNIT_FLAG_PLAYER_CONTROLLED),
-                (164, u32::from(byte2) << 8),
-                (188, duel.0),
-                (196, duel.1),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                    template,
+                ),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FLAGS,
+                    UNIT_FLAG_PLAYER_CONTROLLED,
+                ),
+                (
+                    benilla_protocol::field::FIELD_UNIT_BYTES_2,
+                    u32::from(byte2) << 8,
+                ),
+                (benilla_protocol::field::FIELD_PLAYER_DUEL_ARBITER, duel.0),
+                (benilla_protocol::field::FIELD_PLAYER_DUEL_TEAM, duel.1),
             ]))
         };
         let me = player(1, 0, (0, 0));
@@ -1141,7 +1202,10 @@ mod tests {
         let human = fx::corpse(fx::HUMAN, false);
         assert!(!corpse_friendly(&human, None, Some(&me)), "no catalog");
         assert!(!corpse_friendly(&human, Some(&factions), None), "no player");
-        let no_template = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(35, 999)]));
+        let no_template = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+            999,
+        )]));
         assert!(
             !corpse_friendly(&human, Some(&factions), Some(&no_template)),
             "a template the table lacks"
@@ -1174,11 +1238,11 @@ mod tests {
     fn possession_is_the_flag_and_the_charmer_else_the_creator() {
         let store = |flags: u32, charmed_by: u32, created_by: u32| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (46, flags),
-                (10, charmed_by),
-                (11, 0),
-                (14, created_by),
-                (15, 0),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+                (benilla_protocol::field::FIELD_UNIT_CHARMEDBY, charmed_by),
+                (benilla_protocol::field::FIELD_UNIT_CHARMEDBY + 1, 0),
+                (benilla_protocol::field::FIELD_UNIT_CREATEDBY, created_by),
+                (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
             ]))
         };
         let me = Some(0x77);

@@ -910,8 +910,8 @@ mod tests {
     }
 
     /// `OBJECT_FIELD_ENTRY` and `UNIT_FIELD_PETNUMBER`, absolute descriptor indices.
-    const ENTRY: u16 = 3;
-    const PETNUMBER: u16 = 139;
+    const ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+    const PETNUMBER: u16 = benilla_protocol::field::FIELD_UNIT_PETNUMBER;
 
     fn unit(fields: &[(u16, u32)]) -> ObjectStore {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(fields))

@@ -134,11 +134,23 @@ fn critter_guid(entry: u32) -> u64 {
 fn self_store(critter: Option<u64>, mount_display: u32, charmed_by: u64) -> ObjectStore {
     let critter = critter.unwrap_or(0);
     ObjectStore(ObjectFields::from_pairs(&[
-        (10, charmed_by as u32),
-        (11, (charmed_by >> 32) as u32),
-        (18, critter as u32),
-        (19, (critter >> 32) as u32),
-        (133, mount_display),
+        (
+            benilla_protocol::field::FIELD_UNIT_CHARMEDBY,
+            charmed_by as u32,
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_CHARMEDBY + 1,
+            (charmed_by >> 32) as u32,
+        ),
+        (benilla_protocol::field::FIELD_UNIT_CRITTER, critter as u32),
+        (
+            benilla_protocol::field::FIELD_UNIT_CRITTER + 1,
+            (critter >> 32) as u32,
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID,
+            mount_display,
+        ),
     ]))
 }
 

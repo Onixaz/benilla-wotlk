@@ -26,8 +26,8 @@ use crate::ui_script::{UiDrain, UiFeed};
 const ITEM_FLAG_REFUNDABLE: u32 = 0x1000;
 /// `ITEM_FIELD_FLAGS & 0x100`: a bound item still in its trade window.
 const ITEM_FIELD_FLAG_BOP_TRADEABLE: u32 = 0x100;
-/// `ITEM_FIELD_CREATE_PLAYED_TIME`'s shared index.
-const FIELD_ITEM_CREATE_PLAYED_TIME: u16 = 45;
+/// `ITEM_FIELD_CREATE_PLAYED_TIME`'s index.
+const FIELD_ITEM_CREATE_PLAYED_TIME: u16 = benilla_protocol::field::FIELD_ITEM_CREATE_PLAYED_TIME;
 /// The refund lines' currency caps (`0x6d9c4f`, `0x6d9cbf`).
 const HONOR_CAP: u32 = 75_000;
 const ARENA_CAP: u32 = 10_000;

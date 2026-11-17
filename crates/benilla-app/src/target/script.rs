@@ -31,9 +31,9 @@ pub(crate) struct ScriptSelect<'w, 's> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
 }
 
-/// `AssistUnit`'s line for a basis it cannot use: an empty or `"target"` token (`0x9fc4a0`) shows
-/// `ERR_GENERIC_NO_TARGET`, any other `ERR_UNIT_NOT_FOUND`.
-fn assist_miss_key(token: &str) -> &'static str {
+/// `AssistUnit`'s and `FollowUnit`'s line for a unit they cannot use: an empty or `"target"` token
+/// (`0x9fc4a0`) shows `ERR_GENERIC_NO_TARGET`, any other `ERR_UNIT_NOT_FOUND`.
+pub(super) fn unit_miss_key(token: &str) -> &'static str {
     if token.is_empty() || token.eq_ignore_ascii_case("target") {
         "ERR_GENERIC_NO_TARGET"
     } else {
@@ -67,7 +67,7 @@ impl ScriptSelect<'_, '_> {
                         info!("assist (AssistUnit): \"{token}\" names no held unit");
                         self.errors
                             .0
-                            .push(crate::ui_action::UiError::key(assist_miss_key(&token)));
+                            .push(crate::ui_action::UiError::key(unit_miss_key(&token)));
                     }
                 }
             }
@@ -248,16 +248,33 @@ mod tests {
 
         let mut world = script_world();
 
-        world.spawn((SelfPlayer, Guid(ME), store(&[(22, 100), (28, 100)])));
+        world.spawn((
+            SelfPlayer,
+            Guid(ME),
+            store(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ]),
+        ));
         // The basis is pointing at the victim; the victim points at nobody.
         let basis = world
             .spawn((
                 Guid(BASIS),
-                store(&[(22, 100), (28, 100), (16, VICTIM as u32)]),
+                store(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_TARGET, VICTIM as u32),
+                ]),
             ))
             .id();
         let victim = world
-            .spawn((Guid(VICTIM), store(&[(22, 100), (28, 100)])))
+            .spawn((
+                Guid(VICTIM),
+                store(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                ]),
+            ))
             .id();
         let index = &mut world.resource_mut::<crate::net::GuidIndex>().0;
         index.insert(BASIS, basis);
@@ -327,17 +344,30 @@ mod tests {
             |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
 
         let mut world = script_world();
-        world.spawn((SelfPlayer, Guid(ME), store(&[(22, 100), (28, 100)])));
+        world.spawn((
+            SelfPlayer,
+            Guid(ME),
+            store(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ]),
+        ));
         let pet = world
-            .spawn((Guid(PET), store(&[(22, 100), (28, 100)])))
+            .spawn((
+                Guid(PET),
+                store(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                ]),
+            ))
             .id();
         let member = world
             .spawn((
                 Guid(MEMBER),
                 store(&[
-                    (22, 100),
-                    (28, 100),
-                    (8, PET as u32),
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_SUMMON, PET as u32),
                     (9, (PET >> 32) as u32),
                 ]),
             ))
@@ -494,9 +524,22 @@ mod tests {
             |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
 
         let mut world = script_world();
-        world.spawn((SelfPlayer, Guid(ME), store(&[(22, 100), (28, 100)])));
+        world.spawn((
+            SelfPlayer,
+            Guid(ME),
+            store(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ]),
+        ));
         let mob = world
-            .spawn((Guid(MOB), store(&[(22, 100), (28, 100)])))
+            .spawn((
+                Guid(MOB),
+                store(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                ]),
+            ))
             .id();
         world
             .resource_mut::<crate::net::GuidIndex>()
@@ -601,11 +644,22 @@ mod tests {
             |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
 
         let mut world = script_world();
-        world.spawn((SelfPlayer, Guid(ME), store(&[(22, 100), (28, 100)])));
+        world.spawn((
+            SelfPlayer,
+            Guid(ME),
+            store(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ]),
+        ));
         let basis = world
             .spawn((
                 Guid(BASIS),
-                store(&[(22, 100), (28, 100), (16, MEMBER as u32)]),
+                store(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_TARGET, MEMBER as u32),
+                ]),
             ))
             .id();
         world
@@ -698,7 +752,11 @@ mod tests {
         let basis = world
             .spawn((
                 Guid(BASIS),
-                store(&[(22, 100), (28, 100), (16, STRANGER as u32)]),
+                store(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_TARGET, STRANGER as u32),
+                ]),
             ))
             .id();
         world
@@ -734,11 +792,17 @@ mod tests {
         // `UNIT_FIELD_TARGET` 16, the latter two each a 2-field guid.
         let unit = |kind: u32, summon: u64, target: u64| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, kind),
-                (8, summon as u32),
-                (9, (summon >> 32) as u32),
-                (16, target as u32),
-                (17, (target >> 32) as u32),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, kind),
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, summon as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (summon >> 32) as u32,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_TARGET, target as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_TARGET + 1,
+                    (target >> 32) as u32,
+                ),
             ]))
         };
         const PLAYER: u32 = 0x19;
@@ -870,9 +934,12 @@ mod tests {
         // `OBJECT_FIELD_TYPE` 2 and `UNIT_FIELD_TARGET` 16, a 2-field guid.
         let unit = |target: u64| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, 0x09),
-                (16, target as u32),
-                (17, (target >> 32) as u32),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x09),
+                (benilla_protocol::field::FIELD_UNIT_TARGET, target as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_TARGET + 1,
+                    (target >> 32) as u32,
+                ),
             ]))
         };
 
@@ -943,7 +1010,12 @@ mod tests {
 
         const ME: u64 = 1;
         const VENDOR: u64 = 0xF130_0000_9800_0001;
-        let unit = || ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x09)]));
+        let unit = || {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_TYPE,
+                0x09,
+            )]))
+        };
 
         let mut world = script_world();
         world.insert_non_send_resource(crate::ui_script::chat_tests::chat_frame());
@@ -992,7 +1064,12 @@ mod tests {
         const NEAR: u64 = 0x5555;
         let store =
             |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
-        let live = || store(&[(22, 100), (28, 100)]);
+        let live = || {
+            store(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            ])
+        };
 
         let mut world = script_world();
         world.init_resource::<Messages<super::super::by_name::TargetByNameRequest>>();

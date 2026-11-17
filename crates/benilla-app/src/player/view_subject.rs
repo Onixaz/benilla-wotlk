@@ -215,7 +215,7 @@ mod tests {
 
         // Far sight set, the object not streamed: still the body, not the origin. The store takes
         // the field as the values handler merges it, and the update reaches the field's watcher.
-        const FARSIGHT: u16 = 712;
+        const FARSIGHT: u16 = benilla_protocol::field::FIELD_PLAYER_FARSIGHT;
         let set = |app: &mut App, lo: u32| {
             let fields =
                 benilla_protocol::ObjectFields::from_pairs(&[(FARSIGHT, lo), (FARSIGHT + 1, 0)]);

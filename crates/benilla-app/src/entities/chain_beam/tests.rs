@@ -229,7 +229,10 @@ fn play(entity: Entity, spell_id: u32) -> ChainProcPlay {
 fn typed_unit(app: &mut App) -> Entity {
     streamed(
         app,
-        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9)])),
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_OBJECT_TYPE,
+            0x9,
+        )])),
     )
 }
 
@@ -271,9 +274,18 @@ fn target_selection_prefers_the_channel_object_only_on_its_own_narrow_path() {
     index.0.insert(OBJECT_GUID, victim);
     // Field 20 = UNIT_FIELD_CHANNEL_OBJECT (a guid pair), 144 = UNIT_CHANNEL_SPELL.
     let channelling = ObjectStore(ObjectFields::from_pairs(&[
-        (20, OBJECT_GUID as u32),
-        (21, (OBJECT_GUID >> 32) as u32),
-        (144, CHANNEL_SPELL),
+        (
+            benilla_protocol::field::FIELD_UNIT_CHANNEL_OBJECT,
+            OBJECT_GUID as u32,
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_CHANNEL_OBJECT + 1,
+            (OBJECT_GUID >> 32) as u32,
+        ),
+        (
+            benilla_protocol::field::FIELD_UNIT_CHANNEL_SPELL,
+            CHANNEL_SPELL,
+        ),
     ]));
     let idle = ObjectStore(ObjectFields::from_pairs(&[]));
 
@@ -909,7 +921,10 @@ fn only_a_unit_casters_go_saves_the_location() {
     let unit = typed_unit(&mut app);
     let trap = streamed(
         &mut app,
-        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x21)])),
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_OBJECT_TYPE,
+            0x21,
+        )])),
     );
     for caster in [unit, trap] {
         app.world_mut().write_message(SpellGoTargets {

@@ -75,12 +75,12 @@ fn pet_errors(s: &mut UiScript) -> Vec<String> {
 fn pet(name: &str, health: u32, power: u32, max_power: u32, power_type: u8) -> UnitState {
     // `UNIT_FIELD_` HEALTH, POWER1, MAXHEALTH, MAXPOWER1, LEVEL, BYTES_0 (the power type is its
     // byte 3), the power pair at its type's slot.
-    const HEALTH: u16 = 22;
-    const POWER1: u16 = 23;
-    const MAXHEALTH: u16 = 28;
-    const MAXPOWER1: u16 = 29;
-    const LEVEL: u16 = 34;
-    const BYTES_0: u16 = 36;
+    const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const POWER1: u16 = benilla_protocol::field::FIELD_UNIT_POWER1;
+    const MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
+    const MAXPOWER1: u16 = benilla_protocol::field::FIELD_UNIT_MAXPOWER1;
+    const LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
     let slot = u16::from(power_type);
     let store = crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
         (HEALTH, health),

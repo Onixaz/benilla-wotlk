@@ -273,7 +273,7 @@ fn every_unit_field_bridge_event_has_a_producer() {
     /// or that is no bridge event, fails the gate.
     const UNPRODUCED: &[(&str, &str)] = &[(
         "UNIT_TARGET",
-        "field 12, the unit's target. The unit snapshot the feed diffs (`UnitState`) does not \
+        "`UNIT_FIELD_TARGET`, the unit's target. The unit snapshot the feed diffs (`UnitState`) does not \
          carry a unit's target, so nothing sees it change; the target-of-target frame refreshes \
          on its own update",
     )];
