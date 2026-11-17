@@ -11,6 +11,7 @@ use crate::dbc::{f32_at, parse, str_at, u32_at};
 use crate::Chain;
 
 mod atmosphere;
+mod skybox;
 mod tables;
 
 pub use atmosphere::Atmosphere;
@@ -21,6 +22,8 @@ use atmosphere::{
     LP_OCEAN_SHALLOW_ALPHA, LP_SKYBOX, LP_WATER_DEEP_ALPHA, LP_WATER_SHALLOW_ALPHA,
 };
 pub use atmosphere::{ZERO_KEY_COLOR, ZERO_KEY_SCALAR};
+use skybox::{compact_pairs, merge_pair, seed_pairs, SkyboxPairs};
+pub use skybox::{SkyboxDraw, SKYBOX_FLAG_COMBINE, SKYBOX_FLAG_SYNC_TIME};
 use tables::{band_schema, load_bands, load_float_bands, sample_color, sample_float, Band, DAY};
 
 const LIGHT: &str = "DBFilesClient\\Light.dbc";
@@ -170,10 +173,10 @@ pub struct LightCatalog {
     light_params_water_alpha: HashMap<u32, [f32; 4]>,
     /// `LightParams` id → `lightSkyboxID` ([`LP_SKYBOX`]), for its non-zero rows only.
     light_params_skybox: HashMap<u32, u32>,
-    /// `LightSkybox.dbc` id → model chain path, spelled as a WMO MOSB skybox is so one model never
-    /// builds twice. Only the ghost path reads it here; 12340's 158 skybox params are mostly zone
-    /// skies (`StormPeaks_SkyC_Ulduar.mdx`), which no path draws yet.
-    skyboxes: HashMap<u32, String>,
+    /// `LightSkybox.dbc` id → (model chain path, `Flags`), the path spelled as a WMO MOSB skybox is
+    /// so one model never builds twice. The zone skies ([`Self::skybox_blend`]) and the ghost sky
+    /// ([`Self::ghost_skybox`]) both resolve through it.
+    skyboxes: HashMap<u32, (String, u32)>,
 }
 
 pub(crate) fn light_int_band_schema() -> Schema {
@@ -347,7 +350,16 @@ impl LightCatalog {
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
                 if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 1)) {
-                    m.insert(id, crate::models::model_path(&path));
+                    // An empty name stays a record: `GetOverrideSky` (`0x7f30c0`) returns null
+                    // for it, which still takes its place in the draw list, a full-weight one
+                    // clearing the skies before it. An empty path is that null.
+                    let flags = u32_at(r, 2).unwrap_or(0);
+                    let path = if path.is_empty() {
+                        String::new()
+                    } else {
+                        crate::models::model_path(&path)
+                    };
+                    m.insert(id, (path, flags));
                 }
             }
             m
@@ -455,7 +467,115 @@ impl LightCatalog {
     pub fn ghost_skybox(&self, map: u32, pos: [f32; 3]) -> Option<&str> {
         let light = self.pick_light(map, pos)?;
         let id = self.light_params_skybox.get(&light.params[SLOT_DEATH])?;
-        self.skyboxes.get(id).map(String::as_str)
+        self.skyboxes
+            .get(id)
+            .map(|(path, _)| path.as_str())
+            .filter(|p| !p.is_empty())
+    }
+
+    /// The ghost sky's `LightSkybox` flags, beside [`Self::ghost_skybox`]: the override sky reads
+    /// its own bit 1 for the time-of-day sync (`SyncSkyAnimWithTime` takes `m_skybox` too).
+    pub fn ghost_skybox_flags(&self, map: u32, pos: [f32; 3]) -> u32 {
+        self.pick_light(map, pos)
+            .and_then(|l| self.light_params_skybox.get(&l.params[SLOT_DEATH]))
+            .and_then(|id| self.skyboxes.get(id))
+            .map_or(0, |(_, flags)| *flags)
+    }
+
+    /// The zone skies this frame, in draw order, at most three: the reference's skybox pairs
+    /// through the same area-light blend [`Self::sample_blended_with`] runs, then `SetColors`'
+    /// compaction ([`compact_pairs`]).
+    ///
+    /// - The base is the map's global light (else the zero-match record), seeded by
+    ///   `LoadLightingBands` (`0x7ebff0`): its skybox id at weight 1.0 ([`seed_pairs`]).
+    /// - Each local sphere containing `pos`, farthest first, folds its id in at its blend weight
+    ///   (`BlendAreaLight` `0x7ee5d0` → `BlendOutputs` `0x7ec9a0`, [`merge_pair`]); then each
+    ///   server override at its weight capped by its fade (`DoAreaLights`, `0x7f1360`).
+    /// - Magma and slime take the liquid's fixed row alone, as `SetColors` calls `CalcColors` on
+    ///   the liquid's `LightParams` and runs no area lights.
+    ///
+    /// The slot is the clear one, or the underwater one under a water kind. Storm never moves a
+    /// sky: `BlendColors` (`0x7ec220`), the storm lerp, leaves the pairs alone. The ghost is not a
+    /// slot here: its sky is the override ([`Self::ghost_skybox`]), drawn over this list.
+    pub fn skybox_blend(
+        &self,
+        map: u32,
+        pos: [f32; 3],
+        submersion: Submersion,
+        overrides: &[LightOverride],
+    ) -> Vec<SkyboxDraw> {
+        let sky_of = |param: u32| self.light_params_skybox.get(&param).copied().unwrap_or(0);
+        let record = |id: u32| self.skyboxes.get(&id).cloned();
+        if let Some(p) = submersion.fixed_param() {
+            if self.has_param(p) {
+                return compact_pairs(&seed_pairs(sky_of(p)), record);
+            }
+        }
+        let slot = weather_slot(false, false, submersion.is_water());
+        // `GetLightParams(light, slot)`, the clear slot standing in for an unset one as the
+        // atmosphere's `atmo_of` does; `None` where the row names no param at all.
+        let param_of = |l: &Light| -> Option<u32> {
+            let p = match l.params[slot] {
+                0 => l.params[SLOT_CLEAR],
+                p => p,
+            };
+            (p >= 1).then_some(p)
+        };
+        // The base, as the atmosphere's: the global, else the zero-match record for a rowless map.
+        // The seven maps with rows but no global start from the constructor's empty pairs.
+        let map_has_no_light = !self.lights.iter().any(|l| l.map == map);
+        let base = self
+            .lights
+            .iter()
+            .find(|l| l.map == map && l.global)
+            .or_else(|| {
+                map_has_no_light
+                    .then(|| self.lights.iter().find(|l| l.id == FALLBACK_LIGHT_ID))
+                    .flatten()
+            })
+            .and_then(param_of);
+        let mut pairs = base.map_or_else(SkyboxPairs::default, |p| seed_pairs(sky_of(p)));
+
+        let dist = |l: &Light| {
+            (0..3)
+                .map(|i| (l.pos[i] - pos[i]).powi(2))
+                .sum::<f32>()
+                .sqrt()
+        };
+        let mut locals: Vec<(f32, &Light)> = self
+            .lights
+            .iter()
+            .filter(|l| l.map == map && !l.global)
+            .filter_map(|l| {
+                let d = dist(l);
+                (d <= l.falloff_end).then_some((d, l))
+            })
+            .collect();
+        locals.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (d, l) in locals {
+            if let Some(p) = param_of(l) {
+                merge_pair(
+                    &mut pairs,
+                    sky_of(p),
+                    blend_alpha(d, l.falloff_start, l.falloff_end),
+                );
+            }
+        }
+        for o in overrides.iter().filter(|o| o.fade > 0.0) {
+            let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
+            let (Some(base), Some(with)) = (by_id(o.light), by_id(o.override_id)) else {
+                continue;
+            };
+            let d = dist(base);
+            if d >= base.falloff_end {
+                continue;
+            }
+            if let Some(p) = param_of(with) {
+                let weight = blend_alpha(d, base.falloff_start, base.falloff_end).min(o.fade);
+                merge_pair(&mut pairs, sky_of(p), weight);
+            }
+        }
+        compact_pairs(&pairs, record)
     }
 
     /// The reference's area-light blend: from the map's global light, lerp toward each local

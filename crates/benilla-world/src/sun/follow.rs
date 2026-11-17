@@ -181,6 +181,9 @@ pub(super) struct FlareGate<'w, 's> {
     submerged: Res<'w, crate::liquid::SubmergedEye>,
     /// The cloud coverage `occ1` samples; as in the reference, the visible clouds draw from it too.
     clouds: Res<'w, CloudCoverage>,
+    /// The skies' glare fade: `DNGlare::Update` (`0x7ef6e0`) multiplies its target by
+    /// `1 − w` for the strongest sky, before the day curve and the occlusion.
+    skybox: Res<'w, crate::skybox::SkyboxWeight>,
     env: Local<'s, f32>,
     /// Cached cell verdicts (bit = clear); `primed` falls when the probe is skipped.
     mask: Local<'s, u16>,
@@ -213,7 +216,11 @@ impl FlareGate<'_, '_> {
         half: f32,
         rise: f32,
     ) -> f32 {
-        let base = dn * horizon_gate(dir) * occ1 * submersion_glare_fade(self.submerged.depth);
+        let base = dn
+            * horizon_gate(dir)
+            * occ1
+            * submersion_glare_fade(self.submerged.depth)
+            * (1.0 - self.skybox.glare_weight());
         let target = if base > 0.0 && self.camera_interior.0.is_none() {
             // Resident ADT terrain first, the whole-map WDL surface elsewhere.
             let (streamer, adt_tiles, wdl) = (&self.streamer, &self.adt_tiles, &self.wdl);
@@ -563,6 +570,8 @@ mod tests {
         app.init_resource::<DebugState>();
         // Dry (depth 0), where the submersion fade is the exact identity.
         app.init_resource::<crate::liquid::SubmergedEye>();
+        // No sky: the glare's skybox fade is the identity.
+        app.init_resource::<crate::skybox::SkyboxWeight>();
         app.insert_resource(WowLighting {
             moon_dir_white: dir,
             moon_disc_scale: 1.0,

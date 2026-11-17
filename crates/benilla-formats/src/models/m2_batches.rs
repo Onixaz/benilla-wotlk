@@ -160,6 +160,18 @@ pub fn load_m2_mesh_skinned(
         .with_context(|| format!("parsing M2 {path}"))
 }
 
+/// A sky model read once from the chain: its render batches and its [`crate::SkyRig`], the two
+/// halves the sky lane animates (`DayNight::GetOverrideSky`, `0x7f30c0`, loads one `CM2Model`).
+pub fn load_sky_model(
+    chain: &mut Chain,
+    raw_path: &str,
+) -> Result<(Vec<RenderSubmesh>, crate::SkyRig)> {
+    let (path, model) = read_model(chain, raw_path)?;
+    let subs = parse_m2_render_submeshes(&model, parent_dir(&path), &[])
+        .with_context(|| format!("parsing M2 {path}"))?;
+    Ok((subs, crate::SkyRig::new(&model)))
+}
+
 /// [`crate::m2_bone_spins`] for a model read from the chain.
 pub fn load_m2_bone_spins(
     chain: &mut Chain,
