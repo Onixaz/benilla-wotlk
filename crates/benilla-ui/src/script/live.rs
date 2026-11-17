@@ -153,9 +153,9 @@ pub trait LiveState {
         false
     }
 
-    /// The leading arena slots holding an opponent or a pet (`0x549630`), `None` without slots.
-    fn arena_opponent_count(&self) -> Option<usize> {
-        None
+    /// The leading arena slots holding an opponent or a pet (`0x549630`), 0 without slots.
+    fn arena_opponent_count(&self) -> usize {
+        0
     }
 
     /// Our honor block when called, `None` before its private fields stream.

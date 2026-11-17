@@ -205,8 +205,8 @@ impl LiveState for LiveView<'_, '_> {
         self.score.names_pending()
     }
 
-    fn arena_opponent_count(&self) -> Option<usize> {
-        self.arena.as_ref().map(|a| a.count())
+    fn arena_opponent_count(&self) -> usize {
+        self.arena.as_ref().map_or(0, |a| a.count())
     }
 
     fn honor(&self) -> Option<benilla_ui::script::HonorState> {
