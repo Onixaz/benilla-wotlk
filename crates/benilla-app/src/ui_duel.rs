@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::target::{NameMatch, PlayerLookup};
-use crate::ui_action::Spells;
+use crate::ui_action::{show_in_turn, Spells, UiError};
 use crate::ui_script::live::{LineArg, UiEvents};
 use crate::ui_script::UiDrain;
 
@@ -73,7 +73,6 @@ pub(crate) mod net {
     fn on_requested(
         In(ev): In<SessionEvent>,
         mut duel: ResMut<DuelState>,
-        mut errors: ResMut<crate::ui_action::UiErrorKeys>,
         mut ui: ResMut<UiEvents>,
         commands: Res<NetCommands>,
         self_guid: Res<crate::net::SelfGuid>,
@@ -88,7 +87,6 @@ pub(crate) mod net {
             let held = players.player_name(challenger);
             requested(
                 &mut duel,
-                &mut errors,
                 &mut ui,
                 &commands,
                 (arbiter, challenger),
@@ -132,11 +130,10 @@ pub(crate) mod net {
     fn on_complete(
         In(ev): In<SessionEvent>,
         mut duel: ResMut<DuelState>,
-        mut errors: ResMut<crate::ui_action::UiErrorKeys>,
         mut ui: ResMut<UiEvents>,
     ) {
         if let SessionEvent::DuelComplete { started } = ev {
-            complete(&mut duel, &mut errors, &mut ui, started);
+            complete(&mut duel, &mut ui, started);
         }
     }
 
@@ -171,7 +168,6 @@ pub(crate) mod net {
     #[allow(clippy::too_many_arguments)] // the handler's inputs, passed through for its tests
     pub(crate) fn requested(
         duel: &mut DuelState,
-        errors: &mut crate::ui_action::UiErrorKeys,
         ui: &mut UiEvents,
         commands: &NetCommands,
         (arbiter, challenger): (u64, u64),
@@ -181,9 +177,8 @@ pub(crate) mod net {
     ) {
         duel.arbiter = arbiter;
         if Some(challenger) == own {
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_DUEL_REQUESTED"));
+            // `0x5cfd0a`, ahead of the accept (`0x5cfd12`).
+            show_in_turn(ui, "ui_duel", UiError::key("ERR_DUEL_REQUESTED"));
             let _ = commands.0.send(ClientCommand::DuelAccepted { arbiter });
             return;
         }
@@ -204,17 +199,11 @@ pub(crate) mod net {
     }
 
     /// `SMSG_DUEL_COMPLETE` (`0x5cfa90`): a held arbiter clears and fires `DUEL_FINISHED` (`0x5cfad8`); the countdown ends either way.
-    pub(crate) fn complete(
-        duel: &mut DuelState,
-        errors: &mut crate::ui_action::UiErrorKeys,
-        ui: &mut UiEvents,
-        started: bool,
-    ) {
+    pub(crate) fn complete(duel: &mut DuelState, ui: &mut UiEvents, started: bool) {
         if duel.arbiter != 0 {
+            // `0x5cfabe`, ahead of `DUEL_FINISHED`.
             if !started {
-                errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_DUEL_CANCELLED"));
+                show_in_turn(ui, "ui_duel", UiError::key("ERR_DUEL_CANCELLED"));
             }
             duel.arbiter = 0;
             ui.fire("DUEL_FINISHED", Vec::new());
@@ -386,13 +375,11 @@ mod tests {
         challenger: u64,
         ignored: bool,
         held: Option<Option<String>>,
-    ) -> (Vec<&'static str>, Vec<&'static str>, Vec<ClientCommand>) {
+    ) -> (Vec<&'static str>, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
-        let mut errors = crate::ui_action::UiErrorKeys::default();
         let mut ui = UiEvents::default();
         net::requested(
             duel,
-            &mut errors,
             &mut ui,
             &NetCommands(tx),
             (0xA1, challenger),
@@ -400,20 +387,15 @@ mod tests {
             ignored,
             held,
         );
-        (
-            errors.0.iter().map(|e| e.key).collect(),
-            ui.names(),
-            rx.try_iter().collect(),
-        )
+        (ui.names(), rx.try_iter().collect())
     }
 
     /// Our own challenge accepts at once (`0x5cfd0a`, `0x5cfd12`); both sides store the arbiter.
     #[test]
     fn our_own_challenge_takes_the_error_branch() {
         let mut duel = DuelState::default();
-        let (errors, events, sent) = requested(&mut duel, 7, false, Some(None));
-        assert_eq!(errors, ["ERR_DUEL_REQUESTED"]);
-        assert!(events.is_empty());
+        let (events, sent) = requested(&mut duel, 7, false, Some(None));
+        assert_eq!(events, ["<world>"], "the line, shown in the handler's turn");
         assert!(matches!(
             sent[..],
             [ClientCommand::DuelAccepted { arbiter: 0xA1 }]
@@ -425,7 +407,7 @@ mod tests {
     #[test]
     fn a_challenge_fires_only_for_a_held_player_and_never_for_an_ignored_one() {
         let mut duel = DuelState::default();
-        let (_, events, sent) = requested(&mut duel, 9, true, Some(Some("Two".into())));
+        let (events, sent) = requested(&mut duel, 9, true, Some(Some("Two".into())));
         assert!(events.is_empty());
         assert!(matches!(
             sent[..],
@@ -433,7 +415,7 @@ mod tests {
         ));
         assert_eq!((duel.arbiter, duel.dueler), (0, None));
 
-        let (_, events, sent) = requested(&mut duel, 9, false, Some(Some("Two".into())));
+        let (events, sent) = requested(&mut duel, 9, false, Some(Some("Two".into())));
         assert_eq!(
             events,
             ["<write>"],
@@ -443,7 +425,7 @@ mod tests {
         assert_eq!((duel.arbiter, duel.dueler), (0xA1, Some(9)));
 
         let mut duel = DuelState::default();
-        let (_, events, _) = requested(&mut duel, 9, false, None);
+        let (events, _) = requested(&mut duel, 9, false, None);
         assert!(events.is_empty(), "no held player, no popup");
         assert_eq!(duel.dueler, Some(9));
     }
@@ -451,27 +433,26 @@ mod tests {
     /// Only a held arbiter finishes, an unstarted duel cancelled; the countdown ends either way (`0x5cfa90`).
     #[test]
     fn completion_is_gated_on_holding_an_arbiter() {
-        let mut errors = crate::ui_action::UiErrorKeys::default();
         let mut duel = DuelState::default();
         net::countdown(&mut duel, &mut UiEvents::default(), 3);
         let mut ui = UiEvents::default();
-        net::complete(&mut duel, &mut errors, &mut ui, false);
-        assert!(errors.0.is_empty() && ui.is_empty(), "no duel held: silent");
+        net::complete(&mut duel, &mut ui, false);
+        assert!(ui.is_empty(), "no duel held: silent");
         assert!(duel.countdown.is_none(), "the countdown ends anyway");
 
         duel.arbiter = 0xA1;
-        net::complete(&mut duel, &mut errors, &mut ui, false);
-        let keys: Vec<&str> = errors.0.iter().map(|e| e.key).collect();
-        assert_eq!(keys, ["ERR_DUEL_CANCELLED"]);
-        assert_eq!(ui.names(), ["DUEL_FINISHED"]);
+        net::complete(&mut duel, &mut ui, false);
+        assert_eq!(ui.names(), ["<world>", "DUEL_FINISHED"], "the line first");
         assert_eq!(duel.arbiter, 0);
 
-        let mut errors = crate::ui_action::UiErrorKeys::default();
         let mut ui = UiEvents::default();
         duel.arbiter = 0xA1;
-        net::complete(&mut duel, &mut errors, &mut ui, true);
-        assert!(errors.0.is_empty(), "a real duel ending shows no line here");
-        assert_eq!(ui.names(), ["DUEL_FINISHED"]);
+        net::complete(&mut duel, &mut ui, true);
+        assert_eq!(
+            ui.names(),
+            ["DUEL_FINISHED"],
+            "a real duel ending shows no line here"
+        );
     }
 
     /// Each bounds packet fires its own event, repeats included (`0x5cf917`, `0x5cf937`).

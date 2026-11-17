@@ -204,10 +204,9 @@ fn a_create_with_no_pet_field_keeps_a_bar_that_beat_it() {
     assert!(app.world().resource::<crate::ui_pet::PetBar>().has_bar());
 }
 
-/// The production schedule: the self-create edge, then the time, pet, mail, battlefield and dungeon
-/// finder sends (the UI's world entry `0x528010` runs the dungeon finder's after the
-/// battlefield's); and a `/reload` frame's sweep drops the stone's text before its cascade resets
-/// it.
+/// The production schedule: the self-create edge, then the time, pet, mail, battlefield, dungeon
+/// finder and arena-team sends (the UI's world entry `0x528010` runs them in that order); and a
+/// `/reload` frame's sweep drops the stone's text before its cascade resets it.
 #[test]
 fn the_client_schedules_the_sends_in_the_reference_order() {
     use crate::test_support::runs_before;
@@ -241,5 +240,11 @@ fn the_client_schedules_the_sends_in_the_reference_order() {
         &mut app,
         crate::ui_battlefield::request_status_on_world_enter,
         crate::ui_lfg::lfg_enter_world
+    ));
+    // The arena-team update's roster asks follow the dungeon finder's (`0x528267`, `0x52826c`).
+    assert!(runs_before(
+        &mut app,
+        crate::ui_lfg::lfg_enter_world,
+        crate::ui_arena_team::enter_world
     ));
 }

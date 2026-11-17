@@ -686,23 +686,13 @@ fn player_line(joined: bool, name: &str) -> UiError {
     }
 }
 
-/// Joins and leaves waiting on a name (`0x54a530`, `0x54a5c0`), their lines shown when it lands.
-fn announce_named_players(
-    mut state: ResMut<Battlefield>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
-) {
-    if state.players.is_empty() {
-        return;
-    }
-    state.players.retain(|&(guid, joined)| {
-        let Some(name) = names.full_name(guid, &commands) else {
-            return true;
-        };
-        errors.0.push(player_line(joined, &name));
-        false
-    });
+/// A cached player's name as the join and leave callbacks read it, never asking (`0x54a569`).
+fn cached_full_name(names: &NameCache, guid: u64) -> Option<String> {
+    let name = names.peek(guid)?;
+    Some(match names.player_realm(guid) {
+        Some(realm) => format!("{name}-{realm}"),
+        None => name.to_string(),
+    })
 }
 
 /// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`) and the battlemaster walk-away close (`0x5496d0`).
@@ -901,12 +891,12 @@ mod net {
     use bevy::prelude::*;
 
     use super::{
-        player_line, reward, verdict_line, Battlefield, BattlefieldListPush, BattlefieldQueue,
-        BattlemasterTable, UiScript, WorldPvp,
+        cached_full_name, player_line, reward, verdict_line, Battlefield, BattlefieldListPush,
+        BattlefieldQueue, BattlemasterTable, UiScript, WorldPvp,
     };
     use crate::names::NameCache;
     use crate::net::{NetCommands, NetHandlerApp, SelfPlayer};
-    use crate::ui_action::{UiError, UiErrorKeys};
+    use crate::ui_action::{show_in_turn, UiError};
     use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
@@ -915,6 +905,8 @@ mod net {
             .net_handler(K::BattlefieldList, on_list)
             .net_handler(K::GroupJoinedBattleground, on_verdict)
             .net_handler(K::BattlegroundPlayer, on_player)
+            .net_handler(K::PlayerName, on_name_answer)
+            .net_handler(K::PlayerNameMiss, on_name_answer)
             .net_handler(K::BattlefieldPortDenied, on_port_denied)
             .net_handler(K::BattlefieldMgr, on_mgr)
             .net_handler(K::Disconnected, on_session_end);
@@ -1003,48 +995,80 @@ mod net {
         ui.write(move |s| s.apply_battlefield_list(push));
     }
 
-    /// `SMSG_GROUP_JOINED_BATTLEGROUND` (`0x54b1c0`): its line, shown from the handler.
+    /// `SMSG_GROUP_JOINED_BATTLEGROUND` (`0x54b1c0`): its line, shown in the handler's turn.
     fn on_verdict(
         In(ev): In<SessionEvent>,
         table: Option<Res<BattlemasterTable>>,
         names: Res<NameCache>,
         commands: Res<NetCommands>,
-        mut errors: ResMut<UiErrorKeys>,
+        mut ui: ResMut<UiEvents>,
     ) {
         let SessionEvent::GroupJoinedBattleground(verdict) = ev else {
             return;
         };
         let table = table.as_deref().map(|t| &t.0);
-        errors
-            .0
-            .extend(verdict_line(verdict, table, &names, &commands));
+        if let Some(line) = verdict_line(verdict, table, &names, &commands) {
+            show_in_turn(&mut ui, "ui_battlefield", line);
+        }
     }
 
-    /// A join or leave (`0x54b510`): the line now with the name cached, else when it lands.
-    fn on_player(
+    /// A join or leave (`0x54b510`): the line now with the name cached (`0x54b5a9`), else from its name callback.
+    pub(super) fn on_player(
         In(ev): In<SessionEvent>,
         mut state: ResMut<Battlefield>,
         names: Res<NameCache>,
         commands: Res<NetCommands>,
-        mut errors: ResMut<UiErrorKeys>,
+        mut ui: ResMut<UiEvents>,
     ) {
         let SessionEvent::BattlegroundPlayer { guid, joined } = ev else {
             return;
         };
         match names.full_name(guid, &commands) {
-            Some(name) => errors.0.push(player_line(joined, &name)),
+            Some(name) => show_in_turn(&mut ui, "ui_battlefield", player_line(joined, &name)),
             None => state.players.push((guid, joined)),
         }
+    }
+
+    /// A name answer runs the join and leave callbacks filed for it (`0x54a530`, `0x54a5c0`); an unnamed answer shows none (`0x54a567`).
+    pub(super) fn on_name_answer(
+        In(ev): In<SessionEvent>,
+        mut state: ResMut<Battlefield>,
+        names: Res<NameCache>,
+        mut ui: ResMut<UiEvents>,
+    ) {
+        use benilla_protocol::messages::NameQueryMiss;
+        let guid = match ev {
+            SessionEvent::PlayerName { guid, .. } => guid,
+            SessionEvent::PlayerNameMiss {
+                miss: NameQueryMiss::Retry,
+                ..
+            } => return,
+            SessionEvent::PlayerNameMiss { guid, .. } => guid,
+            _ => return,
+        };
+        if !state.players.iter().any(|&(g, _)| g == guid) {
+            return;
+        }
+        let name = cached_full_name(&names, guid);
+        state.players.retain(|&(g, joined)| {
+            if g != guid {
+                return true;
+            }
+            if let Some(name) = &name {
+                show_in_turn(&mut ui, "ui_battlefield", player_line(joined, name));
+            }
+            false
+        });
     }
 
     /// `SMSG_BATTLEFIELD_PORT_DENIED` (`0x54d4b0`): `ERR_PLAYER_DEAD`, with our player held.
     fn on_port_denied(
         In(ev): In<SessionEvent>,
         me: Query<(), With<SelfPlayer>>,
-        mut errors: ResMut<UiErrorKeys>,
+        mut ui: ResMut<UiEvents>,
     ) {
         if matches!(ev, SessionEvent::BattlefieldPortDenied) && !me.is_empty() {
-            errors.0.push(UiError::key("ERR_PLAYER_DEAD"));
+            show_in_turn(&mut ui, "ui_battlefield", UiError::key("ERR_PLAYER_DEAD"));
         }
     }
 
@@ -1087,7 +1111,6 @@ impl Plugin for BattlefieldPlugin {
             .init_resource::<StatusRequestOwed>()
             .init_resource::<BattlefieldQueue>()
             .init_resource::<WorldPvp>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
             .add_systems(Startup, load_battlemaster_list.after(AssetSet::Open))
             .add_systems(
                 Update,
@@ -1100,12 +1123,7 @@ impl Plugin for BattlefieldPlugin {
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(crate::ui_unit::EnterWorldFeed),
-                    // The name callbacks run as the name answers land, in the net drain.
-                    announce_named_players
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::apply_net_updates),
                     crate::ui_session::close_npc_session_out_of_range::<Battlefield>
-                        .after(announce_named_players)
                         .before(drain_battlefield),
                     drain_battlefield.in_set(UiDrain),
                 ),
@@ -1284,6 +1302,60 @@ mod tests {
             .unwrap();
         assert_eq!(rx.try_iter().count(), 0);
         assert_eq!(status_now(&app), Some(1));
+    }
+
+    /// A join waits on its name; the answer shows each line filed for it in its turn (`0x54a530`, `0x54a5c0`), a retry keeps them, a denial drops them silently (`0x54a567`).
+    #[test]
+    fn a_name_answer_runs_the_join_and_leave_callbacks_filed_for_it() {
+        use benilla_protocol::messages::NameQueryMiss;
+        use benilla_protocol::SessionEvent;
+        use bevy::ecs::system::RunSystemOnce;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut w = World::new();
+        w.insert_resource(NetCommands(tx));
+        w.init_resource::<Battlefield>();
+        w.init_resource::<NameCache>();
+        w.init_resource::<UiEvents>();
+        let player = |guid, joined| SessionEvent::BattlegroundPlayer { guid, joined };
+        for ev in [player(0x10, true), player(0x10, false), player(0x11, true)] {
+            w.run_system_once_with(net::on_player, ev).unwrap();
+        }
+        assert!(w.resource::<UiEvents>().is_empty(), "no name: no line yet");
+        assert_eq!(w.resource::<Battlefield>().players.len(), 3);
+
+        let retry = SessionEvent::PlayerNameMiss {
+            guid: 0x10,
+            miss: NameQueryMiss::Retry,
+        };
+        w.run_system_once_with(net::on_name_answer, retry).unwrap();
+        assert_eq!(
+            w.resource::<Battlefield>().players.len(),
+            3,
+            "a retry keeps them"
+        );
+
+        w.resource_mut::<NameCache>()
+            .insert_player(0x10, "Brisca".into(), None);
+        let named = SessionEvent::PlayerName {
+            guid: 0x10,
+            name: "Brisca".into(),
+            realm: String::new(),
+            race: 1,
+            class: 1,
+            gender: 0,
+        };
+        w.run_system_once_with(net::on_name_answer, named).unwrap();
+        assert_eq!(w.resource::<UiEvents>().names(), ["<world>", "<world>"]);
+        assert_eq!(w.resource::<Battlefield>().players, [(0x11, true)]);
+
+        *w.resource_mut::<UiEvents>() = UiEvents::default();
+        let denied = SessionEvent::PlayerNameMiss {
+            guid: 0x11,
+            miss: NameQueryMiss::Deny,
+        };
+        w.run_system_once_with(net::on_name_answer, denied).unwrap();
+        assert!(w.resource::<UiEvents>().is_empty(), "no record: no line");
+        assert!(w.resource::<Battlefield>().players.is_empty());
     }
 
     #[test]

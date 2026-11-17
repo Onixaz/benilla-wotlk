@@ -1572,6 +1572,110 @@ fn duel_and_battlefield_events_fire_in_wire_order() {
     );
 }
 
+/// The event names of `seen` that are in `events`, in order.
+fn fired(seen: &[Seen], events: &[&str]) -> Vec<String> {
+    seen.iter()
+        .filter(|s| events.contains(&s.event.as_str()))
+        .map(|s| s.event.clone())
+        .collect()
+}
+
+/// A queued status on the first slot.
+fn queued_status() -> SessionEvent {
+    SessionEvent::BattlefieldStatus(benilla_protocol::messages::BattlefieldStatus {
+        slot: 0,
+        queue: (2 << 16) | 0x80,
+        status: 1,
+        queued: Some((60_000, 0)),
+        ..Default::default()
+    })
+}
+
+/// The port denial (`0x54d4d4`) and the join verdict (`0x54b1c0`) show their lines through the message display in their handler's turn (`0x52188a`, `0x521863`), around a status in either order.
+#[test]
+fn battlefield_handler_lines_fire_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = [
+        "UI_ERROR_MESSAGE",
+        "UI_INFO_MESSAGE",
+        "UPDATE_BATTLEFIELD_STATUS",
+    ];
+    let too_many = SessionEvent::GroupJoinedBattleground(
+        benilla_protocol::messages::GroupJoinedBattleground {
+            result: -4,
+            player: None,
+        },
+    );
+    let deserters = SessionEvent::GroupJoinedBattleground(
+        benilla_protocol::messages::GroupJoinedBattleground {
+            result: -2,
+            player: None,
+        },
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::BattlefieldPortDenied,
+            queued_status(),
+            too_many,
+            deserters,
+        ],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &events),
+        [
+            "UI_ERROR_MESSAGE",
+            "UPDATE_BATTLEFIELD_STATUS",
+            "UI_ERROR_MESSAGE",
+            "UI_INFO_MESSAGE",
+        ]
+    );
+    let seen = rig.packets(
+        vec![queued_status(), SessionEvent::BattlefieldPortDenied],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &events),
+        ["UPDATE_BATTLEFIELD_STATUS", "UI_ERROR_MESSAGE"]
+    );
+}
+
+/// An unstarted duel's completion shows `ERR_DUEL_CANCELLED` (`0x5cfabe`, an info line) before `DUEL_FINISHED` (`0x5cfad8`), both ahead of a later status.
+#[test]
+fn a_cancelled_duel_shows_its_line_before_it_finishes() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::DuelRequested {
+                arbiter: 0xF110_0000_0000_0001,
+                challenger: 0x99,
+            },
+            SessionEvent::DuelComplete { started: false },
+            queued_status(),
+        ],
+        2,
+    );
+    assert_eq!(
+        fired(
+            &seen,
+            &[
+                "UI_INFO_MESSAGE",
+                "DUEL_FINISHED",
+                "UPDATE_BATTLEFIELD_STATUS"
+            ]
+        ),
+        [
+            "UI_INFO_MESSAGE",
+            "DUEL_FINISHED",
+            "UPDATE_BATTLEFIELD_STATUS"
+        ]
+    );
+}
+
 /// A held player of `guid`, as a stream create sends it.
 fn player_create(guid: u64) -> SessionEvent {
     player_create_with(guid, &[])

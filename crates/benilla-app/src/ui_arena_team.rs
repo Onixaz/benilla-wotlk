@@ -199,17 +199,26 @@ pub(crate) fn info_changed(
     ui.fire("ARENA_TEAM_UPDATE", Vec::new());
 }
 
-/// The world-enter cascade's team update (`0x52826c` -> `0x5a3dc0`), with no signal.
-fn enter_world(
+/// The world-enter cascade's team update (`0x52826c` -> `0x5a3dc0`), with no signal, after the dungeon finder's (`0x528267`).
+pub(crate) fn enter_world(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    mut commands: Commands,
+) {
+    if cascades.read().next().is_some() {
+        commands.queue(|world: &mut World| {
+            if let Err(e) = world.run_system_cached(update_teams_on_enter) {
+                warn!("ui_arena_team: the world entry's update did not run: {e}");
+            }
+        });
+    }
+}
+
+fn update_teams_on_enter(
     mut teams: ResMut<ArenaTeams>,
     mut throttle: ResMut<RosterThrottle>,
     me: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
-    if cascades.read().next().is_none() {
-        return;
-    }
     if let Some(info) = me.iter().next().and_then(|s| read_info(&s.0)) {
         teams.update_teams(&info, &mut throttle, Instant::now(), &commands);
     }
@@ -248,24 +257,12 @@ impl ArenaTeamView<'_> {
 
 /// A `GlobalStrings` line shown through the message table, in turn with the handler's events.
 fn show_line(ui: &mut UiEvents, key: &'static str, args: Vec<String>) {
-    ui.world(move |world| {
-        if let Err(e) = world.run_system_cached_with(show_keyed_line, (key, args)) {
-            warn!("ui_arena_team: the line was not shown: {e}");
-        }
-    });
-}
-
-fn show_keyed_line(
-    In((key, args)): In<(&'static str, Vec<String>)>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut sink: crate::ui_action::MessageSink,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let line = crate::ui_action::keyed_line_s(&script, key, &args);
-    crate::ui_action::show_messages(&mut script, &mut sink, "ui_arena_team", line);
+    let args = args.into_iter().map(crate::ui_action::FillArg::S).collect();
+    crate::ui_action::show_in_turn(
+        ui,
+        "ui_arena_team",
+        crate::ui_action::UiError::args(key, args),
+    );
 }
 
 /// `SMSG_ARENA_TEAM_COMMAND_RESULT`'s line (`0x6ccb20`).
@@ -503,10 +500,10 @@ impl Plugin for UiArenaTeamPlugin {
             .add_systems(
                 Update,
                 (
-                    // In the net stage, after the drain writes the cascade, ahead of the UI's systems.
+                    // The world entry's list runs it after the dungeon finder's (`0x528267`, `0x52826c`).
                     enter_world
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::enter_world_on_self_create)
+                        .in_set(crate::ui_script::UiFeed)
+                        .after(crate::ui_lfg::lfg_enter_world)
                         .after(crate::query_cache::release_on_enter::<ArenaTeams>),
                     drain_arena_teams.in_set(UiDrain),
                 ),
