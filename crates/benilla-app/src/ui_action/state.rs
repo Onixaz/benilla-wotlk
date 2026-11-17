@@ -203,7 +203,7 @@ pub(crate) fn feed_action_state(
     // Every cooldown pushes its absolute start on the `GetTime` clock, derived from this one
     // pair, so a running cooldown derives the same start every frame.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
-    cooldowns.prune(now);
+    cooldowns.write().prune(now);
     let gen_changed = memory.last_generation != Some(cooldowns.generation);
     memory.last_generation = Some(cooldowns.generation);
     // The cooldown-clock trace (`WOW_MOVE_TRACE` sink, tag "cd"): once per second.

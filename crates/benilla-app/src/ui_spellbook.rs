@@ -132,7 +132,6 @@ pub(crate) fn feed_spellbook(
         Res<crate::spell::SpellModifiers>,
     ),
     weapon_icons: Option<ResMut<crate::ui_spell_info::WeaponActionIcons>>,
-    companions: Res<crate::ui_companion::CompanionLists>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -156,7 +155,6 @@ pub(crate) fn feed_spellbook(
     let spells_changed = spells.as_ref().is_some_and(|r| r.is_changed());
     let lines_changed = skill_lines.as_ref().is_some_and(|r| r.is_changed());
     let summons_changed = summons.is_changed();
-    let companions_changed = companions.is_changed();
     // `is_added`: only the load-once icon column is read; the model cache churns every frame.
     let icons_added = icons.as_ref().is_some_and(|r| r.is_added());
     gate::trace(
@@ -174,7 +172,6 @@ pub(crate) fn feed_spellbook(
             ("spells", spells_changed),
             ("skill_lines", lines_changed),
             ("summons", summons_changed),
-            ("companions", companions_changed),
             ("icons", icons_added),
             // A queued learn never waits behind a skipped frame.
             ("learned", !learned.0.is_empty()),
@@ -193,7 +190,6 @@ pub(crate) fn feed_spellbook(
             || spells_changed
             || lines_changed
             || summons_changed
-            || companions_changed
             || icons_added
             || !learned.0.is_empty(),
     );
@@ -294,21 +290,6 @@ pub(crate) fn feed_spellbook(
             slot.cooldown = cooldowns.with_rune_leg(slot.spell_id, d, slot.cooldown, &leg, now_ms);
         }
     }
-    // The companion spells' cooldowns, the history `GetCompanionCooldown` reads (`0x53e490`),
-    // pushed with the book's until the live view can lend `Cooldowns`: the cast ladder the press
-    // appliers take beside their loan writes it (B0002, #1315).
-    script.set_companion_cooldowns(
-        companions
-            .spells()
-            .filter_map(|id| {
-                let d = spells.catalog.get(id);
-                Some((
-                    id,
-                    cooldowns.info(id, 0, d, anchor).ui_triple(anchor, ui_now)?,
-                ))
-            })
-            .collect(),
-    );
     // The known tracking spells (`0x542030` → `0x7fdf60`), in the book's display order.
     let tracking = fresh
         .named()

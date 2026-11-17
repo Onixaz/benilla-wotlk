@@ -200,7 +200,10 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
-pub use live::{read_live, write_live, LiveLoan, LiveState};
+pub use live::{
+    owner_write, read_live, shared_read, write_live, LiveLoan, LiveState, OwnerWrite, SharedRead,
+    ViewRef,
+};
 mod loot;
 mod loot_roll;
 mod lua51;

@@ -710,7 +710,7 @@ pub(crate) fn player_token_guid(
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
     index: Option<Res<'w, crate::net::GuidIndex>>,
-    pet: Option<Res<'w, crate::ui_pet::PetBar>>,
+    pet: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
@@ -789,7 +789,7 @@ impl UnitTokens<'_, '_> {
                 .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default()),
             // Off the pet bar's cached guid, as the `"pet"` snapshot reads it.
             UnitBase::Pet => {
-                let guid = self.pet.as_ref()?.spells.pet_guid;
+                let guid = self.pet.get()?.spells.pet_guid;
                 (guid != 0).then(|| self.held(guid)).flatten()
             }
             UnitBase::PartyPet(row) => self

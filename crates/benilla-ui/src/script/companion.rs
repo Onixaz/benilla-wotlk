@@ -86,17 +86,6 @@ fn spell_at(ty: CompanionType, slot: usize) -> Option<u32> {
 }
 
 impl super::UiScript {
-    /// Replace the companion spells' cooldowns, `(start_ms on the GetTime clock, duration_ms,
-    /// enabled)` by spell, which `GetCompanionCooldown` reads beside the book's.
-    pub fn set_companion_cooldowns(
-        &mut self,
-        cooldowns: std::collections::HashMap<u32, (i64, u32, bool)>,
-    ) {
-        if self.model_ref().companion_cooldowns != cooldowns {
-            self.model_mut().companion_cooldowns = cooldowns;
-        }
-    }
-
     /// Take the queued dismissals and random summons, in call order.
     pub fn take_companion_intents(&mut self) -> Vec<CompanionIntent> {
         drain_field!(self, companion_intents)
@@ -179,7 +168,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetCompanionCooldown(type, index) (`0x53e490`): `start, duration, enable` of the spell's
-    // cooldown; with no player, or past the list, nothing.
+    // cooldown, the history asked at the call (`0x53e54c`); with no player, or past the list,
+    // nothing.
     g.set(
         "GetCompanionCooldown",
         lua.create_function(|lua, (ty, index): (Value, Value)| {
@@ -189,9 +179,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(spell_id) = spell_at(ty, slot) else {
                 return Ok(MultiValue::new());
             };
-            let model = crate::script::model_mut_of(lua);
-            let (start, duration, enable) = match model.companion_cooldowns.get(&spell_id).copied()
-            {
+            let (anchor, ui_now) = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                (model.clock_wall.get(), model.now)
+            };
+            let cooldown =
+                super::read_live(|l| l.spell_cooldown(spell_id, anchor, ui_now)).flatten();
+            let (start, duration, enable) = match cooldown {
                 Some((start_ms, duration_ms, enabled)) => {
                     let (start, duration) =
                         (start_ms as f64 / 1000.0, f64::from(duration_ms) / 1000.0);

@@ -126,7 +126,7 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) held_for_pick: ResMut<'w, HeldForPick>,
     /// The pet's cooldown list and pending cast, which a cast as the pet reads; its writes are
     /// queued, as the script appliers share the bar.
-    pub(crate) pet_bar: Option<Res<'w, crate::ui_pet::PetBar>>,
+    pub(crate) pet_bar: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
     /// `secureAbilityToggle`; a harness without it reads the default, on.
     pub(crate) secure_toggle: Option<Res<'w, super::SecureAbilityToggle>>,
     /// Where a pet cast whose missile flies its aim goes to be aimed and sent.
@@ -308,6 +308,7 @@ impl CastLadder<'_, '_> {
         if let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) {
             let speed = cast_speed(self.objects.player_object());
             self.cooldowns
+                .write()
                 .start_gcd(spell_id, d, now, &self.spell_mods, speed);
         }
         self.ground.clear();
@@ -331,7 +332,7 @@ impl CastLadder<'_, '_> {
             return;
         }
         // The same spell pending for this caster bails on cooldown or `0x404` (`0x80d36d`).
-        if let Some(bar) = self.pet_bar.as_deref() {
+        if let Some(bar) = self.pet_bar.get() {
             let pending = bar
                 .pending_cast
                 .is_some_and(|(id, until)| id == spell_id && now < until);
@@ -573,7 +574,7 @@ impl CastLadder<'_, '_> {
             &mut self.ecs,
             &mut self.pending,
             &mut self.queued_melee,
-            &mut self.cooldowns,
+            &mut self.cooldowns.write(),
             &self.spell_mods,
             &mut self.cast_errors,
             &mut self.auto_repeat,

@@ -323,6 +323,18 @@ pub trait LiveState {
     fn open_stable_aura(&self) -> bool {
         false
     }
+
+    /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it
+    /// (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now`
+    /// seconds names at `anchor`; `None` with nothing running.
+    fn spell_cooldown(
+        &self,
+        _spell_id: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -332,6 +344,97 @@ thread_local! {
     /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of
     /// which puts the previous one back before its borrow ends.
     static SLOT: Cell<Lent> = const { Cell::new(None) };
+    /// The borrows of what is lent, live now, by [`Hold`] kind: a shared read and a write never
+    /// overlap, nor two verb writes, so none aliases another.
+    static HELD: Cell<[u32; 3]> = const { Cell::new([0; 3]) };
+}
+
+/// What a borrow of the lent state does.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// A read: a verb's, the host's view, or the host's read of a lendable resource.
+    Shared = 0,
+    /// The host's write to a lendable resource its view reads.
+    Owner = 1,
+    /// A verb's write to the view.
+    Verb = 2,
+}
+
+/// One borrow of the lent state, counted in [`HELD`] until it drops.
+struct Held(Hold);
+
+impl Held {
+    /// Count a borrow; one that would alias a live one panics.
+    fn new(hold: Hold) -> Self {
+        HELD.with(|h| {
+            let mut held = h.get();
+            let [shared, owner, verb] = held;
+            let clear = match hold {
+                Hold::Shared => owner == 0 && verb == 0,
+                Hold::Owner => shared == 0 && verb == 0,
+                Hold::Verb => shared == 0 && owner == 0 && verb == 0,
+            };
+            assert!(
+                clear,
+                "the lent state is borrowed as {} beside {held:?} (shared, owner, verb) borrows",
+                ["shared", "its owner's write", "a verb's write"][hold as usize],
+            );
+            held[hold as usize] += 1;
+            h.set(held);
+        });
+        Self(hold)
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        HELD.with(|h| {
+            let mut held = h.get();
+            held[self.0 as usize] -= 1;
+            h.set(held);
+        });
+    }
+}
+
+/// A host's write to state its lent view reads, held while the write's borrow lives: no verb reaches
+/// the view meanwhile, and no shared read of it may be held.
+pub struct OwnerWrite {
+    _held: Held,
+}
+
+/// Start an owner's write; it ends when the guard drops.
+pub fn owner_write() -> OwnerWrite {
+    OwnerWrite {
+        _held: Held::new(Hold::Owner),
+    }
+}
+
+/// A host's shared read of state its lent view reads, held while the read's borrow lives: no owner
+/// writes it meanwhile.
+pub struct SharedRead {
+    _held: Held,
+}
+
+/// Start a host's shared read; it ends when the guard drops.
+pub fn shared_read() -> SharedRead {
+    SharedRead {
+        _held: Held::new(Hold::Shared),
+    }
+}
+
+/// The lent view, read by its host between calls into Lua; a verb that writes the view panics
+/// while it lives.
+pub struct ViewRef<'a, V> {
+    view: &'a V,
+    _held: Held,
+}
+
+impl<V> std::ops::Deref for ViewRef<'_, V> {
+    type Target = V;
+
+    fn deref(&self) -> &V {
+        self.view
+    }
 }
 
 /// Lend `live` on this thread, returning what it replaces.
@@ -380,16 +483,15 @@ impl<V: LiveState> LiveLoan<V> {
         Self { view, previous }
     }
 
-    /// The lent view.
-    pub fn view(&self) -> &V {
-        // SAFETY: the box lives until the drop; a verb's borrow of it ends with its closure.
-        unsafe { self.view.as_ref() }
-    }
-
-    /// The lent view, mutably, between calls into Lua: the owner of a borrow sets it here.
-    pub fn view_mut(&mut self) -> &mut V {
-        // SAFETY: as `view`; `&mut self` keeps every other borrow of the loan out.
-        unsafe { self.view.as_mut() }
+    /// The lent view, read between calls into Lua; a verb's write to it panics while this lives.
+    pub fn view(&self) -> ViewRef<'_, V> {
+        let held = Held::new(Hold::Shared);
+        // SAFETY: the box lives until the drop; a verb's mutable borrow of it panics while `held`
+        // counts this one, and a verb's shared one ends with its closure.
+        ViewRef {
+            view: unsafe { self.view.as_ref() },
+            _held: held,
+        }
     }
 }
 
@@ -425,9 +527,10 @@ pub(crate) fn has_control() -> bool {
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
+    let _held = Held::new(Hold::Shared);
     // SAFETY: a pointer in the slot is a mutable borrow held by an enclosing `with_live` or
-    // `LiveLoan`, which outlives this call; the view never calls back into Lua, so no other
-    // borrow of it is live, and the reference cannot escape `f`.
+    // `LiveLoan`, which outlives this call; `_held` panics beside an owner's write, the view
+    // never calls back into Lua, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
     Some(f(live))
 }
@@ -436,8 +539,9 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
 /// with none lent.
 pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
     let mut ptr = SLOT.with(Cell::get)?;
-    // SAFETY: as `read_live`: the lender's borrow is mutable and nothing else reaches the view
-    // for the length of `f`.
+    let _held = Held::new(Hold::Verb);
+    // SAFETY: as `read_live`; `_held` panics beside any of the host's own borrows of the view, so
+    // nothing else reaches it for the length of `f`.
     let live = unsafe { ptr.as_mut() };
     Some(f(live))
 }
@@ -506,6 +610,8 @@ pub(crate) struct TestView {
     pub charm_or_summon: bool,
     /// An open-stable aura is on us.
     pub open_stable_aura: bool,
+    /// The player's cooldown history by spell, as `(start_ms, duration_ms, enabled)`.
+    pub cooldowns: std::collections::HashMap<u32, (i64, u32, bool)>,
     /// The pet is out as a hunter's unit with its creature record.
     pub stable_live_pet: bool,
 }
@@ -679,6 +785,15 @@ impl LiveState for TestView {
 
     fn open_stable_aura(&self) -> bool {
         self.open_stable_aura
+    }
+
+    fn spell_cooldown(
+        &self,
+        spell_id: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        self.cooldowns.get(&spell_id).copied()
     }
 }
 

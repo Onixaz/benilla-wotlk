@@ -44,6 +44,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) stable: crate::ui_stable::StableView<'w, 's>,
     pub(crate) cooldowns: Slot<'w, crate::spell::Cooldowns>,
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
+    /// The spell records, the cooldown query's category and global-cooldown legs.
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -78,9 +80,9 @@ impl LiveView<'_, '_> {
 }
 
 /// A resource the view reads that a system holding the VM may write itself. [`LendLive`] points it
-/// at the resource: a system that does not write it registers a read, and one that does ([`Owns`])
-/// writes it only through [`OwnedMut`], whose borrow ends before its next call into Lua, so a verb
-/// reads the owner's latest write when called.
+/// at the resource's storage: a system that does not write it registers a read, and one that does
+/// ([`Owns`]) writes it only through [`OwnedMut`], whose write no verb reaches, so a verb reads the
+/// owner's latest write when called.
 pub(crate) struct Slot<'w, X: Resource> {
     ptr: Option<NonNull<X>>,
     _life: PhantomData<&'w X>,
@@ -89,13 +91,13 @@ pub(crate) struct Slot<'w, X: Resource> {
 impl<X: Resource> Slot<'_, X> {
     /// The resource as the verbs read it now.
     pub(crate) fn get(&self) -> Option<&X> {
-        // SAFETY: the pointer is the resource's storage, read under the lending system's access;
-        // no mutable borrow of it outlives an owner's write, and none is live inside a call.
+        // SAFETY: the storage pointer, read under the lending system's access; an owner's write
+        // panics beside the shared view or verb this read is made through, and none outlives it.
         self.ptr.map(|p| unsafe { p.as_ref() })
     }
 
-    fn set(&mut self, x: Option<&X>) {
-        self.ptr = x.map(NonNull::from);
+    fn set(&mut self, ptr: Option<NonNull<X>>) {
+        self.ptr = ptr;
     }
 }
 
@@ -153,18 +155,23 @@ impl Owns for OwnsCooldownsAndPetBar {
 
 /// A VM holder's write handle on a resource its lent view reads: the owner's borrow, held as the
 /// storage pointer, so a write borrows it only for its own length and a verb called after it reads
-/// it. A write's `&mut` is never held across a call into Lua.
+/// it. While a write lives no verb reaches the view, and no shared view of it may be held.
 pub(crate) struct OwnedMut<'w, X: Resource> {
     ticks: MutUntyped<'w>,
     ptr: NonNull<X>,
 }
 
 impl<X: Resource> OwnedMut<'_, X> {
-    /// The resource, marked changed, for the length of one write.
-    pub(crate) fn write(&mut self) -> &mut X {
+    /// The resource, marked changed, for as long as the returned borrow lives.
+    pub(crate) fn write(&mut self) -> OwnedWrite<'_, X> {
         self.ticks.set_changed();
-        // SAFETY: the system's write access is registered; the borrow is tied to `&mut self`.
-        unsafe { self.ptr.as_mut() }
+        let held = benilla_ui::script::owner_write();
+        // SAFETY: the system's write access is registered; the borrow is tied to `&mut self`, and
+        // `held` keeps every verb and shared view of the loan off the storage while it lives.
+        OwnedWrite {
+            x: unsafe { self.ptr.as_mut() },
+            _held: held,
+        }
     }
 }
 
@@ -172,38 +179,169 @@ impl<X: Resource> std::ops::Deref for OwnedMut<'_, X> {
     type Target = X;
 
     fn deref(&self) -> &X {
-        // SAFETY: as `write`, shared.
+        // SAFETY: as `write`, shared; a verb's read beside it is shared too.
         unsafe { self.ptr.as_ref() }
     }
 }
 
-impl<X: Resource> std::ops::DerefMut for OwnedMut<'_, X> {
-    fn deref_mut(&mut self) -> &mut X {
-        self.write()
+/// One write through [`OwnedMut`], live until it drops.
+pub(crate) struct OwnedWrite<'a, X> {
+    x: &'a mut X,
+    _held: benilla_ui::script::OwnerWrite,
+}
+
+impl<X> std::ops::Deref for OwnedWrite<'_, X> {
+    type Target = X;
+
+    fn deref(&self) -> &X {
+        self.x
     }
 }
 
-// SAFETY: the write is registered in `init_access` and fetched as a pointer, never a reference.
-unsafe impl<X: Resource> SystemParam for OwnedMut<'_, X> {
-    type State = ComponentId;
-    type Item<'w, 's> = OwnedMut<'w, X>;
+impl<X> std::ops::DerefMut for OwnedWrite<'_, X> {
+    fn deref_mut(&mut self) -> &mut X {
+        self.x
+    }
+}
+
+/// A shared read of a lendable resource beside its owner's pair, as a press applier in the owner's
+/// set reads it: each read is counted while it lives, so the owner's write cannot overlap it. Absent
+/// resource, no read.
+pub(crate) struct LentRef<'w, X: Resource> {
+    ptr: Option<NonNull<X>>,
+    _life: PhantomData<&'w X>,
+}
+
+impl<X: Resource> LentRef<'_, X> {
+    /// The resource, for as long as the returned borrow lives.
+    pub(crate) fn get(&self) -> Option<LentRead<'_, X>> {
+        let ptr = self.ptr?;
+        let held = benilla_ui::script::shared_read();
+        // SAFETY: the storage pointer, read under the system's access; `held` panics beside an
+        // owner's write and keeps one from starting while it lives.
+        Some(LentRead {
+            x: unsafe { ptr.as_ref() },
+            _held: held,
+        })
+    }
+}
+
+/// One read through [`LentRef`], live until it drops.
+pub(crate) struct LentRead<'a, X> {
+    x: &'a X,
+    _held: benilla_ui::script::SharedRead,
+}
+
+impl<X> std::ops::Deref for LentRead<'_, X> {
+    type Target = X;
+
+    fn deref(&self) -> &X {
+        self.x
+    }
+}
+
+// SAFETY: a read is registered unless the system already writes it as an owned pair, whose writes
+// the read's count excludes; fetched as a pointer, never a reference.
+unsafe impl<X: Resource> SystemParam for LentRef<'_, X> {
+    type State = SlotIds;
+    type Item<'w, 's> = LentRef<'w, X>;
 
     fn init_state(world: &mut World) -> Self::State {
-        world.components_registrator().register_resource::<X>()
+        slot_ids::<X>(world)
     }
 
     fn init_access(
-        &id: &ComponentId,
+        &(id, loan, owner): &Self::State,
         _: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         _: &mut World,
     ) {
-        // Beside the view's read of it: that read is through the same pointer, between writes.
-        component_access_set.add_unfiltered_resource_write(id);
+        let access = component_access_set.combined_access();
+        if !access.has_resource_write(id) {
+            component_access_set.add_unfiltered_resource_read(id);
+            return;
+        }
+        assert!(
+            access.has_resource_read(loan) || access.has_resource_read(owner),
+            "error[B0002]: {} is read beside a plain write of it: write it through `OwnedMut`",
+            std::any::type_name::<X>()
+        );
+    }
+
+    unsafe fn get_param<'w, 's>(
+        &mut (id, ..): &'s mut Self::State,
+        _: &SystemMeta,
+        world: UnsafeWorldCell<'w>,
+        _: Tick,
+    ) -> Self::Item<'w, 's> {
+        LentRef {
+            // SAFETY: registered in `init_access`, or written by the system's own pair.
+            ptr: unsafe { slot_fetch(world, id) },
+            _life: PhantomData,
+        }
+    }
+}
+
+/// Never inserted: read by a [`LendLive`] that owns `X`, so its [`OwnedMut`] knows its partner.
+struct LoanMark<X>(PhantomData<fn() -> X>);
+impl<X: 'static> Resource for LoanMark<X> {}
+
+/// Never inserted: read by an [`OwnedMut`] of `X`, so its [`LendLive`] knows its partner.
+struct OwnerMark<X>(PhantomData<fn() -> X>);
+impl<X: 'static> Resource for OwnerMark<X> {}
+
+/// Register an owner's write of lendable `id`, one half of the pair a [`LendLive`] owning it and
+/// its [`OwnedMut`] make: an earlier access to it must be the partner's (`partner` marked, `mine`
+/// not), else it is refused (B0002) as `ResMut` refuses it.
+fn owned_access(
+    name: &str,
+    id: ComponentId,
+    mine: ComponentId,
+    partner: ComponentId,
+    set: &mut FilteredAccessSet,
+) {
+    let access = set.combined_access();
+    assert!(
+        !access.has_resource_read(mine),
+        "error[B0002]: {name} is lent or written twice in one system"
+    );
+    assert!(
+        !access.has_resource_read(id) || access.has_resource_read(partner),
+        "error[B0002]: {name} is borrowed beside its owner's lent view: read it through the view \
+         and write it through `OwnedMut`"
+    );
+    set.add_unfiltered_resource_write(id);
+    set.add_unfiltered_resource_read(mine);
+}
+
+// SAFETY: the write is registered in `init_access` and fetched as a pointer, never a reference.
+unsafe impl<X: Resource> SystemParam for OwnedMut<'_, X> {
+    type State = SlotIds;
+    type Item<'w, 's> = OwnedMut<'w, X>;
+
+    fn init_state(world: &mut World) -> Self::State {
+        let (id, loan, owner) = slot_ids::<X>(world);
+        (id, owner, loan)
+    }
+
+    fn init_access(
+        &(id, mine, partner): &Self::State,
+        _: &mut SystemMeta,
+        component_access_set: &mut FilteredAccessSet,
+        _: &mut World,
+    ) {
+        // Beside its loan's access alone: the view reads through the same pointer, between writes.
+        owned_access(
+            std::any::type_name::<X>(),
+            id,
+            mine,
+            partner,
+            component_access_set,
+        );
     }
 
     unsafe fn validate_param(
-        &mut id: &mut ComponentId,
+        &mut (id, ..): &mut Self::State,
         _: &SystemMeta,
         world: UnsafeWorldCell,
     ) -> Result<(), SystemParamValidationError> {
@@ -222,7 +360,7 @@ unsafe impl<X: Resource> SystemParam for OwnedMut<'_, X> {
     }
 
     unsafe fn get_param<'w, 's>(
-        &mut id: &'s mut ComponentId,
+        &mut (id, ..): &'s mut Self::State,
         _: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         _: Tick,
@@ -560,6 +698,21 @@ impl LiveState for LiveView<'_, '_> {
     fn open_stable_aura(&self) -> bool {
         self.stable.open_stable_aura()
     }
+
+    /// The history's answer for the spell at the call (`0x53e54c` into `0x809000`), with the
+    /// category and global-cooldown legs its record names.
+    fn spell_cooldown(
+        &self,
+        spell_id: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        let d = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
+        self.cooldowns
+            .get()?
+            .info(spell_id, 0, d, std::time::Instant::now())
+            .ui_triple(anchor, ui_now)
+    }
 }
 
 /// [`LiveView`] lent to every verb for the run of the system that takes it: the parameter each
@@ -571,8 +724,9 @@ pub(crate) struct LendLive<'w, 's, O: Owns = ()> {
 }
 
 impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
-    /// The lent view, read by the system between its calls into Lua.
-    pub(crate) fn view(&self) -> &LiveView<'w, 's> {
+    /// The lent view, read by the system between its calls into Lua; a verb that writes the view,
+    /// or the system's own owned write, panics while it lives.
+    pub(crate) fn view(&self) -> benilla_ui::script::ViewRef<'_, LiveView<'w, 's>> {
         self.loan.view()
     }
 }
@@ -580,31 +734,49 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
 /// The state [`LendLive`] builds its view from.
 type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 
-/// The lendable resources' ids.
-type SlotState = (ComponentId, ComponentId);
+/// A lendable resource's id, then the loan's and the owner's marks.
+type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// Register the view's read of lendable `id`. Unowned, a write registered before it is refused
-/// (B0002); owned, the system's [`OwnedMut`] registers the write, before or after it.
-fn slot_access<X: Resource>(owned: bool, id: ComponentId, set: &mut FilteredAccessSet) {
+/// The lendable resources' ids.
+type SlotState = (SlotIds, SlotIds);
+
+/// Register `X` and its pair's marks.
+fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
+    let mut r = world.components_registrator();
+    (
+        r.register_resource::<X>(),
+        r.register_resource::<LoanMark<X>>(),
+        r.register_resource::<OwnerMark<X>>(),
+    )
+}
+
+/// Register the view's access to lendable `X`. Unowned, a read, refused beside a write (B0002);
+/// owned, the write its [`OwnedMut`] pairs with, refused beside any other access.
+fn slot_access<X: Resource>(owned: bool, (id, loan, owner): SlotIds, set: &mut FilteredAccessSet) {
+    let name = std::any::type_name::<X>();
+    if owned {
+        owned_access(name, id, loan, owner, set);
+        return;
+    }
     assert!(
-        owned || !set.combined_access().has_resource_write(id),
-        "error[B0002]: {} is written beside the lent view: write it through `OwnedMut` and name it \
-         in the system's `LendLive` owns",
-        std::any::type_name::<X>()
+        !set.combined_access().has_resource_write(id),
+        "error[B0002]: {name} is written beside the lent view: write it through `OwnedMut` and \
+         name it in the system's `LendLive` owns",
     );
     set.add_unfiltered_resource_read(id);
 }
 
-/// The lendable resource `id` as its storage pointer.
+/// The lendable resource `id` as its storage pointer, made without a reference, so the owner's
+/// writes through its own pointer leave it valid.
 ///
 /// # Safety
 /// The calling system's access to `id` is registered.
-unsafe fn slot_fetch<'w, X: Resource>(
-    world: UnsafeWorldCell<'w>,
+unsafe fn slot_fetch<X: Resource>(
+    world: UnsafeWorldCell<'_>,
     id: ComponentId,
-) -> Option<&'w X> {
-    // SAFETY: registered by the caller; read as a pointer, the reference handed out per read.
-    unsafe { world.get_resource_by_id(id).map(|p| p.deref::<X>()) }
+) -> Option<NonNull<X>> {
+    // SAFETY: registered by the caller.
+    unsafe { world.get_resource_by_id(id) }.and_then(|p| NonNull::new(p.as_ptr().cast::<X>()))
 }
 
 // SAFETY: every access is `LiveView`'s or a lendable resource's, registered in `init_access`; an
@@ -617,12 +789,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         (
             <LiveView<'static, 'static> as SystemParam>::init_state(world),
             (
-                world
-                    .components_registrator()
-                    .register_resource::<crate::spell::Cooldowns>(),
-                world
-                    .components_registrator()
-                    .register_resource::<crate::ui_pet::PetBar>(),
+                slot_ids::<crate::spell::Cooldowns>(world),
+                slot_ids::<crate::ui_pet::PetBar>(world),
             ),
         )
     }
@@ -683,8 +851,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         };
         // SAFETY: both registered in `init_access`.
         unsafe {
-            view.cooldowns.set(slot_fetch(world, state.1 .0));
-            view.pet_bar.set(slot_fetch(world, state.1 .1));
+            view.cooldowns.set(slot_fetch(world, state.1 .0 .0));
+            view.pet_bar.set(slot_fetch(world, state.1 .1 .0));
         }
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
         // after any loan made inside it, and never leaks one.
@@ -772,12 +940,8 @@ impl UiEvents {
     }
 }
 
-/// What [`with_live_world`] lends: the view, and the lendable resources it fills in.
-type WorldView = (
-    LiveView<'static, 'static>,
-    Option<Res<'static, crate::spell::Cooldowns>>,
-    Option<Res<'static, crate::ui_pet::PetBar>>,
-);
+/// What [`with_live_world`] lends: the view as a system lends it.
+type WorldView = LendLive<'static, 'static>;
 
 /// The cached parameter state [`with_live_world`] lends from.
 #[derive(Resource)]
@@ -840,10 +1004,9 @@ pub(crate) fn lend_world<R>(
         state: Some(state),
     };
     let state = held.state.as_mut().expect("held until the drop");
-    let (mut view, cooldowns, pet_bar) = state.0.get_mut(held.world);
-    view.cooldowns.set(cooldowns.map(Res::into_inner));
-    view.pet_bar.set(pet_bar.map(Res::into_inner));
-    script.with_live(&mut view, f)
+    // Lent until it drops, after `f`.
+    let _loan = state.0.get_mut(held.world);
+    f(script)
 }
 
 /// Fires what the handler that just ran queued, in its order, with the `World` lent; it runs after
@@ -959,6 +1122,82 @@ mod tests {
             refusal(|_l: LendLive<OwnsCooldowns>, _w: OwnedMut<Cooldowns>| {}),
             ""
         );
+    }
+
+    /// Any other borrow of an owned resource beside its pair is refused (B0002) in every order: a
+    /// `Res` or `ResMut`, a second `OwnedMut`, an `OwnedMut` beside a loan that does not own it.
+    #[test]
+    fn an_owned_resource_admits_no_other_borrow_in_any_order() {
+        type L<'w, 's> = LendLive<'w, 's, OwnsCooldowns>;
+        type W<'w> = OwnedMut<'w, Cooldowns>;
+        let refused = [
+            refusal(|_r: Res<Cooldowns>, _l: L, _w: W| {}),
+            refusal(|_l: L, _r: Res<Cooldowns>, _w: W| {}),
+            refusal(|_l: L, _w: W, _r: Res<Cooldowns>| {}),
+            refusal(|_r: Res<Cooldowns>, _w: W, _l: L| {}),
+            refusal(|_w: W, _r: Res<Cooldowns>, _l: L| {}),
+            refusal(|_w: W, _l: L, _r: Res<Cooldowns>| {}),
+            refusal(|_r: ResMut<Cooldowns>, _l: L, _w: W| {}),
+            refusal(|_l: L, _w: W, _r: ResMut<Cooldowns>| {}),
+            refusal(|_r: ResMut<Cooldowns>, _w: W| {}),
+            refusal(|_w: W, _r: ResMut<Cooldowns>| {}),
+            refusal(|_l: L, _w: W, _v: W| {}),
+            refusal(|_w: W, _l: L, _v: W| {}),
+            refusal(|_w: W, _l: L, _m: L| {}),
+            refusal(|_l: LendLive, _w: W| {}),
+            refusal(|_w: W, _l: LendLive| {}),
+        ];
+        for (i, message) in refused.iter().enumerate() {
+            assert!(message.contains("B0002"), "case {i}: {message:?}");
+        }
+        // Each member of a set borrows it alone, beside the loan outside the set.
+        assert_eq!(refusal(|_l: L, _s: ParamSet<(W, W)>| {}), "");
+    }
+
+    /// A shared view the system holds and its owned write exclude each other, and no verb reaches
+    /// the view while the write lives: each would alias the storage.
+    #[test]
+    fn a_held_view_and_an_owned_write_exclude_each_other_and_the_verbs() {
+        let run = |f: fn(&LendLive<OwnsCooldowns>, &mut OwnedMut<Cooldowns>)| {
+            let mut world = World::new();
+            world.init_resource::<Cooldowns>();
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                world
+                    .run_system_once(
+                        move |live: LendLive<OwnsCooldowns>, mut c: OwnedMut<Cooldowns>| {
+                            f(&live, &mut c);
+                        },
+                    )
+                    .unwrap();
+            }))
+            .is_err()
+        };
+        assert!(run(|live, c| {
+            let view = live.view();
+            c.write().generation += 1;
+            drop(view);
+        }));
+        assert!(run(|live, c| {
+            let mut w = c.write();
+            let _view = live.view();
+            w.generation += 1;
+        }));
+        assert!(run(|_, c| {
+            let _w = c.write();
+            benilla_ui::script::read_live(|_| ());
+        }));
+        assert!(run(|live, _| {
+            let _view = live.view();
+            benilla_ui::script::write_live(|_| ());
+        }));
+        // Apart, each goes through, and the guards are back to zero after a run that unwound.
+        assert!(!run(|live, c| {
+            let seen = live.view().cooldowns.get().map(|c| c.generation);
+            c.write().generation += 1;
+            assert_eq!(seen, Some(0));
+            assert_eq!(benilla_ui::script::read_live(|_| ()), Some(()));
+            assert_eq!(benilla_ui::script::write_live(|_| ()), Some(()));
+        }));
     }
 
     /// The owner's write is the next read of its view, inside the same run, and the view lent

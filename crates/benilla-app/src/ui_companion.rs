@@ -93,11 +93,6 @@ impl CompanionLists {
         &self.lists[type_slot(ty)]
     }
 
-    /// Every listed spell, critters first.
-    pub(crate) fn spells(&self) -> impl Iterator<Item = u32> + '_ {
-        self.lists.iter().flatten().copied()
-    }
-
     /// The random-critter pool.
     pub(crate) fn random_pool(&self) -> &[u32] {
         &self.random_pool

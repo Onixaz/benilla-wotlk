@@ -3033,6 +3033,33 @@ fn the_companion_cooldown_reads_the_history_an_earlier_frame_wrote() {
     );
 }
 
+/// A `SMSG_SPELL_COOLDOWN` and the mount's aura in one frame: the aura handler's
+/// `COMPANION_UPDATE` reads the history the cooldown packet just wrote, as `GetCompanionCooldown`
+/// asks it at the call (`0x53e54c`), not the frame before's.
+#[test]
+fn the_companion_cooldown_reads_the_history_the_same_frame_wrote() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
+        return;
+    };
+    rig.packets(vec![creature_answer(284, "Brown Horse")], 3);
+    assert_eq!(rig.live_now().verbs["mount1cd"], "0");
+    let seen = rig.packets(
+        vec![
+            SessionEvent::SpellCooldowns {
+                caster: ME,
+                flags: 0,
+                cooldowns: vec![(HORSE, 30_000)],
+            },
+            own_aura(3, HORSE),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["COMPANION_UPDATE"], &["mount1cd"]),
+        vec!["COMPANION_UPDATE MOUNT | mount1cd=30"]
+    );
+}
+
 /// The stable master guid the stable scenarios list.
 const STABLE_MASTER: u64 = 0xF130_0000_0000_0042;
 

@@ -223,12 +223,14 @@ pub(crate) fn drain_pet_book(
             debug!("ui_pet_book: autocast {spell_id} refused, the pet's actions are not usable");
             continue;
         }
-        let Some(on) = set_autocast(&mut bar.spells, spell_id, state) else {
+        let mut written = bar.write();
+        let Some(on) = set_autocast(&mut written.spells, spell_id, state) else {
             continue;
         };
         // The reference's event signal `0x161`: the bar repaints before the packet leaves, and the
         // signal count carries that to the feed.
-        bar.bar_signals = bar.bar_signals.wrapping_add(1);
+        written.bar_signals = written.bar_signals.wrapping_add(1);
+        drop(written);
         debug!("ui_pet_book: autocast {spell_id} -> {on}");
         let _ = commands.0.send(ClientCommand::PetSpellAutocast {
             pet_guid,

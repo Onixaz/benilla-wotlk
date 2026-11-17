@@ -197,13 +197,13 @@ impl PetPress<'_, '_> {
         } else {
             false
         };
-        if !commit_press(bar, entry, refused, possessing) {
+        if !commit_press(&mut bar.write(), entry, refused, possessing) {
             debug!("ui_pet: slot {slot} refused by the attack validator — no packet");
             return PetCast::Done;
         }
         if let Some(spell) = spell {
             arm_pet_gcd(
-                bar,
+                &mut bar.write(),
                 entry.action(),
                 spell,
                 possessing,
@@ -283,7 +283,7 @@ pub(super) fn drain_pet_actions(
             );
             continue;
         }
-        let Some(flipped) = toggle_slot_autocast(&mut bar, slot) else {
+        let Some(flipped) = toggle_slot_autocast(&mut bar.write(), slot) else {
             continue;
         };
         debug!(
@@ -298,15 +298,16 @@ pub(super) fn drain_pet_actions(
         });
     }
     for _ in 0..stops {
-        if stop_pet_attack(&mut bar, &commands) {
+        if stop_pet_attack(&mut bar.write(), &commands) {
             debug!("ui_pet: stop attack");
         }
     }
     // The drag's `(0-based position, word)` pairs: mirrored here and sent as one batch, since the
     // server tells one pair from two by body size.
     for entries in writes {
+        let mut written = bar.write();
         for &(position, packed) in &entries {
-            if let Some(e) = bar.spells.bar.get_mut(position as usize) {
+            if let Some(e) = written.spells.bar.get_mut(position as usize) {
                 *e = PetActionEntry::from(packed);
             }
         }
