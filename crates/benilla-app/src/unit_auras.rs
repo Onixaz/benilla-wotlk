@@ -327,10 +327,7 @@ fn on_aura_update(
     }
 }
 
-/// The spells whose effects one packet removes, then those it applies: the removal for each slot
-/// whose live aura left or changed spell (`0x72f803`, `0x72f825`), then the add for each slot whose aura
-/// arrived; an `ALL` packet applies every live aura it carries, held ones too (`0x72f904`), where
-/// the delta skips an unchanged one (`0x72f9dc`). Each spell comes with whether it was removed.
+/// One packet's removed then applied spells, flagged removed (`0x72f803`, `0x72f904`, `0x72f9dc`).
 fn own_aura_moves(before: &UnitAuras, after: &UnitAuras, all: bool) -> Vec<(u32, bool)> {
     let mut slots: Vec<u8> = before
         .by_slot

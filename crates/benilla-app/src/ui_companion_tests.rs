@@ -177,14 +177,17 @@ fn a_live_learn_and_unlearn_fire_from_their_handlers() {
         commands: &commands,
         ui: &mut ui,
     };
-    add_known(&mut lists, 11, true, None, &mut cx);
+    assert_eq!(
+        add_known(&mut lists, 11, true, None, &mut cx),
+        Some(crate::tutorial::id::COMPANION_CRITTER)
+    );
     assert_eq!(
         cx.ui.names(),
         ["<world>", "COMPANION_UPDATE", "COMPANION_LEARNED"]
     );
     let mut ui = UiEvents::default();
     cx.ui = &mut ui;
-    add_known(&mut lists, 10, true, None, &mut cx);
+    let _ = add_known(&mut lists, 10, true, None, &mut cx);
     assert!(cx.ui.is_empty(), "the record is asked first");
     record_answered(&mut lists, 700, Some("Zebra Cat"), &mut cx);
     assert_eq!(

@@ -78,6 +78,8 @@ pub(crate) struct Lifecycle<'w> {
     names: Res<'w, crate::names::NameCache>,
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
+    /// The companion adds' tutorials (`0x542751`).
+    tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
     multicast: ResMut<'w, super::multicast::MultiCastLists>,
     cast_bar: ResMut<'w, CastBarFeed>,
     pending: ResMut<'w, PendingCast>,
@@ -232,19 +234,36 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResM
         // exists it zeroes the buffer's entry (`0x6e7888`).
         if !our_object_exists(&l) {
             l.known_buffer.0.retain(|&s| s != spell_id);
-        } else if let Some(spells) = l.spells.as_deref() {
-            let mut cx = crate::ui_companion::CompanionCx {
-                catalog: &spells.catalog,
-                summons: &l.summons.0,
-                names: &l.names,
-                commands: &l.net,
-                ui: &mut l.ui,
-            };
-            crate::ui_companion::remove_known(&mut l.companions, spell_id, &mut cx);
+        } else {
+            companion_remove(&mut l, spell_id);
         }
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
     }
+}
+
+/// The companion arm of a known-spell removal (`0x53fad0`); the lists are borrowed only for a
+/// spell they hold, so another removal leaves them unchanged.
+fn companion_remove(l: &mut Lifecycle, spell_id: u32) {
+    let Some(spells) = l.spells.as_deref() else {
+        return;
+    };
+    let companion = spells
+        .catalog
+        .get(spell_id)
+        .and_then(|d| d.companion_kind(&l.summons.0))
+        .is_some();
+    if !companion && !l.companions.random_pool().contains(&spell_id) {
+        return;
+    }
+    let mut cx = crate::ui_companion::CompanionCx {
+        catalog: &spells.catalog,
+        summons: &l.summons.0,
+        names: &l.names,
+        commands: &l.net,
+        ui: &mut l.ui,
+    };
+    crate::ui_companion::remove_known(&mut l.companions, spell_id, &mut cx);
 }
 
 /// Whether the object manager holds our object, from its create on (`0x6e7840`), not from the
@@ -274,6 +293,15 @@ fn companion_add(l: &mut Lifecycle, (race, class): (u8, u8), spell_id: u32) {
         .skill_lines
         .as_deref()
         .and_then(|s| s.catalog.spell_to_line(spell_id, race, class));
+    // Borrowed only for a companion or a pool spell, so another learn leaves the lists unchanged.
+    let companion = spells
+        .catalog
+        .get(spell_id)
+        .and_then(|d| d.companion_kind(&l.summons.0))
+        .is_some();
+    if !companion && line != Some(crate::ui_companion::SKILL_LINE_COMPANIONS) {
+        return;
+    }
     let mut cx = crate::ui_companion::CompanionCx {
         catalog: &spells.catalog,
         summons: &l.summons.0,
@@ -281,7 +309,13 @@ fn companion_add(l: &mut Lifecycle, (race, class): (u8, u8), spell_id: u32) {
         commands: &l.net,
         ui: &mut l.ui,
     };
-    crate::ui_companion::add_known(&mut l.companions, spell_id, true, line, &mut cx);
+    if let Some(id) =
+        crate::ui_companion::add_known(&mut l.companions, spell_id, true, line, &mut cx)
+    {
+        if let Some(t) = l.tutorials.as_mut() {
+            t.write(crate::tutorial::TutorialEvent::trigger(id));
+        }
+    }
 }
 
 /// The unlearn's totem sweep (`0x53fe57`); an emptied list or a call spell refills (`0x53ff4f`).
@@ -295,6 +329,7 @@ fn on_spell_superceded(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
+    stores: Query<&ObjectStore>,
 ) {
     if let SessionEvent::SpellSuperceded {
         old_spell_id,
@@ -302,12 +337,19 @@ fn on_spell_superceded(
     } = ev
     {
         // Before our object exists the pair edits the buffer: the old entry renamed, else the new
-        // one appended (`0x6e7ef4`).
-        if !our_object_exists(&l) {
-            let buffer = &mut l.known_buffer.0;
-            match buffer.iter_mut().find(|s| **s == old_spell_id) {
-                Some(s) => *s = new_spell_id,
-                None => buffer.push(new_spell_id),
+        // one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run
+        // their companion arms (`0x542eba`, `0x542ec6`).
+        match our_store(&l, &stores).map(|me| race_class_of(&me.0)) {
+            Some(me) => {
+                companion_remove(&mut l, old_spell_id);
+                companion_add(&mut l, me, new_spell_id);
+            }
+            None => {
+                let buffer = &mut l.known_buffer.0;
+                match buffer.iter_mut().find(|s| **s == old_spell_id) {
+                    Some(s) => *s = new_spell_id,
+                    None => buffer.push(new_spell_id),
+                }
             }
         }
         superceded_spell(

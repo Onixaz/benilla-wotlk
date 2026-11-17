@@ -196,6 +196,7 @@ fn button_name(n: i64) -> String {
 /// Evaluate one condition against `token`, the group's unit (`target` when it named none).
 fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
     let unit = model.unit(token);
+    // The token resolves off the pushed unit guids until the unit tokens read live (#1289).
     let guid = model.unit_guids.guid_of(token);
     let args = &c.args[..];
     let in_party = |g: u64| g == model.unit_guids.player || model.unit_guids.party.contains(&g);

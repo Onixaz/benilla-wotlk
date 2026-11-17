@@ -81,10 +81,6 @@ pub struct PetStats {
     pub happiness: Option<u32>,
     /// Return 2: the damage percentage, already scaled by 100.
     pub damage_percentage: f32,
-    /// `GetPetLoyalty`: the `PetLoyalty.dbc` name verbatim, `"(Loyalty Level N) "` prefix included.
-    pub loyalty: Option<String>,
-    /// `GetPetTrainingPoints`: `(totalPoints, spent)`, high word first.
-    pub training_points: (u16, u16),
     /// `GetPetExperience`: `(currXP, nextXP)`.
     pub experience: (u32, u32),
     /// `UnitCreatureFamily("pet")`: the localized `CreatureFamily.dbc` word off the cached creature
@@ -516,6 +512,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(move |lua, unit: Value| {
             let unit =
                 super::binding_abi::string_arg(lua, unit, r#"Usage: UnitCreatureFamily("unit")"#)?;
+            // The token resolves off the pushed unit guids until the unit tokens read live (#1289).
             let guid = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
@@ -1143,8 +1140,6 @@ mod tests {
             icon: Some("Interface\\Icons\\Ability_Hunter_Pet_Boar".into()),
             happiness: Some(3),
             damage_percentage: 125.0,
-            loyalty: Some("(Loyalty Level 6) Best Friend".into()),
-            training_points: (170, 130),
             experience: (4200, 8000),
             family: Some("Boar".into()),
             food_types: vec![

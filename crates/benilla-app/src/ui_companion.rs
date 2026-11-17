@@ -17,6 +17,9 @@
 //!   (`0x53fad0`);
 //! - `COMPANION_UPDATE "CRITTER"` on our `UNIT_FIELD_CRITTER` change (`0x6cf6c0`), `"MOUNT"` on a
 //!   `MOUNTED` aura's arrival or removal on us (`0x724a6b`, `0x71e9b2`).
+//!
+//! Each add triggers its list's tutorial (`0x542751`, `0x54275a`). Not modelled: the vehicle arm of
+//! the active test (`0x802cf3`).
 
 use bevy::prelude::*;
 
@@ -57,8 +60,7 @@ impl Plugin for UiCompanionPlugin {
     }
 }
 
-/// The two companion lists (`0xbe8df4`), the records they wait on (`0x53cec0`'s count) and the
-/// random-critter pool (`0x6e7bc4`), written only by the spell and creature-answer handlers.
+/// The companion lists (`0xbe8df4`), their pending records and the random pool (`0x6e7bc4`).
 #[derive(Resource, Default)]
 pub(crate) struct CompanionLists {
     /// Critters, then mounts: spell ids in add order until sorted.
@@ -184,14 +186,10 @@ pub(crate) fn add_known(
     notify: bool,
     line: Option<u32>,
     cx: &mut CompanionCx,
-) {
+) -> Option<u32> {
     lists.pool(spell_id, line);
-    let Some(d) = cx.catalog.get(spell_id).filter(|d| d.in_name_cache()) else {
-        return;
-    };
-    let Some(kind) = d.companion_kind(cx.summons) else {
-        return;
-    };
+    let d = cx.catalog.get(spell_id).filter(|d| d.in_name_cache())?;
+    let kind = d.companion_kind(cx.summons)?;
     lists.lists[slot_of(kind)].push(spell_id);
     let creature = d.companion_creature();
     match cx.names.answer(NameKey::Creature(creature), 0, cx.commands) {
@@ -203,6 +201,16 @@ pub(crate) fn add_known(
             cx.ui.fire("COMPANION_LEARNED", Vec::new());
         }
         Some(_) => {}
+    }
+    Some(tutorial_of(kind))
+}
+
+/// The tutorial an add to `kind`'s list triggers, before its record is asked (`0x542751`,
+/// `0x54275a`).
+fn tutorial_of(kind: CompanionKind) -> u32 {
+    match kind {
+        CompanionKind::Critter => crate::tutorial::id::COMPANION_CRITTER,
+        CompanionKind::Mount => crate::tutorial::id::COMPANION_MOUNT,
     }
 }
 
@@ -223,6 +231,7 @@ pub(crate) struct CompanionInit<'w> {
     commands: Option<Res<'w, NetCommands>>,
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     ui: ResMut<'w, UiEvents>,
+    tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
 }
 
 /// The active player's init (`0x6e7f50`), run as our object is created with its race and class:
@@ -238,6 +247,7 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands,
         skill_lines,
         mut ui,
+        mut tutorials,
     } = init;
     let (Some(spells), Some(summons), Some(names), Some(commands)) = (
         spells.as_deref(),
@@ -261,7 +271,11 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands,
         ui: &mut ui,
     };
-    add_initial(&mut lists, known, &mut cx);
+    for id in add_initial(&mut lists, known, &mut cx) {
+        if let Some(t) = tutorials.as_mut() {
+            t.write(crate::tutorial::TutorialEvent::trigger(id));
+        }
+    }
 }
 
 /// The init's adds: the lists cleared (`0x6e7f9d`), each known spell added without a
@@ -270,12 +284,14 @@ pub(crate) fn add_initial(
     lists: &mut CompanionLists,
     known: impl IntoIterator<Item = (u32, Option<u32>)>,
     cx: &mut CompanionCx,
-) {
+) -> Vec<u32> {
     *lists = CompanionLists::default();
-    for (spell_id, line) in known {
-        add_known(lists, spell_id, false, line, cx);
-    }
+    let tutorials = known
+        .into_iter()
+        .filter_map(|(spell_id, line)| add_known(lists, spell_id, false, line, cx))
+        .collect();
     cx.update(lists, None);
+    tutorials
 }
 
 /// The known-spell removal's companion arm (`0x53fad0`): a listed spell leaves its list, then the

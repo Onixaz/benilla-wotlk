@@ -445,7 +445,6 @@ fn stats(hunter: bool, happiness: Option<u32>, damage: f32) -> benilla_ui::scrip
         hunter_pet: hunter,
         happiness,
         damage_percentage: damage,
-        training_points: (170, 130),
         experience: (4200, 8000),
         // Family and diet stay default: the unit frame draws neither.
         ..benilla_ui::script::PetStats::default()

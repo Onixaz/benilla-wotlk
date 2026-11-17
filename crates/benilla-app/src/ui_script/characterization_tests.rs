@@ -2627,7 +2627,6 @@ fn companion_events_fire_from_the_spell_and_creature_handlers() {
         "COMPANION_UPDATE",
         "COMPANION_LEARNED",
         "COMPANION_UNLEARNED",
-        "UI_ERROR_MESSAGE",
     ];
     let verbs = &["mounts", "critters", "mount1"];
     let seen = rig.packets(
@@ -3251,5 +3250,46 @@ fn an_open_stable_auras_removal_closes_the_stable() {
     assert_eq!(
         pin(&seen, &["PET_STABLE_CLOSED"], &["atstable"]),
         vec!["PET_STABLE_CLOSED | atstable=false"]
+    );
+}
+
+/// A supersede with our object held runs the removal's companion arm, then the registrar's with
+/// notify set (`0x542eba`, `0x542ec6`): the old mount leaves, the new critter joins and is learned.
+#[test]
+fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            creature_answer(284, "Brown Horse"),
+            creature_answer(7385, "Bombay Cat"),
+        ],
+        3,
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::SpellSuperceded {
+            old_spell_id: HORSE,
+            new_spell_id: CAT,
+        }],
+        3,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "COMPANION_UPDATE",
+                "COMPANION_LEARNED",
+                "COMPANION_UNLEARNED"
+            ],
+            &["mounts", "critters"]
+        ),
+        // The emptied lists sort nothing, so the removal fires no update; the handler's events
+        // fire once its changes apply, so each reads both lists moved.
+        vec![
+            "COMPANION_UNLEARNED | mounts=0 critters=1",
+            "COMPANION_UPDATE | mounts=0 critters=1",
+            "COMPANION_LEARNED | mounts=0 critters=1",
+        ]
     );
 }

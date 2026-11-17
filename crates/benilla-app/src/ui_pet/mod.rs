@@ -79,9 +79,7 @@ pub(crate) struct PetBar {
     pub(crate) pending_cast: Option<(u32, Instant)>,
 }
 
-/// The controlled-pet list (`[0xc23500]`, count `[0xc234fc]`), its head `PetBar`'s guid: written
-/// by the pet setter and replaced whole by `SMSG_PET_GUIDS`, and read by every pet verb at call
-/// time (`0x5d3a24`). Apart from [`PetBar`], which the bar's presses write, so the live view lends it.
+/// The controlled-pet list (`[0xc23500]`), which the pet verbs read at call time (`0x5d3a24`).
 #[derive(Resource, Default)]
 pub(crate) struct PetList(pub(crate) Vec<u64>);
 

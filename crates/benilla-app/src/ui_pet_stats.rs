@@ -135,9 +135,6 @@ fn stats_for(
             hunter_pet: true,
             happiness,
             damage_percentage,
-            loyalty: None,
-            // 12340's unit block has no `UNIT_TRAINING_POINTS`.
-            training_points: (0, 0),
             experience: fields.unit_pet_experience(),
             family,
             icon,
@@ -257,12 +254,12 @@ mod tests {
         ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, 9 << 8)]))
     }
 
-    /// A boar with loyalty level 6, full happiness and mid-XP.
+    /// A boar with byte 1 set, full happiness and mid-XP.
     fn boar() -> ObjectStore {
         ObjectStore(ObjectFields::from_pairs(&[
             (ENTRY, BOAR_ENTRY),
             (PETNUMBER, 42),
-            (BYTES_1, 6 << 8),   // loyalty level in byte 1
+            (BYTES_1, 6 << 8),
             (POWER5, 1_000_000), // maximum happiness
             (PETXP, 4200),
             (PETNEXTXP, 8000),
@@ -324,8 +321,7 @@ mod tests {
         (NetCommands(tx), rx)
     }
 
-    /// On the real DBC data: no training points, the loyalty byte, and a maxed pet's bucket with
-    /// 125% damage.
+    /// On the real DBC data: a maxed pet's bucket with 125% damage and its experience.
     #[test]
     fn a_hunters_boar_reads_every_field() {
         let Some(t) = tables() else { return };
@@ -333,8 +329,6 @@ mod tests {
         assert!(has_ui && s.hunter_pet);
         assert_eq!(s.happiness, Some(3));
         assert_eq!(s.damage_percentage, 125.0);
-        assert_eq!(s.loyalty, None);
-        assert_eq!(s.training_points, (0, 0), "no 12340 field carries them");
         assert_eq!(s.experience, (4200, 8000));
     }
 
@@ -366,8 +360,6 @@ mod tests {
         );
         assert!(!s.hunter_pet);
         assert_eq!(s.happiness, None);
-        assert_eq!(s.loyalty, None);
-        assert_eq!(s.training_points, (0, 0));
         assert_eq!(s.experience, (0, 0));
     }
 
@@ -381,9 +373,9 @@ mod tests {
         assert!(!s.hunter_pet);
     }
 
-    /// Level 0 is nil, not "Rebellious": the client's own bound.
+    /// A zero byte 1 leaves the happiness bucket answering.
     #[test]
-    fn loyalty_level_zero_is_nil() {
+    fn a_zero_byte_one_still_answers_happiness() {
         let Some(t) = tables() else { return };
         let fresh = ObjectStore(ObjectFields::from_pairs(&[
             (PETNUMBER, 42),
@@ -391,8 +383,7 @@ mod tests {
             (POWER5, 1_000_000),
         ]));
         let (_, s) = stats_for(Some(&fresh.0), Some(&hunter().0), Some(&t), no_family());
-        assert_eq!(s.loyalty, None);
-        assert_eq!(s.happiness, Some(3), "…but happiness still answers");
+        assert_eq!(s.happiness, Some(3), "a fresh pet still answers");
     }
 
     #[test]
@@ -524,8 +515,7 @@ mod tests {
             s.food_types.is_empty(),
             "…but the diet shares with the stats"
         );
-        assert_eq!(s.loyalty, None, "…as does the hunter machinery");
-        assert_eq!(s.happiness, None);
+        assert_eq!(s.happiness, None, "…as does the hunter machinery");
 
         // Under a hunter it gets both.
         let (_, s) = stats_for(
