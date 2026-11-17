@@ -211,9 +211,6 @@ pub(crate) fn feed_ui_input(
     };
     let mac = cfg!(target_os = "macos");
     for ev in keyboard.read() {
-        if ev.state != ButtonState::Pressed {
-            continue;
-        }
         let named = match ev.key_code {
             KeyCode::Enter | KeyCode::NumpadEnter => Some("ENTER"),
             KeyCode::Escape => Some("ESCAPE"),
@@ -223,22 +220,24 @@ pub(crate) fn feed_ui_input(
         // What the layout names the key: the clipboard chords' letters, and a keyboard frame's
         // `arg1` below.
         let token = crate::bindings::chord::key_token(ev.key_code, &layout);
+        if ev.state != ButtonState::Pressed {
+            // The release goes to the keyboard frame its press went to, by the name the press
+            // dispatched under (`0x494490`): that frame's `OnKeyUp`.
+            let name = named
+                .or_else(|| frame_key_name(ev.key_code))
+                .map(str::to_owned)
+                .or_else(|| token.map(|t| t.to_string()));
+            if let Some(name) = name {
+                script.key_up(&name);
+            }
+            continue;
+        }
         // Dispatched unconditionally: unfocused, they fall through to the camera and turn keys.
         let chord = keymap::chord(ev.key_code, token, mods, mac);
         // A keyboard frame gets these by name before their chord runs (a dialog needs BACKSPACE);
         // `frame_key_input` declines at a focused box, so no frame steals its editing keys. `true`
         // suppresses the chord and the key's binding (the reference's existence gate).
-        let frame_named = match ev.key_code {
-            KeyCode::Backspace => Some("BACKSPACE"),
-            KeyCode::Delete => Some("DELETE"),
-            KeyCode::ArrowLeft => Some("LEFT"),
-            KeyCode::ArrowRight => Some("RIGHT"),
-            KeyCode::ArrowUp => Some("UP"),
-            KeyCode::ArrowDown => Some("DOWN"),
-            KeyCode::Home => Some("HOME"),
-            KeyCode::End => Some("END"),
-            _ => None,
-        };
+        let frame_named = frame_key_name(ev.key_code);
         if let Some(name) = frame_named {
             if script.frame_key_input(name) {
                 // Not `typing`: a frame eating one key is not a box taking focus, and treating it
@@ -326,6 +325,21 @@ pub(crate) fn feed_ui_input(
     for err in errors {
         tally.log("ui_script(input)", err);
     }
+}
+
+/// The editing keys a keyboard frame gets by name before their chord runs.
+fn frame_key_name(code: KeyCode) -> Option<&'static str> {
+    Some(match code {
+        KeyCode::Backspace => "BACKSPACE",
+        KeyCode::Delete => "DELETE",
+        KeyCode::ArrowLeft => "LEFT",
+        KeyCode::ArrowRight => "RIGHT",
+        KeyCode::ArrowUp => "UP",
+        KeyCode::ArrowDown => "DOWN",
+        KeyCode::Home => "HOME",
+        KeyCode::End => "END",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

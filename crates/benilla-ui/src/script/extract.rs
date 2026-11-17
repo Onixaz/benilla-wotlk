@@ -188,6 +188,9 @@ fn extract_one(
                     fog: m.armed_fog(),
                     ffx: m.ffx,
                 },
+                Some(crate::widget::KindState::Movie(m)) if m.playing => {
+                    QuadContent::Movie { handle: fh }
+                }
                 _ => QuadContent::Frame,
             };
             (
@@ -474,6 +477,8 @@ fn extract_one(
     // its own OVERLAY and HIGHLIGHT regions.
     let z = match &content {
         QuadContent::ModelPane { .. } => zkey.callback(order::DrawLayer::Artwork).raw(),
+        // `RenderMovie` is queued for layer 2 only (`0x95f340`).
+        QuadContent::Movie { .. } => zkey.callback(order::DrawLayer::Artwork).raw(),
         // Queued on OVERLAY only (`0x590660`), after that layer's quads.
         QuadContent::QuestBlobs(_) => zkey.callback(order::DrawLayer::Overlay).raw(),
         _ => zkey.raw(),

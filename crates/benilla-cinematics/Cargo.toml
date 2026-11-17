@@ -1,0 +1,12 @@
+[package]
+name = "benilla-cinematics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The 3.3.5a pre-rendered movies: RIFF AVI demuxer and the MPEG-4 Part 2 subset they use"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+benilla-formats = { path = "../benilla-formats" }

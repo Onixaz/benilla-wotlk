@@ -14,7 +14,25 @@ use super::{load_ingame_ui, CursorPayloadHeld, PlayerUiHover, UiClock, UiKeyboar
 use crate::ui_script::addons;
 
 pub(crate) fn setup_script(world: &mut World) {
-    install_glue_side_vm(world, super::glue::GlueScreen::Login);
+    let screen = boot_screen(world);
+    install_glue_side_vm(world, screen);
+}
+
+/// The startup screen (`0x404234`): `"movie"` while the `movie` CVar is 1, which this clears, else
+/// `"login"`. Deviation: an unattended run boots to `"login"` and leaves the CVar alone, since a
+/// probe's fresh config would otherwise sit through the intro before its login.
+fn boot_screen(world: &mut World) -> super::glue::GlueScreen {
+    if crate::run_mode::unattended() {
+        return super::glue::GlueScreen::Login;
+    }
+    let Some(mut cvars) = world.get_resource_mut::<crate::cvars::Cvars>() else {
+        return super::glue::GlueScreen::Login;
+    };
+    if cvars.get("movie") != Some("1") {
+        return super::glue::GlueScreen::Login;
+    }
+    cvars.set("movie", "0");
+    super::glue::GlueScreen::Movie
 }
 
 /// Install the VM the world holds outside the world: the stock glue screens', put up on `screen`,
@@ -135,6 +153,7 @@ fn new_vm<E: std::fmt::Display>(
     seed_class_names(world, &mut script);
     seed_paperdoll_item_frame(world, &mut script);
     install_addon_asset_resolvers(world, &mut script);
+    crate::ui_movie::player::seat_movie_host(world, &mut script);
     info!("ui_script: new VM, session {}", script.session());
     Some(script)
 }

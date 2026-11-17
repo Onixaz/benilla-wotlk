@@ -157,6 +157,7 @@ fn content_kind(c: &QuadContent) -> &'static str {
         QuadContent::QuestBlobs(_) => "quest-blobs",
         QuadContent::Minimap { .. } => "minimap",
         QuadContent::ModelPane { .. } => "modelpane",
+        QuadContent::Movie { .. } => "movie",
         QuadContent::Texture { .. } => "texture",
         QuadContent::ColorWheel => "colorwheel",
         QuadContent::ColorValue { .. } => "colorvalue",
@@ -373,6 +374,7 @@ fn verify_splice(
     text_ui: Option<&benilla_ui::script::EditBoxTextUi>,
     caret_pinned: bool,
     script: &UiScript,
+    movie: Option<&crate::ui_movie::player::MovieShared>,
 ) {
     let mut check: Vec<UiQuad> = Vec::with_capacity(quads.quads.len());
     let mut spans: Vec<u32> = Vec::with_capacity(prev.extracted.len());
@@ -393,6 +395,7 @@ fn verify_splice(
             &mut check,
             &mut links,
             &mut slot,
+            movie,
         );
         spans.push(check.len() as u32);
     }
@@ -674,6 +677,8 @@ pub(super) fn paint_script(
     mut prev: Local<crate::ui_script::VmMemo<GateInputs>>,
     mut ui_cost: ResMut<super::UiFrameCost>,
     pass: Res<super::UiPassState>,
+    // The playing movie, which a MovieFrame's quad draws.
+    movie: Option<Res<crate::ui_movie::player::MovieShared>>,
 ) {
     let (capture, ui_cost_wanted) = run;
     // Stand down with the tick half, which already cleared the booth panes.
@@ -957,6 +962,7 @@ pub(super) fn paint_script(
                 &mut scratch,
                 &mut scratch_links,
                 &mut scratch_slot,
+                movie.as_deref(),
             );
             scratch_ranges.push(at..scratch.len());
         }
@@ -1063,6 +1069,7 @@ pub(super) fn paint_script(
                 text_ui.as_ref(),
                 capture.is_some(),
                 &script,
+                movie.as_deref(),
             );
         }
         drop(extract_span);
@@ -1128,6 +1135,7 @@ pub(super) fn paint_script(
             &mut out,
             &mut link_spans,
             &mut minimap_slot,
+            movie.as_deref(),
         );
         spans.push(out.len() as u32);
     }
@@ -1271,6 +1279,7 @@ fn convert_entry(
         String,
     )>,
     minimap_slot: &mut Option<crate::minimap::MinimapSlot>,
+    movie: Option<&crate::ui_movie::player::MovieShared>,
 ) {
     let Some(r) = eq.rect else { return };
     // WoW UI space is y-up from the bottom-left: scale ×s, then flip through the window height.
@@ -1311,6 +1320,19 @@ fn convert_entry(
                 alpha: eq.alpha,
                 player_texture: Vec2::from(player_texture) * s,
             });
+        }
+        // A playing MovieFrame: the black clear and the movie over the whole window, whatever the
+        // frame's rect.
+        QuadContent::Movie { handle } => {
+            if let Some((draw, shared)) = movie.and_then(|m| Some((m.draw_for(handle)?, m))) {
+                out.extend(crate::ui_movie::player::emit_quads(
+                    draw,
+                    &shared.image,
+                    eq.z,
+                    w,
+                    h,
+                ));
+            }
         }
         // A `<Model>`/`<PlayerModel>` pane draws itself, as the stock files declare a bare pane
         // with no Texture: a glue `ModelFFX` is the glue booth's scene, a file pane is a model

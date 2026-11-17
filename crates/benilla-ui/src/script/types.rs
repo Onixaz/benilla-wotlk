@@ -106,6 +106,13 @@ pub enum QuadContent {
         /// A `ModelFFX`: the glue screens' scene, which the app's glue booth draws.
         ffx: bool,
     },
+    /// A `MovieFrame` with a movie open: the app draws the movie at this slot, over the whole
+    /// screen whatever the frame's rect (`0x95eed0` sets a full-screen viewport and clears it
+    /// black first).
+    Movie {
+        /// The frame the app's player opened the movie for.
+        handle: crate::widget::FrameHandle,
+    },
     /// A `Texture` region: a BLP path, a solid or vertex colour, or both (a tinted texture).
     Texture {
         path: Option<String>,
