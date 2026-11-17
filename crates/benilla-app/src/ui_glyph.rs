@@ -17,7 +17,7 @@ use benilla_ui::script::{
 use crate::net::{ClientCommand, FieldChanged, NetCommands, ObjectStore, SelfPlayer};
 use crate::spell::targeting::{SpellTargeting, TargetingWants};
 use crate::ui_action::Spells;
-use crate::ui_script::{UiInput, VmMemo};
+use crate::ui_script::{UiDrain, VmMemo};
 use crate::ui_unit::UnitFeed;
 
 /// The glyph tables, absent when the client data failed to load.
@@ -39,7 +39,7 @@ impl Plugin for UiGlyphPlugin {
                     feed_glyphs
                         .in_set(UnitFeed)
                         .after(crate::ui_talent::TalentFeed),
-                    drain_glyph_removes.after(UiInput),
+                    drain_glyph_removes.in_set(UiDrain),
                 ),
             );
     }

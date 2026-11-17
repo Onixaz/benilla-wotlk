@@ -22,7 +22,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, Objects};
 use crate::query_cache::QueryCache;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// `ITEM_FIELD_FLAGS & 0x2`: the item was read once, so it shows with no read check.
 const ITEM_FIELD_FLAG_TRANSLATED: u32 = 0x2;
@@ -352,7 +352,7 @@ impl Plugin for UiItemTextPlugin {
                         .in_set(UiFeed)
                         .after(crate::ui_chat::load_language_words)
                         .after(crate::ui_chat::feed_language_skills),
-                    drain_item_text.after(UiInput),
+                    drain_item_text.in_set(UiDrain),
                 ),
             );
     }

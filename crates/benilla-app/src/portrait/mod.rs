@@ -841,10 +841,15 @@ impl Plugin for PortraitPlugin {
                 )
                     .chain()
                     .after(GluePreviewFeed)
-                    .after(CreatureBoothFeed),
+                    .after(CreatureBoothFeed)
+                    // After the UI's calls land: model frames draw in the paint (`0x47f163`).
+                    .after(crate::ui_script::UiDrain),
             )
-            // Re-face each booth's eye-glow cards to its own camera.
-            .add_systems(Update, booth::face_booth_billboards)
+            // Re-face each booth's eye-glow cards to its own camera, after the UI as the booths.
+            .add_systems(
+                Update,
+                booth::face_booth_billboards.after(crate::ui_script::UiDrain),
+            )
             // Push each booth part's sampled `MatAnim` alpha, after the sampler.
             .add_systems(
                 Update,

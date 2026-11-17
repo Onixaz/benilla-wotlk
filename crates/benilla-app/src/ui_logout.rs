@@ -17,7 +17,7 @@ use benilla_ui::script::{SessionRequest, UiScript};
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, LoggedOutMessage, NetCommands, SelfGuid};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The refusal line for every non-zero reason, never `PLAYER_LOGOUT_FAILED_ERROR`: message `0x180`
 /// of the error display, a key so the player's `GlobalStrings.lua` supplies it.
@@ -212,7 +212,7 @@ impl Plugin for UiLogoutPlugin {
                 // After the idle handler, which reads the pending byte: its request is drained and
                 // the byte set in the frame it was asked, as the reference sets it in the call.
                 (drain_logout, exit_on_logout_complete)
-                    .after(UiInput)
+                    .in_set(UiDrain)
                     .after(crate::ui_chat::idle::idle_handler),
             ),
         );

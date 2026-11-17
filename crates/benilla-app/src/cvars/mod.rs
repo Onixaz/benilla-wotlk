@@ -676,7 +676,7 @@ impl Plugin for CvarPlugin {
                 Update,
                 (sync_cvars, follow_filter_policy)
                     .chain()
-                    .after(crate::ui_script::UiInput),
+                    .in_set(crate::ui_script::UiDrain),
             )
             // Enter World's save (`0x4d9ed8`), in `Last`, after every `Update` writer of the
             // registry.

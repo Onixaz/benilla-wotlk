@@ -15,7 +15,7 @@ use crate::creature_anim::QueueNpcEmotes;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_quest::{row_is_active, row_is_one_click};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 
 /// The open gossip menu, plus the NPC-text records by id, which outlive it. The cache holds whole
@@ -176,7 +176,7 @@ impl Plugin for UiGossipPlugin {
                 // Range-close first so the clear fires `GOSSIP_CLOSED` the same frame.
                 close_npc_session_out_of_range::<GossipState>.before(feed_gossip),
                 feed_gossip.in_set(UiFeed),
-                drain_gossip.after(UiInput),
+                drain_gossip.in_set(UiDrain),
             ),
         );
     }

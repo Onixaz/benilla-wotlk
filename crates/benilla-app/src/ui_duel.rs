@@ -14,7 +14,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::target::{NameMatch, PlayerLookup};
 use crate::ui_action::Spells;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The `Effect[0]` that marks the duel spell: the spell-learned walk keeps such a spell in
 /// `[0xbe7d90]` (`0x5420ac`), which `StartDuel` casts (`0x5cf9a1`).
@@ -439,7 +439,7 @@ impl Plugin for UiDuelPlugin {
                 // each "Duel starting: N" lands a frame late.
                 tick_countdown.before(feed_duel),
                 feed_duel.in_set(UiFeed),
-                drain_duel.after(UiInput),
+                drain_duel.in_set(UiDrain),
             ),
         );
     }

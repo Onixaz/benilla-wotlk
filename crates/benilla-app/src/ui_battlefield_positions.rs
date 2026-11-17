@@ -19,7 +19,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, EnteredWorldMessage, GuidIndex, NetCommands, NetEntity, SelfGuid};
 use crate::ui_battlefield::BattlefieldQueue;
 use crate::ui_party::GroupState;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// `RequestBattlefieldPositions` (`0x54cf60`) sends at most once per 5000 ms, and only with an
 /// active queue slot; without one it clears the list.
@@ -255,7 +255,7 @@ impl Plugin for BattlefieldPositionsPlugin {
             (
                 reset_on_world_enter.before(feed_battlefield_positions),
                 feed_battlefield_positions.in_set(UiFeed),
-                drain_battlefield_positions.after(UiInput),
+                drain_battlefield_positions.in_set(UiDrain),
             ),
         );
     }

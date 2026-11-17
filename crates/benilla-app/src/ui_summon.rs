@@ -26,7 +26,7 @@ use bevy::prelude::*;
 use crate::area::AreaTableRes;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfGuid};
 use crate::ui_script::live::UiEvents;
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 
 /// The latched question, the reference's four globals: written by [`net::request`], read by the
 /// getters through [`SummonView`] and by [`drain_summon`].
@@ -313,7 +313,7 @@ impl Plugin for UiSummonPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<SummonState>()
-            .add_systems(Update, drain_summon.after(UiInput));
+            .add_systems(Update, drain_summon.in_set(UiDrain));
     }
 }
 

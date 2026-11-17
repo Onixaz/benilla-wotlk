@@ -258,7 +258,7 @@ pub(crate) struct UiPress;
 /// The player-UI feed phase, after [`UiPress`] and ungated (`UnitFeed` is the gated sub-phase):
 /// every push this frame's tick must see, as in the reference's frame, where packet dispatch
 /// precedes every script event signal and both precede `OnUpdate`. Every VM holder in `Update` is
-/// in this set, in [`UiPress`] or `.after(UiInput)`, as `game_plugins::schedule_tests` checks.
+/// in this set, in [`UiPress`] or in [`UiDrain`], as `game_plugins::schedule_tests` checks.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiFeed;
 
@@ -267,9 +267,15 @@ pub(crate) struct UiFeed;
 pub(crate) struct UiPaint;
 
 /// The VM's tick (`OnUpdate`, the layout, the cooldown widgets' update), before
-/// [`WorldStage::Input`]; what the press and the tick queued drains `.after` it.
+/// [`WorldStage::Input`]; what the press and the tick queued drains in [`UiDrain`].
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiInput;
+
+/// The drains of what the press and the tick queued, after [`UiInput`] and before
+/// [`WorldStage::Input`]: a call's effect lands before the world update moves anyone, as the
+/// reference runs input (`0x47f12d`) before the movement idle (`0x47f15b`, `0x6f1490`).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct UiDrain;
 
 /// The frame's atomic (`Instant`, `GetTime`) pair, the one base for mapping a store `Instant` onto
 /// `GetTime`: `anchor`'s steps are the VM clock's deltas, so a mapped start is stable frame to
@@ -482,14 +488,15 @@ impl Plugin for UiScriptPlugin {
                 PreUpdate,
                 (run_pending_reload, lifecycle::run_pending_entry_load).chain(),
             )
-            // The four UI phases in order after the net drain: the press, the feeds, the tick,
-            // then the paint.
+            // The UI phases in order after the net drain: the press, the feeds, the tick, its
+            // drains, then the paint.
             .configure_sets(
                 Update,
                 (
                     UiPress.after(WorldStage::Net),
                     UiFeed,
                     UiInput.before(WorldStage::Input),
+                    UiDrain.before(WorldStage::Input),
                     UiPaint,
                 )
                     .chain(),

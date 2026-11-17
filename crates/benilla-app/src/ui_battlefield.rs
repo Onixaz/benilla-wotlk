@@ -25,7 +25,7 @@ use benilla_ui::script::{
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer, WorldEnterCascadeMessage};
 use crate::player::Player;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::NpcSession;
 use crate::world_state::WorldStates;
 
@@ -961,7 +961,7 @@ impl Plugin for BattlefieldPlugin {
                     feed_battlemaster_rows
                         .in_set(UiFeed)
                         .before(crate::ui_unit::EnterWorldFeed),
-                    drain_battlefield.after(UiInput),
+                    drain_battlefield.in_set(UiDrain),
                 ),
             );
     }

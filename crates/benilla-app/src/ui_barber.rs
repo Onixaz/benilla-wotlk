@@ -17,7 +17,7 @@ use crate::net::{
 use crate::player::camera_view::BarberView;
 use crate::player::camera_zoom::ZoomLimit;
 use crate::player::{Player, StandStateRequest};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The barber's cape, the `ItemDisplayInfo` the chair puts in the tabard slot (`0x52fb2a`).
 pub(crate) const BARBER_CAPE_DISPLAY: u32 = 54559;
@@ -403,7 +403,7 @@ impl Plugin for BarberUiPlugin {
                     feed_barber
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_barber.after(UiInput).in_set(BarberDrain),
+                    drain_barber.in_set(UiDrain).in_set(BarberDrain),
                 ),
             );
     }

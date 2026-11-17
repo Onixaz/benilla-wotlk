@@ -31,7 +31,7 @@ use crate::names::{NameCache, NameKey};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::spell::{CompanionEdges, Cooldowns, SummonSlots};
 use crate::ui_action::{PlayerActions, Spells, UiError, UiErrorKeys};
-use crate::ui_script::{gate, UiInput};
+use crate::ui_script::{gate, UiDrain};
 use crate::ui_unit::UnitFeed;
 use crate::unit_auras::UnitAuras;
 
@@ -55,11 +55,11 @@ impl Plugin for UiCompanionPlugin {
                     .after(crate::ui_action::SlotIdentityFeed)
                     .before(crate::ui_pet_stats::PetSnapshot)
                     .before(crate::ui_action::CooldownEvents),
-                drain_companions.after(UiInput),
+                drain_companions.in_set(UiDrain),
                 // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
                 // Before the display build that loads its model and the booth that draws it.
                 feed_companion_booth
-                    .after(UiInput)
+                    .in_set(UiDrain)
                     .in_set(crate::portrait::CreatureBoothFeed)
                     .before(crate::entities::DisplayBuildSet),
             ),

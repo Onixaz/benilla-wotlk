@@ -19,7 +19,7 @@ use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
-use crate::ui_script::{UiFeed, UiInput, WorldLeaveSweepMessage};
+use crate::ui_script::{UiDrain, UiFeed, WorldLeaveSweepMessage};
 
 /// `CanShowResetInstances()`'s window, 25 hours: `cmp eax, 0x15f90` against `time(0)` minus when we
 /// left, signed, so the boundary is inclusive (`0x51959e`).
@@ -821,7 +821,7 @@ impl Plugin for UiInstancePlugin {
                     encounter_leave_world
                         .after(crate::net::apply_net_updates)
                         .before(crate::ui_script::UiPress),
-                    drain_instance.after(UiInput),
+                    drain_instance.in_set(UiDrain),
                 ),
             );
     }

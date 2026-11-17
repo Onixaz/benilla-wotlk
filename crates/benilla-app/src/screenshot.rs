@@ -23,7 +23,7 @@ use bevy::tasks::IoTaskPool;
 
 use benilla_ui::script::UiScript;
 
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The reference's file stem.
 const STEM: &str = "WoWScrnShot";
@@ -237,7 +237,7 @@ impl Plugin for ScreenshotPlugin {
             (
                 report_captures.in_set(UiFeed),
                 ask_for_captures
-                    .after(UiInput)
+                    .in_set(UiDrain)
                     .after(crate::bindings::BindingSet),
             ),
         );

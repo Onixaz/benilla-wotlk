@@ -15,7 +15,7 @@ use crate::net::{
 };
 use crate::ui_chat::ChatLog;
 use crate::ui_quest::rewards::QuestRewardTablesRes;
-use crate::ui_script::{UiInput, VmMemo};
+use crate::ui_script::{UiDrain, VmMemo};
 use crate::ui_unit::UnitFeed;
 
 pub(crate) struct UiTitlePlugin;
@@ -26,7 +26,7 @@ impl Plugin for UiTitlePlugin {
             Update,
             (
                 feed_titles.in_set(UnitFeed),
-                drain_title_sets.after(UiInput),
+                drain_title_sets.in_set(UiDrain),
                 feed_overhead_rows,
             ),
         )

@@ -17,7 +17,7 @@ use benilla_ui::script::{
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_battlefield::BattlefieldQueue;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::world_state_ui::WorldStateUiRes;
 
 /// `RequestBattlefieldScoreData`'s throttle (`0x54ce30`).
@@ -254,7 +254,7 @@ impl Plugin for BattlefieldScorePlugin {
                     .after(benilla_world::schedule::WorldStage::Net)
                     .before(feed_battlefield_score),
                 feed_battlefield_score.in_set(UiFeed),
-                drain_battlefield_score.after(UiInput),
+                drain_battlefield_score.in_set(UiDrain),
             ),
         );
     }

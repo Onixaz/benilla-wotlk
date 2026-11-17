@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use benilla_ui::script::{FollowRequest as ScriptFollowRequest, ScriptValue, UiScript};
 
 use crate::player::{FollowRequest, FollowState};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The followee guid each VM was last told of, so the events fire on transitions only; a VM
 /// replaced by `/reload` mid-follow starts at `None` and is told `BEGIN` again.
@@ -77,7 +77,7 @@ impl Plugin for UiFollowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FollowFeed>().add_systems(
             Update,
-            (feed_follow.in_set(UiFeed), drain_follow.after(UiInput)),
+            (feed_follow.in_set(UiFeed), drain_follow.in_set(UiDrain)),
         );
     }
 }

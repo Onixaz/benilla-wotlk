@@ -64,7 +64,7 @@ impl Plugin for UiMacroPlugin {
                         .in_set(crate::ui_script::UiFeed)
                         .in_set(InWorldGated),
                     // After the script tick that dirtied the table.
-                    note_dirty_macros.after(crate::ui_script::UiInput),
+                    note_dirty_macros.in_set(crate::ui_script::UiDrain),
                 ),
             );
     }

@@ -17,7 +17,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, Guid, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_items::{item_link, slot_guid, wire_pos};
-use crate::ui_script::{gate, UiFeed, UiInput};
+use crate::ui_script::{gate, UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 use benilla_protocol::messages::BAG_PLAYER_INVENTORY;
 
@@ -127,7 +127,7 @@ impl Plugin for UiMerchantPlugin {
                     feed_repair_costs
                         .in_set(UiFeed)
                         .before(crate::ui_char::feed_char),
-                    drain_merchant.after(UiInput),
+                    drain_merchant.in_set(UiDrain),
                 ),
             );
     }

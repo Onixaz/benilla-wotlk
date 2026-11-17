@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 #[cfg(test)]
 mod ace_gate_tests;
@@ -154,7 +154,7 @@ impl Plugin for UiChatPlugin {
                     input::drain_addon_message_sends,
                 )
                     .chain()
-                    .after(UiInput)
+                    .in_set(UiDrain)
                     // Before the zone-channel walk renumbers or renames a slot, so a `/N` resolves
                     // against the roster the script's `GetChannelName` read this frame.
                     .before(channels::end_session_channels_on_disconnect)

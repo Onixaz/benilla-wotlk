@@ -20,7 +20,7 @@ use crate::net::{
 };
 use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_chat::ChatLog;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The template flag that marks a purchase with a refund record (`template+0x18 & 0x1000`).
 const ITEM_FLAG_REFUNDABLE: u32 = 0x1000;
@@ -98,7 +98,7 @@ impl Plugin for UiSocketPlugin {
             .add_systems(
                 Update,
                 (
-                    drain_item_sends.after(UiInput),
+                    drain_item_sends.in_set(UiDrain),
                     // The refund results print with the VM's strings, so they wait for its frames.
                     feed_refunds
                         .in_set(UiFeed)

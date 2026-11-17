@@ -27,7 +27,7 @@ use benilla_ui::script::{
 
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
 use crate::ui_action::{PlayerActions, Spells};
-use crate::ui_script::{gate, UiInput};
+use crate::ui_script::{gate, UiDrain};
 use crate::ui_unit::UnitFeed;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
@@ -152,7 +152,7 @@ impl Plugin for UiTalentPlugin {
                     // window; drain after it, so a click sends the same frame.
                     feed_talents.in_set(UnitFeed).in_set(TalentFeed),
                     feed_inspect_talents.in_set(UnitFeed),
-                    drain_talent_learns.after(UiInput),
+                    drain_talent_learns.in_set(UiDrain),
                 ),
             );
     }

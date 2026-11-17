@@ -28,7 +28,7 @@ use crate::net::{NetCommands, NetHandlerApp, ObjectStore, Objects, SelfGuid, Sel
 use crate::spell::{cast_target, CastCommit, CastLadder};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_items::{count_of, item_icon, tool_categories, InventoryScope};
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 use crate::ui_spellbook::SkillLines;
 use crate::ui_unit::UnitFeed;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
@@ -141,7 +141,7 @@ impl Plugin for UiTradeSkillPlugin {
                         .before(feed_trade_skill)
                         .after(crate::ui_script::UiPress),
                     feed_trade_skill.in_set(UnitFeed),
-                    drain_trade_skill.after(UiInput),
+                    drain_trade_skill.in_set(UiDrain),
                 ),
             );
     }

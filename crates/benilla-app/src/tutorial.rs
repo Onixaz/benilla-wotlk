@@ -23,7 +23,7 @@ use benilla_ui::script::{ScriptValue, UiScript};
 use crate::char_select::ClientState;
 use crate::net::{ClientCommand, EnteredWorldMessage, NetCommands, ObjectStore, SelfPlayer};
 use crate::player::Player;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The popup cue plays on both legs.
 const TUTORIAL_POPUP_SOUND: &str = "TutorialPopup";
@@ -627,7 +627,7 @@ impl Plugin for TutorialPlugin {
                     feed_tutorials
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_tutorials.after(UiInput),
+                    drain_tutorials.in_set(UiDrain),
                 ),
             )
             .add_systems(OnExit(ClientState::InWorld), on_world_leave);

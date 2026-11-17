@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use benilla_formats::SpellCatalog;
 use benilla_protocol::messages::ActionButton;
 
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
@@ -476,10 +476,10 @@ impl Plugin for UiActionPlugin {
                     state::fire_combat_edges
                         .in_set(UnitFeed)
                         .after(state::feed_action_state),
-                    drain::drain_action_sets.after(UiInput),
-                    equipment_sets::drain_equipment_sets.after(UiInput),
+                    drain::drain_action_sets.in_set(UiDrain),
+                    equipment_sets::drain_equipment_sets.in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.
-                    drain::drain_go_openers.after(UiInput),
+                    drain::drain_go_openers.in_set(UiDrain),
                     // The latches must be current before the target chain's cursor reads them.
                     track_learned_abilities
                         .in_set(UnitFeed)

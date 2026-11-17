@@ -772,6 +772,8 @@ impl Plugin for EntitiesPlugin {
                 .in_set(EntityVisualsSet)
                 .after(WorldStage::Net),
         )
+        // After the UI's calls land: a model frame's `SetUnit` asks for a display built here.
+        .configure_sets(Update, EntityVisualsSet.after(crate::ui_script::UiDrain))
         .init_resource::<ChainLocations>()
         .init_resource::<ChainHopLists>()
         // In the visuals set, after the cast router's beam plays and the net stage's hop arrays.

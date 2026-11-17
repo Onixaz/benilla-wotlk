@@ -446,7 +446,7 @@ impl Plugin for SoundPlugin {
             )
                 .chain()
                 // After the registry drains the panel's `SetCVar`, which the same click makes.
-                .after(crate::ui_script::UiInput)
+                .in_set(crate::ui_script::UiDrain)
                 .after(crate::cvars::sync_cvars)
                 .in_set(engine::RestartSet),
         )
