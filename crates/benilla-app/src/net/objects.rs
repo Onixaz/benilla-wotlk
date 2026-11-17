@@ -1635,9 +1635,7 @@ struct Merged {
     watched: Vec<(u16, u32, u32)>,
 }
 
-/// An item's watches past its create, on the quest log: its stack count's test of the logged
-/// quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own,
-/// which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
+/// An item's watches past its create, on the quest log: its stack count's test of the logged quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own, which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
 fn item_quest_watch(sc: &Scene, guid: u64, stack: bool, entry: bool) {
     let Some(log) = sc.quest_log.as_deref() else {
         return;

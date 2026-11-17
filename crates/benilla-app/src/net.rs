@@ -703,8 +703,7 @@ pub(crate) fn publish_world_time(
 
 /// The server's unix wall clock (`SMSG_QUERY_TIME_RESPONSE`), advanced monotonically. Descriptor
 /// deadlines are absolute server stamps (a timed quest's is `time(nullptr) + limitTime`, vmangos
-/// `Player::AddQuest`), so a countdown reads this, never the local clock. The re-ask sits behind a
-/// lock, so the log's rebuild disarms it inside a verb's call (`0x5e6daa`).
+/// `Player::AddQuest`), so a countdown reads this, never the local clock. The re-ask sits behind a lock, so the log's rebuild disarms it inside a verb's call (`0x5e6daa`).
 #[derive(Resource, Default)]
 pub(crate) struct ServerWallClock {
     sample: Option<WallClockSample>,

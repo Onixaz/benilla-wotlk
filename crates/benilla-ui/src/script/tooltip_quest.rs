@@ -1,8 +1,5 @@
 //! The quest tooltip (`0x622960`): `SetHyperlink` on a `quest:` link, for any quest the template
-//! cache can answer, in the log or not, read at the call. A template miss leaves the tooltip
-//! cleared, and a name in flight reads as the placeholder; each record the build missed (the
-//! template, a name in the leaderboard) builds it again when it lands, through the tooltip's quest
-//! callback (`0x61de20`).
+//! cache can answer, in the log or not, read at the call. A template miss leaves the tooltip cleared, and a name in flight reads as the placeholder; each record the build missed (the template, a name in the leaderboard) builds it again when it lands, through the tooltip's quest callback (`0x61de20`).
 
 use mlua::{Lua, Table};
 
@@ -43,8 +40,7 @@ pub struct QuestTooltipRead {
 }
 
 impl super::UiScript {
-    /// A cache record landed (`0x61de20`, found): every tooltip whose build missed it builds
-    /// again for the quest it shows.
+    /// A cache record landed (`0x61de20`, found): every tooltip whose build missed it builds again for the quest it shows.
     pub fn quest_record_landed(&mut self, record: QuestRecord) {
         let waiting: Vec<FrameHandle> = {
             let model = self.model_ref();
@@ -85,8 +81,7 @@ fn rebuild(lua: &Lua, h: FrameHandle, quest_id: u32) -> mlua::Result<()> {
 /// the requirements, then `OnTooltipSetQuest` before the show.
 pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    // The caches at the call, each miss asked with the tooltip's callback (`0x622984`,
-    // `0x622a62`).
+    // The caches at the call, each miss asked with the tooltip's callback (`0x622984`, `0x622a62`).
     let get = |key: &str| crate::strings::global(lua, key);
     let read = super::read_live(|l| l.quest_tooltip(quest_id, &get)).flatten();
     let (view, active) = {
@@ -216,8 +211,7 @@ mod tests {
         loan.view().0.borrow_mut().insert(176, read);
     }
 
-    /// A template miss leaves the tooltip cleared; its answer builds it (`0x61de20`), and a second
-    /// click hides it.
+    /// A template miss leaves the tooltip cleared; its answer builds it (`0x61de20`), and a second click hides it.
     #[test]
     fn a_quest_link_waits_on_its_template_then_builds_and_a_second_click_hides() {
         let (mut s, caches) = tip();
@@ -243,8 +237,7 @@ mod tests {
         assert!(s.eval::<bool>("return T:IsShown() == nil").unwrap());
     }
 
-    /// A name in flight shows at once as the placeholder, and its answer builds the tooltip again
-    /// with the name; another record's answer builds nothing.
+    /// A name in flight shows at once as the placeholder, and its answer builds the tooltip again with the name; another record's answer builds nothing.
     #[test]
     fn a_name_in_flight_shows_the_placeholder_and_its_answer_rebuilds() {
         let (mut s, caches) = tip();

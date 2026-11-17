@@ -32,7 +32,6 @@ pub(crate) enum QuestView {
 /// The open questgiver window; the per-guid dialog statuses survive a close.
 #[derive(Resource, Default)]
 pub(crate) struct QuestGiver {
-    pub(crate) completed_fanfare: bool,
     /// The panel's source: an NPC, a GameObject, a quest-starter item or a sharing player.
     pub(crate) npc: Option<u64>,
     pub(crate) view: Option<QuestView>,
@@ -87,11 +86,6 @@ impl QuestGiver {
             QuestView::Detail(d) if d.sharer != 0 => Some(d.sharer),
             _ => self.npc,
         }
-    }
-
-    /// The one-shot turn-in fanfare, which the reference plays from the packet, not from Lua.
-    pub(crate) fn take_completed_fanfare(&mut self) -> bool {
-        std::mem::take(&mut self.completed_fanfare)
     }
 
     pub(crate) fn clear(&mut self) {
@@ -224,7 +218,17 @@ pub(crate) mod lines;
 mod net;
 pub(crate) mod rewards;
 
-pub(crate) use lines::{coin_text, QuestLine, QuestLines};
+pub(crate) use lines::coin_text;
+
+/// The questgiver window's close (`0x58ca70`): `keep_open` (a chained turn-in) leaves it up (`0x58cb4c`).
+pub(crate) fn giver_finished(world: &mut World, keep_open: bool, _quest: u32, _decline: bool) {
+    if keep_open {
+        return;
+    }
+    if let Some(mut giver) = world.get_resource_mut::<QuestGiver>() {
+        giver.clear();
+    }
+}
 
 pub(crate) struct UiQuestPlugin;
 
@@ -465,8 +469,7 @@ pub(crate) fn feed_quest(
         Option<Res<crate::ui_item_text::PageMaterials>>,
     ),
     // The detail and reward panels' XP, honor, title and reputation extras.
-    // A PvP realm (`Cfg_Configs.dbc`'s `PlayerKillingAllowed`), where `QuestFlagsPVP` answers nil
-    // (set at `0x4055c7`).
+    // A PvP realm (`Cfg_Configs.dbc`'s `PlayerKillingAllowed`), where `QuestFlagsPVP` answers nil (set at `0x4055c7`).
     (rewards, roster): (
         rewards::RewardInputs,
         Option<Res<crate::char_select::Roster>>,
@@ -483,10 +486,7 @@ pub(crate) fn feed_quest(
     let last = last.get(&script);
     let last_name = last_name.get(&script);
     let last_seen = last_seen.get(&script);
-    // Each take reads first: a `Mut` take on an idle frame would mark the giver changed.
-    if giver.completed_fanfare && giver.take_completed_fanfare() {
-        script.queue_sound_kit("QUESTCOMPLETED");
-    }
+    // A take reads first: a `Mut` take on an idle frame would mark the giver changed.
     // Before the snapshot's early-out, so a refusal that closes the panel still prints.
     let lines: Vec<Shown> = if giver.has_messages() {
         giver.take_messages()

@@ -850,9 +850,6 @@ pub(crate) mod schedule_tests {
     ///   unit seen a frame early or late is decided again next frame;
     /// - the cursor classifier against `world_focus`'s focus publish and settle release over
     ///   `Player`: it reads `control_lost`, and they write only `settling` and `world_stale`;
-    /// - `ui_quest::lines::feed_quest_lines` against `ui_items::feed_item_stats` and
-    ///   `ui_tooltip::feed_spell_tooltips` over `Items` and the VM: it only reads templates, which
-    ///   those two do not write, and a chat line commutes with their pushes;
     /// - `script_calls::apply_script_calls`, in the press pass ahead of the feeds, against the
     ///   transport chain's `Transform` and `RemoteMotion` writers (`tick_transports`,
     ///   `reseek_ridden_transport_at_worldport`, `compose_riders`, `compose_deck_passengers`,
@@ -882,7 +879,7 @@ pub(crate) mod schedule_tests {
     ///   (`apply_roster_policy`, `persist_last_character`, `apply_realm_policy`): the refill acts
     ///   only on an in-world learn, they only before world entry;
     /// - `ui_totem::feed_totems` against `ui_items::feed_item_stats` over `Items` and the VM: it
-    ///   only reads templates for the tool check, as `feed_quest_lines` does;
+    ///   only reads templates for the tool check;
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
@@ -981,14 +978,10 @@ pub(crate) mod schedule_tests {
     ///   drain, against `finish_colliders`, as the other such drains pair; and
     ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over
     ///   `Items`: it only reads templates.
-    /// - The quest progress lines (#638) added 1, which left when the lines moved into their
-    ///   packets' handlers (#1276).
+    /// - The quest progress lines (#638) added 1, which left when the lines moved into their packets' handlers (#1276).
     /// - The quest panels and the world map's quest lines add 11: the NPC emote queue's
     ///   `set_emote_queues` and `drive_emote_queues` against `finish_colliders`, as the other
-    ///   animation drivers pair; `ui_quest::lines::feed_quest_lines`, now a `TutorialEvent`
-    ///   writer, against the other writers of that queue (whose events commute) and the feeds it
-    ///   shares the VM with; the POI lines' pair against `feed_item_stats` left when the POI
-    ///   verbs began building them at the call (#1276).
+    /// animation drivers pair; the turn-in lines' pairs left when the complete handler and the template's answer began showing them (#1276); the POI lines' pair against `feed_item_stats` left when the POI verbs began building them at the call (#1276).
     /// - The update-object deck passengers (#902) add 25: `transport::compose_deck_passengers`
     ///   against the same 24 `Transform` readers `compose_riders` pairs with (the range, reach,
     ///   threat and NPC-session feeds, the art scope, the WDL stream and the booth billboards),

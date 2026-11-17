@@ -127,10 +127,7 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
     }
 }
 
-/// The readout as the verbs read it at the call: `GetNumWorldStateUI` counts the rows the
-/// builder admits (`0x548720`) and `GetWorldStateUIInfo` resolves one (`0x548d40`). The builder's
-/// inputs, the scope and the phase mask, move only where it reruns (`0x548970`, `0x513973`), so the
-/// rows admitted at the call are the ones it would hold.
+/// The readout as the verbs read it at the call: `GetNumWorldStateUI` counts the rows the builder admits (`0x548720`) and `GetWorldStateUIInfo` resolves one (`0x548d40`). The builder's inputs, the scope and the phase mask, move only where it reruns (`0x548970`, `0x513973`), so the rows admitted at the call are the ones it would hold.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct WorldStateUiLive<'w> {
     catalog: Option<Res<'w, WorldStateUiRes>>,

@@ -1,12 +1,10 @@
 //! Party quest sharing: each member's verdict on a quest we shared, and the escort confirm a
 //! member gets when someone starts a party-accept quest, with one server latch
 //! (`Player::SetQuestShareInfo`) behind both. The receiving half needs nothing here: the receiver
-//! gets a plain `SMSG_QUESTGIVER_QUEST_DETAILS` whose giver is the sharer, which
-//! [`crate::ui_quest`] tells from an NPC offer by the guid's type.
+//! gets a plain `SMSG_QUESTGIVER_QUEST_DETAILS` whose giver is the sharer, which [`crate::ui_quest`] tells from an NPC offer by the guid's type.
 //!
 //! `QUEST_ACCEPT_CONFIRM(member, title)` raises the stock popup (`UIParent.lua:353`); Yes calls
-//! `ConfirmAcceptQuest()` and No sends nothing. Both handlers read the member's name from the name
-//! cache with no callback (`0x6e3a61`, `0x58bc85`): a miss asks for it and shows nothing.
+//! `ConfirmAcceptQuest()` and No sends nothing. Both handlers read the member's name from the name cache with no callback (`0x6e3a61`, `0x58bc85`): a miss asks for it and shows nothing.
 
 use benilla_protocol::messages::{QuestConfirmAccept, QuestShareMsg};
 use benilla_ui::script::{ScriptValue, UiScript};
@@ -21,8 +19,7 @@ use crate::ui_script::UiDrain;
 /// The share state: the quest the last escort confirm named.
 #[derive(Resource, Default)]
 pub(crate) struct QuestShare {
-    /// The quest `ConfirmAcceptQuest()` answers, latched by the confirm's handler before its name
-    /// lookup (`0x58bc5d`): the verb takes no argument (`StaticPopup.lua:731-733`).
+    /// The quest `ConfirmAcceptQuest()` answers, latched by the confirm's handler before its name lookup (`0x58bc5d`): the verb takes no argument (`StaticPopup.lua:731-733`).
     confirm_quest: Option<u32>,
 }
 
@@ -69,8 +66,7 @@ mod net {
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    /// `MSG_QUEST_PUSH_RESULT` (`0x6e3a31`): the member's name from the cache, then the verdict's
-    /// line (`0x6e3a72`); a name not cached shows nothing.
+    /// `MSG_QUEST_PUSH_RESULT` (`0x6e3a31`): the member's name from the cache, then the verdict's line (`0x6e3a72`); a name not cached shows nothing.
     fn on_push_result(
         In(ev): In<SessionEvent>,
         names: Res<NameCache>,
@@ -98,8 +94,7 @@ mod net {
         show_in_turn(&mut ui, "ui_quest_share", UiError::s(key, name));
     }
 
-    /// `SMSG_QUEST_CONFIRM_ACCEPT` (`0x58bc50`): the quest is latched for the Yes, then
-    /// `QUEST_ACCEPT_CONFIRM(member, title)` fires when the member's name is cached.
+    /// `SMSG_QUEST_CONFIRM_ACCEPT` (`0x58bc50`): the quest is latched for the Yes, then `QUEST_ACCEPT_CONFIRM(member, title)` fires when the member's name is cached.
     fn on_confirm_accept(
         In(ev): In<SessionEvent>,
         mut share: ResMut<QuestShare>,

@@ -7,7 +7,7 @@ use benilla_protocol::messages::{
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{QuestGiver, QuestLine, QuestLines};
+use super::QuestGiver;
 use crate::creature_anim::QueueNpcEmotes;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
 use crate::ui_action::UiError;
@@ -122,43 +122,18 @@ fn on_offer(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes:
 fn on_complete(
     In(ev): In<SessionEvent>,
     mut quest: ResMut<QuestGiver>,
-    mut lines: ResMut<QuestLines>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
-    mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
+    mut turn_ins: ResMut<super::lines::TurnIns>,
     (quest_log, commands): (Res<QuestLog>, Res<NetCommands>),
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::QuestComplete(c) = ev {
-        turn_in_awards(&c, &mut chat, &mut center);
-        // A quest with a next in its chain keeps the window up for that quest's panel.
-        let chained = quest_log
-            .template(c.quest_id, &commands)
-            .is_some_and(|t| t.next_quest_in_chain != 0);
-        quest_complete(c, chained, &mut quest, &mut lines);
-    }
-}
-
-/// The turn-in's honor and arena awards (`0x6d0ed0`-`0x6d0fd0`): the honor, a tenth of the
-/// wire's, prints `COMBATLOG_HONORAWARD` and sends `HONOR_GAINED`; the arena points send
-/// `ARENA_POINTS_GAINED`.
-fn turn_in_awards(
-    c: &QuestComplete,
-    chat: &mut crate::ui_chat::ChatLog,
-    center: &mut MessageWriter<crate::ui_unit::CombatTextEvent>,
-) {
-    use benilla_ui::script::ScriptValue;
-    let honor = c.honor / 10;
-    if c.honor as i32 > 0 {
-        chat.push_pvp_credit(honor as i32, 0, 0);
-        center.write(crate::ui_unit::CombatTextEvent {
-            message_type: "HONOR_GAINED",
-            args: vec![ScriptValue::Int(i64::from(honor))],
-        });
-    }
-    if c.arena_points as i32 > 0 {
-        center.write(crate::ui_unit::CombatTextEvent {
-            message_type: "ARENA_POINTS_GAINED",
-            args: vec![ScriptValue::Int(i64::from(c.arena_points))],
-        });
+        quest_complete(c, &mut quest);
+        // The turn-in runs now with its template cached, else from the template's answer (`0x6d1192`-`0x6d11a6`).
+        if quest_log.template(c.quest_id, &commands).is_some() {
+            ui.world(move |world| super::lines::turn_in(world, c));
+        } else {
+            turn_ins.wait_for_template(c);
+        }
     }
 }
 
@@ -296,40 +271,12 @@ fn quest_offer(o: QuestOfferReward, quest: &mut QuestGiver) {
     quest.open(o.npc, crate::ui_quest::QuestView::Reward(o));
 }
 
-/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): the turn-in's chat lines, then the window
-/// closes unless the quest is `chained` (`0x6d10ca`: `nextQuestInChain != 0` keeps it open, with
-/// no `QUEST_FINISHED`). The XP, money and items themselves arrive by `UPDATE_OBJECT` and
-/// `ITEM_PUSH_RESULT`; 3.3.5a's body has no item list: the fixed rewards print from the template
-/// (`0x6d1018`). Deviation: the reference prints and closes from the template's callback, so with
-/// the template uncached its window waits; this closes at once.
-fn quest_complete(c: QuestComplete, chained: bool, quest: &mut QuestGiver, lines: &mut QuestLines) {
-    // The reference plays the `QUESTCOMPLETED` fanfare on this packet.
-    quest.completed_fanfare = true;
+/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): the XP, money and items arrive by `UPDATE_OBJECT` and `ITEM_PUSH_RESULT`; the turn-in's lines and close are [`super::lines::turn_in`].
+fn quest_complete(c: QuestComplete, quest: &mut QuestGiver) {
     debug!(
         "net: quest {} complete — +{} XP, +{} copper",
         c.quest_id, c.xp, c.money
     );
-    lines.push(QuestLine::Completed(c.quest_id));
-    if c.xp != 0 {
-        lines.push(QuestLine::Experience(c.xp));
-    }
-    // A signed test.
-    if (c.money as i32) > 0 {
-        lines.push(QuestLine::Money(c.money));
-    }
-    // Signed tests, after the honor line.
-    if c.talents as i32 > 0 {
-        lines.push(QuestLine::Talents(c.talents));
-    }
-    // Deviation: the arena award's `COMBATLOG_ARENAPOINTSAWARD` line goes out as chat type `0x32`
-    // (`0x6d0ff4`), which has no `ChatTypeInfo` row in the stock UI, so it is not raised.
-    lines.push(QuestLine::RewardItems(c.quest_id));
-    if quest.chosen_reward != 0 {
-        lines.push(QuestLine::Item(std::mem::take(&mut quest.chosen_reward)));
-    }
-    if !chained {
-        quest.clear();
-    }
     // A turn-in can move every giver's marker, so the reference re-asks from here.
     quest.bump_reask();
 }
@@ -466,122 +413,6 @@ mod tests {
             Some(dialog_status::REWARD2),
             "and a player passes the same typemask, as it does in the reference"
         );
-    }
-
-    /// The turn-in's awards (`0x6d0ed0`-`0x6d0fd0`): a tenth of the wire's honor to
-    /// `HONOR_GAINED`, the arena points to `ARENA_POINTS_GAINED`, and nothing without either.
-    #[test]
-    fn a_turn_in_sends_its_honor_and_arena_awards_to_the_combat_text() {
-        use benilla_ui::script::ScriptValue;
-        use bevy::ecs::system::RunSystemOnce;
-        let sent = |c: QuestComplete| {
-            let mut app = App::new();
-            app.init_resource::<crate::ui_chat::ChatLog>()
-                .add_message::<crate::ui_unit::CombatTextEvent>();
-            app.world_mut()
-                .run_system_once(
-                    move |mut chat: ResMut<crate::ui_chat::ChatLog>,
-                          mut center: MessageWriter<crate::ui_unit::CombatTextEvent>| {
-                        turn_in_awards(&c, &mut chat, &mut center)
-                    },
-                )
-                .unwrap();
-            app.world_mut()
-                .resource_mut::<Messages<crate::ui_unit::CombatTextEvent>>()
-                .drain()
-                .map(|e| (e.message_type, e.args))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            sent(QuestComplete {
-                quest_id: 7,
-                honor: 1_250,
-                arena_points: 15,
-                ..Default::default()
-            }),
-            [
-                ("HONOR_GAINED", vec![ScriptValue::Int(125)]),
-                ("ARENA_POINTS_GAINED", vec![ScriptValue::Int(15)]),
-            ]
-        );
-        assert!(sent(QuestComplete {
-            quest_id: 7,
-            ..Default::default()
-        })
-        .is_empty());
-    }
-
-    /// `0x6d0e10`'s order: the completion, the XP, the money, the template's reward items, then
-    /// the chosen reward, which the turn-in spends.
-    #[test]
-    fn a_turn_in_raises_its_lines_in_the_reference_order() {
-        let mut giver = QuestGiver {
-            chosen_reward: 2_047,
-            ..Default::default()
-        };
-        let mut lines = QuestLines::default();
-        quest_complete(
-            QuestComplete {
-                quest_id: 7,
-                xp: 450,
-                money: 1_025,
-                talents: 1,
-                arena_points: 15,
-                ..Default::default()
-            },
-            false,
-            &mut giver,
-            &mut lines,
-        );
-        assert_eq!(
-            lines.queued(),
-            [
-                QuestLine::Completed(7),
-                QuestLine::Experience(450),
-                QuestLine::Money(1_025),
-                QuestLine::Talents(1),
-                QuestLine::RewardItems(7),
-                QuestLine::Item(2_047),
-            ]
-        );
-        assert_eq!(giver.chosen_reward, 0, "the turn-in zeroes the latch");
-
-        // No XP (a capped level) and no money: the completion and the template's items.
-        let mut lines = QuestLines::default();
-        quest_complete(
-            QuestComplete {
-                quest_id: 7,
-                ..Default::default()
-            },
-            false,
-            &mut giver,
-            &mut lines,
-        );
-        assert_eq!(
-            lines.queued(),
-            [QuestLine::Completed(7), QuestLine::RewardItems(7)]
-        );
-    }
-
-    /// `0x6d10ca`: a chained turn-in leaves the window to the next quest's panel.
-    #[test]
-    fn a_chained_turn_in_keeps_the_window_and_a_last_one_closes_it() {
-        let turn_in = |chained| {
-            let mut giver = open_detail(7);
-            let mut lines = QuestLines::default();
-            quest_complete(
-                QuestComplete {
-                    quest_id: 7,
-                    ..Default::default()
-                },
-                chained,
-                &mut giver,
-                &mut lines,
-            );
-            giver.is_open()
-        };
-        assert!(turn_in(true));
-        assert!(!turn_in(false));
     }
 
     fn open_detail(quest_id: u32) -> QuestGiver {

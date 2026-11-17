@@ -62,13 +62,11 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::QuestForceRemoved, on_force_removed)
         .net_handler(K::QuestsCompleted, on_quests_completed)
         .net_handler(K::ItemPushResult, on_item_push)
-        // The template callback finishes an item push held for it (`0x6d7d70`), registered after
-        // the cache's own handler.
+        // The template callback finishes an item push held for it (`0x6d7d70`), registered after the cache's own handler.
         .net_handler(K::QuestTemplate, on_template_landed);
 }
 
-/// Announce the queued notices in the calling handler's turn: the line and `QUEST_WATCH_UPDATE`
-/// fire from the packet (`0x6d82e9`, `0x6d8241`), ahead of the frame's `QUEST_LOG_UPDATE`.
+/// Announce the queued notices in the calling handler's turn: the line and `QUEST_WATCH_UPDATE` fire from the packet (`0x6d82e9`, `0x6d8241`), ahead of the frame's `QUEST_LOG_UPDATE`.
 fn announce_in_turn(ui: &mut UiEvents) {
     ui.world(|world| {
         if let Err(e) = world.run_system_cached(announce_notices) {
@@ -144,8 +142,7 @@ fn on_force_removed(
     }
 }
 
-/// The completed-quest answer stores the ids and fires `QUEST_QUERY_COMPLETE` from the packet
-/// (`0x5b5190`, `0x5b5270`).
+/// The completed-quest answer stores the ids and fires `QUEST_QUERY_COMPLETE` from the packet (`0x5b5190`, `0x5b5270`).
 fn on_quests_completed(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::QuestsCompleted(ids) = ev {
         ui.write(move |script| script.set_quests_completed(ids));
@@ -483,8 +480,7 @@ pub(super) fn drain_quest_progress_sends(
     }
 }
 
-/// Announce the queued notices in the handler's turn; a notice whose quest-item check waits on a
-/// template stays queued for that template's answer.
+/// Announce the queued notices in the handler's turn; a notice whose quest-item check waits on a template stays queued for that template's answer.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 fn announce_notices(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -829,9 +825,7 @@ mod tests {
         assert!(complete_sent(0, 8).is_empty());
     }
 
-    /// `GetQuestTimers`' expiry inside the call: the mark and the status re-ask once (`0x5e634a`,
-    /// `0x5e582a`), the cached title for the line; an uncached template is asked and its answer
-    /// owes the line (`0x5e635c`).
+    /// `GetQuestTimers`' expiry inside the call: the mark and the status re-ask once (`0x5e634a`, `0x5e582a`), the cached title for the line; an uncached template is asked and its answer owes the line (`0x5e635c`).
     #[test]
     fn a_timer_expiry_is_marked_and_reasked_once_in_the_call() {
         let mut log = QuestLog::default();

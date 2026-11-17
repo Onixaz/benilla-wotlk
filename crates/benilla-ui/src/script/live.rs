@@ -108,8 +108,7 @@ pub trait LiveState {
         0
     }
 
-    /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)`
-    /// with no answer, `None` where no view lends the check.
+    /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)` with no answer, `None` where no view lends the check.
     fn item_spell_in_range(&self, _spell_id: u32, _target: u64) -> Option<Option<bool>> {
         None
     }
@@ -124,21 +123,17 @@ pub trait LiveState {
         None
     }
 
-    /// The `index`th admitted readout row resolved at the call (`0x548d40`); `Some(None)` past the
-    /// end, `None` without a readout.
+    /// The `index`th admitted readout row resolved at the call (`0x548d40`); `Some(None)` past the end, `None` without a readout.
     fn world_state_ui_info(&self, _index: usize) -> Option<Option<super::WorldStateUiView>> {
         None
     }
 
-    /// One world state's value at the call, a miss reading 0 (`0x549440`'s table); `None` without
-    /// the table.
+    /// One world state's value at the call, a miss reading 0 (`0x549440`'s table); `None` without the table.
     fn world_state(&self, _key: u32) -> Option<i32> {
         None
     }
 
-    /// A quest tooltip's build from the caches at the call (`0x622960`), its title, objectives
-    /// paragraph and no-progress leaderboard formatted through `get`, each miss asked; `None`
-    /// where no view lends them.
+    /// A quest tooltip's build from the caches at the call (`0x622960`), its title, objectives paragraph and no-progress leaderboard formatted through `get`, each miss asked; `None` where no view lends them.
     fn quest_tooltip(
         &self,
         _quest_id: u32,
@@ -147,9 +142,7 @@ pub trait LiveState {
         None
     }
 
-    /// A logged quest's POI lines as the slot, the bags and the caches read now (`0x5e58c0`,
-    /// `0x5e20a0`, `0x5e1ff0`), formatted through `get`; `Some(None)` for a quest not logged or
-    /// not cached, `None` where no view lends them.
+    /// A logged quest's POI lines as the slot, the bags and the caches read now (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`), formatted through `get`; `Some(None)` for a quest not logged or not cached, `None` where no view lends them.
     fn quest_poi_lines(
         &self,
         _quest_id: u32,
@@ -158,16 +151,12 @@ pub trait LiveState {
         None
     }
 
-    /// A logged quest's special item as our bags hold it now (`0x5e0da0`): the template's
-    /// starting item, else under flag `0x20000` a drop item, the first carried copy that can be
-    /// used; `None` for none.
+    /// A logged quest's special item as our bags hold it now (`0x5e0da0`): the template's starting item, else under flag `0x20000` a drop item, the first carried copy that can be used; `None` for none.
     fn quest_special_item(&self, _quest_id: u32) -> Option<super::QuestSpecialItemView> {
         None
     }
 
-    /// A logged quest's answers at the call, computed from its slot and the caches (`0x5e0000`,
-    /// `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`), lines formatted through `get`, its detail
-    /// left out; `Some(None)` for a quest not cached, `None` where no view lends them.
+    /// A logged quest's answers at the call, computed from its slot and the caches (`0x5e0000`, `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`), lines formatted through `get`, its detail left out; `Some(None)` for a quest not cached, `None` where no view lends them.
     fn quest_log_row(
         &self,
         _quest_id: u32,
@@ -177,41 +166,32 @@ pub trait LiveState {
         None
     }
 
-    /// A logged quest's detail pane at the call; `Some(None)` for a quest not cached, `None`
-    /// where no view lends it.
+    /// A logged quest's detail pane at the call; `Some(None)` for a quest not cached, `None` where no view lends it.
     fn quest_log_detail(&self, _quest_id: u32, _slot: u8) -> Option<Option<super::QuestLogDetail>> {
         None
     }
 
-    /// The daily-quest fields holding a quest at the call (`0x58db30`), `None` where no view lends
-    /// them.
+    /// The daily-quest fields holding a quest at the call (`0x58db30`), `None` where no view lends them.
     fn daily_quests_completed(&self) -> Option<u32> {
         None
     }
 
-    /// `GetQuestTimers`' expiry of a run-out timer inside the call (`0x5e634a`): marks the quest
-    /// expired and asks every questgiver's status again. `Some(Some(title))` for a new mark whose
-    /// template is cached, `Some(None)` for a quest already marked or one whose line waits on its
-    /// template's answer (`0x5e635c`); `None` where no view lends it.
+    /// `GetQuestTimers`' expiry of a run-out timer inside the call (`0x5e634a`): marks the quest expired and asks every questgiver's status again. `Some(Some(title))` for a new mark whose template is cached, `Some(None)` for a quest already marked or one whose line waits on its template's answer (`0x5e635c`); `None` where no view lends it.
     fn expire_quest(&self, _quest_id: u32) -> Option<Option<String>> {
         None
     }
 
-    /// The server's unix seconds now, fractional: the local clock offset by the last time
-    /// response (`0x5dff40`), which the timer verbs subtract (`0x5e4320`); `None` before one.
+    /// The server's unix seconds now, fractional: the local clock offset by the last time response (`0x5dff40`), which the timer verbs subtract (`0x5e4320`); `None` before one.
     fn server_unix_time(&self) -> Option<f64> {
         None
     }
 
-    /// The daily quest reset in server unix seconds as the last time response placed it
-    /// (`0x5dff40`), which `GetQuestResetTime` counts down to (`0x5e6de0`); `None` before one.
+    /// The daily quest reset in server unix seconds as the last time response placed it (`0x5dff40`), which `GetQuestResetTime` counts down to (`0x5e6de0`); `None` before one.
     fn quest_reset_unix(&self) -> Option<f64> {
         None
     }
 
-    /// `GetQuestResetTime`'s first step (`0x5e6dee`-`0x5e6e00`): with the time response's re-ask
-    /// due, the log's rebuild runs, its tail asking the time again (`0x5e6d79`); its rows to write,
-    /// `None` when not due, the rebuild skipped or no view lends it.
+    /// `GetQuestResetTime`'s first step (`0x5e6dee`-`0x5e6e00`): with the time response's re-ask due, the log's rebuild runs, its tail asking the time again (`0x5e6d79`); its rows to write, `None` when not due, the rebuild skipped or no view lends it.
     fn rebuild_quest_log_if_reask_due(&self) -> Option<super::QuestLogPlan> {
         None
     }
@@ -434,8 +414,7 @@ pub(crate) fn has_control() -> bool {
     read_live(|l| l.has_control()).unwrap_or(true)
 }
 
-/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the
-/// frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
+/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
 pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
     if read_live(|l| l.unique_signal(event)) != Some(true) {
         model.pending_events.push((event.to_string(), Vec::new()));

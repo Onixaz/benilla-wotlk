@@ -1,6 +1,4 @@
-//! The quest log's app side: the template cache, the row table the rebuild writes into the VM
-//! ([`rows`]) and the per-row answers the verbs compute at the call. The progress lines and
-//! `QUEST_WATCH_UPDATE` come from the packets ([`progress`]). Abandons and shares drain from here.
+//! The quest log's app side: the template cache, the row table the rebuild writes into the VM ([`rows`]) and the per-row answers the verbs compute at the call. The progress lines and `QUEST_WATCH_UPDATE` come from the packets ([`progress`]). Abandons and shares drain from here.
 
 mod progress;
 pub(crate) mod rows;
@@ -30,8 +28,7 @@ use rows::QuestAsk;
 /// Marks a GameObject objective's entry on the wire (vmangos `Quest.cpp:512-516`).
 const GO_OBJECTIVE_BIT: u32 = 0x8000_0000;
 
-/// The template cache, asked once per quest id. Only handlers and the cache's own systems write
-/// it, so the live view lends it to every verb.
+/// The template cache, asked once per quest id. Only handlers and the cache's own systems write it, so the live view lends it to every verb.
 #[derive(Resource, Default)]
 pub(crate) struct QuestLog {
     templates: QueryCache<u32, QuestTemplate>,
@@ -46,9 +43,7 @@ pub(crate) struct QuestLogMarks {
     notices: Vec<progress::QuestNotice>,
 }
 
-/// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client
-/// (`0x5e57e0`), until they leave the log. Behind a lock, so `GetQuestTimers` marks them inside
-/// its call (`0x5e634a`) through the lent view.
+/// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client (`0x5e57e0`), until they leave the log. Behind a lock, so `GetQuestTimers` marks them inside its call (`0x5e634a`) through the lent view.
 #[derive(Resource, Default)]
 pub(crate) struct QuestExpiries {
     expired: std::sync::Mutex<HashSet<u32>>,
@@ -100,10 +95,7 @@ impl QuestExpiries {
         self.waiting().clear();
     }
 
-    /// `GetQuestTimers`' expiry of a run-out timer, inside the call: the mark (`0x5e634a`), every
-    /// questgiver's status asked again (`0x5e582a`), and the quest's title for `ERR_QUEST_FAILED_S`
-    /// when its template is cached; a miss asks it with a callback that shows the line on the
-    /// answer (`0x5e635c`, `0x5de980`). `None` when the quest was already marked.
+    /// `GetQuestTimers`' expiry of a run-out timer, inside the call: the mark (`0x5e634a`), every questgiver's status asked again (`0x5e582a`), and the quest's title for `ERR_QUEST_FAILED_S` when its template is cached; a miss asks it with a callback that shows the line on the answer (`0x5e635c`, `0x5de980`). `None` when the quest was already marked.
     pub(crate) fn expire_in_call(
         &self,
         quest_id: u32,
@@ -197,8 +189,7 @@ mod net {
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    /// A creature, GameObject or item record a quest verb asked for landed: `QUEST_LOG_UPDATE`
-    /// waits as a unique signal (`0x5de9fa`, `0x5dea2a`, `0x5dea49`).
+    /// A creature, GameObject or item record a quest verb asked for landed: `QUEST_LOG_UPDATE` waits as a unique signal (`0x5de9fa`, `0x5dea2a`, `0x5dea49`).
     fn on_record(In(ev): In<SessionEvent>, asks: Res<QuestAsks>, signals: Res<UniqueSignals>) {
         let ask = match ev {
             SessionEvent::CreatureName {
@@ -218,8 +209,7 @@ mod net {
         }
     }
 
-    /// `SMSG_QUERY_TIME_RESPONSE` sets the log's clock (`0x5dff40`), then queues `QUEST_LOG_UPDATE`
-    /// (`0x5dff89`) in turn with the frame's other unique signals.
+    /// `SMSG_QUERY_TIME_RESPONSE` sets the log's clock (`0x5dff40`), then queues `QUEST_LOG_UPDATE` (`0x5dff89`) in turn with the frame's other unique signals.
     fn on_server_time(
         In(ev): In<SessionEvent>,
         signals: Res<crate::ui_script::live::UniqueSignals>,
@@ -229,8 +219,7 @@ mod net {
         }
     }
 
-    /// The answer lands in the cache, then its callbacks run: an expiry line that waited on it
-    /// (`0x5de980`), a verb's ask, a pending accept and the rebuild's counter ([`super::rows::template_landed`]).
+    /// The answer lands in the cache, then its callbacks run: an expiry line that waited on it (`0x5de980`), a verb's ask, a pending accept and the rebuild's counter ([`super::rows::template_landed`]).
     fn on_template(
         In(ev): In<SessionEvent>,
         mut quest_log: ResMut<QuestLog>,
@@ -242,6 +231,7 @@ mod net {
             let (id, title) = (t.quest_id, t.title.clone());
             quest_template(t, &mut quest_log);
             super::rows::template_landed(id, &mut marks, &rebuild, &asks, &signals, &mut ui);
+            ui.world(move |world| crate::ui_quest::lines::quest_landed(world, id));
             if expiries.take_waiting(id) {
                 crate::ui_action::show_in_turn(
                     &mut ui,
@@ -1501,7 +1491,7 @@ mod tests {
             .init_resource::<crate::world_state::WorldStates>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_quest::QuestLines>()
+            .init_resource::<crate::ui_quest::lines::TurnIns>()
             .init_resource::<crate::ui_script::live::UniqueSignals>();
         let mut log = QuestLog::default();
         let mut pairs = Vec::new();
@@ -1584,7 +1574,6 @@ mod tests {
     /// Idle feeds leave the caches others are gated on unmarked.
     #[test]
     fn idle_feeds_leave_the_shared_caches_unwritten() {
-        use crate::ui_quest::QuestLines;
         use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1;
 
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -1597,7 +1586,7 @@ mod tests {
             .init_resource::<crate::world_state::WorldStates>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<QuestLines>()
+            .init_resource::<crate::ui_quest::lines::TurnIns>()
             .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
@@ -1947,7 +1936,7 @@ mod tests {
             .init_resource::<crate::world_state::WorldStates>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_quest::QuestLines>()
+            .init_resource::<crate::ui_quest::lines::TurnIns>()
             .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<crate::net::ServerWallClock>();
         let mut log = QuestLog::default();

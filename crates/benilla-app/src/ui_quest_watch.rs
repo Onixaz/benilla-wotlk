@@ -1,7 +1,5 @@
 //! The objective tracker's feeds: the quest POI wire (`CMSG_QUEST_POI_QUERY` for the quests the VM
-//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store from the handler), and the live
-//! reads of each quest's special item (`0x5e0da0`), found in the bags with its charges and range
-//! at call time.
+//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store from the handler), and the live reads of each quest's special item (`0x5e0da0`), found in the bags with its charges and range at call time.
 
 use bevy::prelude::*;
 
@@ -31,8 +29,7 @@ impl Plugin for UiQuestWatchPlugin {
     }
 }
 
-/// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): the store takes each quest in turn with the
-/// handler's events, and `QUEST_POI_UPDATE` waits as a unique signal (`0x5e7628`).
+/// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): the store takes each quest in turn with the handler's events, and `QUEST_POI_UPDATE` waits as a unique signal (`0x5e7628`).
 fn on_quest_poi(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, signals: Res<UniqueSignals>) {
     if let SessionEvent::QuestPoi(pois) = ev {
         debug!("ui_quest_watch: POI for {} quest(s)", pois.len());
@@ -104,10 +101,7 @@ fn poi_line(
     }
 }
 
-/// One logged quest's POI lines at the call (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`): the objectives by
-/// entry with their raw counters (`0x5e2370`), the items by id with the bag count capped
-/// (`0x5e2630`), the drops, and the header zone's top area; `None` for a quest not logged or not
-/// cached.
+/// One logged quest's POI lines at the call (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`): the objectives by entry with their raw counters (`0x5e2370`), the items by id with the bag count capped (`0x5e2630`), the drops, and the header zone's top area; `None` for a quest not logged or not cached.
 fn poi_lines(
     v: &QuestView<'_, '_>,
     quest_id: u32,
@@ -255,8 +249,7 @@ fn drain_quest_poi_queries(
     }
 }
 
-/// What the special-item verbs read at call time: the quest's template, our bags and the item
-/// instances.
+/// What the special-item verbs read at call time: the quest's template, our bags and the item instances.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct QuestView<'w, 's> {
     quest_log: Option<Res<'w, QuestLog>>,
@@ -292,11 +285,7 @@ impl QuestView<'_, '_> {
         poi_lines(self, quest_id, get)
     }
 
-    /// The quest's special item (`0x5e0da0`): the template's starting item, else under flag
-    /// `0x20000` its drop items in order (`0x5e0df9`), the first carried copy that can be used
-    /// (`0x708c10`), with the bag slot it sits in, its charges and its on-use spell.
-    /// A template or item record not cached is asked here, as the reference's cache lookup with a
-    /// callback asks it (`0x5e0da0`), and reads as no item until it lands.
+    /// The quest's special item (`0x5e0da0`): the template's starting item, else under flag `0x20000` its drop items in order (`0x5e0df9`), the first carried copy that can be used (`0x708c10`), with the bag slot it sits in, its charges and its on-use spell. A template or item record not cached is asked here, as the reference's cache lookup with a callback asks it (`0x5e0da0`), and reads as no item until it lands.
     pub(crate) fn quest_special_item(&self, quest_id: u32) -> Option<QuestSpecialItemView> {
         let (quest_log, objects, items, net) = (
             self.quest_log.as_deref()?,
@@ -341,8 +330,7 @@ impl QuestView<'_, '_> {
     }
 }
 
-/// What the special item's range verb reads at the call (`0x5e54c0`): the spell, our modifiers and
-/// the range facts of us and the unit, none of them sampled.
+/// What the special item's range verb reads at the call (`0x5e54c0`): the spell, our modifiers and the range facts of us and the unit, none of them sampled.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ItemRangeLive<'w, 's> {
     spells: Option<Res<'w, crate::ui_action::Spells>>,
@@ -351,8 +339,7 @@ pub(crate) struct ItemRangeLive<'w, 's> {
 }
 
 impl ItemRangeLive<'_, '_> {
-    /// The item's spell through the range check toward `target` (`0x5e55b6`), `None` with no
-    /// answer.
+    /// The item's spell through the range check toward `target` (`0x5e55b6`), `None` with no answer.
     pub(crate) fn in_range(&self, spell_id: u32, target: u64) -> Option<bool> {
         let spells = self.spells.as_deref()?;
         let def = spells.catalog.get(spell_id)?;
@@ -382,8 +369,7 @@ mod tests {
         ]))
     }
 
-    /// Us at the origin and a living unit `yards` away, and an item spell that takes any unit at
-    /// 0-20 yd.
+    /// Us at the origin and a living unit `yards` away, and an item spell that takes any unit at 0-20 yd.
     fn world(yards: f32) -> (World, Entity) {
         let mut world = World::new();
         let mut spells = crate::ui_action::Spells::empty_for_tests();
@@ -428,9 +414,7 @@ mod tests {
             .expect("the range view runs")
     }
 
-    /// The special item's range (`0x5e55b6` -> `0x809610`) reads where the unit stands at each
-    /// call: a move between two calls in one frame answers the new place, and a guid no unit
-    /// holds answers nil.
+    /// The special item's range (`0x5e55b6` -> `0x809610`) reads where the unit stands at each call: a move between two calls in one frame answers the new place, and a guid no unit holds answers nil.
     #[test]
     fn the_item_range_reads_the_unit_where_it_stands_at_each_call() {
         let (mut world, mob) = world(10.0);
@@ -446,8 +430,7 @@ mod tests {
         assert_eq!(in_range(&mut world, 0x99), None, "nobody holds the guid");
     }
 
-    /// Us with quest 33 in slot 0 at `kills` of 8 wolves, its template cached, the wolf's name
-    /// `wolf` when known.
+    /// Us with quest 33 in slot 0 at `kills` of 8 wolves, its template cached, the wolf's name `wolf` when known.
     fn poi_world(kills: u16, wolf: Option<&str>) -> World {
         use benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1;
         let mut world = World::new();
@@ -501,9 +484,7 @@ mod tests {
             .expect("the quest view runs")
     }
 
-    /// The POI leaderboard builds at the call (`0x5e58c0`) from the slot's counter and the name
-    /// cache as they stand: a counter moved between two calls reads the new count, a name in flight
-    /// the placeholder, and a quest not logged no lines.
+    /// The POI leaderboard builds at the call (`0x5e58c0`) from the slot's counter and the name cache as they stand: a counter moved between two calls reads the new count, a name in flight the placeholder, and a quest not logged no lines.
     #[test]
     fn the_poi_lines_read_the_slot_and_the_names_at_each_call() {
         let mut world = poi_world(3, None);

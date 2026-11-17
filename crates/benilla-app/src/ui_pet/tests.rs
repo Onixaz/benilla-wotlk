@@ -1124,8 +1124,7 @@ fn a_moved_summon_field_fires_unit_pet_with_the_bar_unchanged() {
     assert_eq!(events(&mut app), 2, "a quiet frame fires nothing");
 }
 
-/// A moved `UNIT_FIELD_PET_NAME_TIMESTAMP` evicts the pet's cached name through the command queue,
-/// as no system holding the VM writes the name cache, and the next resolve asks it again (#1304).
+/// A moved `UNIT_FIELD_PET_NAME_TIMESTAMP` evicts the pet's cached name through the command queue, as no system holding the VM writes the name cache, and the next resolve asks it again (#1304).
 #[test]
 fn a_renamed_pets_name_is_asked_again() {
     use benilla_protocol::field::{FIELD_UNIT_PETNUMBER, FIELD_UNIT_PET_NAME_TIMESTAMP};

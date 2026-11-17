@@ -60,8 +60,7 @@ impl WorldStates {
         self.phase_mask
     }
 
-    /// `SMSG_SET_PHASE_SHIFT`'s setter (`0x513960`): true when the mask moved, which rebuilds the
-    /// world-state UI and fires `UPDATE_WORLD_STATES` (`0x51397f`); the same mask again does nothing.
+    /// `SMSG_SET_PHASE_SHIFT`'s setter (`0x513960`): true when the mask moved, which rebuilds the world-state UI and fires `UPDATE_WORLD_STATES` (`0x51397f`); the same mask again does nothing.
     pub(crate) fn set_phase_mask(&mut self, mask: u32) -> bool {
         let moved = mask != self.phase_mask;
         if moved {
@@ -85,9 +84,7 @@ impl WorldStates {
 
     /// Writes `(id, value)` pairs, the reference's setter for both opcodes. Init's trailing
     /// `(0, 0)` is written as data; a zero value is stored, not deleted (`edx` is never tested); a
-    /// repeated key overwrites in place. `moved` when any value moved (`0x549440` returns 1 only
-    /// then; a new key starts at 0); `seasons` counts the arena season's moves, each of which the
-    /// setter signals as it writes (`0x5494db`).
+    /// repeated key overwrites in place. `moved` when any value moved (`0x549440` returns 1 only then; a new key starts at 0); `seasons` counts the arena season's moves, each of which the setter signals as it writes (`0x5494db`).
     pub(crate) fn write(&mut self, states: &[(u32, u32)]) -> Written {
         let mut written = Written::default();
         for &(key, value) in states {

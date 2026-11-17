@@ -61,8 +61,7 @@ pub(super) fn emote_target(
     guid.filter(|&guid| Some(guid) != me).unwrap_or(0)
 }
 
-/// `/partytest raid`'s writes, applied off the VM's systems so the lent view reads the group and
-/// the name cache: the 25 synthetic rows, each member's name record, and the roster lines.
+/// `/partytest raid`'s writes, applied off the VM's systems so the lent view reads the group and the name cache: the 25 synthetic rows, each member's name record, and the roster lines.
 fn party_test_raid(world: &mut World, me: Option<u64>) {
     world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
         let lines = crate::ui_party::synthetic_raid(
@@ -1430,8 +1429,7 @@ pub(super) fn drain_addon_message_sends(
 mod party_test_raid_tests {
     use super::*;
 
-    /// The queued `/partytest raid` seats every synthetic member with its name record, which the
-    /// raid rows read from the name cache (#1304).
+    /// The queued `/partytest raid` seats every synthetic member with its name record, which the raid rows read from the name cache (#1304).
     #[test]
     fn the_party_test_raid_rows_carry_their_names() {
         let mut world = World::new();

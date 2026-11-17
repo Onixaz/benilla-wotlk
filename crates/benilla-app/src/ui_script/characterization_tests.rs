@@ -808,9 +808,7 @@ fn quest_accept_and_complete() {
         ],
         3,
     );
-    // The slot watcher rebuilds the rows (`0x6df3bb`) and fires `QUEST_ACCEPTED` for a cached
-    // template at once (`0x6df49c`); the rebuild's `QUEST_LOG_UPDATE` waits for the frame's flush
-    // (`0x5e6cb9`, `0x614760`).
+    // The slot watcher rebuilds the rows (`0x6df3bb`) and fires `QUEST_ACCEPTED` for a cached template at once (`0x6df49c`); the rebuild's `QUEST_LOG_UPDATE` waits for the frame's flush (`0x5e6cb9`, `0x614760`).
     assert_eq!(
         pin(&accept, events, verbs),
         vec![
@@ -1086,9 +1084,7 @@ fn quest_accept_shows_the_special_item_with_the_log_update() {
     assert_eq!(first.verbs["special"], "true");
 }
 
-/// The accept's `QUEST_ACCEPTED` (`0x6df49c`) and the flushed `QUEST_LOG_UPDATE` after it
-/// (`0x614760`) both read the special item: the verb reads the quest and the bags when called
-/// (`0x5e0da0`), as do the calls after the frames.
+/// The accept's `QUEST_ACCEPTED` (`0x6df49c`) and the flushed `QUEST_LOG_UPDATE` after it (`0x614760`) both read the special item: the verb reads the quest and the bags when called (`0x5e0da0`), as do the calls after the frames.
 #[test]
 fn quest_accept_with_a_carried_source_item() {
     let Some((mut rig, accept)) = accept_with_the_source_item() else {
@@ -1108,9 +1104,7 @@ fn quest_accept_with_a_carried_source_item() {
     assert_eq!(rig.live_now().verbs["special"], "true");
 }
 
-/// Two POI responses in one frame: each handler writes the store in turn (`0x5e7370`) and queues
-/// `QUEST_POI_UPDATE` as a unique signal (`0x5e7628`), which fires once, at the frame's flush
-/// (`0x614760`), never per response.
+/// Two POI responses in one frame: each handler writes the store in turn (`0x5e7370`) and queues `QUEST_POI_UPDATE` as a unique signal (`0x5e7628`), which fires once, at the frame's flush (`0x614760`), never per response.
 #[test]
 fn two_poi_responses_in_one_frame_fire_one_poi_update() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1157,8 +1151,7 @@ fn charz_poi_seen(
     }
 }
 
-/// The POI response writes its store from the handler (`0x5e7370`), so the next packet's handler
-/// in the same frame already finds it; nothing waits for a per-frame pass.
+/// The POI response writes its store from the handler (`0x5e7370`), so the next packet's handler in the same frame already finds it; nothing waits for a per-frame pass.
 #[test]
 fn the_next_packets_handler_finds_the_poi_response_stored() {
     use crate::net::handlers::NetHandlerApp;
@@ -1176,8 +1169,7 @@ fn the_next_packets_handler_finds_the_poi_response_stored() {
     assert_eq!(*seen.0.lock().unwrap(), vec![false, true]);
 }
 
-/// `QUEST_POI_UPDATE` (`0x5e7628`) and the time response's `QUEST_LOG_UPDATE` (`0x5dff89`) are
-/// queued by their handlers and flushed in queue order (`0x614760`): wire order, either way round.
+/// `QUEST_POI_UPDATE` (`0x5e7628`) and the time response's `QUEST_LOG_UPDATE` (`0x5dff89`) are queued by their handlers and flushed in queue order (`0x614760`): wire order, either way round.
 #[test]
 fn the_poi_and_time_responses_signal_in_wire_order() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1196,9 +1188,7 @@ fn the_poi_and_time_responses_signal_in_wire_order() {
     );
 }
 
-/// The quest-slot watch rebuilds the log (`0x6df3bb`), queueing `QUEST_LOG_UPDATE` (`0x5e6cb9`)
-/// from the update handler, so it keeps wire order with a POI response's `QUEST_POI_UPDATE`
-/// (`0x5e7628`) at the flush (`0x614760`).
+/// The quest-slot watch rebuilds the log (`0x6df3bb`), queueing `QUEST_LOG_UPDATE` (`0x5e6cb9`) from the update handler, so it keeps wire order with a POI response's `QUEST_POI_UPDATE` (`0x5e7628`) at the flush (`0x614760`).
 #[test]
 fn the_slot_watch_and_the_poi_response_signal_in_wire_order() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1230,8 +1220,7 @@ fn the_slot_watch_and_the_poi_response_signal_in_wire_order() {
     );
 }
 
-/// The time response sets the offset and the reset (`0x5dff40`) and queues `QUEST_LOG_UPDATE`
-/// (`0x5dff89`); `GetQuestResetTime` reads them when called (`0x5e6de0`), 0 before any response.
+/// The time response sets the offset and the reset (`0x5dff40`) and queues `QUEST_LOG_UPDATE` (`0x5dff89`); `GetQuestResetTime` reads them when called (`0x5e6de0`), 0 before any response.
 #[test]
 fn the_time_response_updates_the_log_with_the_reset_already_read() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1330,8 +1319,7 @@ const PROGRESS_EVENTS: &[&str] = &[
     "UI_INFO_MESSAGE",
 ];
 
-/// A kill's progress, the counter word and the add-kill line in either wire order: what fires
-/// and what the leaderboard reads at each event, pinned ahead of the progress move (#1276).
+/// A kill's progress, the counter word and the add-kill line in either wire order: what fires and what the leaderboard reads at each event, pinned ahead of the progress move (#1276).
 #[test]
 fn quest_progress_in_both_packet_orders() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1371,8 +1359,7 @@ fn quest_progress_in_both_packet_orders() {
         ),
         (
             vec![
-                // The counter word fires the log window's watch (`0x60c280`); the add-kill handler's
-                // line and watch event (`0x6d82e9`, `0x6d8241`) read the slot at the call (`0x5e1460`).
+                // The counter word fires the log window's watch (`0x60c280`); the add-kill handler's line and watch event (`0x6d82e9`, `0x6d8241`) read the slot at the call (`0x5e1460`).
                 "UNIT_QUEST_LOG_CHANGED player | lb=Wolf slain: 1/5 lbdone=nil",
                 "UI_INFO_MESSAGE Wolf slain: 1/5 | lb=Wolf slain: 1/5 lbdone=nil",
                 "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 1/5 lbdone=nil",
@@ -1404,9 +1391,7 @@ const DIALOG_EVENTS: &[&str] = &[
     "QUEST_ACCEPT_CONFIRM",
 ];
 
-/// The quest dialogs as their packets arrive one frame apart and two in one frame, and the escort
-/// confirm: what fires and what the dialog verbs read at each event, pinned ahead of the dialog
-/// move (#1276).
+/// The quest dialogs as their packets arrive one frame apart and two in one frame, and the escort confirm: what fires and what the dialog verbs read at each event, pinned ahead of the dialog move (#1276).
 #[test]
 fn quest_dialogs_and_the_escort_confirm() {
     use benilla_protocol::messages::{
@@ -1502,8 +1487,7 @@ fn quest_dialogs_and_the_escort_confirm() {
                 "QUEST_FINISHED | qtitle= qdone=nil",
             ]),
             lines(&[]),
-            // The per-frame feed shows the frame's last dialog alone: 12340's handlers fire
-            // `QUEST_DETAIL` (`0x58dfb5`) and then `QUEST_PROGRESS` (`0x58bb4c`), each in its turn.
+            // The per-frame feed shows the frame's last dialog alone: 12340's handlers fire `QUEST_DETAIL` (`0x58dfb5`) and then `QUEST_PROGRESS` (`0x58bb4c`), each in its turn.
             lines(&[
                 "QUEST_PROGRESS | qtitle=Charz qdone=1",
                 "QUEST_FINISHED | qtitle= qdone=nil",
@@ -1513,9 +1497,7 @@ fn quest_dialogs_and_the_escort_confirm() {
     );
 }
 
-/// A dialog and a quest-slot update in one frame, in either wire order: the dialog's event fires
-/// before the frame's `QUEST_LOG_UPDATE`, which waits for the idle tail after every handler
-/// (`0x52b247` -> `0x614760`).
+/// A dialog and a quest-slot update in one frame, in either wire order: the dialog's event fires before the frame's `QUEST_LOG_UPDATE`, which waits for the idle tail after every handler (`0x52b247` -> `0x614760`).
 #[test]
 fn a_dialog_and_a_slot_update_in_one_frame_fire_the_log_update_last() {
     use benilla_protocol::messages::QuestDetails;
@@ -1553,8 +1535,7 @@ fn a_dialog_and_a_slot_update_in_one_frame_fire_the_log_update_last() {
     );
 }
 
-/// The events the progress, completed-quest and escort handlers fire, beside the control
-/// handler's, in one frame.
+/// The events the progress, completed-quest and escort handlers fire, beside the control handler's, in one frame.
 const TURN_EVENTS: &[&str] = &[
     "UI_INFO_MESSAGE",
     "QUEST_WATCH_UPDATE",
@@ -1564,9 +1545,7 @@ const TURN_EVENTS: &[&str] = &[
     "PLAYER_CONTROL_GAINED",
 ];
 
-/// The add-kill line and `QUEST_WATCH_UPDATE` (`0x6d82e9`, `0x6d8241`), `QUEST_QUERY_COMPLETE`
-/// (`0x5b5270`) and `QUEST_ACCEPT_CONFIRM` (`0x58bc50`) fire in their packet's turn: ahead of a
-/// later packet's handler event in the same frame, behind an earlier one's.
+/// The add-kill line and `QUEST_WATCH_UPDATE` (`0x6d82e9`, `0x6d8241`), `QUEST_QUERY_COMPLETE` (`0x5b5270`) and `QUEST_ACCEPT_CONFIRM` (`0x58bc50`) fire in their packet's turn: ahead of a later packet's handler event in the same frame, behind an earlier one's.
 #[test]
 fn progress_completed_and_confirm_fire_in_their_packets_turn() {
     use benilla_protocol::messages::QuestConfirmAccept;
@@ -1643,9 +1622,7 @@ fn progress_completed_and_confirm_fire_in_their_packets_turn() {
     );
 }
 
-/// The escort confirm and the push verdict read the member's name with no callback (`0x58bc85`,
-/// `0x6e3a61`): a name not cached drops them, and its answer later in the frame raises nothing;
-/// a cached name shows the verdict's line.
+/// The escort confirm and the push verdict read the member's name with no callback (`0x58bc85`, `0x6e3a61`): a name not cached drops them, and its answer later in the frame raises nothing; a cached name shows the verdict's line.
 #[test]
 fn an_unnamed_member_drops_the_confirm_and_the_verdict() {
     use benilla_protocol::messages::{QuestConfirmAccept, QuestShareMsg};
@@ -2113,10 +2090,7 @@ fn duel_and_battlefield_events_fire_in_wire_order() {
     );
 }
 
-/// The world-state handler fires `ARENA_SEASON_WORLD_STATE` from the setter (`0x5494db`), refreshes
-/// the map (`0x5269c5`) and fires `UPDATE_WORLD_STATES` (`0x5269d1`, `0x526a17`) before the next
-/// packet's handler runs, and a moved phase fires it too (`0x51397f`); the readout reads the values
-/// each handler just wrote.
+/// The world-state handler fires `ARENA_SEASON_WORLD_STATE` from the setter (`0x5494db`), refreshes the map (`0x5269c5`) and fires `UPDATE_WORLD_STATES` (`0x5269d1`, `0x526a17`) before the next packet's handler runs, and a moved phase fires it too (`0x51397f`); the readout reads the values each handler just wrote.
 #[test]
 fn world_state_events_fire_from_their_handlers_in_wire_order() {
     let Some(mut rig) = Rig::login(&[]) else {

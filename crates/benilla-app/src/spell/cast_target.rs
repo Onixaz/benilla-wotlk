@@ -1135,8 +1135,7 @@ mod tests {
     }
 }
 
-/// A unit's range facts from its relations to us, its store, and its reach and position: the one
-/// builder the cast's and the quest item's range checks share.
+/// A unit's range facts from its relations to us, its store, and its reach and position: the one builder the cast's and the quest item's range checks share.
 fn range_facts_of(
     rel: &TargetRelations<'_>,
     store: &ObjectStore,
@@ -1177,8 +1176,7 @@ pub(crate) struct RangeFactsView<'w, 's> {
 }
 
 impl RangeFactsView<'_, '_> {
-    /// The unit `guid` as the range check reads it now, as [`CastTargeting::range_facts`] builds
-    /// it; `None` before it streams.
+    /// The unit `guid` as the range check reads it now, as [`CastTargeting::range_facts`] builds it; `None` before it streams.
     fn facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
         let entity = *self.index.as_deref()?.0.get(&guid)?;
         let store = self.stores.get(entity).ok()?;
@@ -1211,8 +1209,7 @@ impl RangeFactsView<'_, '_> {
         Some(range_facts_of(&rel, store, at, is_self))
     }
 
-    /// The range check of `def` from our player toward `target` at the call (`0x809610`), as the
-    /// item range verbs run it.
+    /// The range check of `def` from our player toward `target` at the call (`0x809610`), as the item range verbs run it.
     pub(crate) fn player_range_check(
         &self,
         def: &SpellDisplay,

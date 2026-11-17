@@ -1,7 +1,4 @@
-//! The quest tooltip's reads at the call: a `quest:` link names any quest, in the log or not, so its
-//! record comes off the template cache, and the leaderboard's lines take their no-progress keys
-//! (`0x5e1460` with no log entry, as `0x622960` calls it). Each record the build missed builds the
-//! tooltip again when its answer lands (`0x61de20`).
+//! The quest tooltip's reads at the call: a `quest:` link names any quest, in the log or not, so its record comes off the template cache, and the leaderboard's lines take their no-progress keys (`0x5e1460` with no log entry, as `0x622960` calls it). Each record the build missed builds the tooltip again when its answer lands (`0x61de20`).
 
 use benilla_protocol::messages::QuestTemplate;
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -41,8 +38,7 @@ struct Names<'a> {
     commands: &'a NetCommands,
 }
 
-/// The no-progress leaderboard's lines, and the records still in flight, each read as the
-/// placeholder. An id the server does not know reads as the reference's blank.
+/// The no-progress leaderboard's lines, and the records still in flight, each read as the placeholder. An id the server does not know reads as the reference's blank.
 fn requirement_lines(
     t: &QuestTemplate,
     n: &Names<'_>,
@@ -187,9 +183,7 @@ impl QuestTooltipLive<'_, '_> {
     }
 }
 
-/// Each record answer runs the quest tooltips' callbacks for it once the cache holds it
-/// (`0x61de20`): registered after the caches' own handlers, a found record builds every tooltip
-/// whose build missed it.
+/// Each record answer runs the quest tooltips' callbacks for it once the cache holds it (`0x61de20`): registered after the caches' own handlers, a found record builds every tooltip whose build missed it.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::QuestTemplate, on_record)
@@ -264,8 +258,7 @@ mod tests {
         assert!(rep_lines(8).is_empty());
     }
 
-    /// A minimal app with the record handlers, the caches holding quest 176 (Hogger, creature
-    /// 448 in flight), and a VM with a quest tooltip `T`.
+    /// A minimal app with the record handlers, the caches holding quest 176 (Hogger, creature 448 in flight), and a VM with a quest tooltip `T`.
     fn tooltip_app() -> App {
         let mut app = App::new();
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -329,9 +322,7 @@ mod tests {
         }
     }
 
-    /// `SetHyperlink` reads the caches at the call (`0x622960`): the name in flight shows as the
-    /// placeholder and is asked; its answer builds the tooltip again with the name (`0x61de20`),
-    /// and another creature's answer builds nothing.
+    /// `SetHyperlink` reads the caches at the call (`0x622960`): the name in flight shows as the placeholder and is asked; its answer builds the tooltip again with the name (`0x61de20`), and another creature's answer builds nothing.
     #[test]
     fn the_tooltip_reads_the_caches_at_the_call_and_a_name_answer_rebuilds_it() {
         use crate::net::handlers::dispatch;

@@ -252,10 +252,7 @@ impl LiveState for LiveView<'_, '_> {
         self.quest.expire_quest(quest_id)
     }
 
-    /// The last time response advanced on our monotonic clock, where the reference adds the
-    /// local clock to its offset (`0x5dff40`). Deviation: a local clock step mid-session (an NTP
-    /// correction) moves the reference's countdowns and not ours, as the step changes no time the
-    /// server counts.
+    /// The last time response advanced on our monotonic clock, where the reference adds the local clock to its offset (`0x5dff40`). Deviation: a local clock step mid-session (an NTP correction) moves the reference's countdowns and not ours, as the step changes no time the server counts.
     fn server_unix_time(&self) -> Option<f64> {
         self.clock.as_ref()?.now_unix()
     }
@@ -684,10 +681,7 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
     });
 }
 
-/// The unique signals queued this frame: each event once, however often it is queued
-/// (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` ->
-/// `0x614760`). Behind a lock so the lent view queues the verbs' signals into the same queue the
-/// handlers fill.
+/// The unique signals queued this frame: each event once, however often it is queued (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` -> `0x614760`). Behind a lock so the lent view queues the verbs' signals into the same queue the handlers fill.
 #[derive(Resource, Default)]
 pub(crate) struct UniqueSignals(std::sync::Mutex<Vec<&'static str>>);
 
@@ -718,9 +712,7 @@ impl UniqueSignals {
     }
 }
 
-/// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique
-/// signals fire in queue order without arguments (`0x52b247` -> `0x614760`), after the feeds that
-/// queue them; with no VM they are dropped.
+/// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique signals fire in queue order without arguments (`0x52b247` -> `0x614760`), after the feeds that queue them; with no VM they are dropped.
 pub(crate) fn flush_unique_signals(
     (script, _live): (Option<NonSendMut<UiScript>>, LendLive),
     signals: Res<UniqueSignals>,
@@ -730,9 +722,7 @@ pub(crate) fn flush_unique_signals(
         return;
     };
     script.update_quest_watch_timers();
-    // The count taken at entry, its entries still queued while they fire, so a re-queue matches
-    // one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers
-    // queued (`0x6147a3`).
+    // The count taken at entry, its entries still queued while they fire, so a re-queue matches one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers queued (`0x6147a3`).
     let events = signals.queue().clone();
     for event in events {
         script.fire_event(event, Vec::new());

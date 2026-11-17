@@ -314,8 +314,7 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
     );
 }
 
-/// A unique signal waits once however often it is queued (`0x6143f0`), in its first queueing's
-/// place, and the flush fires the queue in that order and empties it (`0x614760`).
+/// A unique signal waits once however often it is queued (`0x6143f0`), in its first queueing's place, and the flush fires the queue in that order and empties it (`0x614760`).
 #[test]
 fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
     use super::live::{flush_unique_signals, UniqueSignals};
@@ -347,9 +346,7 @@ fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
     assert_eq!(seen, "QUEST_POI_UPDATE0 QUEST_LOG_UPDATE0");
 }
 
-/// A signal queued while the flush fires matches the entry in flight (`0x6143f0`) or is dropped
-/// when the count is zeroed (`0x6147a3`): a `QUEST_LOG_UPDATE` handler that folds a header fires
-/// its event once, and nothing waits for the next frame.
+/// A signal queued while the flush fires matches the entry in flight (`0x6143f0`) or is dropped when the count is zeroed (`0x6147a3`): a `QUEST_LOG_UPDATE` handler that folds a header fires its event once, and nothing waits for the next frame.
 #[test]
 fn a_signal_queued_during_the_flush_is_dropped() {
     use super::live::{flush_unique_signals, UniqueSignals};
@@ -383,9 +380,7 @@ fn a_signal_queued_during_the_flush_is_dropped() {
     assert_eq!(seen(&app), "", "nothing fires the next frame");
 }
 
-/// A verb's unique signal joins the handlers' queue through the lent view, so the frame fires the
-/// log's update once however many sites queue it (`0x5e0c7c`, `0x5e6cb9`, `0x614760`); the game UI's
-/// shutdown at a disconnect empties the queue (`0x52902f`), so nothing fires at the next login.
+/// A verb's unique signal joins the handlers' queue through the lent view, so the frame fires the log's update once however many sites queue it (`0x5e0c7c`, `0x5e6cb9`, `0x614760`); the game UI's shutdown at a disconnect empties the queue (`0x52902f`), so nothing fires at the next login.
 #[test]
 fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
     use super::live::{clear_unique_signals, flush_unique_signals, UniqueSignals};

@@ -112,9 +112,7 @@ fn weather(
 
 /// `SMSG_INIT_WORLD_STATES` and `SMSG_UPDATE_WORLD_STATE` share one setter, as in the reference.
 /// An init first records `(map, zone, area)` as the UI's display filter, then writes its pairs
-/// (`0x526530`). The setter fires `ARENA_SEASON_WORLD_STATE` as the season moves (`0x5494db`); then
-/// an update refreshes the map and fires `UPDATE_WORLD_STATES` whatever it wrote (`0x526a17`), an
-/// init only when its filter or any pair moved (`0x5269bd`, `0x5269d1`).
+/// (`0x526530`). The setter fires `ARENA_SEASON_WORLD_STATE` as the season moves (`0x5494db`); then an update refreshes the map and fires `UPDATE_WORLD_STATES` whatever it wrote (`0x526a17`), an init only when its filter or any pair moved (`0x5269bd`, `0x5269d1`).
 fn world_states(
     scope: Option<(u32, u32, u32)>,
     states: Vec<(u32, u32)>,

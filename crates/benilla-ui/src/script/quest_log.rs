@@ -122,8 +122,7 @@ pub struct QuestLogDetail {
 /// A quest-log reward row is the same shape as a questgiver panel row.
 pub type QuestLogQuestItem = QuestItemView;
 
-/// A log seeded into a VM no app lends rows to (the VM's own tests, the addon harness): the rows
-/// in log order and each quest's answers. The app writes only the row table, [`QuestLogRow`].
+/// A log seeded into a VM no app lends rows to (the VM's own tests, the addon harness): the rows in log order and each quest's answers. The app writes only the row table, [`QuestLogRow`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestLogState {
     /// Every row in log order, the quests folded under a collapsed header last.
@@ -177,8 +176,7 @@ fn global_strings(lua: &Lua) -> impl Fn(&str) -> Option<String> + '_ {
     }
 }
 
-/// A quest's answers computed at the call from its slot and the caches (`0x5e0000`, `0x5e0070`,
-/// `0x5e0d20`, `0x5e0ea0`, `0x5e1460`); a seeded log's where no view lends them.
+/// A quest's answers computed at the call from its slot and the caches (`0x5e0000`, `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`); a seeded log's where no view lends them.
 fn quest_answers(
     quest_id: u32,
     slot: u8,
@@ -306,10 +304,7 @@ pub struct QuestLogPlan {
     pub new_sort_types: Vec<i32>,
 }
 
-/// The rebuild's carry of the collapse filter to its new sort types (`0x5e69a7`-`0x5e6bfc`): a
-/// sort type kept keeps its bit, a new one opens, and bits past the sort types keep their value.
-/// Deviation: the reference keys its old list by signed id, negated when open, so the id-0 header
-/// reads folded after every rebuild; here the old bit is read by position.
+/// The rebuild's carry of the collapse filter to its new sort types (`0x5e69a7`-`0x5e6bfc`): a sort type kept keeps its bit, a new one opens, and bits past the sort types keep their value. Deviation: the reference keys its old list by signed id, negated when open, so the id-0 header reads folded after every rebuild; here the old bit is read by position.
 pub fn carry_collapse_filter(filter: i32, old: &[i32], new: &[i32]) -> i32 {
     let mut out = filter;
     for (i, st) in new.iter().enumerate().take(25) {
@@ -452,16 +447,14 @@ impl super::UiScript {
         apply_plan(&mut self.model_mut(), plan);
     }
 
-    /// Write the rebuilt row table (`0x5e6940`). A watch holds while any quest row, shown or
-    /// folded, carries its id, so a collapse never prunes.
+    /// Write the rebuilt row table (`0x5e6940`). A watch holds while any quest row, shown or folded, carries its id, so a collapse never prunes.
     pub fn set_quest_log_rows(&mut self, rows: Vec<QuestLogRow>) {
         let mut model = self.model_mut();
         model.quest_log = rows;
         super::quest_watch::on_quest_log(&mut model);
     }
 
-    /// Seed a log into a VM no app lends rows to: the row table, and each quest's answers for the
-    /// verbs to read where no view lends them.
+    /// Seed a log into a VM no app lends rows to: the row table, and each quest's answers for the verbs to read where no view lends them.
     pub fn seed_quest_log(&mut self, state: QuestLogState) {
         let rows = state
             .entries
@@ -556,8 +549,7 @@ impl super::UiScript {
     }
 }
 
-/// The server clock in unix seconds, read at call time (`0x5e4320`); `None` with no view lent or
-/// before the first time response.
+/// The server clock in unix seconds, read at call time (`0x5e4320`); `None` with no view lent or before the first time response.
 fn server_now() -> Option<f64> {
     super::read_live(|l| l.server_unix_time()).flatten()
 }
@@ -1113,10 +1105,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // One return per live timer, in log order, re-read every OnUpdate: `QuestTimerFrame_Update`
     // takes them as varargs and hides on none (`QuestTimerFrame.lua:11`, `:26`, `:37`). A timer
-    // run out marks its quest expired unless it is complete, inside the call (`0x5e634a` ->
-    // `0x5e57e0`): it reads failed at once, the questgivers are asked again, its line shows
-    // (`0x5e6385`), and `QUEST_LOG_UPDATE` follows (`0x5e63b0`). Deviation: the line goes out
-    // with the engine verbs' other lines after the tick, not inside the call (#1306).
+    // run out marks its quest expired unless it is complete, inside the call (`0x5e634a` -> `0x5e57e0`): it reads failed at once, the questgivers are asked again, its line shows (`0x5e6385`), and `QUEST_LOG_UPDATE` follows (`0x5e63b0`). Deviation: the line goes out with the engine verbs' other lines after the tick, not inside the call (#1306).
     g.set(
         "GetQuestTimers",
         lua.create_function(|lua, ()| {
@@ -1335,8 +1324,7 @@ mod tests {
     use super::{QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState};
     use crate::script::{QuestItemView, UiScript};
 
-    /// The server clock lent at `now`, with the daily reset at `reset`, until the loan drops; a
-    /// later loan in the same test reads over it.
+    /// The server clock lent at `now`, with the daily reset at `reset`, until the loan drops; a later loan in the same test reads over it.
     fn clock_at(
         now: f64,
         reset: Option<f64>,
@@ -2477,9 +2465,7 @@ mod tests {
         );
     }
 
-    /// A timer run out marks its quest expired in `GetQuestTimers`, inside the call (`0x5e6240` ->
-    /// `0x5e57e0`), unless it is complete; its cached title queues the line, and
-    /// `QUEST_LOG_UPDATE` follows.
+    /// A timer run out marks its quest expired in `GetQuestTimers`, inside the call (`0x5e6240` -> `0x5e57e0`), unless it is complete; its cached title queues the line, and `QUEST_LOG_UPDATE` follows.
     #[test]
     fn a_run_out_timer_marks_its_quest_failed_at_once() {
         let mut s = UiScript::new().unwrap();

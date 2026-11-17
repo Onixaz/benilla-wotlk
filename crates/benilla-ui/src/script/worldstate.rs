@@ -1,5 +1,4 @@
-//! `GetNumWorldStateUI` and `GetWorldStateUIInfo`, behind the always-up PvP readout, over the rows
-//! the live view admits and resolves at the call, as the reference resolves its admitted ids. The info is eleven
+//! `GetNumWorldStateUI` and `GetWorldStateUIInfo`, behind the always-up PvP readout, over the rows the live view admits and resolves at the call, as the reference resolves its admitted ids. The info is eleven
 //! values, `uiType` first (`0x548d40`, `mov eax,0xb` at `0x548f22`).
 
 use mlua::{Lua, MultiValue, Value};

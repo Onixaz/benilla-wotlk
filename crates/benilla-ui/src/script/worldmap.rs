@@ -1016,16 +1016,13 @@ impl super::UiScript {
         }
     }
 
-    /// The world-state handler's map refresh (`0x5269c5`, `0x526a0b`): the setter over the current
-    /// cells rebuilds the landmarks against the live values and signals `WORLD_MAP_UPDATE` before
-    /// it returns (`0x50f490`, `0x546310`).
+    /// The world-state handler's map refresh (`0x5269c5`, `0x526a0b`): the setter over the current cells rebuilds the landmarks against the live values and signals `WORLD_MAP_UPDATE` before it returns (`0x50f490`, `0x546310`).
     pub fn refresh_world_map(&mut self) {
         self.model_mut().worldmap.refresh();
         self.fire_event("WORLD_MAP_UPDATE", Vec::new());
     }
 
-    /// Sets the world-state values the POI gates and icons read where no live view lends them; a
-    /// change refreshes the map.
+    /// Sets the world-state values the POI gates and icons read where no live view lends them; a change refreshes the map.
     pub fn set_world_map_world_states(&mut self, states: HashMap<u32, i32>) {
         let mut model = self.model_mut();
         if model.worldmap.world_states != states {
@@ -1122,8 +1119,7 @@ pub(super) fn set_map_now(lua: &Lua, c: i32, z: i32, d: i32) {
 }
 
 impl WorldMapState {
-    /// A world state's value at the call, 0 for one never seen (`0x548d10`); the set values stand
-    /// in where no live view lends the table.
+    /// A world state's value at the call, 0 for one never seen (`0x548d10`); the set values stand in where no live view lends the table.
     pub(crate) fn world_state(&self, id: u32) -> i32 {
         super::read_live(|l| l.world_state(id))
             .flatten()

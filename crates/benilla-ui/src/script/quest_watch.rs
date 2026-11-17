@@ -28,8 +28,7 @@ pub(crate) struct QuestWatch {
     distance: (i32, f32),
 }
 
-/// The special item behind a quest's tracker button (`0x5e0da0`), as the live view finds it in
-/// the bags at call time: the template's source item, else with flag `0x20000` a drop item, either
+/// The special item behind a quest's tracker button (`0x5e0da0`), as the live view finds it in the bags at call time: the template's source item, else with flag `0x20000` a drop item, either
 /// one with an on-use spell.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestSpecialItemView {
@@ -442,9 +441,7 @@ impl super::UiScript {
         }
     }
 
-    /// The watch-timer update (`0x5dfef0`), which the game UI's idle runs ahead of the unique
-    /// signals' flush (`0x52b229`): drop each timed watch past its expiry, queueing the log's update
-    /// (`0x5dff1d`).
+    /// The watch-timer update (`0x5dfef0`), which the game UI's idle runs ahead of the unique signals' flush (`0x52b229`): drop each timed watch past its expiry, queueing the log's update (`0x5dff1d`).
     pub fn update_quest_watch_timers(&mut self) {
         let mut model = self.model_mut();
         let now = model.now;
@@ -736,15 +733,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 v,
                 "Usage: IsQuestLogSpecialItemInRange(index [,target])",
             )?;
-            // The token as `lua_tolstring` reads it, a number in its string form, anything else
-            // none (`0x5e5589`).
+            // The token as `lua_tolstring` reads it, a number in its string form, anything else none (`0x5e5589`).
             let token = lua
                 .coerce_string(unit)?
                 .map(|s| s.to_string_lossy())
                 .unwrap_or_default();
             let model = model_ref(lua);
-            // The token resolves through the unit feed's guids, not at the call (#1289).
-            // A missing or empty token is the target (`0x60b029`).
+            // The token resolves through the unit feed's guids, not at the call (#1289). A missing or empty token is the target (`0x60b029`).
 
             let target = if token.is_empty() {
                 Some(model.unit_guids.target).filter(|&g| g != 0)
@@ -817,9 +812,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The special item of the quest at a 1-based row, read live (`0x5e0da0`), and its bag slot,
-/// while the slot holds it. The slot's link, texture and cooldown are the container feed's
-/// until #1278 reads the bags live.
+/// The special item of the quest at a 1-based row, read live (`0x5e0da0`), and its bag slot, while the slot holds it. The slot's link, texture and cooldown are the container feed's until #1278 reads the bags live.
 fn special_item(
     model: &Model,
     index: i32,
@@ -889,9 +882,7 @@ mod tests {
         s
     }
 
-    /// `GetQuestLogSpecialItemInfo` (`0x5e52d0`) and the use verb read the item the lent view finds
-    /// in the bags when called (`0x5e0da0`): nothing with no view, the view's item once one is
-    /// lent, and nothing again when the view's bags no longer hold it.
+    /// `GetQuestLogSpecialItemInfo` (`0x5e52d0`) and the use verb read the item the lent view finds in the bags when called (`0x5e0da0`): nothing with no view, the view's item once one is lent, and nothing again when the view's bags no longer hold it.
     #[test]
     fn the_special_item_verbs_read_the_lent_view_when_called() {
         use crate::script::live::TestView;
@@ -943,8 +934,7 @@ mod tests {
         assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnil");
     }
 
-    /// The range check's answer: spell 1000 reaches [`NEAR`] and not [`FAR`]; any other unit or
-    /// spell has no answer.
+    /// The range check's answer: spell 1000 reaches [`NEAR`] and not [`FAR`]; any other unit or spell has no answer.
     struct Range;
 
     impl crate::script::SpellInfoSource for Range {
@@ -961,10 +951,7 @@ mod tests {
     const NEAR: u64 = 7;
     const FAR: u64 = 8;
 
-    /// `IsQuestLogSpecialItemInRange(index [, unit])` (`0x5e54c0`): the row's special item
-    /// (`0x5e5519`), the token's guid (`0x5e5592`), a missing or empty token naming the target
-    /// (`0x60b029`), a number token read as its string (`0x5e5589`), and the item's spell through
-    /// the range check (`0x5e55b6`): 1 or 0, nil for no item, no unit or no answer.
+    /// `IsQuestLogSpecialItemInRange(index [, unit])` (`0x5e54c0`): the row's special item (`0x5e5519`), the token's guid (`0x5e5592`), a missing or empty token naming the target (`0x60b029`), a number token read as its string (`0x5e5589`), and the item's spell through the range check (`0x5e55b6`): 1 or 0, nil for no item, no unit or no answer.
     #[test]
     fn the_special_item_range_resolves_its_token_then_checks_the_item_spell() {
         use crate::script::live::TestView;

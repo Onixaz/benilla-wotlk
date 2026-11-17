@@ -259,13 +259,11 @@ pub(crate) struct UiPress;
 /// The player-UI feed phase, after [`UiPress`] and ungated (`UnitFeed` is the gated sub-phase):
 /// every push this frame's tick must see, as in the reference's frame, where packet dispatch
 /// precedes every script event signal and both precede `OnUpdate`. Every VM holder in `Update` is
-/// in this set, in [`UiPress`], [`UiSignals`] or [`UiDrain`], as `game_plugins::schedule_tests`
-/// checks.
+/// in this set, in [`UiPress`], [`UiSignals`] or [`UiDrain`], as `game_plugins::schedule_tests` checks.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiFeed;
 
-/// The game UI's idle tail, after the whole [`UiFeed`] phase and before the tick: the watch timers
-/// and the frame's unique signals fire after every handler's events (`0x52b229`, `0x52b247`).
+/// The game UI's idle tail, after the whole [`UiFeed`] phase and before the tick: the watch timers and the frame's unique signals fire after every handler's events (`0x52b229`, `0x52b247`).
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiSignals;
 
@@ -520,8 +518,7 @@ impl Plugin for UiScriptPlugin {
             )
             // In the feed phase, so an `OnUpdate` reads this frame's `GetFramerate()`.
             .add_systems(Update, feed_framerate.in_set(UiFeed))
-            // The frame's unique signals, after every handler and feed (`0x614760`); a signal
-            // queued before the interface is up waits for it.
+            // The frame's unique signals, after every handler and feed (`0x614760`); a signal queued before the interface is up waits for it.
             .init_resource::<live::UniqueSignals>()
             .net_handler(
                 benilla_protocol::SessionEventKind::Disconnected,
