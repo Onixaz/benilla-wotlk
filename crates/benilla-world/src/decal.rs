@@ -188,11 +188,6 @@ impl WorldDecal<'_, '_> {
     pub fn receiver_count(&self) -> usize {
         self.surfaces.iter().count()
     }
-
-    /// Whether this collider receives ground decals, which the mount tilt asks of its down-ray hit.
-    pub fn receives(&self, entity: Entity) -> bool {
-        self.surfaces.contains(entity)
-    }
 }
 
 #[cfg(test)]

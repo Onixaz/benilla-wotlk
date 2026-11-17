@@ -73,7 +73,7 @@ fn conform_rotation(mode: u8, n_local: Vec3) -> Quat {
 }
 
 /// Conform every flagged model to the ground under its unit: one face normal per unit from a
-/// down-ray against the decal receivers (the reference averages its walkable contact normals,
+/// down-ray against the body's ground (the reference averages its walkable contact normals,
 /// the movement block's `+0x24`; the two agree on a uniform slope), smoothed on the up-vector.
 ///
 /// Deviation: the reference updates every unit every frame; here only units showing a flagged
@@ -84,7 +84,7 @@ fn conform_rotation(mode: u8, n_local: Vec3) -> Quat {
 pub(super) fn conform_units(
     time: Res<Time>,
     spatial: SpatialQuery,
-    decals: benilla_world::decal::WorldDecal,
+    ground: Query<(), With<benilla_world::collision::WalkGround>>,
     units: Query<
         (
             &Transform,
@@ -142,7 +142,7 @@ pub(super) fn conform_units(
                         TILT_PROBE_UP + TILT_PROBE_DOWN,
                         true,
                         &filter,
-                        &|e| decals.receives(e),
+                        &|e| ground.contains(e),
                     )
                     .map(|hit| hit.normal);
                 tilt_target(sampled)

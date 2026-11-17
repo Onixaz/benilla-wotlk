@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use benilla_formats::{
     accumulate_wmo_group_camera_collision, accumulate_wmo_group_camera_only_collision,
-    accumulate_wmo_group_collision, parse_wmo_lights, parse_wmo_root, wmo_group_doodad_refs,
-    wmo_group_footprint_tris, wmo_group_has_liquid_grid, wmo_group_header, wmo_group_light_refs,
-    wmo_group_liquid_mesh, wmo_group_submeshes, CollisionMesh, FootprintTris, LiquidMesh,
-    WmoDoodad, WmoDoodadSet, WmoFog, WmoGroupInfo, WmoLight, WmoLiquidRule, WmoPortalInfo,
-    WmoPortalRef,
+    accumulate_wmo_group_collision, accumulate_wmo_group_pick_collision, parse_wmo_lights,
+    parse_wmo_root, wmo_group_doodad_refs, wmo_group_footprint_tris, wmo_group_has_liquid_grid,
+    wmo_group_header, wmo_group_light_refs, wmo_group_liquid_mesh, wmo_group_submeshes,
+    CollisionMesh, FootprintTris, LiquidMesh, WmoDoodad, WmoDoodadSet, WmoFog, WmoGroupInfo,
+    WmoLight, WmoLiquidRule, WmoPortalInfo, WmoPortalRef,
 };
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext};
@@ -79,6 +79,12 @@ pub struct WmoModel {
     pub collision: Option<CollisionMesh>,
     /// Camera and line-of-sight collision: DETAIL kept, NOCAMCOLLIDE dropped.
     pub collision_camera: Option<CollisionMesh>,
+    /// The mouse pick's occluder faces: every face but MOPY `0x88` and blended materials, DETAIL
+    /// kept, the set the world trace's ignore mask `0x188` leaves.
+    pub collision_pick: Option<CollisionMesh>,
+    /// The blended faces past the same mask: the pick passes them, ground decals drape them. With
+    /// [`Self::collision_pick`] they are the decal receivers' WMO faces, every face but MOPY `0x88`.
+    pub collision_decal_blended: Option<CollisionMesh>,
     /// The root's MODD doodads in WMO model space, spawned by doodad set.
     pub doodads: Vec<WmoDoodad>,
     /// The MODS ranges into [`Self::doodads`]: set 0 always, plus the one a placement picks.
@@ -415,6 +421,11 @@ impl AssetLoader for WmoModelLoader {
         let mut col_idx: Vec<u32> = Vec::new();
         let mut cam_pos: Vec<[f32; 3]> = Vec::new();
         let mut cam_idx: Vec<u32> = Vec::new();
+        let mut pick_pos: Vec<[f32; 3]> = Vec::new();
+        let mut pick_idx: Vec<u32> = Vec::new();
+        let mut blend_pos: Vec<[f32; 3]> = Vec::new();
+        let mut blend_idx: Vec<u32> = Vec::new();
+        let material_blended = root.material_blended();
         let mut group_doodad_refs: Vec<Vec<u16>> = vec![Vec::new(); root.group_count() as usize];
         let mut group_light_refs: Vec<Vec<u16>> = vec![Vec::new(); root.group_count() as usize];
         let mut group_liquids: Vec<Option<LiquidMesh>> =
@@ -456,6 +467,12 @@ impl AssetLoader for WmoModelLoader {
             col_pos.extend_from_slice(&gpos);
             col_idx.extend(gidx.iter().map(|i| i + base));
             accumulate_wmo_group_camera_collision(&gbytes, &mut cam_pos, &mut cam_idx);
+            accumulate_wmo_group_pick_collision(
+                &gbytes,
+                &material_blended,
+                (&mut pick_pos, &mut pick_idx),
+                (&mut blend_pos, &mut blend_idx),
+            );
             let (mut dpos, mut didx): (Vec<[f32; 3]>, Vec<u32>) = (Vec::new(), Vec::new());
             accumulate_wmo_group_camera_only_collision(&gbytes, &mut dpos, &mut didx);
             if let Some(tris) = group_camera_only_tris.get_mut(gi as usize) {
@@ -543,6 +560,14 @@ impl AssetLoader for WmoModelLoader {
             positions: cam_pos,
             indices: cam_idx,
         });
+        let collision_pick = (!pick_idx.is_empty()).then_some(CollisionMesh {
+            positions: pick_pos,
+            indices: pick_idx,
+        });
+        let collision_decal_blended = (!blend_idx.is_empty()).then_some(CollisionMesh {
+            positions: blend_pos,
+            indices: blend_idx,
+        });
         resolve_shared_liquid_cells(&mut group_liquids);
         let portals = root.portals();
         let (group_collision_bounds, collision_bounds) =
@@ -568,6 +593,8 @@ impl AssetLoader for WmoModelLoader {
             collision_bounds,
             collision,
             collision_camera,
+            collision_pick,
+            collision_decal_blended,
             doodads: root.doodads().to_vec(),
             doodad_sets: root.doodad_sets().to_vec(),
             lights: parse_wmo_lights(&bytes),
