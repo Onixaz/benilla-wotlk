@@ -460,7 +460,8 @@ pub use quest::{
     QuestState,
 };
 pub use quest_log::{
-    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState,
+    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogRow,
+    QuestLogState,
 };
 pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};

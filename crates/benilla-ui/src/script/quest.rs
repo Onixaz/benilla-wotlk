@@ -404,8 +404,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "Usage: GetActiveTitle(index)",
         true,
         |lua, row, model| {
-            let complete = row
-                .is_some_and(|r| super::quest_log::quest_complete_at(&model.quest_log, r.quest_id));
+            let complete =
+                row.is_some_and(|r| super::quest_log::quest_complete_at(lua, model, r.quest_id));
             Ok(MultiValue::from_vec(vec![
                 title(lua, row)?,
                 Value::Boolean(complete),
@@ -973,7 +973,7 @@ mod tests {
 
         // `isComplete` reads the log: quest 60's row is complete, and quest 63's holds no
         // objective and has not failed (`0x58bcb0`).
-        s.set_quest_log(crate::script::QuestLogState {
+        s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![
                 crate::script::QuestLogEntryView {
                     quest_id: 60,
@@ -987,7 +987,6 @@ mod tests {
                     ..Default::default()
                 },
             ],
-            num_quests: 2,
             ..Default::default()
         });
         assert_eq!(
@@ -1000,13 +999,12 @@ mod tests {
                 .unwrap(),
             ("Bounty on Murlocs".to_string(), true)
         );
-        s.set_quest_log(crate::script::QuestLogState {
+        s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![crate::script::QuestLogEntryView {
                 quest_id: 63,
                 complete: -1,
                 ..Default::default()
             }],
-            num_quests: 1,
             ..Default::default()
         });
         assert!(

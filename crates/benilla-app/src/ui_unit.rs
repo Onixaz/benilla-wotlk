@@ -1371,7 +1371,8 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_QUEST_LOG_CHANGED`: one watch over every player's whole quest-log window (`0x60c280`,
     // registered per player unit at byte `0x28`, `0x1f4` long), so any slot field fires it once.
-    if edges.moved_in(cur.guid, quest_log_window()) {
+    // `"player"` fires from the values handler (`own_flags_watch`); the other tokens wait on #1266.
+    if token != "player" && edges.moved_in(cur.guid, quest_log_window()) {
         script.fire_event("UNIT_QUEST_LOG_CHANGED", vec![tok()]);
     }
     // The power events are named per resource (`UNIT_MANA`, `UNIT_MAXRAGE`, `UNIT_RUNIC_POWER`,
@@ -1894,7 +1895,8 @@ fn feed_units(
             // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
             // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             script.fire_event("UPDATE_FACTION", vec![]);
-            // The battlefield entry (`0x528230`), ahead of the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
+            // The quest log's entry (`0x5281db`), the battlefield's (`0x528230`), then the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
+            crate::ui_quest_log::rows::queue_enter_world(&mut deferred);
             crate::ui_battlefield::queue_enter_world(&mut deferred);
             crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;

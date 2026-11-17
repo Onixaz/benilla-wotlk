@@ -699,7 +699,7 @@ pub(crate) mod schedule_tests {
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
-    ///   page texts, `WorldAssets`, `Creatures`' display models): two misses for one key commute.
+    ///   page texts, `WorldAssets`, `Creatures`' and `ItemDisplays`' display models): two misses for one key commute.
     ///   A cache that is also a window's state is not pure, and not here.
     /// - An append-only sink (`ChatLog`, `MessageSounds`, `UiErrorKeys`, `UiErrorTexts`):
     ///   writers commute, and a drain's order against a writer is one frame of latency.
@@ -730,7 +730,9 @@ pub(crate) mod schedule_tests {
             ("PageTexts", TypeId::of::<crate::ui_item_text::PageTexts>),
             ("WorldAssets", TypeId::of::<benilla_assets::WorldAssets>),
             ("Creatures", TypeId::of::<crate::entities::Creatures>),
+            ("ItemDisplays", TypeId::of::<crate::entities::ItemDisplays>),
         ];
+
         const SINKS: &[ClassRow] = &[
             ("ChatLog", TypeId::of::<crate::ui_chat::ChatLog>),
             ("MessageSounds", TypeId::of::<crate::sound::MessageSounds>),
@@ -1033,7 +1035,9 @@ pub(crate) mod schedule_tests {
     // paint): the transport chain before the press, the tick's drains (`UiDrain`) before the
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_152;
+    // The quest rows read at the call (#1276) put `ItemDisplays`, a pure display cache, in every VM system's view; classed with `Creatures`, 3098.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_098;
+
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

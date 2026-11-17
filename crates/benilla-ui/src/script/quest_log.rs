@@ -122,32 +122,152 @@ pub struct QuestLogDetail {
 /// A quest-log reward row is the same shape as a questgiver panel row.
 pub type QuestLogQuestItem = QuestItemView;
 
-/// The quest-log snapshot the app pushes on each change; an empty log is empty `entries`.
+/// A log seeded into a VM no app lends rows to (the VM's own tests, the addon harness): the rows
+/// in log order and each quest's answers. The app writes only the row table, [`QuestLogRow`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestLogState {
-    /// Every row, as the reference's row table holds them (`0xc237b0`): the shown headers and
-    /// quests in log order, then the quests folded under a collapsed header
-    /// ([`QuestLogEntryView::hidden`]). Every index verb walks them all (`0xc23ad0`).
+    /// Every row in log order, the quests folded under a collapsed header last.
     pub entries: Vec<QuestLogEntryView>,
-    /// `GetNumQuestLogEntries`'s return 2: every quest, folded ones included, for the
-    /// "Quests: N/20" count (`QuestLogFrame.lua:290`).
-    pub num_quests: u32,
-    /// `GetDailyQuestsCompleted`: the daily-quest fields holding a quest (`0x58db30`).
+    /// `GetDailyQuestsCompleted`'s answer.
     pub daily_completed: u32,
 }
 
-impl QuestLogState {
-    /// The shown rows, `GetNumQuestLogEntries`' first return (`0xc23ae4`).
-    pub fn num_shown(&self) -> usize {
-        self.entries.iter().filter(|e| !e.hidden).count()
-    }
+/// One row of the log's row table (`0x5e6ad6`): a quest's id and log slot, or a header's sort type.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuestLogRow {
+    pub quest_id: u32,
+    /// The quest's `PLAYER_QUEST_LOG` slot (`0x5e6adc`).
+    pub slot: u8,
+    /// A header row (`0x5e6b6e`).
+    pub is_header: bool,
+    /// A header's name, from its sort type.
+    pub title: String,
+    /// The row's header group: its place among the sorted sort types (`0x5e6b47`).
+    pub sort_index: u32,
+    /// A header whose group's bit is clear in the collapse filter.
+    pub collapsed: bool,
+    /// A quest under a collapsed header, sorted past the shown rows (`0x5e08f0`).
+    pub hidden: bool,
+}
 
-    /// The quest's row, folded or not (`0x5deeb0`).
-    pub fn quest(&self, quest_id: u32) -> Option<&QuestLogEntryView> {
-        self.entries
-            .iter()
-            .find(|e| !e.is_header && e.quest_id == quest_id)
+/// The rows' counts: shown and quests, folded ones included (`0x5df010`).
+pub(crate) fn counts(rows: &[QuestLogRow]) -> (usize, usize) {
+    let shown = rows.iter().filter(|r| !r.hidden).count();
+    (shown, rows.iter().filter(|r| !r.is_header).count())
+}
+
+/// A seeded log's answers, consulted where no view lends quest rows.
+#[derive(Default)]
+struct Seed {
+    rows: std::collections::HashMap<u32, QuestLogEntryView>,
+    daily: u32,
+}
+
+thread_local! {
+    static SEEDED: std::cell::RefCell<Seed> = std::cell::RefCell::default();
+}
+
+/// The VM's `GlobalStrings.lua` lookup the leaderboard formats through.
+fn global_strings(lua: &Lua) -> impl Fn(&str) -> Option<String> + '_ {
+    move |key| {
+        lua.globals()
+            .get::<String>(key)
+            .ok()
+            .filter(|t| !t.is_empty())
     }
+}
+
+/// A quest's answers computed at the call from its slot and the caches (`0x5e0000`, `0x5e0070`,
+/// `0x5e0d20`, `0x5e0ea0`, `0x5e1460`); a seeded log's where no view lends them.
+fn quest_answers(
+    quest_id: u32,
+    slot: u8,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<QuestLogEntryView> {
+    match super::read_live(|l| l.quest_log_row(quest_id, slot, get)).flatten() {
+        Some(answer) => answer,
+        None => SEEDED.with(|s| s.borrow().rows.get(&quest_id).cloned()),
+    }
+}
+
+/// A row with its answers: a header's from the row, a quest's computed at the call.
+pub(crate) fn resolve(lua: &Lua, row: &QuestLogRow) -> QuestLogEntryView {
+    resolve_with(row, &global_strings(lua))
+}
+
+/// [`resolve`] with the line formats `get` gives.
+fn resolve_with(row: &QuestLogRow, get: &dyn Fn(&str) -> Option<String>) -> QuestLogEntryView {
+    if row.is_header {
+        return QuestLogEntryView {
+            title: row.title.clone(),
+            is_header: true,
+            collapsed: row.collapsed,
+            sort_index: row.sort_index,
+            ..Default::default()
+        };
+    }
+    let mut e = quest_answers(row.quest_id, row.slot, get).unwrap_or_default();
+    e.quest_id = row.quest_id;
+    e.is_header = false;
+    e.collapsed = false;
+    e.sort_index = row.sort_index;
+    e.hidden = row.hidden;
+    e
+}
+
+/// The row at a 0-based index with its answers.
+pub(crate) fn entry_at(lua: &Lua, model: &Model, index: usize) -> Option<QuestLogEntryView> {
+    model.quest_log.get(index).map(|r| resolve(lua, r))
+}
+
+/// Every row with its answers, in log order.
+pub(crate) fn entries(lua: &Lua, model: &Model) -> Vec<QuestLogEntryView> {
+    model.quest_log.iter().map(|r| resolve(lua, r)).collect()
+}
+
+/// The quest's row, folded or not (`0x5deeb0`).
+pub(crate) fn quest_row_of(model: &Model, quest_id: u32) -> Option<&QuestLogRow> {
+    model
+        .quest_log
+        .iter()
+        .find(|r| !r.is_header && r.quest_id == quest_id)
+}
+
+/// A logged quest's answers where only the numbers are read, no line formatted.
+pub(crate) fn quest_numbers(model: &Model, quest_id: u32) -> Option<QuestLogEntryView> {
+    quest_row_of(model, quest_id).map(|r| resolve_with(r, &|_| None))
+}
+
+/// The quest's row with its answers, folded or not.
+pub(crate) fn quest_entry(lua: &Lua, model: &Model, quest_id: u32) -> Option<QuestLogEntryView> {
+    quest_row_of(model, quest_id).map(|r| resolve(lua, r))
+}
+
+/// A quest's detail pane computed at the call; a seeded log's where no view lends it.
+pub(crate) fn quest_detail(row: &QuestLogRow) -> Option<QuestLogDetail> {
+    if row.is_header {
+        return None;
+    }
+    match super::read_live(|l| l.quest_log_detail(row.quest_id, row.slot)).flatten() {
+        Some(detail) => detail,
+        None => SEEDED.with(|s| s.borrow().rows.get(&row.quest_id)?.detail.clone()),
+    }
+}
+
+/// `GetDailyQuestsCompleted`'s count at the call (`0x58db30`); a seeded log's where no view lends it.
+fn daily_completed() -> u32 {
+    super::read_live(|l| l.daily_quests_completed())
+        .flatten()
+        .unwrap_or_else(|| SEEDED.with(|s| s.borrow().daily))
+}
+
+/// Mark a seeded quest failed, as the expiry mark reads in a lent view's answers.
+fn fail_seeded(quest_id: u32) {
+    SEEDED.with(|s| {
+        if let Some(e) = s.borrow_mut().rows.get_mut(&quest_id) {
+            e.complete = -1;
+        }
+    });
 }
 
 /// Whether a row reads settled: complete (`0x5e0ea0`) or objective-less (`0x5e10b0`).
@@ -158,16 +278,16 @@ pub(crate) fn settled(e: &QuestLogEntryView) -> bool {
 /// The quest-complete test (`0x58bcb0`), which the greeting and gossip active rows read: the
 /// quest's log row, folded or not, passes the completion test or the objective-less one. A quest
 /// off the log answers false, as its index lookup misses.
-pub(crate) fn quest_complete_at(log: &QuestLogState, quest_id: u32) -> bool {
-    log.quest(quest_id).is_some_and(settled)
+pub(crate) fn quest_complete_at(lua: &Lua, model: &Model, quest_id: u32) -> bool {
+    quest_entry(lua, model, quest_id).is_some_and(|e| settled(&e))
 }
 
 /// Re-sorts the rows on a collapse filter, as the rebuild and every fold do (`0x5e0b80`): a header
 /// whose bit is clear reads collapsed, and its quests sort past every shown row, each group in its
-/// order. `entries` must already be grouped as the log is, each header before its quests.
-pub fn fold_quest_log(entries: &mut [QuestLogEntryView], filter: i32) {
+/// order. `rows` must already be grouped as the log is, each header before its quests.
+pub fn fold_quest_log(rows: &mut [QuestLogRow], filter: i32) {
     let open = |sort: u32| sort >= 25 || (1i64 << sort) & i64::from(filter) != 0;
-    for e in entries.iter_mut() {
+    for e in rows.iter_mut() {
         if e.is_header {
             e.collapsed = !open(e.sort_index);
         } else {
@@ -175,7 +295,7 @@ pub fn fold_quest_log(entries: &mut [QuestLogEntryView], filter: i32) {
         }
     }
     // The comparator (`0x5e08f0`): shown before folded, then by sort index, a header first.
-    entries.sort_by_key(|e| (e.hidden, e.sort_index, !e.is_header));
+    rows.sort_by_key(|e| (e.hidden, e.sort_index, !e.is_header));
 }
 
 /// Leaderboard line count (`0x5e1300`): the lines, the template's faction apart, or 1 if complete.
@@ -207,15 +327,20 @@ fn leader_board_line(e: &QuestLogEntryView, index: i64) -> Option<&QuestLogObjec
 }
 
 /// The quest row at a 1-based index over every row, a header or one out of range answering none.
-fn quest_row(model: &Model, index: i64) -> Option<&QuestLogEntryView> {
+fn quest_row_at(model: &Model, index: i64) -> Option<&QuestLogRow> {
     usize::try_from(index - 1)
         .ok()
-        .and_then(|i| model.quest_log.entries.get(i))
+        .and_then(|i| model.quest_log.get(i))
         .filter(|e| !e.is_header)
 }
 
+/// [`quest_row_at`] with the row's answers.
+fn quest_row(lua: &Lua, model: &Model, index: i64) -> Option<QuestLogEntryView> {
+    quest_row_at(model, index).map(|r| resolve(lua, r))
+}
+
 fn selected_id(model: &Model) -> u32 {
-    quest_row(model, i64::from(model.quest_log_selection)).map_or(0, |e| e.quest_id)
+    quest_row_at(model, i64::from(model.quest_log_selection)).map_or(0, |e| e.quest_id)
 }
 
 /// The collapse filter: the `questLogCollapseFilter` CVar's value where it is registered, else
@@ -240,7 +365,7 @@ fn collapse_header(model: &mut Model, index: i64, collapse: bool) {
     let filter = collapse_filter(model);
     let header = usize::try_from(index)
         .ok()
-        .and_then(|i| model.quest_log.entries.get(i))
+        .and_then(|i| model.quest_log.get(i))
         .filter(|e| e.is_header)
         .map(|e| e.sort_index);
     let filter = match header {
@@ -253,11 +378,10 @@ fn collapse_header(model: &mut Model, index: i64, collapse: bool) {
     };
     set_collapse_filter(model, filter);
     let selected = selected_id(model);
-    fold_quest_log(&mut model.quest_log.entries, filter);
+    fold_quest_log(&mut model.quest_log, filter);
     if selected != 0 {
         model.quest_log_selection = model
             .quest_log
-            .entries
             .iter()
             .position(|e| !e.is_header && e.quest_id == selected)
             .map_or(0, |i| i as u32 + 1);
@@ -267,12 +391,46 @@ fn collapse_header(model: &mut Model, index: i64, collapse: bool) {
 }
 
 impl super::UiScript {
-    /// Push the quest-log snapshot. A watch holds while any quest row, shown or folded, carries
-    /// its id (`0x5e6940`), so a collapse never prunes.
-    pub fn set_quest_log(&mut self, state: QuestLogState) {
+    /// Write the rebuilt row table (`0x5e6940`). A watch holds while any quest row, shown or
+    /// folded, carries its id, so a collapse never prunes.
+    pub fn set_quest_log_rows(&mut self, rows: Vec<QuestLogRow>) {
         let mut model = self.model_mut();
-        model.quest_log = state;
+        model.quest_log = rows;
         super::quest_watch::on_quest_log(&mut model);
+    }
+
+    /// Seed a log into a VM no app lends rows to: the row table, and each quest's answers for the
+    /// verbs to read where no view lends them.
+    pub fn seed_quest_log(&mut self, state: QuestLogState) {
+        let rows = state
+            .entries
+            .iter()
+            .map(|e| QuestLogRow {
+                quest_id: e.quest_id,
+                slot: 0,
+                is_header: e.is_header,
+                title: if e.is_header {
+                    e.title.clone()
+                } else {
+                    String::new()
+                },
+                sort_index: e.sort_index,
+                collapsed: e.collapsed,
+                hidden: e.hidden,
+            })
+            .collect();
+        SEEDED.with(|s| {
+            *s.borrow_mut() = Seed {
+                rows: state
+                    .entries
+                    .into_iter()
+                    .filter(|e| !e.is_header)
+                    .map(|e| (e.quest_id, e))
+                    .collect(),
+                daily: state.daily_completed,
+            }
+        });
+        self.set_quest_log_rows(rows);
     }
 
     /// Drain the `QueryQuestsCompleted()` calls as a count.
@@ -288,6 +446,11 @@ impl super::UiScript {
     /// The 1-based selection, 0 for none.
     pub fn quest_log_selection(&self) -> u32 {
         self.model_ref().quest_log_selection
+    }
+
+    /// The quest's log slot from its row, folded or not, as `AbandonQuest` searches the rows.
+    pub fn quest_log_slot(&self, quest_id: u32) -> Option<u8> {
+        quest_row_of(&self.model_ref(), quest_id).map(|r| r.slot)
     }
 
     /// The selected quest's id, 0 for none: the reference's selection (`0x5dffa0`), which the app
@@ -371,10 +534,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok((
-                model.quest_log.num_shown() as i64,
-                i64::from(model.quest_log.num_quests),
-            ))
+            let (shown, quests) = counts(&model.quest_log);
+            Ok((shown as i64, quests as i64))
         })?,
     )?;
 
@@ -393,8 +554,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 usize::try_from(n)
                     .ok()
                     .and_then(|n| n.checked_sub(1))
-                    .and_then(|n| model.quest_log.entries.get(n))
-                    .cloned()
+                    .and_then(|n| entry_at(lua, &model, n))
             };
             let Some(e) = entry else {
                 return Ok(MultiValue::from_vec(vec![
@@ -444,7 +604,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let index = model.quest_log_selection as usize;
             Ok(index
                 .checked_sub(1)
-                .and_then(|n| model.quest_log.entries.get(n))
+                .and_then(|n| entry_at(lua, &model, n))
                 .map_or(0, |e| i64::from(e.suggested_group)))
         })?,
     )?;
@@ -452,12 +612,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The daily count (`0x58db30`) and its constant cap, 25 (`0x58c470`).
     g.set(
         "GetDailyQuestsCompleted",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.quest_log.daily_completed))
-        })?,
+        lua.create_function(|_, ()| Ok(i64::from(daily_completed())))?,
     )?;
     g.set("GetMaxDailyQuests", lua.create_function(|_, ()| Ok(25i64))?)?;
     // `QueryQuestsCompleted()` (`0x5b1bb0`) sends the empty request; the answer fires
@@ -500,7 +655,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             match (i as usize)
                 .checked_sub(1)
-                .and_then(|n| model.quest_log.entries.get(n))
+                .and_then(|n| model.quest_log.get(n))
             {
                 None => model.quest_log_selection = 0,
                 Some(e) if e.is_header => {}
@@ -551,10 +706,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let row = match n {
-                Some(n) => quest_row(&model, n as i64),
-                None => quest_row(&model, i64::from(model.quest_log_selection)),
+                Some(n) => quest_row(lua, &model, n as i64),
+                None => quest_row(lua, &model, i64::from(model.quest_log_selection)),
             };
-            Ok(row.map_or(0, leader_board_count))
+            Ok(row.as_ref().map_or(0, leader_board_count))
         })?,
     )?;
 
@@ -569,10 +724,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                quest_row(&model, quest)
-                    .or_else(|| quest_row(&model, i64::from(model.quest_log_selection)))
-                    .and_then(|e| leader_board_line(e, i64::from(i) - 1))
-                    .cloned()
+                quest_row(lua, &model, quest)
+                    .or_else(|| quest_row(lua, &model, i64::from(model.quest_log_selection)))
+                    .and_then(|e| leader_board_line(&e, i64::from(i) - 1).cloned())
             };
             // Three values either way, `finished` 1 or nil (`0x5e5f60`).
             let Some(l) = line else {
@@ -602,7 +756,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                Ok(model.selected_quest_detail().map(pick).unwrap_or(0))
+                Ok(model
+                    .selected_quest_detail()
+                    .as_ref()
+                    .map(pick)
+                    .unwrap_or(0))
             })?,
         )
     }
@@ -704,7 +862,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         .and_then(|d| {
                             usize::try_from(row)
                                 .ok()
-                                .and_then(|n| pick(d).get(n))
+                                .and_then(|n| pick(&d).get(n))
                                 .cloned()
                         })
                         .map(|it| {
@@ -782,7 +940,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let sel = model.quest_log_selection as usize;
             Ok(flag(
                 sel.checked_sub(1)
-                    .and_then(|n| model.quest_log.entries.get(n))
+                    .and_then(|n| entry_at(lua, &model, n))
                     .is_some_and(|e| e.complete < 0),
             ))
         })?,
@@ -826,7 +984,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let sel = model.quest_log_selection as usize;
             model.quest_log_abandon_mark = sel
                 .checked_sub(1)
-                .and_then(|n| model.quest_log.entries.get(n))
+                .and_then(|n| model.quest_log.get(n))
                 .filter(|e| !e.is_header)
                 .map_or(0, |e| e.quest_id);
             Ok(())
@@ -842,12 +1000,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 let mark = model.quest_log_abandon_mark;
-                model
-                    .quest_log
-                    .entries
-                    .iter()
-                    .find(|e| mark != 0 && !e.is_header && e.quest_id == mark)
-                    .map(|e| e.title.clone())
+                (mark != 0)
+                    .then(|| quest_entry(lua, &model, mark))
+                    .flatten()
+                    .map(|e| e.title)
             };
             Ok(match title {
                 Some(t) => Value::String(lua.create_string(&t)?),
@@ -865,11 +1021,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 let mark = model.quest_log_abandon_mark;
-                model
-                    .quest_log
-                    .quest(mark)
-                    .filter(|_| mark != 0)
-                    .and_then(|e| e.abandon_items.clone())
+                (mark != 0)
+                    .then(|| quest_entry(lua, &model, mark))
+                    .flatten()
+                    .and_then(|e| e.abandon_items)
             };
             Ok(match items {
                 Some(t) => MultiValue::from_vec(vec![Value::String(lua.create_string(&t)?)]),
@@ -884,7 +1039,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
             let mark = model.quest_log_abandon_mark;
-            let in_log = mark != 0 && model.quest_log.quest(mark).is_some();
+            let in_log = mark != 0 && quest_row_of(&model, mark).is_some();
             if in_log {
                 model.quest_log_abandon_mark = 0;
                 model.quest_log_abandons.push(mark);
@@ -911,10 +1066,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let now = server_now();
                 let mut left = Vec::new();
                 let mut due = Vec::new();
-                for (i, e) in model.quest_log.entries.iter().enumerate() {
-                    match seconds_left(e, now) {
+                for e in entries(lua, &model) {
+                    match seconds_left(&e, now) {
                         Some(s) if s >= 0 => left.push(Value::Integer(s)),
-                        Some(_) if e.complete != 1 => due.push(i),
+                        Some(_) if e.complete != 1 => due.push(e.quest_id),
                         _ => {}
                     }
                 }
@@ -922,10 +1077,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             if !due.is_empty() {
                 let mut model = crate::script::model_mut_of(lua);
-                for i in due {
-                    let e = &mut model.quest_log.entries[i];
-                    e.complete = -1;
-                    let id = e.quest_id;
+                for id in due {
+                    fail_seeded(id);
                     if let Some(Some(Some(title))) = super::live::read_live(|l| l.expire_quest(id))
                     {
                         model.ui_errors_s.push(("ERR_QUEST_FAILED_S", title));
@@ -947,9 +1100,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let now = server_now();
             let index = t.checked_sub(1).and_then(|n| {
-                model
-                    .quest_log
-                    .entries
+                entries(lua, &model)
                     .iter()
                     .enumerate()
                     .filter(|(_, e)| live_seconds_left(e, now).is_some())
@@ -973,8 +1124,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let left = (model.quest_log_selection as usize)
                 .checked_sub(1)
-                .and_then(|n| model.quest_log.entries.get(n))
-                .and_then(|e| seconds_left(e, server_now()));
+                .and_then(|n| entry_at(lua, &model, n))
+                .and_then(|e| seconds_left(&e, server_now()));
             Ok(match left {
                 // Clamped where the lists drop the row, as in the reference.
                 Some(s) => Value::Integer(s.max(0)),
@@ -1006,12 +1157,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            super::quest::reward_spell_link(
-                lua,
-                model
-                    .selected_quest_detail()
-                    .and_then(|d| d.reward_spell.as_ref()),
-            )
+            let spell = model.selected_quest_detail().and_then(|d| d.reward_spell);
+            super::quest::reward_spell_link(lua, spell.as_ref())
         })?,
     )?;
     // `GetQuestResetTime` (`0x5e6de0`): whole seconds to the daily reset the last
@@ -1039,7 +1186,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let quest_id = (index as usize)
                 .checked_sub(1)
-                .and_then(|i| model.quest_log.entries.get(i))
+                .and_then(|i| model.quest_log.get(i))
                 .filter(|e| !e.is_header)
                 .map_or(0, |e| e.quest_id);
             if quest_id == 0 {
@@ -1071,9 +1218,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         usize::try_from(row)
             .ok()
             .and_then(|r| r.checked_sub(1))
-            .and_then(|n| model.quest_log.entries.get(n))
+            .and_then(|n| entry_at(lua, model, n))
             .filter(|e| !e.is_header)
-            .cloned()
     }
 
     // The share button enables on `GetQuestLogPushable() and GetNumPartyMembers() > 0`
@@ -1141,7 +1287,6 @@ mod tests {
 
     fn two_quests() -> QuestLogState {
         QuestLogState {
-            num_quests: 2,
             daily_completed: 0,
             entries: vec![
                 QuestLogEntryView {
@@ -1211,7 +1356,7 @@ mod tests {
     #[test]
     fn a_log_reward_the_player_cannot_use_answers_unusable() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         s.run("SelectQuestLogEntry(1)").unwrap();
         s.set_player_req_state(crate::script::PlayerReqState {
             level: 10,
@@ -1250,7 +1395,7 @@ mod tests {
         );
         assert!(s.eval::<bool>("return GetQuestLogTitle(1) == nil").unwrap());
 
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         assert_eq!(
             s.eval::<(i64, i64)>("return GetNumQuestLogEntries()")
                 .unwrap(),
@@ -1286,7 +1431,7 @@ mod tests {
             .eval::<bool>("local t, l = GetQuestLogTitle(1) return t == nil and l == 0")
             .unwrap());
 
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         for i in ["0", "-1", "99"] {
             assert!(
                 s.eval::<bool>(&format!(
@@ -1336,7 +1481,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
 
         assert!(s
             .eval::<bool>(
@@ -1359,7 +1504,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         let mut state = two_quests();
         state.entries[1].tag = Some("Elite".into());
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         assert!(s
             .eval::<bool>("local _, _, tag = GetQuestLogTitle(1) return tag == nil")
             .unwrap());
@@ -1371,7 +1516,7 @@ mod tests {
     #[test]
     fn selection_is_synchronous() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         assert_eq!(s.eval::<i64>("return GetQuestLogSelection()").unwrap(), 0);
         assert_eq!(
             s.eval::<i64>("SelectQuestLogEntry(2); return GetQuestLogSelection()")
@@ -1384,7 +1529,7 @@ mod tests {
     #[test]
     fn a_log_walk_answers_per_entry_without_a_push_between() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         let walk: String = s
             .eval(
                 "local out = ''\n\
@@ -1405,7 +1550,7 @@ mod tests {
     #[test]
     fn the_detail_counts_follow_the_selection_too() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         assert_eq!(
             s.eval::<i64>("SelectQuestLogEntry(1); return GetQuestLogRewardMoney()")
                 .unwrap(),
@@ -1435,7 +1580,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         assert!(s
             .eval::<bool>(
                 "SelectQuestLogEntry(1); local d = GetQuestLogQuestText(); return d == ''"
@@ -1452,7 +1597,6 @@ mod tests {
             ..Default::default()
         };
         let row = |objectives, rep_objective| QuestLogState {
-            num_quests: 1,
             daily_completed: 0,
             entries: vec![QuestLogEntryView {
                 quest_id: 1,
@@ -1469,21 +1613,21 @@ mod tests {
             .unwrap()
         };
 
-        s.set_quest_log(row(vec![line("reputation")], true));
+        s.seed_quest_log(row(vec![line("reputation")], true));
         assert_eq!(
             s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
             1
         );
         assert_eq!(read(&mut s, 1).as_deref(), Some("reputation"));
 
-        s.set_quest_log(row(vec![line("monster")], true));
+        s.seed_quest_log(row(vec![line("monster")], true));
         assert_eq!(
             s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
             2
         );
         assert_eq!(read(&mut s, 2), None);
 
-        s.set_quest_log(row(vec![line("player")], true));
+        s.seed_quest_log(row(vec![line("player")], true));
         assert_eq!(
             s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
             2
@@ -1494,7 +1638,7 @@ mod tests {
     #[test]
     fn detail_getters_read() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         s.run("SelectQuestLogEntry(1)").unwrap();
         assert!(s
             .eval::<bool>(
@@ -1583,7 +1727,7 @@ mod tests {
     #[test]
     fn abandon_two_step_pins_the_click_time_target() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         s.run("SelectQuestLogEntry(2); SetAbandonQuest()").unwrap();
         assert_eq!(
             s.eval::<String>("return GetAbandonQuestName()").unwrap(),
@@ -1602,7 +1746,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         let mut state = two_quests();
         state.entries[0].complete = -1;
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         s.run("SelectQuestLogEntry(1)").unwrap();
         assert!(s.eval::<bool>("return IsCurrentQuestFailed()").unwrap());
         assert!(s
@@ -1615,7 +1759,7 @@ mod tests {
     #[test]
     fn watch_set_is_id_keyed_and_survives_a_log_shuffle() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         s.run("AddQuestWatch(2)").unwrap(); // quest 7
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 1);
         assert!(s.eval::<bool>("return IsQuestWatched(2)").unwrap());
@@ -1626,7 +1770,7 @@ mod tests {
         // Quest 783 leaves and quest 7 moves to row 1, keeping its watch.
         let mut shuffled = two_quests();
         shuffled.entries.remove(0);
-        s.set_quest_log(shuffled);
+        s.seed_quest_log(shuffled);
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 1);
         assert!(s.eval::<bool>("return IsQuestWatched(1)").unwrap());
         assert_eq!(s.eval::<i64>("return GetQuestIndexForWatch(1)").unwrap(), 1);
@@ -1634,7 +1778,7 @@ mod tests {
         s.run("RemoveQuestWatch(1)").unwrap();
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 0);
         s.run("AddQuestWatch(1)").unwrap();
-        s.set_quest_log(QuestLogState::default());
+        s.seed_quest_log(QuestLogState::default());
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 0);
     }
 
@@ -1653,7 +1797,7 @@ mod tests {
             state
         };
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(expanded());
+        s.seed_quest_log(expanded());
         s.run("AddQuestWatch(3)").unwrap(); // quest 7
         assert_eq!(s.quest_log_watched(), vec![7]);
 
@@ -1663,7 +1807,7 @@ mod tests {
         for e in &mut folded.entries[1..] {
             e.hidden = true;
         }
-        s.set_quest_log(folded);
+        s.seed_quest_log(folded);
         assert_eq!(
             s.eval::<(i64, i64)>("return GetNumQuestLogEntries()")
                 .unwrap(),
@@ -1674,15 +1818,14 @@ mod tests {
             1,
             "a collapse must not prune the watch of a quest still in the log"
         );
-        s.set_quest_log(expanded());
+        s.seed_quest_log(expanded());
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return GetQuestIndexForWatch(1)").unwrap(), 3);
 
         // Quest 7 leaves the log, neither visible nor folded.
         let mut gone = expanded();
         gone.entries.retain(|e| e.quest_id != 7);
-        gone.num_quests = 1;
-        s.set_quest_log(gone);
+        s.seed_quest_log(gone);
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 0);
     }
 
@@ -1692,7 +1835,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         let mut state = two_quests();
         state.entries[1].timer = 1_000_900;
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
 
         // No server clock yet.
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 0);
@@ -1740,7 +1883,7 @@ mod tests {
         state.entries[0].timer = 1_000_900;
         state.entries[1].timer = 1; // failed: the server's sentinel
         state.entries[1].complete = -1;
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         let _clock = clock_at(1_000_400.0, None);
 
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 1);
@@ -1757,7 +1900,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         let mut state = two_quests();
         state.entries[0].pushable = true; // 783 is sharable, 7 is not
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
 
         assert_eq!(
             s.eval::<Option<i64>>("return GetQuestLogPushable()")
@@ -1783,14 +1926,14 @@ mod tests {
     #[test]
     fn abandon_mark_is_a_quest_id_that_survives_a_reindex() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         s.run("SelectQuestLogEntry(2); SetAbandonQuest()").unwrap(); // quest 7
 
         // Quest 7 moves to row 1 and a stranger takes row 2.
         let mut moved = two_quests();
         moved.entries.swap(0, 1);
         moved.entries[1].quest_id = 999;
-        s.set_quest_log(moved.clone());
+        s.seed_quest_log(moved.clone());
         assert_eq!(
             s.eval::<String>("return GetAbandonQuestName()").unwrap(),
             "Kobold Camp Cleanup"
@@ -1802,19 +1945,19 @@ mod tests {
         s.run("SelectQuestLogEntry(1); SetAbandonQuest()").unwrap();
         let mut folded = moved.clone();
         folded.entries[0].hidden = true;
-        s.set_quest_log(folded);
+        s.seed_quest_log(folded);
         s.run("AbandonQuest()").unwrap();
         assert_eq!(s.take_quest_log_abandons(), vec![7]);
 
         // Gone from the log: nothing queues, and the mark stays.
-        s.set_quest_log(moved.clone());
+        s.seed_quest_log(moved.clone());
         s.run("SelectQuestLogEntry(1); SetAbandonQuest()").unwrap();
         let mut gone = moved.clone();
         gone.entries.remove(0);
-        s.set_quest_log(gone);
+        s.seed_quest_log(gone);
         s.run("AbandonQuest()").unwrap();
         assert!(s.take_quest_log_abandons().is_empty());
-        s.set_quest_log(moved);
+        s.seed_quest_log(moved);
         s.run("AbandonQuest()").unwrap();
         assert_eq!(
             s.take_quest_log_abandons(),
@@ -1840,7 +1983,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         let mut state = two_quests();
         state.entries[1].pushable = true; // quest id 7
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         in_a_party(&mut s);
         s.run("SelectQuestLogEntry(2)").unwrap();
         s.run("QuestLogPushQuest()").unwrap();
@@ -1851,7 +1994,7 @@ mod tests {
     #[test]
     fn push_without_a_selection_queues_nothing() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         in_a_party(&mut s);
         s.run("QuestLogPushQuest()").unwrap();
         assert!(s.take_quest_log_pushes().is_empty());
@@ -1867,7 +2010,7 @@ mod tests {
         };
 
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(sharable());
+        s.seed_quest_log(sharable());
         s.run("SelectQuestLogEntry(1)").unwrap();
         s.run("QuestLogPushQuest()").unwrap();
         assert!(s.take_quest_log_pushes().is_empty(), "solo pushes nothing");
@@ -1899,7 +2042,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         s.run("SelectQuestLogEntry(1)").unwrap();
         s.run("QuestLogPushQuest()").unwrap();
         assert!(
@@ -1945,7 +2088,7 @@ mod tests {
     fn is_unit_on_quest_scans_a_party_members_quest_log() {
         use crate::script::{UnitGuids, UnitState};
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(with_header());
+        s.seed_quest_log(with_header());
         let mut guids = UnitGuids {
             player: ME,
             target: STRANGER,
@@ -2019,7 +2162,7 @@ mod tests {
     #[test]
     fn selecting_a_header_keeps_the_selected_quest() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(with_header());
+        s.seed_quest_log(with_header());
         s.run("SelectQuestLogEntry(3)").unwrap();
         s.run("SelectQuestLogEntry(1)").unwrap();
         assert_eq!(s.eval::<i64>("return GetQuestLogSelection()").unwrap(), 3);
@@ -2032,7 +2175,7 @@ mod tests {
     #[test]
     fn the_share_verbs_take_a_row_before_the_selection() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(with_header());
+        s.seed_quest_log(with_header());
         s.run("SelectQuestLogEntry(3)").unwrap();
         assert_eq!(
             s.eval::<i64>("return select('#', GetQuestLogPushable())")
@@ -2056,7 +2199,7 @@ mod tests {
     #[test]
     fn the_leaderboard_answers_three_values_and_no_mark_names_nil() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_quests());
+        s.seed_quest_log(two_quests());
         assert!(s
             .eval::<bool>(
                 "local t, k, f = GetQuestLogLeaderBoard(1, 2) return f == 1 and k == 'monster'"
@@ -2079,17 +2222,20 @@ mod tests {
     /// tests, never its lines, and reaches a folded row.
     #[test]
     fn the_greeting_test_reads_complete_or_objective_less_rows_folded_or_not() {
+        let at = |log: &QuestLogState, id: u32| {
+            let mut s = UiScript::new().unwrap();
+            s.seed_quest_log(log.clone());
+            let model = s.model_ref();
+            super::quest_complete_at(s.lua(), &model, id)
+        };
         let mut log = two_quests();
         log.entries[0].objectives[0].kind = "event".into();
-        assert!(
-            !super::quest_complete_at(&log, 783),
-            "an event line is not objective-less"
-        );
+        assert!(!at(&log, 783), "an event line is not objective-less");
         log.entries[0].no_objectives = true;
-        assert!(super::quest_complete_at(&log, 783));
+        assert!(at(&log, 783));
         log.entries[1].hidden = true;
-        assert!(super::quest_complete_at(&log, 7), "a folded complete quest");
-        assert!(!super::quest_complete_at(&log, 999), "off the log");
+        assert!(at(&log, 7), "a folded complete quest");
+        assert!(!at(&log, 999), "off the log");
     }
 
     /// Two headers (sort types 0 and 1), each with one quest: the stock order.
@@ -2110,7 +2256,6 @@ mod tests {
                 header("Westfall", 1),
                 b,
             ],
-            num_quests: 2,
             daily_completed: 0,
         }
     }
@@ -2120,7 +2265,7 @@ mod tests {
     #[test]
     fn a_fold_keeps_its_quests_as_rows_past_the_shown_count() {
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(two_zones());
+        s.seed_quest_log(two_zones());
         s.run("SelectQuestLogEntry(2); AddQuestWatch(2)").unwrap(); // quest 783
         s.model_mut().pending_events.clear();
 
@@ -2178,7 +2323,7 @@ mod tests {
     fn a_fold_writes_the_collapse_filter_cvar() {
         let mut s = UiScript::new().unwrap();
         s.register_cvars([("questLogCollapseFilter", "-1")]);
-        s.set_quest_log(two_zones());
+        s.seed_quest_log(two_zones());
         s.run("CollapseQuestHeader(3)").unwrap(); // Westfall, bit 1
         assert_eq!(s.cvar("questLogCollapseFilter").as_deref(), Some("-3"));
         assert_eq!(
@@ -2210,7 +2355,7 @@ mod tests {
             line("player", "Players slain: 0/5", false),
         ];
         log.entries[1].objectives = vec![line("log", "Report to Marshal McBride.", false)];
-        s.set_quest_log(log);
+        s.seed_quest_log(log);
         assert_eq!(
             s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
             2
@@ -2256,7 +2401,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         let mut log = two_quests();
         log.entries[1].abandon_items = Some("Kobold Ear, Torch".into());
-        s.set_quest_log(log);
+        s.seed_quest_log(log);
         assert_eq!(s.arity("GetAbandonQuestItems()").unwrap(), 0);
         s.run("SelectQuestLogEntry(1); SetAbandonQuest()").unwrap();
         assert_eq!(s.arity("GetAbandonQuestItems()").unwrap(), 0);
@@ -2276,7 +2421,7 @@ mod tests {
         let mut state = two_quests();
         state.entries[0].timer = 1_000_900; // in progress
         state.entries[1].timer = 1_000_900; // complete
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         let view = crate::script::live::TestView {
             server_unix: Some(1_000_950.0),
             quest_titles: [(783, "The Fargodeep Mine".to_string())].into(),

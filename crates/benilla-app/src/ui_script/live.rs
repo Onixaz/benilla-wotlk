@@ -39,6 +39,7 @@ pub(crate) struct LiveView<'w, 's> {
     signals: Option<Res<'w, UniqueSignals>>,
     item_range: crate::ui_quest_watch::ItemRangeLive<'w, 's>,
     quest_tooltip: crate::ui_quest_log::tooltip::QuestTooltipLive<'w, 's>,
+    quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -224,6 +225,27 @@ impl LiveState for LiveView<'_, '_> {
         quest_id: u32,
     ) -> Option<benilla_ui::script::QuestSpecialItemView> {
         self.quest.quest_special_item(quest_id)
+    }
+
+    fn quest_log_row(
+        &self,
+        quest_id: u32,
+        slot: u8,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<benilla_ui::script::QuestLogEntryView>> {
+        self.quest_rows.row(quest_id, slot, get)
+    }
+
+    fn quest_log_detail(
+        &self,
+        quest_id: u32,
+        slot: u8,
+    ) -> Option<Option<benilla_ui::script::QuestLogDetail>> {
+        self.quest_rows.detail(quest_id, slot)
+    }
+
+    fn daily_quests_completed(&self) -> Option<u32> {
+        self.quest_rows.daily_completed()
     }
 
     fn expire_quest(&self, quest_id: u32) -> Option<Option<String>> {

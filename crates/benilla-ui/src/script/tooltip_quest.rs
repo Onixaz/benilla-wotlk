@@ -101,11 +101,7 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
         if !waits.is_empty() {
             model.quest_tooltip_waits.insert(h, waits);
         }
-        let active = model
-            .quest_log
-            .entries
-            .iter()
-            .any(|e| !e.is_header && e.quest_id == quest_id);
+        let active = super::quest_log::quest_row_of(&model, quest_id).is_some();
         (view, active)
     };
     fire_cleared(lua, h);

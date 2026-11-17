@@ -465,7 +465,12 @@ pub(crate) fn feed_quest(
         Option<Res<crate::ui_item_text::PageMaterials>>,
     ),
     // The detail and reward panels' XP, honor, title and reputation extras.
-    rewards: rewards::RewardInputs,
+    // A PvP realm (`Cfg_Configs.dbc`'s `PlayerKillingAllowed`), where `QuestFlagsPVP` answers nil
+    // (set at `0x4055c7`).
+    (rewards, roster): (
+        rewards::RewardInputs,
+        Option<Res<crate::char_select::Roster>>,
+    ),
     mut sink: MessageSink,
     mut last: Local<crate::ui_script::VmMemo<Option<QuestState>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
@@ -556,7 +561,9 @@ pub(crate) fn feed_quest(
                 });
         }
         st.suggested_group = suggested;
-        st.flags_pvp = flags & quest_flags::FLAGS_PVP != 0 && !rewards.realm_is_pvp();
+        st.flags_pvp = flags & quest_flags::FLAGS_PVP != 0
+            && !roster.as_ref().is_some_and(|r| r.realm_is_pvp());
+
         st.auto_accept = flags & quest_flags::AUTO_ACCEPT != 0;
         st
     });

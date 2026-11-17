@@ -50,7 +50,6 @@ fn model() -> QuestLogState {
     };
     QuestLogState {
         entries: vec![header, kill, done],
-        num_quests: 2,
         daily_completed: 0,
     }
 }
@@ -90,7 +89,7 @@ fn the_stock_tracker_draws_watched_quests_and_a_tracked_achievement() {
     for event in ["VARIABLES_LOADED", "PLAYER_ENTERING_WORLD"] {
         s.fire_event(event, Vec::<ScriptValue>::new());
     }
-    s.set_quest_log(model());
+    s.seed_quest_log(model());
     s.run(&format!(
         "AddQuestWatch(2) AddQuestWatch(3) AddTrackedAchievement({tracked})"
     ))
@@ -159,7 +158,7 @@ fn an_accepted_quest_is_watched_by_the_stock_log() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("watchaccept", false, "", |_| {});
     s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
-    s.set_quest_log(model());
+    s.seed_quest_log(model());
     let _ = s.take_errors();
     s.fire_event("QUEST_ACCEPTED", vec![ScriptValue::Int(2)]);
     assert_eq!(s.quest_log_watched(), vec![7]);

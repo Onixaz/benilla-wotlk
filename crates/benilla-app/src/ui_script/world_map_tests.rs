@@ -216,8 +216,7 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
     let (mut s, _) = session();
     let _ = s.take_errors();
     const QUEST: u32 = 33;
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![
             QuestLogEntryView {
                 title: "Elwynn Forest".into(),
@@ -298,8 +297,7 @@ fn the_stock_map_draws_and_hovers_a_quest_blob() {
     let (mut s, _) = session();
     let _ = s.take_errors();
     const QUEST: u32 = 54;
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![
             QuestLogEntryView {
                 title: "Elwynn Forest".into(),
@@ -411,8 +409,7 @@ fn the_quest_log_show_map_button_leaves_the_map_updating() {
     let (mut s, _) = session();
     let _ = s.take_errors();
     const QUEST: u32 = 60;
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![
             QuestLogEntryView {
                 title: "Elwynn Forest".into(),

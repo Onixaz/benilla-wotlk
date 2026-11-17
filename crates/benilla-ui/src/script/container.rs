@@ -661,7 +661,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if s.start_quest == 0 {
                 return Ok((quest_item, Value::Nil, Value::Nil));
             }
-            let active = model.quest_log.quest(s.start_quest).is_some();
+            let active = super::quest_log::quest_row_of(&model, s.start_quest).is_some();
             Ok((
                 quest_item,
                 Value::Integer(i64::from(s.start_quest)),
@@ -1780,7 +1780,7 @@ mod tests {
             },
         );
         s.set_container(0, Some(bag));
-        s.set_quest_log(crate::script::QuestLogState {
+        s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![crate::script::QuestLogEntryView {
                 quest_id: 456,
                 ..Default::default()

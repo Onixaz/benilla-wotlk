@@ -124,6 +124,8 @@ pub(crate) struct Scene<'w, 's> {
     roster_throttle: ResMut<'w, crate::ui_arena_team::RosterThrottle>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    /// The templates the item watches test the logged quests' required items against.
+    quest_log: Option<Res<'w, crate::ui_quest_log::QuestLog>>,
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -1464,6 +1466,9 @@ fn gameobject_info(
 /// Our own unit's watches in field order (`0x4d5550`): health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
+    if merged.item_stack || merged.item_entry {
+        item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
+    }
     if sc.self_guid.0 != Some(guid) {
         return;
     }
@@ -1485,10 +1490,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
     own_death_fields(sc, guid, player);
-    // The quest-slot watch (`0x6df370`, one per slot's five fields) rebuilds the log (`0x6df3bb`),
-    // which queues `QUEST_LOG_UPDATE` (`0x5e6cb9`) in turn with the frame's other unique signals.
-    if merged.quest_log_moved {
-        sc.signals.unique_signal("QUEST_LOG_UPDATE");
+    // The log window's watch (`0x60c280`), then each moved slot's watch (`0x6df370`) in slot order.
+    if !merged.quest_slots.is_empty() {
+        sc.ui.fire(
+            "UNIT_QUEST_LOG_CHANGED",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+        if let Some(store) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) {
+            let edges = quest_slot_edges(&merged.quest_slots, &store.0);
+            sc.ui
+                .world(move |world| crate::ui_quest_log::rows::slot_watch(world, edges));
+        }
     }
     own_player_watches(sc, guid, &merged.watched);
 }
@@ -1572,7 +1584,17 @@ fn merge_fields(
             {
                 merged.death.push((e.index, e.old, e.new));
             }
-            merged.quest_log_moved |= own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index);
+            if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
+                merged.quest_slots.push((e.index, e.old, e.new));
+            }
+            if matches!(
+                e.kind,
+                benilla_protocol::messages::ObjectType::Item
+                    | benilla_protocol::messages::ObjectType::Container
+            ) {
+                merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
+                merged.item_entry |= e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY;
+            }
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
             }
@@ -1601,12 +1623,78 @@ struct Merged {
     flags_moved: bool,
     /// Our own death fields' `(index, old, new)`, in field order.
     death: Vec<(u16, u32, u32)>,
-    /// One of our own quest-log slots' fields moved.
-    quest_log_moved: bool,
+    /// Our own quest-log slots' fields' `(index, old, new)`.
+    quest_slots: Vec<(u16, u32, u32)>,
+    /// An item's stack count moved (`0x707720`).
+    item_stack: bool,
+    /// An item's entry moved (`0x707960`).
+    item_entry: bool,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
     /// Our own honor and arena-team watches' `(index, old, new)`, in field order.
     watched: Vec<(u16, u32, u32)>,
+}
+
+/// An item's watches past its create, on the quest log: its stack count's test of the logged
+/// quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own,
+/// which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
+fn item_quest_watch(sc: &Scene, guid: u64, stack: bool, entry: bool) {
+    let Some(log) = sc.quest_log.as_deref() else {
+        return;
+    };
+    let Some(item) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) else {
+        return;
+    };
+    let me = sc
+        .self_guid
+        .0
+        .and_then(|g| sc.index.0.get(&g))
+        .and_then(|&e| sc.stores.get(e).ok());
+    if entry && me.is_some() && item.0.item_owner() == sc.self_guid.0 {
+        sc.signals.unique_signal("QUEST_LOG_UPDATE");
+    }
+    if let (true, Some(me)) = (stack, me) {
+        crate::ui_quest_log::rows::item_moved(
+            item.0.object_entry().unwrap_or(0),
+            me,
+            log,
+            &sc.signals,
+        );
+    }
+}
+
+/// The slots `fields` moved, in slot order, each slot's `(quest id, state)` before and after.
+fn quest_slot_edges(
+    fields: &[(u16, u32, u32)],
+    store: &benilla_protocol::ObjectFields,
+) -> Vec<crate::ui_quest_log::rows::SlotEdge> {
+    use benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS;
+    let base = benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1;
+    let mut slots: Vec<u8> = fields
+        .iter()
+        .map(|&(index, ..)| ((index - base) / QUEST_LOG_SLOT_FIELDS) as u8)
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots
+        .into_iter()
+        .map(|slot| {
+            let at = base + u16::from(slot) * QUEST_LOG_SLOT_FIELDS;
+            let now = store.player_quest_log(slot);
+            let now_id = now.map_or(0, |s| s.quest_id);
+            let now_state = now.map_or(0, |s| u32::from(s.state));
+            let old = |index: u16, now: u32| {
+                fields
+                    .iter()
+                    .find(|&&(i, ..)| i == index)
+                    .map_or(now, |&(_, old, _)| old)
+            };
+            crate::ui_quest_log::rows::SlotEdge {
+                was: (old(at, now_id), old(at + 1, now_state) as u8),
+                now: (now_id, now_state as u8),
+            }
+        })
+        .collect()
 }
 
 /// Every quest-log slot's fields: the slot watch's range (`0x6e52c5`-`0x6e52fb`).

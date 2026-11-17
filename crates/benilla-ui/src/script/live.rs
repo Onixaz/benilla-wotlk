@@ -165,6 +165,30 @@ pub trait LiveState {
         None
     }
 
+    /// A logged quest's answers at the call, computed from its slot and the caches (`0x5e0000`,
+    /// `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`), lines formatted through `get`, its detail
+    /// left out; `Some(None)` for a quest not cached, `None` where no view lends them.
+    fn quest_log_row(
+        &self,
+        _quest_id: u32,
+        _slot: u8,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<super::QuestLogEntryView>> {
+        None
+    }
+
+    /// A logged quest's detail pane at the call; `Some(None)` for a quest not cached, `None`
+    /// where no view lends it.
+    fn quest_log_detail(&self, _quest_id: u32, _slot: u8) -> Option<Option<super::QuestLogDetail>> {
+        None
+    }
+
+    /// The daily-quest fields holding a quest at the call (`0x58db30`), `None` where no view lends
+    /// them.
+    fn daily_quests_completed(&self) -> Option<u32> {
+        None
+    }
+
     /// `GetQuestTimers`' expiry of a run-out timer inside the call (`0x5e634a`): marks the quest
     /// expired and asks every questgiver's status again. `Some(Some(title))` for a new mark whose
     /// template is cached, `Some(None)` for a quest already marked or one whose line waits on its
@@ -403,7 +427,6 @@ pub(crate) fn has_control() -> bool {
     read_live(|l| l.has_control()).unwrap_or(true)
 }
 
-/// `f` over the view lent right now, `None` with none lent.
 /// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the
 /// frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
 pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
@@ -412,6 +435,7 @@ pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str
     }
 }
 
+/// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
     // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or

@@ -1177,9 +1177,8 @@ fn seat_a_session(script: &mut UiScript) {
             complete: 1,
             ..Default::default()
         };
-        script.set_quest_log(QuestLogState {
+        script.seed_quest_log(QuestLogState {
             entries: vec![header, in_progress, done],
-            num_quests: 2,
             daily_completed: 0,
         });
     }

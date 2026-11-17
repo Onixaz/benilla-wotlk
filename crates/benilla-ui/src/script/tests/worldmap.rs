@@ -1011,8 +1011,7 @@ fn a_quest_icon_projects_onto_the_displayed_floor() {
     let mut s = script();
     s.register_cvars([("questPOI", "1")]);
     s.set_world_map_catalog(floors());
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 33,
             poi_objectives: u32::MAX,

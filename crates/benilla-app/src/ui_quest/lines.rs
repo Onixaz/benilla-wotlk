@@ -1,5 +1,5 @@
 //! The quest chat lines the reference raises from its packet and field handlers: the accept line
-//! from the quest-slot watcher, and the turn-in's completion, experience, money and item lines
+//! from the quest-slot watch ([`accept_line`]), and the turn-in's completion, experience, money and item lines
 //! (12340's `0x6d0e10`). A line whose quest or item record is not cached waits for it, as the
 //! reference's cache callbacks print on the record's arrival.
 
@@ -16,8 +16,6 @@ use crate::ui_quest_log::QuestLog;
 /// One quest chat line, raised in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuestLine {
-    /// `ERR_QUEST_ACCEPTED_S` (`0x92`) with the quest's title.
-    Accepted(u32),
     /// `ERR_QUEST_COMPLETE_S` with the title, for every turn-in; the next quest in the chain only
     /// decides whether the window stays (`0x6d10ca`).
     Completed(u32),
@@ -67,7 +65,7 @@ pub(super) fn register(app: &mut App) {
             Update,
             feed_quest_lines
                 .in_set(crate::ui_unit::UnitFeed)
-                .after(crate::ui_quest_log::feed_quest_log),
+                .after(crate::ui_unit::EnterWorldFeed),
         );
 }
 
@@ -84,10 +82,6 @@ fn feed_quest_lines(
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut sink: MessageSink,
-    tutorial_bank: Option<Res<crate::tutorial::Tutorials>>,
-    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
-    // The accept callback's process-wide count (`0xc9eb08`).
-    mut accepts: Local<u32>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -116,15 +110,11 @@ fn feed_quest_lines(
     lines.0 = expanded;
     let mut shown = Vec::new();
     let mut chat_lines = Vec::new();
-    let mut accepted = Vec::new();
     lines.0.retain(
         |&line| match resolve(line, &quest_log, &items, &commands, &get) {
             Resolved::Show(msg) => {
                 if let Some(text) = ui_error_text(&msg, &get) {
                     shown.push(Shown::keyed(msg.key, text));
-                }
-                if let QuestLine::Accepted(id) = line {
-                    accepted.push(id);
                 }
                 false
             }
@@ -143,26 +133,42 @@ fn feed_quest_lines(
         sink.chat
             .push_event(crate::ui_chat::ChatEvent::text_only(kind, text));
     }
-    // `QUEST_ACCEPTED` with the quest's log row follows the accept line and its tutorials, all
-    // raised once the template is cached (the accept callback `0x6df2b0`, then the log update
-    // `0x6df370`).
-    for id in accepted {
-        let quest_type = quest_log
-            .template(id, &commands)
-            .map_or(0, |t| t.quest_type);
-        let flagged = tutorial_bank
-            .as_deref()
-            .is_some_and(|t| t.is_flagged(crate::tutorial::id::QUEST_LOG));
-        for tutorial in accept_tutorials(quest_type, flagged, &mut accepts) {
-            if let Some(t) = tutorials.as_mut() {
-                t.write(crate::tutorial::TutorialEvent::trigger(tutorial));
-            }
+}
+
+/// The accept's line and tutorials, its template cached (`0x6df440`-`0x6df481`, the answer's
+/// `0x6df2f9`-`0x6df343`).
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+pub(crate) fn accept_line(
+    In(quest_id): In<u32>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    quest_log: Res<QuestLog>,
+    commands: Res<NetCommands>,
+    mut sink: MessageSink,
+    tutorial_bank: Option<Res<crate::tutorial::Tutorials>>,
+    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    // The accept callback's process-wide count (`0x6df46d`).
+    mut accepts: Local<u32>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let Some(t) = quest_log.template(quest_id, &commands) else {
+        return;
+    };
+    let get = |key: &str| benilla_ui::strings::global(script.lua(), key);
+    let msg = UiError::s("ERR_QUEST_ACCEPTED_S", t.title.clone());
+    let shown: Vec<Shown> = ui_error_text(&msg, &get)
+        .map(|text| Shown::keyed(msg.key, text))
+        .into_iter()
+        .collect();
+    show_messages(&mut script, &mut sink, "ui_quest", shown);
+    let flagged = tutorial_bank
+        .as_deref()
+        .is_some_and(|t| t.is_flagged(crate::tutorial::id::QUEST_LOG));
+    for tutorial in accept_tutorials(t.quest_type, flagged, &mut accepts) {
+        if let Some(t) = tutorials.as_mut() {
+            t.write(crate::tutorial::TutorialEvent::trigger(tutorial));
         }
-        let index = script.quest_log_index(id) as i64;
-        script.fire_event(
-            "QUEST_ACCEPTED",
-            vec![benilla_ui::script::ScriptValue::Int(index)],
-        );
     }
 }
 
@@ -192,10 +198,6 @@ fn resolve(
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Resolved {
     match line {
-        QuestLine::Accepted(id) => match quest(id, quest_log, commands) {
-            Ok(t) => Resolved::Show(UiError::s("ERR_QUEST_ACCEPTED_S", t.title.clone())),
-            Err(r) => r,
-        },
         QuestLine::Completed(id) => match quest(id, quest_log, commands) {
             Ok(t) => Resolved::Show(UiError::s("ERR_QUEST_COMPLETE_S", t.title.clone())),
             Err(r) => r,
@@ -323,7 +325,6 @@ mod tests {
                 .insert_template(2_580, Some(crate::items::test_template("Linen Cloth")));
             let mut lines = world.resource_mut::<QuestLines>();
             for line in [
-                QuestLine::Accepted(783),
                 QuestLine::Completed(7),
                 QuestLine::Experience(450),
                 QuestLine::Money(1_025),
@@ -337,7 +338,6 @@ mod tests {
         assert_eq!(
             chat(&app),
             [
-                "Quest accepted: A Threat Within",
                 "Experience gained: 450.",
                 "Received 10 Silver, 25 Copper.",
                 "Received item: |cffffffff|Hitem:2580:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r.",
@@ -359,8 +359,8 @@ mod tests {
                 .resource::<crate::sound::MessageSounds>()
                 .queued()
                 .iter()
-                .any(|r| r.key == "ERR_QUEST_ACCEPTED_S"),
-            "the accept line's row carries its sound"
+                .any(|r| r.key == "ERR_QUEST_REWARD_EXP_I"),
+            "a line's row carries its sound"
         );
 
         {
@@ -374,7 +374,7 @@ mod tests {
         }
         app.update();
         assert_eq!(
-            chat(&app)[4..],
+            chat(&app)[3..],
             [
                 "Kobold Camp Cleanup completed.",
                 "Received item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r.",
@@ -468,8 +468,8 @@ mod tests {
         let mut seen = Vec::new();
         for q in [1, 2, 3, 9] {
             app.world_mut()
-                .resource_mut::<QuestLines>()
-                .push(QuestLine::Accepted(q));
+                .run_system_cached_with(accept_line, q)
+                .unwrap();
             app.update();
             seen.push(triggered(&mut app));
         }

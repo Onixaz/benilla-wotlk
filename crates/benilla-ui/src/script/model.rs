@@ -987,7 +987,7 @@ pub(crate) struct Model {
     pub(crate) death_actions: Vec<death::DeathAction>,
 
     /// The quest log, selection (1-based), abandon mark (a quest id) and abandons.
-    pub(crate) quest_log: quest_log::QuestLogState,
+    pub(crate) quest_log: Vec<quest_log::QuestLogRow>,
     pub(crate) quest_log_selection: u32,
     /// The reward-faction list, refilled by a quest panel's publish or
     /// `ProcessQuestLogRewardFactions` (`0x58d050`).
@@ -1228,9 +1228,9 @@ pub(crate) struct Model {
 
 impl Model {
     /// The selected quest-log row's detail, resolved per call as the reference's bindings do.
-    pub(crate) fn selected_quest_detail(&self) -> Option<&quest_log::QuestLogDetail> {
+    pub(crate) fn selected_quest_detail(&self) -> Option<quest_log::QuestLogDetail> {
         let index = usize::try_from(self.quest_log_selection.checked_sub(1)?).ok()?;
-        self.quest_log.entries.get(index)?.detail.as_ref()
+        quest_log::quest_detail(self.quest_log.get(index)?)
     }
 }
 
@@ -1774,7 +1774,7 @@ impl Model {
             quest_selects: Vec::new(),
             quest_actions: Vec::new(),
             death_actions: Vec::new(),
-            quest_log: quest_log::QuestLogState::default(),
+            quest_log: Vec::new(),
             quest_log_selection: 0,
             quest_reward_factions: Vec::new(),
             quest_log_abandon_mark: 0,

@@ -75,7 +75,7 @@ fn poi_lines(quest_id: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<Ques
 fn quest_at_row(model: &Model, row: i64) -> u32 {
     usize::try_from(row - 1)
         .ok()
-        .and_then(|i| model.quest_log.entries.get(i))
+        .and_then(|i| model.quest_log.get(i))
         .filter(|e| !e.is_header)
         .map_or(0, |e| e.quest_id)
 }
@@ -142,12 +142,8 @@ fn update_icons(model: &mut Model) {
             x: r.center.0,
             y: r.center.1,
         }));
-        let done = model
-            .quest_log
-            .entries
-            .iter()
-            .find(|e| !e.is_header && e.quest_id == slot.quest_id)
-            .is_some_and(|e| e.complete == 1);
+        let done =
+            super::quest_log::quest_numbers(model, slot.quest_id).is_some_and(|e| e.complete == 1);
         if done {
             complete.push(i);
         } else {
@@ -554,8 +550,7 @@ mod tests {
     ) {
         use crate::script::{QuestLogEntryView, QuestLogState};
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(QuestLogState {
-            num_quests: 1,
+        s.seed_quest_log(QuestLogState {
             entries: vec![
                 QuestLogEntryView {
                     title: "Elwynn Forest".into(),

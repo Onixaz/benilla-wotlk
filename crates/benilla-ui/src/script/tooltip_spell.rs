@@ -139,14 +139,15 @@ impl super::UiScript {
             .quest
             .iter()
             .filter_map(|q| q.reward_spell.as_ref())
+            .map(|s| s.spell_id)
             .chain(
                 model
                     .quest_log
-                    .entries
                     .iter()
-                    .filter_map(|e| e.detail.as_ref()?.reward_spell.as_ref()),
-            )
-            .map(|s| s.spell_id);
+                    .filter_map(|r| super::quest_log::quest_detail(r)?.reward_spell)
+                    .map(|s| s.spell_id)
+                    .collect::<Vec<_>>(),
+            );
         // `SetTradeSkillItem`'s spell hovers: the recipes that make no item.
         let recipes = model
             .trade_skill
@@ -955,8 +956,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .expect("model app_data");
                 model
                     .selected_quest_detail()
-                    .and_then(|d| d.reward_spell.as_ref())
-                    .map(|s| (s.spell_id, s.name.clone()))
+                    .and_then(|d| d.reward_spell)
+                    .map(|s| (s.spell_id, s.name))
             };
             set_reward_spell(lua, &this, id)
         })?,

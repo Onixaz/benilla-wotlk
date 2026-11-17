@@ -1371,12 +1371,11 @@ fn quest_progress_in_both_packet_orders() {
         ),
         (
             vec![
-                // The per-frame feeds: the line and the watch event read the counter the log feed
-                // pushed last frame. 12340 fires both from the add-kill handler (`0x6d82e9`,
-                // `0x6d8241`) with the counter word already applied, the leaderboard reading
-                // the slot at the call: 1/5 here once the progress move lands.
-                "UI_INFO_MESSAGE Wolf slain: 1/5 | lb=Wolf slain: 0/5 lbdone=nil",
-                "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 0/5 lbdone=nil",
+                // The counter word fires the log window's watch (`0x60c280`); the add-kill handler's
+                // line and watch event (`0x6d82e9`, `0x6d8241`) read the slot at the call (`0x5e1460`).
+                "UNIT_QUEST_LOG_CHANGED player | lb=Wolf slain: 1/5 lbdone=nil",
+                "UI_INFO_MESSAGE Wolf slain: 1/5 | lb=Wolf slain: 1/5 lbdone=nil",
+                "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 1/5 lbdone=nil",
                 "QUEST_LOG_UPDATE | lb=Wolf slain: 1/5 lbdone=nil",
             ]
             .into_iter()
@@ -1385,6 +1384,7 @@ fn quest_progress_in_both_packet_orders() {
             vec![
                 "UI_INFO_MESSAGE Wolf slain: 2/5 | lb=Wolf slain: 1/5 lbdone=nil",
                 "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 1/5 lbdone=nil",
+                "UNIT_QUEST_LOG_CHANGED player | lb=Wolf slain: 2/5 lbdone=nil",
                 "QUEST_LOG_UPDATE | lb=Wolf slain: 2/5 lbdone=nil",
             ]
             .into_iter()

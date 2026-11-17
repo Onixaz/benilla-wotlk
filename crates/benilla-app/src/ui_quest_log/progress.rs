@@ -499,10 +499,9 @@ fn announce_notices(
     (objects, rewards): (crate::net::Objects, crate::ui_quest::rewards::RewardInputs),
 ) {
     let Some(mut script) = script else {
-        // No interface to show them: the reference has no listener before its UI loads.
-        marks.notices.clear();
         return;
     };
+
     if marks.notices.is_empty() {
         return;
     }

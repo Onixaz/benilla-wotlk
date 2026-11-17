@@ -387,19 +387,12 @@ impl CastTargeting<'_, '_> {
         let rel = &ctx.rel;
         let store = rel.target_store?;
         let is_self = self.self_guid.0 == Some(guid);
-        Some(super::range_check::RangeFacts {
-            unit: ctx.range.target?,
-            pos: ctx.range.target_pos?,
-            flags: store.0.unit_flags(),
-            alive: super::bind_gates::unit_alive(&store.0),
-            dead_flag: store.0.unit_dynflag_dead(),
-            creature_type: rel.types.of(store),
-            pet_number: store.0.unit_pet_number(),
-            attackable: rel.attackable(is_self),
-            in_party: rel.in_party(is_self),
-            in_group: rel.in_group(is_self),
-            target: store.0.unit_target().filter(|&g| g != 0),
-        })
+        Some(range_facts_of(
+            rel,
+            store,
+            (ctx.range.target?, ctx.range.target_pos?),
+            is_self,
+        ))
     }
 
     /// The [`CastContext`] of a cast with the pet as caster (the spell-cast entry `0x80cce0` called
@@ -1142,8 +1135,30 @@ mod tests {
     }
 }
 
-/// The range check's inputs alone, for a verb that runs it at the call without the cast's
-/// selection, auras and gates: our reach, motion and position, and each unit's facts.
+/// A unit's range facts from its relations to us, its store, and its reach and position: the one
+/// builder the cast's and the quest item's range checks share.
+fn range_facts_of(
+    rel: &TargetRelations<'_>,
+    store: &ObjectStore,
+    (unit, pos): (benilla_formats::RangeUnit, Vec3),
+    is_self: bool,
+) -> super::range_check::RangeFacts {
+    super::range_check::RangeFacts {
+        unit,
+        pos,
+        flags: store.0.unit_flags(),
+        alive: unit_alive(&store.0),
+        dead_flag: store.0.unit_dynflag_dead(),
+        creature_type: rel.types.of(store),
+        pet_number: store.0.unit_pet_number(),
+        attackable: rel.attackable(is_self),
+        in_party: rel.in_party(is_self),
+        in_group: rel.in_group(is_self),
+        target: store.0.unit_target().filter(|&g| g != 0),
+    }
+}
+
+/// The range check's inputs alone, read at the call: our reach and position, and each unit's facts.
 #[derive(SystemParam)]
 pub(crate) struct RangeFactsView<'w, 's> {
     stores: Query<'w, 's, &'static ObjectStore>,
@@ -1189,19 +1204,11 @@ impl RangeFactsView<'_, '_> {
             },
         };
         let is_self = self_guid == Some(guid);
-        Some(super::range_check::RangeFacts {
-            unit: self.range_units.unit(entity)?,
-            pos: self.transforms.get(entity).ok()?.translation,
-            flags: store.0.unit_flags(),
-            alive: unit_alive(&store.0),
-            dead_flag: store.0.unit_dynflag_dead(),
-            creature_type: rel.types.of(store),
-            pet_number: store.0.unit_pet_number(),
-            attackable: rel.attackable(is_self),
-            in_party: rel.in_party(is_self),
-            in_group: rel.in_group(is_self),
-            target: store.0.unit_target().filter(|&g| g != 0),
-        })
+        let at = (
+            self.range_units.unit(entity)?,
+            self.transforms.get(entity).ok()?.translation,
+        );
+        Some(range_facts_of(&rel, store, at, is_self))
     }
 
     /// The range check of `def` from our player toward `target` at the call (`0x809610`), as the
