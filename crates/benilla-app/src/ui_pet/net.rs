@@ -85,9 +85,41 @@ fn on_spells(
     catalog: Option<Res<Spells>>,
     mut bar: ResMut<PetBar>,
     mut list: ResMut<super::PetList>,
+    combat: PetCombat,
 ) {
     if let SessionEvent::PetSpells(spells) = ev {
+        let previous = bar.spells.pet_guid;
         pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
+        // A new pet's attacking global is its combat test once held (`0x5d6a42`, `0x5d6a80`).
+        let pet = bar.spells.pet_guid;
+        if pet != previous && pet != 0 {
+            bar.attacking = combat.in_combat(pet).unwrap_or(false);
+        }
+    }
+}
+
+/// The held pet's combat test (`0x71afb0`): `UNIT_FIELD_FLAGS` `0x800`, or an auto-attack running.
+#[derive(bevy::ecs::system::SystemParam)]
+struct PetCombat<'w, 's> {
+    index: Option<Res<'w, GuidIndex>>,
+    units: Query<
+        'w,
+        's,
+        (
+            &'static crate::net::ObjectStore,
+            Option<&'static crate::creature_anim::Engaged>,
+        ),
+    >,
+}
+
+impl PetCombat<'_, '_> {
+    /// `None` when `guid` names no held unit (`0x5d6a6d`), else whether it is in combat.
+    fn in_combat(&self, guid: u64) -> Option<bool> {
+        let &e = self.index.as_ref()?.0.get(&guid)?;
+        let (store, engaged) = self.units.get(e).ok()?;
+        store.0.is_unit().then(|| {
+            store.0.unit_flags() & super::unit::UNIT_FLAG_PET_IN_COMBAT != 0 || engaged.is_some()
+        })
     }
 }
 

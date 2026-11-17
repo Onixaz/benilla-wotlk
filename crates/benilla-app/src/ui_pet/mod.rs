@@ -62,10 +62,10 @@ pub(crate) struct PetBar {
     /// GCD. Each mutation but the seed fires the flush, off [`Cooldowns::generation`]
     /// (`bar::fire_pet_cooldown_events`).
     pub(crate) cooldowns: Cooldowns,
-    /// The client's attack latch, local: all of `IsPetAttackActive`, and the only thing that lights
-    /// Attack. Raised only for a possessed unit, so never on a hunter's bar; lowered by
-    /// `PetStopAttack`, a new pet and the old-target clear. `PET_ATTACK_*` read the pet's flag
-    /// `0x800` instead.
+    /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that
+    /// lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a
+    /// possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test
+    /// (`0x5d6a80`).
     pub(crate) attacking: bool,
     /// `PET_BAR_UPDATE` signals, counted. Both state writes signal unconditionally, and `OnClick`'s
     /// `SetChecked(0)` needs that repaint to relight a press on the current mode, so the count is
@@ -77,6 +77,14 @@ pub(crate) struct PetBar {
     /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
     /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
     pub(crate) pending_cast: Option<(u32, Instant)>,
+}
+
+/// Push the pet-attacking global into the VM in the writer's turn, for the verbs after it.
+pub(crate) fn push_pet_attacking(world: &mut World) {
+    let on = world.get_resource::<PetBar>().is_some_and(|b| b.attacking);
+    if let Some(mut script) = world.get_non_send_resource_mut::<benilla_ui::script::UiScript>() {
+        script.set_pet_attacking(on);
+    }
 }
 
 /// The controlled-pet list (`[0xc23500]`), which the pet verbs read at call time (`0x5d3a24`).

@@ -165,15 +165,18 @@ pub(super) fn slot_paint(
         .then(|| command_token(action))
         .flatten()
     {
-        // Lit when the unmasked `state >> 8` equals the action, so a disabled bar lights none, or
-        // for Attack alone on the attack latch. `attack_active` is `IsPetAttackActive`, that latch
-        // on this slot.
+        // Attack is lit by the pet-attacking global alone (`0x5d51ea`); the others when the
+        // unmasked `state >> 8` equals the action (`0x5d51fc`), so a disabled bar lights none.
         let attacking = pet_attacking && action == PET_COMMAND_ATTACK;
         return PetActionView {
             name: Some(name.to_string()),
             texture: Some(texture.to_string()),
             is_token: true,
-            active: bar.command_state() == action || attacking,
+            active: if action == PET_COMMAND_ATTACK {
+                pet_attacking
+            } else {
+                bar.command_state() == action
+            },
             attack_active: attacking,
             ..Default::default()
         };
@@ -275,6 +278,7 @@ pub(crate) fn feed_pet_bar(
     let pickup_allowed = pet_flags.is_some_and(|flags| flags & UNIT_FLAG_POSSESSED == 0);
     let pet_attacking = bar.attacking;
     // `GetPetTimeRemaining`'s expiry on the VM clock, signed both ways around the anchor sample.
+    script.set_pet_attacking(pet_attacking);
     script.set_pet_expiry(bar.expires.map(|t| match t.checked_duration_since(anchor) {
         Some(ahead) => ui_now + ahead.as_secs_f64(),
         None => ui_now - anchor.duration_since(t).as_secs_f64(),

@@ -1538,14 +1538,24 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
             PetSignal::Experience if pet == Some(guid) => sc
                 .ui
                 .fire("UNIT_PET_EXPERIENCE", vec![ScriptValue::Str("pet".into())]),
-            PetSignal::Attack(on) if ours => sc.ui.fire(
-                if on {
-                    "PET_ATTACK_START"
-                } else {
-                    "PET_ATTACK_STOP"
-                },
-                Vec::new(),
-            ),
+            // The signal, then the pet-attacking global (`0x5d30b2` then `0x5d30ba`, `0x5d30c8`
+            // then `0x5d30d0`): a handler of the event reads the old value.
+            PetSignal::Attack(on) if ours => {
+                sc.ui.fire(
+                    if on {
+                        "PET_ATTACK_START"
+                    } else {
+                        "PET_ATTACK_STOP"
+                    },
+                    Vec::new(),
+                );
+                sc.ui.world(move |world| {
+                    if let Some(mut bar) = world.get_resource_mut::<crate::ui_pet::PetBar>() {
+                        bar.attacking = on;
+                    }
+                    crate::ui_pet::push_pet_attacking(world);
+                });
+            }
             _ => {}
         }
     }

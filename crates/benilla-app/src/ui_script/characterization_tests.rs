@@ -63,6 +63,7 @@ local VERBS = {
     { "critter1on", function() return (select(5, GetCompanionInfo("CRITTER", 1))) end },
     { "mount1cd", function() return (select(2, GetCompanionCooldown("MOUNT", 1))) end },
     { "possess", function() return IsPossessBarVisible() end },
+    { "petattack", function() return IsPetAttackActive() end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
     { "button2", button2 },
@@ -2923,9 +2924,15 @@ fn pet_attack_events_fire_from_the_flags_field_handler() {
         ],
         3,
     );
+    // The setter writes the pet-attacking global after its signal (`0x5d30b2` then `0x5d30ba`), so
+    // a handler reads the old value; `IsPetAttackActive` reads the global whatever its argument.
     assert_eq!(
-        pin(&seen, events, &[]),
-        vec!["UNIT_HAPPINESS pet", "PET_ATTACK_START", "PET_ATTACK_STOP"]
+        pin(&seen, events, &["petattack"]),
+        vec![
+            "UNIT_HAPPINESS pet | petattack=false",
+            "PET_ATTACK_START | petattack=false",
+            "PET_ATTACK_STOP | petattack=true",
+        ]
     );
 }
 

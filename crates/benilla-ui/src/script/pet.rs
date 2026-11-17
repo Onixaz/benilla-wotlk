@@ -117,6 +117,8 @@ pub(crate) struct PetBarState {
     /// The charm or possess expiry on the `GetTime` clock, in seconds: the last `SMSG_PET_SPELLS`
     /// duration past its arrival, `None` for a packet whose duration is 0.
     pub(crate) expiry: Option<f64>,
+    /// `IsPetAttackActive()`, the pet-attacking global (`[0xc234dc]`).
+    pub(crate) attacking: bool,
 }
 
 /// The possess spell `[0xc234e0]`'s record, read through the live view when called.
@@ -177,6 +179,11 @@ impl super::UiScript {
     /// count plus the duration for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
     pub fn set_pet_expiry(&mut self, expiry: Option<f64>) {
         set_field!(self, pet_bar.expiry, expiry);
+    }
+
+    /// Push the pet-attacking global `IsPetAttackActive` answers (`[0xc234dc]`).
+    pub fn set_pet_attacking(&mut self, attacking: bool) {
+        set_field!(self, pet_bar.attacking, attacking);
     }
 
     /// Take the `CastPetAction` calls out of the call stream, as 1-based slots; the app decides
@@ -424,14 +431,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The one pet binding that answers a real boolean, `false` even out of range.
+    // IsPetAttackActive() (`0x5d3160`): the pet-attacking global as a real boolean; any argument
+    // is ignored.
     g.set(
         "IsPetAttackActive",
-        lua.create_function(move |lua, i: u32| {
+        lua.create_function(move |lua, _: MultiValue| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(slot_at(&model, i).is_some_and(|s| s.view.attack_active))
+            Ok(model.pet_bar.attacking)
         })?,
     )?;
 
@@ -924,15 +932,32 @@ mod tests {
         assert_eq!(s.take_pet_stop_attacks(), 0, "drain empties");
     }
 
+    /// `IsPetAttackActive` answers the pet-attacking global whatever its argument (`0x5d3160`).
     #[test]
-    fn attack_active_is_a_per_slot_boolean() {
+    fn attack_active_is_the_global_whatever_the_slot() {
         let mut s = UiScript::new().unwrap();
         s.set_pet_actions(true, true, true, slots());
-        assert!(s.eval::<bool>("return IsPetAttackActive(1)").unwrap());
-        assert!(!s.eval::<bool>("return IsPetAttackActive(2)").unwrap());
-        assert!(s
-            .eval::<bool>("return IsPetAttackActive(9) == false")
-            .unwrap());
+        for call in [
+            "IsPetAttackActive()",
+            "IsPetAttackActive(1)",
+            "IsPetAttackActive(9)",
+        ] {
+            assert!(
+                s.eval::<bool>(&format!("return {call} == false")).unwrap(),
+                "{call}"
+            );
+        }
+        s.set_pet_attacking(true);
+        for call in [
+            "IsPetAttackActive()",
+            "IsPetAttackActive(2)",
+            "IsPetAttackActive(9)",
+        ] {
+            assert!(
+                s.eval::<bool>(&format!("return {call} == true")).unwrap(),
+                "{call}"
+            );
+        }
     }
 
     /// `IsPetAttackAction` reads the slot word, a real boolean (`0x5d5a10`); the stock bar's
