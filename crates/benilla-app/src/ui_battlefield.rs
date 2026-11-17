@@ -809,7 +809,7 @@ fn enter_world(
     if let Some(mut positions) = positions {
         positions.enter_world();
     }
-    // `0x54cb41`.
+    // Zero both status dwords (`0x54cb57`, `0x54cb5d`).
     if let Some(mut queue) = queue {
         queue.zero_statuses();
     }
@@ -1255,7 +1255,7 @@ mod tests {
         assert!(!q.apply_at(zero, None, now), "no active slot left to clear");
     }
 
-    /// The cascade only owes the request; the world entry zeroes, then sends it (`0x54cb41`, `0x54cc40`).
+    /// The cascade only owes the request; the world entry zeroes, then sends it (`0x54cb57`, `0x54cb5d`, `0x54cc40`).
     #[test]
     fn the_world_entry_zeroes_then_sends_the_owed_request() {
         let (tx, rx) = crossbeam_channel::unbounded();
