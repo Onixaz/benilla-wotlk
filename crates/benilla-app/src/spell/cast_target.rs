@@ -1141,3 +1141,87 @@ mod tests {
         }
     }
 }
+
+/// The range check's inputs alone, for a verb that runs it at the call without the cast's
+/// selection, auras and gates: our reach, motion and position, and each unit's facts.
+#[derive(SystemParam)]
+pub(crate) struct RangeFactsView<'w, 's> {
+    stores: Query<'w, 's, &'static ObjectStore>,
+    self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    index: Option<Res<'w, GuidIndex>>,
+    self_guid: Option<Res<'w, SelfGuid>>,
+    factions: Option<Res<'w, Factions>>,
+    reputations: Option<Res<'w, Reputations>>,
+    /// The group the party and raid tables read at the call.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+    names: Option<Res<'w, NameCache>>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    self_transform: Query<'w, 's, &'static Transform, (With<SelfPlayer>, With<ObjectStore>)>,
+    transforms: Query<'w, 's, &'static Transform, With<ObjectStore>>,
+    range_units: super::RangeUnits<'w, 's>,
+}
+
+impl RangeFactsView<'_, '_> {
+    /// The unit `guid` as the range check reads it now, as [`CastTargeting::range_facts`] builds
+    /// it; `None` before it streams.
+    fn facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
+        let entity = *self.index.as_deref()?.0.get(&guid)?;
+        let store = self.stores.get(entity).ok()?;
+        let self_guid = self.self_guid.as_deref().and_then(|g| g.0);
+        let self_store = self.self_store.iter().next();
+        let owner = |s| owner_store(s, self.index.as_deref(), &self.stores);
+        let roster = self.group.as_deref().map(|g| GroupRoster::of(g, self_guid));
+        let rel = TargetRelations {
+            target_store: Some(store),
+            target_owner_store: owner(Some(store)),
+            self_store,
+            factions: self.factions.as_deref(),
+            reputations: self.reputations.as_deref()?,
+            types: CreatureTypeSources {
+                names: self.names.as_deref(),
+                forms: self.spells.as_deref().map(|s| &s.forms),
+            },
+            group: GroupInputs {
+                self_guid,
+                target_guid: Some(guid),
+                self_owner_store: owner(self_store),
+                roster: roster.as_ref(),
+            },
+        };
+        let is_self = self_guid == Some(guid);
+        Some(super::range_check::RangeFacts {
+            unit: self.range_units.unit(entity)?,
+            pos: self.transforms.get(entity).ok()?.translation,
+            flags: store.0.unit_flags(),
+            alive: unit_alive(&store.0),
+            dead_flag: store.0.unit_dynflag_dead(),
+            creature_type: rel.types.of(store),
+            pet_number: store.0.unit_pet_number(),
+            attackable: rel.attackable(is_self),
+            in_party: rel.in_party(is_self),
+            in_group: rel.in_group(is_self),
+            target: store.0.unit_target().filter(|&g| g != 0),
+        })
+    }
+
+    /// The range check of `def` from our player toward `target` at the call (`0x809610`), as the
+    /// item range verbs run it.
+    pub(crate) fn player_range_check(
+        &self,
+        def: &SpellDisplay,
+        row: Option<&benilla_formats::SpellRange>,
+        mods: &super::SpellModifiers,
+        target: u64,
+    ) -> Option<bool> {
+        let pos = self.self_transform.iter().next()?.translation;
+        super::range_check(
+            def,
+            row,
+            mods,
+            (self.range_units.caster(), pos),
+            target,
+            None,
+            |guid| self.facts(guid),
+        )
+    }
+}
