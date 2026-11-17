@@ -68,6 +68,8 @@ local VERBS = {
     { "nores", function() return CannotBeResurrected() end },
     { "healer", function() return CheckSpiritHealerDist() end },
     { "restimer", function() return ResurrectHasTimer() end },
+    { "bf1", function() return (GetBattlefieldStatus(1)) end },
+    { "bfrun", function() return GetBattlefieldInstanceRunTime() > 0 end },
 }
 local function answers()
     local verbs = {}
@@ -1452,5 +1454,103 @@ fn the_death_verbs_read_the_world_between_frames() {
         read(&mut rig, "restimer"),
         "nil",
         "inside an arena the offer has no timer"
+    );
+}
+
+/// A slot queued, then made active on an arena map, in one frame: 12340's status handler applies
+/// each packet and fires `UPDATE_BATTLEFIELD_STATUS` with it (`0x54ae40`, `0x54b1a9`), the active
+/// one after its score rebuild's `UPDATE_BATTLEFIELD_SCORE` (`0x54b0d6` -> `0x54aa30`), so the
+/// first event reads the queued slot and only the later ones the arena.
+#[test]
+fn battlefield_statuses_in_one_frame_fire_in_wire_order() {
+    use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let queue = (6 << 16) | 2;
+    let queued = SessionEvent::BattlefieldStatus(BattlefieldStatus {
+        slot: 0,
+        queue,
+        status: 1,
+        queued: Some((60_000, 0)),
+        ..Default::default()
+    });
+    let active = SessionEvent::BattlefieldStatus(BattlefieldStatus {
+        slot: 0,
+        queue,
+        status: 3,
+        active: Some(BattlefieldActive {
+            map_id: 559,
+            joined_queue: 0,
+            shutdown_ms: 0,
+            run_ms: 30_000,
+            arena_faction: 0,
+        }),
+        ..Default::default()
+    });
+    let seen = rig.packets(vec![queued, active], 2);
+    assert_eq!(
+        pin(
+            &seen,
+            &["UPDATE_BATTLEFIELD_STATUS", "UPDATE_BATTLEFIELD_SCORE"],
+            &["bf1", "arena", "bfrun"]
+        ),
+        vec![
+            "UPDATE_BATTLEFIELD_STATUS 1 | bf1=queued arena=nil bfrun=false",
+            "UPDATE_BATTLEFIELD_SCORE | bf1=active arena=1 bfrun=true",
+            "UPDATE_BATTLEFIELD_STATUS 1 | bf1=active arena=1 bfrun=true",
+        ]
+    );
+}
+
+/// The duel's bounds packets around a battlefield status: each handler fires its event as it
+/// handles its packet (`0x5cf910`, `0x54ae40`, `0x5cf930`), so the three events come in wire
+/// order across the two subsystems, and the completion of a held duel fires `DUEL_FINISHED`
+/// (`0x5cfad8`).
+#[test]
+fn duel_and_battlefield_events_fire_in_wire_order() {
+    use benilla_protocol::messages::BattlefieldStatus;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let queued = SessionEvent::BattlefieldStatus(BattlefieldStatus {
+        slot: 1,
+        queue: (2 << 16) | 0x80,
+        status: 1,
+        queued: Some((60_000, 0)),
+        ..Default::default()
+    });
+    let seen = rig.packets(
+        vec![
+            SessionEvent::DuelRequested {
+                arbiter: 0xF110_0000_0000_0001,
+                challenger: 0x99,
+            },
+            SessionEvent::DuelOutOfBounds,
+            queued,
+            SessionEvent::DuelInBounds,
+            SessionEvent::DuelComplete { started: true },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "DUEL_REQUESTED",
+                "DUEL_OUTOFBOUNDS",
+                "UPDATE_BATTLEFIELD_STATUS",
+                "DUEL_INBOUNDS",
+                "DUEL_FINISHED"
+            ],
+            &[]
+        ),
+        vec![
+            "DUEL_OUTOFBOUNDS",
+            "UPDATE_BATTLEFIELD_STATUS 2",
+            "DUEL_INBOUNDS",
+            "DUEL_FINISHED",
+        ],
+        "a challenger no object holds raises no popup (`0x5cfd73`)"
     );
 }

@@ -26,6 +26,7 @@ pub(crate) struct LiveView<'w, 's> {
     far_sight_clear: Option<Res<'w, crate::player::view_subject::FarSightClear>>,
     death: crate::death::DeathView<'w, 's>,
     summon: crate::ui_summon::SummonView<'w>,
+    battlefield: crate::ui_battlefield::BattlefieldView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -142,6 +143,14 @@ impl LiveState for LiveView<'_, '_> {
     fn summon_time_left_ms(&self) -> u32 {
         self.summon.time_left_ms()
     }
+
+    fn battlefield_frame(&self) -> benilla_ui::script::BattlefieldFrame {
+        self.battlefield.frame()
+    }
+
+    fn battlemaster_rows(&self) -> Vec<benilla_ui::script::BattlemasterRow> {
+        self.battlefield.rows()
+    }
 }
 
 /// [`LiveView`] lent to every verb for the run of the system that takes it: the parameter each
@@ -221,11 +230,25 @@ unsafe impl SystemParam for LendLive<'_, '_> {
 // SAFETY: `LiveView` reads only.
 unsafe impl ReadOnlySystemParam for LendLive<'_, '_> {}
 
+/// A handler's write to state the VM owns, run in turn with the events around it.
+type VmWrite = Box<dyn FnOnce(&mut UiScript) + Send + Sync>;
+
 /// One queued call into the VM.
 enum UiEvent {
     Fire(&'static str, Vec<ScriptValue>),
     /// The cursor clear a handler runs beside its event (`0x520fab`).
     ClearCursor,
+    /// A write to what the VM owns, such as the battlefield list a list packet fills (`0x54e390`).
+    Write(VmWrite),
+    /// A system chat line, its `GlobalStrings` template read off the VM and filled (`0x5498f6`,
+    /// `0x5cfb20`).
+    SystemLine(&'static str, Vec<LineArg>),
+}
+
+/// An argument a system line's template takes.
+pub(crate) enum LineArg {
+    S(String),
+    D(i64),
 }
 
 /// The events this frame's handlers fired, in order; the drain empties it after each handler.
@@ -243,6 +266,16 @@ impl UiEvents {
         self.0.push(UiEvent::ClearCursor);
     }
 
+    /// Add the system chat line `key`'s template names, filled with `args` as the handler runs.
+    pub(crate) fn system_line(&mut self, key: &'static str, args: Vec<LineArg>) {
+        self.0.push(UiEvent::SystemLine(key, args));
+    }
+
+    /// Write state the VM owns in turn with the events around it; `write` may fire its own.
+    pub(crate) fn write(&mut self, write: impl FnOnce(&mut UiScript) + Send + Sync + 'static) {
+        self.0.push(UiEvent::Write(Box::new(write)));
+    }
+
     /// The fired event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
@@ -251,6 +284,8 @@ impl UiEvents {
             .map(|e| match e {
                 UiEvent::Fire(name, _) => *name,
                 UiEvent::ClearCursor => "<clear cursor>",
+                UiEvent::Write(_) => "<write>",
+                UiEvent::SystemLine(key, _) => key,
             })
             .collect()
     }
@@ -338,12 +373,36 @@ pub(crate) fn fire_handler_events(world: &mut World) {
         return;
     }
     let events = std::mem::take(&mut queued.0);
-    with_live_world(world, |script| {
+    let lines = with_live_world(world, |script| {
+        let mut lines = Vec::new();
         for event in events {
             match event {
                 UiEvent::Fire(event, args) => script.fire_event(event, args),
                 UiEvent::ClearCursor => script.clear_cursor_payload(),
+                UiEvent::Write(write) => write(script),
+                UiEvent::SystemLine(key, args) => {
+                    use benilla_ui::strings::Arg;
+                    let args: Vec<Arg> = args
+                        .iter()
+                        .map(|a| match a {
+                            LineArg::S(s) => Arg::S(s),
+                            LineArg::D(d) => Arg::D(*d),
+                        })
+                        .collect();
+                    let text = crate::ui_chat::combat::global_string(script, key)
+                        .map(|t| benilla_ui::strings::fill(&t, &args));
+                    lines.extend(text.filter(|t| !t.is_empty()));
+                }
             }
         }
+        lines
     });
+    // The chat log carries the line to the chat frame, as the chat feed's other system lines go.
+    if let (Some(lines), Some(mut chat)) =
+        (lines, world.get_resource_mut::<crate::ui_chat::ChatLog>())
+    {
+        for line in lines {
+            crate::ui_chat::away::push_system(&mut chat, line);
+        }
+    }
 }

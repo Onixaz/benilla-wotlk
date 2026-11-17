@@ -1,11 +1,7 @@
 //! Duels: the challenge, the countdown, the bounds and the outcome line, after 12340's handlers
-//! (registered at `0x5cfdd0`). The challenge (`0x5cfcd0`) reaches both players, and the
-//! challenger's own copy accepts at once (`0x5cfd12`). Bounds (`0x5cf910`, `0x5cf930`) only fire
-//! events: the server enforces them.
-//!
-//! Deviation: the challenger's name comes from the [`NameCache`], so a name still being queried
-//! delays the popup rather than dropping it; the reference reads it off the streamed player and
-//! fires nothing without one (`0x5cfd69`).
+//! (registered at `0x5cfdd0`), each firing its events and adding its lines as it applies its
+//! packet. The challenge (`0x5cfcd0`) reaches both players, and the challenger's own copy accepts
+//! at once (`0x5cfd12`). Bounds (`0x5cf910`, `0x5cf930`) only fire events: the server enforces them.
 
 use benilla_ui::script::{DuelRequest, ScriptValue, UiScript};
 use bevy::prelude::*;
@@ -14,109 +10,45 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::target::{NameMatch, PlayerLookup};
 use crate::ui_action::Spells;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::live::{LineArg, UiEvents};
+use crate::ui_script::UiDrain;
 
 /// The `Effect[0]` that marks the duel spell: the spell-learned walk keeps such a spell in
 /// `[0xbe7d90]` (`0x5420ac`), which `StartDuel` casts (`0x5cf9a1`).
 const SPELL_EFFECT_DUEL: u32 = 83;
 
-/// A line named by its `GlobalStrings` key, resolved in [`feed_duel`] where the VM is. The three
-/// keys are engine-composed, not message-catalog rows, so they go out as `Shown::unkeyed`: through
-/// `Shown::keyed` an unknown key turns the line red.
-enum OwedLine {
-    /// `DUEL_COUNTDOWN` ("Duel starting: %d") with the seconds left.
-    Countdown(u32),
-    /// `DUEL_WINNER_RETREAT` when the loser fled, else `DUEL_WINNER_KNOCKOUT`; both are positional
-    /// (`%1$s` winner, `%2$s` loser), and the retreat line names the loser first.
-    Winner {
-        fled: bool,
-        winner: String,
-        loser: String,
-    },
-}
-
-/// The duel session: written by the net handlers, read by [`feed_duel`], which fires the events on
-/// its edges, and by [`tick_countdown`].
+/// The duel session the handlers write.
 #[derive(Resource, Default)]
 pub(crate) struct DuelState {
-    owed: Vec<OwedLine>,
     /// The duel flag's guid, `[0xc22b58]`: set by the request, echoed on accept and cancel, and
-    /// cleared only by completion, which fires `DUEL_FINISHED`. `0` is no duel.
+    /// cleared by completion, which fires `DUEL_FINISHED`, or by an ignored challenge. `0` is no
+    /// duel.
     pub(crate) arbiter: u64,
-    /// Set while the challenge popup is owed; the challenger never gets one.
-    challenger: Option<u64>,
-    /// One bounds event per packet, in packet order: `true` for `DUEL_OUTOFBOUNDS`.
-    bounds: Vec<bool>,
+    /// Another player's challenge, `[0xc22b60]`: stored after `DUEL_REQUESTED` (`0x5cfd99`),
+    /// cleared by completion (`0x5cfa90`).
+    dueler: Option<u64>,
     countdown: Option<Countdown>,
 }
 
-/// The duel countdown timer (`0x5cf870`).
+/// The duel countdown timer (`0x5cf870`): the seconds its next line shows.
 struct Countdown {
     remaining: u32,
     tick: Timer,
 }
 
 impl DuelState {
-    /// `SMSG_DUEL_REQUESTED`: true when the challenge is our own, and the caller then shows
-    /// `ERR_DUEL_REQUESTED` and accepts inline, as the reference's handler does (`0x5cfd0a`).
-    fn apply_requested(&mut self, arbiter: u64, challenger: u64, own: Option<u64>) -> bool {
-        self.arbiter = arbiter;
-        let ours = Some(challenger) == own;
-        self.challenger = (!ours).then_some(challenger);
-        ours
-    }
-
-    /// The partner probe's accept hook (`WOW_PROBE=partner`): taking the challenger discharges the
-    /// popup as the feed's `DUEL_REQUESTED` edge does.
+    /// The partner probe's accept hook (`WOW_PROBE=partner`): the challenge it answers.
     pub(crate) fn take_challenger(&mut self) -> Option<u64> {
-        self.challenger.take()
-    }
-
-    /// `SMSG_DUEL_COMPLETE`: true when "Duel cancelled." is owed. Gated on an arbiter, as
-    /// `0x5cfa90` is, except the countdown cancel, which the reference also runs outside the gate.
-    fn apply_complete(&mut self, started: bool) -> bool {
-        self.countdown = None;
-        if self.arbiter == 0 {
-            return false;
-        }
-        self.arbiter = 0;
-        self.challenger = None;
-        !started
-    }
-
-    /// `SMSG_DUEL_COUNTDOWN`. Deviation: zero arms nothing, where the reference prints 0 and
-    /// re-arms forever on the `dec`'s wraparound, a bug vmangos never reaches (it sends 3000).
-    fn apply_countdown(&mut self, seconds: u32) {
-        self.countdown = (seconds > 0).then(|| Countdown {
-            remaining: seconds,
-            tick: Timer::from_seconds(1.0, TimerMode::Repeating),
-        });
+        self.dueler.take()
     }
 }
 
-/// Resolve an owed line against the VM's string table; a missing string is no line.
-fn owed_text(line: &OwedLine, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
-    use benilla_ui::strings::{fill, Arg};
-    let text = match line {
-        OwedLine::Countdown(n) => fill(&get("DUEL_COUNTDOWN")?, &[Arg::D(i64::from(*n))]),
-        OwedLine::Winner {
-            fled,
-            winner,
-            loser,
-        } => {
-            let key = if *fled {
-                "DUEL_WINNER_RETREAT"
-            } else {
-                "DUEL_WINNER_KNOCKOUT"
-            };
-            // Always winner then loser; the template's `%1$s`/`%2$s` picks the order.
-            fill(&get(key)?, &[Arg::S(winner), Arg::S(loser)])
-        }
-    };
-    (!text.is_empty()).then_some(text)
+/// The countdown's line (`0x5cf870`): `DUEL_COUNTDOWN` ("Duel starting: %d") as a system line.
+fn countdown_line(ui: &mut UiEvents, seconds: u32) {
+    ui.system_line("DUEL_COUNTDOWN", vec![LineArg::D(i64::from(seconds))]);
 }
 
-/// The duel's packet handlers; the events fire off the state's edges in [`feed_duel`].
+/// The duel's packet handlers, each firing its events once its changes apply.
 pub(crate) mod net {
     use super::*;
     use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -134,35 +66,64 @@ pub(crate) mod net {
             .net_handler(K::Disconnected, on_session_end);
     }
 
+    #[allow(clippy::too_many_arguments)] // a handler's full input set
     fn on_requested(
         In(ev): In<SessionEvent>,
         mut duel: ResMut<DuelState>,
         mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+        mut ui: ResMut<UiEvents>,
         commands: Res<NetCommands>,
         self_guid: Res<crate::net::SelfGuid>,
         social: Res<crate::ui_social::SocialState>,
+        players: Players,
     ) {
         if let SessionEvent::DuelRequested {
             arbiter,
             challenger,
         } = ev
         {
+            let held = players.player_name(challenger);
             requested(
                 &mut duel,
                 &mut errors,
+                &mut ui,
                 &commands,
-                arbiter,
-                challenger,
+                (arbiter, challenger),
                 self_guid.0,
                 social.is_ignored(challenger),
+                held,
             );
         }
     }
 
-    fn on_bounds(In(ev): In<SessionEvent>, mut duel: ResMut<DuelState>) {
+    /// The held players, as the challenge's lookup with type mask `0x10` finds them
+    /// (`0x5cfd69`), and the names the cache holds.
+    #[derive(bevy::ecs::system::SystemParam)]
+    pub(crate) struct Players<'w, 's> {
+        index: Res<'w, crate::net::GuidIndex>,
+        stores: Query<'w, 's, &'static crate::net::ObjectStore>,
+        names: Res<'w, NameCache>,
+        commands: Res<'w, NetCommands>,
+    }
+
+    impl Players<'_, '_> {
+        /// `None` for a guid no held player has; else the player's name, `None` inside while the
+        /// cache has none.
+        fn player_name(&self, guid: u64) -> Option<Option<String>> {
+            let store = self
+                .index
+                .0
+                .get(&guid)
+                .and_then(|&e| self.stores.get(e).ok())?;
+            (store.0.object_type() == Some(benilla_protocol::messages::ObjectType::Player))
+                .then(|| self.names.resolve(guid, &self.commands).map(str::to_string))
+        }
+    }
+
+    fn on_bounds(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
         match ev {
-            SessionEvent::DuelOutOfBounds => bounds(&mut duel, true),
-            SessionEvent::DuelInBounds => bounds(&mut duel, false),
+            SessionEvent::DuelOutOfBounds => bounds(&mut ui, true),
+            SessionEvent::DuelInBounds => bounds(&mut ui, false),
             _ => {}
         }
     }
@@ -171,26 +132,31 @@ pub(crate) mod net {
         In(ev): In<SessionEvent>,
         mut duel: ResMut<DuelState>,
         mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+        mut ui: ResMut<UiEvents>,
     ) {
         if let SessionEvent::DuelComplete { started } = ev {
-            complete(&mut duel, &mut errors, started);
+            complete(&mut duel, &mut errors, &mut ui, started);
         }
     }
 
-    fn on_winner(In(ev): In<SessionEvent>, mut duel: ResMut<DuelState>) {
+    fn on_winner(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
         if let SessionEvent::DuelWinner {
             fled,
             winner: won,
             loser,
         } = ev
         {
-            winner(&mut duel, fled, &won, &loser);
+            winner(&mut ui, fled, &won, &loser);
         }
     }
 
-    fn on_countdown(In(ev): In<SessionEvent>, mut duel: ResMut<DuelState>) {
+    fn on_countdown(
+        In(ev): In<SessionEvent>,
+        mut duel: ResMut<DuelState>,
+        mut ui: ResMut<UiEvents>,
+    ) {
         if let SessionEvent::DuelCountdown { seconds } = ev {
-            countdown(&mut duel, seconds);
+            countdown(&mut duel, &mut ui, seconds);
         }
     }
 
@@ -200,153 +166,133 @@ pub(crate) mod net {
         *duel = DuelState::default();
     }
 
-    /// `SMSG_DUEL_REQUESTED`. A challenge from an ignored player is declined with
-    /// `CMSG_DUEL_CANCELLED` and shows nothing (`0x5cfd33`).
+    /// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`): the arbiter is stored; our own challenge shows
+    /// `ERR_DUEL_REQUESTED` and accepts (`0x5cfd0a`); one from an ignored player is declined and
+    /// the arbiter zeroed (`0x5cfd33`-`0x5cfd42`); else a held player's fires `DUEL_REQUESTED` with
+    /// its name (`0x5cfd8b`), `UNKNOWNOBJECT` while the cache has none, and the challenge is
+    /// stored.
+    #[allow(clippy::too_many_arguments)] // the handler's inputs, passed through for its tests
     pub(crate) fn requested(
         duel: &mut DuelState,
         errors: &mut crate::ui_action::UiErrorKeys,
+        ui: &mut UiEvents,
         commands: &NetCommands,
-        arbiter: u64,
-        challenger: u64,
+        (arbiter, challenger): (u64, u64),
         own: Option<u64>,
         ignored: bool,
+        held: Option<Option<String>>,
     ) {
-        if ignored {
-            let _ = commands.0.send(ClientCommand::DuelCancelled { arbiter });
-            return;
-        }
-        if duel.apply_requested(arbiter, challenger, own) {
+        duel.arbiter = arbiter;
+        if Some(challenger) == own {
             errors
                 .0
                 .push(crate::ui_action::UiError::key("ERR_DUEL_REQUESTED"));
             let _ = commands.0.send(ClientCommand::DuelAccepted { arbiter });
+            return;
         }
+        if ignored {
+            let _ = commands.0.send(ClientCommand::DuelCancelled { arbiter });
+            duel.arbiter = 0;
+            return;
+        }
+        if let Some(name) = held {
+            ui.write(move |s| {
+                let name = name
+                    .or_else(|| crate::ui_chat::combat::global_string(s, "UNKNOWNOBJECT"))
+                    .unwrap_or_default();
+                s.fire_event("DUEL_REQUESTED", vec![ScriptValue::Str(name)]);
+            });
+        }
+        duel.dueler = Some(challenger);
     }
 
+    /// `SMSG_DUEL_COMPLETE` (`0x5cfa90`): with an arbiter held, "Duel cancelled." for an
+    /// unstarted duel, the arbiter cleared and `DUEL_FINISHED` (`0x5cfad8`); the countdown and the
+    /// challenge end either way.
     pub(crate) fn complete(
         duel: &mut DuelState,
         errors: &mut crate::ui_action::UiErrorKeys,
+        ui: &mut UiEvents,
         started: bool,
     ) {
-        if duel.apply_complete(started) {
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_DUEL_CANCELLED"));
+        if duel.arbiter != 0 {
+            if !started {
+                errors
+                    .0
+                    .push(crate::ui_action::UiError::key("ERR_DUEL_CANCELLED"));
+            }
+            duel.arbiter = 0;
+            ui.fire("DUEL_FINISHED", Vec::new());
         }
+        duel.countdown = None;
+        duel.dueler = None;
     }
 
     /// `SMSG_DUEL_WINNER`: the outcome line, composed client-side (`0x5cfb20`); the server
-    /// broadcasts it, so bystanders see it too.
-    pub(crate) fn winner(duel: &mut DuelState, fled: bool, winner: &str, loser: &str) {
-        duel.owed.push(OwedLine::Winner {
-            fled,
-            winner: winner.to_string(),
-            loser: loser.to_string(),
+    /// broadcasts it, so bystanders see it too. `DUEL_WINNER_RETREAT` when the loser fled, else
+    /// `DUEL_WINNER_KNOCKOUT`, both filled winner then loser; the retreat template's positional
+    /// specifiers name the loser first.
+    pub(crate) fn winner(ui: &mut UiEvents, fled: bool, winner: &str, loser: &str) {
+        let key = if fled {
+            "DUEL_WINNER_RETREAT"
+        } else {
+            "DUEL_WINNER_KNOCKOUT"
+        };
+        ui.system_line(
+            key,
+            vec![
+                LineArg::S(winner.to_string()),
+                LineArg::S(loser.to_string()),
+            ],
+        );
+    }
+
+    /// `SMSG_DUEL_COUNTDOWN` (`0x5cfa50`): the seconds' line at once, then the timer for the rest.
+    /// Deviation: zero shows and arms nothing, where the reference prints 0 and re-arms forever on
+    /// the `dec`'s wraparound, a bug no server reaches (they send 3000).
+    pub(crate) fn countdown(duel: &mut DuelState, ui: &mut UiEvents, seconds: u32) {
+        duel.countdown = None;
+        if seconds == 0 {
+            return;
+        }
+        countdown_line(ui, seconds);
+        duel.countdown = (seconds > 1).then(|| Countdown {
+            remaining: seconds - 1,
+            tick: Timer::from_seconds(1.0, TimerMode::Repeating),
         });
     }
 
-    pub(crate) fn countdown(duel: &mut DuelState, seconds: u32) {
-        duel.apply_countdown(seconds);
-    }
-
-    /// Each packet owes its event and nothing else (`0x5cf910`, `0x5cf930`).
-    pub(crate) fn bounds(duel: &mut DuelState, outside: bool) {
-        duel.bounds.push(outside);
-    }
-}
-
-/// Fire the four duel events on [`DuelState`]'s edges.
-fn feed_duel(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut duel: ResMut<DuelState>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    mut sink: crate::ui_action::MessageSink,
-    mut fed: Local<crate::ui_script::VmMemo<FedDuel>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let fed = fed.get(&script);
-
-    // Lines before events: a line describes the transition its event announces.
-    let owed = std::mem::take(&mut duel.owed);
-    let lines: Vec<crate::ui_action::Shown> = {
-        let get = |key: &str| script.lua().globals().get::<String>(key).ok();
-        owed.iter()
-            .filter_map(|line| {
-                owed_text(line, &get).map(|text| {
-                    crate::ui_action::Shown::unkeyed(benilla_ui::messages::MsgKind::Chat, text)
-                })
-            })
-            .collect()
-    };
-    crate::ui_action::show_messages(&mut script, &mut sink, "ui_duel", lines);
-
-    // `DUEL_REQUESTED(name)`, held until the name resolves (the module's deviation).
-    if let Some(guid) = duel.challenger {
-        if let Some(name) = names.resolve(guid, &commands).map(str::to_string) {
-            script.fire_event("DUEL_REQUESTED", vec![ScriptValue::Str(name)]);
-            duel.challenger = None;
+    /// Each packet fires its event and nothing else (`0x5cf910`, `0x5cf930`).
+    pub(crate) fn bounds(ui: &mut UiEvents, outside: bool) {
+        if outside {
+            ui.fire("DUEL_OUTOFBOUNDS", Vec::new());
+        } else {
+            ui.fire("DUEL_INBOUNDS", Vec::new());
         }
     }
-
-    for event in owed_events(&mut duel, fed) {
-        script.fire_event(event, Vec::new());
-    }
 }
 
-/// The bounds pair, one per packet (`0x5cf917`, `0x5cf937`), ahead of the completion that follows
-/// them on the wire, then `DUEL_FINISHED` when the arbiter clears (`0x5cfad8`).
-fn owed_events(duel: &mut DuelState, fed: &mut FedDuel) -> Vec<&'static str> {
-    let mut events: Vec<&'static str> = std::mem::take(&mut duel.bounds)
-        .into_iter()
-        .map(|outside| {
-            if outside {
-                "DUEL_OUTOFBOUNDS"
-            } else {
-                "DUEL_INBOUNDS"
-            }
-        })
-        .collect();
-    let held = duel.arbiter != 0;
-    if fed.held && !held {
-        events.push("DUEL_FINISHED");
-    }
-    fed.held = held;
-    events
-}
-
-/// What [`feed_duel`] last announced.
-#[derive(Default)]
-struct FedDuel {
-    held: bool,
-}
-
-/// The duel countdown (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
-/// arrival, since the reference runs the tick body before arming its timer, then one a second.
-fn tick_countdown(time: Res<Time>, mut duel: ResMut<DuelState>, mut started: Local<bool>) {
+/// The duel countdown's timer (`0x5cf870`): one `DUEL_COUNTDOWN` line a second after the
+/// handler's own, its text read off the VM as the timer fires.
+fn tick_countdown(
+    time: Res<Time>,
+    mut duel: ResMut<DuelState>,
+    mut ui: ResMut<UiEvents>,
+    mut commands: Commands,
+) {
     let Some(countdown) = duel.countdown.as_mut() else {
-        *started = false;
         return;
     };
-    let fire = if *started {
-        countdown.tick.tick(time.delta()).just_finished()
-    } else {
-        *started = true;
-        true
-    };
-    if !fire {
+    if !countdown.tick.tick(time.delta()).just_finished() {
         return;
     }
     let remaining = countdown.remaining;
     countdown.remaining -= 1;
-    let done = countdown.remaining == 0;
-    duel.owed.push(OwedLine::Countdown(remaining));
-    if done {
+    if countdown.remaining == 0 {
         duel.countdown = None;
-        *started = false;
     }
+    countdown_line(&mut ui, remaining);
+    commands.queue(crate::ui_script::live::fire_handler_events);
 }
 
 /// Drain the duel verbs' intents into their sends.
@@ -435,10 +381,7 @@ impl Plugin for UiDuelPlugin {
         app.init_resource::<DuelState>().add_systems(
             Update,
             (
-                // The tick names its line and `feed_duel` resolves it, so the tick runs first or
-                // each "Duel starting: N" lands a frame late.
-                tick_countdown.before(feed_duel),
-                feed_duel.in_set(UiFeed),
+                tick_countdown.after(benilla_world::schedule::WorldStage::Net),
                 drain_duel.in_set(UiDrain),
             ),
         );
@@ -449,72 +392,127 @@ impl Plugin for UiDuelPlugin {
 mod tests {
     use super::*;
 
-    /// Both sides store the arbiter, so `DUEL_FINISHED` reaches both.
+    fn requested(
+        duel: &mut DuelState,
+        challenger: u64,
+        ignored: bool,
+        held: Option<Option<String>>,
+    ) -> (Vec<&'static str>, Vec<&'static str>, Vec<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut errors = crate::ui_action::UiErrorKeys::default();
+        let mut ui = UiEvents::default();
+        net::requested(
+            duel,
+            &mut errors,
+            &mut ui,
+            &NetCommands(tx),
+            (0xA1, challenger),
+            Some(7),
+            ignored,
+            held,
+        );
+        (
+            errors.0.iter().map(|e| e.key).collect(),
+            ui.names(),
+            rx.try_iter().collect(),
+        )
+    }
+
+    /// Our own challenge shows `ERR_DUEL_REQUESTED` and accepts at once (`0x5cfd0a`,
+    /// `0x5cfd12`); both sides store the arbiter, so `DUEL_FINISHED` reaches both.
     #[test]
     fn our_own_challenge_takes_the_error_branch() {
         let mut duel = DuelState::default();
-        assert!(duel.apply_requested(0xA1, 7, Some(7)));
-        assert_eq!(duel.arbiter, 0xA1);
-        assert_eq!(duel.challenger, None);
-
-        let mut duel = DuelState::default();
-        assert!(!duel.apply_requested(0xA1, 9, Some(7)));
-        assert_eq!(duel.challenger, Some(9));
+        let (errors, events, sent) = requested(&mut duel, 7, false, Some(None));
+        assert_eq!(errors, ["ERR_DUEL_REQUESTED"]);
+        assert!(events.is_empty());
+        assert!(matches!(
+            sent[..],
+            [ClientCommand::DuelAccepted { arbiter: 0xA1 }]
+        ));
+        assert_eq!((duel.arbiter, duel.dueler), (0xA1, None));
     }
 
-    /// Only an unstarted duel earns "Duel cancelled.".
+    /// An ignored challenger's duel is declined and the arbiter zeroed (`0x5cfd33`-`0x5cfd42`);
+    /// a held player's fires `DUEL_REQUESTED` from the handler; one not held fires nothing
+    /// (`0x5cfd73`), and either is stored as the challenge (`0x5cfd99`).
+    #[test]
+    fn a_challenge_fires_only_for_a_held_player_and_never_for_an_ignored_one() {
+        let mut duel = DuelState::default();
+        let (_, events, sent) = requested(&mut duel, 9, true, Some(Some("Two".into())));
+        assert!(events.is_empty());
+        assert!(matches!(
+            sent[..],
+            [ClientCommand::DuelCancelled { arbiter: 0xA1 }]
+        ));
+        assert_eq!((duel.arbiter, duel.dueler), (0, None));
+
+        let (_, events, sent) = requested(&mut duel, 9, false, Some(Some("Two".into())));
+        assert_eq!(
+            events,
+            ["<write>"],
+            "the event, fired with its name off the VM"
+        );
+        assert!(sent.is_empty());
+        assert_eq!((duel.arbiter, duel.dueler), (0xA1, Some(9)));
+
+        let mut duel = DuelState::default();
+        let (_, events, _) = requested(&mut duel, 9, false, None);
+        assert!(events.is_empty(), "no held player, no popup");
+        assert_eq!(duel.dueler, Some(9));
+    }
+
+    /// Only a held arbiter finishes, and only an unstarted duel earns "Duel cancelled."; the
+    /// countdown ends either way (`0x5cfa90`).
     #[test]
     fn completion_is_gated_on_holding_an_arbiter() {
+        let mut errors = crate::ui_action::UiErrorKeys::default();
         let mut duel = DuelState::default();
-        assert!(!duel.apply_complete(false), "no duel held → silent");
+        net::countdown(&mut duel, &mut UiEvents::default(), 3);
+        let mut ui = UiEvents::default();
+        net::complete(&mut duel, &mut errors, &mut ui, false);
+        assert!(errors.0.is_empty() && ui.is_empty(), "no duel held: silent");
+        assert!(duel.countdown.is_none(), "the countdown ends anyway");
 
-        duel.apply_requested(0xA1, 9, Some(7));
-        duel.apply_countdown(3);
-        assert!(duel.apply_complete(false), "unstarted → cancelled line");
+        duel.arbiter = 0xA1;
+        net::complete(&mut duel, &mut errors, &mut ui, false);
+        let keys: Vec<&str> = errors.0.iter().map(|e| e.key).collect();
+        assert_eq!(keys, ["ERR_DUEL_CANCELLED"]);
+        assert_eq!(ui.names(), ["DUEL_FINISHED"]);
         assert_eq!(duel.arbiter, 0);
-        assert!(duel.countdown.is_none(), "the countdown is cancelled too");
 
-        duel.apply_requested(0xA1, 9, Some(7));
-        assert!(
-            !duel.apply_complete(true),
-            "a real duel ending is silent here"
-        );
+        let mut errors = crate::ui_action::UiErrorKeys::default();
+        let mut ui = UiEvents::default();
+        duel.arbiter = 0xA1;
+        net::complete(&mut duel, &mut errors, &mut ui, true);
+        assert!(errors.0.is_empty(), "a real duel ending shows no line here");
+        assert_eq!(ui.names(), ["DUEL_FINISHED"]);
     }
 
-    /// Each bounds packet fires its own event, repeats included, and a duel ending out of bounds
-    /// fires no `DUEL_INBOUNDS` (`0x5cfa90` touches no bounds state).
+    /// Each bounds packet fires its own event, repeats included (`0x5cf917`, `0x5cf937`).
     #[test]
-    fn bounds_fire_once_per_packet_and_completion_adds_none() {
-        let mut duel = DuelState::default();
-        let mut fed = FedDuel::default();
-        duel.apply_requested(0xA1, 9, Some(7));
-        assert!(owed_events(&mut duel, &mut fed).is_empty());
-
-        net::bounds(&mut duel, true);
-        net::bounds(&mut duel, true);
-        net::bounds(&mut duel, false);
+    fn bounds_fire_once_per_packet() {
+        let mut ui = UiEvents::default();
+        net::bounds(&mut ui, true);
+        net::bounds(&mut ui, true);
+        net::bounds(&mut ui, false);
         assert_eq!(
-            owed_events(&mut duel, &mut fed),
+            ui.names(),
             ["DUEL_OUTOFBOUNDS", "DUEL_OUTOFBOUNDS", "DUEL_INBOUNDS"]
         );
-
-        net::bounds(&mut duel, true);
-        duel.apply_complete(true);
-        assert_eq!(
-            owed_events(&mut duel, &mut fed),
-            ["DUEL_OUTOFBOUNDS", "DUEL_FINISHED"],
-            "fled: out of bounds, then the finish, and no inbounds"
-        );
-        assert!(owed_events(&mut duel, &mut fed).is_empty());
     }
 
+    /// The countdown's first line shows from the handler (`0x5cfa50` runs `0x5cf870` at once),
+    /// the timer keeping the rest; zero arms nothing.
     #[test]
-    fn zero_countdown_arms_nothing() {
+    fn the_countdown_shows_its_first_line_from_the_handler() {
         let mut duel = DuelState::default();
-        duel.apply_countdown(0);
-        assert!(duel.countdown.is_none());
-        duel.apply_countdown(3);
-        assert_eq!(duel.countdown.as_ref().map(|c| c.remaining), Some(3));
+        let mut ui = UiEvents::default();
+        net::countdown(&mut duel, &mut ui, 0);
+        assert!(duel.countdown.is_none() && ui.is_empty());
+        net::countdown(&mut duel, &mut ui, 3);
+        assert_eq!(ui.names(), ["DUEL_COUNTDOWN"]);
+        assert_eq!(duel.countdown.as_ref().map(|c| c.remaining), Some(2));
     }
 
     /// 7266 "Duel", which every character starts with, carries `SPELL_EFFECT_DUEL`, so a starting
@@ -540,6 +538,7 @@ mod tests {
     /// Against the shipped `GlobalStrings.lua`: the retreat template names the loser first.
     #[test]
     fn the_outcome_line_places_both_names_positionally() {
+        use benilla_ui::strings::{fill, Arg};
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let src = chain
@@ -547,34 +546,24 @@ mod tests {
             .expect("GlobalStrings.lua in the chain");
         let s = benilla_ui::script::UiScript::new().expect("VM");
         s.run(&String::from_utf8_lossy(&src)).expect("runs clean");
-        let get = |key: &str| s.lua().globals().get::<String>(key).ok();
-
-        let outcome = |fled| {
-            owed_text(
-                &OwedLine::Winner {
-                    fled,
-                    winner: "Onerogue".into(),
-                    loser: "Twomage".into(),
-                },
-                &get,
-            )
-        };
+        let get = |key: &str| s.lua().globals().get::<String>(key).unwrap();
+        let names = [Arg::S("Onerogue"), Arg::S("Twomage")];
         assert_eq!(
-            outcome(false).as_deref(),
-            Some("Onerogue has defeated Twomage in a duel")
+            fill(&get("DUEL_WINNER_KNOCKOUT"), &names),
+            "Onerogue has defeated Twomage in a duel"
         );
         assert_eq!(
-            outcome(true).as_deref(),
-            Some("Twomage has fled from Onerogue in a duel")
+            fill(&get("DUEL_WINNER_RETREAT"), &names),
+            "Twomage has fled from Onerogue in a duel"
         );
         assert_eq!(
-            owed_text(&OwedLine::Countdown(3), &get).as_deref(),
-            Some("Duel starting: 3")
+            fill(&get("DUEL_COUNTDOWN"), &[Arg::D(3)]),
+            "Duel starting: 3"
         );
     }
 
     /// `ERR_DUEL_CANCELLED` is the yellow info line and `ERR_DUEL_REQUESTED` plays `LEVELUP`; the
-    /// three templates are not rows, which `Shown::keyed` would turn red.
+    /// three templates are not rows, so they go out as system lines.
     #[test]
     fn the_error_pair_are_catalog_rows_and_the_templates_are_not() {
         use benilla_ui::messages::{by_key, MsgKind};
@@ -592,10 +581,7 @@ mod tests {
             "DUEL_WINNER_KNOCKOUT",
             "DUEL_WINNER_RETREAT",
         ] {
-            assert!(
-                by_key(key).is_none(),
-                "{key} is engine-composed — it must not go out through Shown::keyed"
-            );
+            assert!(by_key(key).is_none(), "{key} is engine-composed");
         }
     }
 }

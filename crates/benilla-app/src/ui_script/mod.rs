@@ -501,6 +501,14 @@ impl Plugin for UiScriptPlugin {
                 )
                     .chain(),
             )
+            // The area under us resolves in the world update, after the input's calls drain and
+            // before the paint (`0x47f15b`, then `0x47f163`).
+            .configure_sets(
+                Update,
+                benilla_world::terrain_stream::AreaAuthoritySet
+                    .after(UiDrain)
+                    .before(UiPaint),
+            )
             // In the feed phase, so an `OnUpdate` reads this frame's `GetFramerate()`.
             .add_systems(Update, feed_framerate.in_set(UiFeed))
             // The press hit-tests the rects the last tick resolved, the ones on screen, in-world

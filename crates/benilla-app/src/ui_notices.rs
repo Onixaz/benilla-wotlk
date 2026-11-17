@@ -106,9 +106,10 @@ impl Plugin for NoticesPlugin {
             .add_systems(
                 Update,
                 (
+                    // A send of the world update, ahead of the UI phases that read the clock.
                     request_ui_time
                         .after(benilla_world::schedule::WorldStage::Net)
-                        .before(UiFeed),
+                        .before(crate::ui_script::UiPress),
                     feed_notices
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),

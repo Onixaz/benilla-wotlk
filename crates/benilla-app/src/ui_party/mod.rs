@@ -39,10 +39,7 @@ impl Plugin for UiPartyPlugin {
             .add_systems(
                 Update,
                 (
-                    // After the battlefield feed, whose arena test the selection colour reads.
-                    feed::feed_party
-                        .in_set(UiFeed)
-                        .after(crate::ui_battlefield::feed_battlefield),
+                    feed::feed_party.in_set(UiFeed),
                     // Gated: a notice drained into the boot VM would be lost.
                     feed::feed_marks
                         .in_set(UiFeed)

@@ -2,8 +2,8 @@
 //!
 //! The reference holds a `MSG_PVP_LOG_DATA` board until every row's name has resolved, and the last
 //! name arrival rebuilds it (`0x54ca30` → `0x54aa30`); here the board is pushed the frame the last
-//! name lands. `UPDATE_BATTLEFIELD_SCORE` fires on a pushed board and on the status-3 arrival,
-//! before `UPDATE_BATTLEFIELD_STATUS` (`0x54b148` before `0x54b1a9`).
+//! name lands. `UPDATE_BATTLEFIELD_SCORE` fires on a pushed board here, and on the status-3 arrival
+//! from the status handler, before `UPDATE_BATTLEFIELD_STATUS` (`0x54b0d6` before `0x54b1a9`).
 
 use std::time::{Duration, Instant};
 
@@ -38,6 +38,14 @@ pub(crate) struct BattlefieldScoreboard {
 impl BattlefieldScoreboard {
     pub(crate) fn apply(&mut self, data: PvpLogData) {
         self.log = Some(data);
+    }
+
+    /// Whether a row's name is still being asked for (`0xbea578`), which holds the board's rebuild
+    /// and its `UPDATE_BATTLEFIELD_SCORE` back (`0x54aa30`).
+    pub(crate) fn names_pending(&self, names: &NameCache) -> bool {
+        self.log
+            .as_ref()
+            .is_some_and(|l| l.rows.iter().any(|r| names.peek(r.guid).is_none()))
     }
 }
 
@@ -108,10 +116,7 @@ fn resolve_board(
 pub(crate) fn feed_battlefield_score(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     board: Res<BattlefieldScoreboard>,
-    (queue, mut owed): (
-        Res<BattlefieldQueue>,
-        ResMut<crate::ui_battlefield::BattlefieldOwed>,
-    ),
+    queue: Res<BattlefieldQueue>,
     catalog: Option<Res<WorldStateUiRes>>,
     names: Res<NameCache>,
     guids: Res<crate::net::GuidIndex>,
@@ -149,13 +154,9 @@ pub(crate) fn feed_battlefield_score(
             teams,
         })
     });
-    let status_rebuild = std::mem::take(&mut owed.became_active);
-    if status_rebuild {
-        script.reset_battlefield_score_filter();
-    }
+    // A status 3's rebuild fires from its handler (`0x54b0d6`).
     let last = last.get(&script);
-    let changed = sync_board(&mut script, fresh, board.log.is_none(), last);
-    if changed || status_rebuild {
+    if sync_board(&mut script, fresh, board.log.is_none(), last) {
         script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
     }
 }

@@ -78,7 +78,7 @@ impl Plugin for UiLfgPlugin {
                 (
                     lfg_enter_world
                         .in_set(UiFeed)
-                        .after(crate::ui_battlefield::reset_on_world_enter),
+                        .after(crate::ui_battlefield::request_status_on_world_enter),
                     // Gated, so a frameless boot VM never takes a packet the in-game VM needs.
                     // After a map change's cache eviction, which writes the icon catalog's holder.
                     feed_lfg

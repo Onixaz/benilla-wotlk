@@ -1825,6 +1825,8 @@ fn feed_units(
             // The cascade's corpse and release reset and our own create's dead or alive refresh,
             // as an exclusive command with its events fired in turn (`0x528010`, `0x6e818b`).
             crate::death::queue_enter_world(&mut deferred);
+            // The cascade's battlefield entry (`0x54ca50`), later in its list.
+            crate::ui_battlefield::queue_enter_world(&mut deferred);
             memo.entered_world = true;
         }
     } else if memo.entered_world {

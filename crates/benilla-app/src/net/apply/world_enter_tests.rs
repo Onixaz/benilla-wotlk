@@ -43,7 +43,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
                 crate::net::send_query_time,
                 crate::ui_pet::request_pet_info_on_world_enter,
                 crate::ui_mail::send_query_next_mail_time_on_enter,
-                crate::ui_battlefield::reset_on_world_enter,
+                crate::ui_battlefield::request_status_on_world_enter,
                 crate::ui_lfg::lfg_enter_world,
             )
                 .chain(),
@@ -235,11 +235,11 @@ fn the_client_schedules_the_sends_in_the_reference_order() {
     assert!(runs_before(
         &mut app,
         crate::ui_mail::send_query_next_mail_time_on_enter,
-        crate::ui_battlefield::reset_on_world_enter
+        crate::ui_battlefield::request_status_on_world_enter
     ));
     assert!(runs_before(
         &mut app,
-        crate::ui_battlefield::reset_on_world_enter,
+        crate::ui_battlefield::request_status_on_world_enter,
         crate::ui_lfg::lfg_enter_world
     ));
 }

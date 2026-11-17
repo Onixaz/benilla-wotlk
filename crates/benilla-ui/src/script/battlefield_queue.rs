@@ -2,8 +2,8 @@
 //! battleground and arena lists `PVPBattlegroundFrame.lua`, `BattlefieldFrame.lua` and
 //! `ArenaFrame.lua` read, the two queue slots behind the minimap icon, and the Wintergrasp queue.
 //! The VM owns what the bindings write (the listed type, the instances, the selection, the
-//! battlemaster); the app pushes `BattlemasterList.dbc` resolved for the player, each list packet
-//! as it lands and the slots every frame, since their clocks move.
+//! battlemaster), which the list handler fills (`0x54e390`); the slots, clocks and
+//! `BattlemasterList.dbc` resolved for the player are read live when a verb is called.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -60,7 +60,7 @@ pub struct BattlefieldListPush {
     pub instances: Vec<u32>,
 }
 
-/// One queue slot (`m_status[i]`, `0xbea4b8`) reduced by the app at this frame's clock.
+/// One queue slot (`0xbea4b8`) reduced by the app at the calling verb's clock.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BattlefieldQueueSlot {
     /// 0 none, 1 queued, 2 confirm, 3 active; anything else answers `"error"`.
@@ -94,7 +94,7 @@ pub struct WorldPvpQueueView {
     pub expire_in: i32,
 }
 
-/// What the app pushes every frame: the clocks, the active instance and the gates.
+/// What the queue's verbs read live: the clocks, the active instance and the gates.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct BattlefieldFrame {
     pub slots: [BattlefieldQueueSlot; 2],
@@ -145,10 +145,9 @@ pub enum BattlefieldMgrRequest {
 /// The VM's mirror of the reference's battlefield engine.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BattlefieldInfo {
-    /// Every `BattlemasterList.dbc` row, as pushed.
-    rows: Vec<BattlemasterRow>,
-    /// The battleground types (`0xbea720`): the battleground rows' ids in their sorted order.
-    order: Vec<u32>,
+    /// The battleground types whose holiday ran at the last sort of the type list (`0xbea720`):
+    /// the game's start sorts with none (`0x54e720`), `SortBGList` with today's (`0x54c9f0`).
+    sort_holidays: Vec<u32>,
     /// The battleground type id (`0xbea53c`), the type the list and the join name.
     bg_type: u32,
     /// The instance list (`0xbea5bc`).
@@ -161,7 +160,6 @@ pub(crate) struct BattlefieldInfo {
     allow_join: bool,
     holiday: BattlefieldRewardView,
     random: BattlefieldRewardView,
-    frame: BattlefieldFrame,
     joins: Vec<BattlefieldJoin>,
     /// `RequestBattlegroundInstanceInfo`'s sends: the type asked.
     list_requests: Vec<u32>,
@@ -177,8 +175,7 @@ pub(crate) struct BattlefieldInfo {
 impl Default for BattlefieldInfo {
     fn default() -> Self {
         Self {
-            rows: Vec::new(),
-            order: Vec::new(),
+            sort_holidays: Vec::new(),
             bg_type: 0,
             instances: Vec::new(),
             battlemaster: 0,
@@ -186,7 +183,6 @@ impl Default for BattlefieldInfo {
             allow_join: true,
             holiday: Default::default(),
             random: Default::default(),
-            frame: Default::default(),
             joins: Vec::new(),
             list_requests: Vec::new(),
             port_requests: Vec::new(),
@@ -199,29 +195,39 @@ impl Default for BattlefieldInfo {
 }
 
 impl BattlefieldInfo {
-    fn row(&self, id: u32) -> Option<&BattlemasterRow> {
-        self.rows.iter().find(|r| r.id == id)
-    }
-
-    /// The battlefield list sort (`0x54a650`) as a key: the random battleground first, then a
-    /// running holiday, then the lower minimum level, then the lower id.
-    fn sort_order(&mut self) {
-        let rows = &self.rows;
-        self.order.sort_by_key(|&id| {
-            let r = rows.iter().find(|r| r.id == id);
+    /// The battleground types (`0xbea720`) in their sorted order: the battleground rows, sorted
+    /// (`0x54a650`) with the random battleground first, then a holiday running at the last sort,
+    /// then the lower minimum level, then the lower id.
+    fn order(&self, rows: &[BattlemasterRow]) -> Vec<u32> {
+        let mut order: Vec<&BattlemasterRow> = rows
+            .iter()
+            .filter(|r| r.instance_type == INSTANCE_TYPE_BATTLEGROUND)
+            .collect();
+        order.sort_by_key(|r| {
             (
-                id != RANDOM_BATTLEGROUND,
-                !r.is_some_and(|r| r.holiday),
-                r.map_or(0, |r| r.min_level),
-                id,
+                r.id != RANDOM_BATTLEGROUND,
+                !self.sort_holidays.contains(&r.id),
+                r.min_level,
+                r.id,
             )
         });
+        order.into_iter().map(|r| r.id).collect()
     }
 
     /// The listed type's row, the gate most bindings open with.
-    fn listed(&self) -> Option<&BattlemasterRow> {
-        self.row(self.bg_type)
+    fn listed(&self, rows: &[BattlemasterRow]) -> Option<BattlemasterRow> {
+        rows.iter().find(|r| r.id == self.bg_type).cloned()
     }
+}
+
+/// `BattlemasterList.dbc` resolved for the player at the call; none with no view lent.
+fn rows() -> Vec<BattlemasterRow> {
+    super::read_live(|l| l.battlemaster_rows()).unwrap_or_default()
+}
+
+/// The slots, clocks and gates at the call; the empty queue with no view lent.
+fn frame() -> BattlefieldFrame {
+    super::read_live(|l| l.battlefield_frame()).unwrap_or_default()
 }
 
 /// The reference's 1-based index, `(u32)tonumber − 1`: 0 and negatives wrap past any bound.
@@ -261,69 +267,42 @@ fn event(model: &mut Model, name: &str) {
 }
 
 impl super::UiScript {
-    /// Push `BattlemasterList.dbc` resolved for the player. The first push builds the type list as
-    /// the game initialization does (`0x54e720`), before any holiday is known; `SortBGList`
-    /// re-sorts.
-    pub fn set_battlemaster_rows(&mut self, rows: Vec<BattlemasterRow>) {
-        if self.model_ref().battlefield.rows == rows {
-            return;
-        }
-        let mut model = self.model_mut();
-        let bf = &mut model.battlefield;
-        let first = bf.rows.is_empty();
-        bf.rows = rows;
-        if first {
-            bf.order = bf
-                .rows
-                .iter()
-                .filter(|r| r.instance_type == INSTANCE_TYPE_BATTLEGROUND)
-                .map(|r| r.id)
-                .collect();
-            let holidays: Vec<bool> = bf.rows.iter().map(|r| r.holiday).collect();
-            for r in &mut bf.rows {
-                r.holiday = false;
-            }
-            bf.sort_order();
-            for (r, h) in bf.rows.iter_mut().zip(holidays) {
-                r.holiday = h;
-            }
-        }
-    }
-
     /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`): the type, rewards and instances, then the event its
     /// source names. A battlemaster opens the session (the battlemaster setter, `0x5496d0`).
     pub fn apply_battlefield_list(&mut self, list: BattlefieldListPush) {
-        let mut model = self.model_mut();
-        let bf = &mut model.battlefield;
-        bf.bg_type = list.bg_type;
-        bf.holiday = list.holiday;
-        bf.random = list.random;
-        bf.instances = list.instances;
-        bf.allow_join = true;
-        if list.bg_type == RANDOM_BATTLEGROUND && list.battlemaster != 0 {
-            bf.battlemaster = list.battlemaster;
-            event(&mut model, "NPC_PVPQUEUE_ANYWHERE");
-        } else if list.from_anywhere {
-            event(&mut model, "PVPQUEUE_ANYWHERE_SHOW");
-        } else if list.battlemaster != 0 {
-            bf.battlemaster = list.battlemaster;
-            event(&mut model, "BATTLEFIELDS_SHOW");
-        } else {
-            bf.battlemaster = 0;
-            event(&mut model, "BATTLEFIELDS_CLOSED");
-            event(&mut model, "BATTLEFIELDS_SHOW");
+        let events: &[&str] = {
+            let mut model = self.model_mut();
+            let bf = &mut model.battlefield;
+            bf.bg_type = list.bg_type;
+            bf.holiday = list.holiday;
+            bf.random = list.random;
+            bf.instances = list.instances;
+            bf.allow_join = true;
+            if list.bg_type == RANDOM_BATTLEGROUND && list.battlemaster != 0 {
+                bf.battlemaster = list.battlemaster;
+                &["NPC_PVPQUEUE_ANYWHERE"]
+            } else if list.from_anywhere {
+                &["PVPQUEUE_ANYWHERE_SHOW"]
+            } else if list.battlemaster != 0 {
+                bf.battlemaster = list.battlemaster;
+                &["BATTLEFIELDS_SHOW"]
+            } else {
+                bf.battlemaster = 0;
+                &["BATTLEFIELDS_CLOSED", "BATTLEFIELDS_SHOW"]
+            }
+        };
+        for &name in events {
+            self.fire_event(name, Vec::new());
         }
     }
 
     /// The battlemaster walked out of range or the session ended: the battlemaster setter with
-    /// none.
+    /// none, which fires `BATTLEFIELDS_CLOSED` at once (`0x5496d0`).
     pub fn close_battlemaster(&mut self) {
-        let mut model = self.model_mut();
-        if model.battlefield.battlemaster == 0 {
+        if std::mem::take(&mut self.model_mut().battlefield.battlemaster) == 0 {
             return;
         }
-        model.battlefield.battlemaster = 0;
-        event(&mut model, "BATTLEFIELDS_CLOSED");
+        self.fire_event("BATTLEFIELDS_CLOSED", Vec::new());
     }
 
     /// The battlemaster the VM holds, 0 with none.
@@ -340,14 +319,6 @@ impl super::UiScript {
         bf.battlemaster = 0;
         bf.allow_join = true;
         bf.instances.clear();
-    }
-
-    /// Push the slots and clocks, every frame.
-    pub fn set_battlefield_frame(&mut self, frame: BattlefieldFrame) {
-        if self.model_ref().battlefield.frame == frame {
-            return;
-        }
-        self.model_mut().battlefield.frame = frame;
     }
 
     pub fn take_battlefield_joins(&mut self) -> Vec<BattlefieldJoin> {
@@ -416,7 +387,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = read(lua);
             let Some(r) = model
                 .battlefield
-                .listed()
+                .listed(&rows())
                 .filter(|r| r.has_map && player_exists(&model))
             else {
                 return Ok(MultiValue::new());
@@ -456,7 +427,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(flag(
                 model
                     .battlefield
-                    .listed()
+                    .listed(&rows())
                     .is_some_and(|r| r.instance_type == INSTANCE_TYPE_ARENA),
             ))
         })?,
@@ -465,9 +436,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // Two values (`0x549ad0`): inside an arena, and the active slot's rated flag.
     g.set(
         "IsActiveBattlefieldArena",
-        lua.create_function(|lua, ()| {
-            let model = read(lua);
-            let f = &model.battlefield.frame;
+        lua.create_function(|_, ()| {
+            let f = frame();
             let rated = f
                 .active
                 .and_then(|i| f.slots.get(usize::from(i)))
@@ -484,7 +454,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             let model = read(lua);
             Ok(flag(
-                model.battlefield.listed().is_some_and(|r| r.groups_allowed),
+                model
+                    .battlefield
+                    .listed(&rows())
+                    .is_some_and(|r| r.groups_allowed),
             ))
         })?,
     )?;
@@ -503,7 +476,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 if !model.battlefield.allow_join {
                     return Ok(());
                 }
-                let row = model.battlefield.listed().cloned();
+                let row = model.battlefield.listed(&rows());
                 let arena = row
                     .as_ref()
                     .is_some_and(|r| r.instance_type == INSTANCE_TYPE_ARENA);
@@ -598,8 +571,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 "Usage: GetBattlefieldStatus(index)",
             )?);
-            let model = read(lua);
-            let Some(s) = model.battlefield.frame.slots.get(index as usize) else {
+            let f = frame();
+            let Some(s) = f.slots.get(index as usize) else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     Value::Nil,
@@ -631,10 +604,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 "Usage: GetBattlefieldPortExpiration(index)",
             )?);
-            let model = read(lua);
-            Ok(model
-                .battlefield
-                .frame
+            Ok(frame()
                 .slots
                 .get(index as usize)
                 .map_or(0, |s| i64::from(s.port_expiration_ms / 1000)))
@@ -657,10 +627,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, index: Value| {
                 let index = index0(number_arg(lua, index, usage)?);
-                let model = read(lua);
-                Ok(model
-                    .battlefield
-                    .frame
+                Ok(frame()
                     .slots
                     .get(index as usize)
                     .map_or(0, |s| i64::from(get(s))))
@@ -670,21 +637,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "GetBattlefieldInstanceExpiration",
-        lua.create_function(|lua, ()| {
-            Ok(i64::from(
-                read(lua).battlefield.frame.instance_expiration_ms,
-            ))
-        })?,
+        lua.create_function(|_, ()| Ok(i64::from(frame().instance_expiration_ms)))?,
     )?;
 
     g.set(
         "GetBattlefieldInstanceRunTime",
-        lua.create_function(|lua, ()| Ok(i64::from(read(lua).battlefield.frame.run_time_ms)))?,
+        lua.create_function(|_, ()| Ok(i64::from(frame().run_time_ms)))?,
     )?;
 
     g.set(
         "GetBattlefieldArenaFaction",
-        lua.create_function(|lua, ()| Ok(flag(read(lua).battlefield.frame.arena_faction != 0)))?,
+        lua.create_function(|_, ()| Ok(flag(frame().arena_faction != 0)))?,
     )?;
 
     // AcceptBattlefieldPort(index, accept) (`0x54da10`): nil off the two slots or on a refusal,
@@ -697,13 +660,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 "Usage: AcceptBattlefieldPort(index, accept)",
             )?);
+            let f = frame();
             let mut model = crate::script::model_mut_of(lua);
-            let Some(slot) = model.battlefield.frame.slots.get(index as usize).cloned() else {
+            let Some(slot) = f.slots.get(index as usize) else {
                 return Ok(Value::Nil);
             };
             let accept = bool_or_default(accept.as_ref(), false);
             if accept {
-                if let Some(key) = model.battlefield.frame.port_refusal {
+                if let Some(key) = f.port_refusal {
                     model.ui_errors.push(key);
                     return Ok(Value::Nil);
                 }
@@ -727,7 +691,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "GetNumBattlegroundTypes",
-        lua.create_function(|lua, ()| Ok(read(lua).battlefield.order.len() as i64))?,
+        lua.create_function(|lua, ()| Ok(read(lua).battlefield.order(&rows()).len() as i64))?,
     )?;
 
     // Five values (`0x54e010`): name, canEnter, isHoliday, isRandom, id; nothing off the list.
@@ -736,11 +700,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetBattlegroundInfo(index)")?;
             let model = read(lua);
-            let bf = &model.battlefield;
+            let rows = rows();
             let row = usize::try_from(index - 1)
                 .ok()
-                .and_then(|i| bf.order.get(i))
-                .and_then(|&id| bf.row(id))
+                .and_then(|i| model.battlefield.order(&rows).get(i).copied())
+                .and_then(|id| rows.iter().find(|r| r.id == id))
                 .filter(|_| player_exists(&model));
             let Some(r) = row else {
                 return Ok(MultiValue::new());
@@ -759,7 +723,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SortBGList",
         lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).battlefield.sort_order();
+            crate::script::model_mut_of(lua).battlefield.sort_holidays = rows()
+                .into_iter()
+                .filter(|r| r.holiday)
+                .map(|r| r.id)
+                .collect();
             Ok(true)
         })?,
     )?;
@@ -779,12 +747,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             let bf = &mut model.battlefield;
-            let Some(id) = bf.order.get(index as usize).copied() else {
+            let rows = rows();
+            let Some(id) = bf.order(&rows).get(index as usize).copied() else {
                 return Ok(());
             };
-            if bf.row(id).is_none() {
-                return Ok(());
-            }
             bf.list_requests.push(id);
             bf.instances.clear();
             bf.bg_type = id;
@@ -813,8 +779,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if index != 0 {
                 return Ok(MultiValue::new());
             }
-            let model = read(lua);
-            let q = &model.battlefield.frame.world_pvp;
+            let q = frame().world_pvp;
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(status_text(q.status))?),
                 opt_string(lua, q.area_name.as_deref())?,
@@ -867,9 +832,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "CanHearthAndResurrectFromArea",
-        lua.create_function(|lua, ()| {
-            Ok(flag(read(lua).battlefield.frame.can_hearth_and_resurrect))
-        })?,
+        lua.create_function(|_, ()| Ok(flag(frame().can_hearth_and_resurrect)))?,
     )?;
 
     Ok(())
@@ -893,11 +856,57 @@ mod tests {
         s
     }
 
-    fn pending(s: &UiScript) -> Vec<String> {
-        s.model_ref()
-            .pending_events
-            .iter()
-            .map(|(n, _)| n.clone())
+    /// A view whose queue and rows are fixed.
+    #[derive(Default)]
+    struct View {
+        frame: BattlefieldFrame,
+        rows: Vec<BattlemasterRow>,
+    }
+
+    impl crate::script::LiveState for View {
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+        fn has_control(&self) -> bool {
+            true
+        }
+        fn far_sight(&self) -> bool {
+            false
+        }
+        fn battlefield_frame(&self) -> BattlefieldFrame {
+            self.frame.clone()
+        }
+        fn battlemaster_rows(&self) -> Vec<BattlemasterRow> {
+            self.rows.clone()
+        }
+    }
+
+    fn with_rows(rows: Vec<BattlemasterRow>) -> View {
+        View {
+            rows,
+            ..Default::default()
+        }
+    }
+
+    /// The events `f` fires, in order.
+    fn fired(s: &mut UiScript, f: impl FnOnce(&mut UiScript)) -> Vec<String> {
+        s.run(
+            "BQ_SEEN = {} local f = CreateFrame('Frame') f:RegisterAllEvents() \
+             f:SetScript('OnEvent', function(_, e) BQ_SEEN[#BQ_SEEN + 1] = e end)",
+        )
+        .unwrap();
+        f(s);
+        s.eval::<String>("local e = table.concat(BQ_SEEN, ',') BQ_SEEN = {} return e")
+            .unwrap()
+            .split(',')
+            .filter(|e| !e.is_empty())
+            .map(str::to_string)
             .collect()
     }
 
@@ -929,73 +938,102 @@ mod tests {
     #[test]
     fn the_type_list_sorts_random_first_then_level_and_resorts_on_holiday() {
         let mut s = vm();
-        s.set_battlemaster_rows(rows());
+        let view = with_rows(rows());
         assert_eq!(
-            s.eval::<i64>("return GetNumBattlegroundTypes()").unwrap(),
+            s.with_live(&view, |s| s.eval::<i64>("return GetNumBattlegroundTypes()"))
+                .unwrap(),
             4,
             "arena rows are not battleground types"
         );
-        let names = |s: &UiScript| {
-            s.eval::<String>(
-                "local t = {} for i = 1, GetNumBattlegroundTypes() do \
-                 t[#t+1] = (GetBattlegroundInfo(i)) end return table.concat(t, ',')",
-            )
+        let names = |s: &mut UiScript, view: &View| {
+            s.with_live(view, |s| {
+                s.eval::<String>(
+                    "local t = {} for i = 1, GetNumBattlegroundTypes() do \
+                     t[#t+1] = (GetBattlegroundInfo(i)) end return table.concat(t, ',')",
+                )
+            })
             .unwrap()
         };
         assert_eq!(
-            names(&s),
+            names(&mut s, &view),
             "Random Battleground,Warsong Gulch,Arathi Basin,Alterac Valley"
         );
         let mut r = rows();
         r[0].holiday = true;
-        s.set_battlemaster_rows(r);
+        let holiday = with_rows(r);
         assert_eq!(
-            names(&s),
+            names(&mut s, &holiday),
             "Random Battleground,Warsong Gulch,Arathi Basin,Alterac Valley",
             "a new holiday waits for SortBGList"
         );
-        assert!(s.eval::<bool>("return SortBGList()").unwrap());
+        assert!(s
+            .with_live(&holiday, |s| s.eval::<bool>("return SortBGList()"))
+            .unwrap());
         assert_eq!(
-            names(&s),
+            names(&mut s, &holiday),
             "Random Battleground,Alterac Valley,Warsong Gulch,Arathi Basin"
         );
+        assert_eq!(
+            names(&mut s, &view),
+            "Random Battleground,Alterac Valley,Warsong Gulch,Arathi Basin",
+            "the last sort holds until the next"
+        );
         let got = s
-            .eval::<String>(
-                "local n, c, h, r, id = GetBattlegroundInfo(1) \
-                 return n .. tostring(c) .. tostring(h) .. tostring(r) .. id",
-            )
+            .with_live(&holiday, |s| {
+                s.eval::<String>(
+                    "local n, c, h, r, id = GetBattlegroundInfo(1) \
+                     return n .. tostring(c) .. tostring(h) .. tostring(r) .. id",
+                )
+            })
             .unwrap();
         assert_eq!(got, "Random Battleground1nil132");
         assert_eq!(s.arity("GetBattlegroundInfo(9)").unwrap(), 0);
+        assert_eq!(
+            s.eval::<i64>("return GetNumBattlegroundTypes()").unwrap(),
+            0,
+            "no view, no rows"
+        );
     }
 
     #[test]
     fn requesting_a_type_switches_it_at_once() {
         let mut s = vm();
-        s.set_battlemaster_rows(rows());
-        s.run("RequestBattlegroundInstanceInfo(2)").unwrap();
+        let view = with_rows(rows());
+        s.with_live(&view, |s| s.run("RequestBattlegroundInstanceInfo(2)"))
+            .unwrap();
         assert_eq!(s.take_battlefield_list_requests(), vec![2]);
         let got = s
-            .eval::<String>("local n, d, g = GetBattlefieldInfo() return n .. '|' .. d .. '|' .. g")
+            .with_live(&view, |s| {
+                s.eval::<String>(
+                    "local n, d, g = GetBattlefieldInfo() return n .. '|' .. d .. '|' .. g",
+                )
+            })
             .unwrap();
         assert_eq!(got, "Warsong Gulch|Warsong Gulch text|5");
-        assert_eq!(s.arity("GetBattlefieldInfo()").unwrap(), 6);
-        s.run("RequestBattlegroundInstanceInfo(0) RequestBattlegroundInstanceInfo(9)")
-            .unwrap();
+        assert_eq!(
+            s.with_live(&view, |s| s.arity("GetBattlefieldInfo()"))
+                .unwrap(),
+            6
+        );
+        s.with_live(&view, |s| {
+            s.run("RequestBattlegroundInstanceInfo(0) RequestBattlegroundInstanceInfo(9)")
+        })
+        .unwrap();
         assert!(s.take_battlefield_list_requests().is_empty());
     }
 
     #[test]
     fn a_list_packet_fires_the_event_its_source_names() {
         let mut s = vm();
-        s.set_battlemaster_rows(rows());
-        s.apply_battlefield_list(BattlefieldListPush {
-            battlemaster: 0x42,
-            bg_type: 2,
-            instances: vec![7, 3],
-            ..Default::default()
+        let shown = fired(&mut s, |s| {
+            s.apply_battlefield_list(BattlefieldListPush {
+                battlemaster: 0x42,
+                bg_type: 2,
+                instances: vec![7, 3],
+                ..Default::default()
+            })
         });
-        assert_eq!(pending(&s), ["BATTLEFIELDS_SHOW"]);
+        assert_eq!(shown, ["BATTLEFIELDS_SHOW"], "fired by the list itself");
         assert_eq!(s.battlemaster(), 0x42);
         assert_eq!(s.eval::<i64>("return GetNumBattlefields()").unwrap(), 2);
         s.run("JoinBattlefield(2, 1)").unwrap();
@@ -1026,15 +1064,21 @@ mod tests {
     #[test]
     fn an_arena_join_takes_the_index_as_its_slot() {
         let mut s = vm();
-        s.set_battlemaster_rows(rows());
+        let view = with_rows(rows());
         s.apply_battlefield_list(BattlefieldListPush {
             battlemaster: 0x77,
             bg_type: 6,
             ..Default::default()
         });
-        assert_eq!(s.eval::<i64>("return IsBattlefieldArena()").unwrap(), 1);
-        s.run("JoinBattlefield(1, 1, 1) JoinBattlefield(3)")
-            .unwrap();
+        assert_eq!(
+            s.with_live(&view, |s| s.eval::<i64>("return IsBattlefieldArena()"))
+                .unwrap(),
+            1
+        );
+        s.with_live(&view, |s| {
+            s.run("JoinBattlefield(1, 1, 1) JoinBattlefield(3)")
+        })
+        .unwrap();
         assert_eq!(
             s.take_battlefield_joins(),
             vec![
@@ -1068,35 +1112,42 @@ mod tests {
             port_expiration_ms: 79_900,
             ..Default::default()
         };
-        s.set_battlefield_frame(frame.clone());
+        let view = View {
+            frame: frame.clone(),
+            ..Default::default()
+        };
         let got = s
-            .eval::<String>(
-                "local st, n, id, lo, hi, size, rated = GetBattlefieldStatus(1) \
-                 return st .. n .. id .. lo .. hi .. size .. tostring(rated)",
-            )
+            .with_live(&view, |s| {
+                s.eval::<String>(
+                    "local st, n, id, lo, hi, size, rated = GetBattlefieldStatus(1) \
+                     return st .. n .. id .. lo .. hi .. size .. tostring(rated)",
+                )
+            })
             .unwrap();
         assert_eq!(got, "confirmWarsong Gulch410190nil");
-        assert_eq!(s.arity("GetBattlefieldStatus(3)").unwrap(), 7);
         assert_eq!(
-            s.eval::<i64>("return GetBattlefieldPortExpiration(1)")
+            s.with_live(&view, |s| s.arity("GetBattlefieldStatus(3)"))
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            s.with_live(&view, |s| s
+                .eval::<i64>("return GetBattlefieldPortExpiration(1)"))
                 .unwrap(),
             79,
             "whole seconds"
         );
         frame.port_refusal = Some("ERR_NOT_IN_COMBAT");
-        s.set_battlefield_frame(frame);
-        assert!(s
-            .eval::<bool>("return AcceptBattlefieldPort(1, 1) == nil")
-            .unwrap());
+        let refused = View {
+            frame,
+            ..Default::default()
+        };
+        let ask = |s: &mut UiScript, lua: &str| s.with_live(&refused, |s| s.eval::<bool>(lua));
+        assert!(ask(&mut s, "return AcceptBattlefieldPort(1, 1) == nil").unwrap());
         assert!(s.take_battlefield_port_requests().is_empty());
-        assert_eq!(
-            s.eval::<i64>("return AcceptBattlefieldPort(1, 0)").unwrap(),
-            1
-        );
+        assert!(ask(&mut s, "return AcceptBattlefieldPort(1, 0) == 1").unwrap());
         assert_eq!(s.take_battlefield_port_requests(), vec![(0, false)]);
-        assert!(s
-            .eval::<bool>("return AcceptBattlefieldPort(3, 1) == nil")
-            .unwrap());
+        assert!(ask(&mut s, "return AcceptBattlefieldPort(3, 1) == nil").unwrap());
     }
 
     #[test]
@@ -1108,13 +1159,17 @@ mod tests {
             ..Default::default()
         };
         frame.slots[1].rated = true;
-        s.set_battlefield_frame(frame);
-        assert_eq!(
+        let view = View {
+            frame,
+            ..Default::default()
+        };
+        let ask = |s: &mut UiScript| {
             s.eval::<String>(
-                "local a, r = IsActiveBattlefieldArena() return tostring(a) .. tostring(r)"
+                "local a, r = IsActiveBattlefieldArena() return tostring(a) .. tostring(r)",
             )
-            .unwrap(),
-            "11"
-        );
+            .unwrap()
+        };
+        assert_eq!(s.with_live(&view, ask), "11");
+        assert_eq!(ask(&mut s), "nilnil", "no view: no arena");
     }
 }

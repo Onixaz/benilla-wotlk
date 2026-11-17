@@ -107,6 +107,18 @@ pub trait LiveState {
     fn summon_time_left_ms(&self) -> u32 {
         0
     }
+
+    /// The battlefield queue as its verbs read it when called: the two slots (`0xbea4b8`), the
+    /// active instance (`0xacd16c`, `0xbea570`), the world-PvP queue (`0xbea4a8`) and the gates.
+    fn battlefield_frame(&self) -> super::BattlefieldFrame {
+        super::BattlefieldFrame::default()
+    }
+
+    /// `BattlemasterList.dbc` resolved for the player when called: the level's bracket, the side's
+    /// map description and the holiday world states.
+    fn battlemaster_rows(&self) -> Vec<super::BattlemasterRow> {
+        Vec::new()
+    }
 }
 
 /// A lent view's address, its lifetime erased.

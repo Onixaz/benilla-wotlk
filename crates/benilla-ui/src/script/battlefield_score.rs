@@ -177,7 +177,7 @@ impl super::UiScript {
         model.battlefield_board.rebuild();
     }
 
-    /// The status-3 reset of the filter (`0x54b0a6`), as the slot turns active.
+    /// The status-3 reset of the filter (`0x54b0cc`), as the slot turns active.
     pub fn reset_battlefield_score_filter(&mut self) {
         let mut model = self.model_mut();
         model.battlefield_board.filter = -1;

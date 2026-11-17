@@ -226,6 +226,50 @@ fn queued(status: u32) -> BattlefieldFrame {
     frame
 }
 
+/// The queue and rows the verbs read, lent for a test's length as the app lends the World.
+#[derive(Default)]
+struct PvpView {
+    rows: std::cell::RefCell<Vec<BattlemasterRow>>,
+    frame: std::cell::RefCell<BattlefieldFrame>,
+}
+
+impl benilla_ui::script::LiveState for PvpView {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn battlefield_frame(&self) -> BattlefieldFrame {
+        self.frame.borrow().clone()
+    }
+    fn battlemaster_rows(&self) -> Vec<BattlemasterRow> {
+        self.rows.borrow().clone()
+    }
+}
+
+fn lend() -> benilla_ui::script::LiveLoan<PvpView> {
+    // SAFETY: each test holds its loan on its own thread and drops it at its end.
+    unsafe { benilla_ui::script::LiveLoan::new(PvpView::default()) }
+}
+
+fn set_rows(view: &benilla_ui::script::LiveLoan<PvpView>, rows: Vec<BattlemasterRow>) {
+    *view.view().rows.borrow_mut() = rows;
+}
+
+fn set_frame(view: &benilla_ui::script::LiveLoan<PvpView>, frame: BattlefieldFrame) {
+    *view.view().frame.borrow_mut() = frame;
+}
+
 fn tabs_shown(s: &UiScript) -> [bool; 2] {
     [1, 2].map(|i| {
         s.eval::<bool>(&format!(
@@ -242,6 +286,7 @@ fn tabs_shown(s: &UiScript) -> [bool; 2] {
 fn the_pvp_tabs_follow_the_types_the_player_can_enter() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
+    let view = lend();
     let (mut s, _failures) = super::layer_tests::production_load_with("pvp", false, "", |_| {});
     s.set_unit(
         "player",
@@ -252,7 +297,7 @@ fn the_pvp_tabs_follow_the_types_the_player_can_enter() {
             ..Default::default()
         }),
     );
-    s.set_battlemaster_rows(battlemaster_rows());
+    set_rows(&view, battlemaster_rows());
     s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
     s.tick(0.0);
     assert_eq!(tabs_shown(&s), [true, true], "rows in at world entry");
@@ -274,7 +319,7 @@ fn the_pvp_tabs_follow_the_types_the_player_can_enter() {
             ..r
         })
         .collect();
-    s.set_battlemaster_rows(low);
+    set_rows(&view, low);
     s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
     s.tick(0.0);
     assert_eq!(
@@ -282,7 +327,7 @@ fn the_pvp_tabs_follow_the_types_the_player_can_enter() {
         [false, false],
         "no type the player can enter"
     );
-    s.set_battlemaster_rows(battlemaster_rows());
+    set_rows(&view, battlemaster_rows());
     s.fire_event(
         "PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE",
         Vec::<ScriptValue>::new(),
@@ -299,8 +344,9 @@ fn the_pvp_tabs_follow_the_types_the_player_can_enter() {
 fn the_battlegrounds_tab_queues_and_the_popup_takes_the_port() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
+    let view = lend();
     let mut s = load();
-    s.set_battlemaster_rows(battlemaster_rows());
+    set_rows(&view, battlemaster_rows());
     s.run("TogglePVPFrame() PVPParentFrameTab2:Click()")
         .unwrap();
     s.tick(0.0);
@@ -339,7 +385,7 @@ fn the_battlegrounds_tab_queues_and_the_popup_takes_the_port() {
         }]
     );
 
-    s.set_battlefield_frame(queued(1));
+    set_frame(&view, queued(1));
     s.fire_event("UPDATE_BATTLEFIELD_STATUS", vec![ScriptValue::Int(1)]);
     s.tick(0.0);
     assert!(
@@ -356,7 +402,7 @@ fn the_battlegrounds_tab_queues_and_the_popup_takes_the_port() {
     assert!(!shown(&s, "StaticPopup1"), "queued is not yet a question");
 
     // The event names the slot that changed; the entry popup shows only for it.
-    s.set_battlefield_frame(queued(2));
+    set_frame(&view, queued(2));
     s.fire_event("UPDATE_BATTLEFIELD_STATUS", vec![ScriptValue::Int(1)]);
     s.tick(0.0);
     assert!(shown(&s, "StaticPopup1"), "confirm raises the entry popup");
@@ -367,7 +413,7 @@ fn the_battlegrounds_tab_queues_and_the_popup_takes_the_port() {
     s.run("StaticPopup1Button1:Click()").unwrap();
     assert_eq!(s.take_battlefield_port_requests(), vec![(0, true)]);
 
-    s.set_battlefield_frame(BattlefieldFrame::default());
+    set_frame(&view, BattlefieldFrame::default());
     s.fire_event("UPDATE_BATTLEFIELD_STATUS", vec![ScriptValue::Int(1)]);
     s.tick(0.0);
     assert!(!shown(&s, "MiniMapBattlefieldFrame"), "no queue hides it");
@@ -380,8 +426,9 @@ fn the_battlegrounds_tab_queues_and_the_popup_takes_the_port() {
 fn the_arena_battlemaster_joins_a_two_v_two_skirmish() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
+    let view = lend();
     let mut s = load();
-    s.set_battlemaster_rows(battlemaster_rows());
+    set_rows(&view, battlemaster_rows());
     s.apply_battlefield_list(BattlefieldListPush {
         battlemaster: 0xF130_0000_4D2A_0001,
         bg_type: 6,
