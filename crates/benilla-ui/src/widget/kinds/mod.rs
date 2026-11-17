@@ -244,6 +244,8 @@ impl TooltipAnchor {
 pub struct TooltipState {
     /// Lines currently filled (`NumLines`). Regions past this index exist but are hidden.
     pub num_lines: usize,
+    /// Whether the most recent content clear found any lines; consumed by `OnTooltipCleared`.
+    pub(crate) last_clear_had_lines: bool,
     /// The left-column FontString pool, index i = line i+1, grown on demand with no line cap.
     pub left_lines: Vec<RegionHandle>,
     /// The right-column pool (the `AddDoubleLine`/`TextRightN` half), parallel to `left_lines`.

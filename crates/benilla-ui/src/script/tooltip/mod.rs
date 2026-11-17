@@ -362,14 +362,16 @@ pub(super) fn add_texture(
 /// Hides and blanks every line cell and resets the counters; the caller fires `OnTooltipCleared`
 /// outside the model borrow.
 pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
-    let (lefts, rights, texture_lines) = match model.arena.frame(h).map(|f| &f.kind_state) {
-        Some(KindState::Tooltip(t)) => (
-            t.left_lines.clone(),
-            t.right_lines.clone(),
-            t.texture_lines.clone(),
-        ),
-        _ => return,
-    };
+    let (lefts, rights, texture_lines, had_lines) =
+        match model.arena.frame(h).map(|f| &f.kind_state) {
+            Some(KindState::Tooltip(t)) => (
+                t.left_lines.clone(),
+                t.right_lines.clone(),
+                t.texture_lines.clone(),
+                t.num_lines > 0,
+            ),
+            _ => return,
+        };
     // Each texture's line and the one after it go back to the column and the slot hides
     // (`0x61c6f0`). The reference re-seats the line after at a 0 gap (`0x61c772`), so it rides 2
     // units high from then on; that quirk is not kept.
@@ -397,6 +399,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         model.set_region_text(rh, None);
     }
     if let Ok(t) = tip_mut(model, h) {
+        t.last_clear_had_lines = had_lines;
         t.num_lines = 0;
         t.texture_lines.clear();
         t.min_width = 0.0;
@@ -431,10 +434,16 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
 
 /// Fires `OnTooltipCleared`; a script error is recorded, never propagated.
 pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
-    let id = {
+    let (id, should_fire) = {
         let mut model = crate::script::model_mut_of(lua);
-        model.frame_id(h)
+        let should_fire = tip_mut(&mut model, h)
+            .map(|t| std::mem::take(&mut t.last_clear_had_lines))
+            .unwrap_or(false);
+        (model.frame_id(h), should_fire)
     };
+    if !should_fire {
+        return;
+    }
     if let Err(e) = event::fire_widget_handler(lua, id, "OnTooltipCleared", Vec::new()) {
         crate::script::model_mut_of(lua).record_lua_error(&e);
     }
