@@ -2209,6 +2209,43 @@ mod tests {
         assert_eq!(reasks(&rx), 1);
     }
 
+    /// The stack watch reads a header row's sort type as a quest id from the cache (`0x5e1285`): an uncached one sends no query (`0x67debd`), a cached quest of that id requiring the item signals.
+    #[test]
+    fn the_stack_watch_reads_a_header_sort_type_as_a_quest_id() {
+        let (mut app, _, rx) = log_app(&[(0, 201, 7)]);
+        app.update();
+        let _ = rx.try_iter().count();
+        let moved = |app: &mut App, item: u32| {
+            let w = app.world();
+            let mut signals = crate::ui_script::live::UniqueSignals::default();
+            rows::item_moved(
+                item,
+                true,
+                w.resource::<QuestLog>(),
+                w.non_send_resource::<rows::RebuildMarks>(),
+                w.resource::<NetCommands>(),
+                &mut signals,
+            );
+            signals.names()
+        };
+        assert!(moved(&mut app, 4000).is_empty());
+        assert!(
+            !rx.try_iter()
+                .any(|c| matches!(c, ClientCommand::QuestQuery { .. })),
+            "quest 7 uncached: the lookup asks nothing"
+        );
+        let mut seven = quest_template([obj(0, 0, 4000, 1, ""), empty(), empty(), empty()]);
+        (seven.quest_id, seven.zone_or_sort) = (7, 12);
+        app.world_mut()
+            .resource_mut::<QuestLog>()
+            .insert_template(seven);
+        assert_eq!(
+            moved(&mut app, 4000),
+            ["QUEST_LOG_UPDATE"],
+            "zone 7's header row reads cached quest 7"
+        );
+    }
+
     /// A timer run out marks its quest expired at the rebuild (`0x5e6b15` -> `0x5e57e0`): it reads
     /// failed and the bare status query goes out.
     #[test]

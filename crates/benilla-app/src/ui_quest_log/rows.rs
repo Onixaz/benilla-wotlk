@@ -713,7 +713,7 @@ pub(super) fn template_landed(
     }
 }
 
-/// The stack watch (`0x5e1250`): a quest row whose template requires the item queues `QUEST_LOG_UPDATE` (`0x5e12bc`) and, with our player in, re-asks every giver's status (`0x5e12e5`). The header rows' sort types, which the walk also looks up as quest ids (`0x5e1285`), are not.
+/// The stack watch (`0x5e1250`): a row whose first word names a cached quest requiring the item queues `QUEST_LOG_UPDATE` (`0x5e12bc`) and, with our player in, re-asks every giver's status (`0x5e12e5`).
 pub(crate) fn item_moved(
     entry: u32,
     me: bool,
@@ -722,11 +722,14 @@ pub(crate) fn item_moved(
     net: &NetCommands,
     signals: &mut UniqueSignals,
 ) {
+    // A quest row's id or a header row's sort type (`0x5e6ad6`, `0x5e6b68`), each read from the cache with no callback (`0x5e1285`), so a miss sends no query (`0x67debd`).
     let required = entry != 0
         && marks
             .quest_rows
             .iter()
-            .filter_map(|&id| log.templates.get(id))
+            .copied()
+            .chain(marks.sort_types.iter().map(|&sort| sort as u32))
+            .filter_map(|id| log.templates.get(id))
             .any(|t| t.required_items.iter().any(|&(id, _)| id == entry));
     if !required {
         return;
