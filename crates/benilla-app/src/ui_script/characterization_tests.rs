@@ -61,6 +61,7 @@ local VERBS = {
     { "happy", function() return (GetPetHappiness()) end },
     { "xp", function() local c, m = GetPetExperience(); return c .. "/" .. m end },
     { "critter1on", function() return (select(5, GetCompanionInfo("CRITTER", 1))) end },
+    { "mount1cd", function() return (select(2, GetCompanionCooldown("MOUNT", 1))) end },
     { "possess", function() return IsPossessBarVisible() end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
@@ -224,6 +225,15 @@ impl Rig {
 
     /// [`Self::login`] with `before` on the wire ahead of our create, in the same frame.
     pub fn login_after(before: Vec<SessionEvent>, fields: &[(u16, u32)]) -> Option<Self> {
+        Self::login_around(before, fields, Vec::new())
+    }
+
+    /// [`Self::login`] with `before` ahead of our create and `after` behind it, in the same frame.
+    pub fn login_around(
+        before: Vec<SessionEvent>,
+        fields: &[(u16, u32)],
+        after: Vec<SessionEvent>,
+    ) -> Option<Self> {
         benilla_formats::wow_data_or_skip!(None);
         if std::env::var_os(CHILD).is_none() {
             run_in_child();
@@ -297,6 +307,9 @@ impl Rig {
             rig.send(ev);
         }
         rig.send(self_create(fields));
+        for ev in after {
+            rig.send(ev);
+        }
         for _ in 0..30 {
             rig.run(1);
             if rig.seen.iter().any(|s| s.event == "PLAYER_LOGIN") {
@@ -2677,6 +2690,61 @@ fn our_recreate_replays_the_login_book_into_the_companion_lists() {
     );
 }
 
+/// A learn or an unlearn landing in the same frame as our create, after it, files into the lists
+/// at once: the handlers ask the object manager for our object, which holds it from the create on
+/// (`0x6e7d60`, `0x6e7840`), not from the frame's player tag.
+#[test]
+fn a_learn_and_an_unlearn_after_our_create_in_one_frame_reach_the_lists() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            creature_answer(284, "Brown Horse"),
+            creature_answer(7385, "Bombay Cat"),
+        ],
+        3,
+    );
+    let events = &[
+        "COMPANION_UPDATE",
+        "COMPANION_LEARNED",
+        "COMPANION_UNLEARNED",
+    ];
+    let verbs = &["mounts", "critters"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ObjectDestroyed(ME),
+            self_create(&[(2, 0x19)]),
+            SessionEvent::SpellLearned { spell_id: CAT },
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "COMPANION_UPDATE | mounts=1 critters=0",
+            "COMPANION_UPDATE | mounts=1 critters=1",
+            "COMPANION_LEARNED | mounts=1 critters=1",
+        ]
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ObjectDestroyed(ME),
+            self_create(&[(2, 0x19)]),
+            SessionEvent::SpellRemoved { spell_id: HORSE },
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "COMPANION_UPDATE | mounts=1 critters=0",
+            // Both lists empty: the update sorts nothing and stays silent.
+            "COMPANION_UNLEARNED | mounts=0 critters=0",
+        ]
+    );
+}
+
 /// The bar's `PET_BAR_UPDATE` handler re-tests the Pets tab off `GetNumCompanions` (#1244): it
 /// reads the lists the spell handler filled, whichever of the mount's record and the pet packet
 /// lands first. `COMPANION_UPDATE` fires from the record's answer; `PET_BAR_UPDATE` still fires from
@@ -2894,5 +2962,71 @@ fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
             "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
             "UPDATE_BONUS_ACTIONBAR | possess=false possname=nil",
         ]
+    );
+}
+
+/// A world entry with our charm set asks for the pet and looks up the possess spell after
+/// `PLAYER_ENTERING_WORLD` and before the reputation's `UPDATE_FACTION` (`0x5281a6`, `0x5281fe`
+/// -> `0x5d6ede`, `0x528208`), so the bonus bar's handler runs after the UI's world entry.
+#[test]
+fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
+    use benilla_protocol::field::FIELD_UNIT_CHARM;
+    const MIND_CONTROL: u32 = 605;
+    const VICTIM: u64 = 0xF130_0000_0000_0077;
+    let Some(mut rig) = Rig::login_around(
+        Vec::new(),
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_CHARM, VICTIM as u32),
+            (FIELD_UNIT_CHARM + 1, (VICTIM >> 32) as u32),
+        ],
+        vec![own_aura(0, MIND_CONTROL)],
+    ) else {
+        return;
+    };
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "PLAYER_ENTERING_WORLD",
+                "UPDATE_BONUS_ACTIONBAR",
+                "UPDATE_FACTION"
+            ],
+            &["possess", "possname"]
+        ),
+        vec![
+            "UPDATE_FACTION | possess=false possname=nil",
+            "PLAYER_ENTERING_WORLD | possess=false possname=nil",
+            "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
+            "UPDATE_FACTION | possess=true possname=Mind Control",
+        ]
+    );
+}
+
+/// `GetCompanionCooldown` (`0x53e490`) reads the cooldown history a `SMSG_SPELL_COOLDOWN` of an
+/// earlier frame wrote, both from a handler's event and between frames.
+#[test]
+fn the_companion_cooldown_reads_the_history_an_earlier_frame_wrote() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            creature_answer(284, "Brown Horse"),
+            SessionEvent::SpellCooldowns {
+                caster: ME,
+                flags: 0,
+                cooldowns: vec![(HORSE, 30_000)],
+            },
+        ],
+        3,
+    );
+    let between = rig.live_now();
+    assert_eq!(between.verbs["mount1cd"], "30");
+    let seen = rig.packets(vec![own_aura(3, HORSE)], 3);
+    assert_eq!(
+        pin(&seen, &["COMPANION_UPDATE"], &["mount1cd"]),
+        vec!["COMPANION_UPDATE MOUNT | mount1cd=30"]
     );
 }

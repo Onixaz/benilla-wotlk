@@ -62,14 +62,24 @@ pub(crate) fn find_possessed(
     }
 }
 
-/// The world entry's lookup (`0x5d6ede`), once the pet ask is sent, its event fired in turn.
-pub(super) fn queue_world_entry_lookup(commands: &mut Commands) {
-    commands.queue(|world: &mut World| {
-        if let Err(e) = world.run_system_cached(world_entry_lookup) {
-            warn!("ui_pet: the world entry's possess lookup did not run: {e}");
-        }
-        crate::ui_script::live::fire_handler_events(world);
-    });
+/// The world entry's lookup owed by the pet ask that went out (`0x5d6ede`, behind the send at
+/// `0x5d6ed6`), run after `PLAYER_ENTERING_WORLD` (`0x5281a6` before `0x5281fe`).
+#[derive(Resource, Default)]
+pub(crate) struct PossessLookupOwed(pub(crate) bool);
+
+/// The world entry's pet step after `PLAYER_ENTERING_WORLD` (`0x5281fe`): the owed lookup, its
+/// event fired in turn, ahead of the reputation's entry (`0x528208`).
+pub(crate) fn world_entry_step(world: &mut World) {
+    let owed = world
+        .get_resource_mut::<PossessLookupOwed>()
+        .is_some_and(|mut o| std::mem::take(&mut o.0));
+    if !owed {
+        return;
+    }
+    if let Err(e) = world.run_system_cached(world_entry_lookup) {
+        warn!("ui_pet: the world entry's possess lookup did not run: {e}");
+    }
+    crate::ui_script::live::fire_handler_events(world);
 }
 
 /// Our fields, auras and transport seat, as the lookup reads them.

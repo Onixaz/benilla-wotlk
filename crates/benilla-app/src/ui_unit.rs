@@ -1890,10 +1890,17 @@ fn feed_units(
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             crate::ui_script::fire_armed_player_login(&mut script);
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-            // The cascade's reputation world entry (`0x5d2bc0`) re-sorts and fires `UPDATE_FACTION`
-            // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
-            // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
-            script.fire_event("UPDATE_FACTION", vec![]);
+            // The cascade's pet step (`0x5281fe`), then its reputation world entry (`0x5d2bc0`),
+            // which re-sorts and fires `UPDATE_FACTION` (`0x5d1bfa`) with the player seated,
+            // re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0
+            // maximum.
+            deferred.queue(|world: &mut World| {
+                crate::ui_pet::possess::world_entry_step(world);
+                if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+                    ui.fire("UPDATE_FACTION", Vec::new());
+                }
+                crate::ui_script::live::fire_handler_events(world);
+            });
             // The battlefield entry (`0x528230`), ahead of the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
             crate::ui_battlefield::queue_enter_world(&mut deferred);
             crate::death::queue_enter_world(&mut deferred);

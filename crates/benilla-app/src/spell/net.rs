@@ -186,11 +186,12 @@ fn on_spell_learned(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    stores: Query<&ObjectStore>,
 ) {
     if let SessionEvent::SpellLearned { spell_id } = ev {
         // `0x4d4db0` on the active player (`0x10`): our own player, once its object has streamed.
-        let learner = self_q.iter().next().map(|store| Learner {
+        let me = our_store(&l, &stores);
+        let learner = me.map(|store| Learner {
             level: store.0.unit_level().unwrap_or(0),
             class: store.0.unit_class().unwrap_or(0),
             form: store.0.unit_shapeshift_form(),
@@ -218,23 +219,18 @@ fn on_spell_learned(
         }
         // The add's companion arm, its line and `COMPANION_LEARNED` (`0x5426a5`); before our
         // object exists the spell waits in the buffer its init replays (`0x6e7de0`).
-        match self_q.iter().next() {
-            Some(me) => companion_add(&mut l, race_class_of(&me.0), spell_id),
+        match me.map(|me| race_class_of(&me.0)) {
+            Some(me) => companion_add(&mut l, me, spell_id),
             None => l.known_buffer.0.push(spell_id),
         }
     }
 }
 
-fn on_spell_removed(
-    In(ev): In<SessionEvent>,
-    mut l: Lifecycle,
-    mut errors: ResMut<UiErrorKeys>,
-    self_q: Query<(), With<SelfPlayer>>,
-) {
+fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
         // The known-spell removal drops a companion from its list (`0x53fad0`); before our object
         // exists it zeroes the buffer's entry (`0x6e7888`).
-        if self_q.is_empty() {
+        if !our_object_exists(&l) {
             l.known_buffer.0.retain(|&s| s != spell_id);
         } else if let Some(spells) = l.spells.as_deref() {
             let mut cx = crate::ui_companion::CompanionCx {
@@ -249,6 +245,18 @@ fn on_spell_removed(
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
     }
+}
+
+/// Whether the object manager holds our object, from its create on (`0x6e7840`), not from the
+/// frame's tag.
+fn our_object_exists(l: &Lifecycle) -> bool {
+    l.self_guid.0.is_some_and(|g| l.index.0.contains_key(&g))
+}
+
+/// Our object's fields, held from its create on (`0x6e7d60`).
+fn our_store<'a>(l: &Lifecycle, stores: &'a Query<&ObjectStore>) -> Option<&'a ObjectStore> {
+    let e = l.self_guid.0.and_then(|g| l.index.0.get(&g))?;
+    stores.get(*e).ok()
 }
 
 /// Our race and class off our fields.
@@ -287,7 +295,6 @@ fn on_spell_superceded(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
-    self_q: Query<(), With<SelfPlayer>>,
 ) {
     if let SessionEvent::SpellSuperceded {
         old_spell_id,
@@ -296,7 +303,7 @@ fn on_spell_superceded(
     {
         // Before our object exists the pair edits the buffer: the old entry renamed, else the new
         // one appended (`0x6e7ef4`).
-        if self_q.is_empty() {
+        if !our_object_exists(&l) {
             let buffer = &mut l.known_buffer.0;
             match buffer.iter_mut().find(|s| **s == old_spell_id) {
                 Some(s) => *s = new_spell_id,

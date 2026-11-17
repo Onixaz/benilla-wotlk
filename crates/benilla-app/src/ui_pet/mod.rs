@@ -105,14 +105,16 @@ pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 /// `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set; the `SMSG_PET_SPELLS` it
 /// answers rebuilds the bar. The reference's entry waits out the loading screen, so the summon
 /// field has landed; ours rides the self create, which a login's `SMSG_PET_SPELLS` can beat while
-/// the field comes a frame later, so the bar drops only when the ask goes out.
+/// the field comes a frame later, so the bar drops only when the ask goes out. The ask owes the
+/// possess lookup, which the UI's entry runs after `PLAYER_ENTERING_WORLD`
+/// ([`possess::world_entry_step`]).
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut bar: ResMut<PetBar>,
     list: Option<ResMut<PetList>>,
     player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
-    mut ecs: Commands,
+    owed: Option<ResMut<possess::PossessLookupOwed>>,
 ) {
     if cascades.read().next().is_none() {
         return;
@@ -126,7 +128,9 @@ pub(crate) fn request_pet_info_on_world_enter(
         list.0.clear();
     }
     let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
-    possess::queue_world_entry_lookup(&mut ecs);
+    if let Some(mut owed) = owed {
+        owed.0 = true;
+    }
 }
 
 impl PetBar {
@@ -155,6 +159,7 @@ impl Plugin for UiPetPlugin {
         app.init_resource::<PetBar>()
             .init_resource::<PetList>()
             .init_resource::<possess::PossessSpell>()
+            .init_resource::<possess::PossessLookupOwed>()
             .init_resource::<PetRenameable>()
             .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
