@@ -1,12 +1,11 @@
 //! The objective tracker's feeds: the quest POI wire (`CMSG_QUEST_POI_QUERY` for the quests the VM
-//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store) and each quest's special item
-//! (`0x5e0da0`), found in the bags with its charges and range.
+//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store), and the live reads of each
+//! quest's special item (`0x5e0da0`), found in the bags with its charges and range at call time.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
-use benilla_formats::RangeTargets;
 use benilla_protocol::messages::QuestPoi;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
@@ -16,8 +15,6 @@ use benilla_ui::script::{
 
 use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
-use crate::target::Selection;
-use crate::ui_action::Spells;
 use crate::ui_quest_log::QuestLog;
 use crate::ui_unit::UnitFeed;
 
@@ -37,7 +34,7 @@ impl Plugin for UiQuestWatchPlugin {
             .net_handler(SessionEventKind::Disconnected, on_session_end)
             .add_systems(
                 Update,
-                (feed_quest_pois, feed_special_items, feed_quest_poi_lines)
+                (feed_quest_pois, feed_quest_poi_lines)
                     .in_set(UnitFeed)
                     .after(crate::ui_quest_log::feed_quest_log),
             );
@@ -301,86 +298,62 @@ fn feed_quest_pois(
     }
 }
 
-/// The quest's special item (`0x5e0da0`) for each logged quest: the template's source item, else
-/// under flag `0x20000` its drop items in order, the first carried copy with an on-use spell
-/// (`0x708c10`); its range against the target as `IsItemInRange` asks it.
-#[allow(clippy::too_many_arguments)] // a Bevy system's inputs
-pub(crate) fn feed_special_items(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    quest_log: Res<QuestLog>,
-    self_q: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
-    units: Query<&Transform, Without<SelfPlayer>>,
-    objects: crate::net::Objects,
-    items: Res<Items>,
-    commands: Res<NetCommands>,
-    spells: Option<Res<Spells>>,
-    spell_mods: Res<crate::spell::SpellModifiers>,
-    range_units: crate::spell::RangeUnits,
-    selection: Res<Selection>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let Some((store, me)) = self_q.iter().next() else {
-        return;
-    };
-    let target = selection.guid.and_then(|g| objects.entity(g));
-    let dist_sq = target
-        .and_then(|e| units.get(e).ok())
-        .map(|t| me.translation.distance_squared(t.translation));
-    let mut found = HashMap::new();
-    for quest_id in quest_log.quest_ids() {
-        let Some(t) = quest_log.template(quest_id, &commands) else {
-            continue;
-        };
+/// What the special-item verbs read at call time: the quest's template, our bags and the item
+/// instances.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct QuestView<'w, 's> {
+    quest_log: Option<Res<'w, QuestLog>>,
+    /// Our store, for the bag walk.
+    me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    objects: Option<crate::net::Objects<'w, 's>>,
+    items: Option<Res<'w, Items>>,
+    net: Option<Res<'w, NetCommands>>,
+}
+
+impl QuestView<'_, '_> {
+    /// The quest's special item (`0x5e0da0`): the template's starting item, else under flag
+    /// `0x20000` its drop items in order (`0x5e0df9`), the first carried copy that can be used
+    /// (`0x708c10`), with the bag slot it sits in, its charges and its on-use spell.
+    pub(crate) fn quest_special_item(&self, quest_id: u32) -> Option<QuestSpecialItemView> {
+        let (quest_log, objects, items, net) = (
+            self.quest_log.as_deref()?,
+            self.objects.as_ref()?,
+            self.items.as_deref()?,
+            self.net.as_deref()?,
+        );
+        let store = self.me.iter().next()?;
+        let t = quest_log.template(quest_id, net)?;
         let drops = t.flags & QUEST_FLAG_DROP_ITEM_USE != 0;
         if t.src_item_id == 0 && !drops {
-            continue;
+            return None;
         }
         let mut candidates = vec![t.src_item_id];
         if drops {
             candidates.extend(t.objectives.iter().map(|o| o.item_drop));
         }
-        let hit = candidates.into_iter().filter(|&id| id != 0).find_map(|id| {
-            let use_spell = items.template(id, 0, &commands)?.use_spell?;
-            let at = crate::ui_items::find_carried_at(&store.0, &objects, |guid| {
-                objects
-                    .object(guid)
-                    .and_then(|o| o.object_entry())
-                    .is_some_and(|e| e == id)
-            })?;
-            Some((at, use_spell.spell_id))
-        });
-        let Some(((bag, slot, guid), spell_id)) = hit else {
-            continue;
-        };
+        let ((bag, slot, guid), spell_id) =
+            candidates
+                .into_iter()
+                .filter(|&id| id != 0)
+                .find_map(|id| {
+                    let use_spell = items.template(id, 0, net)?.use_spell?;
+                    let at = crate::ui_items::find_carried_at(&store.0, objects, |guid| {
+                        objects
+                            .object(guid)
+                            .and_then(|o| o.object_entry())
+                            .is_some_and(|e| e == id)
+                    })?;
+                    Some((at, use_spell.spell_id))
+                })?;
         let charges = objects
             .object(guid)
             .and_then(|o| o.item_spell_charges(0))
             .unwrap_or(0);
-        let in_range = spells
-            .as_deref()
-            .and_then(|s| s.catalog.get(spell_id).map(|d| (s, d)))
-            .and_then(|(s, d)| {
-                let d2 = dist_sq?;
-                let row = s.ranges.get(d.range_index);
-                let targets = RangeTargets {
-                    target: target.and_then(|e| range_units.unit(e)),
-                    attack_target: None,
-                };
-                spell_mods
-                    .min_max_range(d, row, range_units.caster(), targets)
-                    .map(|(min, max)| d2 >= min * min && d2 <= max * max)
-            });
-        found.insert(
-            quest_id,
-            QuestSpecialItemView {
-                bag,
-                slot,
-                charges,
-                in_range,
-            },
-        );
+        Some(QuestSpecialItemView {
+            bag,
+            slot,
+            charges,
+            spell_id,
+        })
     }
-    script.set_quest_special_items(found);
 }

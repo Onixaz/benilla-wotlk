@@ -4,7 +4,7 @@
 //! `SMSG_QUEST_POI_QUERY_RESPONSE`), and the verbs the stock `WatchFrame.lua` reads per watched
 //! quest: the special item, the completion text and the link.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
@@ -28,8 +28,8 @@ pub(crate) struct QuestWatch {
     distance: (i32, f32),
 }
 
-/// The special item behind a quest's tracker button (`0x5e0da0`), as the app
-/// finds it in the bags: the template's source item, else with flag `0x20000` a drop item, either
+/// The special item behind a quest's tracker button (`0x5e0da0`), as the live view finds it in
+/// the bags at call time: the template's source item, else with flag `0x20000` a drop item, either
 /// one with an on-use spell.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestSpecialItemView {
@@ -38,9 +38,8 @@ pub struct QuestSpecialItemView {
     pub slot: u32,
     /// `ITEM_FIELD_SPELL_CHARGES[0]` (`0x5e539d`).
     pub charges: i32,
-    /// The on-use spell's range against the target, `None` when there is no target or no range
-    /// (`0x5e54c0`).
-    pub in_range: Option<bool>,
+    /// The on-use spell, the first with trigger 0, the range verb checks (`0x5e5529`).
+    pub spell_id: u32,
 }
 
 /// One region of a quest's POI, as the `SMSG_QUEST_POI_QUERY_RESPONSE` handler keeps it
@@ -90,7 +89,6 @@ pub(crate) struct QuestWatchState {
     poi_asked: HashSet<u32>,
     /// `CMSG_QUEST_POI_QUERY` ids for the app to send.
     poi_wants: Vec<u32>,
-    pub(crate) special_items: HashMap<u32, QuestSpecialItemView>,
 }
 
 impl QuestWatchState {
@@ -442,13 +440,6 @@ impl super::UiScript {
         self.fire_event("QUEST_POI_UPDATE", Vec::new());
     }
 
-    /// Push each quest's special item, found in the bags by the app.
-    pub fn set_quest_special_items(&mut self, items: HashMap<u32, QuestSpecialItemView>) {
-        if self.model_ref().quest_watch.special_items != items {
-            self.model_mut().quest_watch.special_items = items;
-        }
-    }
-
     /// The watch-timer update (`0x5dfef0`): drop each timed watch past its expiry, announcing the
     /// log.
     pub(crate) fn expire_quest_watches(&mut self) {
@@ -734,23 +725,33 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // IsQuestLogSpecialItemInRange(index [, unit]) (`0x5e54c0`) → 1, 0, or nil; the unit defaults
-    // to the target (`0x5e5589`).
+    // to the target (`0x5e557e`).
     g.set(
         "IsQuestLogSpecialItemInRange",
-        lua.create_function(|lua, (v, _unit): (Value, Value)| {
+        lua.create_function(|lua, (v, unit): (Value, Value)| {
             let index = number_arg(
                 lua,
                 v,
                 "Usage: IsQuestLogSpecialItemInRange(index [,target])",
             )?;
             let model = model_ref(lua);
-            Ok(
-                match special_item(&model, index).and_then(|(i, _)| i.in_range) {
-                    Some(true) => Value::Integer(1),
-                    Some(false) => Value::Integer(0),
-                    None => Value::Nil,
-                },
-            )
+            // An absent or empty token is the target (`0x5e557e`).
+            let token = match &unit {
+                Value::String(s) => s.to_str().map(|t| t.to_string()).unwrap_or_default(),
+                _ => String::new(),
+            };
+            let target = if token.is_empty() {
+                Some(model.unit_guids.target).filter(|&g| g != 0)
+            } else {
+                model.unit_guids.guid_of(&token)
+            };
+            // The item's spell through the spell range check, as `IsItemInRange` runs it (`0x5e55b6`).
+            let spell = special_item(&model, index).map(|(i, _)| i.spell_id);
+            let near = spell
+                .zip(model.spell_info.clone())
+                .zip(target)
+                .and_then(|((id, s), guid)| s.spell_in_range(id, false, guid));
+            Ok(super::spell_info::range_answer(near))
         })?,
     )?;
 
@@ -809,13 +810,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The special item of the quest at a 1-based row and its bag slot, while the slot holds it.
+/// The special item of the quest at a 1-based row, read live (`0x5e0da0`), and its bag slot,
+/// while the slot holds it.
 fn special_item(
     model: &Model,
     index: i32,
-) -> Option<(&QuestSpecialItemView, &super::container::ContainerSlot)> {
+) -> Option<(QuestSpecialItemView, &super::container::ContainerSlot)> {
     let e = quest_at(model, i64::from(index))?;
-    let item = model.quest_watch.special_items.get(&e.quest_id)?;
+    let item = super::read_live(|l| l.quest_special_item(e.quest_id)).flatten()?;
     let slot = model.containers.get(&item.bag)?.slots.get(&item.slot)?;
     Some((item, slot))
 }
@@ -871,6 +873,60 @@ mod tests {
         }
         s.set_quest_log(state);
         s
+    }
+
+    /// `GetQuestLogSpecialItemInfo` (`0x5e52d0`) and the use verb read the item the lent view finds
+    /// in the bags when called (`0x5e0da0`): nothing with no view, the view's item once one is
+    /// lent, and nothing again when the view's bags no longer hold it.
+    #[test]
+    fn the_special_item_verbs_read_the_lent_view_when_called() {
+        use crate::script::live::TestView;
+        use crate::script::{ContainerSlot, ContainerState};
+        let mut s = script(2);
+        s.set_container(
+            0,
+            Some(ContainerState {
+                num_slots: 16,
+                slots: [(
+                    3,
+                    ContainerSlot {
+                        item_id: 5000,
+                        link: Some("|Hitem:5000|h[Relic]|h".into()),
+                        texture: Some("Relic".into()),
+                        ..Default::default()
+                    },
+                )]
+                .into(),
+                ..Default::default()
+            }),
+        );
+        let ask = |s: &UiScript| {
+            s.eval::<String>(
+                "local l, t, c = GetQuestLogSpecialItemInfo(2) return tostring(l) .. tostring(c)",
+            )
+            .unwrap()
+        };
+        assert_eq!(ask(&s), "nilnil");
+        let carried = TestView {
+            special_items: [(
+                2,
+                QuestSpecialItemView {
+                    bag: 0,
+                    slot: 3,
+                    charges: 4,
+                    spell_id: 1000,
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(s.with_live(&carried, |s| ask(s)), "|Hitem:5000|h[Relic]|h4");
+        let row_one = |s: &UiScript| {
+            s.eval::<i64>("return select('#', GetQuestLogSpecialItemInfo(1))")
+                .unwrap()
+        };
+        assert_eq!(s.with_live(&carried, |s| row_one(s)), 0);
+        assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnil");
     }
 
     #[test]

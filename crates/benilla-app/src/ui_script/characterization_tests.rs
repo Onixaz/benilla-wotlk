@@ -1037,7 +1037,6 @@ fn flight_start_with_the_control_update_ahead_of_the_flags() {
 /// (`0x5e52d0`) reads the quest and the bags at call time, so the tracker's `QUEST_LOG_UPDATE`
 /// redraw already finds the special item.
 #[test]
-#[ignore = "#1245: feed_special_items pushes after feed_quest_log has fired QUEST_LOG_UPDATE"]
 fn quest_accept_shows_the_special_item_with_the_log_update() {
     let Some((_, accept)) = accept_with_the_source_item() else {
         return;
@@ -1049,10 +1048,11 @@ fn quest_accept_shows_the_special_item_with_the_log_update() {
     assert_eq!(first.verbs["special"], "true");
 }
 
-/// Today: the accept's `QUEST_LOG_UPDATE` reads no special item; `QUEST_ACCEPTED`, fired after it, does.
+/// The accept's `QUEST_LOG_UPDATE` and `QUEST_ACCEPTED` both read the special item: the verb reads
+/// the quest and the bags when called (`0x5e0da0`), as do the calls after the frames.
 #[test]
 fn quest_accept_with_a_carried_source_item() {
-    let Some((rig, accept)) = accept_with_the_source_item() else {
+    let Some((mut rig, accept)) = accept_with_the_source_item() else {
         return;
     };
     assert_eq!(
@@ -1062,11 +1062,11 @@ fn quest_accept_with_a_carried_source_item() {
             &["special"]
         ),
         vec![
-            "QUEST_LOG_UPDATE | special=false",
+            "QUEST_LOG_UPDATE | special=true",
             "QUEST_ACCEPTED 2 | special=true",
         ]
     );
-    assert_eq!(rig.now().verbs["special"], "true");
+    assert_eq!(rig.live_now().verbs["special"], "true");
 }
 
 /// A logged-in rig carrying an on-use item in the backpack's first slot, then the accept of the

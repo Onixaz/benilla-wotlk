@@ -107,6 +107,13 @@ pub trait LiveState {
     fn summon_time_left_ms(&self) -> u32 {
         0
     }
+
+    /// A logged quest's special item as our bags hold it now (`0x5e0da0`): the template's
+    /// starting item, else under flag `0x20000` a drop item, the first carried copy that can be
+    /// used; `None` for none.
+    fn quest_special_item(&self, _quest_id: u32) -> Option<super::QuestSpecialItemView> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -222,6 +229,8 @@ pub(crate) struct TestView {
     pub dynamic_flags: std::collections::HashMap<u64, u32>,
     /// Each held player's `PLAYER_FLAGS`; a held unit absent here is no player.
     pub player_flags: std::collections::HashMap<u64, u32>,
+    /// Each logged quest's special item.
+    pub special_items: std::collections::HashMap<u32, super::QuestSpecialItemView>,
 }
 
 #[cfg(test)]
@@ -257,6 +266,10 @@ impl LiveState for TestView {
 
     fn far_sight(&self) -> bool {
         self.far_sight
+    }
+
+    fn quest_special_item(&self, quest_id: u32) -> Option<super::QuestSpecialItemView> {
+        self.special_items.get(&quest_id).cloned()
     }
 }
 

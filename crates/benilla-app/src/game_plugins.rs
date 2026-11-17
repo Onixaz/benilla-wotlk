@@ -886,11 +886,6 @@ pub(crate) mod schedule_tests {
     /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
     ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
     ///   as the guild registrar's close beside it does.
-    /// - `ui_quest_watch::feed_special_items` against `ui_items::feed_item_stats` over `Items` and
-    ///   the VM (it only reads templates, as `feed_quest_lines` does) and against the `Transform`
-    ///   writers the range compare's readers pair with (the transport riders
-    ///   and ticks, the booth billboards, the marker seat scale): it reads the player's and the
-    ///   target's position once a frame for the quest item's range dot, as `feed_action_state` does.
     /// - `ui_spell_info::feed_spell_info`, `GetSpellInfo`'s caster snapshot, is a range compare's
     ///   reader against the same `Player` and `RemoteMotion` writers, and against
     ///   `ui_pet::drain::pet_stop_on_old_target_clear` over `PetBar`: it reads the pet's guid,

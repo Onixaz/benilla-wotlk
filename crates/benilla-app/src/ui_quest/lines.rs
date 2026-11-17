@@ -65,11 +65,9 @@ pub(super) fn register(app: &mut App) {
         .net_handler(SessionEventKind::Disconnected, on_session_end)
         .add_systems(
             Update,
-            // After the special items' push, which `QUEST_ACCEPTED`'s tracker redraw reads.
             feed_quest_lines
                 .in_set(crate::ui_unit::UnitFeed)
-                .after(crate::ui_quest_log::feed_quest_log)
-                .after(crate::ui_quest_watch::feed_special_items),
+                .after(crate::ui_quest_log::feed_quest_log),
         );
 }
 
@@ -283,6 +281,7 @@ mod tests {
         app.insert_resource(NetCommands(tx))
             .init_resource::<QuestLines>()
             .init_resource::<QuestLog>()
+            .init_resource::<crate::ui_quest_log::QuestLogMarks>()
             .init_resource::<Items>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()

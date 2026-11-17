@@ -107,7 +107,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_quest_share::feed_quest_share",
     "benilla_app::ui_quest_watch::feed_quest_poi_lines",
     "benilla_app::ui_quest_watch::feed_quest_pois",
-    "benilla_app::ui_quest_watch::feed_special_items",
     "benilla_app::ui_reputation::feed_reputation",
     "benilla_app::ui_rune::feed_runes",
     "benilla_app::ui_script::demo_unit_feed",

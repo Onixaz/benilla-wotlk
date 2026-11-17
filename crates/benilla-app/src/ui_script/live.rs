@@ -26,6 +26,7 @@ pub(crate) struct LiveView<'w, 's> {
     far_sight_clear: Option<Res<'w, crate::player::view_subject::FarSightClear>>,
     death: crate::death::DeathView<'w, 's>,
     summon: crate::ui_summon::SummonView<'w>,
+    quest: crate::ui_quest_watch::QuestView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -141,6 +142,13 @@ impl LiveState for LiveView<'_, '_> {
 
     fn summon_time_left_ms(&self) -> u32 {
         self.summon.time_left_ms()
+    }
+
+    fn quest_special_item(
+        &self,
+        quest_id: u32,
+    ) -> Option<benilla_ui::script::QuestSpecialItemView> {
+        self.quest.quest_special_item(quest_id)
     }
 }
 
