@@ -34,6 +34,8 @@ pub struct MapCatalog {
     entrances: HashMap<u32, (u32, f32, f32)>,
     /// `MaxPlayers` (`+0x44`), for maps with a non-zero one.
     max_players: HashMap<u32, u32>,
+    /// `ExpansionID` (`+0x3c`), for maps with a non-zero one: 1 Outland, 2 Northrend.
+    expansions: HashMap<u32, u32>,
 }
 
 /// `Map.dbc` `Flags` bit: the map's difficulty can change inside it, `GetInstanceInfo`'s seventh
@@ -116,6 +118,12 @@ impl MapCatalog {
         self.max_players.get(&map_id).copied().unwrap_or(0)
     }
 
+    /// `ExpansionID` (`+0x3c`): the expansion an account needs for the map, 0 for none or an
+    /// unknown map.
+    pub fn expansion(&self, map_id: u32) -> u32 {
+        self.expansions.get(&map_id).copied().unwrap_or(0)
+    }
+
     pub fn len(&self) -> usize {
         self.dirs.len()
     }
@@ -158,6 +166,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
     let mut descriptions = HashMap::new();
     let mut icon_scales = HashMap::new();
     let mut max_players = HashMap::new();
+    let mut expansions = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         if let Some(dir) = str_at(&rs, r, 1) {
@@ -195,6 +204,10 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
                 entrances.insert(id, (m, x, y));
             }
         }
+        // `ExpansionID`, six columns past the loading screen (`+0x24` to `+0x3c`).
+        if let Some(e) = at(6).filter(|&e| e != 0) {
+            expansions.insert(id, e);
+        }
         // `MaxPlayers`, eight columns past the loading screen (`+0x24` to `+0x44`).
         if let Some(n) = at(8).filter(|&n| n != 0) {
             max_players.insert(id, n);
@@ -210,6 +223,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         descriptions,
         icon_scales,
         max_players,
+        expansions,
     })
 }
 
@@ -237,6 +251,15 @@ mod tests {
         assert_eq!(catalog.name(0), Some("Eastern Kingdoms"));
         assert_eq!(catalog.loading_screen_id(0), Some(4));
         assert_eq!(catalog.directory(571), Some("Northrend"));
+        assert_eq!(
+            (
+                catalog.expansion(0),
+                catalog.expansion(530),
+                catalog.expansion(571)
+            ),
+            (0, 1, 2),
+            "ExpansionID: Azeroth, Outland, Northrend"
+        );
         assert_eq!(catalog.directory(489), Some("PVPZone03"));
         assert_eq!(catalog.name(489), Some("Warsong Gulch"));
         assert_eq!(catalog.instance_type(489), Some(3));
