@@ -145,7 +145,8 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) quest: Res<'w, crate::ui_quest::QuestGiver>,
     /// Bit 7: the reference fires `CONFIRM_BINDER`; `CMSG_BINDER_ACTIVATE` is the dialog's Accept.
     pub(crate) binder: ResMut<'w, crate::ui_binder::BinderState>,
-    pub(crate) death: ResMut<'w, crate::death::DeathNet>,
+    /// Bit 5's talk runs as a command, its `CONFIRM_XP_LOSS` fired in turn (`0x6db010`).
+    pub(crate) talk: Commands<'w, 's>,
     /// Bit 6 sends through the cache the proximity poll writes, so the two agree on the healer.
     pub(crate) spirit: ResMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
     /// The NPC whose window is open, checked before the ladder.
@@ -972,7 +973,7 @@ impl Dispatch<'_, '_> {
                 debug!(
                     "right-click interact: {guid:#x} (spirit healer — CONFIRM_XP_LOSS, no packet)"
                 );
-                self.service.death.ask_spirit_healer(guid);
+                crate::death::queue_spirit_healer_talk(&mut self.service.talk, guid);
             }
             ServiceAction::AcquireSpiritGuide => {
                 debug!("right-click interact: {guid:#x} (spirit guide — adopting, 0x2E2)");

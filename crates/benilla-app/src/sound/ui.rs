@@ -361,7 +361,7 @@ pub(super) fn plugin(app: &mut App) {
                 play_loot_pickup_sounds,
                 play_auto_equip_sounds,
             )
-                .after(crate::ui_script::UiInput),
+                .in_set(crate::ui_script::UiDrain),
         );
 }
 

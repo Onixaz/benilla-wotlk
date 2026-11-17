@@ -19,7 +19,7 @@ use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
-use crate::ui_script::{UiFeed, UiInput, WorldLeaveSweepMessage};
+use crate::ui_script::{UiDrain, UiFeed, WorldLeaveSweepMessage};
 
 /// `CanShowResetInstances()`'s window, 25 hours: `cmp eax, 0x15f90` against `time(0)` minus when we
 /// left, signed, so the boundary is inclusive (`0x51959e`).
@@ -57,7 +57,7 @@ pub(crate) struct InstanceState {
     lines: Vec<LockoutLine>,
     /// `RAID_INSTANCE_WELCOME`s to fire: the map, its difficulty, seconds, locked, extended.
     welcomes: Vec<(u32, u32, i32, bool, bool)>,
-    /// The instance lock clock (`[0xbd0874]`-`[0xbd087c]`).
+    /// The instance lock clock (`[0xbd0858]`-`[0xbd0860]`).
     lock: LockClock,
     /// `INSTANCE_LOCK_START`/`_STOP` owed, in order.
     lock_events: Vec<&'static str>,
@@ -157,6 +157,11 @@ pub(crate) struct MapFacts<'a> {
 }
 
 impl InstanceState {
+    /// A UI load zeroes the lock clock (`0x52aa0e`-`0x52aa1a`), with no event.
+    pub(crate) fn reset_at_ui_load(&mut self) {
+        self.lock = LockClock::default();
+    }
+
     /// `SMSG_UPDATE_INSTANCE_OWNERSHIP`: one store, no line.
     pub(crate) fn set_ownership(&mut self, owns: bool) {
         self.owns_saved = owns;
@@ -816,7 +821,7 @@ impl Plugin for UiInstancePlugin {
                     encounter_leave_world
                         .after(crate::net::apply_net_updates)
                         .before(crate::ui_script::UiPress),
-                    drain_instance.after(UiInput),
+                    drain_instance.in_set(UiDrain),
                 ),
             );
     }

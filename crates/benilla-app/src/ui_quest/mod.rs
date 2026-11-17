@@ -18,7 +18,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_action::{show_messages, ui_error_text, MessageSink, Shown, Spells, UiError};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 
 /// The wire packet that opened the current panel.
@@ -246,8 +246,8 @@ impl Plugin for UiQuestPlugin {
                         .before(crate::ui_unit::UnitFeed)
                         .before(feed_quest),
                     feed_quest.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
-                    drain_quest.after(UiInput),
-                    read_trivial_tracking.after(UiInput),
+                    drain_quest.in_set(UiDrain),
+                    read_trivial_tracking.in_set(UiDrain),
                 ),
             );
     }

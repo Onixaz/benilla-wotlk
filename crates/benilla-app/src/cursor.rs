@@ -289,7 +289,7 @@ impl Plugin for CursorPlugin {
                     )
                         .chain()
                         // After the tick: a FrameXML `SetCursor` made this frame is read here.
-                        .after(crate::ui_script::UiInput),
+                        .in_set(crate::ui_script::UiDrain),
                     // After the controller's look grab and the loading cover: the frame's last
                     // word on where the pointer is and whether it shows.
                     other::place_software_cursor

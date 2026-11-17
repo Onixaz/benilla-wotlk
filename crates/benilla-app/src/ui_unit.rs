@@ -20,7 +20,7 @@ use crate::net::{
     SelfPlayer,
 };
 use crate::target::{ring_reaction, Factions, Selection};
-use crate::ui_script::{gate, UiInput};
+use crate::ui_script::{gate, UiDrain};
 
 mod held;
 
@@ -182,7 +182,7 @@ impl Plugin for UiUnitPlugin {
         )
         .add_systems(Update, feed_name_records.in_set(UnitFeed))
         .add_systems(Update, taxi_benchmark.in_set(UnitFeed))
-        .add_systems(Update, drain_pvp_toggles.after(UiInput))
+        .add_systems(Update, drain_pvp_toggles.in_set(UiDrain))
         .net_handler(
             benilla_protocol::SessionEventKind::PowerUpdate,
             on_power_update,
@@ -191,8 +191,8 @@ impl Plugin for UiUnitPlugin {
             benilla_protocol::SessionEventKind::HealthUpdate,
             on_health_update,
         )
-        .add_systems(Update, drain_worn_display_toggles.after(UiInput))
-        .add_systems(Update, drain_action_bar_toggles.after(UiInput))
+        .add_systems(Update, drain_worn_display_toggles.in_set(UiDrain))
+        .add_systems(Update, drain_action_bar_toggles.in_set(UiDrain))
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
         .add_systems(Update, feed_known_languages.in_set(UnitFeed))
         .add_systems(
@@ -1452,7 +1452,11 @@ fn feed_units(
     mut guild: ResMut<crate::ui_guild::GuildState>,
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
-    entered_world: Option<MessageReader<crate::net::EnteredWorldMessage>>,
+    // The commands carry the world-enter cascade's death part.
+    (entered_world, mut deferred): (
+        Option<MessageReader<crate::net::EnteredWorldMessage>>,
+        Commands,
+    ),
 ) {
     let Some(mut script) = script else {
         return;
@@ -1818,6 +1822,9 @@ fn feed_units(
             // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
             // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             script.fire_event("UPDATE_FACTION", vec![]);
+            // The cascade's corpse and release reset and our own create's dead or alive refresh,
+            // as an exclusive command with its events fired in turn (`0x528010`, `0x6e818b`).
+            crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;
         }
     } else if memo.entered_world {

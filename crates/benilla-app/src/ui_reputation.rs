@@ -15,7 +15,7 @@ use benilla_ui::script::{FactionEntry, ReputationSend, ReputationState, UiScript
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Reputations, SelfPlayer};
 use crate::target::Factions;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// Rank `r` spans `RANK_BOUNDS[r]..RANK_BOUNDS[r + 1]`, the client's table at `0xa2d2fc`, the edges
 /// [`benilla_formats::reputation_rank`] ranks by. The Lua `standingID` is the rank plus one.
@@ -31,7 +31,7 @@ impl Plugin for UiReputationPlugin {
                 Update,
                 (
                     feed_reputation.in_set(UiFeed),
-                    drain_reputation_sends.after(UiInput),
+                    drain_reputation_sends.in_set(UiDrain),
                 ),
             )
             .add_systems(PostUpdate, apply_local_flag_writes);

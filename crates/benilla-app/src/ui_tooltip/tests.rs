@@ -86,7 +86,7 @@ impl TestCtx {
             ),
             attack_target: None,
             objects,
-            items: &mut self.items,
+            items: &self.items,
             commands: &self.commands,
             sub_classes,
             skill_lines: self.skill_lines.as_ref(),

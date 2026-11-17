@@ -22,7 +22,7 @@ use bevy::ecs::system::SystemParam;
 
 use crate::net::{ClientCommand, FieldChanged, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_action::{PlayerActions, Spells};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 use crate::ui_spellbook::SkillLines;
 
@@ -133,7 +133,7 @@ impl Plugin for UiTrainerPlugin {
                         .in_set(UiFeed)
                         .in_set(TrainerFeed)
                         .after(crate::ui_unit::UnitFeed),
-                    drain_trainer.after(UiInput),
+                    drain_trainer.in_set(UiDrain),
                 ),
             );
     }

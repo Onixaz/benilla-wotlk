@@ -1,9 +1,10 @@
 //! Being summoned: `SMSG_SUMMON_REQUEST` latches the question and fires `CONFIRM_SUMMON` with no
-//! arguments; `ConfirmSummon` and `CancelSummon` answer it with `CMSG_SUMMON_RESPONSE`, the
-//! summoner's guid and an agree byte, and `CANCEL_SUMMON` hides the dialog.
+//! arguments from its handler (`0x6d8680` -> `0x513c21`); `ConfirmSummon` and `CancelSummon`
+//! answer it with `CMSG_SUMMON_RESPONSE`, the summoner's guid and an agree byte, and
+//! `CANCEL_SUMMON` hides the dialog.
 //!
 //! - The latch writes four globals, the guid's two halves, the zone and an absolute deadline, then
-//!   a bare event signal (516).
+//!   a bare event signal; the dialog's getters read them at call time through the live view.
 //! - The request asks the active player first (`0x6d86c6`): with no player object nothing happens;
 //!   dead or a ghost, it declines at once and shows nothing (`0x6d86fc`), so a live question is
 //!   untouched. The test: health <= 0, or a player with the `PLAYER_FLAGS` ghost bit (a ghost's
@@ -13,31 +14,22 @@
 //! - `ConfirmSummon()` checks no deadline, so two Accepts are two packets; the server checks its
 //!   own expiry.
 //! - `CANCEL_SUMMON` fires for `SMSG_SUMMON_CANCEL` and for the three ways out of a group: the kick,
-//!   the disband and the leave ack ([`SummonState::cancel`]).
+//!   the disband and the leave ack ([`cancel`]).
 //!
 //! Deviation: the latch is dropped at session end and an answer with nothing latched sends nothing,
 //! so no stale or zero guid reaches the server. The reference never clears the guid or zone, only
 //! the deadline, so its answers send whatever is left.
 
-use benilla_ui::script::{SummonConfirmUiState, UiScript};
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use crate::area::AreaTableRes;
-use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfGuid};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::live::UiEvents;
+use crate::ui_script::UiDrain;
 
-/// One event the summon flow owes the VM, in arrival order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Signal {
-    /// `CONFIRM_SUMMON`, per latched request: the same warlock summoning twice is two dialogs.
-    Ask,
-    /// `CANCEL_SUMMON`.
-    Cancel,
-}
-
-/// The latched question, the reference's four globals: written by [`net::request`], read by
-/// [`feed_summon`] and [`drain_summon`].
+/// The latched question, the reference's four globals: written by [`net::request`], read by the
+/// getters through [`SummonView`] and by [`drain_summon`].
 #[derive(Resource, Default)]
 pub(crate) struct SummonState {
     /// Echoed by the answers; 0 when nothing has asked this session.
@@ -47,8 +39,10 @@ pub(crate) struct SummonState {
     /// An absolute ms stamp there; here `Time<Real>` seconds, as the server's window runs in real
     /// time. `None` is the zeroed deadline.
     expires_at: Option<f64>,
-    /// The events still to fire.
-    owed: Vec<Signal>,
+    /// The name cache's record for the summoner, `""` until it lands.
+    name: String,
+    /// The zone's `AreaTable.dbc` row name, `""` with none.
+    area: String,
 }
 
 impl SummonState {
@@ -57,22 +51,15 @@ impl SummonState {
         self.summoner = summoner;
         self.zone = zone;
         self.expires_at = Some(now + f64::from(delay_ms) / 1000.0);
-        self.owed.push(Signal::Ask);
     }
 
-    /// Owe one `CANCEL_SUMMON`; the latch stays, as the reference's does.
-    pub(crate) fn cancel(&mut self) {
-        self.owed.push(Signal::Cancel);
+    /// A UI load zeroes the deadline alone (`0x52aa20`); the summoner and zone stay.
+    pub(crate) fn reset_at_ui_load(&mut self) {
+        self.expires_at = None;
     }
 
     fn pending(&self) -> Option<u64> {
         (self.summoner != 0).then_some(self.summoner)
-    }
-
-    /// How many `CANCEL_SUMMON`s are owed.
-    #[cfg(test)]
-    pub(crate) fn cancels_owed(&self) -> usize {
-        self.owed.iter().filter(|s| **s == Signal::Cancel).count()
     }
 
     /// Ms left, clamped at zero; the binding truncates to seconds.
@@ -83,57 +70,46 @@ impl SummonState {
     }
 }
 
-/// Push the three getters' answers every frame, and fire the owed `CONFIRM_SUMMON`s (no arguments)
-/// and `CANCEL_SUMMON`s in order.
-fn feed_summon(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut summon: ResMut<SummonState>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    areas: Option<Res<AreaTableRes>>,
-    // Real: the deadline was stamped on this clock.
-    time: Res<Time<Real>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
+/// `CANCEL_SUMMON` from the calling handler; the latch stays, as the reference's does.
+pub(crate) fn cancel(ui: &mut UiEvents) {
+    trace_fire("CANCEL_SUMMON");
+    ui.fire("CANCEL_SUMMON", Vec::new());
+}
 
-    // The getters' defaults already answer a zeroed bank. Not `pending()`: a zero-guid request
-    // still latches and fires in the reference, and must not leave its signal owed.
-    if summon.summoner == 0 && summon.owed.is_empty() {
-        return;
+/// The `summon` trace's middle link, between the packet and the response.
+fn trace_fire(event: &str) {
+    if benilla_assets::trace::enabled_for("summon") {
+        benilla_assets::trace::line("summon", &format!("fire {event}"));
+    }
+}
+
+/// What the three summon getters read at call time, part of the VM's live view: the latch, which
+/// holds the cache's record and the zone's row as they are when read.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct SummonView<'w> {
+    summon: Option<Res<'w, SummonState>>,
+    time: Option<Res<'w, Time<Real>>>,
+}
+
+impl SummonView<'_> {
+    /// The name cache's record for the latched guid (`0x516510`), `""` until it lands.
+    pub(crate) fn summoner(&self) -> String {
+        self.summon
+            .as_ref()
+            .map_or_else(String::new, |s| s.name.clone())
     }
 
-    // A miss asks and reports `""` this frame; a zero guid names nobody and is never asked about.
-    let summoner_name = match summon.pending() {
-        Some(guid) => names
-            .resolve(guid, &commands)
-            .unwrap_or_default()
-            .to_string(),
-        None => String::new(),
-    };
-    script.set_summon_confirm(SummonConfirmUiState {
-        summoner: summoner_name,
-        area: area_name(summon.zone, areas.as_deref()),
-        time_left_ms: summon.time_left_ms(time.elapsed_secs_f64()),
-    });
+    /// `GetSummonConfirmAreaName()` (`0x516580`).
+    pub(crate) fn area(&self) -> String {
+        self.summon
+            .as_ref()
+            .map_or_else(String::new, |s| s.area.clone())
+    }
 
-    for signal in std::mem::take(&mut summon.owed) {
-        let event = match signal {
-            Signal::Ask => "CONFIRM_SUMMON",
-            Signal::Cancel => "CANCEL_SUMMON",
-        };
-        // The `summon` trace's middle link, between the packet and the response.
-        if benilla_assets::trace::enabled_for("summon") {
-            benilla_assets::trace::line(
-                "summon",
-                &format!(
-                    "fire {event} summoner={:#x} zone={}",
-                    summon.summoner, summon.zone
-                ),
-            );
-        }
-        script.fire_event(event, Vec::new());
+    /// `GetSummonConfirmTimeLeft()`'s milliseconds (`0x5164b0`).
+    pub(crate) fn time_left_ms(&self) -> u32 {
+        let now = self.time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64());
+        self.summon.as_ref().map_or(0, |s| s.time_left_ms(now))
     }
 }
 
@@ -195,17 +171,6 @@ fn drain_summon(
     }
 }
 
-/// The latch dies with the session (the module's deviation), on `DisconnectedMessage`, which a
-/// socket death, a kick and `/logout` all reach. A `/reload` keeps it, as the reference's does.
-fn end_session_summon(
-    mut msgs: MessageReader<crate::net::DisconnectedMessage>,
-    mut summon: ResMut<SummonState>,
-) {
-    if msgs.read().next().is_some() {
-        *summon = SummonState::default();
-    }
-}
-
 /// The summon's packet handlers.
 pub(crate) mod net {
     use bevy::prelude::*;
@@ -215,10 +180,28 @@ pub(crate) mod net {
 
     use crate::net::NetHandlerApp;
     use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfGuid};
+    use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
         app.net_handler(SessionEventKind::SummonRequest, on_request)
-            .net_handler(SessionEventKind::SummonCancel, on_cancel);
+            .net_handler(SessionEventKind::SummonCancel, on_cancel)
+            .net_handler(SessionEventKind::PlayerName, on_summoner_name)
+            .net_handler(SessionEventKind::Disconnected, on_session_end);
+    }
+
+    /// The summoner's name landing in the cache: the getter's next read finds it.
+    fn on_summoner_name(In(ev): In<SessionEvent>, mut summon: ResMut<SummonState>) {
+        if let SessionEvent::PlayerName { guid, name, .. } = ev {
+            if summon.pending() == Some(guid) {
+                summon.name = name;
+            }
+        }
+    }
+
+    /// The latch dies with the session (the module's deviation); a `/reload` keeps the summoner
+    /// and zone and zeroes the deadline (`0x52aa20`), so the time left reads 0.
+    fn on_session_end(In(_): In<SessionEvent>, mut summon: ResMut<SummonState>) {
+        *summon = SummonState::default();
     }
 
     /// The reference's dead test over the self object, not `unit_reads_dead`.
@@ -230,6 +213,9 @@ pub(crate) mod net {
         stores: Query<&ObjectStore>,
         real_clock: Res<Time<Real>>,
         commands: Res<NetCommands>,
+        mut ui: ResMut<UiEvents>,
+        names: Res<crate::names::NameCache>,
+        areas: Option<Res<crate::area::AreaTableRes>>,
     ) {
         if let SessionEvent::SummonRequest {
             summoner,
@@ -250,25 +236,41 @@ pub(crate) mod net {
                 real_clock.elapsed_secs_f64(),
                 &mut summon,
             );
-            if decline {
-                let _ = commands.0.send(ClientCommand::SummonResponse {
-                    summoner,
-                    agree: false,
-                });
+            match decline {
+                Some(true) => {
+                    let _ = commands.0.send(ClientCommand::SummonResponse {
+                        summoner,
+                        agree: false,
+                    });
+                }
+                // The latch's bare signal (`0x513c21`); a cache miss asks for the name.
+                Some(false) => {
+                    summon.name = match summoner {
+                        0 => String::new(),
+                        guid => names
+                            .resolve(guid, &commands)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    };
+                    summon.area = super::area_name(zone, areas.as_deref());
+                    super::trace_fire("CONFIRM_SUMMON");
+                    ui.fire("CONFIRM_SUMMON", Vec::new());
+                }
+                None => {}
             }
         }
     }
 
     /// `SMSG_SUMMON_CANCEL` (`0x6cbcf0`): `CANCEL_SUMMON`, nothing else.
-    fn on_cancel(In(ev): In<SessionEvent>, mut summon: ResMut<SummonState>) {
+    fn on_cancel(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
         if let SessionEvent::SummonCancel = ev {
-            summon.cancel();
+            super::cancel(&mut ui);
         }
     }
 
     /// `SMSG_SUMMON_REQUEST` (`0x6d8680`): `dead_or_ghost` is `None` with no player object, which
-    /// does nothing. A living player latches the offer; a dead one touches nothing, so a live
-    /// question survives, and the return asks for the decline.
+    /// does nothing. A living player latches the offer and is asked; a dead one touches nothing,
+    /// so a live question survives, and declines. `Some(true)` asks for the decline.
     pub(crate) fn request(
         summoner: u64,
         zone: u32,
@@ -276,7 +278,7 @@ pub(crate) mod net {
         dead_or_ghost: Option<bool>,
         now: f64,
         summon: &mut SummonState,
-    ) -> bool {
+    ) -> Option<bool> {
         // The `summon` trace's first link, with the gate's verdict: a refusal looks like a bug.
         if benilla_assets::trace::enabled_for("summon") {
             benilla_assets::trace::line(
@@ -290,35 +292,28 @@ pub(crate) mod net {
         match dead_or_ghost {
             None => {
                 debug!("ui_summon: summon request from {summoner:#x} with no player object");
-                false
+                None
             }
             Some(true) => {
                 debug!("ui_summon: summon request from {summoner:#x} declined — dead or a ghost");
-                true
+                Some(true)
             }
             Some(false) => {
                 summon.latch(summoner, zone, delay_ms, now);
-                false
+                Some(false)
             }
         }
     }
 }
 
-/// The summon flow: the question's feed and its answers.
+/// The summon flow: the question's handlers and its answers.
 pub(crate) struct UiSummonPlugin;
 
 impl Plugin for UiSummonPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<SummonState>().add_systems(
-            Update,
-            (
-                // Before the feed, so the frame a session ends feeds nothing from it.
-                end_session_summon.before(feed_summon),
-                feed_summon.in_set(UiFeed),
-                drain_summon.after(UiInput),
-            ),
-        );
+        app.init_resource::<SummonState>()
+            .add_systems(Update, drain_summon.in_set(UiDrain));
     }
 }
 
@@ -326,23 +321,18 @@ impl Plugin for UiSummonPlugin {
 mod tests {
     use super::*;
 
-    /// A decline leaves the guid latched, so only a per-packet signal sees the second summon.
+    /// Each request is its own dialog from its handler: the same summoner asking twice fires twice,
+    /// and the guid outlives the fire.
     #[test]
-    fn asking_twice_owes_two_dialogs() {
+    fn asking_twice_fires_two_dialogs() {
         let mut summon = SummonState::default();
         assert_eq!(summon.pending(), None);
-
-        summon.latch(0x2a, 1519, 120_000, 100.0);
-        assert_eq!(summon.owed, [Signal::Ask]);
-        summon.owed.clear(); // the feed fired the first dialog
+        let ask = |summon: &mut SummonState, now| {
+            net::request(0x2a, 1519, 120_000, Some(false), now, summon)
+        };
+        assert_eq!(ask(&mut summon, 100.0), Some(false), "a dialog");
         assert_eq!(summon.pending(), Some(0x2a), "the guid outlives the fire");
-
-        summon.latch(0x2a, 1519, 120_000, 200.0);
-        assert_eq!(
-            summon.owed,
-            [Signal::Ask],
-            "the same summoner asking again owes a dialog"
-        );
+        assert_eq!(ask(&mut summon, 200.0), Some(false), "a second dialog");
     }
 
     /// The reference's countdown read, in its three cases: never armed, running, expired.
@@ -363,56 +353,55 @@ mod tests {
     #[test]
     fn a_dead_player_declines_and_latches_nothing() {
         let mut summon = SummonState::default();
-        assert!(net::request(
-            0x2a,
-            1519,
-            120_000,
-            Some(true),
-            100.0,
-            &mut summon
-        ));
+        assert_eq!(
+            net::request(0x2a, 1519, 120_000, Some(true), 100.0, &mut summon),
+            Some(true)
+        );
         assert_eq!(summon.pending(), None);
-        assert!(summon.owed.is_empty());
         assert_eq!(summon.time_left_ms(100.0), 0);
 
-        assert!(!net::request(0x2a, 1519, 120_000, None, 100.0, &mut summon));
+        assert_eq!(
+            net::request(0x2a, 1519, 120_000, None, 100.0, &mut summon),
+            None
+        );
         assert_eq!(summon.pending(), None, "no player object, no latch");
 
         // A live question, then a refused second request.
-        assert!(!net::request(
-            0x2a,
-            1519,
-            120_000,
-            Some(false),
-            100.0,
-            &mut summon
-        ));
-        summon.owed.clear();
-        assert!(net::request(
-            0x99,
-            1,
-            120_000,
-            Some(true),
-            150.0,
-            &mut summon
-        ));
+        assert_eq!(
+            net::request(0x2a, 1519, 120_000, Some(false), 100.0, &mut summon),
+            Some(false)
+        );
+        assert_eq!(
+            net::request(0x99, 1, 120_000, Some(true), 150.0, &mut summon),
+            Some(true)
+        );
         assert_eq!(
             summon.pending(),
             Some(0x2a),
             "the live offer is undisturbed"
         );
         assert_eq!(summon.zone, 1519);
-        assert!(summon.owed.is_empty(), "and no second dialog is owed");
     }
 
-    /// The cancel signal queues behind the request it follows and keeps the latch.
+    /// The cancel fires from its handler and keeps the latch.
     #[test]
-    fn a_cancel_is_owed_in_order_and_keeps_the_latch() {
+    fn a_cancel_fires_and_keeps_the_latch() {
         let mut summon = SummonState::default();
         summon.latch(0x2a, 1519, 120_000, 100.0);
-        summon.cancel();
-        assert_eq!(summon.owed, [Signal::Ask, Signal::Cancel]);
+        let mut ui = UiEvents::default();
+        cancel(&mut ui);
+        assert_eq!(ui.names(), ["CANCEL_SUMMON"]);
         assert_eq!(summon.pending(), Some(0x2a));
+    }
+
+    /// A UI load zeroes the deadline alone (`0x52aa20`): the time left reads 0, the latch stays.
+    #[test]
+    fn a_ui_load_zeroes_the_deadline_and_keeps_the_latch() {
+        let mut summon = SummonState::default();
+        summon.latch(0x2a, 1519, 120_000, 100.0);
+        summon.reset_at_ui_load();
+        assert_eq!(summon.time_left_ms(100.0), 0);
+        assert_eq!((summon.pending(), summon.zone), (Some(0x2a), 1519));
     }
 
     /// `0x51b07e`-`0x51b0b0`: alive with none of the four flags; no player object refuses.

@@ -14,7 +14,7 @@ use crate::net::{ClientCommand, NetCommands};
 use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_items::KEYRING_CONTAINER;
 use crate::ui_party::{GroupState, GROUPTYPE_RAID, GROUP_MEMBER_SUBGROUP};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 mod looters;
 mod net;
@@ -611,7 +611,7 @@ impl Plugin for UiLootPlugin {
                     // writers read it, and their teardown's close finds this frame's window.
                     feed_loot.in_set(UiFeed),
                     drain_loot
-                        .after(UiInput)
+                        .in_set(UiDrain)
                         .before(crate::target::TargetUpdate),
                     // After the net drain and the selection writers, which arm and drop the
                     // latch; the anim driver orders after this.

@@ -19,7 +19,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, NetStatus, SelfGuid};
 use crate::ui_action::{FillArg, UiError, UiErrorKeys};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// How often the UI clock is asked for in world (`0x5488f0`: `now + 20000`).
 const UI_TIME_REQUEST_EVERY: Duration = Duration::from_secs(20);
@@ -112,7 +112,7 @@ impl Plugin for NoticesPlugin {
                     feed_notices
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_level_grant.after(UiInput),
+                    drain_level_grant.in_set(UiDrain),
                 ),
             );
     }

@@ -455,7 +455,7 @@ impl Plugin for UiModelsPlugin {
             .add_systems(
                 Update,
                 sync_tiles
-                    .after(crate::ui_script::UiInput)
+                    .in_set(crate::ui_script::UiDrain)
                     .after(forget_dead_vm_tiles),
             )
             // The composite, in the minimap fill's lane: after packing, before the mesh rebuild.
@@ -640,7 +640,11 @@ fn sync_tiles(
             &mut Projection,
             &mut Transform,
         ),
-        (With<TileCamera>, Without<TilePerspectiveCamera>),
+        (
+            With<TileCamera>,
+            Without<TilePerspectiveCamera>,
+            Without<crate::net::ObjectStore>,
+        ),
     >,
     mut pane_cams: Query<
         (
@@ -650,7 +654,7 @@ fn sync_tiles(
             &mut Transform,
             &TilePerspectiveCamera,
         ),
-        Without<TileCamera>,
+        (Without<TileCamera>, Without<crate::net::ObjectStore>),
     >,
     mut roots: Query<
         (
@@ -663,6 +667,7 @@ fn sync_tiles(
             With<TileRoot>,
             Without<TileCamera>,
             Without<TilePerspectiveCamera>,
+            Without<crate::net::ObjectStore>,
         ),
     >,
     mut parts: Query<
@@ -1350,7 +1355,11 @@ fn set_camera_active(
             &mut Projection,
             &mut Transform,
         ),
-        (With<TileCamera>, Without<TilePerspectiveCamera>),
+        (
+            With<TileCamera>,
+            Without<TilePerspectiveCamera>,
+            Without<crate::net::ObjectStore>,
+        ),
     >,
     active: bool,
 ) {

@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects};
 use crate::pending_item_ops::{LockTransitions, PendingItemOps};
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
 mod drain;
@@ -1062,6 +1062,7 @@ impl Plugin for UiItemsPlugin {
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
             .init_resource::<LockTransitions>()
             .init_resource::<net::BagOpens>()
+            .init_resource::<feed::FreshTemplates>()
             // After the chain opens: unordered, it can run first and skip every item DBC.
             .add_systems(
                 Startup,
@@ -1087,6 +1088,10 @@ impl Plugin for UiItemsPlugin {
                     feed_item_stats
                         .in_set(UnitFeed)
                         .after(crate::ui_action::SlotIdentityFeed),
+                    // In the net drain, ahead of every system lending the VM.
+                    feed::take_fresh_templates
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::apply_net_updates),
                     feed_item_sets
                         .in_set(UnitFeed)
                         .after(crate::ui_action::SlotIdentityFeed),
@@ -1096,20 +1101,20 @@ impl Plugin for UiItemsPlugin {
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
                     // plain `UseContainerItem` is a script call.
-                    drain_container_repairs.after(UiInput),
+                    drain_container_repairs.in_set(UiDrain),
                     // Pick, place and split: `CMSG_SWAP_INV_ITEM`, `CMSG_SWAP_ITEM` or
                     // `CMSG_SPLIT_ITEM`.
-                    drain_container_moves.after(UiInput),
+                    drain_container_moves.in_set(UiDrain),
                     // The delete-confirm popup's accept: `CMSG_DESTROYITEM`.
-                    drain_container_destroys.after(UiInput),
+                    drain_container_destroys.in_set(UiDrain),
                     // `AutoEquipCursorItem`: `CMSG_AUTOEQUIP_ITEM`.
-                    drain_container_autoequips.after(UiInput),
-                    drain_bag_autostores.after(UiInput),
+                    drain_container_autoequips.in_set(UiDrain),
+                    drain_bag_autostores.in_set(UiDrain),
                     // The soulbind confirmations' answers (`EquipPendingItem`,
                     // `CancelPendingEquip`, `ConfirmBindOnUse`). A dialog is answered in a later
                     // frame than it was raised, so no order against the other drains is needed.
-                    drain::drain_bind_confirm_answers.after(UiInput),
-                    drain::drain_bind_on_use_confirms.after(UiInput),
+                    drain::drain_bind_confirm_answers.in_set(UiDrain),
+                    drain::drain_bind_on_use_confirms.in_set(UiDrain),
                 ),
             );
     }

@@ -17,7 +17,7 @@ use benilla_ui::script::{
 
 use crate::net::{ArenaTeamCommand, ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::query_cache::QueryCache;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// The roster query's throttle per team (`0x5a3600`).
 const ROSTER_THROTTLE: Duration = Duration::from_secs(10);
@@ -512,7 +512,7 @@ impl Plugin for UiArenaTeamPlugin {
                 feed_arena_teams
                     .in_set(UiFeed)
                     .run_if(crate::ui_script::ingame_ui_up),
-                drain_arena_teams.after(UiInput),
+                drain_arena_teams.in_set(UiDrain),
             ),
         );
     }

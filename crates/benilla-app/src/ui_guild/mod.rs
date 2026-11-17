@@ -14,7 +14,7 @@ use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
 use crate::query_cache::QueryCache;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 mod event_log;
 mod feed;
@@ -815,7 +815,7 @@ pub(crate) mod net {
 #[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GuildFeed;
 
-/// The guild's `.after(UiInput)` drain, which the guild bank's drain reads after.
+/// The guild's `.in_set(UiDrain)` drain, which the guild bank's drain reads after.
 #[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GuildDrain;
 
@@ -845,7 +845,7 @@ impl Plugin for UiGuildPlugin {
                     event_log::feed_guild_event_log
                         .in_set(UiFeed)
                         .after(feed::feed_guild),
-                    feed::drain_guild.after(UiInput).in_set(GuildDrain),
+                    feed::drain_guild.in_set(UiDrain).in_set(GuildDrain),
                 )
                     // Never against the boot VM: the feed's edge memo survives the entry load, so
                     // an edge spent on a VM with no frames, such as the login MOTD, is lost.

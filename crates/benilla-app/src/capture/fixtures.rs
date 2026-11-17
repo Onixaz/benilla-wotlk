@@ -23,6 +23,30 @@ const CHEST_GUID: u64 = (0xF110u64 << 48) | 0x744;
 /// 45°), so `front` shows the lit side and `rear` the unlit one.
 const SUBJECT_YAW: f32 = 2.36;
 
+/// A landed item template, written with the fixture's commands: the system lends the VM, whose
+/// verbs read the cache, so it holds no write to it.
+fn seed_template(commands: &mut Commands, entry: u32, t: benilla_protocol::messages::ItemInfo) {
+    commands.queue(move |w: &mut World| {
+        w.resource_mut::<crate::items::Items>()
+            .insert_template(entry, Some(t));
+    });
+}
+
+/// An item object in the index, spawned as the wire does, with the fixture's commands.
+fn seed_item(
+    commands: &mut Commands,
+    guid: u64,
+    fields: benilla_protocol::messages::ObjectFields,
+    container: bool,
+) {
+    commands.queue(move |w: &mut World| {
+        w.resource_scope(|w, mut index: Mut<crate::net::GuidIndex>| {
+            crate::items::spawn_item(&mut w.commands(), &mut index, guid, fields, container);
+        });
+        w.flush();
+    });
+}
+
 /// Seeds the fixture window's state once the scene is resident; the real feeds push it into the VM
 /// during the settle window as live wire data would. Icons resolve through the offline
 /// `ItemDisplayCatalog`, and names go straight into the caches.
@@ -35,9 +59,6 @@ pub(super) fn seed_ui_fixture(
     mut quest: ResMut<crate::ui_quest::QuestGiver>,
     mut quest_log: ResMut<crate::ui_quest_log::QuestLog>,
     mut loot: ResMut<crate::ui_loot::LootState>,
-    // One param under Bevy's 16-param cap: item objects are entities in the index, spawned as
-    // the wire does.
-    store: (ResMut<crate::items::Items>, ResMut<crate::net::GuidIndex>),
     mut names: ResMut<crate::names::NameCache>,
     icons: Option<Res<crate::entities::ItemDisplays>>,
     (mut script, _live): (
@@ -45,7 +66,6 @@ pub(super) fn seed_ui_fixture(
         crate::ui_script::LendLive,
     ),
     mut selection: ResMut<crate::target::Selection>,
-    mut player: ResMut<crate::player::Player>,
     // A nested tuple, one param under Bevy's 16-param cap.
     (mut actions, mut bank, mut exit, mut loading): (
         ResMut<crate::ui_action::PlayerActions>,
@@ -54,7 +74,6 @@ pub(super) fn seed_ui_fixture(
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
 ) {
-    let (mut items, mut index) = store;
     // A glue-screen capture has no world scenario, and no glue screen opens a UI fixture.
     let Some(scenario) = ctx.scenario else {
         return;
@@ -197,7 +216,7 @@ pub(super) fn seed_ui_fixture(
                     let entry = 91_000 + i as u32;
                     let mut t = template(name, 1);
                     t.required_level = *req_level;
-                    items.insert_template(entry, Some(t));
+                    seed_template(&mut commands, entry, t);
                     benilla_protocol::messages::VendorItem {
                         slot: i as u32 + 1,
                         entry,
@@ -329,20 +348,19 @@ pub(super) fn seed_ui_fixture(
                 (G_STONE, 94_004, 1, "Hearthstone", DISP_STONE, 1),
                 (G_BANKBAG, 94_005, 1, "Small Brown Pouch", DISP_STONE, 1),
             ] {
-                crate::items::spawn_item(&mut commands, &mut index, guid, obj(entry, stack), false);
+                seed_item(&mut commands, guid, obj(entry, stack), false);
                 let mut t = template(name, quality);
                 t.display_info_id = disp;
                 if guid == G_BANKBAG {
                     t.class = 1; // container
                     t.container_slots = 6;
                 }
-                items.insert_template(entry, Some(t));
+                seed_template(&mut commands, entry, t);
             }
             // The bank bag is a container object (its contents stream on the bag item): 6 slots,
             // one occupied, so its popout window (container 5) is in the shot too.
-            crate::items::spawn_item(
+            seed_item(
                 &mut commands,
-                &mut index,
                 G_BANKBAG,
                 ObjectFields::from_pairs(&[
                     (benilla_protocol::field::FIELD_OBJECT_ENTRY, 94_005),
@@ -426,9 +444,9 @@ pub(super) fn seed_ui_fixture(
             );
             // A QUEST_DETAILS view (the accept panel): description, objectives, two choice rewards,
             // one fixed reward and money.
-            items.insert_template(92_001, Some(template("Brackwater Cudgel", 2)));
-            items.insert_template(92_002, Some(template("Militia Warhammer", 1)));
-            items.insert_template(92_003, Some(template("Bandit Cloak", 1)));
+            seed_template(&mut commands, 92_001, template("Brackwater Cudgel", 2));
+            seed_template(&mut commands, 92_002, template("Militia Warhammer", 1));
+            seed_template(&mut commands, 92_003, template("Bandit Cloak", 1));
             let choice = |entry: u32, disp: u32| benilla_protocol::messages::QuestRewardItem {
                 item_id: entry,
                 count: 1,
@@ -529,13 +547,13 @@ pub(super) fn seed_ui_fixture(
             // `display_info_id`.
             let mut with_icon = template("Chipped Boar Tusk", 0);
             with_icon.display_info_id = DISP_STONE;
-            items.insert_template(93_001, Some(with_icon));
+            seed_template(&mut commands, 93_001, with_icon);
             let mut cudgel = template("Brackwater Cudgel", 2);
             cudgel.display_info_id = DISP_SWORD;
-            items.insert_template(93_002, Some(cudgel));
+            seed_template(&mut commands, 93_002, cudgel);
             let mut cloak = template("Bandit Cloak", 1);
             cloak.display_info_id = DISP_SHIELD;
-            items.insert_template(93_003, Some(cloak));
+            seed_template(&mut commands, 93_003, cloak);
 
             // Entry 1, auto-selected: a creature objective at 3/10, an item objective at 0/5,
             // rewards and money. `quest_type: 1` is `QuestInfo.dbc`'s "Elite", though the real 783
@@ -621,8 +639,8 @@ pub(super) fn seed_ui_fixture(
             }
         }
         UiFixture::Loot => {
-            items.insert_template(90_117, Some(template("Chipped Boar Tusk", 0)));
-            items.insert_template(90_118, Some(template("Ruined Pelt", 1)));
+            seed_template(&mut commands, 90_117, template("Chipped Boar Tusk", 0));
+            seed_template(&mut commands, 90_118, template("Ruined Pelt", 1));
             loot.open(
                 NPC_GUID,
                 benilla_protocol::messages::loot_type::CORPSE,
@@ -684,7 +702,9 @@ pub(super) fn seed_ui_fixture(
             };
             // At the default origin the player is off every zone rect and the arrow hides, so park
             // it at the scenario's Northshire spot.
-            player.pos = benilla_assets::coords::wow_to_bevy(scenario.eye);
+            let eye = benilla_assets::coords::wow_to_bevy(scenario.eye);
+            commands
+                .queue(move |w: &mut World| w.resource_mut::<crate::player::Player>().pos = eye);
             // Alternating explore bits, so about half of each zone's overlays reveal.
             let words = usize::from(benilla_protocol::messages::PLAYER_EXPLORED_ZONES_SLOTS);
             script.set_world_map_explored(vec![0x5555_5555; words]);
@@ -956,14 +976,14 @@ pub(super) fn seed_ui_fixture(
                     (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, stack),
                 ]) // OBJECT_ENTRY, STACK_COUNT
             };
-            crate::items::spawn_item(&mut commands, &mut index, G_CHEST, obj(93_010, 1), false);
-            crate::items::spawn_item(&mut commands, &mut index, G_SWORD, obj(93_011, 1), false);
-            crate::items::spawn_item(&mut commands, &mut index, G_BOW, obj(93_013, 1), false);
-            crate::items::spawn_item(&mut commands, &mut index, G_ARROWS, obj(93_012, 200), false);
+            seed_item(&mut commands, G_CHEST, obj(93_010, 1), false);
+            seed_item(&mut commands, G_SWORD, obj(93_011, 1), false);
+            seed_item(&mut commands, G_BOW, obj(93_013, 1), false);
+            seed_item(&mut commands, G_ARROWS, obj(93_012, 200), false);
             let mut chest = template("Tarnished Chainmail", 1);
             chest.display_info_id = DISP_SHIELD;
             chest.inventory_type = 5;
-            items.insert_template(93_010, Some(chest));
+            seed_template(&mut commands, 93_010, chest);
             let mut sword = template("Militia Shortsword", 2);
             sword.class = 2; // weapon: 1h sword, skill 43 (the Attack row's skill line)
             sword.subclass = 7;
@@ -972,18 +992,18 @@ pub(super) fn seed_ui_fixture(
             sword.dmg_min = 13.0;
             sword.dmg_max = 19.0;
             sword.delay_ms = 2400;
-            items.insert_template(93_011, Some(sword));
+            seed_template(&mut commands, 93_011, sword);
             let mut bow = template("Cracked Shortbow", 1);
             bow.class = 2; // weapon: bow, skill 45 (the ranged block's skill line)
             bow.subclass = 2;
             bow.display_info_id = DISP_STONE;
             bow.inventory_type = 15;
-            items.insert_template(93_013, Some(bow));
+            seed_template(&mut commands, 93_013, bow);
             let mut arrows = template("Rough Arrow", 0);
             arrows.class = 6; // projectile: the ammo slot's icon and bag-summed count (200)
             arrows.inventory_type = 24; // INVTYPE_AMMO: the equip drains' SET_AMMO fork
             arrows.display_info_id = DISP_STONE;
-            items.insert_template(93_012, Some(arrows));
+            seed_template(&mut commands, 93_012, arrows);
 
             names.insert_player(PLAYER_GUID, "Benilla".into(), None);
             commands.spawn((
@@ -1170,9 +1190,8 @@ pub(super) fn seed_ui_fixture(
                 crate::net::Guid(PLAYER_GUID),
             ));
             // The equipped main-hand weapon, whose icon the auto-attack borrows.
-            crate::items::spawn_item(
+            seed_item(
                 &mut commands,
-                &mut index,
                 G_SWORD,
                 ObjectFields::from_pairs(&[
                     (benilla_protocol::field::FIELD_OBJECT_ENTRY, 93_011),
@@ -1182,7 +1201,7 @@ pub(super) fn seed_ui_fixture(
             );
             let mut sword = template("Militia Shortsword", 2);
             sword.display_info_id = DISP_SWORD;
-            items.insert_template(93_011, Some(sword));
+            seed_template(&mut commands, 93_011, sword);
             let Some(script) = script.as_mut() else {
                 return;
             };
@@ -1775,5 +1794,18 @@ fn set_enemy_plates(script: Option<&benilla_ui::script::UiScript>, on: bool) {
     let lua = format!("SetCVar('nameplateShowEnemies', {})", u8::from(on));
     if let Some(Err(e)) = script.map(|s| s.run(&lua)) {
         warn!("nameplates: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The seed lends the VM, so it writes nothing the live view reads: initializing its access
+    /// panics on such a conflict (B0001/B0002).
+    #[test]
+    fn the_fixture_seed_lends_the_vm_without_an_access_conflict() {
+        use bevy::ecs::system::System;
+        let mut world = bevy::prelude::World::new();
+        let mut system = bevy::prelude::IntoSystem::into_system(super::seed_ui_fixture);
+        system.initialize(&mut world);
     }
 }

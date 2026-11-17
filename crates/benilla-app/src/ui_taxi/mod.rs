@@ -9,7 +9,7 @@ use benilla_ui::script::{TaxiUiState, UiScript};
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
 mod routing;
@@ -294,7 +294,7 @@ impl Plugin for UiTaxiPlugin {
                     // Range-close first so the clear fires `TAXIMAP_CLOSED` the same frame.
                     close_npc_session_out_of_range::<TaxiState>.before(feed_taxi),
                     feed_taxi.in_set(UiFeed),
-                    drain_taxi.after(UiInput),
+                    drain_taxi.in_set(UiDrain),
                 ),
             );
     }

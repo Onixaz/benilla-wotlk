@@ -531,7 +531,10 @@ impl Plugin for QuestMarkersPlugin {
                 query_statuses
                     .before(crate::ui_script::UiPress)
                     .before(crate::ui_unit::UnitFeed),
-                sync_markers.after(crate::ui_quest::read_trivial_tracking),
+                // After the UI's calls land, as the booths: the markers draw what the tick read.
+                sync_markers
+                    .after(crate::ui_quest::read_trivial_tracking)
+                    .after(crate::ui_script::UiDrain),
                 build_markers,
                 pose_markers,
                 bake_seat_scale,

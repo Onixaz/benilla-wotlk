@@ -193,7 +193,7 @@ impl Plugin for BindingsPlugin {
                         .in_set(InWorldGated),
                     // After the tick: the requests are Lua's own (`SaveBindings`), queued by
                     // handlers the tick dispatched, and a save must not wait a frame.
-                    drain_binding_requests.after(crate::ui_script::UiInput),
+                    drain_binding_requests.in_set(crate::ui_script::UiDrain),
                 ),
             );
     }

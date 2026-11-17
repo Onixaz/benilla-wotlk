@@ -10,7 +10,7 @@ use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
 /// The pet trainer's pending question: the latch and the cost.
@@ -74,6 +74,11 @@ impl InstanceBoot {
             self.deadline = None;
             self.events.push("INSTANCE_BOOT_STOP");
         }
+    }
+
+    /// A UI load zeroes the deadline (`0x52aa08`), with no event.
+    pub(crate) fn reset_at_ui_load(&mut self) {
+        self.deadline = None;
     }
 
     /// Whole seconds left, 0 when idle or past, as the reference divides a clamped ms remainder.
@@ -438,7 +443,7 @@ impl Plugin for UiDialogVerbsPlugin {
                     // healer: the reference resolves an Accept press in the UI dispatch, before
                     // its pick and poll run later in the frame.
                     drain_latch_verbs
-                        .after(UiInput)
+                        .in_set(UiDrain)
                         .before(crate::target::TargetUpdate),
                 ),
             )

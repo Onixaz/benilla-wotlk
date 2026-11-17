@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use benilla_ui::script::{BankState, UiScript};
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 
 /// `BankBagSlotPrices.dbc`, the client's own slot prices; absent, the purchase row shows 0 and
@@ -76,7 +76,7 @@ impl Plugin for UiBankPlugin {
                         .before(crate::ui_script::UiPress)
                         .before(feed_bank),
                     feed_bank.in_set(UiFeed),
-                    drain_bank.after(UiInput),
+                    drain_bank.in_set(UiDrain),
                 ),
             );
     }

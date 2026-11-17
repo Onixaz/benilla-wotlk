@@ -227,7 +227,7 @@ pub(super) fn plugin(app: &mut App) {
         Update,
         // After the UI tick, so a flag Lua moved is read the same frame.
         sync_chat_logging
-            .after(crate::ui_script::UiInput)
+            .in_set(crate::ui_script::UiDrain)
             .in_set(crate::char_select::InWorldGated),
     );
 }

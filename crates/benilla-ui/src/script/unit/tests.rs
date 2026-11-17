@@ -1073,6 +1073,71 @@ fn unit_classification_reads_the_five_word_table() {
 
 // ── `UnitAffectingCombat` and `TargetByName` ────────────────────────────────────────────────────
 
+/// The death verbs read the held unit at call time (`0x60f480`, `0x60f580`, `0x60f680`): health at
+/// zero, the dead-looking dynamic flag `0x20` outside our group and its pets (`0x512a30`), and the
+/// ghost bit on a player; a unit with no object answers its party record, the pushed snapshot.
+#[test]
+fn the_death_verbs_read_the_held_unit_live() {
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&crate::script::UnitGuids {
+        player: 1,
+        target: 2,
+        party: [3, 0, 0, 0],
+        held: [(1, 0), (2, 0), (3, 0)].into(),
+        ..Default::default()
+    });
+    let ask = |s: &mut UiScript, call: &str| {
+        s.eval::<String>(&format!("return tostring({call})"))
+            .unwrap()
+    };
+    // A corpse, a feigning stranger, a feigning party member and a ghost.
+    let live = crate::script::live::TestView {
+        player: Some(1),
+        units: [(1, (0, 1)), (2, (0, 50)), (3, (0, 50))].into(),
+        dynamic_flags: [(2, 0x20), (3, 0x20)].into(),
+        player_flags: [(1, 0x10), (3, 0)].into(),
+        ..Default::default()
+    };
+    s.with_live(&live, |s| {
+        assert_eq!(
+            ask(s, r#"UnitIsDead("player")"#),
+            "nil",
+            "a ghost has health 1"
+        );
+        assert_eq!(ask(s, r#"UnitIsGhost("player")"#), "1");
+        assert_eq!(ask(s, r#"UnitIsDeadOrGhost("player")"#), "1");
+        assert_eq!(
+            ask(s, r#"UnitIsDead("target")"#),
+            "1",
+            "a stranger's flag reads dead"
+        );
+        assert_eq!(ask(s, r#"UnitIsGhost("target")"#), "nil", "no player");
+        assert_eq!(ask(s, r#"UnitIsDeadOrGhost("target")"#), "1");
+        assert_eq!(
+            ask(s, r#"UnitIsDead("party1")"#),
+            "nil",
+            "a member's flag is waived"
+        );
+        assert_eq!(ask(s, r#"UnitIsDeadOrGhost("party1")"#), "nil");
+    });
+    let dead = crate::script::live::TestView {
+        player: Some(1),
+        units: [(1, (0, 0))].into(),
+        player_flags: [(1, 0)].into(),
+        ..Default::default()
+    };
+    s.with_live(&dead, |s| {
+        assert_eq!(ask(s, r#"UnitIsDead("player")"#), "1");
+        assert_eq!(ask(s, r#"UnitIsGhost("player")"#), "nil");
+        assert_eq!(ask(s, r#"UnitIsDeadOrGhost("player")"#), "1");
+        assert_eq!(
+            ask(s, r#"UnitIsDead("target")"#),
+            "nil",
+            "not held: no record"
+        );
+    });
+}
+
 /// Bit 19 of the named unit's live flags word (`0x60f8ac`); not in combat and no such unit share
 /// one nil arm: both jump to it in the reference.
 #[test]

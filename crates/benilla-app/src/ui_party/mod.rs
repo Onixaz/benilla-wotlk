@@ -12,7 +12,7 @@ use benilla_protocol::messages::{
 };
 use bevy::prelude::*;
 
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 pub(crate) mod difficulty;
 mod feed;
@@ -51,7 +51,7 @@ impl Plugin for UiPartyPlugin {
                         .run_if(crate::ui_script::ingame_ui_up),
                     difficulty::feed_menu_gates.in_set(UiFeed),
                     difficulty::feed_instance_difficulty.in_set(UiFeed),
-                    feed::drain_party.after(UiInput),
+                    feed::drain_party.in_set(UiDrain),
                 ),
             );
     }

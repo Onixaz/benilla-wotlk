@@ -24,7 +24,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_items::{EquipError, EquipErrors};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
 mod invoice;
@@ -219,7 +219,7 @@ impl Plugin for UiMailPlugin {
                     close_npc_session_out_of_range::<MailOpen>.before(feed_mail),
                     feed_mail.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
                     drain_mail
-                        .after(UiInput)
+                        .in_set(UiDrain)
                         .before(crate::ui_social::drain_social),
                     // The cascade's order: the time query, this, then the battlefield status.
                     send_query_next_mail_time_on_enter.after(crate::net::send_query_time),

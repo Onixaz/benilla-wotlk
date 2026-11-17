@@ -63,6 +63,8 @@ impl Plugin for TransportPlugin {
                 )
                     .chain()
                     .after(benilla_world::schedule::WorldStage::Net)
+                    // Before the UI, as the movement idle moves transports (`0x6f14ae`).
+                    .before(crate::ui_script::UiPress)
                     .before(benilla_world::schedule::WorldStage::Input),
             )
             // The ride frame last, after `PlayerControlSet` decides what we stand on; its

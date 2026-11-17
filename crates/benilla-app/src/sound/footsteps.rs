@@ -84,7 +84,7 @@ fn footstep_sounds(
     // The foley's material table and creature catalog, one tuple for the 16-param ceiling.
     foley: (Option<Res<super::Materials>>, Option<Res<Creatures>>),
     objects: crate::net::Objects,
-    mut items: Option<ResMut<Items>>,
+    items: Option<Res<Items>>,
     net_commands: Res<NetCommands>,
     voices: Option<Res<CreatureVoices>>,
     world: benilla_world::world_point::WorldPoint,
@@ -127,7 +127,7 @@ fn footstep_sounds(
         }
         // The armor foley, ahead of the gates below, on the stepping entity: a mount's body rustles
         // under the rider.
-        if let (Some(materials), Some(it)) = (materials.as_deref(), items.as_mut()) {
+        if let (Some(materials), Some(it)) = (materials.as_deref(), items.as_deref()) {
             let material = match net.kind {
                 // The reference reads the chest through the private inv-slot array: self only.
                 EntityKind::Player => {

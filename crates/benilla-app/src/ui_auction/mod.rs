@@ -19,7 +19,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_action::{show_messages, ui_error_text, MessageSink, Shown, UiError};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
 mod net;
@@ -410,7 +410,7 @@ impl Plugin for UiAuctionPlugin {
                     .after(crate::ui_unit::UnitFeed)
                     .in_set(UiFeed)
                     .run_if(crate::ui_script::ingame_ui_up),
-                drain_auction.after(UiInput),
+                drain_auction.in_set(UiDrain),
             ),
         );
     }

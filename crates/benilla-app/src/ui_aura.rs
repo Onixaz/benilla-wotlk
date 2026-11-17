@@ -19,7 +19,7 @@ use crate::net::{
 };
 use crate::target::{is_friendly, Factions, Selection};
 use crate::ui_action::Spells;
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 use crate::unit_auras::{UnitAura, UnitAuras};
 
@@ -43,7 +43,7 @@ impl Plugin for UiAuraPlugin {
                     .in_set(AuraEvents)
                     .after(crate::ui_action::SlotIdentityFeed),
             )
-            .add_systems(Update, drain_aura_cancels.after(UiInput))
+            .add_systems(Update, drain_aura_cancels.in_set(UiDrain))
             .add_systems(OnExit(ClientState::InWorld), end_session_aura_state);
     }
 }

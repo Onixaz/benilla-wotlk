@@ -17,7 +17,7 @@ use benilla_ui::script::{
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_battlefield::BattlefieldQueue;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::world_state_ui::WorldStateUiRes;
 
 /// `RequestBattlefieldScoreData`'s throttle (`0x54ce30`).
@@ -108,7 +108,10 @@ fn resolve_board(
 pub(crate) fn feed_battlefield_score(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     board: Res<BattlefieldScoreboard>,
-    mut queue: ResMut<BattlefieldQueue>,
+    (queue, mut owed): (
+        Res<BattlefieldQueue>,
+        ResMut<crate::ui_battlefield::BattlefieldOwed>,
+    ),
     catalog: Option<Res<WorldStateUiRes>>,
     names: Res<NameCache>,
     guids: Res<crate::net::GuidIndex>,
@@ -146,7 +149,7 @@ pub(crate) fn feed_battlefield_score(
             teams,
         })
     });
-    let status_rebuild = queue.take_became_active();
+    let status_rebuild = std::mem::take(&mut owed.became_active);
     if status_rebuild {
         script.reset_battlefield_score_filter();
     }
@@ -251,7 +254,7 @@ impl Plugin for BattlefieldScorePlugin {
                     .after(benilla_world::schedule::WorldStage::Net)
                     .before(feed_battlefield_score),
                 feed_battlefield_score.in_set(UiFeed),
-                drain_battlefield_score.after(UiInput),
+                drain_battlefield_score.in_set(UiDrain),
             ),
         );
     }

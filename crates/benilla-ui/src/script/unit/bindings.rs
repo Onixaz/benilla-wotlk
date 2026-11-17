@@ -357,41 +357,26 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    g.set(
-        "UnitIsDead",
-        lua.create_function(|lua, token: Value| {
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitIsDead("unit")"#,
-            )?);
-            unit_predicate(lua, &token, |u| u.dead)
-        })?,
-    )?;
-
-    // A released ghost has health 1, so `UnitIsDead` is false for it.
-    g.set(
-        "UnitIsGhost",
-        lua.create_function(|lua, token: Value| {
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitIsGhost("unit")"#,
-            )?);
-            unit_predicate(lua, &token, |u| u.ghost)
-        })?,
-    )?;
-    g.set(
-        "UnitIsDeadOrGhost",
-        lua.create_function(|lua, token: Value| {
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitIsDeadOrGhost("unit")"#,
-            )?);
-            unit_predicate(lua, &token, |u| u.dead || u.ghost)
-        })?,
-    )?;
+    // UnitIsDead (`0x60f480`), UnitIsGhost (`0x60f580`) and UnitIsDeadOrGhost (`0x60f680`) read
+    // the held unit at call time; a unit the client holds no object for answers its party record.
+    for (name, ask) in [
+        ("UnitIsDead", DeathAsk::Dead),
+        ("UnitIsGhost", DeathAsk::Ghost),
+        ("UnitIsDeadOrGhost", DeathAsk::DeadOrGhost),
+    ] {
+        g.set(
+            name,
+            lua.create_function(move |lua, token: Value| {
+                let usage = match ask {
+                    DeathAsk::Dead => r#"Usage: UnitIsDead("unit")"#,
+                    DeathAsk::Ghost => r#"Usage: UnitIsGhost("unit")"#,
+                    DeathAsk::DeadOrGhost => r#"Usage: UnitIsDeadOrGhost("unit")"#,
+                };
+                let token = crate::script::binding_abi::string_arg(lua, token, usage)?;
+                Ok(flag(unit_reads_dead(lua, &token, ask)))
+            })?,
+        )?;
+    }
 
     // UnitReaction(unit, other) (12340 `0x60d280`): both tokens resolved (`0x60c1f0`), then
     // `0x7251c0(unit, other)` plus one (`0x60d2dc`), so 1-based, 5 for a unit toward itself; nil
@@ -1594,4 +1579,61 @@ fn class_pair(lua: &Lua, token: &Option<String>) -> mlua::Result<(Value, Value)>
         )),
         None => Ok((Value::Nil, Value::Nil)),
     }
+}
+
+/// Which death verb asks.
+#[derive(Clone, Copy)]
+enum DeathAsk {
+    Dead,
+    Ghost,
+    DeadOrGhost,
+}
+
+/// The death verbs' answer for `token`. A held unit reads live: health at or below zero
+/// (`0x60f4fe`), the dead-looking dynamic flag `0x20` on anyone outside our group and its pets
+/// (`0x60f504`-`0x60f52e`, `0x512a30`), and for a player the ghost bit (`0x60f612`; the
+/// dead-or-ghost test `0x6dac10`). A unit held by no object answers its party record (`0x513c30`):
+/// dead `& 4`, ghost `& 8`, either `& 0xc` (`0x60f769`). With no view lent, the pushed snapshot.
+fn unit_reads_dead(lua: &Lua, token: &str, ask: DeathAsk) -> bool {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    let guid = model.unit_guids.guid_of(token);
+    let live = crate::script::read_live(|live| {
+        let guid = guid?;
+        let health = live.unit_health(guid)?;
+        let ghost = live.player_flags(guid).is_some_and(|f| f & 0x10 != 0);
+        let looks_dead = live.unit_dynamic_flags(guid).is_some_and(|f| f & 0x20 != 0)
+            && !group_member_or_pet(&model.unit_guids, live.active_player(), guid);
+        Some(match ask {
+            DeathAsk::Dead => health == 0 || looks_dead,
+            DeathAsk::Ghost => ghost,
+            DeathAsk::DeadOrGhost => health == 0 || ghost || looks_dead,
+        })
+    });
+    if let Some(Some(answer)) = live {
+        return answer;
+    }
+    // No held object: the record's flags, which the snapshot carries for a member out of view.
+    let lent = live.is_some();
+    model.unit(token).is_some_and(|u| {
+        (!lent || !u.has_object)
+            && match ask {
+                DeathAsk::Dead => u.dead,
+                DeathAsk::Ghost => u.ghost,
+                DeathAsk::DeadOrGhost => u.dead || u.ghost,
+            }
+    })
+}
+
+/// The group test the dead-looking flag is waived for (`0x512a30`): us, our pet, a party member
+/// or its pet (`0x52d310`), a raid member or its pet (`0x573200`).
+fn group_member_or_pet(guids: &super::UnitGuids, me: Option<u64>, guid: u64) -> bool {
+    guid != 0
+        && (me == Some(guid)
+            || guids.pet == guid
+            || guids.party.contains(&guid)
+            || guids.party_pets.contains(&guid)
+            || guids.raid.contains(&guid)
+            || guids.raid_pets.contains(&guid))
 }

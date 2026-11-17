@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 
 use crate::char_select::ClientState;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_unit::UnitFeed;
 use benilla_world::schedule::WorldStage;
 
@@ -159,7 +159,7 @@ impl Plugin for SpellPlugin {
                         .before(UnitFeed),
                     // The item-target commit: after the input pass so a bag click binds the same
                     // frame; outside the target chain, as its clicks never reach the world.
-                    targeting::commit_item_cast_on_pick.after(UiInput),
+                    targeting::commit_item_cast_on_pick.in_set(UiDrain),
                 ),
             )
             .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)

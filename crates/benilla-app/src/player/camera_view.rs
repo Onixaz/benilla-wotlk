@@ -352,7 +352,7 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             drain_view_requests
                 // After the Lua tick that queues them, before the control pass seats the pose.
-                .after(crate::ui_script::UiInput)
+                .in_set(crate::ui_script::UiDrain)
                 .after(crate::ui_barber::BarberDrain)
                 .before(super::control)
                 // Capture parks the camera itself; a queued view must not move it.

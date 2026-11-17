@@ -495,7 +495,12 @@ pub(crate) mod schedule_tests {
             }
             // Pass 2: build, and read what the build found. `is_send` is only known once a
             // system's params have registered their access, i.e. after this.
-            schedule.initialize(world).expect("the schedule builds");
+            if let Err(e) = schedule.initialize(world) {
+                panic!(
+                    "the schedule builds: {} ({e:?})",
+                    e.to_string(schedule.graph(), world)
+                );
+            }
             let mut non_send = Vec::new();
             for (key, system) in schedule.systems().expect("initialized") {
                 if !system.is_send() {
@@ -1028,7 +1033,12 @@ pub(crate) mod schedule_tests {
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
     // The press pass (#1215) runs the script calls ahead of the feeds and their drains, and the
     // packet-derived state a press reads ahead of it, taking the count from at most 3891 to 3808.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_808;
+    // The live view (#1274) reads `Player` and the held objects' `Transform` at call time, so the
+    // frame declares 12340's order (`0x47eff0`: input, the net poll, the movement idle, the
+    // paint): the transport chain before the press, the tick's drains (`UiDrain`) before the
+    // world update, and the booths, quest markers and entity visuals after the drains, taking it
+    // to 3152.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_152;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1419,10 +1429,11 @@ pub(crate) mod schedule_tests {
 
     /// The VM ticks once a frame (`extract::tick_script`, in `UiInput`): a press rides `UiPress`
     /// and a push the tick must see rides `UiFeed`, both chained after the net drain and before
-    /// the tick; a drain of what it produced is `.after(UiInput)`. Read off the built graph. Fails
-    /// a holder with no path to or from the tick, one before the tick outside both phases and not
-    /// argued in [`OUTSIDE_THE_FEED_PHASE`], a phase member the graph does not place between the
-    /// drain and the tick, and a stale row.
+    /// the tick; a drain of what it produced is in `UiDrain`, or `.after(UiInput)` when it follows
+    /// the world update. Read off the built graph. Fails a holder with no path to or from the
+    /// tick, one before the tick outside both phases and not argued in
+    /// [`OUTSIDE_THE_FEED_PHASE`], a phase member the graph does not place between the drain and
+    /// the tick, and a stale row.
     #[test]
     fn every_vm_holder_in_update_declares_its_side_of_the_tick() {
         let mut app = headless_client();
@@ -1505,7 +1516,7 @@ pub(crate) mod schedule_tests {
                 ));
             } else {
                 offenders.push(format!(
-                    "{}: no declared side of the tick — `.in_set(UiFeed)` for a push the tick must see this frame, `.after(UiInput)` for a drain of what the tick produced",
+                    "{}: no declared side of the tick — `.in_set(UiFeed)` for a push the tick must see this frame, `.in_set(UiDrain)` for a drain of what the tick produced",
                     s.name
                 ));
             }
@@ -1535,7 +1546,7 @@ pub(crate) mod schedule_tests {
         assert!(
             offenders.is_empty(),
             "these systems hold the VM in `Update` without declaring their side of the tick \
-             (`UiPress` or `UiFeed` before it, or `.after(UiInput)`):\n  {}",
+             (`UiPress` or `UiFeed` before it, or `.in_set(UiDrain)`):\n  {}",
             offenders.join("\n  ")
         );
         assert!(stale.is_empty(), "stale rows:\n  {}", stale.join("\n  "));
@@ -1569,8 +1580,6 @@ pub(crate) mod schedule_tests {
          "`seen_generation` is a `VmMemo`: a new VM reads `None`, rebuilds and re-fires UPDATE_BINDINGS"),
         ("capture/probe_bg.rs", "bg_probe", Because::SelfHealing,
          "the battleground probe: dev-only (`WOW_PROBE_BG`, `cfg(feature = \"dev\")`) so it is not in a player build at all, and its `mem::take` is of its OWN pending-events string, not a queue anything else fills. Its one real VM dependency is the Lua event tap, which self-heals: `EVENT_DRAIN` returns a `<tap-gone>` sentinel when the tap's globals are missing — the case this window causes, since a tap installed in the boot VM is discarded when `mint_entry_vm` builds the interface — and the probe re-installs on the next frame"),
-        ("death/mod.rs", "feed_death", Because::MemoLatched,
-         "`feed.vm: VmMemo<DeathAnnounced>`: a fresh memo makes the first snapshot an edge and re-announces a held offer, confirm and corpse range"),
         ("screenshot.rs", "ask_for_captures", Because::FilledByVm,
          "`pending` holds only the VM's own `Screenshot()` asks, and the take spawns a capture, publishing nothing"),
         ("screenshot.rs", "report_captures", Because::FilledByVm,
@@ -1589,6 +1598,8 @@ pub(crate) mod schedule_tests {
          "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
         ("ui_battlefield.rs", "feed_battlefield", Because::SelfHealing,
          "`reset_on_world_enter` runs before it at each world-enter cascade, clears the session and re-sends `BattlefieldStatusRequest`"),
+        ("ui_battlefield_score.rs", "feed_battlefield_score", Because::SelfHealing,
+         "`became_active` comes from a status 3, which `reset_on_world_enter`'s `BattlefieldStatusRequest` asks for again at each world-enter cascade"),
         ("ui_binder.rs", "feed_binder", Because::PlayerRoundTrip,
          "`SMSG_BINDER_CONFIRM` only answers the innkeeper's gossip line"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
@@ -1639,8 +1650,6 @@ pub(crate) mod schedule_tests {
          "acts on the glue VM alone, which the lifecycle installs with its GlueXML loaded and seated, so there is no frameless window; its takes are the manager's own flags and outbox"),
         ("ui_stable/mod.rs", "feed_stable", Because::PlayerRoundTrip,
          "both packets follow a stable master's gossip and a click in its window"),
-        ("ui_summon.rs", "feed_summon", Because::PlayerRoundTrip,
-         "only another player's Ritual of Summoning latches the ask (the duel's shape; coincidence-only residual)"),
         ("ui_tabard.rs", "drain_tabard", Because::FilledByVm,
          "the intents are Lua's; the event answers a Save intent"),
         ("ui_tabard.rs", "feed_tabard", Because::PlayerRoundTrip,

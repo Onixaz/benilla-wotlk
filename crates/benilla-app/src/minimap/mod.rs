@@ -1194,7 +1194,7 @@ impl Plugin for MinimapPlugin {
                     feed_minimap_compass.in_set(crate::ui_script::UiFeed),
                     // After the tick that can set the mask, before the emit that draws with it.
                     feed_minimap_mask
-                        .after(crate::ui_script::UiInput)
+                        .in_set(crate::ui_script::UiDrain)
                         .before(UiQuadAppend),
                     // Before the script tick, after the containment verdict it reads. Gated on the
                     // in-game UI: a member's ping in the login burst would otherwise spend its

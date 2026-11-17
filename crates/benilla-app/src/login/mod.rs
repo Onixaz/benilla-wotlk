@@ -39,7 +39,7 @@ impl Plugin for LoginPlugin {
                 // tick whose Lua called its verbs, so its asks reach the policy in the same frame.
                 (
                     crate::ui_script::glue_mgr::drive_glue_mgr
-                        .after(crate::ui_script::UiInput)
+                        .in_set(crate::ui_script::UiDrain)
                         .after(crate::realm_select::RealmSelectSet),
                     // Off the roster and the screen the manager and the tick just moved.
                     crate::ui_script::glue_scene::feed_stock_glue_preview

@@ -12,7 +12,7 @@ use benilla_protocol::messages::PetSpells;
 use crate::net::{GuidIndex, ObjectStore};
 use crate::spell::Cooldowns;
 use crate::ui_action::CooldownEvents;
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
 mod bar;
@@ -189,7 +189,7 @@ impl Plugin for UiPetPlugin {
                     // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
                     // the stable it reads before the stable's own verbs move it.
                     drain_pet_menu
-                        .after(UiInput)
+                        .in_set(UiDrain)
                         .before(crate::ui_stable::drain_stable)
                         .run_if(crate::ui_script::ingame_ui_up),
                 ),

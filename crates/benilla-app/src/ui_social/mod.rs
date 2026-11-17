@@ -10,7 +10,7 @@ use benilla_protocol::messages::{
 };
 use bevy::prelude::*;
 
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 mod feed;
 mod local_who;
@@ -556,7 +556,7 @@ impl Plugin for UiSocialPlugin {
                     feed::feed_social
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    feed::drain_social.after(UiInput),
+                    feed::drain_social.in_set(UiDrain),
                 ),
             );
     }

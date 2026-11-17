@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_action::{show_messages, ui_error_text, MessageSink, Shown, UiError};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 
 /// Frames a queued line waits for its name: a name query is one round trip, and a guid the server
 /// will not name would otherwise hold its line all session.
@@ -155,7 +155,7 @@ impl Plugin for QuestSharePlugin {
             Update,
             (
                 feed_quest_share.in_set(UiFeed),
-                drain_quest_share.after(UiInput),
+                drain_quest_share.in_set(UiDrain),
             ),
         );
     }

@@ -16,7 +16,7 @@ use benilla_ui::script::{StableIntent, StablePetSlot, StableState, UiScript};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_pet_stats::PetFamilyTables;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 
 mod net;
@@ -34,12 +34,12 @@ impl Plugin for UiStablePlugin {
                     // Range-close first so the clear fires `PET_STABLE_CLOSED` the same frame.
                     close_npc_session_out_of_range::<StableOpen>.before(feed_stable),
                     feed_stable.in_set(UiFeed),
-                    drain_stable.after(UiInput),
+                    drain_stable.in_set(UiDrain),
                     // After the VM ticks: the selection is written by a click in `UiPress`
                     // and by `PetStable_Update`'s re-pick (`PetStable.lua:48-63`) inside the
                     // feed's events, so an earlier read shows the previous pet for a frame.
                     feed_stable_booth
-                        .after(UiInput)
+                        .in_set(UiDrain)
                         // Gated: the feed starts with a name lookup over every UI frame.
                         .run_if(
                             |open: Res<StableOpen>, booth: Res<crate::portrait::StableBooth>| {

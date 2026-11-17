@@ -157,6 +157,8 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
                 concat!("fire_event", "("),
                 concat!("fire_event_into", "("),
                 concat!("pending_events.push", "(("),
+                // An event a packet handler fires after its changes apply.
+                concat!(".fire", "("),
             ] {
                 let mut from = 0;
                 while let Some(i) = text[from..].find(call) {

@@ -20,7 +20,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_guild::GuildState;
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
 mod net;
@@ -212,7 +212,7 @@ impl Plugin for UiGuildBankPlugin {
                     .in_set(UiFeed)
                     .after(crate::ui_guild::GuildFeed),
                 drain_guild_bank
-                    .after(UiInput)
+                    .in_set(UiDrain)
                     .after(crate::ui_guild::GuildDrain),
             ),
         );

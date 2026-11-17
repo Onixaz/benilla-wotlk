@@ -31,10 +31,20 @@ local function popup()
         end
     end
 end
+local function button2()
+    for i = 1, 4 do
+        local p = _G["StaticPopup" .. i]
+        if p and p:IsShown() and p.which == "DEATH" then
+            local b = _G["StaticPopup" .. i .. "Button2"]
+            return b:IsShown() and b:GetText()
+        end
+    end
+end
 local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
+    { "isdead", function() return UnitIsDead("player") end },
     { "ghost", function() return UnitIsGhost("player") end },
     { "arena", function() return IsActiveBattlefieldArena() end },
     { "mounted", function() return IsMounted() end },
@@ -46,8 +56,18 @@ local VERBS = {
     { "petui", function() return HasPetUI() end },
     { "mounts", function() return GetNumCompanions("MOUNT") end },
     { "popup", popup },
+    { "button2", button2 },
+    { "soulstone", function() return HasSoulstone() end },
     { "special", function() return GetQuestLogSpecialItemInfo(2) ~= nil end },
     { "watchitem", function() return WatchFrameItem1 ~= nil and WatchFrameItem1:IsShown() end },
+    { "release", function() return GetReleaseTimeRemaining() end },
+    { "reclaim", function() return GetCorpseRecoveryDelay() end },
+    { "summon", function() return GetSummonConfirmTimeLeft() end },
+    { "summoner", function() return GetSummonConfirmSummoner() end },
+    { "falling", function() return IsFalling() end },
+    { "nores", function() return CannotBeResurrected() end },
+    { "healer", function() return CheckSpiritHealerDist() end },
+    { "restimer", function() return ResurrectHasTimer() end },
 }
 local function answers()
     local verbs = {}
@@ -289,6 +309,16 @@ impl Rig {
         Seen::parse(&format!("NOW		{answers}"))
     }
 
+    /// The probe verbs' answers with the `World` lent, as a script call between frames reads them.
+    pub fn live_now(&mut self) -> Seen {
+        let answers = super::live::with_live_world(self.app.world_mut(), |s| {
+            s.eval::<String>("return CHARZ_ANSWERS()")
+        })
+        .expect("a VM")
+        .expect("the observer is loaded");
+        Seen::parse(&format!("NOW		{answers}"))
+    }
+
     /// Everything seen since the last take.
     pub fn take(&mut self) -> Vec<Seen> {
         std::mem::take(&mut self.seen)
@@ -357,6 +387,7 @@ const PET: u64 = 0xF140_0000_0100_0001;
 const QUEST: u32 = 7;
 /// `PLAYER_FLAGS_GHOST`.
 const GHOST: u32 = 0x10;
+use benilla_protocol::field::FIELD_PLAYER_SELF_RES_SPELL;
 
 fn flags(f: u32) -> SessionEvent {
     self_values(&[(FIELD_UNIT_FLAGS, f)])
@@ -447,11 +478,11 @@ fn reload_fires_the_load_events_again() {
     );
 }
 
-/// Today each death event reads the previous state (`PLAYER_DEAD` with `UnitIsDeadOrGhost` false):
-/// the death feed fires before the unit feed pushes the health and flags.
+/// `UnitIsDead` (`0x60f480`), `UnitIsDeadOrGhost` (`0x60f680`) and `UnitIsGhost` (`0x60f580`) read
+/// the held unit at call time, so each death event reads the update its handler just applied.
 #[test]
 fn death_release_and_resurrection() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     let events = &[
@@ -460,7 +491,7 @@ fn death_release_and_resurrection() {
         "PLAYER_UNGHOST",
         "UNIT_HEALTH",
     ];
-    let verbs = &["dead", "ghost", "popup"];
+    let verbs = &["isdead", "dead", "ghost", "popup"];
     let died = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 3);
     let released = rig.packets(
         vec![self_values(&[
@@ -479,23 +510,205 @@ fn death_release_and_resurrection() {
     assert_eq!(
         pin(&died, events, verbs),
         vec![
-            "PLAYER_DEAD | dead=nil ghost=nil popup=You have died. Release to the nearest graveyard?",
-            "UNIT_HEALTH player | dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
+            "PLAYER_DEAD | isdead=1 dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
+            "UNIT_HEALTH player | isdead=1 dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
         ]
     );
     assert_eq!(
         pin(&released, events, verbs),
         vec![
-            "PLAYER_ALIVE | dead=1 ghost=nil popup=nil",
-            "UNIT_HEALTH player | dead=1 ghost=1 popup=nil",
+            "PLAYER_ALIVE | isdead=nil dead=1 ghost=1 popup=nil",
+            "UNIT_HEALTH player | isdead=nil dead=1 ghost=1 popup=nil",
         ]
     );
     assert_eq!(
         pin(&revived, events, verbs),
         vec![
-            "PLAYER_UNGHOST | dead=1 ghost=1 popup=nil",
-            "UNIT_HEALTH player | dead=nil ghost=nil popup=nil",
+            "PLAYER_UNGHOST | isdead=nil dead=nil ghost=nil popup=nil",
+            "UNIT_HEALTH player | isdead=nil dead=nil ghost=nil popup=nil",
         ]
+    );
+}
+
+/// A death and the release in one frame: 12340 handles each update's health watcher in wire order
+/// (`0x73f330`), so `PLAYER_DEAD` fires for the first with its release timer derived just before
+/// it (`0x6dc0f0` -> `0x6dc070`, no timer bit: -1), then `PLAYER_ALIVE` for the second's health 1
+/// (`0x73d5bc`), before the ghost bit's watcher asks for the corpse.
+#[test]
+fn death_and_release_in_one_frame_fire_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            self_values(&[(FIELD_UNIT_HEALTH, 0)]),
+            self_values(&[(FIELD_UNIT_HEALTH, 1), (FIELD_PLAYER_FLAGS, GHOST)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST"],
+            &["release"]
+        ),
+        vec!["PLAYER_DEAD | release=-1", "PLAYER_ALIVE | release=-1"]
+    );
+}
+
+/// A Reincarnation owed at death, its field one flush ahead of health 0: `HasSoulstone`
+/// (`0x51acd0`) reads it at call time, so the `DEATH` popup `UIParent` raises on `PLAYER_DEAD`
+/// shows its second button with the spell's name.
+#[test]
+fn a_self_res_owed_at_death_shows_on_the_death_popup() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_SELF_RES_SPELL, 21169)]),
+            self_values(&[(FIELD_UNIT_HEALTH, 0)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["PLAYER_DEAD"], &["soulstone", "button2"]),
+        vec!["PLAYER_DEAD | soulstone=Reincarnation button2=Reincarnation"]
+    );
+}
+
+/// A `/reload` while dead: the UI load enters the world but never refreshes the dead or alive
+/// signal (`0x52a980` calls `0x528010` alone), and it zeroes the release timer (`0x52a9f6`).
+#[test]
+fn reloading_dead_fires_no_player_dead() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let died = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 3);
+    assert_eq!(
+        pin(&died, &["PLAYER_DEAD"], &["release"]),
+        vec!["PLAYER_DEAD | release=-1"]
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_ENTERING_WORLD", "PLAYER_DEAD", "PLAYER_ALIVE"],
+            &["release", "popup"]
+        ),
+        vec!["PLAYER_ENTERING_WORLD | release=0 popup=nil"]
+    );
+}
+
+/// A `/reload` zeroes the countdowns the UI load owns (`0x52a9f6`-`0x52aa20`): reclaim, instance
+/// boot, instance lock and summon all read 0 after it.
+#[test]
+fn a_reload_zeroes_the_countdowns() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let armed = rig.packets(
+        vec![
+            SessionEvent::CorpseReclaimDelay { delay_ms: 30_000 },
+            SessionEvent::RaidGroupOnly {
+                delay_ms: 60_000,
+                reason: 0,
+            },
+            SessionEvent::InstanceLockWarning {
+                warning: benilla_protocol::messages::InstanceLockWarning {
+                    ms: 90_000,
+                    completed_mask: 0,
+                    extending: false,
+                },
+            },
+            SessionEvent::SummonRequest {
+                summoner: 0x20,
+                zone: 1519,
+                delay_ms: 120_000,
+            },
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&armed, &["CONFIRM_SUMMON"], &["reclaim", "summon"]),
+        vec!["CONFIRM_SUMMON | reclaim=30 summon=120"]
+    );
+    let clocks = |rig: &Rig| {
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<String>(
+                "return GetInstanceBootTimeRemaining() .. ',' .. GetInstanceLockTimeRemaining()",
+            )
+            .unwrap()
+    };
+    assert_eq!(clocks(&rig), "59,89", "the boot and lock clocks run");
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &["reclaim", "summon"]),
+        vec!["PLAYER_ENTERING_WORLD | reclaim=0 summon=0"]
+    );
+    assert_eq!(clocks(&rig), "0,0");
+}
+
+/// The summon offer and its withdrawal in one frame and apart: `CONFIRM_SUMMON` fires from the
+/// request's handler (`0x6d8680` -> `0x513c21`) with the deadline already latched, which
+/// `GetSummonConfirmTimeLeft` reads at call time (`0x5164b0`), and `CANCEL_SUMMON` from the
+/// cancel's (`0x6cbcf0`), in wire order.
+#[test]
+fn summon_offer_and_cancel_fire_from_their_handlers() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let request = || SessionEvent::SummonRequest {
+        summoner: 0x20,
+        zone: 1519,
+        delay_ms: 120_000,
+    };
+    let events = &["CONFIRM_SUMMON", "CANCEL_SUMMON"];
+    let both = rig.packets(vec![request(), SessionEvent::SummonCancel], 3);
+    assert_eq!(
+        pin(&both, events, &["summon"]),
+        vec!["CONFIRM_SUMMON | summon=120", "CANCEL_SUMMON | summon=120"]
+    );
+    let ask = rig.packets(vec![request()], 3);
+    assert_eq!(
+        pin(&ask, events, &["summon"]),
+        vec!["CONFIRM_SUMMON | summon=120"]
+    );
+}
+
+/// A named caster's offer while dead asks at once from its handler (`0x6dbd00` -> `0x512511`);
+/// alive, the offer only latches.
+#[test]
+fn a_resurrect_offer_asks_only_while_dead() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let offer = || SessionEvent::ResurrectRequest {
+        caster: 0x20,
+        name: "Charzpriest".into(),
+        sickness: false,
+        has_timer: true,
+    };
+    let alive = rig.packets(vec![offer()], 3);
+    assert!(pin(&alive, &["RESURRECT_REQUEST"], &[]).is_empty());
+    let dead = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)]), offer()], 3);
+    assert_eq!(
+        pin(&dead, &["PLAYER_DEAD", "RESURRECT_REQUEST"], &[]),
+        vec!["PLAYER_DEAD", "RESURRECT_REQUEST Charzpriest"]
     );
 }
 
@@ -730,15 +943,38 @@ fn combat_enter_and_leave() {
     );
 }
 
+/// A death in combat: the server clears the in-combat flag in the update that zeroes health, and
+/// 12340 runs the mirror handlers in field order (`0x4d5550`), so health's `PLAYER_DEAD`
+/// (`0x73f330`) fires before the flags word's `UNIT_FLAGS` (`0x60c240`).
+#[test]
+fn a_death_in_combat_fires_player_dead_before_unit_flags() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![flags(crate::player::UNIT_FLAG_IN_COMBAT)], 3);
+    let seen = rig.packets(
+        vec![self_values(&[
+            (FIELD_UNIT_HEALTH, 0),
+            (FIELD_UNIT_FLAGS, 0),
+        ])],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["PLAYER_DEAD", "UNIT_FLAGS"], &[]),
+        vec!["PLAYER_DEAD", "UNIT_FLAGS player"]
+    );
+}
+
 // ── The known order bugs: the 12340 result, ignored until the migration (#1245) un-ignores ─────
 
 /// Logged in dead inside an arena, the battlefield status on the wire ahead of our create: 12340
 /// handles the status first, so `IsActiveBattlefieldArena` (`0x549ad0`, the state word at
-/// `0xbea570`) already answers true when `PLAYER_DEAD` shows the `DEATH` popup, whose `OnShow`
-/// then sets the arena text.
+/// `0xbea570`) already answers true when our create's init fires `PLAYER_DEAD` after
+/// `PLAYER_ENTERING_WORLD` (`0x6e818b`). The UI load zeroed the release timer (`0x52a9f6`) and no
+/// death edge armed it, so `GetReleaseTimeRemaining` reads 0 and `UIParent`'s handler shows no
+/// `DEATH` popup; the entry sends the automatic release instead (`0x528010` -> `0x6d2950` with 1).
 #[test]
-#[ignore = "#1245: PLAYER_DEAD fires from its feed before the battlefield feed pushes the arena"]
-fn arena_death_popup_shows_the_arena_text() {
+fn logging_in_dead_in_an_arena_fires_player_dead_with_the_arena_up() {
     use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
     // A 2v2 queue word (team size 2, type 6: all arenas), active on Nagrand Arena, map 559.
     let status = SessionEvent::BattlefieldStatus(BattlefieldStatus {
@@ -758,18 +994,18 @@ fn arena_death_popup_shows_the_arena_text() {
         return;
     };
     let seen = rig.take();
-    let want: String = rig
-        .app
-        .world()
-        .non_send_resource::<benilla_ui::script::UiScript>()
-        .eval("return DEATH_RELEASE_SPECTATOR")
-        .unwrap();
-    let dead = seen
-        .iter()
-        .find(|s| s.event == "PLAYER_DEAD")
-        .expect("PLAYER_DEAD");
-    assert_eq!(dead.verbs["arena"], "1");
-    assert_eq!(rig.now().verbs["popup"], want);
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_ENTERING_WORLD", "PLAYER_DEAD", "PLAYER_ALIVE"],
+            &["arena", "release", "popup"]
+        ),
+        vec![
+            "PLAYER_ENTERING_WORLD | arena=1 release=0 popup=nil",
+            "PLAYER_DEAD | arena=1 release=0 popup=nil",
+        ]
+    );
+    assert_eq!(rig.now().verbs["popup"], "nil");
 }
 
 /// The control update ahead of the flags in one frame: 12340 fires `PLAYER_CONTROL_LOST` inside
@@ -1056,4 +1292,164 @@ fn a_feed_fired_event_reads_the_world_through_the_lent_view() {
         1,
     );
     assert_eq!(feed(&mut rig), vec!["UNIT_HEALTH player live=nil"]);
+}
+
+/// The death verbs read the `World` when called: a change made between frames, before any system
+/// runs, reads at once in `IsFalling` (`0x612430`, the mover's flags word), `HasSoulstone`
+/// (`0x51acd0`), `CannotBeResurrected` (`0x802270`, our aura effects), `CheckSpiritHealerDist`
+/// (`0x6d1fc0`, both positions) and `ResurrectHasTimer`'s arena test (`0x515a00`, `[0xbea570]`).
+#[test]
+fn the_death_verbs_read_the_world_between_frames() {
+    use crate::creature_anim::move_flags::{FALLING, ROOT};
+    use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let me = |rig: &mut Rig| {
+        let world = rig.app.world_mut();
+        world
+            .query_filtered::<Entity, With<crate::net::SelfPlayer>>()
+            .single(world)
+            .expect("our player")
+    };
+    let read = |rig: &mut Rig, verb: &str| rig.live_now().verbs[verb].clone();
+
+    let fall = |rig: &mut Rig, flags: u32| {
+        rig.app
+            .world_mut()
+            .resource_mut::<crate::player::Player>()
+            .set_move_flags(flags);
+    };
+    fall(&mut rig, FALLING);
+    assert_eq!(read(&mut rig, "falling"), "1", "the fall reads at once");
+    fall(&mut rig, FALLING | ROOT);
+    assert_eq!(read(&mut rig, "falling"), "nil", "a rooted fall is no fall");
+    fall(&mut rig, 0);
+
+    assert_eq!(read(&mut rig, "soulstone"), "nil");
+    let entity = me(&mut rig);
+    rig.app
+        .world_mut()
+        .get_mut::<crate::net::ObjectStore>(entity)
+        .unwrap()
+        .0
+        .merge(ObjectFields::from_pairs(&[
+            (FIELD_PLAYER_SELF_RES_SPELL, 21169),
+            (FIELD_UNIT_HEALTH, 0),
+        ]));
+    assert_eq!(
+        read(&mut rig, "soulstone"),
+        "Reincarnation",
+        "dead with one owed"
+    );
+
+    assert_eq!(read(&mut rig, "nores"), "nil");
+    let (spell, effect) = rig
+        .app
+        .world()
+        .resource::<crate::ui_action::Spells>()
+        .catalog
+        .iter()
+        .find_map(|(id, d)| {
+            let i = d.effect_apply_aura.iter().position(|&a| a == 314)?;
+            Some((id, i))
+        })
+        .expect("a spell applying aura 314");
+    rig.app
+        .world_mut()
+        .entity_mut(entity)
+        .insert(crate::unit_auras::UnitAuras::of(
+            ME,
+            &[(0, spell, 1 << effect)],
+        ));
+    assert_eq!(
+        read(&mut rig, "nores"),
+        "1",
+        "the aura's effect reads at once"
+    );
+
+    const HEALER: u64 = 0xF130_0000_0000_6767;
+    rig.packets(
+        vec![SessionEvent::ObjectCreate {
+            guid: HEALER,
+            kind: EntityKind::Unit,
+            display_id: None,
+            position: [-8949.0, -132.0, 83.5],
+            orientation: 0.0,
+            scale: 1.0,
+            speeds: None,
+            mover: None,
+            transport_progress: None,
+            transport: None,
+            spline: None,
+            vehicle: None,
+            attack_target: None,
+            spawned: true,
+            // `OBJECT_FIELD_TYPE` object and unit, which the verbs' unit lookup tests.
+            fields: ObjectFields::from_pairs(&[
+                (2, 0x9),
+                (FIELD_UNIT_HEALTH, 500),
+                (FIELD_UNIT_MAXHEALTH, 500),
+                (FIELD_UNIT_LEVEL, 80),
+            ])
+            .into_created(ObjectType::Unit),
+        }],
+        2,
+    );
+    let place = |rig: &mut Rig, yards: f32| {
+        let e = me(rig);
+        let world = rig.app.world_mut();
+        let at = world.get::<Transform>(e).unwrap().translation;
+        let healer = world.resource::<crate::net::GuidIndex>().0[&HEALER];
+        world.get_mut::<Transform>(healer).unwrap().translation = at + Vec3::X * yards;
+        world
+            .resource_mut::<crate::death::DeathGlobals>()
+            .spirit_healer = Some(HEALER);
+    };
+    place(&mut rig, 3.0);
+    assert_eq!(
+        read(&mut rig, "healer"),
+        "1",
+        "the healer stands within its reach"
+    );
+    place(&mut rig, 50.0);
+    assert_eq!(
+        read(&mut rig, "healer"),
+        "nil",
+        "and its move out reads at once"
+    );
+
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::death::DeathGlobals>()
+        .resurrect = Some(crate::death::ResurrectOffer {
+        caster: 0x20,
+        name: "Brisca".into(),
+        sickness: false,
+        has_timer: true,
+        awaiting_name: false,
+    });
+    assert_eq!(read(&mut rig, "restimer"), "1");
+    // A 2v2 queue word, active on Nagrand Arena, map 559.
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_battlefield::BattlefieldQueue>()
+        .apply(BattlefieldStatus {
+            slot: 0,
+            queue: (6 << 16) | 2,
+            status: 3,
+            active: Some(BattlefieldActive {
+                map_id: 559,
+                joined_queue: 0,
+                shutdown_ms: 0,
+                run_ms: 30_000,
+                arena_faction: 0,
+            }),
+            ..Default::default()
+        });
+    assert_eq!(
+        read(&mut rig, "restimer"),
+        "nil",
+        "inside an arena the offer has no timer"
+    );
 }

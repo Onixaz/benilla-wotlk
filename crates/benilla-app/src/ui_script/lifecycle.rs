@@ -966,6 +966,20 @@ pub(crate) fn finish_ui_load_with(
     between(world, script);
     // `0x52a9e6`: the one-shot the world entry fires and clears.
     script.arm_player_login();
+    // Each UI starts its countdowns zeroed (`0x52a9f6`-`0x52aa20`): release, reclaim, instance
+    // boot, instance lock and summon.
+    if let Some(mut globals) = world.get_resource_mut::<crate::death::DeathGlobals>() {
+        globals.reset_at_ui_load();
+    }
+    if let Some(mut boot) = world.get_resource_mut::<crate::ui_dialog_verbs::InstanceBoot>() {
+        boot.reset_at_ui_load();
+    }
+    if let Some(mut instance) = world.get_resource_mut::<crate::ui_instance::InstanceState>() {
+        instance.reset_at_ui_load();
+    }
+    if let Some(mut summon) = world.get_resource_mut::<crate::ui_summon::SummonState>() {
+        summon.reset_at_ui_load();
+    }
 }
 
 /// Run the patch chain's `Interface\FrameXML\GlobalStrings.lua`, the first file in the reference's

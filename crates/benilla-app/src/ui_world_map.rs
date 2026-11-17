@@ -29,7 +29,7 @@ use benilla_ui::script::{
 
 use crate::net::{ObjectStore, SelfPlayer};
 use crate::player::Player;
-use crate::ui_script::UiInput;
+use crate::ui_script::UiDrain;
 use benilla_assets::MapCatalogRes;
 use benilla_assets::{LockRecover, WorldAssets};
 use benilla_world::world_map::CurrentMap;
@@ -526,10 +526,10 @@ impl Plugin for WorldMapUiPlugin {
             (
                 // Ahead of the world-state event, as the handler refreshes the map first (`0x5269c5`).
                 feed_world_map
-                    .after(UiInput)
+                    .in_set(UiDrain)
                     .before(crate::world_state_ui::feed_world_state_ui),
                 // After the script tick, so the jump hit-tests this tick's frame rects.
-                dev_map_jump.after(UiInput),
+                dev_map_jump.in_set(UiDrain),
             ),
         );
     }
