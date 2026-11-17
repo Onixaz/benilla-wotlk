@@ -791,14 +791,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     "Usage: {who}:SetPossession(slot)"
                 )));
             };
-            let held = {
-                let model = crate::script::model_mut_of(lua);
-                model
-                    .pet_bar
-                    .possess
-                    .as_ref()
-                    .map(|p| (p.spell_id, p.name.clone()))
-            };
+            let held = super::pet::held_possess().map(|p| (p.spell_id, p.name));
             match held {
                 Some((spell_id, name)) if slot.round() == 1.0 => {
                     let opts = SpellRenderOpts {

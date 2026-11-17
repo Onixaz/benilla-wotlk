@@ -58,6 +58,11 @@ local VERBS = {
     { "critters", function() return GetNumCompanions("CRITTER") end },
     { "mount1", function() return (select(2, GetCompanionInfo("MOUNT", 1))) end },
     { "abandon", function() return PetCanBeAbandoned() end },
+    { "happy", function() return (GetPetHappiness()) end },
+    { "xp", function() local c, m = GetPetExperience(); return c .. "/" .. m end },
+    { "critter1on", function() return (select(5, GetCompanionInfo("CRITTER", 1))) end },
+    { "possess", function() return IsPossessBarVisible() end },
+    { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
     { "button2", button2 },
     { "soulstone", function() return HasSoulstone() end },
@@ -2554,32 +2559,51 @@ fn creature_answer(entry: u32, name: &str) -> SessionEvent {
 }
 
 fn own_aura(slot: u8, spell_id: u32) -> SessionEvent {
+    own_auras(false, &[(slot, spell_id)])
+}
+
+/// An aura packet for us, `SMSG_AURA_UPDATE_ALL` with `all`.
+fn own_auras(all: bool, slots: &[(u8, u32)]) -> SessionEvent {
     SessionEvent::AuraUpdate(benilla_protocol::messages::AuraUpdate {
         unit: ME,
-        all: false,
-        slots: vec![(
-            slot,
-            (spell_id != 0).then_some(benilla_protocol::messages::AuraRecord {
-                spell_id,
-                flags: 0x1,
-                level: 80,
-                stacks: 1,
-                caster: None,
-                duration_ms: None,
-            }),
-        )],
+        all,
+        slots: slots
+            .iter()
+            .map(|&(slot, spell_id)| {
+                (
+                    slot,
+                    (spell_id != 0).then_some(benilla_protocol::messages::AuraRecord {
+                        spell_id,
+                        flags: 0x1,
+                        level: 80,
+                        stacks: 1,
+                        caster: None,
+                        duration_ms: None,
+                    }),
+                )
+            })
+            .collect(),
     })
 }
 
+/// `SMSG_INITIAL_SPELLS` with `spell_ids`.
+fn book(spell_ids: &[u32]) -> SessionEvent {
+    SessionEvent::SpellBook {
+        spell_ids: spell_ids.to_vec(),
+        cooldowns: Vec::new(),
+    }
+}
+
 /// The companion lists fill as the spell handlers add the known spells (`0x5426a5`) and every
-/// companion event fires from the handler that causes it: the login's update waits on the mount's
-/// record and fires from its answer (`0x53ebc0`); a live learn's line and `COMPANION_LEARNED` wait
-/// on the critter's; the mount aura's arrival and removal fire `"MOUNT"` (`0x724a6b`, `0x71e9b2`);
-/// an unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+/// companion event fires from the handler that causes it: our create's init replays the book
+/// and its update waits on the mount's record, firing from its answer (`0x6e7f50`, `0x53ebc0`); a
+/// live learn's line and `COMPANION_LEARNED` wait on the critter's; the mount aura's arrival and
+/// removal fire `"MOUNT"` (`0x724a6b`, `0x71e9b2`), and an `ALL` packet re-applies the mount we
+/// hold (`0x72f904`); an unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
 #[test]
 fn companion_events_fire_from_the_spell_and_creature_handlers() {
     // `OBJECT_FIELD_TYPE` with the unit bit: the aura handler skips a non-unit (`0x4d4db0`).
-    let Some(mut rig) = Rig::login(&[(2, 0x19)]) else {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
         return;
     };
     let events = &[
@@ -2591,14 +2615,11 @@ fn companion_events_fire_from_the_spell_and_creature_handlers() {
     let verbs = &["mounts", "critters", "mount1"];
     let seen = rig.packets(
         vec![
-            SessionEvent::SpellBook {
-                spell_ids: vec![HORSE],
-                cooldowns: Vec::new(),
-            },
             creature_answer(284, "Brown Horse"),
             SessionEvent::SpellLearned { spell_id: CAT },
             creature_answer(7385, "Bombay Cat"),
             own_aura(3, HORSE),
+            own_auras(true, &[(3, HORSE)]),
             own_aura(3, 0),
             SessionEvent::SpellRemoved { spell_id: CAT },
         ],
@@ -2612,9 +2633,46 @@ fn companion_events_fire_from_the_spell_and_creature_handlers() {
             "COMPANION_LEARNED | mounts=1 critters=1 mount1=Brown Horse",
             "COMPANION_UPDATE MOUNT | mounts=1 critters=1 mount1=Brown Horse",
             "COMPANION_UPDATE MOUNT | mounts=1 critters=1 mount1=Brown Horse",
+            "COMPANION_UPDATE MOUNT | mounts=1 critters=1 mount1=Brown Horse",
             "COMPANION_UPDATE | mounts=1 critters=0 mount1=Brown Horse",
             "COMPANION_UNLEARNED | mounts=1 critters=0 mount1=Brown Horse",
         ]
+    );
+}
+
+/// Our object's re-create, as a far teleport makes it, runs the init again: the lists clear and
+/// refill from the buffer the login set, and with the record cached the update fires at once
+/// (`0x6e8378` -> `0x6e7fe3`). A spell learned live since never entered the buffer (`0x6e7d60`).
+#[test]
+fn our_recreate_replays_the_login_book_into_the_companion_lists() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
+        return;
+    };
+    let events = &["COMPANION_UPDATE", "COMPANION_LEARNED"];
+    let verbs = &["mounts", "critters", "mount1"];
+    let seen = rig.packets(
+        vec![
+            creature_answer(284, "Brown Horse"),
+            creature_answer(7385, "Bombay Cat"),
+            SessionEvent::SpellLearned { spell_id: CAT },
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "COMPANION_UPDATE | mounts=1 critters=0 mount1=Brown Horse",
+            "COMPANION_UPDATE | mounts=1 critters=1 mount1=Brown Horse",
+            "COMPANION_LEARNED | mounts=1 critters=1 mount1=Brown Horse",
+        ]
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectDestroyed(ME), self_create(&[(2, 0x19)])],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec!["COMPANION_UPDATE | mounts=1 critters=0 mount1=Brown Horse"]
     );
 }
 
@@ -2626,20 +2684,16 @@ fn companion_events_fire_from_the_spell_and_creature_handlers() {
 fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
     let events = &["COMPANION_UPDATE", "PET_BAR_UPDATE"];
     let verbs = &["mounts", "petui"];
-    let book = || SessionEvent::SpellBook {
-        spell_ids: vec![HORSE],
-        cooldowns: Vec::new(),
-    };
     let bar = || {
         SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
             pet_guid: PET,
             ..Default::default()
         }))
     };
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[]) else {
         return;
     };
-    let answer_last = rig.packets(vec![book(), bar(), creature_answer(284, "Brown Horse")], 3);
+    let answer_last = rig.packets(vec![bar(), creature_answer(284, "Brown Horse")], 3);
     assert_eq!(
         pin(&answer_last, events, verbs),
         vec![
@@ -2648,15 +2702,196 @@ fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
         ]
     );
     drop(rig);
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[]) else {
         return;
     };
-    let answer_first = rig.packets(vec![book(), creature_answer(284, "Brown Horse"), bar()], 3);
+    let answer_first = rig.packets(vec![creature_answer(284, "Brown Horse"), bar()], 3);
     assert_eq!(
         pin(&answer_first, events, verbs),
         vec![
             "COMPANION_UPDATE | mounts=1 petui=nil",
             "PET_BAR_UPDATE | mounts=1 petui=nil",
+        ]
+    );
+}
+
+/// A Hunter's pet: its unit type, pet number, creator and summoner us, happiness, experience and
+/// the abandon flag.
+fn hunter_pet(happiness: u32, xp: u32) -> SessionEvent {
+    use benilla_protocol::field::{
+        FIELD_UNIT_BYTES_2, FIELD_UNIT_CREATEDBY, FIELD_UNIT_PETEXPERIENCE,
+        FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_PETNUMBER, FIELD_UNIT_POWER1, FIELD_UNIT_SUMMONEDBY,
+    };
+    SessionEvent::ObjectCreate {
+        guid: PET,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (2, 0x9),
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+            (FIELD_UNIT_LEVEL, 80),
+            (FIELD_UNIT_PETNUMBER, 42),
+            (FIELD_UNIT_CREATEDBY, ME as u32),
+            (FIELD_UNIT_CREATEDBY + 1, (ME >> 32) as u32),
+            (FIELD_UNIT_SUMMONEDBY, ME as u32),
+            (FIELD_UNIT_SUMMONEDBY + 1, (ME >> 32) as u32),
+            (FIELD_UNIT_POWER1 + 4, happiness),
+            (FIELD_UNIT_PETEXPERIENCE, xp),
+            (FIELD_UNIT_PETNEXTLEVELEXP, 8000),
+            // The pet flags' abandon bit (`UNIT_FIELD_BYTES_2` byte 2).
+            (
+                FIELD_UNIT_BYTES_2,
+                u32::from(crate::ui_pet::PET_FLAG_ABANDON) << 16,
+            ),
+        ])
+        .into_created(ObjectType::Unit),
+    }
+}
+
+/// The pet frame's unit signals fire from the field handler of the unit the `"pet"` token names,
+/// one per changed field, each after the delta applies (`0x614190`, event slots 23 and 71-72):
+/// `UNIT_HAPPINESS` on every happiness change, the bucket kept or not, and `UNIT_PET_EXPERIENCE`
+/// on the experience fields; the stat and menu verbs read the pet list's head at each.
+#[test]
+fn pet_stat_events_fire_from_the_pets_field_handler() {
+    use benilla_protocol::field::{
+        FIELD_UNIT_BYTES_0, FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_POWER1,
+    };
+    // A Hunter (class 3), held as a player so the creator test finds it (`0x71b656`).
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 3 << 8)]) else {
+        return;
+    };
+    let events = &["UNIT_HAPPINESS", "UNIT_PET_EXPERIENCE"];
+    let verbs = &["petui", "happy", "xp", "abandon"];
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            })),
+        ],
+        3,
+    );
+    let pet_values = |pairs: &[(u16, u32)]| SessionEvent::ObjectValues {
+        guid: PET,
+        fields: ObjectFields::from_pairs(pairs),
+    };
+    let seen = rig.packets(
+        vec![
+            pet_values(&[(FIELD_UNIT_POWER1 + 4, 999_999)]),
+            pet_values(&[(FIELD_UNIT_POWER1 + 4, 100_000)]),
+            pet_values(&[(FIELD_UNIT_PETEXPERIENCE, 5000)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "UNIT_HAPPINESS pet | petui=1 happy=3 xp=4200/8000 abandon=1",
+            "UNIT_HAPPINESS pet | petui=1 happy=1 xp=4200/8000 abandon=1",
+            "UNIT_PET_EXPERIENCE pet | petui=1 happy=1 xp=5000/8000 abandon=1",
+        ]
+    );
+}
+
+/// `COMPANION_UPDATE "CRITTER"` fires from our `UNIT_FIELD_CRITTER` watch after the field applies
+/// (`0x6cf722`), so the critter's active flag reads the new critter at it.
+#[test]
+fn the_critter_update_fires_from_our_critter_field() {
+    use benilla_protocol::field::FIELD_UNIT_CRITTER;
+    let Some(mut rig) = Rig::login_after(vec![book(&[CAT])], &[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![creature_answer(7385, "Bombay Cat")], 3);
+    // A Bombay Cat's guid: the creature entry in bits 24..51 (`0x802dd8`).
+    let critter = 0xF130_0000_0000_0001 | (7385u64 << 24);
+    let events = &["COMPANION_UPDATE"];
+    let verbs = &["critters", "critter1on"];
+    let seen = rig.packets(
+        vec![
+            self_values(&[
+                (FIELD_UNIT_CRITTER, critter as u32),
+                (FIELD_UNIT_CRITTER + 1, (critter >> 32) as u32),
+            ]),
+            self_values(&[(FIELD_UNIT_CRITTER, 0), (FIELD_UNIT_CRITTER + 1, 0)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "COMPANION_UPDATE CRITTER | critters=1 critter1on=1",
+            "COMPANION_UPDATE CRITTER | critters=1 critter1on=nil",
+        ]
+    );
+}
+
+/// `UPDATE_BONUS_ACTIONBAR` fires from our field handler once the possess spell changes: our
+/// charm's move looks it up in our auras (`0x6d1ab1`), a far sight on a held subject looks again
+/// and finds the same (`0x6e5034`), and one with no subject clears it (`0x6e5042`); the possess
+/// verbs read the held spell at each.
+#[test]
+fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
+    use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_UNIT_CHARM};
+    const MIND_CONTROL: u32 = 605;
+    const VICTIM: u64 = 0xF130_0000_0000_0077;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let victim = SessionEvent::ObjectCreate {
+        guid: VICTIM,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: false,
+        fields: ObjectFields::from_pairs(&[(2, 0x9), (FIELD_UNIT_HEALTH, 50)])
+            .into_created(ObjectType::Unit),
+    };
+    let guid =
+        |index: u16, g: u64| self_values(&[(index, g as u32), (index + 1, (g >> 32) as u32)]);
+    let events = &["UPDATE_BONUS_ACTIONBAR"];
+    let verbs = &["possess", "possname"];
+    let seen = rig.packets(
+        vec![
+            victim,
+            own_aura(0, MIND_CONTROL),
+            guid(FIELD_UNIT_CHARM, VICTIM),
+            guid(FIELD_PLAYER_FARSIGHT, VICTIM),
+            guid(FIELD_PLAYER_FARSIGHT, 0),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
+            "UPDATE_BONUS_ACTIONBAR | possess=false possname=nil",
         ]
     );
 }

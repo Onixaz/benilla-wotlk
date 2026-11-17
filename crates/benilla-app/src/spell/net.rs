@@ -73,6 +73,8 @@ pub(crate) struct Lifecycle<'w> {
     summons: Res<'w, super::SummonSlots>,
     /// The companion lists the known-spell adds file into (`0x5426a5`).
     companions: ResMut<'w, crate::ui_companion::CompanionLists>,
+    /// The known-spell buffer our object's init replays (`0xc9eb3c`).
+    known_buffer: ResMut<'w, crate::ui_companion::KnownSpellBuffer>,
     names: Res<'w, crate::names::NameCache>,
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
@@ -123,6 +125,8 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             .and_then(|&e| sc.stores.get(e).ok())
             .and_then(|s| s.0.unit_ranged_attack_time())
             .unwrap_or(0);
+        // The buffer our object's init replays into the companion lists (`0x6df0c0`).
+        l.known_buffer.0.clone_from(&spell_ids);
         spell_book(
             spell_ids,
             cooldowns,
@@ -136,14 +140,6 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
                 ranged_ms,
             },
         );
-        // The init clears, adds and updates the companions (`0x6e7f9d`, `0x6e7fe3`).
-        let me = l
-            .self_guid
-            .0
-            .and_then(|g| l.index.0.get(&g))
-            .and_then(|&e| sc.stores.get(e).ok())
-            .map(|s| race_class_of(&s.0));
-        companion_adds(&mut l, me, None);
         // The book load files the totems without a refill (`0x6e7f73`).
         l.multicast.lists = Default::default();
         if let Some(spells) = l.spells.as_deref() {
@@ -220,16 +216,27 @@ fn on_spell_learned(
                 l.multicast.refill_due = true;
             }
         }
-        // The add's companion arm, its line and `COMPANION_LEARNED` on a live learn (`0x5426a5`).
-        let me = self_q.iter().next().map(|s| race_class_of(&s.0));
-        companion_adds(&mut l, me, Some((spell_id, learner.is_some())));
+        // The add's companion arm, its line and `COMPANION_LEARNED` (`0x5426a5`); before our
+        // object exists the spell waits in the buffer its init replays (`0x6e7de0`).
+        match self_q.iter().next() {
+            Some(me) => companion_add(&mut l, race_class_of(&me.0), spell_id),
+            None => l.known_buffer.0.push(spell_id),
+        }
     }
 }
 
-fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
+fn on_spell_removed(
+    In(ev): In<SessionEvent>,
+    mut l: Lifecycle,
+    mut errors: ResMut<UiErrorKeys>,
+    self_q: Query<(), With<SelfPlayer>>,
+) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // The known-spell removal drops a companion from its list (`0x53fad0`).
-        if let Some(spells) = l.spells.as_deref() {
+        // The known-spell removal drops a companion from its list (`0x53fad0`); before our object
+        // exists it zeroes the buffer's entry (`0x6e7888`).
+        if self_q.is_empty() {
+            l.known_buffer.0.retain(|&s| s != spell_id);
+        } else if let Some(spells) = l.spells.as_deref() {
             let mut cx = crate::ui_companion::CompanionCx {
                 catalog: &spells.catalog,
                 summons: &l.summons.0,
@@ -249,16 +256,16 @@ fn race_class_of(f: &benilla_protocol::ObjectFields) -> (u8, u8) {
     (f.unit_race().unwrap_or(0), f.unit_class().unwrap_or(0))
 }
 
-/// The companion arm of the known-spell add for one learn (`Some((spell, live))`), or for every
-/// known spell at the init (`None`, `0x6e7f9d`); `me` gives the race and class the pool's skill
-/// line lookup reads (`0x6e7b00`).
-fn companion_adds(l: &mut Lifecycle, me: Option<(u8, u8)>, one: Option<(u32, bool)>) {
+/// The companion arm of a live known-spell add (`0x5426a5`); `(race, class)` are ours, which the
+/// pool's skill line lookup reads (`0x6e7b00`).
+fn companion_add(l: &mut Lifecycle, (race, class): (u8, u8), spell_id: u32) {
     let Some(spells) = l.spells.as_deref() else {
         return;
     };
-    let (race, class) = me.unwrap_or((0, 0));
-    let lines = l.skill_lines.as_deref();
-    let line_of = |id: u32| lines.and_then(|s| s.catalog.spell_to_line(id, race, class));
+    let line = l
+        .skill_lines
+        .as_deref()
+        .and_then(|s| s.catalog.spell_to_line(spell_id, race, class));
     let mut cx = crate::ui_companion::CompanionCx {
         catalog: &spells.catalog,
         summons: &l.summons.0,
@@ -266,24 +273,7 @@ fn companion_adds(l: &mut Lifecycle, me: Option<(u8, u8)>, one: Option<(u32, boo
         commands: &l.net,
         ui: &mut l.ui,
     };
-    match one {
-        Some((spell_id, notify)) => crate::ui_companion::add_known(
-            &mut l.companions,
-            spell_id,
-            notify,
-            line_of(spell_id),
-            &mut cx,
-        ),
-        None => {
-            let known: Vec<_> = l
-                .actions
-                .spells
-                .iter()
-                .map(|&id| (id, line_of(id)))
-                .collect();
-            crate::ui_companion::add_initial(&mut l.companions, known, &mut cx);
-        }
-    }
+    crate::ui_companion::add_known(&mut l.companions, spell_id, true, line, &mut cx);
 }
 
 /// The unlearn's totem sweep (`0x53fe57`); an emptied list or a call spell refills (`0x53ff4f`).
@@ -297,12 +287,22 @@ fn on_spell_superceded(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
+    self_q: Query<(), With<SelfPlayer>>,
 ) {
     if let SessionEvent::SpellSuperceded {
         old_spell_id,
         new_spell_id,
     } = ev
     {
+        // Before our object exists the pair edits the buffer: the old entry renamed, else the new
+        // one appended (`0x6e7ef4`).
+        if self_q.is_empty() {
+            let buffer = &mut l.known_buffer.0;
+            match buffer.iter_mut().find(|s| **s == old_spell_id) {
+                Some(s) => *s = new_spell_id,
+                None => buffer.push(new_spell_id),
+            }
+        }
         superceded_spell(
             old_spell_id,
             new_spell_id,

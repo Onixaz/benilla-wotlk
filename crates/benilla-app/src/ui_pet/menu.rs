@@ -18,7 +18,7 @@ use super::{PetBar, PetUnit};
 /// The pet-flags byte's can-be-renamed bit (`0x5d38c0`): set on a tamed pet not yet renamed.
 const PET_FLAG_RENAME: u8 = 0x01;
 /// The pet-flags byte's can-be-abandoned bit (`0x5d3780`): set on a hunter pet, clear on a summon.
-const PET_FLAG_ABANDON: u8 = 0x02;
+pub(crate) const PET_FLAG_ABANDON: u8 = 0x02;
 /// `SummonProperties.dbc` flag that keeps a summon from being dismissed (`0x5d3881`, `0x5d484c`).
 const SUMMON_FLAG_NO_DISMISS: u32 = 0x20;
 /// `PET_DISMISS_START`'s argument, the dismiss cast in ms (`0x5d48c3`).

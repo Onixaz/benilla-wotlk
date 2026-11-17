@@ -79,7 +79,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_party::feed::feed_party",
     "benilla_app::ui_pet::bar::feed_pet_bar",
     "benilla_app::ui_pet::bar::fire_pet_cooldown_events",
-    "benilla_app::ui_pet::possess::feed_possess_spell",
     "benilla_app::ui_pet::temp_bar::update_pet_temp_bar",
     "benilla_app::ui_pet::unit::feed_pet_unit",
     "benilla_app::ui_pet_book::feed_pet_book",

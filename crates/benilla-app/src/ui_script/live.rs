@@ -35,6 +35,7 @@ pub(crate) struct LiveView<'w, 's> {
     inspect: crate::ui_inspect::InspectLive<'w>,
     companions: crate::ui_companion::CompanionLive<'w, 's>,
     pets: crate::ui_pet_stats::PetView<'w>,
+    possess: crate::ui_pet::possess::PossessLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -329,6 +330,10 @@ impl LiveState for LiveView<'_, '_> {
 
     fn creature_family(&self, guid: u64) -> Option<String> {
         self.pets.creature_family(self.unit(guid)?)
+    }
+
+    fn possess(&self) -> Option<benilla_ui::script::PossessView> {
+        self.possess.view()
     }
 }
 

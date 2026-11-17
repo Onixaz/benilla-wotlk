@@ -311,15 +311,17 @@ fn on_aura_update(
     };
     // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
     if let (Some(before), Some(after), Some(spells), Some(mut ui)) = (before, after, spells, ui) {
-        for spell_id in own_aura_moves(&before, &after) {
+        for spell_id in own_aura_moves(&before, &after, update.all) {
             crate::ui_companion::mount_updates(spell_id, &spells.catalog, &mut ui);
         }
     }
 }
 
-/// The spells whose auras one packet removed from a slot, then those it put in one: the effect
-/// removal for each slot whose aura left, then the add for each slot whose aura arrived.
-fn own_aura_moves(before: &UnitAuras, after: &UnitAuras) -> Vec<u32> {
+/// The spells whose effects one packet removes, then those it applies: the removal for each slot
+/// whose live aura left or changed spell (`0x72f803`, `0x72f825`), then the add for each slot whose aura
+/// arrived; an `ALL` packet applies every live aura it carries, held ones too (`0x72f904`), where
+/// the delta skips an unchanged one (`0x72f9dc`).
+fn own_aura_moves(before: &UnitAuras, after: &UnitAuras, all: bool) -> Vec<u32> {
     let mut slots: Vec<u8> = before
         .by_slot
         .keys()
@@ -333,7 +335,14 @@ fn own_aura_moves(before: &UnitAuras, after: &UnitAuras) -> Vec<u32> {
         (old.map(|a| a.spell_id) != new.map(|a| a.spell_id)).then_some((old, new))
     };
     let removed = slots.iter().filter_map(|s| moved(s)?.0.map(|a| a.spell_id));
-    let added = slots.iter().filter_map(|s| moved(s)?.1.map(|a| a.spell_id));
+    let added: Vec<u32> = if all {
+        after.by_slot.values().map(|a| a.spell_id).collect()
+    } else {
+        slots
+            .iter()
+            .filter_map(|s| moved(s)?.1.map(|a| a.spell_id))
+            .collect()
+    };
     removed.chain(added).collect()
 }
 
@@ -363,6 +372,40 @@ mod tests {
             all,
             slots,
         }
+    }
+
+    /// The effect walk: a delta removes then adds only the slots that moved; an `ALL` packet adds
+    /// every live aura it carries, one we already hold too (`0x72f904`), after the removals.
+    #[test]
+    fn an_all_packet_reapplies_every_aura_it_carries() {
+        let mut held = UnitAuras::default();
+        held.apply(
+            &update(
+                false,
+                vec![
+                    (0, Some(rec(458, 0x01, None))),
+                    (1, Some(rec(7, 0x01, None))),
+                ],
+            ),
+            0.0,
+        );
+        let after = |all, slots| {
+            let mut a = held.clone();
+            a.apply(&update(all, slots), 0.0);
+            a
+        };
+        let same = after(false, vec![(0, Some(rec(458, 0x01, None)))]);
+        assert_eq!(own_aura_moves(&held, &same, false), Vec::<u32>::new());
+        let all = after(
+            true,
+            vec![
+                (0, Some(rec(458, 0x01, None))),
+                (2, Some(rec(9, 0x01, None))),
+            ],
+        );
+        assert_eq!(own_aura_moves(&held, &all, true), vec![7, 458, 9]);
+        let swapped = after(false, vec![(1, Some(rec(8, 0x01, None)))]);
+        assert_eq!(own_aura_moves(&held, &swapped, false), vec![7, 8]);
     }
 
     /// `0x72f5d0`'s log diff: removals first, then arrivals, a stack change, a new expiry; an

@@ -32,7 +32,15 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PetUnlearnedSpell, on_spell_line)
         .net_handler(K::PetRenameable, on_renameable)
         .net_handler(K::PetGuids, on_guids)
-        .net_handler(K::Disconnected, on_session_end);
+        .net_handler(K::Disconnected, on_session_end)
+        .net_handler(K::LoggedOut, on_left_world);
+}
+
+/// Leaving the world drops the possess spell (`0x5d62a0`'s holder, `[0xc234e0]`).
+fn on_left_world(In(ev): In<SessionEvent>, mut possess: ResMut<super::possess::PossessSpell>) {
+    if let SessionEvent::LoggedOut = ev {
+        possess.0 = 0;
+    }
 }
 
 /// A lost socket sends no zero-guid `SMSG_PET_SPELLS`, so the session end resets the bar itself.
@@ -40,9 +48,11 @@ fn on_session_end(
     In(_): In<SessionEvent>,
     mut bar: ResMut<PetBar>,
     mut list: ResMut<super::PetList>,
+    mut possess: ResMut<super::possess::PossessSpell>,
 ) {
     bar.clear();
     list.0.clear();
+    possess.0 = 0;
 }
 
 fn on_spells(

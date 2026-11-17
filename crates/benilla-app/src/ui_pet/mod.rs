@@ -19,7 +19,7 @@ mod bar;
 mod drain;
 mod menu;
 mod net;
-mod possess;
+pub(crate) mod possess;
 mod temp_bar;
 mod unit;
 mod usable;
@@ -30,6 +30,8 @@ use drain::drain_pet_actions;
 pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{PetCast, PetPress};
 use menu::drain_pet_menu;
+#[cfg(test)]
+pub(crate) use menu::PET_FLAG_ABANDON;
 pub(crate) use menu::{menu_predicates, summon_bars_dismiss};
 pub(crate) use temp_bar::temp_slot_texture;
 pub(crate) use unit::feed_pet_unit;
@@ -110,6 +112,7 @@ pub(crate) fn request_pet_info_on_world_enter(
     list: Option<ResMut<PetList>>,
     player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
+    mut ecs: Commands,
 ) {
     if cascades.read().next().is_none() {
         return;
@@ -123,6 +126,7 @@ pub(crate) fn request_pet_info_on_world_enter(
         list.0.clear();
     }
     let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
+    possess::queue_world_entry_lookup(&mut ecs);
 }
 
 impl PetBar {
@@ -150,6 +154,7 @@ impl Plugin for UiPetPlugin {
         net::register(app);
         app.init_resource::<PetBar>()
             .init_resource::<PetList>()
+            .init_resource::<possess::PossessSpell>()
             .init_resource::<PetRenameable>()
             .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
@@ -182,7 +187,6 @@ impl Plugin for UiPetPlugin {
                         .before(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(UnitFeed)
                         .before(crate::ui_script::UiPress),
-                    possess::feed_possess_spell.in_set(UnitFeed),
                     // Before the slot feed, which shows the slots it writes.
                     temp_bar::update_pet_temp_bar
                         .in_set(UnitFeed)

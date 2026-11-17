@@ -121,8 +121,11 @@ pub(crate) struct PetBarState {
     /// The charm or possess expiry on the `GetTime` clock, in seconds: the last `SMSG_PET_SPELLS`
     /// duration past its arrival, `None` for a packet whose duration is 0.
     pub(crate) expiry: Option<f64>,
-    /// The possess spell `[0xc234e0]`, resolved; `None` while no spell is held.
-    pub(crate) possess: Option<PossessView>,
+}
+
+/// The possess spell `[0xc234e0]`'s record, read through the live view when called.
+pub(crate) fn held_possess() -> Option<PossessView> {
+    super::live::read_live(|l| l.possess()).flatten()
 }
 
 /// The held possess spell as `IsPossessBarVisible` and `GetPossessInfo` read its record.
@@ -178,11 +181,6 @@ impl super::UiScript {
     /// count plus the duration for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
     pub fn set_pet_expiry(&mut self, expiry: Option<f64>) {
         set_field!(self, pet_bar.expiry, expiry);
-    }
-
-    /// Push the possess spell, `None` for none; the app fires `UPDATE_BONUS_ACTIONBAR` on a change.
-    pub fn set_possess_spell(&mut self, possess: Option<PossessView>) {
-        set_field!(self, pet_bar.possess, possess);
     }
 
     /// Take the `CastPetAction` calls out of the call stream, as 1-based slots; the app decides
@@ -288,15 +286,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // IsPossessBarVisible() (`0x5a8820`): false while no possess spell `[0xc234e0]` is held.
     g.set(
         "IsPossessBarVisible",
-        lua.create_function(|lua, _: mlua::MultiValue| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model
-                .pet_bar
-                .possess
-                .as_ref()
-                .is_some_and(|p| p.bar_visible))
+        lua.create_function(|_, _: mlua::MultiValue| {
+            Ok(held_possess().is_some_and(|p| p.bar_visible))
         })?,
     )?;
     // GetPossessInfo(index) (`0x5d5820`): a zero index raises; the rounded index picks the spell
@@ -308,15 +299,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if index == 0.0 {
                 return Err(mlua::Error::runtime("Usage: GetPossessInfo(index)"));
             }
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
             let str_or_nil = |s: &Option<String>| -> mlua::Result<Value> {
                 s.as_deref()
                     .map_or(Ok(Value::Nil), |s| lua.create_string(s).map(Value::String))
             };
             let nils = (Value::Nil, Value::Nil, Value::Nil);
-            let Some(p) = model.pet_bar.possess.as_ref() else {
+            let Some(p) = held_possess() else {
                 return Ok(nils);
             };
             #[allow(clippy::cast_possible_truncation)] // `0x5d58a7` rounds to an int
@@ -745,7 +733,7 @@ mod tests {
     /// name, the rounded index picks between them, and a third slot is empty.
     #[test]
     fn a_held_possess_spell_fills_the_spell_and_cancel_slots() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         let held = super::PossessView {
             spell_id: 605,
             bar_visible: true,
@@ -754,7 +742,13 @@ mod tests {
             cancel_icon: Some("cancel-icon".into()),
             cancel_enabled: true,
         };
-        s.set_possess_spell(Some(held.clone()));
+        let lend = |p: Option<super::PossessView>| {
+            crate::script::live::lend_test(crate::script::live::TestView {
+                possess: p,
+                ..Default::default()
+            })
+        };
+        let loan = lend(Some(held.clone()));
         assert_eq!(
             s.eval::<mlua::Value>("return IsPossessBarVisible()")
                 .unwrap(),
@@ -776,7 +770,8 @@ mod tests {
 
         // A vehicle's control aura hides the bar; a sign-bit spell disables the cancel button; a
         // spell with no record empties slot 1 and names nothing on slot 2.
-        s.set_possess_spell(Some(super::PossessView {
+        drop(loan);
+        let loan = lend(Some(super::PossessView {
             bar_visible: false,
             cancel_enabled: false,
             name: None,
@@ -792,7 +787,8 @@ mod tests {
             slot(&s, "2"),
             (Some("cancel-icon".into()), None, Some(false))
         );
-        s.set_possess_spell(None);
+        drop(loan);
+        let _none = lend(None);
         assert_eq!(slot(&s, "2"), (None, None, None));
     }
 

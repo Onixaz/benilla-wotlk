@@ -4,6 +4,8 @@
 
 use benilla_ui::script::{AuraState, PossessView, SpellTooltipView, UiScript, UnitGuids};
 
+use super::test_live::PetAnswersExt;
+
 const ME: u64 = 0x10;
 const SPELL: u32 = 9001;
 

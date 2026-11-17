@@ -267,6 +267,11 @@ pub trait LiveState {
     fn creature_family(&self, _guid: u64) -> Option<String> {
         None
     }
+
+    /// The possess spell `[0xc234e0]`'s record when called, `None` while none is held.
+    fn possess(&self) -> Option<super::PossessView> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -412,6 +417,8 @@ pub(crate) struct TestView {
     pub pet_stats: (bool, super::PetStats),
     /// The pet menu's three predicates; `None` answers the no-pet `(nil, nil, 1)`.
     pub pet_menu: Option<(bool, bool, bool)>,
+    /// The held possess spell.
+    pub possess: Option<super::PossessView>,
 }
 
 #[cfg(test)]
@@ -527,6 +534,10 @@ impl LiveState for TestView {
         (self.player != Some(guid) && self.units.contains_key(&guid))
             .then(|| self.pet_stats.1.family.clone())
             .flatten()
+    }
+
+    fn possess(&self) -> Option<super::PossessView> {
+        self.possess.clone()
     }
 }
 

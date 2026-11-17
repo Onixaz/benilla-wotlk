@@ -123,6 +123,12 @@ pub(crate) struct Scene<'w, 's> {
     roster_throttle: ResMut<'w, crate::ui_arena_team::RosterThrottle>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    /// The possess spell our pet and far-sight watches look up (`0x6d1ab1`, `0x6e5034`).
+    possess: (
+        ResMut<'w, crate::ui_pet::possess::PossessSpell>,
+        Option<Res<'w, crate::ui_action::Spells>>,
+        Option<Res<'w, crate::spell::SummonSlots>>,
+    ),
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -164,6 +170,21 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             pet_token_watch(&mut sc, guid, &merged);
             own_flags_watch(&mut sc, guid, merged);
             return;
+        }
+        // Our own create's init replays the known-spell buffer into the companion lists and
+        // updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
+        if sc.self_guid.0 == Some(guid) {
+            let me = (
+                fields.unit_race().unwrap_or(0),
+                fields.unit_class().unwrap_or(0),
+            );
+            sc.ui.world(move |world| {
+                if let Err(e) =
+                    world.run_system_cached_with(crate::ui_companion::active_player_init, me)
+                {
+                    warn!("companions: the active player's init did not run: {e}");
+                }
+            });
         }
         // Our own create gives us control (`0x6e80b6`), firing `PLAYER_CONTROL_GAINED` on the flag's
         // edge (`0x71c9a0` -> `0x520fe0`) before the silent re-seed (`0x6e8160` -> `0x513880`).
@@ -1514,9 +1535,12 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
 
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
-    use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
+    use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
     if sc.self_guid.0 != Some(guid) {
         return;
+    }
+    if merged.pet_moved {
+        possess_lookup(sc, guid);
     }
     if merged.critter_moved {
         crate::ui_companion::critter_update(&mut sc.ui);
@@ -1538,8 +1562,54 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if let Some((old, new)) = merged.pvp_flags {
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
+    let split = player.partition_point(|&(index, ..)| index < FIELD_PLAYER_FARSIGHT);
+    let (player, past_farsight) = player.split_at(split);
     own_death_fields(sc, guid, player);
+    if merged.farsight_moved {
+        farsight_possess(sc, guid);
+    }
+    own_death_fields(sc, guid, past_farsight);
     own_player_watches(sc, guid, &merged.watched);
+}
+
+/// The possess lookup (`0x5d62a0`) over our held fields, auras and transport.
+fn possess_lookup(sc: &mut Scene, guid: u64) {
+    let Some(&e) = sc.index.0.get(&guid) else {
+        return;
+    };
+    let Ok(store) = sc.stores.get(e) else {
+        return;
+    };
+    let riding = sc.riders.get(e).ok().map(|r| r.transport_guid);
+    let (held, spells, summons) = &mut sc.possess;
+    let catalogs = spells
+        .as_deref()
+        .map(|s| &s.catalog)
+        .zip(summons.as_deref().map(|s| &s.0));
+    crate::ui_pet::possess::find_possessed(
+        &store.0,
+        sc.auras.get(e).ok(),
+        riding,
+        catalogs,
+        held,
+        &mut sc.ui,
+    );
+}
+
+/// Our far-sight watch's possess half: a subject held as an object looks the spell up
+/// (`0x6e5034`), any other clears it (`0x6e5042`).
+fn farsight_possess(sc: &mut Scene, guid: u64) {
+    let subject = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .and_then(|s| s.0.player_farsight());
+    if subject.is_some_and(|g| sc.index.0.contains_key(&g)) {
+        possess_lookup(sc, guid);
+    } else {
+        crate::ui_pet::possess::set_possess_spell(&mut sc.possess.0, 0, &mut sc.ui);
+    }
 }
 
 /// Our player watches past the flags in field order: honor, then the arena-team words once per update (`0x6cdda0`).
@@ -1614,7 +1684,12 @@ fn merge_fields(
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
-            use benilla_protocol::field::FIELD_UNIT_CRITTER;
+            use benilla_protocol::field::{
+                FIELD_PLAYER_FARSIGHT, FIELD_UNIT_CHARM, FIELD_UNIT_CRITTER, FIELD_UNIT_SUMMON,
+            };
+            let pair = |f: u16| e.unit_field(f) || e.unit_field(f + 1);
+            merged.pet_moved |= own && (pair(FIELD_UNIT_CHARM) || pair(FIELD_UNIT_SUMMON));
+            merged.farsight_moved |= own && pair(FIELD_PLAYER_FARSIGHT);
             merged.critter_moved |=
                 own && (e.unit_field(FIELD_UNIT_CRITTER) || e.unit_field(FIELD_UNIT_CRITTER + 1));
             if let Some(event) = pet_signal(&e) {
@@ -1653,6 +1728,10 @@ fn merge_fields(
 #[derive(Default)]
 struct Merged {
     flags_moved: bool,
+    /// Our own `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` moved (`0x6d1970`).
+    pet_moved: bool,
+    /// Our own `PLAYER_FARSIGHT` moved (`0x6e4fd0`).
+    farsight_moved: bool,
     /// Our own `UNIT_FIELD_CRITTER` moved.
     critter_moved: bool,
     /// The pet frame's unit signals the delta's fields raise, in field order.

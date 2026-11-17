@@ -39,18 +39,20 @@ pub(crate) struct UiCompanionPlugin;
 
 impl Plugin for UiCompanionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CompanionLists>().add_systems(
-            Update,
-            (
-                drain_companions.in_set(UiDrain),
-                // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
-                // Before the display build that loads its model and the booth that draws it.
-                feed_companion_booth
-                    .in_set(UiDrain)
-                    .in_set(crate::portrait::CreatureBoothFeed)
-                    .before(crate::entities::DisplayBuildSet),
-            ),
-        );
+        app.init_resource::<CompanionLists>()
+            .init_resource::<KnownSpellBuffer>()
+            .add_systems(
+                Update,
+                (
+                    drain_companions.in_set(UiDrain),
+                    // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
+                    // Before the display build that loads its model and the booth that draws it.
+                    feed_companion_booth
+                        .in_set(UiDrain)
+                        .in_set(crate::portrait::CreatureBoothFeed)
+                        .before(crate::entities::DisplayBuildSet),
+                ),
+            );
         net::register(app);
     }
 }
@@ -204,7 +206,65 @@ pub(crate) fn add_known(
     }
 }
 
-/// The login's adds: the lists cleared (`0x6e7f9d`), each known spell added without a
+/// The known-spell buffer the active player's init replays (`0xc9eb3c`): `SMSG_INITIAL_SPELLS`
+/// sets it (`0x6df0c0`), a learn, removal or supersede before our object exists edits it
+/// (`0x6e7de0`, `0x6e7888`, `0x6e7ef4`), and leaving the world empties it (`0x4065c3`).
+#[derive(Resource, Default)]
+pub(crate) struct KnownSpellBuffer(pub(crate) Vec<u32>);
+
+/// What the active player's init reads to replay the buffer into the lists.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CompanionInit<'w> {
+    buffer: Res<'w, KnownSpellBuffer>,
+    lists: ResMut<'w, CompanionLists>,
+    spells: Option<Res<'w, Spells>>,
+    summons: Option<Res<'w, SummonSlots>>,
+    names: Option<Res<'w, NameCache>>,
+    commands: Option<Res<'w, NetCommands>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    ui: ResMut<'w, UiEvents>,
+}
+
+/// The active player's init (`0x6e7f50`), run as our object is created with its race and class:
+/// the lists cleared (`0x6e7f9d`), each buffered spell added without a line, then one update
+/// (`0x6e7fe3`).
+pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: CompanionInit) {
+    let CompanionInit {
+        buffer,
+        mut lists,
+        spells,
+        summons,
+        names,
+        commands,
+        skill_lines,
+        mut ui,
+    } = init;
+    let (Some(spells), Some(summons), Some(names), Some(commands)) = (
+        spells.as_deref(),
+        summons.as_deref(),
+        names.as_deref(),
+        commands.as_deref(),
+    ) else {
+        *lists = CompanionLists::default();
+        return;
+    };
+    let line_of = |id: u32| {
+        skill_lines
+            .as_deref()
+            .and_then(|s| s.catalog.spell_to_line(id, race, class))
+    };
+    let known: Vec<_> = buffer.0.iter().map(|&id| (id, line_of(id))).collect();
+    let mut cx = CompanionCx {
+        catalog: &spells.catalog,
+        summons: &summons.0,
+        names,
+        commands,
+        ui: &mut ui,
+    };
+    add_initial(&mut lists, known, &mut cx);
+}
+
+/// The init's adds: the lists cleared (`0x6e7f9d`), each known spell added without a
 /// line, then one update.
 pub(crate) fn add_initial(
     lists: &mut CompanionLists,
@@ -396,7 +456,19 @@ pub(crate) mod net {
     use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
-        app.net_handler(SessionEventKind::CreatureName, on_creature_answer);
+        app.net_handler(SessionEventKind::CreatureName, on_creature_answer)
+            .net_handler(SessionEventKind::LoggedOut, on_game_end)
+            .net_handler(SessionEventKind::Disconnected, on_game_end);
+    }
+
+    /// Leaving the world empties the known-spell buffer (`0x4065c3` -> `0x6e47d1`).
+    fn on_game_end(In(ev): In<SessionEvent>, mut buffer: ResMut<super::KnownSpellBuffer>) {
+        if matches!(
+            ev,
+            SessionEvent::LoggedOut | SessionEvent::Disconnected { .. }
+        ) {
+            buffer.0.clear();
+        }
     }
 
     /// `SMSG_CREATURE_QUERY_RESPONSE` for a record the lists wait on (`0x53ebc0`).

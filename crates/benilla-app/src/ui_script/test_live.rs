@@ -5,7 +5,8 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
-    CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetStats, UiScript,
+    CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetStats, PossessView,
+    UiScript,
 };
 
 /// The death answers a test sets.
@@ -39,6 +40,7 @@ struct PetAnswers {
     stats: (bool, PetStats),
     menu: Option<(bool, bool, bool)>,
     companions: CompanionState,
+    possess: Option<PossessView>,
 }
 
 thread_local! {
@@ -55,6 +57,7 @@ pub(super) trait PetAnswersExt {
     fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats);
     fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool);
     fn set_companions(&mut self, state: CompanionState);
+    fn set_possess_spell(&mut self, possess: Option<PossessView>);
 }
 
 fn sticky() {
@@ -80,6 +83,11 @@ impl PetAnswersExt for UiScript {
     fn set_companions(&mut self, state: CompanionState) {
         sticky();
         PET.with(|p| p.borrow_mut().companions = state);
+    }
+
+    fn set_possess_spell(&mut self, possess: Option<PossessView>) {
+        sticky();
+        PET.with(|p| p.borrow_mut().possess = possess);
     }
 }
 
@@ -189,6 +197,10 @@ impl LiveState for View {
 
     fn summon_time_left_ms(&self) -> u32 {
         SUMMON.with(|s| s.borrow().time_left_ms)
+    }
+
+    fn possess(&self) -> Option<PossessView> {
+        PET.with(|p| p.borrow().possess.clone())
     }
 }
 
