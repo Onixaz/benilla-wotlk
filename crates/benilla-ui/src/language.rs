@@ -155,7 +155,7 @@ fn takes_first(last: u32, first_form: Option<char>) -> bool {
             if (last as i32 - 0xac08) % 28 == 0 && first_form == Some('\u{c73c}') {
                 return false;
             }
-            (last - 0xac00) % 28 != 0
+            !(last - 0xac00).is_multiple_of(28)
         }
         0x30..=0x39 => DIGIT_CODA & (1 << (last - 0x30)) != 0,
         0x41..=0x5a => LETTER_CODA & (1 << (last - 0x41)) != 0,
