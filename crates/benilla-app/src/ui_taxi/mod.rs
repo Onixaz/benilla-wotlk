@@ -1,5 +1,5 @@
 //! The taxi map's app side: [`TaxiState`] holds the `SMSG_SHOWTAXINODES` map and the one-shot
-//! replies, [`feed_taxi`] pushes the known nodes on the current node's continent with their
+//! replies, [`feed_taxi`] pushes the known nodes on the map the current node draws on with their
 //! routes (built in [`routing`]) and fires the map events, and [`drain_taxi`] sends the activate.
 
 use benilla_protocol::messages::TaxiMask;
@@ -95,6 +95,7 @@ fn feed_taxi(
     stores: Query<&ObjectStore>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     reactions: crate::target::ReactionInputs,
+    expansion: Res<crate::net::AccountExpansion>,
     mut last: Local<crate::ui_script::VmMemo<Option<TaxiUiState>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
     mut sink: crate::ui_action::MessageSink,
@@ -168,8 +169,8 @@ fn feed_taxi(
         return;
     };
 
-    // The continent is the current node's own, as the packet left it (`build_nodes`). The fares
-    // take the flight master's price discount for the player.
+    // The map is the one the current node draws on (`build_nodes`). The fares take the flight
+    // master's price discount for the player.
     let fresh = state.open.as_ref().and_then(|open| {
         let flightmaster = index
             .0
@@ -184,7 +185,7 @@ fn feed_taxi(
                 me,
             )
         });
-        let (map_id, nodes, resolved) = build_nodes(open, &catalogs, discount)?;
+        let (map_id, nodes, resolved) = build_nodes(open, &catalogs, discount, expansion.0)?;
         cache.0 = resolved;
         Some(TaxiUiState {
             art: format!("Interface\\TaxiFrame\\TAXIMAP{map_id}"),
@@ -332,6 +333,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .insert_resource(NetCommands(tx))
+            .insert_resource(crate::net::AccountExpansion(2))
             .insert_resource(catalogs)
             .insert_resource(factions)
             .insert_resource(reps)
