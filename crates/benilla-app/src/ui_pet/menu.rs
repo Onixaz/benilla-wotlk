@@ -94,7 +94,10 @@ pub(super) fn drain_pet_menu(
         debug!("ui_pet: abandoning pet {pet_guid:#x}");
         let _ = commands.0.send(ClientCommand::PetAbandon { pet_guid });
         // `0x5d4900`: with a stable master held, the stable is listed again.
-        if let Some(npc) = stable.as_ref().and_then(|s| s.npc) {
+        if let Some(npc) = stable
+            .as_ref()
+            .and_then(|s| crate::ui_session::NpcSession::npc(&**s))
+        {
             let _ = commands.0.send(ClientCommand::ListStabledPets { npc });
         }
     }

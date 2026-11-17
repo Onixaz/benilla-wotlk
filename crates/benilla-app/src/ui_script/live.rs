@@ -36,6 +36,7 @@ pub(crate) struct LiveView<'w, 's> {
     companions: crate::ui_companion::CompanionLive<'w, 's>,
     pets: crate::ui_pet_stats::PetView<'w>,
     possess: crate::ui_pet::possess::PossessLive<'w>,
+    stable: crate::ui_stable::StableView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -334,6 +335,48 @@ impl LiveState for LiveView<'_, '_> {
 
     fn possess(&self) -> Option<benilla_ui::script::PossessView> {
         self.possess.view()
+    }
+
+    fn stable(&self) -> benilla_ui::script::StableList {
+        self.stable.list()
+    }
+
+    fn stable_family(
+        &self,
+        entry: u32,
+        callback: benilla_ui::script::StableCallback,
+    ) -> Option<benilla_ui::script::StableFamily> {
+        self.stable
+            .family(entry, callback, self.active_player().unwrap_or(0))
+    }
+
+    fn stable_slot_price(&self, slot: u32) -> Option<u32> {
+        self.stable.slot_price(slot)
+    }
+
+    fn stable_send(&self, verb: benilla_ui::script::StableIntent) {
+        self.stable.send(verb);
+    }
+
+    fn close_stables(&self) -> bool {
+        self.stable.close()
+    }
+
+    /// The pet list's head (`0x5d3a24`).
+    fn pet_out(&self) -> bool {
+        self.pets.head().is_some()
+    }
+
+    /// Our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` (`0x5a1ac0`).
+    fn charm_or_summon(&self) -> bool {
+        let Some(me) = self.active_player().and_then(|g| self.unit(g)) else {
+            return true;
+        };
+        me.unit_charm().is_some() || me.unit_summon().is_some()
+    }
+
+    fn open_stable_aura(&self) -> bool {
+        self.stable.open_stable_aura()
     }
 }
 

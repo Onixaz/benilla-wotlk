@@ -481,7 +481,9 @@ pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffec
 pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
 };
-pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
+pub use stable::{
+    StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,
+};
 pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };

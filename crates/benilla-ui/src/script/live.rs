@@ -272,6 +272,50 @@ pub trait LiveState {
     fn possess(&self) -> Option<super::PossessView> {
         None
     }
+
+    /// The stable globals the list handler writes (`0x5a11a0`).
+    fn stable(&self) -> super::StableList {
+        super::StableList::default()
+    }
+
+    /// Creature `entry`'s family parts; a miss asks the record and queues `callback`'s event for
+    /// its answer (`0x5a13c1`).
+    fn stable_family(
+        &self,
+        _entry: u32,
+        _callback: super::StableCallback,
+    ) -> Option<super::StableFamily> {
+        None
+    }
+
+    /// `StableSlotPrices.dbc` row `slot`'s price (`0x5a14d0`).
+    fn stable_slot_price(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// Send `verb` to the held stable master, or to guid 0 with none.
+    fn stable_send(&self, _verb: super::StableIntent) {}
+
+    /// The stable close (`0x5a1971`-`0x5a19aa`): our open-stable auras cancelled and the master
+    /// cleared; whether one was held, so the caller fires `PET_STABLE_CLOSED`.
+    fn close_stables(&self) -> bool {
+        false
+    }
+
+    /// The pet list holds a pet, the stable drop's fork (`0x5a1ca0`).
+    fn pet_out(&self) -> bool {
+        false
+    }
+
+    /// Our charm or summon field is set, `UnstablePet`'s refusal (`0x5a1ac0`).
+    fn charm_or_summon(&self) -> bool {
+        false
+    }
+
+    /// An open-stable aura is on us (`0x5a19c0`).
+    fn open_stable_aura(&self) -> bool {
+        false
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -419,6 +463,30 @@ pub(crate) struct TestView {
     pub pet_menu: Option<(bool, bool, bool)>,
     /// The held possess spell.
     pub possess: Option<super::PossessView>,
+    /// The stable globals.
+    pub stable: std::cell::RefCell<super::StableList>,
+    /// The creature records the stable verbs find, by entry.
+    pub stable_families: std::cell::RefCell<std::collections::HashMap<u32, super::StableFamily>>,
+    /// `StableSlotPrices.dbc`, by row.
+    pub stable_prices: std::cell::RefCell<std::collections::HashMap<u32, u32>>,
+    /// The record asks a stable miss made, in order.
+    pub stable_asks: std::cell::RefCell<Vec<(u32, super::StableCallback)>>,
+    /// The stable verbs sent, in order.
+    pub stable_sent: std::cell::RefCell<Vec<super::StableIntent>>,
+    /// The pet list holds a pet.
+    pub pet_out: bool,
+    /// Our charm or summon is set.
+    pub charm_or_summon: bool,
+    /// An open-stable aura is on us.
+    pub open_stable_aura: bool,
+}
+
+#[cfg(test)]
+impl TestView {
+    /// The stable verbs sent since the last take.
+    pub(crate) fn take_sent(&self) -> Vec<super::StableIntent> {
+        std::mem::take(&mut *self.stable_sent.borrow_mut())
+    }
 }
 
 #[cfg(test)]
@@ -538,6 +606,46 @@ impl LiveState for TestView {
 
     fn possess(&self) -> Option<super::PossessView> {
         self.possess.clone()
+    }
+
+    fn stable(&self) -> super::StableList {
+        self.stable.borrow().clone()
+    }
+
+    fn stable_family(
+        &self,
+        entry: u32,
+        callback: super::StableCallback,
+    ) -> Option<super::StableFamily> {
+        let found = self.stable_families.borrow().get(&entry).cloned();
+        if found.is_none() {
+            self.stable_asks.borrow_mut().push((entry, callback));
+        }
+        found
+    }
+
+    fn stable_slot_price(&self, slot: u32) -> Option<u32> {
+        self.stable_prices.borrow().get(&slot).copied()
+    }
+
+    fn stable_send(&self, verb: super::StableIntent) {
+        self.stable_sent.borrow_mut().push(verb);
+    }
+
+    fn close_stables(&self) -> bool {
+        std::mem::take(&mut self.stable.borrow_mut().master) != 0
+    }
+
+    fn pet_out(&self) -> bool {
+        self.pet_out
+    }
+
+    fn charm_or_summon(&self) -> bool {
+        self.charm_or_summon
+    }
+
+    fn open_stable_aura(&self) -> bool {
+        self.open_stable_aura
     }
 }
 

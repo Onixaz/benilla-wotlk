@@ -103,7 +103,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_socket::feed_refunds",
     "benilla_app::ui_spell_info::feed_spell_info",
     "benilla_app::ui_spellbook::feed_spellbook",
-    "benilla_app::ui_stable::feed_stable",
     "benilla_app::ui_tabard::feed_tabard",
     "benilla_app::ui_talent::feed_inspect_talents",
     "benilla_app::ui_talent::feed_talents",

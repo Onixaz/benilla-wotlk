@@ -311,8 +311,18 @@ fn on_aura_update(
     };
     // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
     if let (Some(before), Some(after), Some(spells), Some(mut ui)) = (before, after, spells, ui) {
-        for spell_id in own_aura_moves(&before, &after, update.all) {
+        for (spell_id, removed) in own_aura_moves(&before, &after, update.all) {
             crate::ui_companion::mount_updates(spell_id, &spells.catalog, &mut ui);
+            // An open-stable effect's removal closes the stable, forced (`0x71ea25`).
+            let opens_stable = || {
+                spells.catalog.get(spell_id).is_some_and(|rec| {
+                    rec.effect_apply_aura
+                        .contains(&crate::ui_stable::SPELL_AURA_OPEN_STABLE)
+                })
+            };
+            if removed && opens_stable() {
+                ui.world(crate::ui_stable::close_forced);
+            }
         }
     }
 }
@@ -320,8 +330,8 @@ fn on_aura_update(
 /// The spells whose effects one packet removes, then those it applies: the removal for each slot
 /// whose live aura left or changed spell (`0x72f803`, `0x72f825`), then the add for each slot whose aura
 /// arrived; an `ALL` packet applies every live aura it carries, held ones too (`0x72f904`), where
-/// the delta skips an unchanged one (`0x72f9dc`).
-fn own_aura_moves(before: &UnitAuras, after: &UnitAuras, all: bool) -> Vec<u32> {
+/// the delta skips an unchanged one (`0x72f9dc`). Each spell comes with whether it was removed.
+fn own_aura_moves(before: &UnitAuras, after: &UnitAuras, all: bool) -> Vec<(u32, bool)> {
     let mut slots: Vec<u8> = before
         .by_slot
         .keys()
@@ -343,7 +353,10 @@ fn own_aura_moves(before: &UnitAuras, after: &UnitAuras, all: bool) -> Vec<u32> 
             .filter_map(|s| moved(s)?.1.map(|a| a.spell_id))
             .collect()
     };
-    removed.chain(added).collect()
+    removed
+        .map(|s| (s, true))
+        .chain(added.into_iter().map(|s| (s, false)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -395,7 +408,7 @@ mod tests {
             a
         };
         let same = after(false, vec![(0, Some(rec(458, 0x01, None)))]);
-        assert_eq!(own_aura_moves(&held, &same, false), Vec::<u32>::new());
+        assert_eq!(own_aura_moves(&held, &same, false), vec![]);
         let all = after(
             true,
             vec![
@@ -403,9 +416,15 @@ mod tests {
                 (2, Some(rec(9, 0x01, None))),
             ],
         );
-        assert_eq!(own_aura_moves(&held, &all, true), vec![7, 458, 9]);
+        assert_eq!(
+            own_aura_moves(&held, &all, true),
+            vec![(7, true), (458, false), (9, false)]
+        );
         let swapped = after(false, vec![(1, Some(rec(8, 0x01, None)))]);
-        assert_eq!(own_aura_moves(&held, &swapped, false), vec![7, 8]);
+        assert_eq!(
+            own_aura_moves(&held, &swapped, false),
+            vec![(7, true), (8, false)]
+        );
     }
 
     /// `0x72f5d0`'s log diff: removals first, then arrivals, a stack change, a new expiry; an

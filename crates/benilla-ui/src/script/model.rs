@@ -838,7 +838,7 @@ pub(crate) struct Model {
     pub(crate) repair_all: Option<bool>,
     pub(crate) repair_mode: bool,
 
-    /// The stable window: snapshot, selection, drag and queued calls, reset together on close.
+    /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
     /// The open bank's slot-purchase row and calls; its contents are bags -1 and 5..=11.

@@ -100,6 +100,9 @@ local VERBS = {
     { "bfpos1", function() return (select(3, GetBattlefieldPosition(1))) end },
     { "bfstats", function() return GetNumBattlefieldStats() end },
     { "ap1", function() return UnitExists("arenapet1") end },
+    { "atstable", function() return IsAtStableMaster() end },
+    { "stabled", function() return GetNumStablePets() end },
+    { "stablesel", function() return GetSelectedStablePet() end },
 }
 local function answers()
     local verbs = {}
@@ -3028,5 +3031,225 @@ fn the_companion_cooldown_reads_the_history_an_earlier_frame_wrote() {
     assert_eq!(
         pin(&seen, &["COMPANION_UPDATE"], &["mount1cd"]),
         vec!["COMPANION_UPDATE MOUNT | mount1cd=30"]
+    );
+}
+
+/// The stable master guid the stable scenarios list.
+const STABLE_MASTER: u64 = 0xF130_0000_0000_0042;
+
+/// A creature record of `pet_family`, as the stable verbs read it.
+fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
+    let SessionEvent::CreatureName {
+        entry,
+        name,
+        subname,
+        cursor_name,
+        creature_type,
+        rank,
+        type_flags,
+        display_id,
+        civilian,
+        racial_leader,
+        modifiers,
+        ..
+    } = creature_answer(entry, "Wolf")
+    else {
+        unreachable!()
+    };
+    SessionEvent::CreatureName {
+        entry,
+        name,
+        subname,
+        cursor_name,
+        creature_type,
+        pet_family,
+        rank,
+        type_flags,
+        display_id,
+        civilian,
+        racial_leader,
+        modifiers,
+    }
+}
+
+/// The stable master beside us, so the range guard keeps the stable open.
+fn stable_master_create() -> SessionEvent {
+    SessionEvent::ObjectCreate {
+        guid: STABLE_MASTER,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (2, 0x9),
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+            (FIELD_UNIT_LEVEL, 80),
+        ])
+        .into_created(ObjectType::Unit),
+    }
+}
+
+/// `MSG_LIST_STABLED_PETS`: Rex out on entry 299, Bruiser stabled on entry 300, two slots bought.
+fn stable_list() -> SessionEvent {
+    use benilla_protocol::messages::StabledPet;
+    SessionEvent::ListStabledPets {
+        npc: STABLE_MASTER,
+        num_stable_slots: 2,
+        pets: vec![
+            StabledPet {
+                pet_number: 1,
+                creature_entry: 299,
+                level: 70,
+                name: "Rex".into(),
+                flags: 1,
+            },
+            StabledPet {
+                pet_number: 2,
+                creature_entry: 300,
+                level: 60,
+                name: "Bruiser".into(),
+                flags: 3,
+            },
+        ],
+    }
+}
+
+/// A frame logging each stable event with the first stabled pet's family as `GetStablePetInfo`
+/// answers it inside that event.
+const STABLE_LOG: &str = r#"
+STABLE_LOG = {}
+local f = CreateFrame("Frame")
+for _, e in ipairs({ "PET_STABLE_SHOW", "PET_STABLE_UPDATE", "PET_STABLE_UPDATE_PAPERDOLL", "PET_STABLE_CLOSED" }) do
+    f:RegisterEvent(e)
+end
+f:SetScript("OnEvent", function(_, e)
+    STABLE_LOG[#STABLE_LOG + 1] = e .. " " .. tostring((select(4, GetStablePetInfo(1))))
+end)
+"#;
+
+/// Run `lua` with the `World` lent, as a script call between frames.
+fn lua(rig: &mut Rig, lua: &str) -> Vec<String> {
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(lua).unwrap();
+        s.eval::<Vec<String>>("local t = STABLE_LOG or {} STABLE_LOG = {} return t")
+            .unwrap()
+    })
+    .expect("a VM")
+}
+
+/// The stable list's handler stores the globals and fires `PET_STABLE_SHOW` (`0x5a131a`); its
+/// verbs read the globals when called. A record missed by `GetStablePetInfo` fires
+/// `PET_STABLE_UPDATE` from its answer (`0x5a0e80`), once per ask, with the record read; a record
+/// cached before the list answers inside `PET_STABLE_SHOW`, with no update. Result 11 fires the
+/// update from its handler (`0x5a1904`).
+#[test]
+fn stable_events_fire_from_the_list_and_the_record_answer_in_wire_order() {
+    let Some(mut rig) = Rig::login_around(
+        Vec::new(),
+        &[OBJECT_TYPE_PLAYER],
+        vec![stable_master_create()],
+    ) else {
+        return;
+    };
+    lua(&mut rig, STABLE_LOG);
+    let events = &["PET_STABLE_SHOW", "PET_STABLE_UPDATE", "PET_STABLE_CLOSED"];
+    let verbs = &["atstable", "stabled", "stablesel"];
+    // The list, then the record's answer, in one frame.
+    let seen = rig.packets(vec![stable_list(), family_answer(300, 1)], 3);
+    let log = lua(&mut rig, "");
+    let shows = pin(&seen, events, verbs);
+    assert_eq!(
+        shows.first().map(String::as_str),
+        Some("PET_STABLE_SHOW | atstable=true stabled=1 stablesel=-1")
+    );
+    assert_eq!(log.first().map(String::as_str), Some("PET_STABLE_SHOW nil"));
+    assert!(
+        shows[1..]
+            .iter()
+            .all(|l| l == "PET_STABLE_UPDATE | atstable=true stabled=1 stablesel=1"),
+        "{shows:#?}"
+    );
+    assert!(shows.len() > 1, "the answer runs the asks: {shows:#?}");
+    assert!(
+        log[1..].iter().all(|l| l == "PET_STABLE_UPDATE Wolf"),
+        "{log:#?}"
+    );
+
+    // The record cached before the next list: the show reads it, and no update follows; the
+    // stock window's re-pick (`PetStable.lua:48-63`) finds the family and selects before we read.
+    let seen = rig.packets(vec![stable_list()], 3);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec!["PET_STABLE_SHOW | atstable=true stabled=1 stablesel=1"]
+    );
+    assert_eq!(lua(&mut rig, ""), vec!["PET_STABLE_SHOW Wolf"]);
+
+    // Result 11.
+    let seen = rig.packets(vec![SessionEvent::StableResult { result: 11 }], 2);
+    assert_eq!(
+        pin(&seen, events, &["atstable"]),
+        vec!["PET_STABLE_UPDATE | atstable=true"]
+    );
+}
+
+/// `ClosePetStables` clears the master and fires `PET_STABLE_CLOSED` inside the call, so the next
+/// verb in the same chunk reads it gone, while the list stays (`0x5a1996`, `0x5a19aa`); a second
+/// close fires nothing. The connection's end closes a held stable (`0x528d5a`).
+#[test]
+fn the_stable_close_fires_inside_the_call_and_the_session_end_closes() {
+    let Some(mut rig) = Rig::login_around(
+        Vec::new(),
+        &[OBJECT_TYPE_PLAYER],
+        vec![stable_master_create()],
+    ) else {
+        return;
+    };
+    lua(&mut rig, STABLE_LOG);
+    rig.packets(vec![family_answer(300, 1), stable_list()], 3);
+    lua(&mut rig, "");
+    let after = lua(
+        &mut rig,
+        "ClosePetStables() STABLE_LOG[#STABLE_LOG + 1] = 'after ' .. tostring(IsAtStableMaster()) .. ' ' .. GetNumStablePets() ClosePetStables()",
+    );
+    assert_eq!(after, vec!["PET_STABLE_CLOSED Wolf", "after false 1"]);
+
+    rig.packets(vec![stable_list()], 3);
+    lua(&mut rig, "");
+    let seen = rig.packets(
+        vec![SessionEvent::Disconnected {
+            reason: "socket".into(),
+            end: benilla_protocol::SessionEnd::Lost,
+        }],
+        1,
+    );
+    assert_eq!(
+        pin(&seen, &["PET_STABLE_CLOSED"], &["atstable"]),
+        vec!["PET_STABLE_CLOSED | atstable=false"]
+    );
+}
+
+/// An open-stable aura's removal closes the stable forced: `PET_STABLE_CLOSED` fires from the
+/// aura handler with no master held too (`0x71ea25`); its arrival fires nothing.
+#[test]
+fn an_open_stable_auras_removal_closes_the_stable() {
+    /// Call Stabled Pet, whose aura opens the stable.
+    const CALL_STABLED_PET: u32 = 62757;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let seen = rig.packets(vec![own_aura(4, CALL_STABLED_PET), own_aura(4, 0)], 2);
+    assert_eq!(
+        pin(&seen, &["PET_STABLE_CLOSED"], &["atstable"]),
+        vec!["PET_STABLE_CLOSED | atstable=false"]
     );
 }

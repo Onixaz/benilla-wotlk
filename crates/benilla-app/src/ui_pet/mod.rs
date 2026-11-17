@@ -209,7 +209,6 @@ impl Plugin for UiPetPlugin {
                     // the stable it reads before the stable's own verbs move it.
                     drain_pet_menu
                         .in_set(UiDrain)
-                        .before(crate::ui_stable::drain_stable)
                         .run_if(crate::ui_script::ingame_ui_up),
                 ),
             );

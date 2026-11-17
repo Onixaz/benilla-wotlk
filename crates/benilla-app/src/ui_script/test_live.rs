@@ -6,7 +6,7 @@ use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
     CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetStats, PossessView,
-    UiScript,
+    StableCallback, StableFamily, StableList, UiScript,
 };
 
 /// The death answers a test sets.
@@ -41,6 +41,9 @@ struct PetAnswers {
     menu: Option<(bool, bool, bool)>,
     companions: CompanionState,
     possess: Option<PossessView>,
+    stable: StableList,
+    /// The stable's creature records, by entry.
+    stable_families: std::collections::HashMap<u32, StableFamily>,
 }
 
 thread_local! {
@@ -58,11 +61,18 @@ pub(super) trait PetAnswersExt {
     fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool);
     fn set_companions(&mut self, state: CompanionState);
     fn set_possess_spell(&mut self, possess: Option<PossessView>);
+    fn set_stable(&mut self, list: StableList, families: Vec<(u32, StableFamily)>);
 }
 
-fn sticky() {
+/// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no
+/// other loan may be up when it is made.
+fn sticky(script: &UiScript) {
     STICKY.with(|s| {
         if s.borrow().is_none() {
+            assert!(
+                !script.has_live(),
+                "the sticky loan must be made outside every other loan"
+            );
             // SAFETY: held until the thread ends, made before any loan a later call nests in it.
             *s.borrow_mut() = Some(unsafe { LiveLoan::new(View) });
         }
@@ -71,23 +81,32 @@ fn sticky() {
 
 impl PetAnswersExt for UiScript {
     fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats) {
-        sticky();
+        sticky(self);
         PET.with(|p| p.borrow_mut().stats = (has_ui, stats));
     }
 
     fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool) {
-        sticky();
+        sticky(self);
         PET.with(|p| p.borrow_mut().menu = Some((abandon, rename, dismiss)));
     }
 
     fn set_companions(&mut self, state: CompanionState) {
-        sticky();
+        sticky(self);
         PET.with(|p| p.borrow_mut().companions = state);
     }
 
     fn set_possess_spell(&mut self, possess: Option<PossessView>) {
-        sticky();
+        sticky(self);
         PET.with(|p| p.borrow_mut().possess = possess);
+    }
+
+    fn set_stable(&mut self, list: StableList, families: Vec<(u32, StableFamily)>) {
+        sticky(self);
+        PET.with(|p| {
+            let mut p = p.borrow_mut();
+            p.stable = list;
+            p.stable_families = families.into_iter().collect();
+        });
     }
 }
 
@@ -201,6 +220,14 @@ impl LiveState for View {
 
     fn possess(&self) -> Option<PossessView> {
         PET.with(|p| p.borrow().possess.clone())
+    }
+
+    fn stable(&self) -> StableList {
+        PET.with(|p| p.borrow().stable.clone())
+    }
+
+    fn stable_family(&self, entry: u32, _: StableCallback) -> Option<StableFamily> {
+        PET.with(|p| p.borrow().stable_families.get(&entry).cloned())
     }
 }
 
