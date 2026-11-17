@@ -185,7 +185,7 @@ pub(super) fn drain_chat_input(
     commands: Res<NetCommands>,
     emotes: Option<Res<crate::sound::EmoteSounds>>,
     selection: Res<Selection>,
-    mut group: ResMut<crate::ui_party::GroupState>,
+    group: Res<crate::ui_party::GroupState>,
     names: Res<crate::names::NameCache>,
     // Our stand state and move flags for the emote gates; the entity is `/castvis`'s fallback.
     self_player: Query<(Entity, &MovementState, &GlobalTransform), With<SelfPlayer>>,
@@ -527,13 +527,18 @@ pub(super) fn drain_chat_input(
                     ));
                 }
             }
+            // Each group write goes through the console queue: the live view this system lends
+            // reads the group.
             ParsedChat::PartyTest { arg } => match arg.as_str() {
-                "off" => group.clear_session(),
+                "off" => chat_out.console.queue(|world: &mut World| {
+                    world
+                        .resource_mut::<crate::ui_party::GroupState>()
+                        .clear_session();
+                }),
                 // 25 synthetic raid rows, us leading.
                 "raid" => {
                     // The wire arm's by-key queue, so the lines resolve from GlobalStrings with
                     // each row's surface and sound.
-                    // Through the console queue: the system reads the name cache the live view lends.
                     let me = self_guid.0;
                     chat_out.console.queue(move |world: &mut World| {
                         world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
@@ -549,7 +554,11 @@ pub(super) fn drain_chat_input(
                         });
                     });
                 }
-                "invite" => group.pending_invite = Some("Partner".to_string()),
+                "invite" => chat_out.console.queue(|world: &mut World| {
+                    world
+                        .resource_mut::<crate::ui_party::GroupState>()
+                        .pending_invite = Some("Partner".to_string());
+                }),
                 // A group member's ping 35 yd north-east: off both axes, so a mirrored sign
                 // shows, and inside every outdoor view radius (the tightest is 66.7 yd).
                 "ping" => {
@@ -573,7 +582,11 @@ pub(super) fn drain_chat_input(
                 // Skull the target on the local board; a real mark waits for the server's echo.
                 "mark" => {
                     if let Some(guid) = selection.guid {
-                        group.apply_raid_target(7, guid);
+                        chat_out.console.queue(move |world: &mut World| {
+                            world
+                                .resource_mut::<crate::ui_party::GroupState>()
+                                .apply_raid_target(7, guid);
+                        });
                     }
                 }
                 arg => {
@@ -581,15 +594,20 @@ pub(super) fn drain_chat_input(
                         let w = benilla_assets::coords::bevy_to_wow(tf.translation());
                         (w[0], w[1])
                     });
-                    chat_out
-                        .ui_errors
-                        .0
-                        .extend(crate::ui_party::synthetic_roster(&mut group, player_xy));
-                    if arg == "lead" {
-                        // An unmatched leader guid reads as `leader_index` 0, "we lead", which
-                        // shows the leader-only popup rows.
-                        group.leader = 0xF000;
-                    }
+                    let lead = arg == "lead";
+                    chat_out.console.queue(move |world: &mut World| {
+                        let mut group = world.resource_mut::<crate::ui_party::GroupState>();
+                        let lines = crate::ui_party::synthetic_roster(&mut group, player_xy);
+                        if lead {
+                            // An unmatched leader guid reads as `leader_index` 0, "we lead", which
+                            // shows the leader-only popup rows.
+                            group.leader = 0xF000;
+                        }
+                        world
+                            .resource_mut::<crate::ui_action::UiErrorKeys>()
+                            .0
+                            .extend(lines);
+                    });
                 }
             },
             ParsedChat::Invite { name } => {
