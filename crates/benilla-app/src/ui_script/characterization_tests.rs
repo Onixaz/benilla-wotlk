@@ -387,8 +387,7 @@ const PET: u64 = 0xF140_0000_0100_0001;
 const QUEST: u32 = 7;
 /// `PLAYER_FLAGS_GHOST`.
 const GHOST: u32 = 0x10;
-/// `PLAYER_SELF_RES_SPELL`.
-const FIELD_PLAYER_SELF_RES_SPELL: u16 = 1224;
+use benilla_protocol::field::FIELD_PLAYER_SELF_RES_SPELL;
 
 fn flags(f: u32) -> SessionEvent {
     self_values(&[(FIELD_UNIT_FLAGS, f)])
