@@ -672,7 +672,7 @@ mod tests {
         let open = TaxiOpen {
             flightmaster: 0x42,
             nearest_node: silvermoon,
-            known: mask_of(&[silvermoon, tranquillien, 2]),
+            known: mask_of(&[silvermoon, tranquillien]),
         };
         assert!(
             build_nodes(&open, &cat, Some(0.0), 0).is_none(),
