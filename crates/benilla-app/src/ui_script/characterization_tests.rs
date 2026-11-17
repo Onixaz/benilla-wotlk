@@ -58,7 +58,7 @@ local VERBS = {
     { "popup", popup },
     { "button2", button2 },
     { "soulstone", function() return HasSoulstone() end },
-    { "special", function() return GetQuestLogSpecialItemInfo(2) ~= nil end },
+    { "special", function() local l, t = GetQuestLogSpecialItemInfo(2) return l ~= nil and t ~= nil end },
     { "watchitem", function() return WatchFrameItem1 ~= nil and WatchFrameItem1:IsShown() end },
     { "release", function() return GetReleaseTimeRemaining() end },
     { "reclaim", function() return GetCorpseRecoveryDelay() end },
@@ -1086,12 +1086,10 @@ fn flight_start_with_the_control_update_ahead_of_the_flags() {
     );
 }
 
-/// Accepting a quest whose source item is already carried: 12340's `GetQuestLogSpecialItemInfo`
-/// (`0x5e52d0`) reads the quest and the bags at call time, so the tracker's `QUEST_LOG_UPDATE`
-/// redraw already finds the special item.
+/// Accepting a quest whose source item is already carried: 12340's `GetQuestLogSpecialItemInfo` (`0x5e52d0`) reads the quest and the bags at call time, so the tracker's `QUEST_LOG_UPDATE` redraw already finds the special item.
 #[test]
 fn quest_accept_shows_the_special_item_with_the_log_update() {
-    let Some((_, accept)) = accept_with_the_source_item() else {
+    let Some((_, accept)) = accept_with_the_source_item(false) else {
         return;
     };
     let first = accept
@@ -1104,7 +1102,27 @@ fn quest_accept_shows_the_special_item_with_the_log_update() {
 /// The accept's `QUEST_ACCEPTED` (`0x6df49c`) and the flushed `QUEST_LOG_UPDATE` after it (`0x614760`) both read the special item: the verb reads the quest and the bags when called (`0x5e0da0`), as do the calls after the frames.
 #[test]
 fn quest_accept_with_a_carried_source_item() {
-    let Some((mut rig, accept)) = accept_with_the_source_item() else {
+    let Some((mut rig, accept)) = accept_with_the_source_item(false) else {
+        return;
+    };
+    assert_eq!(
+        pin(
+            &accept,
+            &["QUEST_LOG_UPDATE", "QUEST_ACCEPTED"],
+            &["special"]
+        ),
+        vec![
+            "QUEST_ACCEPTED 2 | special=true",
+            "QUEST_LOG_UPDATE | special=true",
+        ]
+    );
+    assert_eq!(rig.live_now().verbs["special"], "true");
+}
+
+/// The source item's create, its bag slot and the quest slot in one frame, as a server's accept sends them: `QUEST_ACCEPTED` and the flushed `QUEST_LOG_UPDATE` already read the item's link and art, which `0x5e52d0` builds from the instance at the call (`0x5e533d`, `0x5e536a`), no bag pass between.
+#[test]
+fn quest_accept_reads_a_source_item_created_in_the_same_frame() {
+    let Some((mut rig, accept)) = accept_with_the_source_item(true) else {
         return;
     };
     assert_eq!(
@@ -1254,7 +1272,7 @@ fn the_time_response_updates_the_log_with_the_reset_already_read() {
 
 /// A logged-in rig carrying an on-use item in the backpack's first slot, then the accept of the
 /// quest whose source item it is; what the accept's frames saw.
-fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
+fn accept_with_the_source_item(same_frame: bool) -> Option<(Rig, Vec<Seen>)> {
     const ITEM: u32 = 5000;
     const ITEM_GUID: u64 = 0x4000_0000_0000_0100;
     let mut rig = Rig::login(&[])?;
@@ -1265,37 +1283,37 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
         category: 0,
         category_cooldown_ms: -1,
     });
-    rig.packets(
-        vec![
-            SessionEvent::ItemTemplate {
-                entry: ITEM,
-                info: Some(Box::new(info)),
-            },
-            SessionEvent::ItemCreate {
-                guid: ITEM_GUID,
-                container: false,
-                // `OBJECT_FIELD_ENTRY`, word 3.
-                fields: ObjectFields::from_pairs(&[(
-                    benilla_protocol::field::FIELD_OBJECT_ENTRY,
-                    ITEM,
-                )])
-                .into_created(ObjectType::Item),
-            },
-            // The backpack's first slot, after the 23 equipment and bag slots.
-            self_values(&[
-                (FIELD_PLAYER_INV_SLOT_HEAD + 46, ITEM_GUID as u32),
-                (FIELD_PLAYER_INV_SLOT_HEAD + 47, (ITEM_GUID >> 32) as u32),
-            ]),
-        ],
-        3,
-    );
-    let accept = rig.packets(
-        vec![
-            quest_template(ITEM),
-            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
-        ],
-        3,
-    );
+    let item = vec![
+        SessionEvent::ItemTemplate {
+            entry: ITEM,
+            info: Some(Box::new(info)),
+        },
+        SessionEvent::ItemCreate {
+            guid: ITEM_GUID,
+            container: false,
+            // `OBJECT_FIELD_ENTRY`, word 3.
+            fields: ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                ITEM,
+            )])
+            .into_created(ObjectType::Item),
+        },
+        // The backpack's first slot, after the 23 equipment and bag slots.
+        self_values(&[
+            (FIELD_PLAYER_INV_SLOT_HEAD + 46, ITEM_GUID as u32),
+            (FIELD_PLAYER_INV_SLOT_HEAD + 47, (ITEM_GUID >> 32) as u32),
+        ]),
+    ];
+    let quest = vec![
+        quest_template(ITEM),
+        self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+    ];
+    if same_frame {
+        let accept = rig.packets(item.into_iter().chain(quest).collect(), 3);
+        return Some((rig, accept));
+    }
+    rig.packets(item, 3);
+    let accept = rig.packets(quest, 3);
     Some((rig, accept))
 }
 

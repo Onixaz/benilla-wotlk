@@ -263,6 +263,9 @@ pub(crate) struct QuestView<'w, 's> {
     gos: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
     areas: Option<Res<'w, crate::sound::AreaSounds>>,
     expiries: Option<Res<'w, crate::ui_quest_log::QuestExpiries>>,
+    /// The special item's inventory art (`0x70aa00`) and its link's suffix name (`0x61e3a0`).
+    icons: Option<Res<'w, crate::entities::ItemDisplays>>,
+    rolls: Option<Res<'w, crate::items::RandomProperties>>,
 }
 
 impl QuestView<'_, '_> {
@@ -303,29 +306,44 @@ impl QuestView<'_, '_> {
         if drops {
             candidates.extend(t.objectives.iter().map(|o| o.item_drop));
         }
-        let ((bag, slot, guid), spell_id) =
+        let ((bag, slot, guid), id, t) =
             candidates
                 .into_iter()
                 .filter(|&id| id != 0)
                 .find_map(|id| {
-                    let use_spell = items.template(id, 0, net)?.use_spell?;
+                    let t = items.template(id, 0, net)?;
+                    t.use_spell?;
                     let at = crate::ui_items::find_carried_at(&store.0, objects, |guid| {
                         objects
                             .object(guid)
                             .and_then(|o| o.object_entry())
                             .is_some_and(|e| e == id)
                     })?;
-                    Some((at, use_spell.spell_id))
+                    Some((at, id, t))
                 })?;
-        let charges = objects
-            .object(guid)
-            .and_then(|o| o.item_spell_charges(0))
-            .unwrap_or(0);
+        let item = objects.object(guid)?;
+        let rolls = crate::items::RollCatalogs {
+            props: self.rolls.as_deref(),
+            enchants: None,
+        };
+        // The link from the instance (`0x5e533d`) and the art from its entry (`0x5e536a`), read at the call like the charges (`0x5e539d`).
+        let link = crate::ui_items::item_link_full(
+            id,
+            &crate::ui_items::object_link_fields(item, t.flags),
+            &rolls.name(&t.name, item.item_random_properties_id()),
+            t.quality,
+        );
+        let texture = self.icons.as_deref().map_or_else(
+            || crate::entities::FALLBACK_ITEM_ICON.to_string(),
+            |i| i.carried_icon(id),
+        );
         Some(QuestSpecialItemView {
             bag,
             slot,
-            charges,
-            spell_id,
+            charges: item.item_spell_charges(0).unwrap_or(0),
+            spell_id: t.use_spell.map_or(0, |u| u.spell_id),
+            link,
+            texture,
         })
     }
 }

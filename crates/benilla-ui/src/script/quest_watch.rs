@@ -28,8 +28,7 @@ pub(crate) struct QuestWatch {
     distance: (i32, f32),
 }
 
-/// The special item behind a quest's tracker button (`0x5e0da0`), as the live view finds it in the bags at call time: the template's source item, else with flag `0x20000` a drop item, either
-/// one with an on-use spell.
+/// The special item behind a quest's tracker button (`0x5e0da0`), as the live view finds it in the bags at call time: the template's source item, else with flag `0x20000` a drop item, either one with an on-use spell.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestSpecialItemView {
     /// The Lua bag and 1-based slot the item sits in.
@@ -39,6 +38,9 @@ pub struct QuestSpecialItemView {
     pub charges: i32,
     /// The on-use spell, the first with trigger 0, the range verb checks (`0x5e5529`).
     pub spell_id: u32,
+    /// The instance's hyperlink (`0x5e533d`) and inventory art (`0x5e536a`).
+    pub link: String,
+    pub texture: String,
 }
 
 /// One region of a quest's POI, as the `SMSG_QUEST_POI_QUERY_RESPONSE` handler keeps it
@@ -689,20 +691,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: GetQuestLogSpecialItemInfo(index)")?;
             let model = model_ref(lua);
-            let Some((item, slot)) = special_item(&model, index) else {
+            let Some(item) = special_item(&model, index) else {
                 return Ok(MultiValue::new());
             };
-            let link = match &slot.link {
-                Some(l) => text(lua, l)?,
-                None => Value::Nil,
-            };
-            let texture = match &slot.texture {
-                Some(t) => text(lua, t)?,
-                None => Value::Nil,
-            };
             Ok(MultiValue::from_vec(vec![
-                link,
-                texture,
+                text(lua, &item.link)?,
+                text(lua, &item.texture)?,
                 Value::Integer(i64::from(item.charges)),
             ]))
         })?,
@@ -714,7 +708,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogSpecialItemCooldown",
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: GetQuestLogSpecialItemCooldown(index)")?;
-            let at = special_item(&model_ref(lua), index).map(|(i, _)| (i.bag, i.slot));
+            let at = special_item(&model_ref(lua), index).map(|i| (i.bag, i.slot));
             let Some((bag, slot)) = at else {
                 return Ok(MultiValue::new());
             };
@@ -747,7 +741,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.unit_guids.guid_of(&token)
             };
             // The item's spell through the range check at the call (`0x5e55b6`).
-            let spell = special_item(&model, index).map(|(i, _)| i.spell_id);
+            let spell = special_item(&model, index).map(|i| i.spell_id);
             let near = spell.zip(target).and_then(|(id, guid)| {
                 super::read_live(|l| l.item_spell_in_range(id, guid))
                     .flatten()
@@ -764,7 +758,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: UseQuestLogSpecialItem(index)")?;
             let mut model = super::model_mut_of(lua);
-            if let Some((bag, slot)) = special_item(&model, index).map(|(i, _)| (i.bag, i.slot)) {
+            if let Some((bag, slot)) = special_item(&model, index).map(|i| (i.bag, i.slot)) {
                 model
                     .script_calls
                     .push(super::ScriptCall::UseItem { bag, slot });
@@ -812,15 +806,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The special item of the quest at a 1-based row, read live (`0x5e0da0`), and its bag slot, while the slot holds it. The slot's link, texture and cooldown are the container feed's until #1278 reads the bags live.
-fn special_item(
-    model: &Model,
-    index: i32,
-) -> Option<(QuestSpecialItemView, &super::container::ContainerSlot)> {
+/// The special item of the quest at a 1-based row with its link, art and charges, all read from the bags at the call (`0x5e0da0`).
+fn special_item(model: &Model, index: i32) -> Option<QuestSpecialItemView> {
     let e = quest_at(model, i64::from(index))?;
-    let item = super::read_live(|l| l.quest_special_item(e.quest_id)).flatten()?;
-    let slot = model.containers.get(&item.bag)?.slots.get(&item.slot)?;
-    Some((item, slot))
+    super::read_live(|l| l.quest_special_item(e.quest_id)).flatten()
 }
 
 /// The tooltip's quest difficulty colour (`0x61e540`, strings at `0xad2a68`): red five and
@@ -843,7 +832,7 @@ fn quest_color(level: i32, player: i32) -> &'static str {
 /// `GameTooltip:SetQuestLogSpecialItem(index)` (`0x630990`): the item instance's hover, as the bag
 /// slot's.
 pub(super) fn set_tooltip_item(lua: &Lua, this: &Table, index: i32) -> mlua::Result<()> {
-    let at = special_item(&model_ref(lua), index).map(|(i, _)| (i.bag, i.slot));
+    let at = special_item(&model_ref(lua), index).map(|i| (i.bag, i.slot));
     if let Some((bag, slot)) = at {
         this.call_method::<MultiValue>("SetBagItem", (bag, slot))?;
     }
@@ -886,32 +875,15 @@ mod tests {
     #[test]
     fn the_special_item_verbs_read_the_lent_view_when_called() {
         use crate::script::live::TestView;
-        use crate::script::{ContainerSlot, ContainerState};
+        // No container is seeded: the link, art and charges come from the view alone.
         let mut s = script(2);
-        s.set_container(
-            0,
-            Some(ContainerState {
-                num_slots: 16,
-                slots: [(
-                    3,
-                    ContainerSlot {
-                        item_id: 5000,
-                        link: Some("|Hitem:5000|h[Relic]|h".into()),
-                        texture: Some("Relic".into()),
-                        ..Default::default()
-                    },
-                )]
-                .into(),
-                ..Default::default()
-            }),
-        );
         let ask = |s: &UiScript| {
             s.eval::<String>(
-                "local l, t, c = GetQuestLogSpecialItemInfo(2) return tostring(l) .. tostring(c)",
+                "local l, t, c = GetQuestLogSpecialItemInfo(2) return tostring(l) .. tostring(t) .. tostring(c)",
             )
             .unwrap()
         };
-        assert_eq!(ask(&s), "nilnil");
+        assert_eq!(ask(&s), "nilnilnil");
         let carried = TestView {
             special_items: [(
                 2,
@@ -920,18 +892,23 @@ mod tests {
                     slot: 3,
                     charges: 4,
                     spell_id: 1000,
+                    link: "|Hitem:5000|h[Relic]|h".into(),
+                    texture: r"Interface\Icons\Relic".into(),
                 },
             )]
             .into(),
             ..Default::default()
         };
-        assert_eq!(s.with_live(&carried, |s| ask(s)), "|Hitem:5000|h[Relic]|h4");
+        assert_eq!(
+            s.with_live(&carried, |s| ask(s)),
+            r"|Hitem:5000|h[Relic]|hInterface\Icons\Relic4"
+        );
         let row_one = |s: &UiScript| {
             s.eval::<i64>("return select('#', GetQuestLogSpecialItemInfo(1))")
                 .unwrap()
         };
         assert_eq!(s.with_live(&carried, |s| row_one(s)), 0);
-        assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnil");
+        assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnilnil");
     }
 
     /// The range check's answer: spell 1000 reaches [`NEAR`] and not [`FAR`]; any other unit or spell has no answer.
@@ -955,16 +932,7 @@ mod tests {
     #[test]
     fn the_special_item_range_resolves_its_token_then_checks_the_item_spell() {
         use crate::script::live::TestView;
-        use crate::script::{ContainerSlot, ContainerState};
         let mut s = script(2);
-        s.set_container(
-            0,
-            Some(ContainerState {
-                num_slots: 16,
-                slots: [(3, ContainerSlot::default())].into(),
-                ..Default::default()
-            }),
-        );
         s.set_spell_info_source(std::rc::Rc::new(Range));
         s.set_unit_guids(&crate::script::UnitGuids {
             player: 1,
@@ -980,6 +948,7 @@ mod tests {
                     slot: 3,
                     charges: 0,
                     spell_id: 1000,
+                    ..Default::default()
                 },
             )]
             .into(),
