@@ -32,12 +32,11 @@ fn taxi_send_bodies_golden() {
         "CMSG_ACTIVATETAXI body"
     );
 
-    // CMSG_ACTIVATETAXIEXPRESS: guid, u32 total cost, u32 count, count x u32 node.
+    // CMSG_ACTIVATETAXIEXPRESS: guid, u32 count, count x u32 node, no fare (`0x6d6430`).
     assert_eq!(
-        messages::activate_taxi_express(0x1234_5678_9abc_def0, 110, &[2, 3, 4]),
+        messages::activate_taxi_express(0x1234_5678_9abc_def0, &[2, 3, 4]),
         hx(concat!(
             "f0debc9a78563412",
-            "6e000000",
             "03000000",
             "02000000",
             "03000000",
@@ -46,8 +45,8 @@ fn taxi_send_bodies_golden() {
         "CMSG_ACTIVATETAXIEXPRESS body"
     );
     assert_eq!(
-        messages::activate_taxi_express(0x1234_5678_9abc_def0, 0, &[]),
-        hx(concat!("f0debc9a78563412", "00000000", "00000000")),
+        messages::activate_taxi_express(0x1234_5678_9abc_def0, &[]),
+        hx(concat!("f0debc9a78563412", "00000000")),
         "CMSG_ACTIVATETAXIEXPRESS body, empty node list"
     );
 }

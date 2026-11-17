@@ -181,8 +181,8 @@ pub(super) struct TaxiRouteCache(pub(super) Vec<ResolvedTaxiNode>);
 /// never produced. Returns the continent's map id, the Lua nodes and their routes, in one order.
 ///
 /// A Lua node's fare takes the flight master's price `discount` ([`shown_fare`]), and is 0 with
-/// none, when the flight master or the player does not resolve; the route's fare stays the raw sum,
-/// which `CMSG_ACTIVATETAXIEXPRESS` carries.
+/// none, when the flight master or the player does not resolve; the route keeps the raw sum, for
+/// the activate's log.
 pub(super) fn build_nodes(
     open: &TaxiOpen,
     cat: &TaxiCatalogs,
