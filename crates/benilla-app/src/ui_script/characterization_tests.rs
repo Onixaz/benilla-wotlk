@@ -2308,6 +2308,7 @@ fn name_answer(guid: u64, name: &str) -> SessionEvent {
         race: 1,
         class: 1,
         gender: 0,
+        declensions: None,
     }
 }
 

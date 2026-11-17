@@ -83,6 +83,10 @@ fn walk(lua: &Lua, channel: Channel, arg: &str) -> bool {
                 Channel::KeyDown => super::editbox::key_input(lua, arg),
             };
             if consumed {
+                if channel == Channel::KeyDown {
+                    // The box's own release runs no script (`0x965920`).
+                    capture(lua, arg, None);
+                }
                 return true;
             }
             continue;
@@ -109,6 +113,7 @@ fn walk(lua: &Lua, channel: Channel, arg: &str) -> bool {
             Channel::KeyDown => {
                 let down = has_script(lua, id, "OnKeyDown");
                 if down || has_script(lua, id, "OnKeyUp") {
+                    capture(lua, arg, Some(h));
                     if down {
                         fire(lua, id, "OnKeyDown", arg);
                     }
@@ -118,6 +123,40 @@ fn walk(lua: &Lua, channel: Channel, arg: &str) -> bool {
         }
     }
     false
+}
+
+/// Record the frame a key's press went to, or forget it (`m_keydownCapture[key]`).
+fn capture(lua: &Lua, key: &str, frame: Option<FrameHandle>) {
+    let mut model = crate::script::model_mut_of(lua);
+    match frame {
+        Some(h) => {
+            model.key_capture.insert(key.to_owned(), h);
+        }
+        None => {
+            model.key_capture.remove(key);
+        }
+    }
+}
+
+/// The key-up channel (`0x494490`): the release goes to the frame its press went to, alone, and
+/// is consumed there; that frame runs `OnKeyUp` while shown (`0x48fbf0`). A key whose press no
+/// frame took is not consumed.
+pub(super) fn key_up(lua: &Lua, key: &str) -> bool {
+    let Some(h) = crate::script::model_mut_of(lua).key_capture.remove(key) else {
+        return false;
+    };
+    let id = {
+        let mut model = crate::script::model_mut_of(lua);
+        let visible = model.arena.glance(h).is_some_and(|g| g.visible);
+        if !visible || model.arena.frame(h).is_none() {
+            return true;
+        }
+        model.frame_id(h)
+    };
+    if has_script(lua, id, "OnKeyUp") {
+        fire(lua, id, "OnKeyUp", key);
+    }
+    true
 }
 
 /// Fire one key handler with its one argument, a string on all three channels; errors are recorded
@@ -176,6 +215,7 @@ pub(super) fn frame_key_input(lua: &Lua, key: &str) -> bool {
         };
         let down = has_script(lua, id, "OnKeyDown");
         if down || has_script(lua, id, "OnKeyUp") {
+            capture(lua, key, Some(h));
             if down {
                 fire(lua, id, "OnKeyDown", key);
             }

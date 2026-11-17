@@ -470,6 +470,7 @@ impl Plugin for UiScriptPlugin {
                 Startup,
                 setup_script
                     .after(benilla_assets::AssetSet::Open)
+                    .after(crate::cvars::CvarLoad)
                     .after(resolve_ui_scale),
             )
             // The in-game UI loads on world entry, as the reference's does, once the loading cover

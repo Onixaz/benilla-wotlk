@@ -125,13 +125,13 @@ pub use kinds::{
     ButtonVisualState, ColorSelectState, CooldownFlash, CooldownPaint, CooldownState, CooldownStep,
     EditAction, EditBoxState, EditOutcome, EditUnit, FrameKind, InsertMode, KindState,
     MessageFrameState, MessageLine, MinimapState, ModelFileFacts, ModelFog, ModelLight,
-    ModelPlayHead, ModelState, QuestBlobCache, QuestBlobMesh, QuestBlobPaint, QuestPoiState,
-    RegionKind, ScrollFrameState, ScrollingMessageState, SequenceFacts, SliderState,
-    StatusBarState, TooltipAnchor, TooltipState, CLICK_LEFT_UP, COOLDOWN_FLASH_MS,
-    COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA, MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK,
-    MINIMAP_DEFAULT_PLAYER_MODEL, MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN,
-    MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP, TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD,
-    TOOLTIP_TEXTURE_GAP, TOOLTIP_TEXTURE_SLOTS, TOOLTIP_WRAP_WIDTH,
+    ModelPlayHead, ModelState, MovieCaption, MovieState, QuestBlobCache, QuestBlobMesh,
+    QuestBlobPaint, QuestPoiState, RegionKind, ScrollFrameState, ScrollingMessageState,
+    SequenceFacts, SliderState, StatusBarState, TooltipAnchor, TooltipState, CLICK_LEFT_UP,
+    COOLDOWN_FLASH_MS, COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA, MINIMAP_DEFAULT_ARROW_MODEL,
+    MINIMAP_DEFAULT_MASK, MINIMAP_DEFAULT_PLAYER_MODEL, MINIMAP_DEFAULT_ZOOM,
+    MINIMAP_ENGINE_CHILDREN, MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP, TOOLTIP_FADE_SECS,
+    TOOLTIP_LINE_GAP, TOOLTIP_PAD, TOOLTIP_TEXTURE_GAP, TOOLTIP_TEXTURE_SLOTS, TOOLTIP_WRAP_WIDTH,
 };
 
 // ── Frame and Region nodes ───────────────────────────────────────────────────────────────────
@@ -624,6 +624,7 @@ impl WidgetArena {
                 FrameKind::GameTooltip => KindState::Tooltip(kinds::TooltipState::default()),
                 FrameKind::Cooldown => KindState::Cooldown(CooldownState::default()),
                 FrameKind::QuestPoiFrame => KindState::QuestPoi(kinds::QuestPoiState::default()),
+                FrameKind::MovieFrame => KindState::Movie(kinds::MovieState::default()),
                 _ => KindState::None,
             },
             next_decl: 0,

@@ -547,6 +547,8 @@ pub enum SessionEvent {
         race: u32,
         gender: u32,
         class: u32,
+        /// The name's five declined forms, when the answer carries them.
+        declensions: Option<[String; 5]>,
     },
     /// `SMSG_NAME_QUERY_RESPONSE` with no name: retry, cache a placeholder, or deny.
     PlayerNameMiss {
@@ -555,7 +557,12 @@ pub enum SessionEvent {
     },
     /// `SMSG_PET_NAME_QUERY_RESPONSE`, keyed by the pet number its guid carries in place of an
     /// entry ([`crate::guid::pet_number`]). An empty `name` is the negative answer.
-    PetName { pet_number: u32, name: String },
+    PetName {
+        pet_number: u32,
+        name: String,
+        /// The name's five declined forms, when the answer carries them.
+        declensions: Option<[String; 5]>,
+    },
     /// `SMSG_CREATURE_QUERY_RESPONSE`, keyed by template `entry`. An unknown entry has a `None`
     /// `name`, and every other field then reads `None`, `0` or `false`.
     CreatureName {

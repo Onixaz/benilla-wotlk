@@ -456,11 +456,7 @@ fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
     let race = u32::from(read_u8(r)?);
     let gender = u32::from(read_u8(r)?);
     let class = u32::from(read_u8(r)?);
-    if read_u8(r)? != 0 {
-        for _ in 0..5 {
-            let _declined = read_cstring(r)?;
-        }
-    }
+    let declensions = pet::read_declensions(r)?;
     Ok(ServerPacket::NameQueryResponse {
         guid,
         name,
@@ -468,6 +464,7 @@ fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
         race,
         gender,
         class,
+        declensions,
     })
 }
 
@@ -2096,8 +2093,12 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_PET_NAME_QUERY_RESPONSE => {
-            let (pet_number, name) = pet::read_pet_name_query_response(&mut r)?;
-            ServerPacket::PetNameQueryResponse { pet_number, name }
+            let (pet_number, name, declensions) = pet::read_pet_name_query_response(&mut r)?;
+            ServerPacket::PetNameQueryResponse {
+                pet_number,
+                name,
+                declensions,
+            }
         }
         opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE => {
             let (entry, info) = gameobject::read_gameobject_query_response(&mut r)?;

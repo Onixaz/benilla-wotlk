@@ -531,6 +531,8 @@ pub enum ServerPacket {
         race: u32,
         gender: u32,
         class: u32,
+        /// The name's five declined forms, when the answer carries them.
+        declensions: Option<[String; 5]>,
     },
     /// `SMSG_NAME_QUERY_RESPONSE` with a non-zero status: no name, and what to do instead.
     NameQueryMiss {
@@ -544,10 +546,12 @@ pub enum ServerPacket {
         info: Option<CreatureQueryInfo>,
     },
     /// `SMSG_PET_NAME_QUERY_RESPONSE`: keyed by pet number, as the client's pet-name cache is; the
-    /// timestamp and declined forms are read and dropped, and an empty `name` is a negative answer.
+    /// timestamp is read and dropped, and an empty `name` is a negative answer.
     PetNameQueryResponse {
         pet_number: u32,
         name: String,
+        /// The name's five declined forms, when the answer carries them.
+        declensions: Option<[String; 5]>,
     },
     /// `SMSG_GAMEOBJECT_QUERY_RESPONSE`: a template's type, display, name and raw type-specific
     /// `data[24]`; a miss is a lone `entry | 0x8000_0000`.
