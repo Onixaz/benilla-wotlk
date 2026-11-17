@@ -66,8 +66,6 @@ pub(crate) struct QuestLogMarks {
     expired: HashSet<u32>,
     /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`, not yet pushed.
     completed_answer: Option<Vec<u32>>,
-    /// The `SMSG_QUERY_TIME_RESPONSE` count the last `QUEST_LOG_UPDATE` covered.
-    clock_answers: u64,
 }
 
 /// `questcache.wdb`.
@@ -140,7 +138,19 @@ mod net {
     pub(super) fn register(app: &mut App) {
         use SessionEventKind as K;
         app.net_handler(K::QuestTemplate, on_template)
+            .net_handler(K::ServerUnixTime, on_server_time)
             .net_handler(K::Disconnected, on_session_end);
+    }
+
+    /// `SMSG_QUERY_TIME_RESPONSE` sets the log's clock (`0x5dff40`), then queues `QUEST_LOG_UPDATE`
+    /// (`0x5dff89`) in turn with the frame's other unique signals.
+    fn on_server_time(
+        In(ev): In<SessionEvent>,
+        mut signals: ResMut<crate::ui_script::live::UniqueSignals>,
+    ) {
+        if let SessionEvent::ServerUnixTime { .. } = ev {
+            signals.unique_signal("QUEST_LOG_UPDATE");
+        }
     }
 
     fn on_template(In(ev): In<SessionEvent>, mut quest_log: ResMut<QuestLog>) {
@@ -837,7 +847,7 @@ pub(crate) fn feed_quest_log(
         Query<(), (Changed<ObjectStore>, Without<crate::net::NetEntity>)>,
         // The GameObject objectives' names.
         Option<Res<crate::go_templates::GameObjectTemplates>>,
-        // The server clock a timer runs out on; each of its answers owes a `QUEST_LOG_UPDATE`.
+        // The server clock a timer runs out on.
         Option<Res<crate::net::ServerWallClock>>,
     ),
     states: Res<crate::world_state::WorldStates>,
@@ -860,13 +870,10 @@ pub(crate) fn feed_quest_log(
     let Some((store, _)) = self_q.iter().next() else {
         return;
     };
-    // `SMSG_QUERY_TIME_RESPONSE` signals the update whatever moved (`0x5dff89`).
-    let answers = clock.as_ref().map_or(0, |c| c.1);
-    let answered = answers != marks.clock_answers;
     // Every row reads only these, so an unmoved set rebuilds the state the diff below would drop;
     // a fresh VM takes its first push whatever moved.
     let stirred = fresh
-        || answered
+        || clock.as_ref().is_some_and(|c| c.is_changed())
         || !stirred_self.is_empty()
         || !stirred_items.is_empty()
         || quest_log.is_changed()
@@ -1149,8 +1156,7 @@ pub(crate) fn feed_quest_log(
         num_quests: rows.len() as u32,
         daily_completed: store.0.player_daily_quests_completed(),
     };
-    marks.clock_answers = answers;
-    if fresh == *last && !answered {
+    if fresh == *last {
         return;
     }
     script.set_quest_log(fresh.clone());

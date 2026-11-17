@@ -1082,16 +1082,117 @@ fn two_poi_responses_in_one_frame_fire_one_poi_update() {
     let Some(mut rig) = Rig::login(&[]) else {
         return;
     };
-    let poi = |quest_id| {
-        SessionEvent::QuestPoi(vec![benilla_protocol::messages::QuestPoi {
-            quest_id,
-            blobs: Vec::new(),
-        }])
-    };
     let seen = rig.packets(vec![poi(QUEST), poi(QUEST + 1)], 3);
     assert_eq!(
         pin(&seen, &["QUEST_POI_UPDATE"], &[]),
         vec!["QUEST_POI_UPDATE"]
+    );
+}
+
+fn poi(quest_id: u32) -> SessionEvent {
+    SessionEvent::QuestPoi(vec![benilla_protocol::messages::QuestPoi {
+        quest_id,
+        blobs: Vec::new(),
+    }])
+}
+
+fn server_time() -> SessionEvent {
+    SessionEvent::ServerUnixTime {
+        unix_time: 1_000_000,
+        reset_in: 3_600,
+    }
+}
+
+/// What [`charz_poi_seen`] read of the POI store, one answer per control update.
+#[derive(Resource, Clone, Default)]
+struct PoiSeen(std::sync::Arc<std::sync::Mutex<Vec<bool>>>);
+
+/// A test handler on the control update reading whether the POI store holds [`QUEST`] at its turn.
+fn charz_poi_seen(
+    In(ev): In<SessionEvent>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    seen: Res<PoiSeen>,
+) {
+    if let SessionEvent::ClientControl { .. } = ev {
+        let seen = seen.0.clone();
+        ui.run(move |s| {
+            seen.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(s.quest_poi_held(QUEST))
+        });
+    }
+}
+
+/// The POI response writes its store from the handler (`0x5e7370`), so the next packet's handler
+/// in the same frame already finds it; nothing waits for a per-frame pass.
+#[test]
+fn the_next_packets_handler_finds_the_poi_response_stored() {
+    use crate::net::handlers::NetHandlerApp;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = PoiSeen::default();
+    rig.app.insert_resource(seen.clone());
+    rig.app.net_handler(
+        benilla_protocol::SessionEventKind::ClientControl,
+        charz_poi_seen,
+    );
+    rig.packets(vec![control(true)], 1);
+    rig.packets(vec![poi(QUEST), control(true)], 1);
+    assert_eq!(*seen.0.lock().unwrap(), vec![false, true]);
+}
+
+/// `QUEST_POI_UPDATE` (`0x5e7628`) and the time response's `QUEST_LOG_UPDATE` (`0x5dff89`) are
+/// queued by their handlers and flushed in queue order (`0x614760`): wire order, either way round.
+#[test]
+fn the_poi_and_time_responses_signal_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"];
+    let poi_first = rig.packets(vec![poi(QUEST), server_time()], 3);
+    let time_first = rig.packets(vec![server_time(), poi(QUEST + 1)], 3);
+    assert_eq!(
+        pin(&poi_first, events, &[]),
+        vec!["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"]
+    );
+    assert_eq!(
+        pin(&time_first, events, &[]),
+        vec!["QUEST_LOG_UPDATE", "QUEST_POI_UPDATE"]
+    );
+}
+
+/// The quest-slot watch rebuilds the log (`0x6df3bb`), queueing `QUEST_LOG_UPDATE` (`0x5e6957`)
+/// from the update handler, so it keeps wire order with a POI response's `QUEST_POI_UPDATE`
+/// (`0x5e7628`) at the flush (`0x614760`).
+#[test]
+fn the_slot_watch_and_the_poi_response_signal_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"];
+    rig.packets(vec![quest_template(0)], 3);
+    let slot_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+            poi(QUEST),
+        ],
+        3,
+    );
+    let poi_first = rig.packets(
+        vec![
+            poi(QUEST + 1),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, 0)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&slot_first, events, &["quests"]),
+        vec!["QUEST_LOG_UPDATE | quests=2", "QUEST_POI_UPDATE | quests=2"]
+    );
+    assert_eq!(
+        pin(&poi_first, events, &["quests"]),
+        vec!["QUEST_POI_UPDATE | quests=0", "QUEST_LOG_UPDATE | quests=0"]
     );
 }
 
@@ -1103,13 +1204,7 @@ fn the_time_response_updates_the_log_with_the_reset_already_read() {
         return;
     };
     assert_eq!(rig.live_now().verbs["reset"], "0");
-    let seen = rig.packets(
-        vec![SessionEvent::ServerUnixTime {
-            unix_time: 1_000_000,
-            reset_in: 3_600,
-        }],
-        3,
-    );
+    let seen = rig.packets(vec![server_time()], 3);
     assert_eq!(
         pin(&seen, &["QUEST_LOG_UPDATE"], &["reset"]),
         vec!["QUEST_LOG_UPDATE | reset=3600"]

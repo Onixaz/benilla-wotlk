@@ -394,6 +394,11 @@ impl super::UiScript {
         quest_index(&self.model_ref(), quest_id)
     }
 
+    /// Whether the POI store holds a response for `quest_id`.
+    pub fn quest_poi_held(&self, quest_id: u32) -> bool {
+        self.model_ref().quest_watch.poi(quest_id).is_some()
+    }
+
     /// Drain the quests to ask the server for (`CMSG_QUEST_POI_QUERY`, `0x5e6cd1`).
     pub fn take_quest_poi_queries(&mut self) -> Vec<u32> {
         // Read first: a mutable borrow moves the mutation count, and this drains every frame.
@@ -733,12 +738,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 v,
                 "Usage: IsQuestLogSpecialItemInRange(index [,target])",
             )?;
+            // The token as `lua_tolstring` reads it, a number in its string form, anything else
+            // none (`0x5e5589`).
+            let token = lua
+                .coerce_string(unit)?
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
             let model = model_ref(lua);
-            // An absent or empty token is the target (`0x5e557e`).
-            let token = match &unit {
-                Value::String(s) => s.to_str().map(|t| t.to_string()).unwrap_or_default(),
-                _ => String::new(),
-            };
+            // A missing or empty token is the target (`0x60b029`).
             let target = if token.is_empty() {
                 Some(model.unit_guids.target).filter(|&g| g != 0)
             } else {
@@ -926,6 +933,104 @@ mod tests {
         };
         assert_eq!(s.with_live(&carried, |s| row_one(s)), 0);
         assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnil");
+    }
+
+    /// The range check's answer: spell 1000 reaches [`NEAR`] and not [`FAR`]; any other unit or
+    /// spell has no answer.
+    struct Range;
+
+    impl crate::script::SpellInfoSource for Range {
+        fn spell_info(&self, _: u32, _: bool) -> Option<crate::script::SpellInfo> {
+            None
+        }
+
+        fn spell_in_range(&self, spell_id: u32, pet: bool, target: u64) -> Option<bool> {
+            assert!(!pet, "the item's spell is the player's");
+            (spell_id == 1000 && (target == NEAR || target == FAR)).then_some(target == NEAR)
+        }
+    }
+
+    const NEAR: u64 = 7;
+    const FAR: u64 = 8;
+
+    /// `IsQuestLogSpecialItemInRange(index [, unit])` (`0x5e54c0`): the row's special item
+    /// (`0x5e5519`), the token's guid (`0x5e5592`), a missing or empty token naming the target
+    /// (`0x60b029`), a number token read as its string (`0x5e5589`), and the item's spell through
+    /// the range check (`0x5e55b6`): 1 or 0, nil for no item, no unit or no answer.
+    #[test]
+    fn the_special_item_range_resolves_its_token_then_checks_the_item_spell() {
+        use crate::script::live::TestView;
+        use crate::script::{ContainerSlot, ContainerState};
+        let mut s = script(2);
+        s.set_container(
+            0,
+            Some(ContainerState {
+                num_slots: 16,
+                slots: [(3, ContainerSlot::default())].into(),
+                ..Default::default()
+            }),
+        );
+        s.set_spell_info_source(std::rc::Rc::new(Range));
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            target: NEAR,
+            pet: FAR,
+            ..Default::default()
+        });
+        let view = TestView {
+            special_items: [(
+                2,
+                QuestSpecialItemView {
+                    bag: 0,
+                    slot: 3,
+                    charges: 0,
+                    spell_id: 1000,
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let ask = |s: &mut UiScript, call: &str| {
+            s.with_live(&view, |s| {
+                s.eval::<String>(&format!("return tostring({call})"))
+                    .unwrap()
+            })
+        };
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2)"), "1");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, nil)"), "1");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, '')"), "1");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, true)"), "1");
+        assert_eq!(
+            ask(&mut s, "IsQuestLogSpecialItemInRange('2', 'target')"),
+            "1"
+        );
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'pet')"), "0");
+        assert_eq!(
+            ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'party1')"),
+            "nil"
+        );
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 5)"), "nil");
+        // Row 1 holds no special item.
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(1)"), "nil");
+        // No target: nobody to range.
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            pet: FAR,
+            ..Default::default()
+        });
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2)"), "nil");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'pet')"), "0");
+        // The item gone from the view: nil, whatever the unit.
+        let none = TestView::default();
+        assert_eq!(
+            s.with_live(&none, |s| s
+                .eval::<String>("return tostring(IsQuestLogSpecialItemInRange(2, 'pet'))")
+                .unwrap()),
+            "nil"
+        );
+        assert!(s
+            .eval::<mlua::Value>("return IsQuestLogSpecialItemInRange()")
+            .is_err());
     }
 
     #[test]

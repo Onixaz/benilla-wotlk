@@ -104,6 +104,7 @@ pub(crate) struct Scene<'w, 's> {
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
     control: ResMut<'w, super::ControlFlag>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
+    signals: ResMut<'w, crate::ui_script::live::UniqueSignals>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -1447,6 +1448,11 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         );
     }
     own_death_fields(sc, guid, after);
+    // The quest-slot watch (`0x6df370`, one per slot's five fields) rebuilds the log (`0x6df3bb`),
+    // which queues `QUEST_LOG_UPDATE` (`0x5e6957`) in turn with the frame's other unique signals.
+    if merged.quest_log_moved {
+        sc.signals.unique_signal("QUEST_LOG_UPDATE");
+    }
 }
 
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
@@ -1501,6 +1507,7 @@ fn merge_fields(
             {
                 merged.death.push((e.index, e.old, e.new));
             }
+            merged.quest_log_moved |= own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index);
             edges.write(e);
         });
     } else {
@@ -1519,7 +1526,15 @@ struct Merged {
     flags_moved: bool,
     /// Our own death fields' `(index, old, new)`, in field order.
     death: Vec<(u16, u32, u32)>,
+    /// One of our own quest-log slots' fields moved.
+    quest_log_moved: bool,
 }
+
+/// Every quest-log slot's fields: the slot watch's range (`0x6e52c5`-`0x6e52fb`).
+const QUEST_LOG_FIELDS: std::ops::Range<u16> = benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1
+    ..benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1
+        + benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS as u16
+            * benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS;
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,
 /// or a create with no movement block). vmangos sends a self create and a speed change back to
