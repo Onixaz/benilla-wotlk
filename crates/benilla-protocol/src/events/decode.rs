@@ -1300,6 +1300,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             race,
             gender,
             class,
+            declensions,
         } => vec![SessionEvent::PlayerName {
             guid,
             name,
@@ -1307,13 +1308,20 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             race,
             gender,
             class,
+            declensions,
         }],
         ServerPacket::NameQueryMiss { guid, miss } => {
             vec![SessionEvent::PlayerNameMiss { guid, miss }]
         }
-        ServerPacket::PetNameQueryResponse { pet_number, name } => {
-            vec![SessionEvent::PetName { pet_number, name }]
-        }
+        ServerPacket::PetNameQueryResponse {
+            pet_number,
+            name,
+            declensions,
+        } => vec![SessionEvent::PetName {
+            pet_number,
+            name,
+            declensions,
+        }],
         ServerPacket::CreatureQueryResponse { entry, info } => {
             let (
                 name,

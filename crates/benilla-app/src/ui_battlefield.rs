@@ -1343,6 +1343,7 @@ mod tests {
             race: 1,
             class: 1,
             gender: 0,
+            declensions: None,
         };
         w.run_system_once_with(net::on_name_answer, named).unwrap();
         assert_eq!(w.resource::<UiEvents>().names(), ["<world>", "<world>"]);
