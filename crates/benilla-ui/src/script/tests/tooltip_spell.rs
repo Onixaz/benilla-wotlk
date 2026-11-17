@@ -1117,7 +1117,8 @@ fn a_pet_view_miss_waits_on_the_pet_store() {
     assert!(s.take_errors().is_empty());
 }
 
-/// No second hover and no second `OnTooltipCleared`: the reference builds the tooltip at the call.
+/// No second hover and no `OnTooltipCleared` for the empty first render: the reference builds the
+/// tooltip at the call, and the answer's silent clear finds no lines after that render.
 #[test]
 fn a_missed_view_re_renders_the_tooltip_when_the_app_answers() {
     let mut s = script();
@@ -1154,8 +1155,8 @@ fn a_missed_view_re_renders_the_tooltip_when_the_app_answers() {
     );
     assert_eq!(
         s.eval::<i64>("return CLEARED").unwrap(),
-        1,
-        "one setter call, one OnTooltipCleared"
+        0,
+        "empty setter and silent answer clear do not fire OnTooltipCleared"
     );
     assert!(s.take_errors().is_empty());
 }
