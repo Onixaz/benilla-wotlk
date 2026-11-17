@@ -51,6 +51,17 @@ impl LiveState for LiveView<'_, '_> {
         self.unit(guid).map(|f| f.unit_health().unwrap_or(0))
     }
 
+    fn unit_dynamic_flags(&self, guid: u64) -> Option<u32> {
+        self.unit(guid).map(|f| f.unit_dynamic_flags())
+    }
+
+    /// The type mask's player bit first, as `UnitIsGhost` tests it (`0x60f5fe`).
+    fn player_flags(&self, guid: u64) -> Option<u32> {
+        self.unit(guid)
+            .filter(|f| f.object_type() == Some(benilla_protocol::messages::ObjectType::Player))
+            .map(|f| f.player_flags())
+    }
+
     fn active_player(&self) -> Option<u64> {
         self.self_guid.as_ref()?.0
     }

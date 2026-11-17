@@ -18,6 +18,18 @@ pub trait LiveState {
     /// A held unit's health (`UNIT_FIELD_HEALTH`); `None` for a guid that is no held unit.
     fn unit_health(&self, guid: u64) -> Option<u32>;
 
+    /// A held unit's `UNIT_DYNAMIC_FLAGS`, whose `0x20` the death verbs test (`0x60f504`); `None`
+    /// for a guid that is no held unit.
+    fn unit_dynamic_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    /// A held player's `PLAYER_FLAGS`, whose ghost bit `0x10` `UnitIsGhost` tests after the type
+    /// mask's player bit (`0x60f5f8`-`0x60f612`); `None` for a guid that is no held player.
+    fn player_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
     /// The active player's guid (`0x4d3790`), `None` before our create names one.
     fn active_player(&self) -> Option<u64>;
 
@@ -206,6 +218,10 @@ pub(crate) struct TestView {
     pub control: bool,
     /// Whether the view looks through a far-sight subject.
     pub far_sight: bool,
+    /// Each held unit's `UNIT_DYNAMIC_FLAGS`, 0 when absent.
+    pub dynamic_flags: std::collections::HashMap<u64, u32>,
+    /// Each held player's `PLAYER_FLAGS`; a held unit absent here is no player.
+    pub player_flags: std::collections::HashMap<u64, u32>,
 }
 
 #[cfg(test)]
@@ -216,6 +232,19 @@ impl LiveState for TestView {
 
     fn unit_health(&self, guid: u64) -> Option<u32> {
         self.units.get(&guid).map(|u| u.1)
+    }
+
+    fn unit_dynamic_flags(&self, guid: u64) -> Option<u32> {
+        self.units
+            .contains_key(&guid)
+            .then(|| self.dynamic_flags.get(&guid).copied().unwrap_or(0))
+    }
+
+    fn player_flags(&self, guid: u64) -> Option<u32> {
+        self.units
+            .contains_key(&guid)
+            .then(|| self.player_flags.get(&guid).copied())
+            .flatten()
     }
 
     fn active_player(&self) -> Option<u64> {

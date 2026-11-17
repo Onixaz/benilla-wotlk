@@ -44,6 +44,7 @@ local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
+    { "isdead", function() return UnitIsDead("player") end },
     { "ghost", function() return UnitIsGhost("player") end },
     { "arena", function() return IsActiveBattlefieldArena() end },
     { "mounted", function() return IsMounted() end },
@@ -478,11 +479,11 @@ fn reload_fires_the_load_events_again() {
     );
 }
 
-/// Today each death event reads the previous state (`PLAYER_DEAD` with `UnitIsDeadOrGhost` false):
-/// the death feed fires before the unit feed pushes the health and flags.
+/// `UnitIsDead` (`0x60f480`), `UnitIsDeadOrGhost` (`0x60f680`) and `UnitIsGhost` (`0x60f580`) read
+/// the held unit at call time, so each death event reads the update its handler just applied.
 #[test]
 fn death_release_and_resurrection() {
-    let Some(mut rig) = Rig::login(&[]) else {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     let events = &[
@@ -491,7 +492,7 @@ fn death_release_and_resurrection() {
         "PLAYER_UNGHOST",
         "UNIT_HEALTH",
     ];
-    let verbs = &["dead", "ghost", "popup"];
+    let verbs = &["isdead", "dead", "ghost", "popup"];
     let died = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 3);
     let released = rig.packets(
         vec![self_values(&[
@@ -510,22 +511,22 @@ fn death_release_and_resurrection() {
     assert_eq!(
         pin(&died, events, verbs),
         vec![
-            "PLAYER_DEAD | dead=nil ghost=nil popup=You have died. Release to the nearest graveyard?",
-            "UNIT_HEALTH player | dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
+            "PLAYER_DEAD | isdead=1 dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
+            "UNIT_HEALTH player | isdead=1 dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
         ]
     );
     assert_eq!(
         pin(&released, events, verbs),
         vec![
-            "PLAYER_ALIVE | dead=1 ghost=nil popup=nil",
-            "UNIT_HEALTH player | dead=1 ghost=1 popup=nil",
+            "PLAYER_ALIVE | isdead=nil dead=1 ghost=1 popup=nil",
+            "UNIT_HEALTH player | isdead=nil dead=1 ghost=1 popup=nil",
         ]
     );
     assert_eq!(
         pin(&revived, events, verbs),
         vec![
-            "PLAYER_UNGHOST | dead=1 ghost=1 popup=nil",
-            "UNIT_HEALTH player | dead=nil ghost=nil popup=nil",
+            "PLAYER_UNGHOST | isdead=nil dead=nil ghost=nil popup=nil",
+            "UNIT_HEALTH player | isdead=nil dead=nil ghost=nil popup=nil",
         ]
     );
 }
