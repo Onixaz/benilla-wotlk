@@ -19,8 +19,9 @@ use benilla_protocol::messages::{
     BattlefieldList, BattlefieldMgrNotice, BattlefieldStatus, GroupJoinedBattleground,
 };
 use benilla_ui::script::{
-    BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldQueueSlot,
-    BattlefieldRewardView, BattlemasterRow, ScriptValue, UiScript, WorldPvpQueueView,
+    BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldQueueSlot,
+    BattlefieldRewardView, BattlegroundType, BattlemasterRow, ScriptValue, UiScript,
+    WorldPvpQueueView,
 };
 
 use crate::names::NameCache;
@@ -51,6 +52,9 @@ const PLAYER_FLAGS_GHOST: u32 = 0x10;
 /// A battleground map's `InstanceType`.
 const INSTANCE_TYPE_BATTLEGROUND: u32 = 3;
 
+/// An arena map's `InstanceType`.
+const INSTANCE_TYPE_ARENA: u32 = 4;
+
 /// `AreaTable.dbc`'s world-PvP flag, `CanHearthAndResurrectFromArea`'s test (`0x54c810`).
 const AREA_FLAG_HEARTH_AND_RESURRECT: u32 = 0x0800_0000;
 
@@ -66,6 +70,9 @@ pub(crate) struct BattlefieldQueue {
     active_map: u32,
     /// The arena faction (`0xbea54a`).
     arena_faction: u8,
+    /// The active map's `InstanceType` (`0xbea570`): set by status 3, cleared only by the queue-0
+    /// arm on the active slot (`0x54b17e`) and the world leave (`0x54e37d`).
+    instance_type: u32,
     /// The instance's expiration and start time, the second kept as the status's arrival
     /// and the wire's elapsed span so no `Instant` precedes the clock's origin.
     instance_expiration: Option<Instant>,
@@ -73,35 +80,47 @@ pub(crate) struct BattlefieldQueue {
 }
 
 impl BattlefieldQueue {
-    /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`).
-    pub(crate) fn apply(&mut self, status: BattlefieldStatus) {
-        self.apply_at(status, Instant::now());
+    /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`) with the map's instance type; whether the queue-0
+    /// arm cleared the active slot.
+    pub(crate) fn apply(&mut self, status: BattlefieldStatus, instance_type: Option<u32>) -> bool {
+        self.apply_at(status, instance_type, Instant::now())
     }
 
-    fn apply_at(&mut self, status: BattlefieldStatus, now: Instant) {
+    fn apply_at(
+        &mut self,
+        status: BattlefieldStatus,
+        instance_type: Option<u32>,
+        now: Instant,
+    ) -> bool {
         let index = status.slot as usize;
         if index >= self.slots.len() {
-            return;
+            return false;
         }
         if status.queue == 0 {
-            if self.active == Some(index) {
+            let active = self.active == Some(index);
+            if active {
                 self.instance_expiration = None;
                 self.run_started = None;
                 self.active_map = 0;
+                self.instance_type = 0;
                 self.active = None;
             }
             self.slots[index] = None;
-            return;
+            return active;
         }
         if let Some(a) = status.active {
             self.active_map = a.map_id;
+            // A map with no row keeps the type (`0x54afad`).
+            if let Some(t) = instance_type {
+                self.instance_type = t;
+            }
             let ms = |v: u32| Duration::from_millis(u64::from(v));
             self.instance_expiration = (a.shutdown_ms != 0).then(|| now + ms(a.shutdown_ms));
             self.run_started = (a.run_ms != 0).then(|| (now, ms(a.run_ms)));
             self.arena_faction = a.arena_faction;
             self.active = Some(index);
         } else {
-            // Any other status zeroes the instance clocks, whichever slot it names (`0x54b0fd`).
+            // Any other status zeroes the instance clocks, whichever slot it names (`0x54b0f2`).
             self.instance_expiration = None;
             self.run_started = None;
             if self.active == Some(index) {
@@ -109,6 +128,17 @@ impl BattlefieldQueue {
             }
         }
         self.slots[index] = Some((status, now));
+        false
+    }
+
+    /// Whether the active map is an arena (`[0xbea570] == 4`).
+    pub(crate) fn in_arena(&self) -> bool {
+        self.instance_type == INSTANCE_TYPE_ARENA
+    }
+
+    /// The world leave (`0x54e330`) zeroes the instance type (`0x54e37d`).
+    pub(crate) fn leave_world(&mut self) {
+        self.instance_type = 0;
     }
 
     /// The world-enter reset (`0x54ca50`): both statuses go to none until the server answers the
@@ -126,6 +156,20 @@ impl BattlefieldQueue {
     /// The map of the instance the player is in, `None` outside one.
     pub(crate) fn active_map(&self) -> Option<u32> {
         self.active.map(|_| self.active_map)
+    }
+
+    /// The active map id (`0xbea564`), 0 once the queue-0 arm clears it.
+    pub(crate) fn active_map_id(&self) -> u32 {
+        self.active_map
+    }
+
+    /// The active slot's battleground type (`0x54cf75`), 0 without an active slot.
+    pub(crate) fn active_bg_type(&self) -> u32 {
+        self.active
+            .and_then(|i| self.slots[i].as_ref())
+            .map_or(0, |(s, _)| {
+                benilla_protocol::messages::queue_bg_type(s.queue)
+            })
     }
 
     /// Our arena side from the active status, which a streamed player's is compared against.
@@ -338,40 +382,39 @@ fn side(store: &ObjectStore) -> Option<usize> {
     }
 }
 
-/// Each `BattlemasterList.dbc` row resolved for this player: the bracket for their level, the
+/// One `BattlemasterList.dbc` row resolved for this player: the bracket for their level, the
 /// holiday's world state and their side's map description.
-fn battlemaster_rows(
+fn battlemaster_row(
     table: &BattlemasterCatalog,
+    r: &benilla_formats::BattlemasterRec,
     maps: Option<&MapCatalog>,
     level: u32,
     side: Option<usize>,
     states: Option<&WorldStates>,
-) -> Vec<BattlemasterRow> {
-    table
-        .rows()
-        .iter()
-        .map(|r| {
-            let map = u32::try_from(r.map_ids[0]).ok();
-            let has_map = map.is_some_and(|m| maps.is_some_and(|c| c.instance_type(m).is_some()));
-            BattlemasterRow {
-                id: r.id,
-                name: r.name.clone(),
-                instance_type: r.instance_type,
-                max_group_size: r.max_group_size,
-                groups_allowed: r.groups_allowed,
-                min_level: r.min_level,
-                can_enter: table.bracket_for_level(r, level).is_some(),
-                holiday: r.holiday_world_state != 0
-                    && states.is_some_and(|s| s.get(r.holiday_world_state) != 0),
-                description: side.map(|s| {
-                    map.and_then(|m| maps?.description(m, s))
-                        .unwrap_or_default()
-                        .to_string()
-                }),
-                has_map,
-            }
-        })
-        .collect()
+) -> BattlemasterRow {
+    let map = u32::try_from(r.map_ids[0]).ok();
+    let has_map = map.is_some_and(|m| maps.is_some_and(|c| c.instance_type(m).is_some()));
+    BattlemasterRow {
+        id: r.id,
+        name: r.name.clone(),
+        instance_type: r.instance_type,
+        max_group_size: r.max_group_size,
+        groups_allowed: r.groups_allowed,
+        min_level: r.min_level,
+        can_enter: table.bracket_for_level(r, level).is_some(),
+        holiday: holiday(r, states),
+        description: side.map(|s| {
+            map.and_then(|m| maps?.description(m, s))
+                .unwrap_or_default()
+                .to_string()
+        }),
+        has_map,
+    }
+}
+
+/// The row's holiday world state is set.
+fn holiday(r: &benilla_formats::BattlemasterRec, states: Option<&WorldStates>) -> bool {
+    r.holiday_world_state != 0 && states.is_some_and(|s| s.get(r.holiday_world_state) != 0)
 }
 
 /// `GetBattlefieldStatus`' name for a slot (`0x54bcc0`): an invitation's map (the random
@@ -439,8 +482,8 @@ fn slot_view(
     view
 }
 
-/// `AcceptBattlefieldPort`'s refusals (`0x54da10`) in its order, skipped on a battleground map. The
-/// transport and fatigue legs are not modelled: the server refuses the port on its own there.
+/// `AcceptBattlefieldPort`'s refusals (`0x54da10`) in its order, skipped on a battleground map; the
+/// VM reads the fatigue leg last (`0x54dbab`).
 fn port_refusal(
     store: &ObjectStore,
     player: Option<&Player>,
@@ -458,6 +501,9 @@ fn port_refusal(
     }
     if player.is_some_and(Player::is_airborne) {
         return Some("ERR_NOT_WHILE_FALLING");
+    }
+    if player.is_some_and(Player::on_transport) {
+        return Some("ERR_CLIENT_LOCKED_OUT");
     }
     None
 }
@@ -480,28 +526,37 @@ pub(crate) struct BattlefieldView<'w, 's> {
 }
 
 impl BattlefieldView<'_, '_> {
-    /// The slots and clocks at this moment, the active instance and the gates.
-    pub(crate) fn frame(&self) -> BattlefieldFrame {
-        let Some(queue) = self.queue.as_deref() else {
-            return BattlefieldFrame::default();
-        };
-        let now = Instant::now();
+    /// One slot at this moment (`0x54bc30`), `None` off the two.
+    pub(crate) fn slot(&self, index: usize) -> Option<BattlefieldQueueSlot> {
+        if index >= 2 {
+            return None;
+        }
+        let slot = self.queue.as_deref().and_then(|q| q.slots[index].as_ref());
+        let active_map = self.queue.as_deref().map_or(0, |q| q.active_map);
         let table = self.table.as_deref().map(|t| &t.0);
         let maps = self.maps.as_deref().map(|m| &m.0);
-        let instance_type = (queue.active_map != 0)
-            .then(|| maps.and_then(|m| m.instance_type(queue.active_map)))
-            .flatten()
-            .unwrap_or(0);
-        let area_id = self.area.as_deref().and_then(|a| a.0).unwrap_or(0);
-        // The current-map arena test (`0x54a700`) despite its name tests for a battleground map,
-        // type 3.
-        let on_battleground_map = maps
-            .zip(self.map.as_deref())
-            .and_then(|(m, id)| m.instance_type(id.0))
-            == Some(INSTANCE_TYPE_BATTLEGROUND);
+        Some(slot_view(slot, active_map, table, maps, Instant::now()))
+    }
+
+    /// The active instance's globals at this moment.
+    pub(crate) fn instance(&self) -> BattlefieldInstance {
+        let Some(queue) = self.queue.as_deref() else {
+            return BattlefieldInstance::default();
+        };
+        let now = Instant::now();
+        BattlefieldInstance {
+            active: queue.active.map(|i| i as u8),
+            instance_type: queue.instance_type,
+            arena_faction: queue.arena_faction,
+            instance_expiration_ms: queue.instance_expiration_ms(now),
+            run_time_ms: queue.run_time_ms(now),
+        }
+    }
+
+    /// The world-PvP slot (`0xbea4a8`) against the UI clock, `time()` plus the server's offset
+    /// (`0x548700`).
+    pub(crate) fn world_pvp(&self) -> WorldPvpQueueView {
         let world_pvp = self.world_pvp.as_deref().map(|w| w.0).unwrap_or_default();
-        // The UI clock, `time()` plus the server's offset (`0x548700`), as
-        // `GetWintergraspWaitTime` reads it.
         let ui_now = self.ui_clock.as_deref().map_or_else(
             || {
                 std::time::SystemTime::now()
@@ -510,46 +565,72 @@ impl BattlefieldView<'_, '_> {
             },
             crate::ui_notices::UiClock::now,
         );
-        let areas = self.areas.as_deref();
-        BattlefieldFrame {
-            slots: [0, 1]
-                .map(|i| slot_view(queue.slots[i].as_ref(), queue.active_map, table, maps, now)),
-            active: queue.active.map(|i| i as u8),
-            instance_type,
-            arena_faction: queue.arena_faction,
-            instance_expiration_ms: queue.instance_expiration_ms(now),
-            run_time_ms: queue.run_time_ms(now),
-            world_pvp: WorldPvpQueueView {
-                queue_id: world_pvp.queue_id as i32,
-                status: world_pvp.status,
-                area_name: areas
-                    .and_then(|a| a.0.name(world_pvp.area_id))
-                    .map(str::to_string),
-                expire_in: (world_pvp.expire as i32).wrapping_sub(ui_now),
-            },
-            can_hearth_and_resurrect: areas
-                .and_then(|a| a.0.get(area_id))
-                .is_some_and(|r| r.flags & AREA_FLAG_HEARTH_AND_RESURRECT != 0),
-            port_refusal: self
-                .me
-                .iter()
-                .next()
-                .and_then(|s| port_refusal(s, self.player.as_deref(), on_battleground_map)),
+        WorldPvpQueueView {
+            queue_id: world_pvp.queue_id as i32,
+            status: world_pvp.status,
+            area_name: self
+                .areas
+                .as_deref()
+                .and_then(|a| a.0.name(world_pvp.area_id))
+                .map(str::to_string),
+            expire_in: (world_pvp.expire as i32).wrapping_sub(ui_now),
         }
     }
 
-    /// `BattlemasterList.dbc` resolved for us now: none before the table loads or our create.
-    pub(crate) fn rows(&self) -> Vec<BattlemasterRow> {
-        let (Some(table), Some(store)) = (self.table.as_deref(), self.me.iter().next()) else {
-            return Vec::new();
-        };
-        battlemaster_rows(
-            &table.0,
+    /// The current area's flags carry `0x8000000` (`0x54c810`).
+    pub(crate) fn can_hearth_and_resurrect(&self) -> bool {
+        let area_id = self.area.as_deref().and_then(|a| a.0).unwrap_or(0);
+        self.areas
+            .as_deref()
+            .and_then(|a| a.0.get(area_id))
+            .is_some_and(|r| r.flags & AREA_FLAG_HEARTH_AND_RESURRECT != 0)
+    }
+
+    /// The first of `AcceptBattlefieldPort`'s refusals we now meet; the current-map test
+    /// (`0x54a700`) despite its name tests for a battleground map, type 3.
+    pub(crate) fn port_refusal(&self) -> Option<&'static str> {
+        let maps = self.maps.as_deref().map(|m| &m.0);
+        let on_battleground_map = maps
+            .zip(self.map.as_deref())
+            .and_then(|(m, id)| m.instance_type(id.0))
+            == Some(INSTANCE_TYPE_BATTLEGROUND);
+        self.me
+            .iter()
+            .next()
+            .and_then(|s| port_refusal(s, self.player.as_deref(), on_battleground_map))
+    }
+
+    /// `BattlemasterList.dbc`'s row `id` resolved for us now: none before the table loads or our
+    /// create.
+    pub(crate) fn row(&self, id: u32) -> Option<BattlemasterRow> {
+        let table = &self.table.as_deref()?.0;
+        let store = self.me.iter().next()?;
+        Some(battlemaster_row(
+            table,
+            table.get(id)?,
             self.maps.as_deref().map(|m| &m.0),
             store.0.unit_level().unwrap_or(0),
             side(store),
             self.states.as_deref(),
-        )
+        ))
+    }
+
+    /// The battleground rows the type list sorts (`0x54a650`), none before our create.
+    pub(crate) fn types(&self) -> Vec<BattlegroundType> {
+        let (Some(table), Some(_)) = (self.table.as_deref(), self.me.iter().next()) else {
+            return Vec::new();
+        };
+        table
+            .0
+            .rows()
+            .iter()
+            .filter(|r| r.instance_type == INSTANCE_TYPE_BATTLEGROUND)
+            .map(|r| BattlegroundType {
+                id: r.id,
+                min_level: r.min_level,
+                holiday: holiday(r, self.states.as_deref()),
+            })
+            .collect()
     }
 }
 
@@ -716,8 +797,14 @@ fn drain_battlefield(
 /// zeroed slots.
 pub(crate) fn zero_statuses_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
+    ports: Option<MessageReader<crate::net::WorldportMessage>>,
+    mut commands: Commands,
     queue: Option<ResMut<BattlefieldQueue>>,
 ) {
+    // A cross-map worldport leaves the world first (`0x528c30`).
+    if ports.is_some_and(|mut p| p.read().filter(|w| w.needs_ack).count() > 0) {
+        commands.queue(leave_world);
+    }
     if cascades.read().next().is_some() {
         if let Some(mut queue) = queue {
             queue.zero_statuses();
@@ -741,13 +828,35 @@ pub(crate) fn request_status_on_world_enter(
 /// selection, type and battlemaster clear, in turn with the events around it. The statuses were
 /// zeroed with the request ([`request_status_on_world_enter`]), which an answer may follow before
 /// a deferred UI load reaches this.
-fn enter_world(state: Option<ResMut<Battlefield>>, ui: Option<ResMut<UiEvents>>) {
+fn enter_world(
+    state: Option<ResMut<Battlefield>>,
+    positions: Option<ResMut<crate::ui_battlefield_positions::BattlefieldPositions>>,
+    ui: Option<ResMut<UiEvents>>,
+) {
     if let Some(mut state) = state {
         state.battlemaster = None;
+    }
+    if let Some(mut positions) = positions {
+        positions.enter_world();
     }
     if let Some(mut ui) = ui {
         ui.write(UiScript::reset_battlefield_on_world_enter);
     }
+}
+
+/// The world leave's battlefield and duel parts: the instance type and list (`0x54e330`), the
+/// arbiter and the countdown (`0x5cfa10`).
+pub(crate) fn leave_world(world: &mut World) {
+    if let Some(mut queue) = world.get_resource_mut::<BattlefieldQueue>() {
+        queue.leave_world();
+    }
+    if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
+        duel.leave_world();
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.write(UiScript::leave_battlefield_world);
+    }
+    crate::ui_script::live::fire_handler_events(world);
 }
 
 /// Queue the battlefield's world entry (`0x54ca50`) to run once the calling system's commands
@@ -759,6 +868,10 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         }
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
+        // The UI init clears the reload byte once its world entry returns (`0x52ae91`).
+        if let Some(mut reload) = world.get_resource_mut::<crate::ui_script::ReloadEntry>() {
+            reload.0 = false;
+        }
         crate::ui_script::live::fire_handler_events(world);
     });
 }
@@ -792,7 +905,7 @@ mod net {
 
     use super::{
         player_line, reward, verdict_line, Battlefield, BattlefieldListPush, BattlefieldQueue,
-        BattlemasterTable, WorldPvp,
+        BattlemasterTable, UiScript, WorldPvp,
     };
     use crate::names::NameCache;
     use crate::net::{NetCommands, NetHandlerApp, SelfPlayer};
@@ -831,9 +944,11 @@ mod net {
     pub(super) fn on_status(
         In(ev): In<SessionEvent>,
         mut queue: ResMut<BattlefieldQueue>,
+        mut positions: ResMut<crate::ui_battlefield_positions::BattlefieldPositions>,
         mut ui: ResMut<UiEvents>,
         mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
         catalog: Option<Res<crate::world_state_ui::WorldStateUiRes>>,
+        maps: Option<Res<benilla_assets::MapCatalogRes>>,
     ) {
         let SessionEvent::BattlefieldStatus(status) = ev else {
             return;
@@ -845,7 +960,15 @@ mod net {
         let held = status.queue != 0;
         let state = status.status;
         let active = status.active.is_some();
-        queue.apply(status);
+        let instance_type = status
+            .active
+            .and_then(|a| maps.as_deref()?.0.instance_type(a.map_id));
+        // The queue-0 arm on the active slot zeroes the positions and the score columns
+        // (`0x54b165`, `0x54b174`).
+        if queue.apply(status, instance_type) {
+            positions.clear_players();
+            ui.write(UiScript::clear_battlefield_score_columns);
+        }
         let mut tutorial = |id| {
             if let Some(t) = tutorials.as_mut() {
                 t.write(crate::tutorial::TutorialEvent::trigger(id));
@@ -1022,9 +1145,9 @@ mod tests {
     fn the_queue_keeps_two_slots() {
         let mut q = BattlefieldQueue::default();
         let now = Instant::now();
-        q.apply_at(status(0, 1), now);
-        q.apply_at(status(1, 1), now);
-        q.apply_at(status(2, 1), now);
+        q.apply_at(status(0, 1), None, now);
+        q.apply_at(status(1, 1), None, now);
+        q.apply_at(status(2, 1), None, now);
         assert!(
             q.slots.iter().all(Option::is_some),
             "a third slot is dropped"
@@ -1035,6 +1158,7 @@ mod tests {
                 slot: 1,
                 ..Default::default()
             },
+            None,
             now,
         );
         assert!(q.slots[1].is_none() && q.queue_word(1) == 0);
@@ -1052,7 +1176,7 @@ mod tests {
             run_ms: 30_000,
             arena_faction: 1,
         });
-        q.apply_at(active, now);
+        q.apply_at(active, None, now);
         assert_eq!(q.active_map(), Some(489));
         assert_eq!(q.active_queue(), WSG);
         let later = now + Duration::from_secs(10);
@@ -1060,7 +1184,7 @@ mod tests {
         assert_eq!(q.instance_expiration_ms(later), 110_000);
 
         // A queued status on the other slot zeroes the clocks and keeps the active index.
-        q.apply_at(status(1, 1), later);
+        q.apply_at(status(1, 1), None, later);
         assert_eq!(q.run_time_ms(later), 0);
         assert_eq!(q.active_map(), Some(489));
 
@@ -1070,7 +1194,7 @@ mod tests {
             joined_queue: 0,
             expire_ms: 80_000,
         });
-        q.apply_at(confirm.clone(), later);
+        q.apply_at(confirm.clone(), None, later);
         let v = slot_view(q.slots[1].as_ref(), q.active_map, None, None, later);
         assert_eq!((v.status, v.port_expiration_ms), (2, 80_000));
 
@@ -1079,6 +1203,7 @@ mod tests {
                 slot: 0,
                 ..Default::default()
             },
+            None,
             later,
         );
         assert_eq!(
@@ -1086,6 +1211,40 @@ mod tests {
             None,
             "clearing the active slot drops the instance"
         );
+    }
+
+    /// The instance type (`0xbea570`) outlives the active index's drop: only the queue-0 arm on
+    /// the active slot (`0x54b17e`) and the world leave (`0x54e37d`) clear it.
+    #[test]
+    fn the_arena_type_outlives_the_active_index() {
+        let mut q = BattlefieldQueue::default();
+        let now = Instant::now();
+        let mut active = status(0, 3);
+        active.active = Some(BattlefieldActive {
+            map_id: 559,
+            joined_queue: 0,
+            shutdown_ms: 0,
+            run_ms: 0,
+            arena_faction: 0,
+        });
+        assert!(!q.apply_at(active.clone(), Some(4), now));
+        assert!(q.in_arena());
+        assert!(!q.apply_at(status(0, 1), None, now), "the slot re-queued");
+        assert_eq!(q.active_map(), None, "the active index dropped");
+        assert!(q.in_arena(), "the type stays");
+        q.leave_world();
+        assert!(!q.in_arena());
+        q.apply_at(active, Some(4), now);
+        let zero = BattlefieldStatus {
+            slot: 0,
+            ..Default::default()
+        };
+        assert!(
+            q.apply_at(zero.clone(), None, now),
+            "the active slot's queue-0 arm"
+        );
+        assert!(!q.in_arena());
+        assert!(!q.apply_at(zero, None, now), "no active slot left to clear");
     }
 
     /// `0x54ca50` zeroes the statuses before it sends `CMSG_BATTLEFIELD_STATUS` (`0x54cb41`,
@@ -1106,7 +1265,7 @@ mod tests {
         let now = Instant::now();
         app.world_mut()
             .resource_mut::<BattlefieldQueue>()
-            .apply_at(status(0, 1), now);
+            .apply_at(status(0, 1), None, now);
         app.world_mut().write_message(WorldEnterCascadeMessage);
         app.update();
         assert!(matches!(
@@ -1121,7 +1280,7 @@ mod tests {
         // The answer lands, then the deferred load's world entry runs.
         app.world_mut()
             .resource_mut::<BattlefieldQueue>()
-            .apply_at(status(0, 1), now);
+            .apply_at(status(0, 1), None, now);
         app.world_mut()
             .run_system_cached(enter_world)
             .expect("the world entry runs");

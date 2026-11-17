@@ -1,46 +1,30 @@
 //! The battleground position verbs `WorldMapFrame.lua` and `Blizzard_BattlefieldMinimap.lua` poll
-//! to place teammates and the flag carriers (opcode `0x2E9`, handler `0x54b3f0`). The reference
-//! drops its party and its raid (`0x54a040`), prefers a live object's position and projects onto
-//! the active map; the app does all that and pushes the finished list here.
+//! to place teammates and the flag carriers (`MSG_BATTLEGROUND_PLAYER_POSITIONS`, `0x54b3f0`), each
+//! read through the live view when called and projected onto the displayed map here.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::number_arg;
+use super::worldmap::WorldMapPoint;
 
-/// One teammate: map-normalized position, `(0, 0)` off the displayed map, and name if known.
+/// One teammate as `GetBattlefieldPosition` reads it (`0x54c2e0`): the point and the full name.
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct BattlefieldPositionView {
-    pub uv: (f32, f32),
+pub struct BattlefieldPositionLive {
+    /// A held player's position, else the packet's at height 0, on the active map.
+    pub at: WorldMapPoint,
+    /// The name record's full name, `None` while asked.
     pub name: Option<String>,
 }
 
-/// A flag carrier: the position and the flag's token, `"AllianceFlag"` or `"HordeFlag"`
-/// (`0x54d010`).
+/// A flag carrier as `GetBattlefieldFlagPosition` reads it (`0x54dcc0`).
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct BattlefieldFlagView {
-    pub uv: (f32, f32),
-    pub token: Option<String>,
-}
-
-impl super::UiScript {
-    /// Push the positions, the up to two carriers and the active map's icon scale.
-    pub fn set_battlefield_positions(
-        &mut self,
-        players: Vec<BattlefieldPositionView>,
-        flags: Vec<BattlefieldFlagView>,
-        icon_scale: f32,
-    ) {
-        let mut model = self.model_mut();
-        model.battlefield_positions = players;
-        model.battlefield_flags = flags;
-        model.battlefield_icon_scale = icon_scale;
-    }
-
-    /// `RequestBattlefieldPositions()` calls since the last drain; the app sends at most every
-    /// 5000 ms, and only with an active slot.
-    pub fn take_battlefield_position_requests(&mut self) -> u32 {
-        self.model_ref().battlefield_position_requests.replace(0)
-    }
+pub struct BattlefieldFlagLive {
+    /// The carrier's own position (`0x5444f0`): held, or its party record's; `None` for neither.
+    pub carrier: Option<WorldMapPoint>,
+    /// The packet's position on the active map.
+    pub packet: WorldMapPoint,
+    /// `"AllianceFlag"` or `"HordeFlag"` (`0x54d010`).
+    pub token: Option<&'static str>,
 }
 
 fn three(lua: &Lua, uv: (f32, f32), third: Option<&str>) -> mlua::Result<MultiValue> {
@@ -54,85 +38,77 @@ fn three(lua: &Lua, uv: (f32, f32), third: Option<&str>) -> mlua::Result<MultiVa
     ]))
 }
 
+/// The reference's 1-based index, `(int)tonumber − 1`.
+fn index0(n: i32) -> Option<usize> {
+    usize::try_from(n.checked_sub(1)?).ok()
+}
+
+fn read<R>(f: impl FnOnce(&dyn super::LiveState) -> R) -> Option<R> {
+    super::live::read_live(f)
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     g.set(
         "GetNumBattlefieldPositions",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.battlefield_positions.len() as i64)
+        lua.create_function(|_, ()| {
+            Ok(read(|l| l.battlefield_position_count()).unwrap_or(0) as i64)
         })?,
     )?;
 
-    // Three values on every leg that does not raise: `(0, 0, nil)` off the list, 0 and below too.
+    // Three values on every leg that does not raise: `(0, 0, nil)` off the list; the point projected
+    // with no Outland hide (`0x54c4a0`).
     g.set(
         "GetBattlefieldPosition",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetBattlefieldPosition(index)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let row = usize::try_from(index)
-                .ok()
-                .and_then(|i| i.checked_sub(1))
-                .and_then(|i| model.battlefield_positions.get(i));
-            match row {
-                Some(r) => three(lua, r.uv, r.name.as_deref()),
-                None => three(lua, (0.0, 0.0), None),
-            }
+            let Some(row) =
+                index0(index).and_then(|i| read(|l| l.battlefield_position(i)).flatten())
+            else {
+                return three(lua, (0.0, 0.0), None);
+            };
+            let uv = super::worldmap::with_map(lua, |wm| wm.project(row.at).0);
+            three(lua, uv, row.name.as_deref())
         })?,
     )?;
 
     g.set(
         "GetNumBattlefieldFlagPositions",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.battlefield_flags.len() as i64)
-        })?,
+        lua.create_function(|_, ()| Ok(read(|l| l.battlefield_flag_count()).unwrap_or(0) as i64))?,
     )?;
 
+    // The carrier's blip, else on `(0, 0)` the packet's point projected (`0x54dd39`, `0x54dd81`).
     g.set(
         "GetBattlefieldFlagPosition",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetBattlefieldFlagPosition(index)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let flag = usize::try_from(index)
-                .ok()
-                .and_then(|i| i.checked_sub(1))
-                .and_then(|i| model.battlefield_flags.get(i));
-            match flag {
-                Some(f) => three(lua, f.uv, f.token.as_deref()),
-                None => three(lua, (0.0, 0.0), None),
-            }
+            let Some(flag) = index0(index).and_then(|i| read(|l| l.battlefield_flag(i)).flatten())
+            else {
+                return three(lua, (0.0, 0.0), None);
+            };
+            let uv =
+                super::worldmap::with_map(lua, |wm| match flag.carrier.map(|p| wm.blip(Some(p))) {
+                    Some(uv) if uv != (0.0, 0.0) => uv,
+                    _ => wm.project(flag.packet).0,
+                });
+            three(lua, uv, flag.token)
         })?,
     )?;
 
-    // The active map's `MinimapIconScale`, 1.0 for a missing row (`0x54c740`).
     g.set(
         "GetBattlefieldMapIconScale",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(f64::from(model.battlefield_icon_scale))
+        lua.create_function(|_, ()| {
+            Ok(f64::from(
+                read(|l| l.battlefield_icon_scale()).unwrap_or(1.0),
+            ))
         })?,
     )?;
 
     g.set(
         "RequestBattlefieldPositions",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let n = &model.battlefield_position_requests;
-            n.set(n.get() + 1);
+        lua.create_function(|_, ()| {
+            read(|l| l.request_battlefield_positions());
             Ok(())
         })?,
     )?;
@@ -170,11 +146,79 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::script::UiScript;
+    use std::cell::Cell;
 
+    use super::*;
+    use crate::script::{LiveState, UiScript};
+
+    /// Two teammates outside the group, one carrier and a count of the requests made.
+    #[derive(Default)]
+    struct View {
+        rows: Vec<BattlefieldPositionLive>,
+        flags: Vec<BattlefieldFlagLive>,
+        requests: Cell<u32>,
+    }
+
+    impl LiveState for View {
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+        fn has_control(&self) -> bool {
+            true
+        }
+        fn far_sight(&self) -> bool {
+            false
+        }
+        fn battlefield_position_count(&self) -> usize {
+            self.rows.len()
+        }
+        fn battlefield_position(&self, index: usize) -> Option<BattlefieldPositionLive> {
+            self.rows.get(index).cloned()
+        }
+        fn battlefield_flag_count(&self) -> usize {
+            self.flags.len()
+        }
+        fn battlefield_flag(&self, index: usize) -> Option<BattlefieldFlagLive> {
+            self.flags.get(index).cloned()
+        }
+        fn battlefield_icon_scale(&self) -> f32 {
+            1.25
+        }
+        fn request_battlefield_positions(&self) {
+            self.requests.set(self.requests.get() + 1);
+        }
+    }
+
+    fn view() -> View {
+        View {
+            rows: vec![
+                BattlefieldPositionLive {
+                    at: WorldMapPoint::flat(489, 1000.0, 1400.0),
+                    name: Some("Probe-Realm".into()),
+                },
+                BattlefieldPositionLive {
+                    at: WorldMapPoint::flat(489, 1100.0, 1450.0),
+                    name: None,
+                },
+            ],
+            flags: vec![BattlefieldFlagLive {
+                carrier: None,
+                packet: WorldMapPoint::flat(489, 1200.0, 1500.0),
+                token: Some("HordeFlag"),
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// Each getter reads the view lent around its call; with none lent it answers the empty list.
     #[test]
-    fn the_getters_answer_three_values_and_zero_off_the_list() {
+    fn the_getters_read_the_view_at_the_call_and_answer_three_values() {
         let mut s = UiScript::new().unwrap();
         assert_eq!(
             s.eval::<i64>("return GetNumBattlefieldPositions()")
@@ -182,54 +226,54 @@ mod tests {
             0
         );
         assert_eq!(s.arity("GetBattlefieldPosition(1)").unwrap(), 3);
-        s.set_battlefield_positions(
-            vec![
-                BattlefieldPositionView {
-                    uv: (0.25, 0.5),
-                    name: Some("Probe-Realm".into()),
-                },
-                BattlefieldPositionView {
-                    uv: (0.75, 0.125),
-                    name: None,
-                },
-            ],
-            vec![BattlefieldFlagView {
-                uv: (0.375, 0.625),
-                token: Some("HordeFlag".into()),
-            }],
-            1.25,
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetNumBattlefieldPositions()")
-                .unwrap(),
-            2
-        );
-        let got = s
-            .eval::<String>(
-                "local x, y, n = GetBattlefieldPosition(1) return x .. '|' .. y .. '|' .. n",
-            )
-            .unwrap();
-        assert_eq!(got, "0.25|0.5|Probe-Realm");
-        assert!(
-            s.eval::<bool>(
-                "local x, y, n = GetBattlefieldPosition(2) return x == 0.75 and n == nil"
-            )
-            .unwrap(),
-            "a name the cache has not answered is nil"
-        );
-        for i in ["0", "3", "-1", "'2.9'"] {
+        let view = view();
+        s.with_live(&view, |s| {
+            assert_eq!(
+                s.eval::<i64>("return GetNumBattlefieldPositions()")
+                    .unwrap(),
+                2
+            );
             let got = s
-                .eval::<String>(&format!(
-                    "local x, y, n = GetBattlefieldPosition({i}) return x .. '|' .. y .. '|' .. tostring(n)"
-                ))
+                .eval::<String>(
+                    "local x, y, n = GetBattlefieldPosition(1) return x .. '|' .. y .. '|' .. tostring(n)",
+                )
                 .unwrap();
-            let want = if i == "'2.9'" {
-                "0.75|0.125|nil"
-            } else {
-                "0|0|nil"
-            };
-            assert_eq!(got, want, "index {i}");
-        }
+            assert_eq!(got, "0|0|Probe-Realm", "off the displayed map");
+            for (i, want) in [("2", "nil"), ("'2.9'", "nil"), ("0", "nil"), ("3", "nil"), ("-1", "nil")] {
+                let got = s
+                    .eval::<String>(&format!(
+                        "local x, y, n = GetBattlefieldPosition({i}) return tostring(n)"
+                    ))
+                    .unwrap();
+                assert_eq!(got, want, "index {i}");
+            }
+            assert_eq!(
+                s.eval::<i64>("return GetNumBattlefieldFlagPositions()")
+                    .unwrap(),
+                1
+            );
+            let got = s
+                .eval::<String>(
+                    "local x, y, t = GetBattlefieldFlagPosition(1) return x .. '|' .. y .. '|' .. t",
+                )
+                .unwrap();
+            assert_eq!(got, "0|0|HordeFlag");
+            assert!(s
+                .eval::<bool>(
+                    "local x, y, t = GetBattlefieldFlagPosition(2) return x == 0 and t == nil"
+                )
+                .unwrap());
+            assert!(
+                (s.eval::<f64>("return GetBattlefieldMapIconScale()")
+                    .unwrap()
+                    - 1.25)
+                    .abs()
+                    < 1e-6
+            );
+            s.run("RequestBattlefieldPositions() RequestBattlefieldPositions()")
+                .unwrap();
+        });
+        assert_eq!(view.requests.get(), 2, "each call reaches the view at once");
         let err = s
             .run("GetBattlefieldPosition(nil)")
             .unwrap_err()
@@ -238,23 +282,6 @@ mod tests {
             err.contains("Usage: GetBattlefieldPosition(index)"),
             "{err}"
         );
-
-        assert_eq!(
-            s.eval::<i64>("return GetNumBattlefieldFlagPositions()")
-                .unwrap(),
-            1
-        );
-        let got = s
-            .eval::<String>(
-                "local x, y, t = GetBattlefieldFlagPosition(1) return x .. '|' .. y .. '|' .. t",
-            )
-            .unwrap();
-        assert_eq!(got, "0.375|0.625|HordeFlag");
-        assert!(s
-            .eval::<bool>(
-                "local x, y, t = GetBattlefieldFlagPosition(2) return x == 0 and t == nil"
-            )
-            .unwrap());
         let err = s
             .run("GetBattlefieldFlagPosition('q')")
             .unwrap_err()
@@ -263,16 +290,10 @@ mod tests {
             err.contains("Usage: GetBattlefieldFlagPosition(index)"),
             "{err}"
         );
-        assert!(
-            (s.eval::<f64>("return GetBattlefieldMapIconScale()")
-                .unwrap()
-                - 1.25)
-                .abs()
-                < 1e-6
+        assert_eq!(
+            s.eval::<f64>("return GetBattlefieldMapIconScale()")
+                .unwrap(),
+            1.0
         );
-        s.run("RequestBattlefieldPositions() RequestBattlefieldPositions()")
-            .unwrap();
-        assert_eq!(s.take_battlefield_position_requests(), 2);
-        assert_eq!(s.take_battlefield_position_requests(), 0);
     }
 }

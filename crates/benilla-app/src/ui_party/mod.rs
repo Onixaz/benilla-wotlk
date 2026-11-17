@@ -378,6 +378,20 @@ impl GroupState {
         self.members.iter().any(|m| m.guid == guid)
     }
 
+    /// A nonzero `guid` that is ours or in a party slot (`0x52c680`), or in the raid roster
+    /// (`0x5726f0`).
+    pub(crate) fn in_party_or_raid(&self, me: Option<u64>, guid: u64) -> bool {
+        guid != 0
+            && (me == Some(guid)
+                || !self.slots_emptied && self.party_slots().any(|m| m.guid == guid)
+                || self.in_raid_roster(me, guid))
+    }
+
+    /// A nonzero `guid` in the raid roster, us included (`0x5726f0`).
+    pub(crate) fn in_raid_roster(&self, me: Option<u64>, guid: u64) -> bool {
+        guid != 0 && feed::raid_rows(self, me).any(|g| g == guid)
+    }
+
     /// `SMSG_GROUP_INVITE` (`0x6df1a0`): the inviter line, and the popup only when we can accept.
     pub fn apply_invited(&mut self, can_accept: bool, inviter: &str) -> Vec<UiError> {
         if !can_accept {

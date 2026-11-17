@@ -652,13 +652,6 @@ pub(crate) struct Model {
     pub(crate) battlefield_score_requests: u32,
     /// The battlefield queue mirror: types, list, selection, slots and the sends.
     pub(crate) battlefield: super::battlefield_queue::BattlefieldInfo,
-    /// Teammates' map positions, the flag carriers, the icon scale and position requests.
-    pub(crate) battlefield_positions: Vec<super::battlefield_positions::BattlefieldPositionView>,
-    pub(crate) battlefield_flags: Vec<super::battlefield_positions::BattlefieldFlagView>,
-    pub(crate) battlefield_icon_scale: f32,
-    /// A `Cell`: the stock `UIParent` OnUpdate calls the verb every frame and the app drains it
-    /// every frame, and neither is anything drawn (`ModelCell`).
-    pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
     /// Acknowledged tutorials, `None` before `SMSG_TUTORIAL_FLAGS`; all `TutorialsEnabled()` reads.
     pub(crate) tutorial_bank: Option<Vec<u8>>,
     /// The completed tutorials, in completion order, `id + 1` each.
@@ -1622,10 +1615,6 @@ impl Model {
             battlefield_board: Default::default(),
             battlefield_score_requests: 0,
             battlefield: Default::default(),
-            battlefield_positions: Vec::new(),
-            battlefield_flags: Vec::new(),
-            battlefield_icon_scale: 1.0,
-            battlefield_position_requests: std::cell::Cell::new(0),
             tutorial_bank: None,
             tutorials_completed: Vec::new(),
             tutorial_flag_requests: Vec::new(),

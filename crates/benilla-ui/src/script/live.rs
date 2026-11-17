@@ -108,15 +108,38 @@ pub trait LiveState {
         0
     }
 
-    /// The battlefield queue as its verbs read it when called: the two slots (`0xbea4b8`), the
-    /// active instance (`0xacd16c`, `0xbea570`), the world-PvP queue (`0xbea4a8`) and the gates.
-    fn battlefield_frame(&self) -> super::BattlefieldFrame {
-        super::BattlefieldFrame::default()
+    /// Queue slot `index` (`0xbea4b8`) at the call, `None` off the two.
+    fn battlefield_slot(&self, index: usize) -> Option<super::BattlefieldQueueSlot> {
+        (index < 2).then(Default::default)
     }
 
-    /// `BattlemasterList.dbc` resolved for the player when called: the level's bracket, the side's
-    /// map description and the holiday world states.
-    fn battlemaster_rows(&self) -> Vec<super::BattlemasterRow> {
+    /// The active instance's globals at the call (`0xacd16c`, `0xbea570`).
+    fn battlefield_instance(&self) -> super::BattlefieldInstance {
+        super::BattlefieldInstance::default()
+    }
+
+    /// The world-PvP queue (`0xbea4a8`) at the call.
+    fn world_pvp_queue(&self) -> super::WorldPvpQueueView {
+        super::WorldPvpQueueView::default()
+    }
+
+    /// The current area's flags carry `0x8000000` (`0x54c810`).
+    fn can_hearth_and_resurrect(&self) -> bool {
+        false
+    }
+
+    /// The first of `AcceptBattlefieldPort`'s refusals we now meet (`0x54da10`).
+    fn battlefield_port_refusal(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// `BattlemasterList.dbc`'s row `id` resolved for the player at the call.
+    fn battlemaster_row(&self, _id: u32) -> Option<super::BattlemasterRow> {
+        None
+    }
+
+    /// The battleground rows the type list sorts (`0x54a650`).
+    fn battleground_types(&self) -> Vec<super::BattlegroundType> {
         Vec::new()
     }
 
@@ -158,6 +181,35 @@ pub trait LiveState {
     fn arena_team_record(&self, _team_id: u32) -> Option<super::ArenaTeamRecordView> {
         None
     }
+
+    /// The positions list's entries outside our party and raid (`0x54a040`).
+    fn battlefield_position_count(&self) -> usize {
+        0
+    }
+
+    /// The `index`th entry outside our party and raid (`0x54c2e0`), its name asked on a miss.
+    fn battlefield_position(&self, _index: usize) -> Option<super::BattlefieldPositionLive> {
+        None
+    }
+
+    /// The flag carriers held, 2 when the second is (`0x54a0e0`).
+    fn battlefield_flag_count(&self) -> usize {
+        0
+    }
+
+    /// The `index`th flag carrier's sources and token (`0x54dcc0`).
+    fn battlefield_flag(&self, _index: usize) -> Option<super::BattlefieldFlagLive> {
+        None
+    }
+
+    /// The active map's `MinimapIconScale`, 1 without a row (`0x54c740`).
+    fn battlefield_icon_scale(&self) -> f32 {
+        1.0
+    }
+
+    /// `RequestBattlefieldPositions` (`0x54cf60`): the list cleared without an active slot, else
+    /// the send at most every 5000 ms.
+    fn request_battlefield_positions(&self) {}
 }
 
 /// A lent view's address, its lifetime erased.

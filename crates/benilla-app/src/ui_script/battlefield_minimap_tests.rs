@@ -3,9 +3,10 @@
 //! addon reads globals from many of its files.
 
 use benilla_ui::script::{
-    BattlefieldFlagView, BattlefieldPositionView, QuadContent, UiScript, UnitState,
-    WorldMapCatalog, WorldMapContinentView, WorldMapFeed, WorldMapOverlayView, WorldMapPlayer,
-    WorldMapPoiView, WorldMapPoint, WorldMapZoneView, WorldStateUiView, ARROW_MODEL,
+    BattlefieldFlagLive, BattlefieldPositionLive, LiveLoan, LiveState, QuadContent, UiScript,
+    UnitState, WorldMapCatalog, WorldMapContinentView, WorldMapFeed, WorldMapOverlayView,
+    WorldMapPlayer, WorldMapPoiView, WorldMapPoint, WorldMapZoneView, WorldStateUiView,
+    ARROW_MODEL,
 };
 
 fn quiet(s: &UiScript) {
@@ -78,6 +79,53 @@ fn at((u, v): (f32, f32)) -> WorldMapPoint {
         y: 1000.0 * (1.0 - u),
         z: 0.0,
     }
+}
+
+/// The battleground positions the position verbs read when called, as the app lends them.
+#[derive(Default)]
+struct Positions {
+    players: Vec<BattlefieldPositionLive>,
+    flags: Vec<BattlefieldFlagLive>,
+    icon_scale: f32,
+}
+
+impl LiveState for Positions {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn battlefield_position_count(&self) -> usize {
+        self.players.len()
+    }
+    fn battlefield_position(&self, index: usize) -> Option<BattlefieldPositionLive> {
+        self.players.get(index).cloned()
+    }
+    fn battlefield_flag_count(&self) -> usize {
+        self.flags.len()
+    }
+    fn battlefield_flag(&self, index: usize) -> Option<BattlefieldFlagLive> {
+        self.flags.get(index).cloned()
+    }
+    fn battlefield_icon_scale(&self) -> f32 {
+        self.icon_scale
+    }
+}
+
+/// Lend `view` until the loan drops.
+fn lend(view: Positions) -> LiveLoan<Positions> {
+    // SAFETY: each test drops its loan on its own thread, before its next one.
+    unsafe { LiveLoan::new(view) }
 }
 
 /// The player in Warsong Gulch at `uv`, off the map at `None`, with party members at theirs.
@@ -491,8 +539,12 @@ fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
     assert_eq!(num(&s, "BattlefieldMinimapPOI1:GetWidth()"), 12.0);
 
     // A battleground whose map row carries a bigger `MinimapIconScale` grows every icon by it.
-    s.set_battlefield_positions(Vec::new(), Vec::new(), 1.5);
+    let loan = lend(Positions {
+        icon_scale: 1.5,
+        ..Default::default()
+    });
     s.run("BattlefieldMinimap_Update()").unwrap();
+    drop(loan);
     assert_eq!(
         (
             num(&s, "BattlefieldMinimapPOI1:GetWidth()"),
@@ -529,23 +581,24 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
     let mut s = session();
     open(&mut s);
 
-    s.set_battlefield_positions(
-        vec![
-            BattlefieldPositionView {
-                uv: (0.25, 0.75),
+    let loan = lend(Positions {
+        players: vec![
+            BattlefieldPositionLive {
+                at: at((0.25, 0.75)),
                 name: Some("Alliedguy".into()),
             },
-            BattlefieldPositionView {
-                uv: (0.0, 0.0),
+            BattlefieldPositionLive {
+                at: WorldMapPoint::flat(0, 0.0, 0.0),
                 name: None,
             },
         ],
-        vec![BattlefieldFlagView {
-            uv: (0.4, 0.6),
-            token: Some("HordeFlag".into()),
+        flags: vec![BattlefieldFlagLive {
+            carrier: None,
+            packet: at((0.4, 0.6)),
+            token: Some("HordeFlag"),
         }],
-        1.0,
-    );
+        icon_scale: 1.0,
+    });
     feed(&mut s, Some((0.5, 0.25)), 0.0, vec![Some((0.1, 0.2)), None]);
     update(&mut s, 0.1);
 
@@ -636,7 +689,11 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
         .unwrap();
     update(&mut s, 0.1);
     assert!(shown(&s, "BattlefieldMinimapRaid1"));
-    s.set_battlefield_positions(Vec::new(), Vec::new(), 1.0);
+    drop(loan);
+    let _loan = lend(Positions {
+        icon_scale: 1.0,
+        ..Default::default()
+    });
     update(&mut s, 0.1);
     assert!(
         !shown(&s, "BattlefieldMinimapRaid1") && !shown(&s, "BattlefieldMinimapFlag1"),

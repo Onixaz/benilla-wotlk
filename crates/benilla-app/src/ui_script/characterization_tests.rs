@@ -87,6 +87,9 @@ local VERBS = {
     { "members1", function() return GetNumArenaTeamMembers(1) end },
     { "inspteam", function() return (GetInspectArenaTeamData(1)) end },
     { "a2name", function() return (UnitName("arena2")) end },
+    { "bfpos", function() return GetNumBattlefieldPositions() end },
+    { "bfpos1", function() return (select(3, GetBattlefieldPosition(1))) end },
+    { "bfstats", function() return GetNumBattlefieldStats() end },
 }
 local function answers()
     local verbs = {}
@@ -1453,19 +1456,22 @@ fn the_death_verbs_read_the_world_between_frames() {
     rig.app
         .world_mut()
         .resource_mut::<crate::ui_battlefield::BattlefieldQueue>()
-        .apply(BattlefieldStatus {
-            slot: 0,
-            queue: (6 << 16) | 2,
-            status: 3,
-            active: Some(BattlefieldActive {
-                map_id: 559,
-                joined_queue: 0,
-                shutdown_ms: 0,
-                run_ms: 30_000,
-                arena_faction: 0,
-            }),
-            ..Default::default()
-        });
+        .apply(
+            BattlefieldStatus {
+                slot: 0,
+                queue: (6 << 16) | 2,
+                status: 3,
+                active: Some(BattlefieldActive {
+                    map_id: 559,
+                    joined_queue: 0,
+                    shutdown_ms: 0,
+                    run_ms: 30_000,
+                    arena_faction: 0,
+                }),
+                ..Default::default()
+            },
+            Some(4),
+        );
     assert_eq!(
         read(&mut rig, "restimer"),
         "nil",
@@ -1633,7 +1639,8 @@ fn pvp_log(guid: u64) -> SessionEvent {
 /// `MSG_PVP_LOG_DATA` with every name known runs the rebuild from its handler (`0x54d495`), so its
 /// `UPDATE_BATTLEFIELD_SCORE` reads the log just stored; a status 3 later in the same frame
 /// rebuilds that same log (`0x54b0d6`) before its `UPDATE_BATTLEFIELD_STATUS` (`0x54b1a9`). The
-/// last line is the stock score frame's own filter call on that status (`0x54c120`).
+/// stock score frame's filter call inside the log's event runs the rebuild there and then
+/// (`0x54c120` -> `0x54aa30`), so its event nests ahead of the status.
 #[test]
 fn a_log_and_a_status_in_one_frame_read_the_log_just_stored() {
     use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
@@ -1662,9 +1669,9 @@ fn a_log_and_a_status_in_one_frame_read_the_log_just_stored() {
         ),
         vec![
             "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=none",
+            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=none",
             "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=active",
             "UPDATE_BATTLEFIELD_STATUS 1 | scores=1 winner=1 score1=Rival bf1=active",
-            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=active",
         ]
     );
 }
@@ -1704,8 +1711,8 @@ fn the_score_event_waits_for_the_last_name() {
 
 /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`) writes the type and instances and fires the event its
 /// source names, each list in turn: the random battleground from a battlemaster, the PvP window,
-/// a battlemaster, then none; the last two closes are the stock frame's own close calls on the
-/// last list (`0x549b40`).
+/// a battlemaster, then none; the stock frame's own close call inside the last list's
+/// `BATTLEFIELDS_CLOSED` fires its own there and then (`0x549b55`), ahead of its `BATTLEFIELDS_SHOW`.
 #[test]
 fn each_battlefield_list_fires_its_source_event_with_its_instances() {
     use benilla_protocol::messages::BattlefieldList;
@@ -1747,9 +1754,8 @@ fn each_battlefield_list_fires_its_source_event_with_its_instances() {
             "PVPQUEUE_ANYWHERE_SHOW | bfcount=2",
             "BATTLEFIELDS_SHOW | bfcount=3",
             "BATTLEFIELDS_CLOSED | bfcount=4",
+            "BATTLEFIELDS_CLOSED | bfcount=4",
             "BATTLEFIELDS_SHOW | bfcount=4",
-            "BATTLEFIELDS_CLOSED | bfcount=4",
-            "BATTLEFIELDS_CLOSED | bfcount=4",
         ]
     );
 }
@@ -2194,5 +2200,174 @@ fn the_inspect_arena_team_reply_signals_from_its_handler() {
             "INSPECT_HONOR_UPDATE | inspteam=nil",
             "ARENA_TEAM_UPDATE | inspteam=Probes",
         ]
+    );
+}
+
+/// A battleground status 3 on map `map` for slot 0, Warsong Gulch's queue word.
+fn active_status(map: u32) -> SessionEvent {
+    use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
+    SessionEvent::BattlefieldStatus(BattlefieldStatus {
+        slot: 0,
+        queue: (2 << 16) | 2,
+        status: 3,
+        active: Some(BattlefieldActive {
+            map_id: map,
+            joined_queue: 0,
+            shutdown_ms: 0,
+            run_ms: 30_000,
+            arena_faction: 0,
+        }),
+        ..Default::default()
+    })
+}
+
+/// `SMSG_BATTLEFIELD_STATUS` for slot 0 with `status`, or the queue-0 clear with `None`.
+fn slot0(status: Option<u32>) -> SessionEvent {
+    use benilla_protocol::messages::BattlefieldStatus;
+    SessionEvent::BattlefieldStatus(BattlefieldStatus {
+        slot: 0,
+        queue: status.map_or(0, |_| (2 << 16) | 2),
+        status: status.unwrap_or(0),
+        ..Default::default()
+    })
+}
+
+/// `MSG_BATTLEGROUND_PLAYER_POSITIONS` naming `guids`, no carrier.
+fn positions(guids: &[u64]) -> SessionEvent {
+    use benilla_protocol::messages::{BattlefieldPosition, BattlefieldPositions};
+    SessionEvent::BattlefieldPositions(BattlefieldPositions {
+        players: guids
+            .iter()
+            .map(|&guid| BattlefieldPosition {
+                guid,
+                x: 1000.0,
+                y: 1400.0,
+            })
+            .collect(),
+        carriers: Vec::new(),
+    })
+}
+
+/// A party list with `member` in our subgroup.
+fn party_with(member: u64) -> SessionEvent {
+    SessionEvent::GroupList {
+        group_type: 0,
+        own_flags: 0,
+        own_roles: 0,
+        members: vec![benilla_protocol::messages::GroupMemberEntry {
+            name: "Mate".into(),
+            guid: member,
+            status: 1,
+            flags: 0,
+            roles: 0,
+        }],
+        leader: ME,
+        loot: Some(benilla_protocol::messages::GroupLootInfo {
+            method: 3,
+            master: 0,
+            threshold: 2,
+        }),
+        difficulties: None,
+        lfg_restricted: false,
+        lfg_status: 0,
+        lfg_slot: 0,
+        battleground: false,
+        group_guid: 0,
+        counter: 0,
+    }
+}
+
+/// The position verbs read the list, the group and the name cache when called (`0x54a040`,
+/// `0x54c2e0`): us and a party member are skipped (`0x52c680`) the moment the list holding them
+/// lands, in either packet order; each nameless read asks the name with its own callback, and the
+/// answer fires `WORLD_MAP_NAME_UPDATE` once per ask (`0x5496c0`), reading the name.
+#[test]
+fn battlefield_positions_read_the_group_and_names_when_called() {
+    for party_first in [false, true] {
+        let Some(mut rig) = Rig::login(&[]) else {
+            return;
+        };
+        let pos = positions(&[0x50, 0x60, ME]);
+        let frame = if party_first {
+            vec![party_with(0x50), pos, active_status(489)]
+        } else {
+            vec![pos, active_status(489), party_with(0x50)]
+        };
+        let seen = rig.packets(frame, 2);
+        let status = pin(&seen, &["UPDATE_BATTLEFIELD_STATUS"], &["bfpos"]);
+        let want = if party_first { "1" } else { "2" };
+        assert_eq!(
+            status,
+            vec![format!("UPDATE_BATTLEFIELD_STATUS 1 | bfpos={want}")],
+            "party first: {party_first}"
+        );
+        assert_eq!(
+            rig.live_now().line(&["bfpos", "bfpos1"]),
+            "NOW | bfpos=1 bfpos1=nil",
+            "the member drops out the moment its list lands"
+        );
+        let seen = rig.packets(vec![name_answer(0x60, "Rival")], 2);
+        let updates = pin(&seen, &["WORLD_MAP_NAME_UPDATE"], &["bfpos1"]);
+        assert!(!updates.is_empty(), "the answer runs the callbacks");
+        assert!(
+            updates
+                .iter()
+                .all(|l| l == "WORLD_MAP_NAME_UPDATE | bfpos1=Rival"),
+            "{updates:?}"
+        );
+        let again = rig.packets(vec![name_answer(0x60, "Rival")], 2);
+        assert!(
+            pin(&again, &["WORLD_MAP_NAME_UPDATE"], &[]).is_empty(),
+            "an answered ask is gone"
+        );
+    }
+}
+
+/// The status handler's queue-0 arm on the active slot zeroes the positions, the score columns
+/// and the instance type (`0x54b165`, `0x54b174`, `0x54b17e`) before its event; once a status has
+/// dropped the active index (`0x54b0fe`) the arm finds no active slot and keeps all three.
+#[test]
+fn the_queue_zero_arm_clears_the_active_instance_before_its_event() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(vec![active_status(559), positions(&[0x60]), slot0(None)], 2);
+    assert_eq!(
+        pin(
+            &seen,
+            &["UPDATE_BATTLEFIELD_STATUS"],
+            &["bf1", "arena", "bfpos", "bfstats"]
+        ),
+        vec![
+            "UPDATE_BATTLEFIELD_STATUS 1 | bf1=active arena=1 bfpos=0 bfstats=0",
+            "UPDATE_BATTLEFIELD_STATUS 1 | bf1=none arena=nil bfpos=0 bfstats=0",
+        ]
+    );
+    let seen = rig.packets(
+        vec![
+            active_status(489),
+            positions(&[0x60]),
+            slot0(Some(1)),
+            slot0(None),
+        ],
+        2,
+    );
+    let lines = pin(
+        &seen,
+        &["UPDATE_BATTLEFIELD_STATUS"],
+        &["bf1", "arena", "bfpos", "bfstats"],
+    );
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].starts_with("UPDATE_BATTLEFIELD_STATUS 1 | bf1=active arena=nil bfpos=0"));
+    let columns = lines[0].rsplit_once(' ').unwrap().1;
+    assert_ne!(columns, "bfstats=0", "Warsong Gulch has score columns");
+    assert_eq!(
+        lines[1],
+        format!("UPDATE_BATTLEFIELD_STATUS 1 | bf1=queued arena=nil bfpos=1 {columns}")
+    );
+    assert_eq!(
+        lines[2],
+        format!("UPDATE_BATTLEFIELD_STATUS 1 | bf1=none arena=nil bfpos=1 {columns}"),
+        "no active slot left for the arm"
     );
 }

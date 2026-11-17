@@ -274,7 +274,7 @@ pub(super) fn read_pvp_log_data(r: &mut impl Read) -> io::Result<PvpLogData> {
 
 /// One position from `MSG_BATTLEGROUND_PLAYER_POSITIONS`, in raw world coordinates; the client
 /// prefers a live object's own position.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct BattlefieldPosition {
     pub guid: u64,
     pub x: f32,

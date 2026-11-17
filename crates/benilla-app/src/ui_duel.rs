@@ -37,6 +37,12 @@ struct Countdown {
 }
 
 impl DuelState {
+    /// The duel's world leave (`0x5cfa10`): the arbiter and the countdown timer go.
+    pub(crate) fn leave_world(&mut self) {
+        self.arbiter = 0;
+        self.countdown = None;
+    }
+
     /// The partner probe's accept hook (`WOW_PROBE=partner`): the challenge it answers.
     pub(crate) fn take_challenger(&mut self) -> Option<u64> {
         self.dueler.take()

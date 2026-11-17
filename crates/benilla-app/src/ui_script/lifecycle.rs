@@ -845,6 +845,8 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         return;
     }
     info!("ui_script: ReloadUI — ending the UI session and building a new one");
+    // The teardown leaves the world (`0x528c30`).
+    crate::ui_battlefield::leave_world(world);
     // The combat log's store outlives a reload, as the reference keeps it outside the VM.
     let combat_log = world
         .get_non_send_resource_mut::<UiScript>()

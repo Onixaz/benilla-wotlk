@@ -9,7 +9,6 @@
 //! fires from the handler that raised it. The out-of-range `"unseen"`, the kept stats and the
 //! forced refresh are #1301.
 
-use benilla_assets::MapCatalogRes;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::ScriptValue;
 use bevy::prelude::*;
@@ -31,9 +30,6 @@ pub(crate) const ARENA_PET_TOKENS: [&str; ARENA_SLOTS] = [
     "arenapet4",
     "arenapet5",
 ];
-
-/// An arena map's `Map.dbc` `InstanceType`, the active battlefield's `[0xbea570]`.
-const INSTANCE_TYPE_ARENA: u32 = 4;
 
 /// The slots, and the `ARENA_OPPONENT_UPDATE`s the call in hand raised, in the order 12340
 /// fires them; the handler queues them as it ends.
@@ -200,8 +196,8 @@ pub(crate) fn pet_of<'a, 'w, 's, 'd>(
 
 /// Whether the active battlefield is an arena: the active map's `Map.dbc` instance type, which the
 /// active status records.
-fn in_arena(queue: &BattlefieldQueue, maps: Option<&MapCatalogRes>) -> bool {
-    queue.active_map().and_then(|m| maps?.0.instance_type(m)) == Some(INSTANCE_TYPE_ARENA)
+fn in_arena(queue: &BattlefieldQueue) -> bool {
+    queue.in_arena()
 }
 
 /// The active battlefield's arena test (`[0xbea570] == 4`) for a system outside this module: the
@@ -209,15 +205,12 @@ fn in_arena(queue: &BattlefieldQueue, maps: Option<&MapCatalogRes>) -> bool {
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ArenaInstance<'w> {
     queue: Option<Res<'w, BattlefieldQueue>>,
-    maps: Option<Res<'w, MapCatalogRes>>,
 }
 
 impl ArenaInstance<'_> {
     /// Whether the active battlefield is an arena.
     pub(crate) fn active(&self) -> bool {
-        self.queue
-            .as_deref()
-            .is_some_and(|q| in_arena(q, self.maps.as_deref()))
+        self.queue.as_deref().is_some_and(in_arena)
     }
 
     /// Whether the active battlefield may have moved since this system last ran.
@@ -261,7 +254,6 @@ fn on_unit_destroyed(
     In(ev): In<SessionEvent>,
     mut arena: ResMut<ArenaOpponents>,
     queue: Res<BattlefieldQueue>,
-    maps: Option<Res<MapCatalogRes>>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     mut ui: ResMut<UiEvents>,
@@ -269,7 +261,7 @@ fn on_unit_destroyed(
     let SessionEvent::ArenaUnitDestroyed(guid) = ev else {
         return;
     };
-    if in_arena(&queue, maps.as_deref()) {
+    if in_arena(&queue) {
         arena.destroyed(guid, &pet_of(&index, &stores));
         arena.flush(&mut ui);
     } else {
@@ -281,8 +273,8 @@ fn on_unit_destroyed(
 /// every slot cleared and `"cleared"` signalled for each token.
 pub(crate) fn enter_world(world: &mut World) {
     let reloading = world
-        .get_resource_mut::<crate::ui_script::ReloadEntry>()
-        .is_some_and(|mut r| std::mem::take(&mut r.0));
+        .get_resource::<crate::ui_script::ReloadEntry>()
+        .is_some_and(|r| r.0);
     if reloading || !world.contains_resource::<ArenaOpponents>() {
         return;
     }

@@ -180,7 +180,7 @@ impl ScoreBoard {
         if names_pending() {
             return false;
         }
-        let arena = super::live::read_live(|l| l.battlefield_frame().instance_type)
+        let arena = super::live::read_live(|l| l.battlefield_instance().instance_type)
             == Some(super::INSTANCE_TYPE_ARENA);
         let names: Vec<Option<ScoreName>> = self.rows.iter().map(|r| score_name(r.guid)).collect();
         if !arena {
@@ -264,6 +264,11 @@ impl super::UiScript {
             model.battlefield_board.filter = -1;
         }
         self.rebuild_battlefield_scores();
+    }
+
+    /// The status handler's queue-0 arm on the active slot zeroes the column count (`0x54b174`).
+    pub fn clear_battlefield_score_columns(&mut self) {
+        self.model_mut().battlefield_board.columns.clear();
     }
 
     /// The world entry's board clear (`0x54ca50`): the result, the filter, the rows, the counts,
@@ -411,12 +416,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if f != -1 && !(0..2).contains(&f) {
                 return Ok(());
             }
-            let mut model = crate::script::model_mut_of(lua);
-            model.battlefield_board.filter = f;
-            if model.battlefield_board.rebuild() {
-                model
-                    .pending_events
-                    .push(("UPDATE_BATTLEFIELD_SCORE".to_string(), Vec::new()));
+            let ran = {
+                let mut model = crate::script::model_mut_of(lua);
+                model.battlefield_board.filter = f;
+                model.battlefield_board.rebuild()
+            };
+            if ran {
+                super::tick::fire_event_into(lua, "UPDATE_BATTLEFIELD_SCORE", Vec::new());
             }
             Ok(())
         })?,
@@ -439,11 +445,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(column) = sort_column(&kind) else {
                 return Ok(());
             };
-            let mut model = crate::script::model_mut_of(lua);
-            if model.battlefield_board.sort_by_column(column) {
-                model
-                    .pending_events
-                    .push(("UPDATE_BATTLEFIELD_SCORE".to_string(), Vec::new()));
+            let ran = crate::script::model_mut_of(lua)
+                .battlefield_board
+                .sort_by_column(column);
+            if ran {
+                super::tick::fire_event_into(lua, "UPDATE_BATTLEFIELD_SCORE", Vec::new());
             }
             Ok(())
         })?,
@@ -512,7 +518,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::{BattlefieldFrame, LiveState, UiScript};
+    use crate::script::{BattlefieldInstance, LiveState, UiScript};
     use std::collections::HashMap;
 
     /// The name cache and the pending count, as the app lends them.
@@ -539,8 +545,8 @@ mod tests {
         fn far_sight(&self) -> bool {
             false
         }
-        fn battlefield_frame(&self) -> BattlefieldFrame {
-            BattlefieldFrame {
+        fn battlefield_instance(&self) -> BattlefieldInstance {
+            BattlefieldInstance {
                 instance_type: self.instance_type,
                 ..Default::default()
             }

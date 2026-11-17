@@ -31,6 +31,7 @@ pub(crate) struct LiveView<'w, 's> {
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     honor: crate::ui_honor::HonorView<'w>,
     arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
+    positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -40,6 +41,21 @@ impl LiveView<'_, '_> {
         let &entity = self.index.as_ref()?.0.get(&guid)?;
         let fields = &self.stores.get(entity).ok()?.0;
         fields.is_unit().then_some(fields)
+    }
+
+    /// A held player's entity, the object lookup with the player type mask (`0x54c3e7`).
+    fn player_entity(&self, guid: u64) -> Option<Entity> {
+        let &entity = self.index.as_ref()?.0.get(&guid)?;
+        let fields = &self.stores.get(entity).ok()?.0;
+        (fields.object_type() == Some(benilla_protocol::messages::ObjectType::Player))
+            .then_some(entity)
+    }
+
+    /// A held player's PvP side (`0x54d074`).
+    fn player_side(&self, guid: u64) -> Option<i8> {
+        let entity = self.player_entity(guid)?;
+        let race = self.stores.get(entity).ok()?.0.unit_race()?;
+        Some(crate::ui_unit::race_pvp_team(race))
     }
 }
 
@@ -148,12 +164,32 @@ impl LiveState for LiveView<'_, '_> {
         self.summon.time_left_ms()
     }
 
-    fn battlefield_frame(&self) -> benilla_ui::script::BattlefieldFrame {
-        self.battlefield.frame()
+    fn battlefield_slot(&self, index: usize) -> Option<benilla_ui::script::BattlefieldQueueSlot> {
+        self.battlefield.slot(index)
     }
 
-    fn battlemaster_rows(&self) -> Vec<benilla_ui::script::BattlemasterRow> {
-        self.battlefield.rows()
+    fn battlefield_instance(&self) -> benilla_ui::script::BattlefieldInstance {
+        self.battlefield.instance()
+    }
+
+    fn world_pvp_queue(&self) -> benilla_ui::script::WorldPvpQueueView {
+        self.battlefield.world_pvp()
+    }
+
+    fn can_hearth_and_resurrect(&self) -> bool {
+        self.battlefield.can_hearth_and_resurrect()
+    }
+
+    fn battlefield_port_refusal(&self) -> Option<&'static str> {
+        self.battlefield.port_refusal()
+    }
+
+    fn battlemaster_row(&self, id: u32) -> Option<benilla_ui::script::BattlemasterRow> {
+        self.battlefield.row(id)
+    }
+
+    fn battleground_types(&self) -> Vec<benilla_ui::script::BattlegroundType> {
+        self.battlefield.types()
     }
 
     /// A held unit's own race and class stand in where the name answer carried none.
@@ -188,6 +224,39 @@ impl LiveState for LiveView<'_, '_> {
 
     fn arena_team_record(&self, team_id: u32) -> Option<benilla_ui::script::ArenaTeamRecordView> {
         self.arena_teams.record(team_id)
+    }
+
+    fn battlefield_position_count(&self) -> usize {
+        self.positions.count(self.active_player())
+    }
+
+    fn battlefield_position(
+        &self,
+        index: usize,
+    ) -> Option<benilla_ui::script::BattlefieldPositionLive> {
+        self.positions
+            .position(self.active_player(), index, |g| self.player_entity(g))
+    }
+
+    fn battlefield_flag_count(&self) -> usize {
+        self.positions.flag_count()
+    }
+
+    fn battlefield_flag(&self, index: usize) -> Option<benilla_ui::script::BattlefieldFlagLive> {
+        self.positions.flag(
+            self.active_player(),
+            index,
+            |g| self.player_entity(g),
+            |g| self.player_side(g),
+        )
+    }
+
+    fn battlefield_icon_scale(&self) -> f32 {
+        self.positions.icon_scale()
+    }
+
+    fn request_battlefield_positions(&self) {
+        self.positions.request();
     }
 }
 

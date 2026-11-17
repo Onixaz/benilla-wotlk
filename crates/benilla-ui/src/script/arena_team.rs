@@ -218,6 +218,13 @@ fn checked_name(name: &str) -> mlua::Result<()> {
     Ok(())
 }
 
+/// One `ARENA_TEAM_ROSTER_UPDATE` per slot holding a roster, fired inside the verb (`0x5a28e0`).
+fn roster_updates(lua: &Lua, slots: &[ArenaTeamSlotView]) {
+    for _ in slots.iter().filter(|s| !s.members.is_empty()) {
+        super::tick::fire_event_into(lua, "ARENA_TEAM_ROSTER_UPDATE", Vec::new());
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -416,12 +423,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 teams.sort.copy_within(0..i, 1);
                 teams.sort[0] = (column, reverse);
             }
-            let fired = slots.iter().filter(|s| !s.members.is_empty()).count();
-            for _ in 0..fired {
-                model
-                    .pending_events
-                    .push(("ARENA_TEAM_ROSTER_UPDATE".to_string(), Vec::new()));
-            }
+            drop(model);
+            roster_updates(lua, &slots);
             Ok(())
         })?,
     )?;
@@ -439,12 +442,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             teams.show_offline = show;
-            let fired = slots.iter().filter(|s| !s.members.is_empty()).count();
-            for _ in 0..fired {
-                model
-                    .pending_events
-                    .push(("ARENA_TEAM_ROSTER_UPDATE".to_string(), Vec::new()));
-            }
+            drop(model);
+            roster_updates(lua, &slots);
             Ok(())
         })?,
     )?;

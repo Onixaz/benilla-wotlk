@@ -310,11 +310,11 @@ pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
 pub use barber::{BarberHost, BarberIntent, BarberStyle};
-pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
+pub use battlefield_positions::{BattlefieldFlagLive, BattlefieldPositionLive};
 pub use battlefield_queue::{
-    BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
-    BattlefieldQueueSlot, BattlefieldRewardView, BattlemasterRow, WorldPvpQueueView,
-    INSTANCE_TYPE_ARENA, RANDOM_BATTLEGROUND,
+    BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
+    BattlefieldQueueSlot, BattlefieldRewardView, BattlegroundType, BattlemasterRow,
+    WorldPvpQueueView, INSTANCE_TYPE_ARENA, RANDOM_BATTLEGROUND,
 };
 pub use battlefield_score::{
     BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,

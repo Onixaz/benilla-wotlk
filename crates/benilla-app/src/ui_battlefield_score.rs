@@ -27,9 +27,6 @@ use crate::world_state_ui::WorldStateUiRes;
 /// `RequestBattlefieldScoreData`'s throttle (`0x54ce30`).
 const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
 
-/// An arena's `InstanceType`; its board is asked once.
-const INSTANCE_TYPE_ARENA: u32 = 4;
-
 /// The rows' names still asked for (`0xbea590`) and the finished flag (`0xbea588`), zeroed by a
 /// world entry and the session's end.
 #[derive(Resource, Default)]
@@ -143,7 +140,6 @@ fn drain_battlefield_score(
     mut clock: ResMut<ScoreRequestClock>,
     board: Res<BattlefieldScoreboard>,
     queue: Res<BattlefieldQueue>,
-    maps: Option<Res<benilla_assets::MapCatalogRes>>,
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {
@@ -152,11 +148,8 @@ fn drain_battlefield_score(
     if script.take_battlefield_score_requests() == 0 {
         return;
     }
-    let in_arena = queue
-        .active_map()
-        .and_then(|m| maps.as_deref()?.0.instance_type(m))
-        == Some(INSTANCE_TYPE_ARENA);
-    if clock.0.is_some() && (board.ended || in_arena) {
+    // The arena test reads the instance type (`0x54ce4d`).
+    if clock.0.is_some() && (board.ended || queue.in_arena()) {
         return;
     }
     let now = Instant::now();

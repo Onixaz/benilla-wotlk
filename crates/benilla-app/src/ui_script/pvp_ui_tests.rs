@@ -5,10 +5,9 @@
 use std::collections::HashMap;
 
 use benilla_ui::script::{
-    ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView,
-    BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldQueueSlot, BattlemasterRow,
-    HonorState, PetitionRequest, PetitionVendorItem, PetitionVendorState, ScriptValue, UiScript,
-    UnitState,
+    ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView, BattlefieldJoin,
+    BattlefieldListPush, BattlefieldQueueSlot, BattlegroundType, BattlemasterRow, HonorState,
+    PetitionRequest, PetitionVendorItem, PetitionVendorState, ScriptValue, UiScript, UnitState,
 };
 
 /// The current arena season's world state (`GetCurrentArenaSeason`, `0x5a2a40`).
@@ -258,6 +257,12 @@ fn queued(status: u32) -> BattlefieldFrame {
     frame
 }
 
+/// The two queue slots a test's view answers.
+#[derive(Clone, Default)]
+struct BattlefieldFrame {
+    slots: [BattlefieldQueueSlot; 2],
+}
+
 /// The queue and rows the verbs read, lent for a test's length as the app lends the World.
 #[derive(Default)]
 struct PvpView {
@@ -281,11 +286,23 @@ impl benilla_ui::script::LiveState for PvpView {
     fn far_sight(&self) -> bool {
         false
     }
-    fn battlefield_frame(&self) -> BattlefieldFrame {
-        self.frame.borrow().clone()
+    fn battlefield_slot(&self, index: usize) -> Option<BattlefieldQueueSlot> {
+        self.frame.borrow().slots.get(index).cloned()
     }
-    fn battlemaster_rows(&self) -> Vec<BattlemasterRow> {
-        self.rows.borrow().clone()
+    fn battlemaster_row(&self, id: u32) -> Option<BattlemasterRow> {
+        self.rows.borrow().iter().find(|r| r.id == id).cloned()
+    }
+    fn battleground_types(&self) -> Vec<BattlegroundType> {
+        self.rows
+            .borrow()
+            .iter()
+            .filter(|r| r.instance_type == 3)
+            .map(|r| BattlegroundType {
+                id: r.id,
+                min_level: r.min_level,
+                holiday: r.holiday,
+            })
+            .collect()
     }
 }
 
