@@ -93,6 +93,11 @@ local VERBS = {
     { "bfstats", function() return GetNumBattlefieldStats() end },
     { "ap1", function() return UnitExists("arenapet1") end },
     { "wsui", function() return GetNumWorldStateUI() end },
+    { "lb", function() return (GetQuestLogLeaderBoard(1, 2)) end },
+    { "lbdone", function() return (select(3, GetQuestLogLeaderBoard(1, 2))) end },
+    { "qtitle", function() return GetTitleText() end },
+    { "qdone", function() return IsQuestCompletable() end },
+    { "qreward", function() return GetRewardMoney() end },
     { "ws", function()
         local t = {}
         for i = 1, GetNumWorldStateUI() do t[#t + 1] = (select(3, GetWorldStateUIInfo(i))) end
@@ -1286,6 +1291,226 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
         3,
     );
     Some((rig, accept))
+}
+
+/// The kill quest the progress pins accept: one creature objective, five to kill.
+fn kill_quest_template() -> SessionEvent {
+    let mut t = benilla_protocol::messages::QuestTemplate {
+        quest_id: QUEST,
+        level: 80,
+        zone_or_sort: 12,
+        title: "Charz".into(),
+        ..Default::default()
+    };
+    t.objectives[0] = benilla_protocol::messages::QuestObjective {
+        creature_or_go: 299,
+        required_count: 5,
+        ..Default::default()
+    };
+    SessionEvent::QuestTemplate(Box::new(t))
+}
+
+/// The kill's two packets: the slot's counter word (`PLAYER_QUEST_LOG_1_3`) and the add-kill line.
+fn kill(count: u32) -> [SessionEvent; 2] {
+    [
+        self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1 + 2, count)]),
+        SessionEvent::QuestObjectiveKill {
+            quest_id: QUEST,
+            entry: 299,
+            count,
+            required: 5,
+        },
+    ]
+}
+
+const PROGRESS_EVENTS: &[&str] = &[
+    "UNIT_QUEST_LOG_CHANGED",
+    "QUEST_WATCH_UPDATE",
+    "QUEST_LOG_UPDATE",
+    "UI_INFO_MESSAGE",
+];
+
+/// A kill's progress, the counter word and the add-kill line in either wire order: what fires
+/// and what the leaderboard reads at each event, pinned ahead of the progress move (#1276).
+#[test]
+fn quest_progress_in_both_packet_orders() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            // The add-kill handler names the creature from its cached record (`0x6d82bc`).
+            SessionEvent::CreatureName {
+                entry: 299,
+                name: Some("Wolf".into()),
+                subname: None,
+                cursor_name: None,
+                creature_type: Some(1),
+                pet_family: 0,
+                rank: 0,
+                type_flags: 0,
+                display_id: 0,
+                civilian: false,
+                racial_leader: false,
+                modifiers: (1.0, 1.0),
+            },
+            kill_quest_template(),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+        ],
+        3,
+    );
+    let [values, line] = kill(1);
+    let values_first = rig.packets(vec![values, line], 3);
+    let [values, line] = kill(2);
+    let line_first = rig.packets(vec![line, values], 3);
+    assert_eq!(
+        (
+            pin(&values_first, PROGRESS_EVENTS, &["lb", "lbdone"]),
+            pin(&line_first, PROGRESS_EVENTS, &["lb", "lbdone"]),
+            fired(&values_first, &["UI_ERROR_MESSAGE", "CHAT_MSG_SYSTEM"]),
+        ),
+        (
+            vec![
+                // The per-frame feeds: the line and the watch event read the counter the log feed
+                // pushed last frame. 12340 fires both from the add-kill handler (`0x6d82e9`,
+                // `0x6d8241`) with the counter word already applied, the leaderboard reading
+                // the slot at the call: 1/5 here once the progress move lands.
+                "UI_INFO_MESSAGE Wolf slain: 1/5 | lb=Wolf slain: 0/5 lbdone=nil",
+                "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 0/5 lbdone=nil",
+                "QUEST_LOG_UPDATE | lb=Wolf slain: 1/5 lbdone=nil",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+            vec![
+                "UI_INFO_MESSAGE Wolf slain: 2/5 | lb=Wolf slain: 1/5 lbdone=nil",
+                "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 1/5 lbdone=nil",
+                "QUEST_LOG_UPDATE | lb=Wolf slain: 2/5 lbdone=nil",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        )
+    );
+}
+
+const DIALOG_EVENTS: &[&str] = &[
+    "QUEST_DETAIL",
+    "QUEST_PROGRESS",
+    "QUEST_COMPLETE",
+    "QUEST_FINISHED",
+    "QUEST_ITEM_UPDATE",
+    "QUEST_ACCEPT_CONFIRM",
+];
+
+/// The quest dialogs as their packets arrive one frame apart and two in one frame, and the escort
+/// confirm: what fires and what the dialog verbs read at each event, pinned ahead of the dialog
+/// move (#1276).
+#[test]
+fn quest_dialogs_and_the_escort_confirm() {
+    use benilla_protocol::messages::{
+        QuestConfirmAccept, QuestDetails, QuestOfferReward, QuestRequestItems,
+    };
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    const NPC: u64 = 0xF130_0000_0100_0001;
+    let detail = || {
+        SessionEvent::QuestDetail(QuestDetails {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            details: "Go.".into(),
+            objectives: "Kill.".into(),
+            ..Default::default()
+        })
+    };
+    let progress = || {
+        SessionEvent::QuestProgress(QuestRequestItems {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            request_text: "Well?".into(),
+            is_complete: true,
+            ..Default::default()
+        })
+    };
+    let offer = || {
+        SessionEvent::QuestOffer(QuestOfferReward {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            offer_text: "Thanks.".into(),
+            ..Default::default()
+        })
+    };
+    let verbs = &["qtitle", "qdone"];
+    let mut seen = Vec::new();
+    for ev in [detail(), progress(), offer()] {
+        seen.push(pin(&rig.packets(vec![ev], 2), DIALOG_EVENTS, verbs));
+    }
+    seen.push(pin(
+        &rig.packets(
+            vec![SessionEvent::QuestComplete(
+                benilla_protocol::messages::QuestComplete {
+                    quest_id: QUEST,
+                    xp: 100,
+                    ..Default::default()
+                },
+            )],
+            2,
+        ),
+        DIALOG_EVENTS,
+        verbs,
+    ));
+    seen.push(pin(
+        &rig.packets(vec![detail(), progress()], 2),
+        DIALOG_EVENTS,
+        verbs,
+    ));
+    seen.push(pin(
+        &rig.packets(
+            vec![
+                name_answer(0x99, "Escort"),
+                SessionEvent::QuestConfirmAccept(QuestConfirmAccept {
+                    quest_id: QUEST,
+                    title: "Charz".into(),
+                    sender: 0x99,
+                }),
+            ],
+            2,
+        ),
+        DIALOG_EVENTS,
+        &[],
+    ));
+    // No NPC is held, so each dialog closes on its first distance check (`QUEST_FINISHED`).
+    let lines = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        seen,
+        vec![
+            lines(&[
+                "QUEST_DETAIL | qtitle=Charz qdone=nil",
+                "QUEST_FINISHED | qtitle= qdone=nil",
+            ]),
+            lines(&[
+                "QUEST_PROGRESS | qtitle=Charz qdone=1",
+                "QUEST_FINISHED | qtitle= qdone=nil",
+            ]),
+            lines(&[
+                "QUEST_COMPLETE | qtitle=Charz qdone=nil",
+                "QUEST_FINISHED | qtitle= qdone=nil",
+            ]),
+            lines(&[]),
+            // The per-frame feed shows the frame's last dialog alone: 12340's handlers fire
+            // `QUEST_DETAIL` (`0x58dfb5`) and then `QUEST_PROGRESS` (`0x58bb4c`), each in its turn.
+            lines(&[
+                "QUEST_PROGRESS | qtitle=Charz qdone=1",
+                "QUEST_FINISHED | qtitle= qdone=nil",
+            ]),
+            lines(&["QUEST_ACCEPT_CONFIRM Escort Charz"]),
+        ]
+    );
 }
 
 // ── The live infrastructure end to end ───────────────────────────────────────────────────────────
