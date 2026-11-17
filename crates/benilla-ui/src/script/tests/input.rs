@@ -614,9 +614,6 @@ fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
     for (ty, name) in [
         ("ScrollingMessageFrame", "OnMessageScrollChanged"),
         ("GameTooltip", "OnTooltipSetFrameStack"),
-        ("MovieFrame", "OnMovieFinished"),
-        ("MovieFrame", "OnMovieShowSubtitle"),
-        ("MovieFrame", "OnMovieHideSubtitle"),
         ("EditBox", "OnCharComposition"),
     ] {
         s.run(&format!(r#"Raiser = CreateFrame("{ty}", "Raiser{ty}")"#))

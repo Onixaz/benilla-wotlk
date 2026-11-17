@@ -451,6 +451,8 @@ pub(crate) struct Model {
     /// The frame each held key's press went to (`m_keydownCapture`, `0x4943c0`), which its release
     /// goes to alone (`0x494490`); by key name.
     pub(crate) key_capture: std::collections::HashMap<String, FrameHandle>,
+    /// The app's movie player, which the MovieFrame verbs open and close movies through.
+    pub(crate) movie_host: Option<std::rc::Rc<dyn super::movieframe::MovieHost>>,
     /// `TogglePVP` calls, a count because `CMSG_TOGGLE_PVP` has no body.
     pub(crate) pvp_toggles: u32,
     /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
@@ -1530,6 +1532,7 @@ impl Model {
             camera_view_requests: Vec::new(),
             session_requests: Vec::new(),
             glue: Default::default(),
+            movie_host: None,
             key_capture: Default::default(),
             pvp_toggles: 0,
             pvp_sets: Vec::new(),
