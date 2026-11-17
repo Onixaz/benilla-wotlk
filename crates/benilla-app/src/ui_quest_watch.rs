@@ -1,5 +1,4 @@
-//! The objective tracker's feeds: the quest POI wire (`CMSG_QUEST_POI_QUERY` for the quests the VM
-//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store from the handler), and the live reads of each quest's special item (`0x5e0da0`), found in the bags with its charges and range at call time.
+//! The objective tracker's feeds: `SMSG_QUEST_POI_QUERY_RESPONSE` into the VM's store from the handler, and the live reads of each quest's special item (`0x5e0da0`), found in the bags with its charges and range at call time.
 
 use bevy::prelude::*;
 
@@ -7,14 +6,12 @@ use benilla_protocol::messages::QuestPoi;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
     QuestLogObjectiveView, QuestPoiLines, QuestPoiRegion, QuestPoiView, QuestSpecialItemView,
-    UiScript,
 };
 
 use crate::items::Items;
-use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
+use crate::net::{NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
 use crate::ui_quest_log::QuestLog;
 use crate::ui_script::live::{UiEvents, UniqueSignals};
-use crate::ui_script::UiDrain;
 
 /// A quest template's flag that lets its drop items serve as the special item (`0x5e0df9`).
 const QUEST_FLAG_DROP_ITEM_USE: u32 = 0x20000;
@@ -24,8 +21,7 @@ pub(crate) struct UiQuestWatchPlugin;
 impl Plugin for UiQuestWatchPlugin {
     fn build(&self, app: &mut App) {
         app.init_non_send_resource::<UniqueSignals>()
-            .net_handler(SessionEventKind::QuestPoi, on_quest_poi)
-            .add_systems(Update, drain_quest_poi_queries.in_set(UiDrain));
+            .net_handler(SessionEventKind::QuestPoi, on_quest_poi);
     }
 }
 
@@ -233,24 +229,6 @@ fn poi_lines(
         drops_needed,
         top_area,
     })
-}
-
-/// Send the POI queries the log update raised (`0x5e6cd1`), at most 25 ids each, as the
-/// reference's one query per log update carries.
-fn drain_quest_poi_queries(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let wants = script.take_quest_poi_queries();
-    for chunk in wants.chunks(25) {
-        debug!("ui_quest_watch: asking POI for {chunk:?}");
-        let _ = commands.0.send(ClientCommand::QuestPoiQuery {
-            quests: chunk.to_vec(),
-        });
-    }
 }
 
 /// What the special-item verbs read at call time: the quest's template, our bags and the item instances.

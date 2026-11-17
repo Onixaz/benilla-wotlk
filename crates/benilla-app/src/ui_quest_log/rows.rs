@@ -93,7 +93,7 @@ impl RebuildMarks {
         self.reask.is_some_and(|at| now >= at)
     }
 
-    /// The rebuild's tail: a due re-ask is disarmed (`0x5e6daa`); whether it was, so the caller sends `CMSG_QUERY_TIME` (`0x5e6d79`).
+    /// The rebuild's tail: a due re-ask is disarmed (`0x5e6daa`); whether it was, so the tail sends `CMSG_QUERY_TIME` (`0x5e6d79`).
     fn take_due_reask(&mut self, now: std::time::Instant) -> bool {
         let due = self.reask_due(now);
         if due {
@@ -412,7 +412,7 @@ struct PlanInputs<'a, 'w, 's> {
     signals: &'a mut UniqueSignals,
 }
 
-/// The rebuild's walk (`0x5e6940`): skipped while a template is pending (`0x5e6973`), cached quests only (`0x5e6a98`), `QUEST_LOG_UPDATE` queued (`0x5e6cb9`), then a due re-ask sent (`0x5e6d60`-`0x5e6daa`).
+/// The rebuild's walk (`0x5e6940`): skipped while a template is pending (`0x5e6973`), cached quests only (`0x5e6a98`), `QUEST_LOG_UPDATE` queued (`0x5e6cb9`), a due re-ask disarmed for the tail to send after the POI query (`0x5e6d60`-`0x5e6daa`).
 fn plan(p: PlanInputs) -> Option<QuestLogPlan> {
     let PlanInputs {
         store,
@@ -516,13 +516,11 @@ fn plan(p: PlanInputs) -> Option<QuestLogPlan> {
     let old_sort_types = std::mem::replace(&mut marks.sort_types, new_sort_types.clone());
     marks.quest_rows = rows.iter().map(|(_, s)| s.quest_id).collect();
     signals.unique_signal("QUEST_LOG_UPDATE");
-    if marks.take_due_reask(std::time::Instant::now()) {
-        let _ = net.0.send(crate::net::ClientCommand::QueryTime);
-    }
     Some(QuestLogPlan {
         rows: table,
         old_sort_types,
         new_sort_types,
+        query_time: marks.take_due_reask(std::time::Instant::now()),
     })
 }
 

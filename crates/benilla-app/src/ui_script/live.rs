@@ -405,6 +405,21 @@ impl LiveState for LiveNow<'_, '_> {
         self.clock.as_ref()?.quest_reset_unix()
     }
 
+    fn send_quest_log_tail(&mut self, pois: &[u32], query_time: bool) {
+        let Some(net) = self.view.net.as_deref() else {
+            return;
+        };
+        if !pois.is_empty() {
+            debug!("ui_quest_log: asking POI for {pois:?}");
+            let _ = net.0.send(crate::net::ClientCommand::QuestPoiQuery {
+                quests: pois.to_vec(),
+            });
+        }
+        if query_time {
+            let _ = net.0.send(crate::net::ClientCommand::QueryTime);
+        }
+    }
+
     fn rebuild_quest_log_if_reask_due(&mut self) -> Option<benilla_ui::script::QuestLogPlan> {
         let Self { view, lent } = self;
         view.quest_rows.rebuild_if_reask_due(lent.row_writes()?)

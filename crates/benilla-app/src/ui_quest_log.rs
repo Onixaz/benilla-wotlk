@@ -2115,6 +2115,38 @@ mod tests {
         assert_eq!(time_asks(&rx), 0, "disarmed until the next answer");
     }
 
+    /// The rebuild's tail sends the POI query, then the due time query (`0x5e6cd1`, `0x5e6d79`), and every rebuild asks again for each quest still without a POI, in log-slot order (`0x5e6aab`).
+    #[test]
+    fn the_rebuild_asks_the_pois_before_the_time_and_again_each_rebuild() {
+        let (mut app, _, rx) = log_app(&[(1, 202, 7), (0, 201, 9)]);
+        let tail = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<String> {
+            rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::QuestPoiQuery { quests } => Some(format!("poi {quests:?}")),
+                    ClientCommand::QueryTime => Some("time".into()),
+                    _ => None,
+                })
+                .collect()
+        };
+        answer_time(&mut app, 1_000_000, 0);
+        app.update();
+        assert_eq!(tail(&rx), ["poi [201, 202]", "time"]);
+        app.update();
+        assert_eq!(tail(&rx), ["poi [201, 202]"], "no answer yet: asked again");
+        script(&mut app).apply_quest_pois(vec![benilla_ui::script::QuestPoiView {
+            quest_id: 201,
+            regions: Vec::new(),
+        }]);
+        app.update();
+        assert_eq!(tail(&rx), ["poi [202]"]);
+        // `GetQuestResetTime`'s rebuild inside the call keeps the order.
+        answer_time(&mut app, 1_000_000, 0);
+        live(&mut app, |s| {
+            s.eval::<i64>("return GetQuestResetTime()").unwrap()
+        });
+        assert_eq!(tail(&rx), ["poi [202]", "time"]);
+    }
+
     /// `GetQuestResetTime` runs a due rebuild inside its call (`0x5e6dfa`, `0x5e6e00`): the rows a later verb in the same chunk reads are the rebuilt ones, `QUEST_LOG_UPDATE` waits, the time is asked once.
     #[test]
     fn get_quest_reset_time_runs_a_due_rebuild_inside_the_call() {

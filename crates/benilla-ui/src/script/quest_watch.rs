@@ -4,8 +4,6 @@
 //! `SMSG_QUEST_POI_QUERY_RESPONSE`), and the verbs the stock `WatchFrame.lua` reads per watched
 //! quest: the special item, the completion text and the link.
 
-use std::collections::HashSet;
-
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
 use super::binding_abi::{flag, number_arg};
@@ -86,10 +84,6 @@ pub(crate) struct QuestWatchState {
     /// quest.
     loaded: bool,
     pub(super) pois: Vec<PoiSlot>,
-    /// Quests asked for and not yet answered, so a rebuild does not re-send.
-    poi_asked: HashSet<u32>,
-    /// `CMSG_QUEST_POI_QUERY` ids for the app to send.
-    poi_wants: Vec<u32>,
 }
 
 impl QuestWatchState {
@@ -398,15 +392,6 @@ impl super::UiScript {
         self.model_ref().quest_watch.poi(quest_id).is_some()
     }
 
-    /// Drain the quests to ask the server for (`CMSG_QUEST_POI_QUERY`, `0x5e6cd1`).
-    pub fn take_quest_poi_queries(&mut self) -> Vec<u32> {
-        // Read first: a mutable borrow moves the mutation count, and this drains every frame.
-        if self.model_ref().quest_watch.poi_wants.is_empty() {
-            return Vec::new();
-        }
-        std::mem::take(&mut self.model_mut().quest_watch.poi_wants)
-    }
-
     /// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): each quest into its slot or the first slot
     /// whose quest left the log (`0x5e7020`); the handler queues `QUEST_POI_UPDATE` beside it.
     pub fn apply_quest_pois(&mut self, pois: Vec<QuestPoiView>) {
@@ -414,7 +399,6 @@ impl super::UiScript {
             let mut model = self.model_mut();
             let model = &mut *model;
             for poi in pois {
-                model.quest_watch.poi_asked.remove(&poi.quest_id);
                 if poi.quest_id == 0 || model.quest_watch.poi(poi.quest_id).is_some() {
                     continue;
                 }
@@ -463,8 +447,7 @@ impl super::UiScript {
     }
 }
 
-/// After a log push: load the saved watches once the log holds a quest (`0x5e6c2b`), prune the
-/// watches of quests that left it, and queue the POI asks for quests the store lacks.
+/// After a log write: load the saved watches once the log holds a quest (`0x5e6c2b`), and prune the watches of quests that left it (`0x5e6c9e`).
 pub(crate) fn on_quest_log(model: &mut Model) {
     let has_quest = model.quest_log.iter().any(|e| !e.is_header);
     if !model.quest_watch.loaded && has_quest {
@@ -488,18 +471,19 @@ pub(crate) fn on_quest_log(model: &mut Model) {
     for id in gone {
         remove_watch(model, id);
     }
-    let unknown: Vec<u32> = model
+}
+
+/// The rebuild's POI asks (`0x5e6aab`-`0x5e6abe`): every logged quest the store holds no POI for (`0x5e28b0`), in log-slot order, asked again on every rebuild.
+pub(crate) fn rebuild_poi_asks(model: &Model) -> Vec<u32> {
+    let mut asks: Vec<(u8, u32)> = model
         .quest_log
         .iter()
         .filter(|e| !e.is_header && e.quest_id != 0)
-        .map(|e| e.quest_id)
-        .filter(|id| model.quest_watch.poi(*id).is_none())
+        .filter(|e| model.quest_watch.poi(e.quest_id).is_none())
+        .map(|e| (e.slot, e.quest_id))
         .collect();
-    for id in unknown {
-        if model.quest_watch.poi_asked.insert(id) {
-            model.quest_watch.poi_wants.push(id);
-        }
-    }
+    asks.sort_unstable();
+    asks.into_iter().map(|(_, id)| id).collect()
 }
 
 fn model_ref(lua: &Lua) -> mlua::AppDataRef<'_, super::ModelCell> {
@@ -1076,18 +1060,18 @@ mod tests {
         assert!(!s.eval::<bool>("return SortQuestWatches()").unwrap());
     }
 
+    /// Every rebuild asks again for each quest still without a POI (`0x5e6aab`), none deduped across rebuilds.
     #[test]
-    fn the_log_asks_once_for_each_quest_without_a_poi() {
+    fn every_rebuild_asks_for_each_quest_without_a_poi() {
         let mut s = script(2);
-        assert_eq!(s.take_quest_poi_queries(), vec![1, 2]);
-        let rows = s.model_ref().quest_log.clone();
-        s.set_quest_log_rows(rows);
-        assert!(s.take_quest_poi_queries().is_empty());
+        assert_eq!(rebuild_poi_asks(&s.model_ref()), vec![1, 2]);
+        assert_eq!(rebuild_poi_asks(&s.model_ref()), vec![1, 2]);
         s.apply_quest_pois(vec![QuestPoiView {
             quest_id: 1,
             regions: Vec::new(),
         }]);
         assert_eq!(s.model_ref().quest_watch.pois.len(), 1);
+        assert_eq!(rebuild_poi_asks(&s.model_ref()), vec![2]);
     }
 
     #[test]

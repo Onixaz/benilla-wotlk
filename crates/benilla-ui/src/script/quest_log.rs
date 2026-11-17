@@ -297,6 +297,8 @@ pub struct QuestLogPlan {
     pub rows: Vec<QuestLogRow>,
     pub old_sort_types: Vec<i32>,
     pub new_sort_types: Vec<i32>,
+    /// The re-ask was due and is disarmed, so the tail sends `CMSG_QUERY_TIME` after the POI query (`0x5e6d79`).
+    pub query_time: bool,
 }
 
 /// The rebuild's carry of the collapse filter to its new sort types (`0x5e69a7`-`0x5e6bfc`): a sort type kept keeps its bit, a new one opens, and bits past the sort types keep their value. Deviation: the reference keys its old list by signed id, negated when open, so the id-0 header reads folded after every rebuild; here the old bit is read by position.
@@ -326,8 +328,9 @@ pub fn remap_selection(selected: u32, rows: &[QuestLogRow]) -> u32 {
         .map_or(0, |i| i as u32 + 1)
 }
 
-/// The rebuild's VM half: the filter carried and set (`0x5e6c0e`), the rows folded (`0x5e6c13`) and written.
-pub(crate) fn apply_plan(model: &mut Model, plan: QuestLogPlan) {
+/// The rebuild's VM half: the filter carried and set (`0x5e6c0e`), the rows folded (`0x5e6c13`) and written, then its tail sent ([`send_rebuild_tail`]).
+pub(crate) fn apply_plan(model: &mut Model, plan: QuestLogPlan) -> RebuildTail {
+    let query_time = plan.query_time;
     let filter = carry_collapse_filter(
         collapse_filter(model),
         &plan.old_sort_types,
@@ -342,6 +345,25 @@ pub(crate) fn apply_plan(model: &mut Model, plan: QuestLogPlan) {
     model.quest_log_selection = selection;
     model.quest_log = rows;
     super::quest_watch::on_quest_log(model);
+    RebuildTail {
+        pois: super::quest_watch::rebuild_poi_asks(model),
+        query_time,
+    }
+}
+
+/// What a rebuild sends once its rows are written.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct RebuildTail {
+    /// The quests with no POI held, in log-slot order (`0x5e6aab`-`0x5e6abe`).
+    pois: Vec<u32>,
+    query_time: bool,
+}
+
+/// The rebuild's sends in its order: the POI query (`0x5e6cd1`), then a due time query (`0x5e6d79`).
+pub(crate) fn send_rebuild_tail(tail: RebuildTail) {
+    if !tail.pois.is_empty() || tail.query_time {
+        super::write_live(|l| l.send_quest_log_tail(&tail.pois, tail.query_time));
+    }
 }
 
 /// Leaderboard line count (`0x5e1300`): the lines, the template's faction apart, or 1 if complete.
@@ -439,7 +461,8 @@ fn collapse_header(model: &mut Model, index: i64, collapse: bool) {
 impl super::UiScript {
     /// Run a rebuild's VM half ([`QuestLogPlan`]).
     pub fn apply_quest_log_plan(&mut self, plan: QuestLogPlan) {
-        apply_plan(&mut self.model_mut(), plan);
+        let tail = apply_plan(&mut self.model_mut(), plan);
+        send_rebuild_tail(tail);
     }
 
     /// Write the rebuilt row table (`0x5e6940`). A watch holds while any quest row, shown or folded, carries its id, so a collapse never prunes.
@@ -1213,7 +1236,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             // A due re-ask runs the rebuild inside the call first (`0x5e6dfa`, `0x5e6e00`).
             if let Some(Some(plan)) = super::write_live(|l| l.rebuild_quest_log_if_reask_due()) {
-                apply_plan(&mut crate::script::model_mut_of(lua), plan);
+                let tail = apply_plan(&mut crate::script::model_mut_of(lua), plan);
+                send_rebuild_tail(tail);
             }
             let reset = super::read_live(|l| l.quest_reset_unix()).flatten();
             Ok(reset

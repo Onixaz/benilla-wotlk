@@ -196,6 +196,9 @@ pub trait LiveState {
         None
     }
 
+    /// The rebuild's tail sends in its order: one `CMSG_QUEST_POI_QUERY` naming `pois` when any (`0x5e6cc9`, `0x5e6cd1`), then `CMSG_QUERY_TIME` when `query_time` (`0x5e6d79`).
+    fn send_quest_log_tail(&mut self, _pois: &[u32], _query_time: bool) {}
+
     /// `GetQuestResetTime`'s first step (`0x5e6dee`-`0x5e6e00`): with the time response's re-ask due, the log's rebuild runs, its tail asking the time again (`0x5e6d79`); its rows to write, `None` when not due, the rebuild skipped or no view lends it.
     fn rebuild_quest_log_if_reask_due(&mut self) -> Option<super::QuestLogPlan> {
         None
