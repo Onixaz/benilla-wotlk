@@ -1349,6 +1349,7 @@ fn the_arena_rating_and_medal_lines_turn_white_when_met() {
             ..Default::default()
         }),
         stats: [rating, 0, 0, 0, 0, 0],
+        roster_type: 3,
         members: Vec::new(),
     };
     let lend =

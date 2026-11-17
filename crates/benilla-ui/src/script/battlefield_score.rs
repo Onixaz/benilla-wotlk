@@ -125,17 +125,13 @@ fn names_pending() -> bool {
 }
 
 impl ScoreBoard {
-    /// The score sort (`0x54a740`): equal with either name uncached; the filtered team first by the
-    /// race's side; then each criterion in turn, the numbers high first, the name A to Z, the team
-    /// low first.
-    ///
-    /// Deviation: the reference's class and stat columns answer "after" for an equal pair, which
-    /// is no ordering; equal keys here compare equal and the sort keeps the array's order.
+    /// The score sort (`0x54a740`): equal with a name uncached, the filtered side first, then each criterion (numbers high, name A to Z, team low).
     fn compare(
         &self,
         (a, an): (&BattlefieldScoreRow, Option<&ScoreName>),
         (b, bn): (&BattlefieldScoreRow, Option<&ScoreName>),
     ) -> std::cmp::Ordering {
+        // Deviates: 12340's class and stat columns answer "after" for an equal pair, no ordering; equal keys compare equal here.
         use std::cmp::Ordering;
         let (Some(an), Some(bn)) = (an, bn) else {
             return Ordering::Equal;

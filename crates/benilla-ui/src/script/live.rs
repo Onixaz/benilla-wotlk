@@ -153,9 +153,9 @@ pub trait LiveState {
         false
     }
 
-    /// The leading arena slots holding an opponent or a pet (`0x549630`), `None` without slots.
-    fn arena_opponent_count(&self) -> Option<usize> {
-        None
+    /// The leading arena slots holding an opponent or a pet (`0x549630`), 0 without slots.
+    fn arena_opponent_count(&self) -> usize {
+        0
     }
 
     /// Our honor block when called, `None` before its private fields stream.
@@ -168,9 +168,33 @@ pub trait LiveState {
         None
     }
 
-    /// Our three arena-team slots when called.
-    fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
-        Default::default()
+    /// Our arena-team slot's seven field words when called, zeros without them.
+    fn arena_team_info(&self, _slot: usize) -> [u32; 7] {
+        [0; 7]
+    }
+
+    /// Our arena-team slot's last `SMSG_ARENA_TEAM_STATS` when called.
+    fn arena_team_stats(&self, _slot: usize) -> [u32; 6] {
+        [0; 6]
+    }
+
+    /// Our arena-team slot's last roster team type when called (`0x5a3ea4`), 0 before a roster.
+    fn arena_team_roster_type(&self, _slot: usize) -> u32 {
+        0
+    }
+
+    /// Our arena-team slot's roster length when called.
+    fn arena_team_member_count(&self, _slot: usize) -> usize {
+        0
+    }
+
+    /// Our arena-team slot's roster member `index` in wire order when called.
+    fn arena_team_member(
+        &self,
+        _slot: usize,
+        _index: usize,
+    ) -> Option<super::ArenaTeamMemberRef<'_>> {
+        None
     }
 
     /// The team cache's record for `team_id` when called, asked on a miss.
@@ -433,8 +457,31 @@ impl LiveState for TestView {
         self.pvp_timer
     }
 
-    fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
-        self.arena_teams.clone()
+    fn arena_team_info(&self, slot: usize) -> [u32; 7] {
+        self.arena_teams[slot].info
+    }
+
+    fn arena_team_stats(&self, slot: usize) -> [u32; 6] {
+        self.arena_teams[slot].stats
+    }
+
+    fn arena_team_roster_type(&self, slot: usize) -> u32 {
+        self.arena_teams[slot].roster_type
+    }
+
+    fn arena_team_member_count(&self, slot: usize) -> usize {
+        self.arena_teams[slot].members.len()
+    }
+
+    fn arena_team_member(
+        &self,
+        slot: usize,
+        index: usize,
+    ) -> Option<super::ArenaTeamMemberRef<'_>> {
+        self.arena_teams[slot]
+            .members
+            .get(index)
+            .map(|m| m.borrowed())
     }
 
     fn arena_team_record(&self, team_id: u32) -> Option<super::ArenaTeamRecordView> {

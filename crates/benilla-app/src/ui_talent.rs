@@ -63,23 +63,42 @@ pub(crate) struct PetTalentGroup {
     pub(crate) pending_update: bool,
 }
 
-/// The inspected player's talents: the `(race, class)` its tabs come from, set with the inspect
-/// target and `None` without a player object, and the groups the inspect packet named.
+/// The inspected player's talents: the groups the inspect packet named.
 #[derive(Resource, Default)]
 pub(crate) struct InspectTalents {
-    pub(crate) class: Option<(u8, u8)>,
     pub(crate) groups: PlayerTalentGroups,
     /// `INSPECT_TALENT_READY`s owed, fired after the snapshot they describe.
     pub(crate) ready: u32,
 }
 
-impl InspectTalents {
-    /// The inspect target changed (`0x5c9f70`): the tabs follow its class, the groups stay until
-    /// the packet replaces them.
-    pub(crate) fn set_target(&mut self, class: Option<(u8, u8)>) {
-        self.class = class;
+/// The talent target's `(race, class)` the inspected tabs come from (`0x5c9f70`), set inside the inspect verbs; `None` without a player object.
+#[derive(Resource, Default)]
+pub(crate) struct InspectTalentClass {
+    class: std::sync::atomic::AtomicU16,
+    /// The resets so far: each one clears the VM's tabs, so the feed re-pushes even an equal set.
+    resets: std::sync::atomic::AtomicU32,
+}
+
+impl InspectTalentClass {
+    /// The talent target moved (`0x5c9f70`): the tabs reset and follow its class, the groups stay until the packet replaces them.
+    pub(crate) fn set(&self, class: Option<(u8, u8)>) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let packed = class.map_or(0, |(race, class)| u16::from(race) << 8 | u16::from(class));
+        self.class.store(packed, Relaxed);
+        self.resets.fetch_add(1, Relaxed);
     }
 
+    pub(crate) fn get(&self) -> Option<(u8, u8)> {
+        let packed = self.class.load(std::sync::atomic::Ordering::Relaxed);
+        (packed != 0).then_some(((packed >> 8) as u8, packed as u8))
+    }
+
+    pub(crate) fn resets(&self) -> u32 {
+        self.resets.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl InspectTalents {
     /// `SMSG_INSPECT_TALENT` for the target: the groups replaced whole (`0x5c9ad0`), then the event.
     pub(crate) fn apply(&mut self, info: TalentsInfo) {
         if let TalentsInfo::Player {
@@ -143,6 +162,7 @@ impl Plugin for UiTalentPlugin {
         app.init_resource::<PlayerTalentGroups>()
             .init_resource::<PetTalentGroup>()
             .init_resource::<InspectTalents>()
+            .init_resource::<InspectTalentClass>()
             .net_handler(SessionEventKind::TalentsInfo, on_talents_info)
             .add_systems(Startup, load_talents.after(AssetSet::Open))
             .add_systems(
@@ -428,21 +448,24 @@ fn feed_inspect_talents(
     talents: Option<Res<Talents>>,
     spells: Option<Res<Spells>>,
     mut inspect: ResMut<InspectTalents>,
-    mut memory: Local<crate::ui_script::VmMemo<Option<TalentUiState>>>,
+    target: Res<InspectTalentClass>,
+    mut memory: Local<crate::ui_script::VmMemo<(Option<TalentUiState>, u32)>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    let (pushed, vm_reset) = memory.get_reset(&script);
+    let ((pushed, last_reset), vm_reset) = memory.get_reset(&script);
+    let class = target.get();
+    let reset = std::mem::replace(last_reset, target.resets()) != *last_reset;
     let catalogs_changed = talents.as_ref().is_some_and(|r| r.is_changed())
         || spells.as_ref().is_some_and(|r| r.is_changed());
-    if !(vm_reset || catalogs_changed || inspect.is_changed()) {
+    if !(vm_reset || catalogs_changed || reset || inspect.is_changed()) {
         return;
     }
     let (Some(talents), Some(spells)) = (talents.as_deref(), spells.as_deref()) else {
         return;
     };
-    let (race, class) = inspect.class.unwrap_or((0, 0));
+    let (race, class) = class.unwrap_or((0, 0));
     let fresh = build_pages(
         &talents.catalog,
         &BTreeSet::new(),
@@ -452,7 +475,7 @@ fn feed_inspect_talents(
         (0, 0),
         &inspect.groups,
     );
-    if pushed.as_ref() != Some(&fresh) {
+    if reset || pushed.as_ref() != Some(&fresh) {
         debug!(
             "ui_talent: fed the inspected player {} tab(s), {} group(s)",
             fresh.tabs.len(),
@@ -744,13 +767,11 @@ mod tests {
             ],
         };
         let mut inspect = InspectTalents::default();
-        inspect.set_target(Some((1, 2)));
         inspect.apply(body(1403, 2));
         assert_eq!((inspect.groups.unspent, inspect.groups.active), (4, 1));
         assert_eq!(inspect.groups.ranks[1].get(&1403), Some(&2));
         assert_eq!(inspect.groups.glyphs[1][0], 7);
         assert_eq!(inspect.ready, 1);
-        inspect.set_target(Some((3, 3)));
         assert_eq!(inspect.groups.ranks.len(), 2, "kept until the next packet");
         inspect.apply(body(1500, 0));
         assert_eq!(inspect.groups.ranks[1].get(&1403), None);
