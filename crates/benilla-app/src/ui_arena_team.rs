@@ -511,8 +511,12 @@ impl Plugin for UiArenaTeamPlugin {
             .add_systems(
                 Update,
                 (
-                    // After the net stage, where the cascade is written and the cache releases.
-                    enter_world.after(benilla_world::schedule::WorldStage::Net),
+                    // In the net stage, after the drain writes the cascade, ahead of the UI's
+                    // systems as the frame orders them.
+                    enter_world
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::enter_world_on_self_create)
+                        .after(crate::query_cache::release_on_enter::<ArenaTeams>),
                     drain_arena_teams.in_set(UiDrain),
                 ),
             );

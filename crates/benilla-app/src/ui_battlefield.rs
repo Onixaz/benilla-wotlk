@@ -711,18 +711,28 @@ fn drain_battlefield(
     }
 }
 
-/// The world-enter cascade's status request, between the mail query and the LFG entry as the
-/// cascade orders them (`0x528010`): both statuses go to none (`0x54cb41`), then the bodyless
-/// `CMSG_BATTLEFIELD_STATUS` goes out (`0x54cc40`), so its answers always land on the zeroed slots.
-pub(crate) fn request_status_on_world_enter(
+/// The world-enter cascade's status zero (`0x54cb41`), in the net stage ahead of its request
+/// ([`request_status_on_world_enter`], `0x54cc40`), so the request's answers always land on the
+/// zeroed slots.
+pub(crate) fn zero_statuses_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     queue: Option<ResMut<BattlefieldQueue>>,
-    commands: Res<NetCommands>,
 ) {
     if cascades.read().next().is_some() {
         if let Some(mut queue) = queue {
             queue.zero_statuses();
         }
+    }
+}
+
+/// The world-enter cascade's status request, between the mail query and the LFG entry as the
+/// cascade orders them (`0x528010`): the bodyless `CMSG_BATTLEFIELD_STATUS` of `0x54ca50`
+/// (`0x54cc40`), answered slot by slot.
+pub(crate) fn request_status_on_world_enter(
+    mut cascades: MessageReader<WorldEnterCascadeMessage>,
+    commands: Res<NetCommands>,
+) {
+    if cascades.read().next().is_some() {
         let _ = commands.0.send(ClientCommand::BattlefieldStatusRequest);
     }
 }
@@ -970,6 +980,9 @@ impl Plugin for BattlefieldPlugin {
             .add_systems(
                 Update,
                 (
+                    zero_statuses_on_world_enter
+                        .in_set(benilla_world::schedule::WorldStage::Net)
+                        .after(crate::net::enter_world_on_self_create),
                     request_status_on_world_enter
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter),
@@ -1086,7 +1099,10 @@ mod tests {
             .init_resource::<BattlefieldQueue>()
             .init_resource::<Battlefield>()
             .add_message::<WorldEnterCascadeMessage>()
-            .add_systems(Update, request_status_on_world_enter);
+            .add_systems(
+                Update,
+                (zero_statuses_on_world_enter, request_status_on_world_enter).chain(),
+            );
         let now = Instant::now();
         app.world_mut()
             .resource_mut::<BattlefieldQueue>()
