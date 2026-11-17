@@ -117,10 +117,24 @@ pub(crate) fn feed_ui_input(
     };
     let wl_display = textinput::wayland_display(raw_handle);
     // ── Modifiers ── before the mouse feed, so a click's `IsShiftKeyDown` sees the click's state.
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
-    script.set_modifiers(shift, ctrl, alt);
+    // Each side apart, the reference's key word (`[0xbeadd8]+0x130`).
+    let modifier_keys = [
+        KeyCode::ShiftLeft,
+        KeyCode::ShiftRight,
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ]
+    .iter()
+    .enumerate()
+    .fold(0u8, |bits, (i, k)| bits | u8::from(keys.pressed(*k)) << i);
+    script.set_modifier_keys(modifier_keys);
+    let (shift, ctrl, alt) = (
+        modifier_keys & 0x3 != 0,
+        modifier_keys & 0xc != 0,
+        modifier_keys & 0x30 != 0,
+    );
     script.set_window_focused(window.focused);
     // ── Mouse ── A cursor off the window skips only the mouse feed.
     // The headless hover probe's aim stands in for a missing cursor, so `PointerOverUi` rises and

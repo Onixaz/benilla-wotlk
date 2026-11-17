@@ -51,6 +51,9 @@ pub(crate) struct ResurrectOffer {
     pub(crate) has_timer: bool,
     /// An unnamed caster whose name query is still out (`0x6dbc60` answers it).
     pub(crate) awaiting_name: bool,
+    /// The caster's name in the player name cache, which `ResurrectGetOfferer` answers
+    /// (`0x515950`, by guid, whatever the packet's name); `None` until the cache answers.
+    pub(crate) offerer: Option<String>,
 }
 
 /// The death state the descriptor does not carry, filled from the wire and cleared at session
@@ -195,6 +198,11 @@ impl DeathView<'_, '_> {
     /// Outside an arena alone (`0x515a00`, the battlefield word `[0xbea570] == 4`).
     pub(crate) fn resurrect_has_timer(&self) -> bool {
         !self.arena.active() && self.offer().is_some_and(|o| o.has_timer)
+    }
+
+    /// `ResurrectGetOfferer` (`0x515950`): the offer's caster as the name cache holds it.
+    pub(crate) fn resurrect_offerer(&self) -> Option<String> {
+        self.offer()?.offerer.clone()
     }
 
     fn offer(&self) -> Option<&ResurrectOffer> {
@@ -1244,6 +1252,7 @@ mod tests {
                 sickness: true,
                 has_timer: true,
                 awaiting_name: false,
+                offerer: None,
             }),
             ..Default::default()
         });

@@ -73,6 +73,12 @@ pub trait LiveState {
         None
     }
 
+    /// `ResurrectGetOfferer` (`0x515950`): the pending offer's caster in the player name cache;
+    /// `None` with no offer or before the cache answers.
+    fn resurrect_offerer(&self) -> Option<String> {
+        None
+    }
+
     /// `HasSoulstone`'s label: the self-res spell's name, or a carried self-res item's.
     fn self_res_label(&self) -> Option<String> {
         None

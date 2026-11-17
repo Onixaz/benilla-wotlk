@@ -1104,6 +1104,7 @@ pub(crate) fn snapshot(
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
         // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
         is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
+        pvp_sanctuary: store.0.unit_byte2_flags() & 0x8 != 0,
         // No honor rank streams: 3.3.5a's `PLAYER_BYTES_3` bytes 2 and 3 are the PvP title and the
         // arena faction.
         pvp_rank: 0,

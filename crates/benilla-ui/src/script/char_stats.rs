@@ -140,6 +140,9 @@ pub struct UnitCombatStats {
     pub combat_rating_bonus: [f32; 25],
     /// Mana regen per second out of casting and while casting, with no mana `None`.
     pub mana_regen: Option<[f32; 2]>,
+    /// Regen per second of the unit's own power type, out of casting and while casting: the
+    /// type's base (`0x4f5300`) plus its flat modifier field (`0x4f5390`).
+    pub power_regen: [f32; 2],
     /// The class's `ChrClasses` damage bonus stat, `None` with no class row.
     pub damage_bonus_stat: Option<u32>,
     /// Whether the form's `SpellShapeshiftForm` flags carry `0x20`: agility adds attack power.
@@ -210,6 +213,7 @@ impl Default for UnitCombatStats {
             combat_ratings: [0; 25],
             combat_rating_bonus: [0.0; 25],
             mana_regen: None,
+            power_regen: [0.0; 2],
             damage_bonus_stat: None,
             form_agility_attack_power: false,
             crit_from_agility: 0.0,
