@@ -70,8 +70,7 @@ pub(crate) struct BattlefieldQueue {
     active_map: u32,
     /// The arena faction (`0xbea54a`).
     arena_faction: u8,
-    /// The active map's `InstanceType` (`0xbea570`): set by status 3, cleared only by the queue-0
-    /// arm on the active slot (`0x54b17e`) and the world leave (`0x54e37d`).
+    /// The active map's `InstanceType` (`0xbea570`), cleared only by the active slot's queue-0 arm (`0x54b17e`) and the world leave.
     instance_type: u32,
     /// The instance's expiration and start time, the second kept as the status's arrival
     /// and the wire's elapsed span so no `Instant` precedes the clock's origin.
@@ -80,8 +79,7 @@ pub(crate) struct BattlefieldQueue {
 }
 
 impl BattlefieldQueue {
-    /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`) with the map's instance type; whether the queue-0
-    /// arm cleared the active slot.
+    /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`); whether the queue-0 arm cleared the active slot.
     pub(crate) fn apply(&mut self, status: BattlefieldStatus, instance_type: Option<u32>) -> bool {
         self.apply_at(status, instance_type, Instant::now())
     }
@@ -241,8 +239,7 @@ impl WorldPvpQueue {
         self.status = status;
     }
 
-    /// The battle-manager notices' writes and the event each fires after them, in its handler's
-    /// order (`0x54b610`-`0x5499c0`).
+    /// The battle-manager notices' writes and each one's event, in handler order (`0x54b610`-`0x5499c0`).
     fn apply(
         &mut self,
         notice: BattlefieldMgrNotice,
@@ -486,8 +483,7 @@ fn slot_view(
     view
 }
 
-/// `AcceptBattlefieldPort`'s refusals (`0x54da10`) in its order, skipped on a battleground map; the
-/// VM reads the fatigue leg last (`0x54dbab`).
+/// `AcceptBattlefieldPort`'s refusals (`0x54da10`) in order, skipped on a battleground map; the VM reads fatigue last.
 fn port_refusal(
     store: &ObjectStore,
     player: Option<&Player>,
@@ -512,8 +508,7 @@ fn port_refusal(
     None
 }
 
-/// What the queue's verbs read when called, as 12340's read its globals (`0x549ad0`-`0x54e6d0`):
-/// the queue, the world-PvP slot, the tables, where we stand and the UI clock.
+/// What the queue's verbs read when called (`0x549ad0`-`0x54e6d0`).
 #[derive(SystemParam)]
 pub(crate) struct BattlefieldView<'w, 's> {
     queue: Option<Res<'w, BattlefieldQueue>>,
@@ -557,8 +552,7 @@ impl BattlefieldView<'_, '_> {
         }
     }
 
-    /// The world-PvP slot (`0xbea4a8`) against the UI clock, `time()` plus the server's offset
-    /// (`0x548700`).
+    /// The world-PvP slot (`0xbea4a8`) against the UI clock (`0x548700`).
     pub(crate) fn world_pvp(&self) -> WorldPvpQueueView {
         let world_pvp = self.world_pvp.as_deref().map(|w| w.0).unwrap_or_default();
         let ui_now = self.ui_clock.as_deref().map_or_else(
@@ -590,8 +584,7 @@ impl BattlefieldView<'_, '_> {
             .is_some_and(|r| r.flags & AREA_FLAG_HEARTH_AND_RESURRECT != 0)
     }
 
-    /// The first of `AcceptBattlefieldPort`'s refusals we now meet; the current-map test
-    /// (`0x54a700`) despite its name tests for a battleground map, type 3.
+    /// The first port refusal we meet; `0x54a700` tests for a battleground map, type 3.
     pub(crate) fn port_refusal(&self) -> Option<&'static str> {
         let maps = self.maps.as_deref().map(|m| &m.0);
         let on_battleground_map = maps
@@ -604,8 +597,7 @@ impl BattlefieldView<'_, '_> {
             .and_then(|s| port_refusal(s, self.player.as_deref(), on_battleground_map))
     }
 
-    /// `BattlemasterList.dbc`'s row `id` resolved for us now: none before the table loads or our
-    /// create.
+    /// `BattlemasterList.dbc`'s row `id` for us now, none before the table or our create.
     pub(crate) fn row(&self, id: u32) -> Option<BattlemasterRow> {
         let table = &self.table.as_deref()?.0;
         let store = self.me.iter().next()?;
@@ -685,8 +677,7 @@ fn verdict_line(
     Some(UiError::key(key))
 }
 
-/// A battleground join's or leave's line, the name as `name-realm` for another realm
-/// (`0x54b55a`-`0x54b58a`).
+/// A join's or leave's line, `name-realm` for another realm (`0x54b55a`).
 fn player_line(joined: bool, name: &str) -> UiError {
     if joined {
         UiError::strings("ERR_BG_PLAYER_JOINED_SS", &[name, name])
@@ -695,8 +686,7 @@ fn player_line(joined: bool, name: &str) -> UiError {
     }
 }
 
-/// The name-cache callbacks of a join or leave whose name was not cached (`0x54a530`,
-/// `0x54a5c0`): its line shows once the name lands.
+/// Joins and leaves waiting on a name (`0x54a530`, `0x54a5c0`), their lines shown when it lands.
 fn announce_named_players(
     mut state: ResMut<Battlefield>,
     names: Res<NameCache>,
@@ -715,9 +705,7 @@ fn announce_named_players(
     });
 }
 
-/// The VM's sends: the joins (`0x54cc70`), the list requests (`0x54e5b0`), the port answers
-/// (`0x54da10`), the leave (`0x54c250`), the hearth and the battle-manager answers; and the
-/// walk-away close of the battlemaster session (`0x5496d0` with none).
+/// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`) and the battlemaster walk-away close (`0x5496d0`).
 fn drain_battlefield(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<Battlefield>,
@@ -862,8 +850,7 @@ pub(crate) fn leave_world(world: &mut World) {
     crate::ui_script::live::fire_handler_events(world);
 }
 
-/// Queue the battlefield's world entry (`0x54ca50`) to run once the calling system's commands
-/// apply: the queue's globals, the scoreboard's, then the arena slots and their events.
+/// Queue the battlefield's world entry (`0x54ca50`) for when the calling system's commands apply.
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
         if let Err(e) = world.run_system_cached(enter_world) {
@@ -946,11 +933,7 @@ mod net {
         *world_pvp = WorldPvp::default();
     }
 
-    /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`): the slot, the confirm tutorial (48) as it reads the
-    /// invitation, on status 3 the map's score columns, the filter reset and the score rebuild
-    /// (`0x54b026`, `0x54b0cc`, `0x54b0d6`) that fires `UPDATE_BATTLEFIELD_SCORE` with every name
-    /// known, the queued tutorial (47), then `UPDATE_BATTLEFIELD_STATUS` with the 1-based slot
-    /// (`0x54b1a9`); a third slot is dropped.
+    /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`): the slot, on status 3 the score rebuild (`0x54b0d6`), then `UPDATE_BATTLEFIELD_STATUS` (`0x54b1a9`).
     pub(super) fn on_status(
         In(ev): In<SessionEvent>,
         mut queue: ResMut<BattlefieldQueue>,
@@ -973,8 +956,7 @@ mod net {
         let instance_type = status
             .active
             .and_then(|a| maps.as_deref()?.0.instance_type(a.map_id));
-        // The queue-0 arm on the active slot zeroes the positions and the score columns
-        // (`0x54b165`, `0x54b174`).
+        // The active slot's queue-0 arm zeroes the positions and score columns (`0x54b165`, `0x54b174`).
         if queue.apply(status, instance_type) {
             positions.clear_players();
             ui.write(UiScript::clear_battlefield_score_columns);
@@ -1004,8 +986,7 @@ mod net {
         );
     }
 
-    /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`): the type, rewards and instances, then the event its
-    /// source names, written into the VM in turn.
+    /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`): written into the VM in turn, then its source's event.
     fn on_list(In(ev): In<SessionEvent>, mut state: ResMut<Battlefield>, mut ui: ResMut<UiEvents>) {
         let SessionEvent::BattlefieldList(list) = ev else {
             return;
@@ -1039,8 +1020,7 @@ mod net {
             .extend(verdict_line(verdict, table, &names, &commands));
     }
 
-    /// A battleground join or leave (`0x54b510`): the line at once with the name cached, else on
-    /// the name's arrival.
+    /// A join or leave (`0x54b510`): the line now with the name cached, else when it lands.
     fn on_player(
         In(ev): In<SessionEvent>,
         mut state: ResMut<Battlefield>,
@@ -1068,9 +1048,7 @@ mod net {
         }
     }
 
-    /// The battle-manager notices (`0x54b610`-`0x5499c0`): `SMSG_BATTLEFIELD_MGR_ENTERED`'s third
-    /// byte adds `CLEARED_AFK` as a system line first (`0x5498f6`-`0x54992b`), then the queue write
-    /// and the event.
+    /// The battle-manager notices (`0x54b610`): the entry's `CLEARED_AFK` line first (`0x5498f6`), then the write and the event.
     fn on_mgr(
         In(ev): In<SessionEvent>,
         mut world_pvp: ResMut<WorldPvp>,
@@ -1226,8 +1204,7 @@ mod tests {
         );
     }
 
-    /// The instance type (`0xbea570`) outlives the active index's drop: only the queue-0 arm on
-    /// the active slot (`0x54b17e`) and the world leave (`0x54e37d`) clear it.
+    /// The instance type outlives the active index; only the queue-0 arm (`0x54b17e`) and the world leave (`0x54e37d`) clear it.
     #[test]
     fn the_arena_type_outlives_the_active_index() {
         let mut q = BattlefieldQueue::default();

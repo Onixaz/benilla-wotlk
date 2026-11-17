@@ -57,8 +57,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Three values on every leg that does not raise: `(0, 0, nil)` off the list; the point projected
-    // with no Outland hide (`0x54c4a0`).
+    // Three values on every leg: `(0, 0, nil)` off the list; projected with no Outland hide (`0x54c4a0`).
     g.set(
         "GetBattlefieldPosition",
         lua.create_function(|lua, index: Value| {

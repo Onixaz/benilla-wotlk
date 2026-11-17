@@ -366,8 +366,7 @@ impl super::UiScript {
         model.unit_guids.focus = focus;
     }
 
-    /// The arena slots alone: `arenaN`'s and `arenapetN`'s guids and the opponent count, as an
-    /// arena handler writes them before its `ARENA_OPPONENT_UPDATE`.
+    /// The arena slots alone, as an arena handler writes them before its `ARENA_OPPONENT_UPDATE`.
     pub fn set_arena_unit_guids(&mut self, arena: [u64; 5], pets: [u64; 5], count: usize) {
         let mut model = self.model_mut();
         let g = &mut model.unit_guids;

@@ -1460,11 +1460,7 @@ fn gameobject_info(
     go_templates.insert(entry, type_id, name, data);
 }
 
-/// Our own unit's watched fields in field order, as the mirror handlers run (`0x4d5550`): health
-/// (`0x73f330`) ahead of the flags word, whose `UNIT_FLAGS` for `"player"` comes from its watch
-/// (`0x60c240` -> `0x60bf10`), then the dynamic flags, the player flags (their PvP cooldown at
-/// `0x6e103a` ahead of the ghost status at `0x6e10fb`), then the honor fields; each keeps wire
-/// order with the next handler's events.
+/// Our own unit's watches in field order (`0x4d5550`): health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
     if sc.self_guid.0 != Some(guid) {
@@ -1491,8 +1487,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     own_player_watches(sc, guid, &merged.watched);
 }
 
-/// Our own player watches past the flags, in field order: the honor fields and the arena-team
-/// words, whose 0x54-byte watch runs once per update (`0x6cdda0`).
+/// Our player watches past the flags in field order: honor, then the arena-team words once per update (`0x6cdda0`).
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     for &(index, old, new) in edges {

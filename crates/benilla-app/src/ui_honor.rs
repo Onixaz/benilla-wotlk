@@ -37,9 +37,7 @@ mod net {
         app.net_handler(SessionEventKind::InspectHonorStats, on_inspect_stats);
     }
 
-    /// `MSG_INSPECT_HONOR_STATS` (`0x5e7a50`): a reply for anyone but the inspect target is
-    /// dropped (`0x5e7a68`); the target's is held, the in-flight latch clears (`0x5e7ae4`) and
-    /// `INSPECT_HONOR_UPDATE` fires (`0x5e7aee`), every time.
+    /// `MSG_INSPECT_HONOR_STATS` (`0x5e7a50`): the target's reply alone (`0x5e7a68`), held, then `INSPECT_HONOR_UPDATE` (`0x5e7aee`).
     pub(super) fn on_inspect_stats(
         In(ev): In<SessionEvent>,
         target: Res<crate::ui_inspect::InspectGuid>,
@@ -88,8 +86,7 @@ impl Plugin for UiHonorPlugin {
     }
 }
 
-/// `RequestInspectHonorData()` (`0x5e9140`): `MSG_INSPECT_HONOR_STATS` for the inspect target's
-/// guid (`0x5e91a1`), none with no target (`0x5e916c`).
+/// `RequestInspectHonorData()` (`0x5e9140`): a send for the inspect target (`0x5e91a1`), none without one (`0x5e916c`).
 fn drain_inspect_honor_requests(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     target: Res<crate::ui_inspect::InspectGuid>,
@@ -122,8 +119,7 @@ pub(crate) struct PvpCooldown {
 }
 
 impl PvpCooldown {
-    /// Our create's init (`0x6e8378` -> `0x6e81f2`), over the new player's zeroed stamp
-    /// (`0x6e6dba`): PvP desired keeps it zero, a running timer keeps it zero, else it starts.
+    /// Our create's init (`0x6e81f2`): desired or a running timer keeps the stamp zero, else it starts.
     pub(crate) fn enter(&mut self, flags: u32, now: Instant) {
         self.stamp = None;
         if flags & PVP_DESIRED == 0 && flags & PVP_TIMER == 0 {
@@ -131,8 +127,7 @@ impl PvpCooldown {
         }
     }
 
-    /// The `PLAYER_FLAGS` watch (`0x6e102c`): a change in `0x40300` re-stamps (`0x6de750`): PvP
-    /// desired zeroes it, else it starts unless the timer flag was set before and after.
+    /// The `PLAYER_FLAGS` watch (`0x6e102c`): a change in `0x40300` re-stamps (`0x6de750`).
     pub(crate) fn watch(&mut self, old: u32, new: u32, now: Instant) {
         if (old ^ new) & 0x40300 == 0 {
             return;
@@ -144,8 +139,7 @@ impl PvpCooldown {
         }
     }
 
-    /// The PvP toggle timer (`0x6de7a0`) under our `flags`: the full span without the timer flag,
-    /// else the ms left on the stamp, -1 with none or once it passed.
+    /// The PvP toggle timer (`0x6de7a0`): the full span without the flag, else ms left, -1 once passed.
     pub(crate) fn toggle_timer(&self, flags: u32, now: Instant) -> i32 {
         if flags & PVP_TIMER == 0 {
             return PVP_TIMER_SPAN.as_millis() as i32;
@@ -257,8 +251,7 @@ fn pvp_name_strings(script: &UiScript) -> HashMap<String, String> {
         .collect()
 }
 
-/// Our honor block off our own descriptor, `None` until its private fields stream: the reference
-/// reads a field it was never sent as 0.
+/// Our honor block off our descriptor, `None` until its private fields stream.
 pub(crate) fn honor_of(f: &ObjectFields) -> Option<HonorState> {
     // Presence is tested on a private field: the public rank byte streams with the unit block.
     let today_hk = f.player_kills_today()?;
@@ -281,8 +274,7 @@ pub(crate) fn honor_of(f: &ObjectFields) -> Option<HonorState> {
 mod tests {
     use super::*;
 
-    /// Each watch fires its own event, in field order; yesterday's half and the unwatched fields
-    /// fire nothing.
+    /// Each watch fires its own event in field order; the unwatched fields fire nothing.
     #[test]
     fn each_watch_fires_its_own_event_in_field_order() {
         use benilla_protocol::field::{
@@ -337,8 +329,7 @@ mod tests {
         assert_eq!(t.toggle_timer(PVP_TIMER, t0 + PVP_TIMER_SPAN), -1);
     }
 
-    /// A login with the timer flag already on keeps the zeroed stamp, so the timer reads -1; a
-    /// fresh create drops the previous character's stamp.
+    /// A login with the timer flag on keeps the zeroed stamp (-1); a fresh create drops the old stamp.
     #[test]
     fn a_login_inside_the_timer_reads_it_as_run_out() {
         let now = Instant::now();

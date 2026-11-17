@@ -27,8 +27,7 @@ use crate::world_state_ui::WorldStateUiRes;
 /// `RequestBattlefieldScoreData`'s throttle (`0x54ce30`).
 const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
 
-/// The rows' names still asked for (`0xbea590`) and the finished flag (`0xbea588`), zeroed by a
-/// world entry and the session's end.
+/// The rows' pending names (`0xbea590`) and the finished flag (`0xbea588`).
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldScoreboard {
     /// The guids whose answer the rebuild waits on: one callback each (`0x54d460`).
@@ -66,9 +65,7 @@ pub(crate) fn score_columns(catalog: &WorldStateUiRes, map: u32) -> Vec<Battlefi
     out
 }
 
-/// A row's name-cache record as the scoreboard reads it (`0x54be90`): `None` while uncached or
-/// denied. The race and class are the name answer's; a held unit's own fields stand in where the
-/// cache has none, as for ourselves, whose name the reference queries at login.
+/// A row's name record as the scoreboard reads it (`0x54be90`), a held unit's race and class standing in.
 pub(crate) fn score_name(
     names: &NameCache,
     guid: u64,
@@ -94,8 +91,7 @@ pub(crate) fn score_name(
     })
 }
 
-/// The log as the VM's board takes it: an arena row's team byte, a battleground's side left to
-/// the rebuild.
+/// The log for the VM's board: an arena row's team byte, a battleground's side left to the rebuild.
 fn board_log(log: PvpLogData) -> BattlefieldScores {
     let rows = log
         .rows
@@ -159,8 +155,7 @@ fn drain_battlefield_score(
     }
 }
 
-/// The world entry's board part (`0x54ca50`): the request clock, the finished flag and the
-/// pending names, their callbacks cancelled (`0x54cad9`, `0x54cb03`), and the VM's board.
+/// The world entry's board part (`0x54ca50`): clock, finished flag and pending names (`0x54cad9`, `0x54cb03`).
 pub(crate) fn enter_world(world: &mut World) {
     if let Some(mut board) = world.get_resource_mut::<BattlefieldScoreboard>() {
         *board = BattlefieldScoreboard::default();
@@ -201,10 +196,7 @@ mod net {
         clock.0 = None;
     }
 
-    /// `MSG_PVP_LOG_DATA` (`0x54d280`): the old callbacks cancelled (`0x54d289`), the log written
-    /// in wire order, each uncached name asked and counted (`0x54d469`), then with none pending
-    /// the rebuild (`0x54d495`). A denied name is no record there (`0x67a2d0` drops it), so its
-    /// row asks again: the negative this cache keeps is dropped first.
+    /// `MSG_PVP_LOG_DATA` (`0x54d280`): the log written, uncached names asked (`0x54d469`), then the rebuild with none pending (`0x54d495`).
     pub(super) fn on_pvp_log_data(
         In(ev): In<SessionEvent>,
         mut board: ResMut<BattlefieldScoreboard>,
@@ -232,9 +224,7 @@ mod net {
         }
     }
 
-    /// A name answer: a row waiting on it counts down, named or denied, and the last one runs the
-    /// rebuild (`0x54ca30`, which the deny's callbacks call too, `0x67a32d`). A retry keeps the
-    /// ask in flight (`0x67a360`) and still waits.
+    /// A name answer counts its rows down, and the last runs the rebuild (`0x54ca30`); a retry still waits (`0x67a360`).
     fn on_name_answer(
         In(ev): In<SessionEvent>,
         mut board: ResMut<BattlefieldScoreboard>,
@@ -415,9 +405,7 @@ mod tests {
         }
     }
 
-    /// `0x54d280`: each uncached row asks its name and counts pending (`0x54d469`). Each answer
-    /// counts down and the last ends the wait (`0x54ca30`); an answer for no row or a retry does
-    /// not.
+    /// `0x54d280` counts each uncached row; each answer counts down and the last ends the wait (`0x54ca30`).
     #[test]
     fn the_rebuild_waits_for_the_last_name() {
         let (mut app, rx) = app();
@@ -512,8 +500,7 @@ mod tests {
         assert!(app.world().resource::<ScoreRequestClock>().0.is_none());
     }
 
-    /// `0x54ca50` zeroes the result, the rows and the counts and fires no score event: the stock
-    /// frame keeps what it showed until its own events.
+    /// `0x54ca50` zeroes the result, rows and counts and fires no score event.
     #[test]
     fn world_entry_drops_an_ended_board() {
         benilla_formats::wow_data_or_skip!();

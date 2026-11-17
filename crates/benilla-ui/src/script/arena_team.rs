@@ -122,8 +122,7 @@ impl ArenaTeams {
         Ordering::Equal
     }
 
-    /// A slot's members in display order, indices into its `members`: the roster as the sort
-    /// left it, which runs on each roster and each change of the order.
+    /// A slot's members in display order, as the sort last left them.
     fn order(&self, slot: &ArenaTeamSlotView) -> Vec<usize> {
         let members = &slot.members;
         let mut order: Vec<usize> = (0..members.len()).collect();
@@ -152,9 +151,7 @@ fn team_id(slots: &[ArenaTeamSlotView; 3], slot: u32) -> u32 {
     slots.get(slot as usize).map_or(0, |s| s.info[0])
 }
 
-/// The personal and team rating check (`0x5a37b0`) over the slots when called: a slot whose team
-/// size is at least the bracket's (2, 3, 5) with a personal rating of `rating`, and a team of that
-/// size rated as high. A bracket off the three never passes.
+/// The rating check (`0x5a37b0`): a slot of at least the bracket's size with both ratings at least `rating`.
 pub(crate) fn rating_met(rating: u32, bracket: i32) -> bool {
     let Some(&min_size) = usize::try_from(bracket)
         .ok()

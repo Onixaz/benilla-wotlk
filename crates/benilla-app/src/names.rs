@@ -431,8 +431,7 @@ impl NameCache {
         self.player_realms.get(&guid).map(String::as_str)
     }
 
-    /// A player's full name off the name record (`0x67d770`): asked on a miss, and asked again
-    /// after a deny, which deletes the record (`0x67a2d0`).
+    /// A player's full name off the name record (`0x67d770`), asked on a miss and again after a deny (`0x67a2d0`).
     pub(crate) fn full_name_record(&self, guid: u64, commands: &NetCommands) -> Option<String> {
         if self.players.answered_unknown(guid) {
             self.players.ask_again(guid, || {

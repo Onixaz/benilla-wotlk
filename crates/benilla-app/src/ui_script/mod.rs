@@ -502,8 +502,7 @@ impl Plugin for UiScriptPlugin {
                 )
                     .chain(),
             )
-            // The area under us resolves in the world update, after the input's calls drain and
-            // before the paint (`0x47f15b`, then `0x47f163`).
+            // The area resolves after the input's calls drain and before the paint (`0x47f15b`, `0x47f163`).
             .configure_sets(
                 Update,
                 benilla_world::terrain_stream::AreaAuthoritySet

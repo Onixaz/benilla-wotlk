@@ -69,9 +69,7 @@ impl ArenaTeams {
             .find(|s| s.team_id == team_id && team_id != 0)
     }
 
-    /// The team update (`0x5a3700`) over our field words: a team that left its slot drops out of
-    /// the cache (`0x5a3763`), the slot takes the field's team id (`0x5a376a`) and every held team
-    /// asks its roster (`0x5a3779`). Its caller fires `ARENA_TEAM_UPDATE` when it signals.
+    /// The team update (`0x5a3700`): a team gone from its slot leaves the cache (`0x5a3763`), the slot takes the field's id, held teams ask their roster.
     fn update_teams(
         &mut self,
         info: &[[u32; 7]; 3],
@@ -114,8 +112,7 @@ impl ArenaTeams {
         })
     }
 
-    /// The three slots as the verbs read them: our field words, the cache's record, the table's
-    /// stats and roster.
+    /// The three slots as the verbs read them: field words, cached record, stats and roster.
     fn slot_views(&self, info: [[u32; 7]; 3], commands: &NetCommands) -> [ArenaTeamSlotView; 3] {
         std::array::from_fn(|i| {
             let s = &self.slots[i];
@@ -150,8 +147,7 @@ impl ArenaTeams {
     }
 }
 
-/// The roster query (`0x5a3600`): the slot's team id off our field, at most one ask per slot per
-/// 10 s.
+/// The roster query (`0x5a3600`): the slot's team id, at most one ask per slot per 10 s.
 fn query_roster(
     slot: usize,
     info: &[[u32; 7]; 3],
@@ -448,8 +444,7 @@ mod net {
                     show_line(&mut ui, key, args);
                 }
             }
-            // The line, then the roster update with force 1 for every slot (`0x5a28e0`): the
-            // throttle resets and the roster event fires with its argument 1.
+            // The line, then the roster update with force 1 for every slot (`0x5a28e0`).
             SessionEvent::ArenaTeamEvent(e) => {
                 let mine = me.0.and_then(|g| names.peek(g)).map(str::to_string);
                 let (key, args) = event_line(e, mine.as_deref());
@@ -474,10 +469,7 @@ mod net {
                     vec![inviter.clone(), inviter, team],
                 );
             }
-            // `MSG_INSPECT_ARENA_TEAMS` (`0x5e7b00`): only for the inspect target (`0x5e7b18`);
-            // the slot's words are written (`0x5e7b57`) and `INSPECT_HONOR_UPDATE` fires
-            // (`0x5e7bdb`). Deviation: a slot of 3 is dropped, where the reference writes it over
-            // the honor reply that follows the three.
+            // `MSG_INSPECT_ARENA_TEAMS` (`0x5e7b00`) for the target alone (`0x5e7b18`); deviation: slot 3 is dropped, where 12340 writes past the array.
             SessionEvent::InspectArenaTeam(t) => {
                 if t.player_guid == 0 || t.player_guid != target.get() || t.slot >= 3 {
                     return;
@@ -511,8 +503,7 @@ impl Plugin for UiArenaTeamPlugin {
             .add_systems(
                 Update,
                 (
-                    // In the net stage, after the drain writes the cascade, ahead of the UI's
-                    // systems as the frame orders them.
+                    // In the net stage, after the drain writes the cascade, ahead of the UI's systems.
                     enter_world
                         .in_set(benilla_world::schedule::WorldStage::Net)
                         .after(crate::net::enter_world_on_self_create)
@@ -539,8 +530,7 @@ mod tests {
         i
     }
 
-    /// `0x5a3600`'s per-slot throttle, and `0x5a376a` takes the field's id while the stats and
-    /// roster stay until their next packet.
+    /// `0x5a3600`'s per-slot throttle; `0x5a376a` takes the field's id, the stats and roster kept.
     #[test]
     fn a_team_in_a_slot_asks_its_roster_once_per_ten_seconds() {
         let (commands, rx) = commands();

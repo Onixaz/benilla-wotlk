@@ -62,9 +62,7 @@ pub struct InspectHonorData {
     pub highest_rank: u8,
 }
 
-/// One of the inspected player's arena teams as `MSG_INSPECT_ARENA_TEAMS` wrote it (`0x5e7b57`):
-/// the team id and the reply's five words, which `GetInspectArenaTeamData` joins with the team
-/// cache's record when called (`0x5e8030`).
+/// An inspected arena team as `MSG_INSPECT_ARENA_TEAMS` wrote it (`0x5e7b57`), joined with the cache when called (`0x5e8030`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InspectArenaTeamWords {
     pub team_id: u32,
@@ -326,8 +324,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms, 0 without the active player
-    // (`0x51bd34`).
+    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms, 0 without the active player (`0x51bd34`).
     g.set(
         "GetPVPTimer",
         lua.create_function(|_, ()| {

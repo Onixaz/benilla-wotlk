@@ -148,20 +148,17 @@ pub trait LiveState {
         None
     }
 
-    /// The scoreboard's pending-name count (`0xbea590`) is not zero: the rebuild and the sort wait
-    /// (`0x54aa39`, `0x54cee3`).
+    /// The scoreboard has pending names (`0xbea590`): the rebuild and sort wait (`0x54aa39`, `0x54cee3`).
     fn battlefield_score_names_pending(&self) -> bool {
         false
     }
 
-    /// The leading arena slots holding an opponent or a pet (`0x549630`), `None` where the app
-    /// holds no slots.
+    /// The leading arena slots holding an opponent or a pet (`0x549630`), `None` without slots.
     fn arena_opponent_count(&self) -> Option<usize> {
         None
     }
 
-    /// Our own honor block off the active player's descriptor when called, `None` before its
-    /// private fields stream.
+    /// Our honor block when called, `None` before its private fields stream.
     fn honor(&self) -> Option<super::HonorState> {
         None
     }
@@ -171,8 +168,7 @@ pub trait LiveState {
         None
     }
 
-    /// Our three arena-team slots when called: the field words, the team cache's record (asked on
-    /// a miss), the last stats and the last roster.
+    /// Our three arena-team slots when called.
     fn arena_team_slots(&self) -> [super::ArenaTeamSlotView; 3] {
         Default::default()
     }
@@ -207,8 +203,7 @@ pub trait LiveState {
         1.0
     }
 
-    /// `RequestBattlefieldPositions` (`0x54cf60`): the list cleared without an active slot, else
-    /// the send at most every 5000 ms.
+    /// `RequestBattlefieldPositions` (`0x54cf60`): cleared without an active slot, else sent at most every 5000 ms.
     fn request_battlefield_positions(&self) {}
 
     /// `NotifyInspect`'s `CMSG_INSPECT` and target (`0x5228c3`, `0x52291a`); whether the target moved (`0x5e76c1`).

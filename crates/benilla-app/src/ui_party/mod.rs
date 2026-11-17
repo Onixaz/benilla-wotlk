@@ -378,8 +378,7 @@ impl GroupState {
         self.members.iter().any(|m| m.guid == guid)
     }
 
-    /// A nonzero `guid` that is ours or in a party slot (`0x52c680`), or in the raid roster
-    /// (`0x5726f0`).
+    /// A nonzero `guid` that is ours, in a party slot (`0x52c680`) or in the raid (`0x5726f0`).
     pub(crate) fn in_party_or_raid(&self, me: Option<u64>, guid: u64) -> bool {
         guid != 0
             && (me == Some(guid)

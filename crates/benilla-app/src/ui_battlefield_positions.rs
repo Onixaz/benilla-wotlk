@@ -25,8 +25,7 @@ pub(crate) const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
 /// Eye of the Storm's `Map.dbc` row, whose one flag reverses the token (`0x54d0b5`).
 const EYE_OF_THE_STORM: u32 = 566;
 
-/// The positions the handler wrote, behind a lock: the request verb clears and stamps them and the
-/// getter files its name asks while the view is lent.
+/// The positions the handler wrote, locked so the verbs can clear, stamp and file name asks while lent.
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldPositions(Mutex<Board>);
 
@@ -47,8 +46,7 @@ impl BattlefieldPositions {
         self.0.get_mut().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` (`0x54b3f0`): the players as sent, the carriers by
-    /// slot, a slot the packet leaves out zeroed.
+    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` (`0x54b3f0`): players as sent, carriers by slot.
     pub(crate) fn apply(&mut self, packet: PositionsPacket) {
         let board = self.board();
         board.players = packet.players;
@@ -79,8 +77,7 @@ impl BattlefieldPositions {
         before - asks.len()
     }
 
-    /// The request (`0x54cf60`) at `now`: without an active slot the list clears (`0x54cf7d`);
-    /// else it sends once the stamp has passed and moves the stamp 5000 ms on.
+    /// The request (`0x54cf60`): no active slot clears the list (`0x54cf7d`), else a send at most every 5000 ms.
     fn request(&self, active: bool, now: Instant) -> bool {
         let mut board = self.0.lock_recover();
         if !active {
@@ -95,8 +92,7 @@ impl BattlefieldPositions {
     }
 }
 
-/// The flag token (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, so a Horde
-/// carrier (side 0) holds the Alliance flag; Eye of the Storm reverses it.
+/// The flag token (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, reversed in Eye of the Storm.
 fn flag_token(side: i8, map: u32) -> Option<&'static str> {
     const TOKENS: [&str; 2] = ["AllianceFlag", "HordeFlag"];
     let side = usize::try_from(side).ok().filter(|&s| s < 2)?;
@@ -154,8 +150,7 @@ impl PositionsView<'_, '_> {
         self.visible(me).len()
     }
 
-    /// `0x54c2e0`: a held player's position (`0x54c3eb`), else the packet's at height 0
-    /// (`0x54c41c`), on the active map; the name record asked with the callback (`0x54c489`).
+    /// `0x54c2e0`: a held player's position (`0x54c3eb`), else the packet's (`0x54c41c`); a nameless row asks (`0x54c489`).
     pub(crate) fn position(
         &self,
         me: Option<u64>,
@@ -196,9 +191,7 @@ impl PositionsView<'_, '_> {
         }
     }
 
-    /// `0x54dcc0`: the carrier's own position (`0x54dd39`: a held player on our map, else its
-    /// party record's on its zone's map), the packet's on the active map (`0x54dd81`), and the
-    /// token (`0x54d010`). `side` is a held player's side.
+    /// `0x54dcc0`: the carrier's own or party position (`0x54dd39`), else the packet's (`0x54dd81`), and its token.
     pub(crate) fn flag(
         &self,
         me: Option<u64>,
@@ -297,8 +290,7 @@ mod net {
         }
     }
 
-    /// A name answer runs each world-map callback the getter filed, named or denied (`0x67a2d0`);
-    /// a retry keeps them waiting.
+    /// A name answer runs each world-map callback filed for it, named or denied (`0x67a2d0`).
     fn on_name_answer(
         In(ev): In<SessionEvent>,
         mut positions: ResMut<BattlefieldPositions>,

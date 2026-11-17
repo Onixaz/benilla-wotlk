@@ -822,8 +822,7 @@ fn close_ui_session(world: &mut World) {
 #[derive(Resource, Default)]
 pub(crate) struct ReloadUiPending(pub(crate) bool);
 
-/// The reload byte (`0xbd0790`), set while a `ReloadUI()` runs (`0x52b00c`): here from the reload
-/// to the world entry it re-enters, whose parts that skip a reload take it.
+/// The reload byte (`0xbd0790`): from `ReloadUI()` (`0x52b00c`) to the world entry it re-enters.
 #[derive(Resource, Default)]
 pub(crate) struct ReloadEntry(pub(crate) bool);
 

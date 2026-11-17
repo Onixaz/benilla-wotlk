@@ -17,8 +17,7 @@ pub struct BattlefieldScoreRow {
     pub honorable_kills: u32,
     pub deaths: u32,
     pub bonus_honor: u32,
-    /// An arena's team byte as sent; a battleground's side, `0` Horde, `1` Alliance, `-1`
-    /// neither, set from the race by the rebuild (`0x54aadf`).
+    /// An arena's team byte as sent; a battleground's side from the race (`0x54aadf`), -1 neither.
     pub faction: i32,
     pub damage_done: u32,
     pub healing_done: u32,
@@ -173,9 +172,7 @@ impl ScoreBoard {
         Ordering::Equal
     }
 
-    /// The rebuild (`0x54aa30`): nothing while a name is pending (`0x54aa39`); else a
-    /// battleground's sides from the races, the filtered count and the sort. True when it ran,
-    /// and the caller fires `UPDATE_BATTLEFIELD_SCORE`.
+    /// The rebuild (`0x54aa30`): nothing while a name is pending (`0x54aa39`); true when it ran.
     fn rebuild(&mut self) -> bool {
         if names_pending() {
             return false;
@@ -205,9 +202,7 @@ impl ScoreBoard {
         true
     }
 
-    /// The sort-column setter (`0x54cee0`): nothing while a name is pending (`0x54cee3`); the
-    /// column moves to the front, flipping its direction if it was already there, then the
-    /// rebuild.
+    /// The sort-column setter (`0x54cee0`): skipped while a name is pending (`0x54cee3`), else front, flip, rebuild.
     fn sort_by_column(&mut self, column: u32) -> bool {
         if names_pending() {
             return false;
@@ -231,8 +226,7 @@ impl ScoreBoard {
 }
 
 impl super::UiScript {
-    /// `MSG_PVP_LOG_DATA`'s writes (`0x54d280`): the arena teams when sent, the result, and the
-    /// rows in wire order; the count and the order wait for the rebuild.
+    /// `MSG_PVP_LOG_DATA`'s writes (`0x54d280`); the count and order wait for the rebuild.
     pub fn set_battlefield_log(&mut self, log: BattlefieldScores) {
         let mut model = self.model_mut();
         let board = &mut model.battlefield_board;
@@ -255,8 +249,7 @@ impl super::UiScript {
         }
     }
 
-    /// The status-3 arm (`0x54b026`-`0x54b0d6`): the map's columns, the filter reset, then the
-    /// rebuild.
+    /// The status-3 arm (`0x54b026`-`0x54b0d6`): the columns, the filter reset, the rebuild.
     pub fn activate_battlefield_scores(&mut self, columns: Vec<BattlefieldStatColumn>) {
         {
             let mut model = self.model_mut();
@@ -271,8 +264,7 @@ impl super::UiScript {
         self.model_mut().battlefield_board.columns.clear();
     }
 
-    /// The world entry's board clear (`0x54ca50`): the result, the filter, the rows, the counts,
-    /// the columns and the team names.
+    /// The world entry's board clear (`0x54ca50`).
     pub fn reset_battlefield_scores_on_world_enter(&mut self) {
         let mut model = self.model_mut();
         let board = &mut model.battlefield_board;
@@ -335,9 +327,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| Ok(read(lua).battlefield_board.filtered as i64))?,
     )?;
 
-    // Twelve values on every leg (`0x54be90`): name, kills, honorable kills, deaths, honor,
-    // faction, a constant 0, race, class, class token, damage, healing; a row whose name is not
-    // cached answers the empty leg.
+    // Twelve values on every leg (`0x54be90`); an uncached row answers the empty leg.
     g.set(
         "GetBattlefieldScore",
         lua.create_function(|lua, index: Value| {
@@ -643,9 +633,7 @@ mod tests {
         });
     }
 
-    /// `0x54d280` writes the rows in wire order as it lands; the count, the sides and the sort wait
-    /// for the rebuild (`0x54aa39`), as do the sort and the filter (`0x54cee3`, `0x54c120`), and a
-    /// row whose name is uncached answers the empty leg (`0x54be90`).
+    /// `0x54d280` writes the rows as it lands; count, sides and sort wait for the rebuild (`0x54aa39`).
     #[test]
     fn a_log_with_names_pending_holds_its_rows_in_wire_order() {
         let mut s = UiScript::new().unwrap();
@@ -717,8 +705,7 @@ mod tests {
         });
     }
 
-    /// An arena's log writes the teams and a later battleground log leaves them; the winner is
-    /// written only by an ended log (`0x54d280`); the world entry clears the names alone.
+    /// An arena log writes the teams, a battleground's keeps them, only an ended log the winner (`0x54d280`).
     #[test]
     fn the_team_info_is_zero_based() {
         let mut s = UiScript::new().unwrap();

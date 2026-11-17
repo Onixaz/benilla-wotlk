@@ -527,8 +527,7 @@ pub(super) fn drain_chat_input(
                     ));
                 }
             }
-            // Each group write goes through the console queue: the live view this system lends
-            // reads the group.
+            // Group writes go through the console queue: the lent live view reads the group.
             ParsedChat::PartyTest { arg } => match arg.as_str() {
                 "off" => chat_out.console.queue(|world: &mut World| {
                     world
@@ -599,8 +598,7 @@ pub(super) fn drain_chat_input(
                         let mut group = world.resource_mut::<crate::ui_party::GroupState>();
                         let lines = crate::ui_party::synthetic_roster(&mut group, player_xy);
                         if lead {
-                            // An unmatched leader guid reads as `leader_index` 0, "we lead", which
-                            // shows the leader-only popup rows.
+                            // An unmatched leader guid reads as `leader_index` 0, which shows the leader-only rows.
                             group.leader = 0xF000;
                         }
                         world

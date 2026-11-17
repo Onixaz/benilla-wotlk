@@ -1480,10 +1480,7 @@ fn the_death_verbs_read_the_world_between_frames() {
     );
 }
 
-/// A slot queued, then made active on an arena map, in one frame: 12340's status handler applies
-/// each packet and fires `UPDATE_BATTLEFIELD_STATUS` with it (`0x54ae40`, `0x54b1a9`), the active
-/// one after its score rebuild's `UPDATE_BATTLEFIELD_SCORE` (`0x54b0d6` -> `0x54aa30`), so the
-/// first event reads the queued slot and only the later ones the arena.
+/// A slot queued then active on an arena map in one frame: each status fires its event as it applies (`0x54ae40`, `0x54b1a9`).
 #[test]
 fn battlefield_statuses_in_one_frame_fire_in_wire_order() {
     use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
@@ -1526,10 +1523,7 @@ fn battlefield_statuses_in_one_frame_fire_in_wire_order() {
     );
 }
 
-/// The duel's bounds packets around a battlefield status: each handler fires its event as it
-/// handles its packet (`0x5cf910`, `0x54ae40`, `0x5cf930`), so the three events come in wire
-/// order across the two subsystems, and the completion of a held duel fires `DUEL_FINISHED`
-/// (`0x5cfad8`).
+/// The duel's packets around a status fire in wire order (`0x5cf910`, `0x54ae40`, `0x5cf930`).
 #[test]
 fn duel_and_battlefield_events_fire_in_wire_order() {
     use benilla_protocol::messages::BattlefieldStatus;
@@ -1637,11 +1631,7 @@ fn pvp_log(guid: u64) -> SessionEvent {
     })
 }
 
-/// `MSG_PVP_LOG_DATA` with every name known runs the rebuild from its handler (`0x54d495`), so its
-/// `UPDATE_BATTLEFIELD_SCORE` reads the log just stored; a status 3 later in the same frame
-/// rebuilds that same log (`0x54b0d6`) before its `UPDATE_BATTLEFIELD_STATUS` (`0x54b1a9`). The
-/// stock score frame's filter call inside the log's event runs the rebuild there and then
-/// (`0x54c120` -> `0x54aa30`), so its event nests ahead of the status.
+/// A named log rebuilds in its handler (`0x54d495`), the stock filter call nesting its event (`0x54c120`), before a later status (`0x54b1a9`).
 #[test]
 fn a_log_and_a_status_in_one_frame_read_the_log_just_stored() {
     use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
@@ -1677,10 +1667,7 @@ fn a_log_and_a_status_in_one_frame_read_the_log_just_stored() {
     );
 }
 
-/// A log whose row's name is uncached asks it and holds the rebuild (`0x54d469`, `0x54aa39`): the
-/// log's result reads at once, its row's name not yet; the answer's callback runs the rebuild
-/// (`0x54ca30`), whose `UPDATE_BATTLEFIELD_SCORE` reads the row named; the stock score frame's
-/// filter call on it rebuilds once more (`0x54c120`).
+/// An uncached row holds the rebuild (`0x54aa39`) until the answer's callback runs it (`0x54ca30`).
 #[test]
 fn the_score_event_waits_for_the_last_name() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1710,10 +1697,7 @@ fn the_score_event_waits_for_the_last_name() {
     );
 }
 
-/// `SMSG_BATTLEFIELD_LIST` (`0x54e390`) writes the type and instances and fires the event its
-/// source names, each list in turn: the random battleground from a battlemaster, the PvP window,
-/// a battlemaster, then none; the stock frame's own close call inside the last list's
-/// `BATTLEFIELDS_CLOSED` fires its own there and then (`0x549b55`), ahead of its `BATTLEFIELDS_SHOW`.
+/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`).
 #[test]
 fn each_battlefield_list_fires_its_source_event_with_its_instances() {
     use benilla_protocol::messages::BattlefieldList;
@@ -1761,9 +1745,7 @@ fn each_battlefield_list_fires_its_source_event_with_its_instances() {
     );
 }
 
-/// The battle-manager notices (`0x54b610`-`0x5499c0`) write the world-PvP slot and fire their
-/// events in wire order, each reading the slot its own packet wrote: the entry and the ejection
-/// free it (`0x54993d`, `0x549a15`).
+/// The battle-manager notices fire in wire order, each reading its own write (`0x54993d`, `0x549a15`).
 #[test]
 fn battle_manager_notices_fire_in_wire_order() {
     use benilla_protocol::messages::BattlefieldMgrNotice as N;
@@ -1830,8 +1812,7 @@ fn battle_manager_notices_fire_in_wire_order() {
     );
 }
 
-/// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`) fires `DUEL_REQUESTED` only for a held player (`0x5cfd73`),
-/// with its name, `UNKNOWNOBJECT`'s text while the cache has none (`0x5cfd7b`).
+/// `DUEL_REQUESTED` only for a held player (`0x5cfd73`), `UNKNOWNOBJECT` while uncached (`0x5cfd7b`).
 #[test]
 fn a_held_challenger_raises_the_duel_with_its_name() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1864,10 +1845,7 @@ fn a_held_challenger_raises_the_duel_with_its_name() {
     );
 }
 
-/// An opponent from the party stats' arena byte (`0x6cf9fa`) fills its slot and signals it from the
-/// handler (`0x54b840`), so `GetNumArenaOpponents` reads it at the event; the world entry clears
-/// every slot and signals `"cleared"` for each token after `PLAYER_ENTERING_WORLD` (`0x528230`,
-/// `0x54cbd9`, `0x54cc02`), which a reload's entry skips (`0x54cb51`).
+/// A party-stats opponent signals from the handler (`0x54b840`); the world entry clears the slots (`0x54cbd9`), a reload's skips it (`0x54cb51`).
 #[test]
 fn arena_opponents_signal_from_the_handler_and_clear_at_world_entry() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1953,9 +1931,7 @@ fn arena_rig() -> Option<Rig> {
     Some(rig)
 }
 
-/// `arenaN` names the slot the handler just wrote when `ARENA_OPPONENT_UPDATE` fires
-/// (`0x608180` reads the slot when called): a held opponent streaming in reads its name at its
-/// `"seen"` (`0x6e8300`), an unheld one from the party stats names nobody, in wire order.
+/// `arenaN` reads the slot just written at its event (`0x608180`), in wire order.
 #[test]
 fn an_arena_event_reads_its_token_at_the_event() {
     let Some(mut rig) = arena_rig() else {
@@ -1976,9 +1952,7 @@ fn an_arena_event_reads_its_token_at_the_event() {
     );
 }
 
-/// The other packet order: the stats name the opponent before it streams in, so its first
-/// `"seen"` and `"unseen"` read no unit and the create's `"seen"` reads it (`0x54d100` keeps the
-/// slot, `0x54b840` signals again).
+/// The other order: the stats name the opponent first, the create signals it again (`0x54d100`, `0x54b840`).
 #[test]
 fn an_arena_opponent_seen_before_it_streams_in_reads_its_unit_at_the_create() {
     let Some(mut rig) = arena_rig() else {
@@ -2050,9 +2024,7 @@ fn an_arena_opponents_pet_lands_after_the_opponents_signals() {
     );
 }
 
-/// Our honor watches fire from the values handler in field order (`0x6e5180`'s list):
-/// `PLAYER_BYTES_3` (`0x6e5671`), today's kills (`0x6e55fc`), the honor currency (`0x6da3c0`),
-/// each reading the update just applied; yesterday's half fires nothing.
+/// Our honor watches fire in field order, each reading its update (`0x6e5671`, `0x6e55fc`, `0x6da3c0`).
 #[test]
 fn honor_watches_fire_in_field_order_with_the_values_just_applied() {
     use benilla_protocol::field::{
@@ -2102,8 +2074,7 @@ fn honor_watches_fire_in_field_order_with_the_values_just_applied() {
     );
 }
 
-/// `GetPVPTimer` reads the cooldown the flags watch stamped (`0x6e103a`): the full span plus a
-/// second without the timer flag, then under five minutes left once the flag comes on.
+/// `GetPVPTimer` reads the stamp the flags watch set (`0x6e103a`).
 #[test]
 fn the_pvp_timer_reads_the_stamp_the_flags_watch_set() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_PLAYER_FLAGS, 0x200)]) else {
@@ -2123,8 +2094,7 @@ fn the_pvp_timer_reads_the_stamp_the_flags_watch_set() {
     );
 }
 
-/// `MSG_INSPECT_HONOR_STATS` for the inspect target is held and signalled from its handler
-/// (`0x5e7a50`), so `HasInspectHonorData` reads it at the event; another player's is dropped.
+/// The inspect target's honor reply is held and signalled from its handler (`0x5e7a50`); another's is dropped.
 #[test]
 fn the_inspect_honor_reply_signals_from_its_handler() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -2152,9 +2122,7 @@ fn the_inspect_honor_reply_signals_from_its_handler() {
     );
 }
 
-/// Our arena-team slots read live: the cache's answer (`0x5a28c0`), our team words' watch
-/// (`0x6cdda0` -> `0x5a37a2`), the stats (`0x5a2d50`) and the roster (`0x5a3e10`) each fire from
-/// their handler, in wire order, reading what that packet applied.
+/// Arena-team events fire from their handlers in wire order (`0x5a28c0`, `0x5a37a2`, `0x5a2d50`, `0x5a3e10`).
 #[test]
 fn arena_team_events_fire_from_their_handlers_in_wire_order() {
     use benilla_protocol::field::FIELD_PLAYER_FIELD_ARENA_TEAM_INFO_1_1 as INFO;
@@ -2205,8 +2173,7 @@ fn arena_team_events_fire_from_their_handlers_in_wire_order() {
     );
 }
 
-/// `MSG_INSPECT_ARENA_TEAMS` for the inspect target writes its slot and signals from its handler
-/// (`0x5e7b57`, `0x5e7bdb`); the team's name is the cache's when called.
+/// The inspect target's team reply writes its slot and signals from its handler (`0x5e7b57`, `0x5e7bdb`).
 #[test]
 fn the_inspect_arena_team_reply_signals_from_its_handler() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -2368,10 +2335,7 @@ fn party_with(member: u64) -> SessionEvent {
     }
 }
 
-/// The position verbs read the list, the group and the name cache when called (`0x54a040`,
-/// `0x54c2e0`): us and a party member are skipped (`0x52c680`) the moment the list holding them
-/// lands, in either packet order; each nameless read asks the name with its own callback, and the
-/// answer fires `WORLD_MAP_NAME_UPDATE` once per ask (`0x5496c0`), reading the name.
+/// The position verbs read the list, group and names when called (`0x54c2e0`), one `WORLD_MAP_NAME_UPDATE` per ask (`0x5496c0`).
 #[test]
 fn battlefield_positions_read_the_group_and_names_when_called() {
     for party_first in [false, true] {
@@ -2414,9 +2378,7 @@ fn battlefield_positions_read_the_group_and_names_when_called() {
     }
 }
 
-/// The status handler's queue-0 arm on the active slot zeroes the positions, the score columns
-/// and the instance type (`0x54b165`, `0x54b174`, `0x54b17e`) before its event; once a status has
-/// dropped the active index (`0x54b0fe`) the arm finds no active slot and keeps all three.
+/// The active slot's queue-0 arm zeroes positions, columns and type before its event (`0x54b165`, `0x54b174`, `0x54b17e`).
 #[test]
 fn the_queue_zero_arm_clears_the_active_instance_before_its_event() {
     let Some(mut rig) = Rig::login(&[]) else {

@@ -31,8 +31,7 @@ pub(crate) const ARENA_PET_TOKENS: [&str; ARENA_SLOTS] = [
     "arenapet5",
 ];
 
-/// The slots, and the `ARENA_OPPONENT_UPDATE`s the call in hand raised, in the order 12340
-/// fires them; the handler queues them as it ends.
+/// The slots and the `ARENA_OPPONENT_UPDATE`s the call in hand raised, in 12340's order.
 #[derive(Resource, Default)]
 pub(crate) struct ArenaOpponents {
     opponents: [u64; ARENA_SLOTS],
@@ -46,8 +45,7 @@ pub(crate) struct ArenaOpponents {
 type PetOf<'a> = &'a dyn Fn(u64) -> Option<u64>;
 
 impl ArenaOpponents {
-    /// Queue the raised events into the handler's, the tokens' units pushed ahead of them so
-    /// each event's handler reads the slots just written.
+    /// Queue the raised events, the tokens' units pushed ahead so each handler reads the slots just written.
     fn flush(&mut self, ui: &mut UiEvents) {
         if self.owed.is_empty() {
             return;
@@ -68,8 +66,7 @@ impl ArenaOpponents {
         }
     }
 
-    /// A player's init inside an arena (`0x6e8300`-`0x6e832c`): one whose side byte is not ours
-    /// takes a slot.
+    /// A player's init inside an arena (`0x6e8300`): one of the other side takes a slot.
     pub(crate) fn streamed_player(
         &mut self,
         side: u8,
@@ -172,8 +169,7 @@ impl ArenaOpponents {
     }
 }
 
-/// A held unit's pet as `0x60a2f0` and `0x54ad10` read it: `UNIT_FIELD_CHARM`, else
-/// `UNIT_FIELD_SUMMON`; `None` for an object that is no unit.
+/// A held unit's pet as `0x60a2f0` reads it: `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`; `None` for no unit.
 pub(crate) fn pet_of_store(store: &ObjectStore) -> Option<u64> {
     if !store.is_unit() {
         return None;
@@ -284,8 +280,7 @@ fn on_unit_destroyed(
     }
 }
 
-/// The world entry's arena part (`0x54cb51`-`0x54cc10`): skipped on a UI reload's entry, else
-/// every slot cleared and `"cleared"` signalled for each token.
+/// The world entry's arena part (`0x54cb51`): skipped on a reload, else every slot cleared and `"cleared"` signalled.
 pub(crate) fn enter_world(world: &mut World) {
     let reloading = world
         .get_resource::<crate::ui_script::ReloadEntry>()

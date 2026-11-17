@@ -1075,8 +1075,7 @@ pub(crate) struct PartyDrain<'w, 's> {
     raid_map: super::net::CurrentRaidMap<'w>,
 }
 
-/// Drain the Lua party intents into their `CMSG_*` sends, applied through the command queue: the
-/// live view this system lends reads the group they write.
+/// Drain the Lua party intents into sends, through the command queue, since the lent view reads the group.
 pub(crate) fn drain_party(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut deferred: Commands,

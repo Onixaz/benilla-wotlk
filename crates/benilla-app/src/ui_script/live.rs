@@ -359,8 +359,7 @@ enum UiEvent {
     ClearCursor,
     /// A write to what the VM owns, such as the battlefield list a list packet fills (`0x54e390`).
     Write(VmWrite),
-    /// A system chat line, its `GlobalStrings` template read off the VM and filled (`0x5498f6`,
-    /// `0x5cfb20`).
+    /// A system chat line, its template read off the VM and filled (`0x5498f6`, `0x5cfb20`).
     SystemLine(&'static str, Vec<LineArg>),
     /// A step over the `World`, such as the unit pushes an event's tokens read.
     World(WorldStep),

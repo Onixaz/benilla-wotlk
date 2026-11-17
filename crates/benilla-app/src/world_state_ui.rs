@@ -151,8 +151,7 @@ pub(crate) fn feed_world_state_ui(
     }
 }
 
-/// The events the world-state handlers owe, moved off the table by [`take_world_state_owed`] so
-/// the systems lending the VM only read the table, which the live view reads too.
+/// The world-state events owed, moved off the table so the VM's lenders only read it.
 #[derive(Resource, Default)]
 pub(crate) struct WorldStateOwed(Vec<crate::world_state::WorldStateEvent>);
 
@@ -163,8 +162,7 @@ impl WorldStateOwed {
     }
 }
 
-/// Move what the table owes into [`WorldStateOwed`]; holds no VM. The drain leaves the table's
-/// change detection alone: readers rebuild on the table, not on the queue.
+/// Move what the table owes into [`WorldStateOwed`], leaving the table's change detection alone.
 fn take_world_state_owed(mut states: ResMut<WorldStates>, mut owed: ResMut<WorldStateOwed>) {
     if states.has_owed() {
         owed.0.extend(states.bypass_change_detection().take_owed());

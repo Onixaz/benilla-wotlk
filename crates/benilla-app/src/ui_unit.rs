@@ -1435,11 +1435,7 @@ fn arena_guids(
     }
 }
 
-/// The `arenaN` and `arenapetN` units, written by an arena handler just before it fires
-/// `ARENA_OPPONENT_UPDATE`, so the event's own handler resolves the token to the slot the packet
-/// just wrote, as `0x608180` reads it when called. The unit verbs still read per-token pushes
-/// (#1289), so the slots and each held unit's snapshot are pushed here at the event; the per-frame
-/// [`feed_units`] keeps them current after it.
+/// The arena units, pushed just before `ARENA_OPPONENT_UPDATE` so its handler reads the slot (`0x608180`); per-token pushes are #1289.
 pub(crate) fn push_arena_units(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
@@ -1898,9 +1894,7 @@ fn feed_units(
             // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
             // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             script.fire_event("UPDATE_FACTION", vec![]);
-            // The cascade's battlefield entry (`0x528230` -> `0x54ca50`), ahead of its corpse and
-            // release reset (`0x528362`, `0x528378`) and our own create's dead or alive refresh
-            // (`0x6e818b`), each an exclusive command with its events fired in turn.
+            // The battlefield entry (`0x528230`), ahead of the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
             crate::ui_battlefield::queue_enter_world(&mut deferred);
             crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;

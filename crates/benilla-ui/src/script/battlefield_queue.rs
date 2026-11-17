@@ -147,8 +147,7 @@ pub enum BattlefieldMgrRequest {
 /// The VM's mirror of the reference's battlefield engine.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BattlefieldInfo {
-    /// The battleground types whose holiday ran at the last sort of the type list (`0xbea720`):
-    /// the game's start sorts with none (`0x54e720`), `SortBGList` with today's (`0x54c9f0`).
+    /// The types whose holiday ran at the last sort (`0xbea720`): none at start (`0x54e720`), today's in `SortBGList` (`0x54c9f0`).
     sort_holidays: Vec<u32>,
     /// The battleground type id (`0xbea53c`), the type the list and the join name.
     bg_type: u32,
@@ -197,9 +196,7 @@ impl Default for BattlefieldInfo {
 }
 
 impl BattlefieldInfo {
-    /// The battleground types (`0xbea720`) in their sorted order (`0x54a650`): the random
-    /// battleground first, then a holiday running at the last sort, the lower minimum level, the
-    /// lower id.
+    /// The battleground types in sorted order (`0x54a650`): random, holiday, lower minimum level, lower id.
     fn order(&self, mut types: Vec<BattlegroundType>) -> Vec<u32> {
         types.sort_by_key(|r| {
             (
@@ -298,8 +295,7 @@ impl super::UiScript {
         }
     }
 
-    /// The battlemaster setter with none (`0x5496d0`): `BATTLEFIELDS_CLOSED` whatever was held,
-    /// then the battlemaster cleared.
+    /// The battlemaster setter with none (`0x5496d0`): `BATTLEFIELDS_CLOSED` always, then cleared.
     pub fn close_battlemaster(&mut self) {
         self.fire_event("BATTLEFIELDS_CLOSED", Vec::new());
         self.model_mut().battlefield.battlemaster = 0;

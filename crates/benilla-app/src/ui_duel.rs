@@ -20,12 +20,9 @@ const SPELL_EFFECT_DUEL: u32 = 83;
 /// The duel session the handlers write.
 #[derive(Resource, Default)]
 pub(crate) struct DuelState {
-    /// The duel flag's guid, `[0xc22b58]`: set by the request, echoed on accept and cancel, and
-    /// cleared by completion, which fires `DUEL_FINISHED`, or by an ignored challenge. `0` is no
-    /// duel.
+    /// The duel arbiter (`0xc22b58`), cleared by completion or an ignored challenge; 0 is no duel.
     pub(crate) arbiter: u64,
-    /// Another player's challenge, `[0xc22b60]`: stored after `DUEL_REQUESTED` (`0x5cfd99`),
-    /// cleared by completion (`0x5cfa90`).
+    /// Another player's challenge (`0xc22b60`), stored after `DUEL_REQUESTED` (`0x5cfd99`).
     dueler: Option<u64>,
     countdown: Option<Countdown>,
 }
@@ -102,8 +99,7 @@ pub(crate) mod net {
         }
     }
 
-    /// The held players, as the challenge's lookup with type mask `0x10` finds them
-    /// (`0x5cfd69`), and the names the cache holds.
+    /// Held players as the challenge's lookup finds them (`0x5cfd69`), and the cached names.
     #[derive(bevy::ecs::system::SystemParam)]
     pub(crate) struct Players<'w, 's> {
         index: Res<'w, crate::net::GuidIndex>,
@@ -113,8 +109,7 @@ pub(crate) mod net {
     }
 
     impl Players<'_, '_> {
-        /// `None` for a guid no held player has; else the player's name, `None` inside while the
-        /// cache has none.
+        /// `None` for no held player; else its name, `None` inside while uncached.
         fn player_name(&self, guid: u64) -> Option<Option<String>> {
             let store = self
                 .index
@@ -172,11 +167,7 @@ pub(crate) mod net {
         *duel = DuelState::default();
     }
 
-    /// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`): the arbiter is stored; our own challenge shows
-    /// `ERR_DUEL_REQUESTED` and accepts (`0x5cfd0a`); one from an ignored player is declined and
-    /// the arbiter zeroed (`0x5cfd33`-`0x5cfd42`); else a held player's fires `DUEL_REQUESTED` with
-    /// its name (`0x5cfd8b`), `UNKNOWNOBJECT` while the cache has none, and the challenge is
-    /// stored.
+    /// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`): ours accepts (`0x5cfd0a`), an ignored one declines (`0x5cfd33`), a held one fires `DUEL_REQUESTED` (`0x5cfd8b`).
     #[allow(clippy::too_many_arguments)] // the handler's inputs, passed through for its tests
     pub(crate) fn requested(
         duel: &mut DuelState,
@@ -212,9 +203,7 @@ pub(crate) mod net {
         duel.dueler = Some(challenger);
     }
 
-    /// `SMSG_DUEL_COMPLETE` (`0x5cfa90`): with an arbiter held, "Duel cancelled." for an
-    /// unstarted duel, the arbiter cleared and `DUEL_FINISHED` (`0x5cfad8`); the countdown and the
-    /// challenge end either way.
+    /// `SMSG_DUEL_COMPLETE` (`0x5cfa90`): a held arbiter clears and fires `DUEL_FINISHED` (`0x5cfad8`); the countdown ends either way.
     pub(crate) fn complete(
         duel: &mut DuelState,
         errors: &mut crate::ui_action::UiErrorKeys,
@@ -234,10 +223,7 @@ pub(crate) mod net {
         duel.dueler = None;
     }
 
-    /// `SMSG_DUEL_WINNER`: the outcome line, composed client-side (`0x5cfb20`); the server
-    /// broadcasts it, so bystanders see it too. `DUEL_WINNER_RETREAT` when the loser fled, else
-    /// `DUEL_WINNER_KNOCKOUT`, both filled winner then loser; the retreat template's positional
-    /// specifiers name the loser first.
+    /// `SMSG_DUEL_WINNER`'s line, composed client-side (`0x5cfb20`), winner then loser.
     pub(crate) fn winner(ui: &mut UiEvents, fled: bool, winner: &str, loser: &str) {
         let key = if fled {
             "DUEL_WINNER_RETREAT"
@@ -253,9 +239,7 @@ pub(crate) mod net {
         );
     }
 
-    /// `SMSG_DUEL_COUNTDOWN` (`0x5cfa50`): the seconds' line at once, then the timer for the rest.
-    /// Deviation: zero shows and arms nothing, where the reference prints 0 and re-arms forever on
-    /// the `dec`'s wraparound, a bug no server reaches (they send 3000).
+    /// `SMSG_DUEL_COUNTDOWN` (`0x5cfa50`); deviation: zero arms nothing, where 12340's `dec` wraps and re-arms forever.
     pub(crate) fn countdown(duel: &mut DuelState, ui: &mut UiEvents, seconds: u32) {
         duel.countdown = None;
         if seconds == 0 {
@@ -278,8 +262,7 @@ pub(crate) mod net {
     }
 }
 
-/// The duel countdown's timer (`0x5cf870`): one `DUEL_COUNTDOWN` line a second after the
-/// handler's own, its text read off the VM as the timer fires.
+/// The countdown timer (`0x5cf870`): one `DUEL_COUNTDOWN` line a second after the handler's.
 fn tick_countdown(
     time: Res<Time>,
     mut duel: ResMut<DuelState>,
@@ -424,8 +407,7 @@ mod tests {
         )
     }
 
-    /// Our own challenge shows `ERR_DUEL_REQUESTED` and accepts at once (`0x5cfd0a`,
-    /// `0x5cfd12`); both sides store the arbiter, so `DUEL_FINISHED` reaches both.
+    /// Our own challenge accepts at once (`0x5cfd0a`, `0x5cfd12`); both sides store the arbiter.
     #[test]
     fn our_own_challenge_takes_the_error_branch() {
         let mut duel = DuelState::default();
@@ -439,9 +421,7 @@ mod tests {
         assert_eq!((duel.arbiter, duel.dueler), (0xA1, None));
     }
 
-    /// An ignored challenger's duel is declined and the arbiter zeroed (`0x5cfd33`-`0x5cfd42`);
-    /// a held player's fires `DUEL_REQUESTED` from the handler; one not held fires nothing
-    /// (`0x5cfd73`), and either is stored as the challenge (`0x5cfd99`).
+    /// An ignored challenger is declined (`0x5cfd33`); only a held one fires `DUEL_REQUESTED` (`0x5cfd73`), and either is stored (`0x5cfd99`).
     #[test]
     fn a_challenge_fires_only_for_a_held_player_and_never_for_an_ignored_one() {
         let mut duel = DuelState::default();
@@ -468,8 +448,7 @@ mod tests {
         assert_eq!(duel.dueler, Some(9));
     }
 
-    /// Only a held arbiter finishes, and only an unstarted duel earns "Duel cancelled."; the
-    /// countdown ends either way (`0x5cfa90`).
+    /// Only a held arbiter finishes, an unstarted duel cancelled; the countdown ends either way (`0x5cfa90`).
     #[test]
     fn completion_is_gated_on_holding_an_arbiter() {
         let mut errors = crate::ui_action::UiErrorKeys::default();
@@ -508,8 +487,7 @@ mod tests {
         );
     }
 
-    /// The countdown's first line shows from the handler (`0x5cfa50` runs `0x5cf870` at once),
-    /// the timer keeping the rest; zero arms nothing.
+    /// The countdown's first line comes from the handler (`0x5cfa50` -> `0x5cf870`); zero arms nothing.
     #[test]
     fn the_countdown_shows_its_first_line_from_the_handler() {
         let mut duel = DuelState::default();
