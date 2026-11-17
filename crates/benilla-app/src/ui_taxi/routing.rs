@@ -898,7 +898,11 @@ mod tests {
         let (if_idx, sw_idx) = (at("Ironforge, Dun Morogh"), at("Stormwind, Elwynn"));
 
         // The walk itself detours.
-        let ids: Vec<u32> = ui.iter().map(|n| node_named(&cat, &n.name)).collect();
+        // Each listed node's id is its chain's last; names repeat (two Thorium Points).
+        let ids: Vec<u32> = resolved
+            .iter()
+            .map(|r| *r.chain.last().expect("a chain"))
+            .collect();
         let hop = |a: u32, b: u32| cat.paths.between(a, b).map(|p| p.cost);
         let length = |a: u32, b: u32| cat.path_length(a, b);
         let walked = walk_routes(
@@ -928,7 +932,7 @@ mod tests {
         assert_eq!(resolved[sw_idx].cost, direct.cost);
 
         for (i, n) in ui.iter().enumerate() {
-            let id = node_named(&cat, &n.name);
+            let id = ids[i];
             if id != ironforge && cat.paths.between(ironforge, id).is_some() {
                 assert_eq!(n.routes.len(), 1, "{} has a direct hop", n.name);
                 assert_eq!(resolved[i].chain, vec![ironforge, id]);
