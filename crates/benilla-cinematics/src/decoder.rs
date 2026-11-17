@@ -261,6 +261,12 @@ impl Decoder {
         self.vol.as_ref().map(|v| (v.width, v.height))
     }
 
+    /// How many chunks a frame shows after the chunk that carries it: 1 in a stream with B-VOPs,
+    /// whose references show one chunk late, else 0.
+    pub fn delay(&self) -> usize {
+        self.vol.as_ref().map_or(0, |v| usize::from(!v.low_delay))
+    }
+
     /// Decodes one AVI chunk and returns the frame it completes in display order, if any: none
     /// for a not-coded VOP, and none for the first reference of a stream that holds B-VOPs,
     /// which shows one chunk late.
