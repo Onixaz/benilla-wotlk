@@ -38,6 +38,7 @@ pub(crate) struct LiveView<'w, 's> {
     world_state_ui: crate::world_state_ui::WorldStateUiLive<'w>,
     signals: Option<Res<'w, UniqueSignals>>,
     item_range: crate::ui_quest_watch::ItemRangeLive<'w, 's>,
+    quest_tooltip: crate::ui_quest_log::tooltip::QuestTooltipLive<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -194,6 +195,22 @@ impl LiveState for LiveView<'_, '_> {
 
     fn world_state(&self, key: u32) -> Option<i32> {
         self.world_state_ui.value(key)
+    }
+
+    fn quest_tooltip(
+        &self,
+        quest_id: u32,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::QuestTooltipRead> {
+        self.quest_tooltip.read(quest_id, get)
+    }
+
+    fn quest_poi_lines(
+        &self,
+        quest_id: u32,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<benilla_ui::script::QuestPoiLines>> {
+        Some(self.quest.quest_poi_lines(quest_id, get))
     }
 
     fn quest_special_item(
@@ -653,10 +670,14 @@ pub(crate) fn flush_unique_signals(
         return;
     };
     script.update_quest_watch_timers();
-    let events = std::mem::take(&mut *signals.queue());
+    // The count taken at entry, its entries still queued while they fire, so a re-queue matches
+    // one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers
+    // queued (`0x6147a3`).
+    let events = signals.queue().clone();
     for event in events {
         script.fire_event(event, Vec::new());
     }
+    signals.clear();
 }
 
 /// The disconnect runs the game UI's shutdown, which empties the unique signals (`0x52902f`).

@@ -3,8 +3,6 @@
 //! reads of each quest's special item (`0x5e0da0`), found in the bags with its charges and range
 //! at call time.
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 
 use benilla_protocol::messages::QuestPoi;
@@ -19,7 +17,6 @@ use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPla
 use crate::ui_quest_log::QuestLog;
 use crate::ui_script::live::{UiEvents, UniqueSignals};
 use crate::ui_script::UiDrain;
-use crate::ui_unit::UnitFeed;
 
 /// A quest template's flag that lets its drop items serve as the special item (`0x5e0df9`).
 const QUEST_FLAG_DROP_ITEM_USE: u32 = 0x20000;
@@ -30,15 +27,7 @@ impl Plugin for UiQuestWatchPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UniqueSignals>()
             .net_handler(SessionEventKind::QuestPoi, on_quest_poi)
-            .add_systems(
-                Update,
-                (
-                    feed_quest_poi_lines
-                        .in_set(UnitFeed)
-                        .after(crate::ui_quest_log::feed_quest_log),
-                    drain_quest_poi_queries.in_set(UiDrain),
-                ),
-            );
+            .add_systems(Update, drain_quest_poi_queries.in_set(UiDrain));
     }
 }
 
@@ -115,165 +104,137 @@ fn poi_line(
     }
 }
 
-/// Each logged quest's POI lines (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`): the objectives by entry
-/// with their raw counters (`0x5e2370`), the items by id with the bag count capped (`0x5e2630`),
-/// the drops, and the header zone's top area. Rebuilt only when an input moved.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)] // one Bevy system's full input set
-fn feed_quest_poi_lines(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    me: Query<Ref<ObjectStore>, With<SelfPlayer>>,
-    quest_log: Res<QuestLog>,
-    names: Res<crate::names::NameCache>,
-    gos: Option<Res<crate::go_templates::GameObjectTemplates>>,
-    items: Res<Items>,
-    objects: crate::net::Objects,
-    (commands, areas, stirred_items): (
-        Res<NetCommands>,
-        Option<Res<crate::sound::AreaSounds>>,
-        Query<(), (Changed<ObjectStore>, Without<crate::net::NetEntity>)>,
-    ),
-) {
+/// One logged quest's POI lines at the call (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`): the objectives by
+/// entry with their raw counters (`0x5e2370`), the items by id with the bag count capped
+/// (`0x5e2630`), the drops, and the header zone's top area; `None` for a quest not logged or not
+/// cached.
+fn poi_lines(
+    v: &QuestView<'_, '_>,
+    quest_id: u32,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<QuestPoiLines> {
     use crate::ui_items::{count_of, InventoryScope};
-    let Some(mut script) = script else {
-        return;
-    };
-    let Some(store) = me.iter().next() else {
-        return;
-    };
-    let stirred = store.is_changed()
-        || quest_log.is_changed()
-        || names.is_changed()
-        || items.is_changed()
-        || gos.as_ref().is_some_and(|g| g.is_changed())
-        || !stirred_items.is_empty();
-    if !stirred {
-        return;
+    let (quest_log, objects, items, commands) = (
+        v.quest_log.as_deref()?,
+        v.objects.as_ref()?,
+        v.items.as_deref()?,
+        v.net.as_deref()?,
+    );
+    let store = v.me.iter().next()?;
+    if quest_id == 0 {
+        return None;
     }
-    let get = |key: &str| {
-        script
-            .lua()
-            .globals()
-            .get::<String>(key)
-            .ok()
-            .filter(|t| !t.is_empty())
-    };
-    let bags = |item: u32| count_of(&store.0, &objects, item, InventoryScope::QUEST_ITEMS);
+    let log = (0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS)
+        .filter_map(|slot| store.0.player_quest_log(slot))
+        .find(|l| l.quest_id == quest_id)?;
+    let t = quest_log.template(log.quest_id, commands)?;
+    let bags = |item: u32| count_of(&store.0, objects, item, InventoryScope::QUEST_ITEMS);
     let item_name = |item: u32| {
         items
-            .template(item, 0, &commands)
+            .template(item, 0, commands)
             .map_or_else(|| NAME_PLACEHOLDER.to_string(), |t| t.name.clone())
     };
-    let mut lines = HashMap::new();
-    for slot in 0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS {
-        let Some(log) = store.0.player_quest_log(slot).filter(|l| l.quest_id != 0) else {
-            continue;
-        };
-        let Some(t) = quest_log.template(log.quest_id, &commands) else {
-            continue;
-        };
-        // An objective by its entry, its first match and counter (`0x5e2370`).
-        let by_object = |entry: u32| -> Option<QuestLogObjectiveView> {
-            if entry == 0 {
-                return None;
-            }
-            let j = t
-                .objectives
-                .iter()
-                .position(|o| o.creature_or_go == entry)?;
-            let o = &t.objectives[j];
-            let count = (u32::from(log.counters[j]), o.required_count);
-            let is_go = entry & GO_OBJECTIVE_BIT != 0;
-            let kind = if is_go { "object" } else { "monster" };
-            Some(if !o.text.is_empty() {
-                poi_line(&get, "QUEST_OBJECTS_FOUND", kind, &o.text, count)
-            } else if is_go {
-                let name = gos
-                    .as_deref()
-                    .and_then(|g| g.name_by_entry(entry & !GO_OBJECTIVE_BIT, &commands))
-                    .unwrap_or(NAME_PLACEHOLDER);
-                poi_line(&get, "QUEST_OBJECTS_FOUND", kind, name, count)
-            } else {
-                let name = names
-                    .resolve_creature(entry, 0, &commands)
-                    .unwrap_or(NAME_PLACEHOLDER);
-                poi_line(&get, "QUEST_MONSTERS_KILLED", kind, name, count)
-            })
-        };
-        // An item by id among the required items, the lone source item skipped (`0x5e2630`).
-        let by_item = |item: u32| -> Option<QuestLogObjectiveView> {
-            if item == 0 {
-                return None;
-            }
-            let &(_, req) = t
-                .required_items
-                .iter()
-                .find(|&&(id, n)| id == item && !(id == t.src_item_id && n <= 1))?;
-            let have = bags(item).min(req);
-            Some(poi_line(
-                &get,
+    // An objective by its entry, its first match and counter (`0x5e2370`).
+    let by_object = |entry: u32| -> Option<QuestLogObjectiveView> {
+        if entry == 0 {
+            return None;
+        }
+        let j = t
+            .objectives
+            .iter()
+            .position(|o| o.creature_or_go == entry)?;
+        let o = &t.objectives[j];
+        let count = (u32::from(log.counters[j]), o.required_count);
+        let is_go = entry & GO_OBJECTIVE_BIT != 0;
+        let kind = if is_go { "object" } else { "monster" };
+        Some(if !o.text.is_empty() {
+            poi_line(get, "QUEST_OBJECTS_FOUND", kind, &o.text, count)
+        } else if is_go {
+            let name = v
+                .gos
+                .as_deref()
+                .and_then(|g| g.name_by_entry(entry & !GO_OBJECTIVE_BIT, commands))
+                .unwrap_or(NAME_PLACEHOLDER);
+            poi_line(get, "QUEST_OBJECTS_FOUND", kind, name, count)
+        } else {
+            let name = v
+                .names
+                .as_deref()
+                .and_then(|n| n.resolve_creature(entry, 0, commands))
+                .unwrap_or(NAME_PLACEHOLDER);
+            poi_line(get, "QUEST_MONSTERS_KILLED", kind, name, count)
+        })
+    };
+    // An item by id among the required items, the lone source item skipped (`0x5e2630`).
+    let by_item = |item: u32| -> Option<QuestLogObjectiveView> {
+        if item == 0 {
+            return None;
+        }
+        let &(_, req) = t
+            .required_items
+            .iter()
+            .find(|&&(id, n)| id == item && !(id == t.src_item_id && n <= 1))?;
+        let have = bags(item).min(req);
+        Some(poi_line(
+            get,
+            "QUEST_ITEMS_NEEDED",
+            "item",
+            &item_name(item),
+            (have, req),
+        ))
+    };
+    let mut board: Vec<Option<QuestLogObjectiveView>> = Vec::with_capacity(18);
+    board.extend(t.objectives.iter().map(|o| by_object(o.creature_or_go)));
+    board.extend(t.required_items.iter().map(|&(id, _)| by_item(id)));
+    board.extend(t.objectives.iter().map(|o| by_item(o.item_drop)));
+    let event = (!t.end_text.is_empty()).then(|| {
+        let done = log.state & benilla_protocol::messages::quest_slot_state::COMPLETE != 0;
+        QuestLogObjectiveView {
+            text: t.end_text.clone(),
+            kind: "event".into(),
+            finished: done,
+            cur: u32::from(done),
+            req: 1,
+            intermediate: false,
+        }
+    });
+    board.push(event.clone());
+    board.push(event);
+    let drops = t
+        .objectives
+        .iter()
+        .filter(|o| o.item_drop as i32 > 0)
+        .map(|o| {
+            let have = bags(o.item_drop).min(o.item_drop_count);
+            poi_line(
+                get,
                 "QUEST_ITEMS_NEEDED",
                 "item",
-                &item_name(item),
-                (have, req),
-            ))
-        };
-        let mut board: Vec<Option<QuestLogObjectiveView>> = Vec::with_capacity(18);
-        board.extend(t.objectives.iter().map(|o| by_object(o.creature_or_go)));
-        board.extend(t.required_items.iter().map(|&(id, _)| by_item(id)));
-        board.extend(t.objectives.iter().map(|o| by_item(o.item_drop)));
-        let event = (!t.end_text.is_empty()).then(|| {
-            let done = log.state & benilla_protocol::messages::quest_slot_state::COMPLETE != 0;
-            QuestLogObjectiveView {
-                text: t.end_text.clone(),
-                kind: "event".into(),
-                finished: done,
-                cur: u32::from(done),
-                req: 1,
-                intermediate: false,
-            }
-        });
-        board.push(event.clone());
-        board.push(event);
-        let drops = t
-            .objectives
-            .iter()
-            .filter(|o| o.item_drop as i32 > 0)
-            .map(|o| {
-                let have = bags(o.item_drop).min(o.item_drop_count);
-                poi_line(
-                    &get,
-                    "QUEST_ITEMS_NEEDED",
-                    "item",
-                    &item_name(o.item_drop),
-                    (have, o.item_drop_count),
-                )
-            })
-            .collect();
-        let drops_needed = t
-            .objectives
-            .iter()
-            .filter(|o| {
-                o.item_drop as i32 > 0
-                    && (o.item_drop != t.src_item_id || o.item_drop_count as i32 > 1)
-                    && bags(o.item_drop) == 0
-            })
-            .count() as u32;
-        let top_area = u32::try_from(t.zone_or_sort)
-            .ok()
-            .filter(|&z| z != 0)
-            .and_then(|z| areas.as_ref()?.0.top_area(z))
-            .unwrap_or(0);
-        lines.insert(
-            log.quest_id,
-            QuestPoiLines {
-                board,
-                drops,
-                drops_needed,
-                top_area,
-            },
-        );
-    }
-    script.set_quest_poi_lines(lines);
+                &item_name(o.item_drop),
+                (have, o.item_drop_count),
+            )
+        })
+        .collect();
+    let drops_needed = t
+        .objectives
+        .iter()
+        .filter(|o| {
+            o.item_drop as i32 > 0
+                && (o.item_drop != t.src_item_id || o.item_drop_count as i32 > 1)
+                && bags(o.item_drop) == 0
+        })
+        .count() as u32;
+    let top_area = u32::try_from(t.zone_or_sort)
+        .ok()
+        .filter(|&z| z != 0)
+        .and_then(|z| v.areas.as_ref()?.0.top_area(z))
+        .unwrap_or(0);
+    Some(QuestPoiLines {
+        board,
+        drops,
+        drops_needed,
+        top_area,
+    })
 }
 
 /// Send the POI queries the log update raised (`0x5e6cd1`), at most 25 ids each, as the
@@ -304,9 +265,22 @@ pub(crate) struct QuestView<'w, 's> {
     objects: Option<crate::net::Objects<'w, 's>>,
     items: Option<Res<'w, Items>>,
     net: Option<Res<'w, NetCommands>>,
+    /// The objectives' creature and GameObject names, and the header zones' top areas.
+    names: Option<Res<'w, crate::names::NameCache>>,
+    gos: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
+    areas: Option<Res<'w, crate::sound::AreaSounds>>,
 }
 
 impl QuestView<'_, '_> {
+    /// One logged quest's POI lines at the call, formatted through `get`.
+    pub(crate) fn quest_poi_lines(
+        &self,
+        quest_id: u32,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<QuestPoiLines> {
+        poi_lines(self, quest_id, get)
+    }
+
     /// The quest's special item (`0x5e0da0`): the template's starting item, else under flag
     /// `0x20000` its drop items in order (`0x5e0df9`), the first carried copy that can be used
     /// (`0x708c10`), with the bag slot it sits in, its charges and its on-use spell.
@@ -377,5 +351,87 @@ impl ItemRangeLive<'_, '_> {
             self.mods.as_deref()?,
             target,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use std::collections::HashMap;
+
+    const ME: u64 = 1;
+    const MOB: u64 = 0xF130_0000_0100_0002;
+    const SPELL: u32 = 7;
+
+    fn unit_store() -> ObjectStore {
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (2, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        ]))
+    }
+
+    /// Us at the origin and a living unit `yards` away, and an item spell that takes any unit at
+    /// 0-20 yd.
+    fn world(yards: f32) -> (World, Entity) {
+        let mut world = World::new();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(HashMap::from([(
+            SPELL,
+            benilla_formats::SpellDisplay {
+                range_index: 1,
+                effect_implicit_target_a: [25, 0, 0],
+                ..Default::default()
+            },
+        )]));
+        spells.ranges = benilla_formats::SpellRangeCatalog::from_rows(HashMap::from([(
+            1,
+            benilla_formats::SpellRange {
+                min: 0.0,
+                max: 20.0,
+                friendly_min: 0.0,
+                friendly_max: 20.0,
+                flags: 0,
+            },
+        )]));
+        world.insert_resource(spells);
+        world.insert_resource(crate::spell::SpellModifiers::default());
+        world.init_resource::<crate::net::Reputations>();
+        world.insert_resource(crate::net::SelfGuid(Some(ME)));
+        let me = world
+            .spawn((SelfPlayer, unit_store(), Transform::default()))
+            .id();
+        let mob = world
+            .spawn((unit_store(), Transform::from_xyz(yards, 0.0, 0.0)))
+            .id();
+        let mut index = crate::net::GuidIndex::default();
+        index.0.insert(ME, me);
+        index.0.insert(MOB, mob);
+        world.insert_resource(index);
+        (world, mob)
+    }
+
+    fn in_range(world: &mut World, target: u64) -> Option<bool> {
+        world
+            .run_system_once(move |live: ItemRangeLive| live.in_range(SPELL, target))
+            .expect("the range view runs")
+    }
+
+    /// The special item's range (`0x5e55b6` -> `0x809610`) reads where the unit stands at each
+    /// call: a move between two calls in one frame answers the new place, and a guid no unit
+    /// holds answers nil.
+    #[test]
+    fn the_item_range_reads_the_unit_where_it_stands_at_each_call() {
+        let (mut world, mob) = world(10.0);
+        assert_eq!(in_range(&mut world, MOB), Some(true), "10 yd is inside 20");
+        world.get_mut::<Transform>(mob).unwrap().translation.x = 30.0;
+        assert_eq!(
+            in_range(&mut world, MOB),
+            Some(false),
+            "30 yd at the next call"
+        );
+        world.get_mut::<Transform>(mob).unwrap().translation.x = 19.0;
+        assert_eq!(in_range(&mut world, MOB), Some(true));
+        assert_eq!(in_range(&mut world, 0x99), None, "nobody holds the guid");
     }
 }

@@ -1513,6 +1513,46 @@ fn quest_dialogs_and_the_escort_confirm() {
     );
 }
 
+/// A dialog and a quest-slot update in one frame, in either wire order: the dialog's event fires
+/// before the frame's `QUEST_LOG_UPDATE`, which waits for the idle tail after every handler
+/// (`0x52b247` -> `0x614760`).
+#[test]
+fn a_dialog_and_a_slot_update_in_one_frame_fire_the_log_update_last() {
+    use benilla_protocol::messages::QuestDetails;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let detail = || {
+        SessionEvent::QuestDetail(QuestDetails {
+            npc: 0xF130_0000_0100_0001,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        })
+    };
+    let events = &["QUEST_DETAIL", "QUEST_LOG_UPDATE"];
+    rig.packets(vec![quest_template(0)], 3);
+    let dialog_first = rig.packets(
+        vec![
+            detail(),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+        ],
+        1,
+    );
+    let slot_first = rig.packets(
+        vec![self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, 0)]), detail()],
+        1,
+    );
+    assert_eq!(
+        fired(&dialog_first, events),
+        ["QUEST_DETAIL", "QUEST_LOG_UPDATE"]
+    );
+    assert_eq!(
+        fired(&slot_first, events),
+        ["QUEST_DETAIL", "QUEST_LOG_UPDATE"]
+    );
+}
+
 // ── The live infrastructure end to end ───────────────────────────────────────────────────────────
 
 /// A test handler on the control update firing `CHARZ_HANDLER`, as the reference's handler fires

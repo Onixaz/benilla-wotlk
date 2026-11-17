@@ -347,6 +347,42 @@ fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
     assert_eq!(seen, "QUEST_POI_UPDATE0 QUEST_LOG_UPDATE0");
 }
 
+/// A signal queued while the flush fires matches the entry in flight (`0x6143f0`) or is dropped
+/// when the count is zeroed (`0x6147a3`): a `QUEST_LOG_UPDATE` handler that folds a header fires
+/// its event once, and nothing waits for the next frame.
+#[test]
+fn a_signal_queued_during_the_flush_is_dropped() {
+    use super::live::{flush_unique_signals, UniqueSignals};
+    let mut app = App::new();
+    app.init_resource::<UniqueSignals>()
+        .add_systems(Update, flush_unique_signals);
+    let s = UiScript::new().unwrap();
+    s.run(
+        "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('QUEST_LOG_UPDATE') \
+         f:SetScript('OnEvent', function(_, e) SEEN[#SEEN + 1] = e \
+           ExpandQuestHeader(0) CollapseQuestHeader(0) end)",
+    )
+    .unwrap();
+    app.insert_non_send_resource(s);
+    let seen = |app: &App| {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("local t = table.concat(SEEN, ' ') SEEN = {} return t")
+            .unwrap()
+    };
+    app.world()
+        .resource::<UniqueSignals>()
+        .unique_signal("QUEST_LOG_UPDATE");
+    app.update();
+    assert_eq!(seen(&app), "QUEST_LOG_UPDATE", "one fire for the frame");
+    assert!(
+        app.world().resource::<UniqueSignals>().names().is_empty(),
+        "the handler's re-queue went with the count"
+    );
+    app.update();
+    assert_eq!(seen(&app), "", "nothing fires the next frame");
+}
+
 /// A verb's unique signal joins the handlers' queue through the lent view, so the frame fires the
 /// log's update once however many sites queue it (`0x5e0c7c`, `0x5e6cb9`, `0x614760`); the game UI's
 /// shutdown at a disconnect empties the queue (`0x52902f`), so nothing fires at the next login.
