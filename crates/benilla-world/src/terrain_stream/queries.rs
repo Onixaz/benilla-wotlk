@@ -134,10 +134,13 @@ pub(super) fn update_current_area(
         // loading screen for this window.
         return;
     }
-    // The WMO group first: the player's down-ray group resolved to its WMOAreaTable world area.
+    // The WMO group first: the player's down-ray group's own WMOAreaTable row by exact key, as
+    // `0x77fa00` asks it; a missing row or a zero area falls to the terrain, never to the
+    // whole-WMO row (Stormwind's exterior groups 25473-25477 have area 0 under a Stormwind City
+    // default).
     let interior_area = standing.0.zip(wmo_areas.as_ref()).and_then(|(k, cat)| {
         cat.0
-            .resolve(k.wmo_id, k.name_set, k.group_area_id)
+            .group_row(k.wmo_id, k.name_set, k.group_area_id)
             .map(|a| a.area_table_id)
             .filter(|&id| id != 0)
     });

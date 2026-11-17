@@ -207,5 +207,11 @@ mod tests {
             .resolve(53, 2, 9999)
             .or_else(|| cat.resolve(53, 0, 9999));
         assert!(inn.is_some(), "the Goldshire inn WMO has rows");
+
+        // Stormwind (61) exterior group 25473: its own row names no area, so the area lookup's
+        // exact key falls to the terrain, while the overlay would lend the whole-WMO Stormwind
+        // City (1519).
+        assert_eq!(cat.group_row(61, 0, 25473).unwrap().area_table_id, 0);
+        assert_eq!(cat.resolve(61, 0, 25473).unwrap().area_table_id, 1519);
     }
 }
