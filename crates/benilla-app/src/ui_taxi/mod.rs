@@ -13,7 +13,9 @@ use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
 mod routing;
-use routing::{build_nodes, load_taxi_catalogs, taxi_error_key, TaxiCatalogs, TaxiRouteCache};
+use routing::{
+    build_nodes, load_taxi_catalogs, taxi_error_key, TaxiCatalogs, TaxiFares, TaxiRouteCache,
+};
 
 /// The open map, `SMSG_SHOWTAXINODES` as the wire gave it.
 pub(crate) struct TaxiOpen {
@@ -169,23 +171,25 @@ fn feed_taxi(
         return;
     };
 
-    // The map is the one the current node draws on (`build_nodes`). The fares take the flight
-    // master's price discount for the player.
+    // The map is the one the current node draws on (`build_nodes`). The fares need the flight
+    // master and the player ([`taxi_fares`]); the player's faction group bars the other team's
+    // nodes from the route walk (`0x5926c0`).
     let fresh = state.open.as_ref().and_then(|open| {
         let flightmaster = index
             .0
             .get(&open.flightmaster)
             .and_then(|&e| stores.get(e).ok());
-        let discount = flightmaster.zip(self_q.iter().next()).map(|(master, me)| {
-            crate::target::vendor_price_discount(
-                reactions.factions.as_deref(),
-                &reactions.reputations,
-                reactions.party(),
-                master,
-                me,
-            )
-        });
-        let (map_id, nodes, resolved) = build_nodes(open, &catalogs, discount, expansion.0)?;
+        let me = self_q.iter().next();
+        let fares = flightmaster
+            .zip(me)
+            .map(|(master, me)| taxi_fares(&reactions, master, me));
+        let catalog = reactions.factions.as_deref().map(|f| f.catalog());
+        let player_group = catalog
+            .zip(me.and_then(|me| me.0.unit_faction_template()))
+            .and_then(|(c, t)| c.template(t))
+            .map(|t| t.group_mask);
+        let (map_id, nodes, resolved) =
+            build_nodes(open, &catalogs, fares, player_group, expansion.0)?;
         cache.0 = resolved;
         Some(TaxiUiState {
             art: format!("Interface\\TaxiFrame\\TAXIMAP{map_id}"),
@@ -221,8 +225,44 @@ fn feed_taxi(
     }
 }
 
+/// What the Lua `TaxiNodeCost`'s fare (`0x591350`) reads off the flight master and the player: the
+/// price discount (`0x7279a0`), and the fare tier from the flight master's reaction toward the
+/// player (`0x7251c0`), read as Neutral when its faction has no reputation slot
+/// (`0x718b30`, on its template's faction).
+fn taxi_fares(
+    reactions: &crate::target::ReactionInputs,
+    master: &ObjectStore,
+    me: &ObjectStore,
+) -> TaxiFares {
+    let factions = reactions.factions.as_deref();
+    let reaction = crate::target::ring_reaction(
+        factions,
+        &reactions.reputations,
+        reactions.party(),
+        Some(master),
+        Some(me),
+    );
+    let has_reputation = factions.is_some_and(|f| {
+        master
+            .0
+            .unit_faction_template()
+            .and_then(|t| f.catalog().template(t))
+            .is_some_and(|t| f.catalog().reputation_faction(t.faction).is_some())
+    });
+    TaxiFares {
+        discount: crate::target::vendor_price_discount(
+            factions,
+            &reactions.reputations,
+            reactions.party(),
+            master,
+            me,
+        ),
+        tier: TaxiFares::tier_of(reaction, has_reputation),
+    }
+}
+
 /// Drain the Lua intents. `TakeTaxiNode(i)` sends `CMSG_ACTIVATETAXI` when a direct `TaxiPath` edge
-/// joins the current node and the target, even if the drawn route detours, and otherwise
+/// joins the current node and the target, as its one drawn segment shows, and otherwise
 /// `CMSG_ACTIVATETAXIEXPRESS` with the chain and its fare, as the reference's test decides; the
 /// `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
 fn drain_taxi(

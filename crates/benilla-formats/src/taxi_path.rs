@@ -33,7 +33,8 @@ impl TaxiPaths {
         self.rows.get(&id)
     }
 
-    /// The direct hop from `from` to `to`; the table is directed, one row per direction.
+    /// The direct hop from `from` to `to`, the first row of the pair; the table is directed, one
+    /// row per direction.
     pub fn between(&self, from: u32, to: u32) -> Option<&TaxiPath> {
         self.by_pair
             .get(&(from, to))
@@ -74,7 +75,10 @@ pub fn load_taxi_paths(chain: &mut Chain) -> Result<TaxiPaths> {
         let Some(to) = u32_at(r, 2) else { continue };
         let cost = u32_at(r, 3).unwrap_or(0);
         rows.insert(id, TaxiPath { id, from, to, cost });
-        by_pair.insert((from, to), id);
+        // The first row of a pair answers, as the taxi map's init (`0x5938d0`) fills its
+        // `(from, to)` table from the last row back: 3.3.5a has one such pair, 175 to 178 in rows
+        // 733 and 793.
+        by_pair.entry((from, to)).or_insert(id);
     }
     Ok(TaxiPaths { rows, by_pair })
 }
@@ -97,5 +101,8 @@ mod tests {
         assert!(hop.cost > 0, "a real hop always carries a nonzero fare");
 
         assert!(cat.paths_from(2).any(|p| p.to == 4 && p.cost == 110));
+
+        // Rows 733 and 793 both run 175 to 178; the first answers.
+        assert_eq!(cat.between(175, 178).map(|p| p.id), Some(733));
     }
 }
