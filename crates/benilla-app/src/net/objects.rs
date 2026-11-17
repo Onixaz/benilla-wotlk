@@ -126,6 +126,8 @@ pub(crate) struct Scene<'w, 's> {
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     /// The templates the item watches test the logged quests' required items against.
     quest_log: Option<Res<'w, crate::ui_quest_log::QuestLog>>,
+    /// The log's quest rows the stack watch walks.
+    quest_rows: Option<Res<'w, crate::ui_quest_log::rows::RebuildMarks>>,
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -1651,11 +1653,13 @@ fn item_quest_watch(sc: &Scene, guid: u64, stack: bool, entry: bool) {
     if entry && me.is_some() && item.0.item_owner() == sc.self_guid.0 {
         sc.signals.unique_signal("QUEST_LOG_UPDATE");
     }
-    if let (true, Some(me)) = (stack, me) {
+    if let (true, Some(rows)) = (stack, sc.quest_rows.as_deref()) {
         crate::ui_quest_log::rows::item_moved(
             item.0.object_entry().unwrap_or(0),
-            me,
+            me.is_some(),
             log,
+            rows,
+            &sc.net,
             &sc.signals,
         );
     }

@@ -2147,6 +2147,66 @@ mod tests {
             .reask_due(std::time::Instant::now()));
     }
 
+    /// The stack watch walks the rebuilt quest rows (`0x5e1270`): an item a row's quest requires queues `QUEST_LOG_UPDATE` (`0x5e12bc`) and re-asks every giver's status (`0x5e12e5`), with no player only the signal; another item, or a quest in a slot the rebuild skipped, neither.
+    #[test]
+    fn a_required_items_stack_move_signals_the_log_and_reasks_the_givers() {
+        let (mut app, player, rx) = log_app(&[(0, 201, 7)]);
+        let needs = |id: u32, item: u32| {
+            let mut t = quest_template([obj(0, 0, item, 5, ""), empty(), empty(), empty()]);
+            (t.quest_id, t.zone_or_sort) = (id, 7);
+            t
+        };
+        app.world_mut()
+            .resource_mut::<QuestLog>()
+            .insert_template(needs(201, 2000));
+        app.update();
+        let reasks = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+            rx.try_iter()
+                .filter(|c| matches!(c, ClientCommand::QuestgiverStatusMultipleQuery))
+                .count()
+        };
+        let _ = reasks(&rx);
+        let moved = |app: &mut App, item: u32, me: bool| {
+            let w = app.world();
+            let signals = w.resource::<crate::ui_script::live::UniqueSignals>();
+            signals.clear();
+            rows::item_moved(
+                item,
+                me,
+                w.resource::<QuestLog>(),
+                w.resource::<rows::RebuildMarks>(),
+                w.resource::<NetCommands>(),
+                signals,
+            );
+            signals.names()
+        };
+        assert_eq!(moved(&mut app, 2000, true), ["QUEST_LOG_UPDATE"]);
+        assert_eq!(reasks(&rx), 1);
+        assert_eq!(moved(&mut app, 2000, false), ["QUEST_LOG_UPDATE"]);
+        assert_eq!(reasks(&rx), 0, "no player: the signal alone");
+        assert!(moved(&mut app, 2001, true).is_empty());
+        assert_eq!(reasks(&rx), 0);
+        // 303's template is pending, so the rebuild that would list 202 skips (`0x5e6973`) and its row is not walked.
+        app.world_mut()
+            .entity_mut(player)
+            .insert(ObjectStore(store_of(&[(0, 201, 7), (2, 303, 7)])));
+        app.update();
+        app.world_mut()
+            .resource_mut::<QuestLog>()
+            .insert_template(needs(202, 3000));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(ObjectStore(store_of(&[
+                (0, 201, 7),
+                (1, 202, 7),
+                (2, 303, 7),
+            ])));
+        app.update();
+        assert!(moved(&mut app, 3000, true).is_empty());
+        assert_eq!(moved(&mut app, 2000, true), ["QUEST_LOG_UPDATE"]);
+        assert_eq!(reasks(&rx), 1);
+    }
+
     /// A timer run out marks its quest expired at the rebuild (`0x5e6b15` -> `0x5e57e0`): it reads
     /// failed and the bare status query goes out.
     #[test]

@@ -70,6 +70,8 @@ struct RebuildState {
     pending: HashSet<u32>,
     /// The last rebuild's sort types in their sorted order (`0x5e6b47`), which the collapse filter's bits follow.
     sort_types: Vec<i32>,
+    /// The quest ids of the last rebuild's quest rows (`0x5e6ad6`), which the stack watch walks (`0x5e1270`).
+    quest_rows: Vec<u32>,
 }
 
 impl RebuildMarks {
@@ -471,6 +473,7 @@ fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
         }
     }
     let old_sort_types = std::mem::replace(&mut marks.sort_types, new_sort_types.clone());
+    marks.quest_rows = rows.iter().map(|(_, s)| s.quest_id).collect();
     drop(marks);
     p.signals.unique_signal("QUEST_LOG_UPDATE");
     if p.clock
@@ -618,15 +621,29 @@ pub(super) fn template_landed(
     }
 }
 
-/// The stack watch's test (`0x5e1250`): a logged quest requiring the item queues `QUEST_LOG_UPDATE` (`0x5e12bc`).
-pub(crate) fn item_moved(entry: u32, store: &ObjectStore, log: &QuestLog, signals: &UniqueSignals) {
+/// The stack watch (`0x5e1250`): a quest row whose template requires the item queues `QUEST_LOG_UPDATE` (`0x5e12bc`) and, with our player in, re-asks every giver's status (`0x5e12e5`). The header rows' sort types, which the walk also looks up as quest ids (`0x5e1285`), are not.
+pub(crate) fn item_moved(
+    entry: u32,
+    me: bool,
+    log: &QuestLog,
+    marks: &RebuildMarks,
+    net: &NetCommands,
+    signals: &UniqueSignals,
+) {
     let required = entry != 0
-        && (0..PLAYER_QUEST_LOG_SLOTS)
-            .filter_map(|s| store.0.player_quest_log(s))
-            .filter(|s| s.quest_id != 0)
-            .filter_map(|s| log.templates.get(s.quest_id))
+        && marks
+            .state()
+            .quest_rows
+            .iter()
+            .filter_map(|&id| log.templates.get(id))
             .any(|t| t.required_items.iter().any(|&(id, _)| id == entry));
-    if required {
-        signals.unique_signal("QUEST_LOG_UPDATE");
+    if !required {
+        return;
+    }
+    signals.unique_signal("QUEST_LOG_UPDATE");
+    if me {
+        let _ = net
+            .0
+            .send(crate::net::ClientCommand::QuestgiverStatusMultipleQuery);
     }
 }
