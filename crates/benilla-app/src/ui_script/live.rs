@@ -52,6 +52,12 @@ impl LiveView<'_, '_> {
             .then_some(entity)
     }
 
+    /// A held player's `(race, class)`, the talent target's lookup with the player type mask (`0x5c9f8f`).
+    fn player_class(&self, guid: u64) -> Option<(u8, u8)> {
+        let fields = &self.stores.get(self.player_entity(guid)?).ok()?.0;
+        Some((fields.unit_race()?, fields.unit_class()?))
+    }
+
     /// A held player's PvP side (`0x54d074`).
     fn player_side(&self, guid: u64) -> Option<i8> {
         let entity = self.player_entity(guid)?;
@@ -280,7 +286,7 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     fn notify_inspect(&self, guid: u64) -> bool {
-        self.inspect.notify(guid)
+        self.inspect.notify(guid, || self.player_class(guid))
     }
 
     fn clear_inspect_target(&self) {
