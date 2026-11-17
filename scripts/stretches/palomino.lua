@@ -21,8 +21,9 @@ local DOWN = { { 2330.0, -5690.0, 154.0 }, { 2300.0, -5677.0, 153.0 }, { 2275.0,
   { 2250.0, -5670.0, 142.0 }, { 2225.0, -5672.0, 125.0 }, { 2200.0, -5676.0, 115.0 },
   { 2175.0, -5680.0, 111.0 }, { 2146.0, -5683.0, 106.0 }, { 2144.0, -5700.0, 103.0 },
   { 2150.0, -5715.0, 102.0 } }
--- South past the fence at (2157, -5735) to the stables, where the horses stand.
-local TO_STABLES = { { 2140.0, -5770.0, 101.0 }, { 2165.0, -5825.0, 101.4 } }
+-- South past the fence at (2157, -5735) and west of the tree at (2149.5, -5758) to the stables,
+-- where the horses stand.
+local TO_STABLES = { { 2142.0, -5750.0, 101.0 }, { 2140.0, -5770.0, 101.0 }, { 2165.0, -5825.0, 101.4 } }
 -- The fields south of the Breach, where the Deathchargers walk.
 local FIELDS = { { 2118.0, -5762.0, 98.4 }, { 2001.0, -5751.0, 100.4 }, { 2074.0, -5827.0, 102.5 },
   { 2183.0, -5809.0, 101.4 } }
@@ -80,9 +81,9 @@ local function board(text, entries, timeout)
   }
 end
 
--- A ride back to Salanar the way the walk came: the trail to its first crumb, up the slope, then
--- into range of Salanar, still seated.
-local function rideBack(text)
+-- A ride back to Salanar the way the walk came: the trail to its first crumb, up the slope by
+-- `up` when the trail starts below it, then into range of Salanar, still seated.
+local function rideBack(text, up)
   local leg = "trail"
   return {
     text,
@@ -92,10 +93,10 @@ local function rideBack(text)
       end
       if leg == "trail" then
         if S.retrace() then
-          leg = "up"
+          leg = up and "up" or "salanar"
         end
       elseif leg == "up" then
-        if S.route(UP) then
+        if S.route(up) then
           leg = "salanar"
         end
       else
@@ -167,20 +168,23 @@ local steps = {
   talk("accept Grand Theft Palomino from Salanar the Horseman", SALANAR, { accept = 12680 }, function()
     return inLog(12680)
   end),
-  walk("walk down from Death's Breach to Havenshire", DOWN, 120),
+  -- The trail starts at the top: the horse rides back up on the line the walk came down, which
+  -- keeps the middle of the lane between the bank and the barricade at (2158, -5677), where a
+  -- horse on the straight legs catches.
   {
-    "walk to the Havenshire Stables",
+    "walk down from Death's Breach to Havenshire",
     start = function()
       S.trailStart()
     end,
     done = function()
-      return S.route(TO_STABLES)
+      return S.route(DOWN)
     end,
     status = function()
-      return "at " .. S.where() .. ", leg " .. tostring(TO_STABLES.at)
+      return "at " .. S.where() .. ", leg " .. tostring(DOWN.at)
     end,
-    timeout = 60,
+    timeout = 120,
   },
+  walk("walk to the Havenshire Stables", TO_STABLES),
   board("steal a Havenshire horse", HORSES),
   rideBack("ride the stolen horse back up to Salanar"),
   useAction("deliver the stolen horse to Salanar", function()
@@ -199,7 +203,7 @@ local steps = {
     end
   end, FIELDS, 300),
   board("take the Dark Rider's Acherus Deathcharger", { DEATHCHARGER }),
-  rideBack("ride the Deathcharger back up to Death's Breach"),
+  rideBack("ride the Deathcharger back up to Death's Breach", UP),
   useAction("use the Horseman's Call", function()
     local _, complete = S.questState(12687)
     return complete
