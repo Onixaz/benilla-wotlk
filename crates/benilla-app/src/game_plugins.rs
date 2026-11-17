@@ -1038,6 +1038,11 @@ pub(crate) mod schedule_tests {
     ///   against six writers (+6): a mover's flags a frame late only delay a sampled stamp.
     /// - The cast attempt's area leg reads `CurrentArea` against `update_current_area` from each
     ///   `CastLadder` drain (+9): a press reads the area under the player a frame late at worst.
+    /// - The cast attempt's place legs (`0x739650`) read `PlayerPlace` against `feed_zone_events`
+    ///   from the two click commits (+2), and the player's book for Cold Weather Flying against
+    ///   `drain_action_sets` and `drain_equipment_sets` from the other `CastLadder` drains (+10):
+    ///   a press reads the place or a slot write a frame late at worst, and neither drain changes
+    ///   which spells the book holds.
     /// - The display swap's carry (#1043) adds 3 net: `refresh_live_display` reads the swapped
     ///   unit's `AnimationPlayer` for its dying anim's progress against `apply_aura_anim_rate`,
     ///   `drive_go_anim`, `drive_booth_turn`, `pose_markers` and `sync_tiles`, which pause or pose
@@ -1051,7 +1056,7 @@ pub(crate) mod schedule_tests {
     // paint): the transport chain before the press, the tick's drains (`UiDrain`) before the
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_152;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_164;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

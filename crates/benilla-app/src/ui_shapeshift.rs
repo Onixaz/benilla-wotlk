@@ -158,7 +158,7 @@ fn feed_shapeshift_bar(
     clock: Res<crate::ui_script::UiClock>,
     // One tuple for Bevy's 16-param ceiling: the spell mods, the rune table and costs, and the
     // form byte the auto-tracking edge reads.
-    (spell_mods, runes, rune_costs, mut seen_form, combo, group, auto): (
+    (spell_mods, runes, rune_costs, mut seen_form, combo, group, auto, place_feed): (
         Res<crate::spell::SpellModifiers>,
         Option<Res<crate::ui_rune::Runes>>,
         Option<Res<crate::ui_rune::RuneCosts>>,
@@ -167,6 +167,8 @@ fn feed_shapeshift_bar(
         // The group, for the reaction's party rung.
         Option<Res<crate::ui_party::GroupState>>,
         crate::spell::AutoChecks,
+        // Where the player stands, for the walk's place legs (Flight Form's flyable zone).
+        usable::UsablePlaceFeed,
     ),
     mut memory: Local<crate::ui_script::VmMemo<StanceMemory>>,
 ) {
@@ -247,6 +249,7 @@ fn feed_shapeshift_bar(
         let form = u32::from(s.0.unit_shapeshift_form());
         auto.unshift(s, spells.forms.get(&form).map_or(0, |f| f.flags))
     });
+    let place = place_feed.player(actions.spells.contains(&usable::COLD_WEATHER_FLYING));
     let fresh: Vec<ShapeshiftFormView> = rows
         .into_iter()
         .map(|(id, d)| {
@@ -268,6 +271,7 @@ fn feed_shapeshift_bar(
                         spell_mods: &spell_mods,
                         runes: rune_check,
                         auto_unshift,
+                        place,
                         combo_points: combo
                             .as_deref()
                             .map_or(0, |c| c.player.on(0, selection.guid.unwrap_or(0))),

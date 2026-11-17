@@ -1041,6 +1041,12 @@ fn send_spell_cast(
         }
         return;
     }
+    // The place legs (`0x739650`), after the area leg.
+    if let Some(reason) = def.and_then(|d| area_gate.place_refusal(d)) {
+        debug!("ui_action: cast {spell_id} refused locally — the place leg ({reason:#x})");
+        cast_errors.push_local(spell_id, reason);
+        return;
+    }
     // The deferred no-bind refusal: every rung passed and nothing bound.
     if let Some(reason) = deferred_refusal {
         debug!("ui_action: cast {spell_id} refused locally — the cast-arm tail ({reason:#x})");

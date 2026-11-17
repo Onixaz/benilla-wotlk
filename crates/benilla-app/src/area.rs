@@ -74,6 +74,9 @@ fn load_area_groups(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
+/// `AttributesExG` bit 22: the cast's flyable test skips the continent leg.
+const ATTR_EX7_ANY_CONTINENT: u32 = 0x0040_0000;
+
 /// `SPELL_FAILED_REQUIRES_AREA`, the shared table's reason; its word names the area.
 const REASON_REQUIRES_AREA: u8 = 0x5d;
 /// `SPELL_FAILED_INCORRECT_AREA`, the shared table's reason.
@@ -86,9 +89,27 @@ pub(crate) struct CastAreaGate<'w> {
     groups: Option<Res<'w, AreaGroupsRes>>,
     areas: Option<Res<'w, AreaTableRes>>,
     current: Option<Res<'w, benilla_world::terrain_stream::CurrentArea>>,
+    /// Where the player stands and its book, for the place legs.
+    place: crate::spell::usable::UsablePlaceFeed<'w>,
+    actions: Option<Res<'w, crate::ui_action::PlayerActions>>,
 }
 
 impl CastAreaGate<'_> {
+    /// The place legs' refusal ([`crate::spell::validator::cast_place_refusal`]) at the player's
+    /// place. `AttributesExG & 0x400000` runs the flyable-zone test (`0x7261b0`) with its
+    /// continent leg off, which reads as Cold Weather Flying already known.
+    pub(crate) fn place_refusal(&self, spell: &benilla_formats::SpellDisplay) -> Option<u8> {
+        let knows = self.actions.as_deref().is_some_and(|a| {
+            a.spells
+                .contains(&crate::spell::usable::COLD_WEATHER_FLYING)
+        });
+        let skips_continent = spell.attributes_ex7 & ATTR_EX7_ANY_CONTINENT != 0;
+        crate::spell::validator::cast_place_refusal(
+            spell,
+            self.place.player(knows || skips_continent),
+        )
+    }
+
     /// The refusal for a spell with a `RequiredAreasID`, and its area word.
     pub(crate) fn refusal(
         &self,
