@@ -20,7 +20,7 @@ fn on_show_bank(
     In(ev): In<SessionEvent>,
     mut bank: ResMut<BankOpen>,
     mut gossip: ResMut<GossipState>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: NonSendMut<QuestGiver>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::ShowBank { banker } = ev {

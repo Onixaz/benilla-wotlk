@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::items::Items;
 use crate::names::NameCache;
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::QuestStatuses;
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::ecs::system::SystemParam;
@@ -426,7 +426,7 @@ fn on_reputation_delta(
     factions: Option<Res<crate::target::ring::Factions>>,
     mut chat_log: ResMut<crate::ui_chat::ChatLog>,
     mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: ResMut<QuestStatuses>,
     mut signals: NonSendMut<crate::ui_script::live::UniqueSignals>,
 ) {
     if let SessionEvent::ReputationDelta {
@@ -892,7 +892,7 @@ const FACTION_FLAG_RANK_SHOWN: u8 = 0x80;
 fn reputation_delta(
     standings: Vec<(u32, i32)>,
     reputations: &mut Reputations,
-    quest: &mut QuestGiver,
+    quest: &mut QuestStatuses,
     lines: &mut FactionLines,
 ) -> bool {
     use benilla_formats::faction_flags as flag;
@@ -1221,7 +1221,7 @@ mod reputation_delta_tests {
         reps.0.resize(128, (0, 0));
         reps.0[stormwind as usize].0 = flag::VISIBLE;
         reps.0[darnassus as usize].0 = flag::VISIBLE | flag::AT_WAR;
-        let mut quest = QuestGiver::default();
+        let mut quest = QuestStatuses::default();
         let mut log = crate::ui_chat::ChatLog::default();
         let mut lines = FactionLines {
             catalog: Some(&catalog),

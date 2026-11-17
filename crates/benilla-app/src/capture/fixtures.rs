@@ -85,10 +85,9 @@ pub(super) fn seed_ui_fixture(
     progress: Res<WorldLoadProgress>,
     mut merchant: ResMut<crate::ui_merchant::MerchantOpen>,
     mut gossip: ResMut<crate::ui_gossip::GossipState>,
-    mut quest: ResMut<crate::ui_quest::QuestGiver>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
-    (mut script, _live): (
+    (mut script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
         crate::ui_script::LendLive,
     ),
@@ -480,7 +479,7 @@ pub(super) fn seed_ui_fixture(
                 count: 1,
                 display_id: disp,
             };
-            quest.open(
+            live.giver_mut().expect("the quest window").open(
                 NPC_GUID,
                 crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
                     npc: NPC_GUID,
@@ -501,6 +500,8 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 }),
             );
+            // The panel's publish and event, as its packet's handler runs them.
+            commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestGreeting => {
             names.insert_creature(
@@ -520,7 +521,7 @@ pub(super) fn seed_ui_fixture(
                 }),
             );
             // The multi-quest greeting: two available quests, bullet rows under "Available Quests".
-            quest.open(
+            live.giver_mut().expect("the quest window").open(
                 NPC_GUID,
                 crate::ui_quest::QuestView::Greeting(benilla_protocol::messages::QuestGiverList {
                     npc: NPC_GUID,
@@ -545,6 +546,7 @@ pub(super) fn seed_ui_fixture(
                     ],
                 }),
             );
+            commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestLog => {
             // The log reads the self player's PLAYER_QUEST_LOG slots, so a synthetic self player

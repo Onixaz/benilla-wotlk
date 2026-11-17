@@ -1600,7 +1600,7 @@ mod tests {
         ));
         app.insert_non_send_resource(UiScript::new().unwrap());
         app.init_resource::<crate::spell::SpellModifiers>()
-            .init_resource::<crate::ui_quest::QuestGiver>()
+            .init_non_send_resource::<crate::ui_quest::QuestGiver>()
             .init_resource::<crate::go_templates::GameObjectTemplates>();
         // The item-stats and quest feeds share caches others are gated on: idle, they must not
         // mark them.

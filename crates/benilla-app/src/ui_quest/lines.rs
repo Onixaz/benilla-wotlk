@@ -102,7 +102,7 @@ pub(crate) fn quest_landed(world: &mut World, quest_id: u32) {
 /// The turn-in (`0x6d0e10`): its lines, the chosen reward's latch read and zeroed (`0x6d1061`, `0x6d10bc`), then the window closes unless the quest chains on (`0x6d10ca`, `0x6d10d4`).
 pub(crate) fn turn_in(world: &mut World, c: QuestComplete) {
     let chosen = world
-        .get_resource_mut::<QuestGiver>()
+        .get_non_send_resource_mut::<QuestGiver>()
         .map_or(0, |mut g| std::mem::take(&mut g.chosen_reward));
     match world.run_system_cached_with(turn_in_lines, (c, chosen)) {
         Ok(Some(chained)) => super::giver_finished(world, chained, c.quest_id, false),
@@ -306,7 +306,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<TurnIns>()
-            .init_resource::<QuestGiver>()
+            .init_non_send_resource::<QuestGiver>()
             .init_resource::<QuestLog>()
             .init_resource::<crate::ui_quest_log::QuestLogMarks>()
             .init_non_send_resource::<crate::ui_quest_log::QuestExpiries>()
@@ -374,7 +374,7 @@ mod tests {
                 2_047,
                 Some(crate::items::test_template("Anvilmar Hand Axe")),
             );
-            world.resource_mut::<QuestGiver>().chosen_reward = 2_047;
+            world.non_send_resource_mut::<QuestGiver>().chosen_reward = 2_047;
             turn_in(
                 world,
                 QuestComplete {
@@ -405,7 +405,10 @@ mod tests {
                 "igQuestListComplete".into()
             )]
         );
-        assert_eq!(app.world().resource::<QuestGiver>().chosen_reward, 0);
+        assert_eq!(
+            app.world().non_send_resource::<QuestGiver>().chosen_reward,
+            0
+        );
         assert_eq!(
             app.world().resource::<TurnIns>().waiting(),
             (0, &[(6_529, 3)][..])
@@ -441,7 +444,7 @@ mod tests {
     #[test]
     fn a_turn_in_waits_for_its_template_and_the_answer_runs_it() {
         let (mut app, _rx) = app();
-        app.world_mut().resource_mut::<QuestGiver>().open(
+        app.world_mut().non_send_resource_mut::<QuestGiver>().open(
             0xF130_0000_0000_0007,
             crate::ui_quest::QuestView::Greeting(Default::default()),
         );
@@ -449,14 +452,14 @@ mod tests {
             .resource_mut::<TurnIns>()
             .wait_for_template(complete(7));
         assert!(chat(&app).is_empty());
-        assert!(app.world().resource::<QuestGiver>().is_open());
+        assert!(app.world().non_send_resource::<QuestGiver>().is_open());
         let world = app.world_mut();
         world
             .resource_mut::<QuestLog>()
             .insert_template(template(7, "Kobold Camp Cleanup", 0));
         quest_landed(world, 7);
         assert_eq!(chat(&app), ["Kobold Camp Cleanup completed."]);
-        assert!(!app.world().resource::<QuestGiver>().is_open());
+        assert!(!app.world().non_send_resource::<QuestGiver>().is_open());
         assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
     }
 
@@ -466,7 +469,7 @@ mod tests {
         for (next, open) in [(8, true), (0, false)] {
             let (mut app, _rx) = app();
             let world = app.world_mut();
-            world.resource_mut::<QuestGiver>().open(
+            world.non_send_resource_mut::<QuestGiver>().open(
                 0xF130_0000_0000_0007,
                 crate::ui_quest::QuestView::Greeting(Default::default()),
             );
@@ -475,7 +478,10 @@ mod tests {
                 .insert_template(template(7, "A Threat Within", next));
             turn_in(world, complete(7));
             assert_eq!(chat(&app), ["A Threat Within completed."]);
-            assert_eq!(app.world().resource::<QuestGiver>().is_open(), open);
+            assert_eq!(
+                app.world().non_send_resource::<QuestGiver>().is_open(),
+                open
+            );
         }
     }
 

@@ -282,6 +282,23 @@ impl QuestView<'_, '_> {
         Some(expiries.expire_in_call(quest_id, log, net).flatten())
     }
 
+    /// A questgiver panel row's item from the cache at the call (`0x58d190`), a miss asked; its answer fires `QUEST_ITEM_UPDATE` (`0x58b92d`).
+    pub(crate) fn quest_item_record(
+        &self,
+        item_id: u32,
+    ) -> Option<Option<benilla_ui::script::QuestItemRecord>> {
+        let (items, net) = (self.items.as_deref()?, self.net.as_deref()?);
+        Some(
+            items
+                .template(item_id, 0, net)
+                .map(|t| benilla_ui::script::QuestItemRecord {
+                    name: t.name.clone(),
+                    quality: t.quality,
+                    link: crate::ui_items::item_link(item_id, &t.name, t.quality),
+                }),
+        )
+    }
+
     /// One logged quest's POI lines at the call, formatted through `get`.
     pub(crate) fn quest_poi_lines(
         &self,

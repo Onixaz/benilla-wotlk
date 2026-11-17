@@ -1471,6 +1471,19 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if merged.item_stack || merged.item_entry {
         item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
     }
+    // The NPC-flag watch's quest leg (`0x71a104`-`0x71a133`): the questgiver bit lost on the open window's giver closes it through the giver's close, nothing owed.
+    if let Some((old, new)) = merged.npc_flags {
+        if old & NPC_FLAG_QUESTGIVER != 0 && new & NPC_FLAG_QUESTGIVER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_non_send_resource::<crate::ui_quest::QuestGiver>()
+                    .is_some_and(|q| q.npc == Some(guid));
+                if open {
+                    crate::ui_quest::giver_finished(world, false, 0, false);
+                }
+            });
+        }
+    }
     if sc.self_guid.0 != Some(guid) {
         return;
     }
@@ -1579,6 +1592,9 @@ fn merge_fields(
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            if e.unit_field(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS) {
+                merged.npc_flags = Some((e.old, e.new));
+            }
             if own
                 && (e.unit_field(FIELD_UNIT_HEALTH)
                     || e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
@@ -1619,6 +1635,9 @@ fn merge_fields(
     merged
 }
 
+/// `UNIT_NPC_FLAG_QUESTGIVER`, the bit the NPC-flag watch tests (`0x71a104`).
+const NPC_FLAG_QUESTGIVER: u32 = 0x2;
+
 /// What [`merge_fields`] saw.
 #[derive(Default)]
 struct Merged {
@@ -1627,6 +1646,8 @@ struct Merged {
     death: Vec<(u16, u32, u32)>,
     /// Our own quest-log slots' fields' `(index, old, new)`.
     quest_slots: Vec<(u16, u32, u32)>,
+    /// A unit's `UNIT_NPC_FLAGS` `(old, new)` when it moved (`0x71a0b0`).
+    npc_flags: Option<(u32, u32)>,
     /// An item's stack count moved (`0x707720`).
     item_stack: bool,
     /// An item's entry moved (`0x707960`).

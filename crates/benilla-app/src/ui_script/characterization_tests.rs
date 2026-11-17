@@ -3130,3 +3130,59 @@ fn the_queue_zero_arm_clears_the_active_instance_before_its_event() {
         "no active slot left for the arm"
     );
 }
+
+/// `CloseQuest` and `AcceptQuest` close inside their call (`0x58d35a` -> `0x58ca70`, `0x58cdc5`): the rest of the chunk already sees `QUEST_FINISHED` fired, the giver and its `"questnpc"` gone and the panel's text kept (`0x58cb6b`, `0x58cb98`, `0x58cded`).
+#[test]
+fn close_and_accept_finish_the_window_inside_their_call() {
+    use benilla_protocol::messages::QuestDetails;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    const NPC: u64 = 0xF130_0000_0100_0001;
+    let detail = || {
+        SessionEvent::QuestDetail(QuestDetails {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        })
+    };
+    let chunk = |verb: &str| {
+        format!(
+            "local before = #(CHARZ_LOG or {{}}) {verb}() local fired = 0 \
+             for i = before + 1, #(CHARZ_LOG or {{}}) do \
+               if CHARZ_LOG[i]:find('QUEST_FINISHED', 1, true) then fired = fired + 1 end end \
+             return fired .. '|' .. tostring(GetTitleText()) .. '|' .. tostring(UnitExists('questnpc'))"
+        )
+    };
+    for verb in ["CloseQuest", "AcceptQuest"] {
+        let opened = rig.packets(vec![detail()], 1);
+        assert_eq!(
+            fired(&opened, &["QUEST_DETAIL", "QUEST_FINISHED"]),
+            ["QUEST_DETAIL"],
+            "{verb}: the window is open"
+        );
+        assert!(rig
+            .app
+            .world()
+            .non_send_resource::<crate::ui_quest::QuestGiver>()
+            .is_open());
+        let read =
+            super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(&chunk(verb)))
+                .expect("a VM")
+                .expect("the chunk runs");
+        assert_eq!(read, "1|Charz|nil", "{verb}");
+        assert!(!rig
+            .app
+            .world()
+            .non_send_resource::<crate::ui_quest::QuestGiver>()
+            .is_open());
+        // The next frames drain the log: the call's own `QUEST_FINISHED`, and no second one.
+        rig.run(2);
+        assert_eq!(
+            fired(&rig.take(), &["QUEST_FINISHED"]),
+            ["QUEST_FINISHED"],
+            "{verb}"
+        );
+    }
+}

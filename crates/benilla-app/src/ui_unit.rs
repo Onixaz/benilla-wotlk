@@ -714,7 +714,6 @@ pub(crate) struct UnitTokens<'w, 's> {
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
-    quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
@@ -802,7 +801,8 @@ impl UnitTokens<'_, '_> {
             UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
             // The interaction NPC's guid.
             UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
-            UnitBase::QuestNpc => self.held(self.quest.as_ref()?.quest_npc()?),
+            // The quest window's source (`0x6081b0`), read through the view lent to the call.
+            UnitBase::QuestNpc => self.held(crate::ui_script::live::quest_npc()?),
             // The encounter's slot (`0x5ed710`).
             UnitBase::Boss(row) => {
                 let guid = self.encounter.as_ref()?.boss(usize::try_from(row).ok()?);
@@ -1496,7 +1496,6 @@ pub(crate) fn push_arena_units(
 #[derive(bevy::ecs::system::SystemParam)]
 struct Interactions<'w> {
     npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
-    quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     /// The active battlefield's arena test, which drops the selection colour's PvP flag.
@@ -1504,7 +1503,7 @@ struct Interactions<'w> {
 }
 
 fn feed_units(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
 
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -1579,7 +1578,7 @@ fn feed_units(
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
-        || interact.quest.as_ref().is_some_and(|r| r.is_changed())
+        || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
         || interact.arena.as_ref().is_some_and(|r| r.is_changed())
         || interact.instance.is_changed();
@@ -1764,9 +1763,8 @@ fn feed_units(
 
     // `"questnpc"`: the questgiver window's source (`0x6081b0`), which `QuestFrame_SetPortrait`
     // titles the window with. A GameObject or item source is held like a unit.
-    let quest_npc = interact
-        .quest
-        .as_deref()
+    let quest_npc = live
+        .giver()
         .and_then(crate::ui_quest::QuestGiver::quest_npc)
         .and_then(|guid| {
             let entity = *index.as_deref()?.0.get(&guid)?;

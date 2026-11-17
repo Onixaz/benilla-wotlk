@@ -985,8 +985,6 @@ pub(crate) struct Model {
 
     /// The open questgiver panel, its greeting-row selects and its button calls.
     pub(crate) quest: Option<quest::QuestState>,
-    pub(crate) quest_selects: Vec<quest::QuestSelect>,
-    pub(crate) quest_actions: Vec<quest::QuestAction>,
 
     /// The release, reclaim, resurrect, spirit-healer and soulstone calls, in order; the app sends each.
     pub(crate) death_actions: Vec<death::DeathAction>,
@@ -1778,8 +1776,6 @@ impl Model {
             trade_set_items: Vec::new(),
             trade_clear_items: Vec::new(),
             quest: None,
-            quest_selects: Vec::new(),
-            quest_actions: Vec::new(),
             death_actions: Vec::new(),
             quest_log: Vec::new(),
             quest_log_selection: 0,

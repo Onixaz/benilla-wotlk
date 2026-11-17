@@ -201,6 +201,26 @@ pub trait LiveState {
         None
     }
 
+    /// A questgiver panel row's item from the item cache at the call (`0x58d190`); `Some(None)` while it is not cached, `None` where no view lends the cache.
+    fn quest_item_record(&self, _item_id: u32) -> Option<Option<super::QuestItemRecord>> {
+        None
+    }
+
+    /// A questgiver button's call (`0x58cd20`, `0x58ce00`, `0x58d350`, `0x58cf40`, `0x58cfa0`): its send and the window's close inside the call; `None` where no view lends the giver.
+    fn quest_action(&mut self, _action: super::QuestAction) -> Option<super::QuestActOutcome> {
+        None
+    }
+
+    /// `SelectAvailableQuest` (`0x58cc20`) or `SelectActiveQuest` (`0x58ccb0`) inside the call; `None` where no view lends the giver.
+    fn quest_select(&mut self, _select: super::QuestSelect) -> Option<super::QuestActOutcome> {
+        None
+    }
+
+    /// The `"questnpc"` unit's guid (`0x6081b0`): the open quest window's inform guid or source; `None` with the window closed or no view lending the giver.
+    fn quest_npc(&self) -> Option<u64> {
+        None
+    }
+
     /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
     fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
         None
@@ -563,6 +583,9 @@ pub(crate) struct TestView {
     pub expired: Vec<u32>,
     /// Each logged quest's POI lines.
     pub poi_lines: std::collections::HashMap<u32, super::QuestPoiLines>,
+    /// The questgiver calls made, in order, and the outcome each answers.
+    pub quest_calls: Vec<Result<super::QuestAction, super::QuestSelect>>,
+    pub quest_outcome: super::QuestActOutcome,
 }
 
 #[cfg(test)]
@@ -626,6 +649,16 @@ impl LiveState for TestView {
 
     fn quest_reset_unix(&self) -> Option<f64> {
         self.quest_reset
+    }
+
+    fn quest_action(&mut self, action: super::QuestAction) -> Option<super::QuestActOutcome> {
+        self.quest_calls.push(Ok(action));
+        Some(self.quest_outcome)
+    }
+
+    fn quest_select(&mut self, select: super::QuestSelect) -> Option<super::QuestActOutcome> {
+        self.quest_calls.push(Err(select));
+        Some(self.quest_outcome)
     }
 
     fn honor(&self) -> Option<super::HonorState> {

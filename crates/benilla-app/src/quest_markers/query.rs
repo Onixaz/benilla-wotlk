@@ -18,7 +18,7 @@ use benilla_protocol::EntityKind;
 
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::target::ring::Factions;
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::QuestStatuses;
 
 /// `UNIT_NPC_FLAGS` questgiver service bit.
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
@@ -30,7 +30,7 @@ const NPC_FLAG_FLIGHTMASTER: u32 = crate::target::cursor_mode::npc_flags::FLIGHT
 /// have changed. The reference sweeps every visible object from its self-player field watches and
 /// packet handlers.
 ///
-/// - Sweep: [`self_generation`] (the field watches) XOR [`QuestGiver::reask_epoch`] (the packet
+/// - Sweep: [`self_generation`] (the field watches) XOR [`QuestStatuses::reask_epoch`] (the packet
 ///   handlers), or your revive or reaction inputs moving; a changed generation is a sweep, which
 ///   sends one `CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY` (`0x6d50c0`), whose answer (`0x418`)
 ///   re-marks every giver, and no status query by guid. The revive and reaction edges first walk
@@ -67,7 +67,7 @@ pub(super) fn query_statuses(
     factions: Option<Res<Factions>>,
     reputations: Res<crate::net::Reputations>,
     group: Option<Res<crate::ui_party::GroupState>>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: ResMut<QuestStatuses>,
     commands: Res<NetCommands>,
     mut ecs: Commands,
     mut state: Local<QueryState>,
@@ -100,7 +100,7 @@ pub(super) fn query_statuses(
     state.generation = generation;
     // A guid that left the world drops its ask key and cached status. A sweep never clears the map:
     // only a unit's own key moving is a per-unit refresh. Pruned only when the index moved, as the
-    // `ResMut` retain marks `QuestGiver` changed.
+    // `ResMut` retain marks `QuestStatuses` changed.
     if index.is_changed() {
         state.asked.retain(|guid, _| index.0.contains_key(guid));
         quest.retain_statuses(|npc| index.0.contains_key(&npc));
@@ -115,7 +115,7 @@ pub(super) fn query_statuses(
         }
         // The reference zeroes the marker (`+0xb2c`, the green `!` too) and the status (`+0xcb8`)
         // together, so every teardown takes both.
-        let tear_down = |quest: &mut QuestGiver, ecs: &mut Commands| {
+        let tear_down = |quest: &mut QuestStatuses, ecs: &mut Commands| {
             quest.clear_status(guid.0);
             if fm.is_some() {
                 ecs.entity(entity)
@@ -266,7 +266,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -322,13 +322,16 @@ mod tests {
 
         // Out of view: the cached status dies with the object, as the reference's does.
         app.world_mut()
-            .resource_mut::<QuestGiver>()
+            .resource_mut::<QuestStatuses>()
             .set_status(NPC, 5);
         app.world_mut().resource_mut::<GuidIndex>().0.remove(&NPC);
         app.world_mut().entity_mut(npc).despawn();
         assert_eq!(asked(&mut app), (0, 0), "gone: nothing to ask");
         assert!(
-            app.world().resource::<QuestGiver>().status(NPC).is_none(),
+            app.world()
+                .resource::<QuestStatuses>()
+                .status(NPC)
+                .is_none(),
             "the cached status goes with the object"
         );
 
@@ -337,7 +340,7 @@ mod tests {
 
         // The flag goes off: drop the answer, which drops the marker with it.
         app.world_mut()
-            .resource_mut::<QuestGiver>()
+            .resource_mut::<QuestStatuses>()
             .set_status(NPC, 5);
         *app.world_mut()
             .entity_mut(npc)
@@ -349,7 +352,10 @@ mod tests {
             "no longer a questgiver — nothing to ask"
         );
         assert!(
-            app.world().resource::<QuestGiver>().status(NPC).is_none(),
+            app.world()
+                .resource::<QuestStatuses>()
+                .status(NPC)
+                .is_none(),
             "and its stale answer is dropped"
         );
     }
@@ -369,7 +375,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -413,7 +419,9 @@ mod tests {
         app.world_mut().entity_mut(me).despawn();
         app.world_mut().entity_mut(npc).despawn();
         app.world_mut().resource_mut::<GuidIndex>().0.clear();
-        app.world_mut().resource_mut::<QuestGiver>().clear_session();
+        app.world_mut()
+            .resource_mut::<QuestStatuses>()
+            .clear_session();
         assert_eq!(asked(&mut app), (0, 0), "nothing asked at character select");
 
         enter(&mut app);
@@ -447,7 +455,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -477,7 +485,7 @@ mod tests {
         // The server's answer: a gold `!` over each.
         for npc in [ESCORT, PLAIN] {
             app.world_mut()
-                .resource_mut::<QuestGiver>()
+                .resource_mut::<QuestStatuses>()
                 .set_status(npc, 5);
         }
 
@@ -494,14 +502,14 @@ mod tests {
 
         assert!(
             app.world()
-                .resource::<QuestGiver>()
+                .resource::<QuestStatuses>()
                 .status(ESCORT)
                 .is_none(),
             "the escortee stopped being a questgiver: its stale AVAILABLE status — and the `!` \
              the marker layer draws from it — must go, sweep or no sweep"
         );
         assert_eq!(
-            app.world().resource::<QuestGiver>().status(PLAIN),
+            app.world().resource::<QuestStatuses>().status(PLAIN),
             Some(5),
             "the control: a giver whose flag is still on keeps its answer until the server \
              replies to the sweep's fresh query"
@@ -515,7 +523,7 @@ mod tests {
         app.update();
         assert!(
             app.world()
-                .resource::<QuestGiver>()
+                .resource::<QuestStatuses>()
                 .status(ESCORT)
                 .is_none(),
             "still nothing cached — the answer arrives from the server, not from us"
@@ -540,7 +548,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -584,10 +592,10 @@ mod tests {
         };
         let restore = |app: &mut App| {
             app.world_mut()
-                .resource_mut::<QuestGiver>()
+                .resource_mut::<QuestStatuses>()
                 .set_status(NPC, 5);
         };
-        let held = |app: &App| app.world().resource::<QuestGiver>().status(NPC);
+        let held = |app: &App| app.world().resource::<QuestStatuses>().status(NPC);
 
         assert_eq!(
             asked(&mut app),
@@ -597,7 +605,7 @@ mod tests {
         restore(&mut app);
 
         // A packet's sweep (a turn-in, a reputation or roster change): the `!` stays up.
-        app.world_mut().resource_mut::<QuestGiver>().bump_reask();
+        app.world_mut().resource_mut::<QuestStatuses>().bump_reask();
         assert_eq!(asked(&mut app), (0, 1), "a packet re-asks everyone at once");
         assert_eq!(held(&app), Some(5), "…and does NOT tear the marker down");
 
@@ -654,7 +662,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .insert_resource(crate::target::Factions::from_catalog(catalog))
             .add_systems(Update, query_statuses);
@@ -709,13 +717,13 @@ mod tests {
         // Now both wear a marker, and a sweep runs.
         for g in [FRIENDLY, HOSTILE] {
             app.world_mut()
-                .resource_mut::<QuestGiver>()
+                .resource_mut::<QuestStatuses>()
                 .set_status(g, 5);
         }
-        app.world_mut().resource_mut::<QuestGiver>().bump_reask();
+        app.world_mut().resource_mut::<QuestStatuses>().bump_reask();
         app.update();
         let asked = drain(&rx);
-        let quest = app.world().resource::<QuestGiver>();
+        let quest = app.world().resource::<QuestStatuses>();
         assert!(
             asked.is_empty(),
             "the sweep asks nobody by guid: its one multiple query covers them — {asked:x?}"
@@ -752,7 +760,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -816,7 +824,7 @@ mod tests {
         assert_eq!(drain(&rx), (vec![], vec![]), "then quiet");
 
         // A packet's sweep asks nobody by guid, and not the flight master.
-        app.world_mut().resource_mut::<QuestGiver>().bump_reask();
+        app.world_mut().resource_mut::<QuestStatuses>().bump_reask();
         app.update();
         let (taxi, giver) = drain(&rx);
         assert_eq!(
@@ -903,7 +911,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -974,7 +982,7 @@ mod tests {
         );
 
         // A sweep, through the packet epoch.
-        app.world_mut().resource_mut::<QuestGiver>().bump_reask();
+        app.world_mut().resource_mut::<QuestStatuses>().bump_reask();
         let swept = asked(&mut app);
         assert!(
             swept.is_empty(),
@@ -1006,7 +1014,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
             .init_resource::<GuidIndex>()
-            .init_resource::<QuestGiver>()
+            .init_resource::<QuestStatuses>()
             .init_resource::<crate::net::Reputations>()
             .add_systems(Update, query_statuses);
 
@@ -1083,7 +1091,7 @@ mod tests {
         }
 
         // The packet half: reputation, the group roster and the quest packets all land here.
-        app.world_mut().resource_mut::<QuestGiver>().bump_reask();
+        app.world_mut().resource_mut::<QuestStatuses>().bump_reask();
         assert_eq!(asked(&mut app), (0, 1), "a swept packet — re-ask everyone");
         assert_eq!(asked(&mut app), (0, 0), "exactly once");
 

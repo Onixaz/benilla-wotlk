@@ -457,8 +457,8 @@ pub use pvp::{
     PLAYER_FLAGS_PVP_TIMER,
 };
 pub use quest::{
-    QuestAction, QuestItemView, QuestPanel, QuestRewardExtras, QuestRewardSpell, QuestSelect,
-    QuestState,
+    QuestActOutcome, QuestAction, QuestItemRecord, QuestItemView, QuestPanel, QuestRewardExtras,
+    QuestRewardSpell, QuestSelect, QuestState,
 };
 pub use quest_log::{
     carry_collapse_filter, fold_quest_log, remap_selection, QuestLogDetail, QuestLogEntryView,

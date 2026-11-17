@@ -99,6 +99,7 @@ pub(crate) fn apply_script_calls(
                 }
             }
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
+            ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {
                 appliers.p5().use_container_item(script, bag, slot);
             }
