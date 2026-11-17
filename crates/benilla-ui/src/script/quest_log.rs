@@ -1,10 +1,4 @@
-//! The quest-log verbs the stock `QuestLogFrame.lua` calls, over a [`QuestLogState`] the app pushes
-//! (rows from the `PLAYER_QUEST_LOG` descriptor slots, text from the quest template cache), with
-//! the abandon, share and timer-expiry intents drained back. The selection lives in the engine, as
-//! `QuestLog_SetSelection` sets and re-reads it in one call (`QuestLogFrame.lua:318`, `:342`). The
-//! abandon mark and the share hold the quest id selected at the click, as the reference's mark does
-//! (a quest id), so a re-index before the popup's Yes cannot retarget them. A header fold re-sorts
-//! the rows here, in the verb, as the reference's does (`0x5e0c00`).
+//! The quest-log verbs the stock `QuestLogFrame.lua` calls, over the row table the app's rebuild writes ([`QuestLogRow`]) and each row's answers read through the live view at the call; the selection, abandon mark and share hold quest ids, and a header fold re-sorts the rows in the verb (`0x5e0c00`).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -48,9 +42,7 @@ pub struct QuestLogEntryView {
     /// `GetAbandonQuestItems` for this quest (`0x5e3d60`): the quest-bound items carried that no
     /// other logged quest needs, joined by `", "`; `None` for none.
     pub abandon_items: Option<String>,
-    /// The slot's deadline in unix seconds (`time(nullptr) + limitTime`, vmangos
-    /// `Player::AddQuest`), 0 when untimed. A stamp, not a countdown: the app diffs this snapshot
-    /// to fire `QUEST_LOG_UPDATE`, so a live number here would rebuild the log every frame.
+    /// The slot's deadline in unix seconds, 0 when untimed: a stamp the timer verbs count down to against the server clock at the call (`0x5e4320`).
     pub timer: u32,
     /// `GetQuestLogTitle`'s `suggestedGroup`, the template's suggested players (`+0x18`,
     /// `0x5ded30`); 0 on a header.

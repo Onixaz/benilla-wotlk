@@ -1,12 +1,4 @@
-//! The VM's live view of the client and the events a packet handler fires. 12340's verbs read the
-//! live object when called (`0x60f396`) and a handler fires its events once its changes apply
-//! (`0x520fe0`). [`LiveView`] is the read-only [`LiveState`] over the `World` every call into Lua
-//! is lent: a system holding the VM takes [`LendLive`], which lends it for the system's run, and
-//! an exclusive one lends through [`with_live_world`] or [`lend_world`]. The main-thread state a
-//! verb writes in its call ([`Lent`]) rides with it: [`LendLive`] borrows it mutably, and a system
-//! that writes one itself leaves it out of its [`LendLive`] and lends its own borrow for each call
-//! ([`LendLive::lending`]). [`UiEvents`] is the queue a handler fires into, emptied into the VM
-//! once that handler's commands apply.
+//! The `World` lent to every call into Lua as its [`LiveState`], as 12340's verbs read the live object at the call (`0x60f396`), and the [`UiEvents`] a packet handler fires once its changes apply (`0x520fe0`).
 
 use benilla_ui::script::{LiveLoan, LiveState, ScriptValue, UiScript};
 use bevy::ecs::change_detection::Tick;
@@ -616,18 +608,13 @@ impl Lent<'_> {
     }
 }
 
-/// [`LiveNow`] lent to every verb for the run of the system that takes it: the parameter each
-/// system holding the VM takes beside it, so every call into Lua it makes reads the `World` and
-/// writes the [`Lent`] state. `OWN` names, by [`lent`] bits, the state the system writes itself:
-/// left out of this parameter's access, it is lent from the system's own borrow for each call
-/// ([`Self::lending`]).
+/// [`LiveNow`] lent to every call into Lua of the VM-holding system that takes it; `OWN` names by [`lent`] bits the state the system lends from its own borrow ([`Self::lending`]).
 pub(crate) struct LendLive<'w, 's, const OWN: u8 = 0> {
     loan: LiveLoan<LiveNow<'w, 's>>,
 }
 
 impl<'w, 's, const OWN: u8> LendLive<'w, 's, OWN> {
-    /// Run `f`, a call into Lua, with `state`, a borrow this system owns, lent to its verbs; the
-    /// loan ends as `f` returns or unwinds, and Bevy saw the write when the borrow was taken.
+    /// Run `f`, a call into Lua, with `state`, a borrow this system owns, lent to its verbs until `f` returns or unwinds.
     pub(crate) fn lending<T: Lendable, R>(&mut self, state: &mut T, f: impl FnOnce() -> R) -> R {
         assert!(
             OWN & T::BIT != 0,
@@ -639,8 +626,7 @@ impl<'w, 's, const OWN: u8> LendLive<'w, 's, OWN> {
         f()
     }
 
-    /// `f` over the quest giver this parameter borrows, read by its system between calls into
-    /// Lua; a verb reached from inside `f` panics rather than write the giver `f` reads.
+    /// `f` over the quest giver this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_giver<R>(&self, f: impl FnOnce(Option<&QuestGiver>) -> R) -> R {
         self.loan.with_view(|v| f(v.lent.giver.get()))
     }
@@ -650,8 +636,7 @@ impl<'w, 's, const OWN: u8> LendLive<'w, 's, OWN> {
         self.loan.with_view(|v| v.lent.giver.changed())
     }
 
-    /// `f` over the quest giver this parameter borrows, written by its system between calls into
-    /// Lua; a verb reached from inside `f` panics rather than alias the giver `f` writes.
+    /// `f` over the quest giver this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_giver_mut<R>(&mut self, f: impl FnOnce(Option<&mut QuestGiver>) -> R) -> R {
         self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
     }

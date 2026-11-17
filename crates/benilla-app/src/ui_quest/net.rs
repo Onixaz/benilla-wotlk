@@ -1,5 +1,4 @@
-//! The questgiver packet handlers: each fills the [`QuestGiver`] the feed reads, and each panel
-//! packet replaces the open view.
+//! The questgiver packet handlers: each writes the [`QuestGiver`] the quest verbs read at their call, and each panel packet replaces the open view.
 
 use benilla_protocol::messages::{
     QuestComplete, QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg,

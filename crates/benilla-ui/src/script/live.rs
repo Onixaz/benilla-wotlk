@@ -10,8 +10,7 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
-/// What the verbs read live, implemented by the app over its state; the `&mut self` methods write
-/// the state a verb changes in its call, reached through [`write_live`].
+/// What the verbs read live, implemented by the app over its state; the `&mut self` methods, reached through [`write_live`], write what a verb changes in its call.
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
     fn unit_flags(&self, guid: u64) -> Option<u32>;
@@ -368,8 +367,7 @@ const FREE: u32 = 0;
 const WRITING: u32 = u32::MAX;
 
 thread_local! {
-    /// The view lent on this thread: set only by [`UiScript::with_live`], [`UiScript::with_live_mut`]
-    /// and [`LiveLoan`], each of which puts the previous one back before its borrow ends.
+    /// The view lent on this thread, set only by [`UiScript::with_live`], [`UiScript::with_live_mut`] and [`LiveLoan`], each restoring the previous one.
     static SLOT: Cell<Lent> = const { Cell::new(None) };
     /// The references into the lent view now out: [`FREE`], a count of readers, or [`WRITING`].
     static HELD: Cell<u32> = const { Cell::new(FREE) };
@@ -378,8 +376,7 @@ thread_local! {
 /// Lend `live` on this thread, returning what it replaces.
 ///
 /// # Safety
-/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends, and
-/// `live` came from a `&mut` borrow when `writable`.
+/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends; `live` came from a `&mut` borrow when `writable`.
 unsafe fn lend(live: NonNull<dyn LiveState + '_>, writable: bool) -> Lent {
     // SAFETY: only the lifetime is erased; the caller restores the slot before the borrow ends,
     // and `read_live` and `write_live` hand the view out only for the length of one closure.
@@ -400,11 +397,9 @@ impl Drop for Restore {
     }
 }
 
-/// A view lent to every verb on this thread until the loan drops, which puts the previous one
-/// back: the guard a host keeps for the length of a stretch of calls into Lua.
+/// A view lent to every verb on this thread until the loan drops, which restores the previous one.
 pub struct LiveLoan<V: LiveState> {
-    /// Boxed, so the lent address holds while the loan moves; held raw, so the lent pointer and
-    /// [`Self::with_view_mut`] share one borrow.
+    /// Boxed and held raw, so the lent address holds while the loan moves and [`Self::with_view_mut`] shares its borrow.
     view: NonNull<V>,
     previous: Lent,
 }
@@ -422,8 +417,7 @@ impl<V: LiveState> LiveLoan<V> {
         Self { view, previous }
     }
 
-    /// `f` over the lent view; a verb writing through a loan from inside `f`, as a call into Lua
-    /// made there would, panics instead of aliasing the reference `f` holds.
+    /// `f` over the lent view; a verb writing through the loan from inside `f` panics.
     pub fn with_view<R>(&self, f: impl FnOnce(&V) -> R) -> R {
         let held = HELD.with(Cell::get);
         assert_ne!(held, WRITING, "a loan's view was read inside a write");
@@ -434,8 +428,7 @@ impl<V: LiveState> LiveLoan<V> {
         f(unsafe { self.view.as_ref() })
     }
 
-    /// `f` over the lent view, to change it between calls into Lua; a verb reading or writing
-    /// through a loan from inside `f` panics instead of aliasing the reference `f` holds.
+    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from inside `f` panics.
     pub fn with_view_mut<R>(&mut self, f: impl FnOnce(&mut V) -> R) -> R {
         let held = HELD.with(Cell::get);
         assert_eq!(
@@ -459,8 +452,7 @@ impl<V: LiveState> Drop for LiveLoan<V> {
 }
 
 impl UiScript {
-    /// Run `f` with `live` lent to every verb it reaches, to read only; the loan ends before this
-    /// returns, and a nested call lends its own and restores the outer one.
+    /// Run `f` with `live` lent read-only to every verb it reaches, a nested call restoring the outer loan.
     pub fn with_live<R>(&mut self, live: &dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
         // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too; the
         // loan is read-only, so the shared borrow is never written through.
@@ -526,8 +518,7 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     Some(f(live))
 }
 
-/// `f` over the view lent right now, to read and write the state a verb changes in its call;
-/// `None` with none lent or a read-only loan.
+/// `f` over the view lent right now, to write what a verb changes in its call; `None` with none lent or a read-only loan.
 ///
 /// # Panics
 /// Inside a [`read_live`] or [`write_live`] closure: one writer and no reader at a time.
@@ -909,9 +900,7 @@ mod tests {
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
     }
 
-    /// A reference out of a loan shuts every verb out of it: a call into Lua made while the host
-    /// reads the view cannot write it, and one made while the host writes it cannot reach it at all,
-    /// so no verb's reference ever aliases the host's; both work again once the reference is back.
+    /// A reference out of a loan shuts the verbs out of it, writes while the host reads and everything while it writes, until the reference is back.
     #[test]
     fn a_reference_out_of_a_loan_shuts_the_verbs_out() {
         let s = UiScript::new().unwrap();
