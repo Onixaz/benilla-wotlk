@@ -153,11 +153,6 @@ pub(super) fn cast_aura_refusal(
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
 
-/// The mounted block of the inhibit check (`0x739e8f`): a live `UNIT_FIELD_MOUNTDISPLAYID` meets it
-/// unless Attributes bit 24 (`0x01000000`, `SPELL_ATTR_ALLOW_WHILE_MOUNTED`) is set; a spell with
-/// no record has no exemption. A caster [`can_auto_dismount`] refuses is told `0x39` "You are
-/// mounted", any other dismounts at the send (the pending send, `0x80af40`). The mount-required
-/// gate (`0x53`) is not built.
 /// `SPELL_FAILED_NOT_HERE`, `_NO_MOUNTS_ALLOWED`, `_ONLY_INDOORS` and `_ONLY_OUTDOORS`.
 const REASON_NOT_HERE: u8 = 60;
 const REASON_NO_MOUNTS_ALLOWED: u8 = 83;
@@ -193,6 +188,11 @@ pub(crate) fn cast_place_refusal(
     None
 }
 
+/// The mounted block of the inhibit check (`0x739e8f`): a live `UNIT_FIELD_MOUNTDISPLAYID` meets it
+/// unless Attributes bit 24 (`0x01000000`, `SPELL_ATTR_ALLOW_WHILE_MOUNTED`) is set; a spell with
+/// no record has no exemption. A caster [`can_auto_dismount`] refuses is told `0x39` "You are
+/// mounted", any other dismounts at the send (the pending send, `0x80af40`). The mount-required
+/// gate (`0x53`) is not built.
 pub(crate) fn cast_mounted_refusal(mounted: bool, spell: Option<&SpellDisplay>) -> bool {
     mounted && spell.is_none_or(|d| d.attributes & 0x0100_0000 == 0)
 }

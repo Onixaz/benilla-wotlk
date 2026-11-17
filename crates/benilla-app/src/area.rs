@@ -96,8 +96,8 @@ pub(crate) struct CastAreaGate<'w> {
 
 impl CastAreaGate<'_> {
     /// The place legs' refusal ([`crate::spell::validator::cast_place_refusal`]) at the player's
-    /// place. `AttributesExG & 0x400000` asks the flyable test without its continent leg
-    /// (`IsInFlyableZone(!(AttributesExG & 0x400000))`), as Cold Weather Flying already known.
+    /// place. `AttributesExG & 0x400000` runs the flyable-zone test (`0x7261b0`) with its
+    /// continent leg off, which reads as Cold Weather Flying already known.
     pub(crate) fn place_refusal(&self, spell: &benilla_formats::SpellDisplay) -> Option<u8> {
         let knows = self.actions.as_deref().is_some_and(|a| {
             a.spells

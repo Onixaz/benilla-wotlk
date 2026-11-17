@@ -104,7 +104,7 @@ pub struct CurrentWmoGroup(pub u32);
 
 /// The keys of the nearest WMO group under the player, interior or exterior, `None` when terrain
 /// is nearer: the group whose `WMOAreaTable.AreaTableID` the area lookup takes
-/// (`World::QueryAreaIdAtPosition`, `0x77fa00`, which skips no group class). Dalaran's streets
+/// (`0x77fa00`, which skips no group class). Dalaran's streets
 /// are exterior groups whose rows name Dalaran (4395) and Dalaran City (4613).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentAreaWmo(pub Option<WmoInteriorKeys>);

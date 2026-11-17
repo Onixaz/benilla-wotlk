@@ -108,7 +108,7 @@ pub fn terrain_height_under_cached<'a>(
 }
 
 /// Tracks the `AreaTable` id under the player's feet as the reference's area lookup
-/// (`World::QueryAreaIdAtPosition`, `0x77fa00`) does: the nearest WMO group under the feet,
+/// (`0x77fa00`) does: the nearest WMO group under the feet,
 /// interior or exterior, wins when the faces-only down-ray finds it nearer than terrain, by its
 /// `WMOAreaTable.AreaTableID`; otherwise it is the chunk's MCNK `areaId`. Holds the last value
 /// while a tile decodes.

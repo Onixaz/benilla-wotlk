@@ -7,7 +7,7 @@
 //! (9), TargetAuraState and its attack-or-assist fork (10/10b, the only legs that read the current
 //! target), the bit-25 cooldown fold (11), the place legs (indoors or outdoors only, then the
 //! flyable zone) and power (12), which the caller runs after the walk (`0x5a8e40`'s
-//! `Spell_C_HaveSpellPower`).
+//! power check).
 //!
 //! Not built, each answering usable: leg 2's caster aura-immunity helpers, leg 4's `AttributesEx3`
 //! sub-conditions, and the legs of `0x80b5d0` between the cooldown fold and the place legs (the
@@ -43,13 +43,14 @@ const UNARMED_COST_SPEED: u32 = 2000;
 const ITEM_FLAG_BREAK_IGNORED: u32 = 0x0000_0008;
 
 /// `Attributes` bits 14 and 15, the place legs' first pair: indoors only and outdoors only, tested
-/// against `CGUnit_C::IsOutdoors` (`0x71b7f0`).
+/// against the caster's outdoors test (`0x71b7f0`).
 pub(crate) const ATTR_INDOORS_ONLY: u32 = 0x0000_4000;
 pub(crate) const ATTR_OUTDOORS_ONLY: u32 = 0x0000_8000;
 /// `AttributesExD` bit 26: only in a flyable zone (the flying mounts and flight forms), tested
-/// against `CGPlayer_C::IsInFlyableZone(1)` (`0x7261b0`).
+/// against the flyable-zone test, continent leg on (`0x7261b0`).
 pub(crate) const ATTR_EX4_ONLY_FLYABLE_ZONE: u32 = 0x0400_0000;
-/// Cold Weather Flying, which `IsInFlyableZone`'s continent leg asks a player to know on map 571.
+/// Cold Weather Flying, which the flyable-zone test's continent leg (`0x7261b0`) asks a player to
+/// know on map 571.
 pub(crate) const COLD_WEATHER_FLYING: u32 = 54197;
 /// Northrend, the one map the continent leg names.
 const NORTHREND: u32 = 571;
@@ -57,9 +58,9 @@ const NORTHREND: u32 = 571;
 /// Where the caster stands, for the walk's place legs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct UsablePlace {
-    /// `IsOutdoors` (`0x71b7f0`).
+    /// The outdoors test (`0x71b7f0`).
     pub(crate) outdoors: bool,
-    /// `IsInFlyableZone(1)` (`0x7261b0`).
+    /// The flyable-zone test, continent leg on (`0x7261b0`).
     pub(crate) flyable_zone: bool,
 }
 
@@ -74,10 +75,10 @@ impl UsablePlace {
     /// The place of a caster standing at `place` on `map`. `cold_weather_flying` is whether a
     /// player's book holds it, `None` for a caster that is not a player.
     ///
-    /// Flyable is `IsInFlyableArea` (`0x51a1d0`: the area's flag `0x400` without `0x20000000`, and
-    /// no area row is not flyable), then for a player on map 571 Cold Weather Flying. `IsOutdoors`
-    /// reads the caster's own world object; for a pet ours stands in the player's verdict, the one
-    /// place the client classifies.
+    /// Flyable is the area test (`0x51a1d0`: the area's flag `0x400` without `0x20000000`, and no
+    /// area row is not flyable), then for a player on map 571 Cold Weather Flying. The outdoors
+    /// test (`0x71b7f0`) reads the caster's own world object; for a pet ours stands in the
+    /// player's verdict, the one place the client classifies.
     pub(crate) fn of(
         place: Option<&crate::area::PlayerPlace>,
         map: Option<u32>,
@@ -1306,7 +1307,7 @@ mod tests {
         assert_eq!(walk(&costly, at(true, true)), (false, true));
     }
 
-    /// `IsInFlyableZone(1)` (`0x7261b0`): the area's verdict, then on map 571 Cold Weather Flying
+    /// The flyable-zone test (`0x7261b0`): the area's verdict, then on map 571 Cold Weather Flying
     /// for a player alone.
     #[test]
     fn the_flyable_zone_asks_a_player_in_northrend_for_cold_weather_flying() {
