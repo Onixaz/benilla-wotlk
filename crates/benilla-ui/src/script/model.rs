@@ -448,6 +448,9 @@ pub(crate) struct Model {
     pub(crate) session_requests: Vec<session::SessionRequest>,
     /// The glue core's slots and request queue; empty in an in-game VM.
     pub(crate) glue: super::glue_core::GlueCore,
+    /// The frame each held key's press went to (`m_keydownCapture`, `0x4943c0`), which its release
+    /// goes to alone (`0x494490`); by key name.
+    pub(crate) key_capture: std::collections::HashMap<String, FrameHandle>,
     /// `TogglePVP` calls, a count because `CMSG_TOGGLE_PVP` has no body.
     pub(crate) pvp_toggles: u32,
     /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
@@ -1527,6 +1530,7 @@ impl Model {
             camera_view_requests: Vec::new(),
             session_requests: Vec::new(),
             glue: Default::default(),
+            key_capture: Default::default(),
             pvp_toggles: 0,
             pvp_sets: Vec::new(),
             inspect_arena_teams: Default::default(),

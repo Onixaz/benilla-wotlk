@@ -248,3 +248,41 @@ fn an_unfocused_editbox_does_not_swallow_a_focused_boxs_editing_key() {
     );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
+
+/// The release goes to the frame the press went to, alone (`0x494490`): its `OnKeyUp` runs with
+/// the key's name, once; a frame shown above it since the press does not take it, a hidden one
+/// runs nothing, and a key no frame took is not consumed.
+#[test]
+fn a_key_up_goes_to_the_frame_that_took_its_press() {
+    let mut s = script();
+    s.run(
+        r#"
+        ups = {}
+        low = CreateFrame("Frame", "KbLow")
+        low:EnableKeyboard(true)
+        low:SetScript("OnKeyUp", function(self, key) table.insert(ups, "low " .. key) end)
+        high = CreateFrame("Frame", "KbHigh")
+        high:SetFrameStrata("DIALOG")
+        high:EnableKeyboard(true)
+        high:SetScript("OnKeyUp", function(self, key) table.insert(ups, "high " .. key) end)
+        high:Hide()
+    "#,
+    )
+    .unwrap();
+    let ups =
+        |s: &crate::script::UiScript| s.eval::<String>("return table.concat(ups, ', ')").unwrap();
+    assert!(s.key_input("SPACE"));
+    s.run("high:Show()").unwrap();
+    assert!(s.key_up("SPACE"), "the press's frame takes its release");
+    assert!(!s.key_up("SPACE"), "once");
+    assert_eq!(ups(&s), "low SPACE");
+    assert!(
+        s.key_input("ENTER"),
+        "now the shown dialog frame takes the press"
+    );
+    s.run("high:Hide()").unwrap();
+    assert!(s.key_up("ENTER"), "a hidden capture still consumes");
+    assert_eq!(ups(&s), "low SPACE", "…and runs nothing");
+    assert!(!s.key_up("ESCAPE"), "no press, no capture");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}

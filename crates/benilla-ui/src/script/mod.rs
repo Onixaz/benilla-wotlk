@@ -1832,6 +1832,12 @@ impl UiScript {
         keyboard::key_input(&self.lua, key) || editbox::key_input(&self.lua, key)
     }
 
+    /// A key's release by name: it goes to the keyboard frame its press went to, which runs
+    /// `OnKeyUp`. `true` if a frame took the press, which suppresses the release's binding.
+    pub fn key_up(&mut self, key: &str) -> bool {
+        keyboard::key_up(&self.lua, key)
+    }
+
     /// An editing key (BACKSPACE, DELETE, the arrows, HOME, END) offered to the keyboard frames
     /// before the focused box gets it as an [`EditAction`]. On `true` the caller dispatches neither
     /// the action nor the key's binding (consumption suppresses it).
