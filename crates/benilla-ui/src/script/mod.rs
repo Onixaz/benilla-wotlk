@@ -133,6 +133,7 @@ pub(crate) mod anim;
 mod client;
 mod clock;
 mod cvars;
+mod debug_verbs;
 mod dressup;
 mod duel;
 pub(crate) mod event;
@@ -1228,6 +1229,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     worldmap::install(lua)?;
     worldstate::install(lua)?;
     net_stats::install(lua)?;
+    debug_verbs::install(lua)?;
     Ok(())
 }
 
