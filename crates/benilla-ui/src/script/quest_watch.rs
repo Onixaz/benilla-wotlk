@@ -404,7 +404,7 @@ impl super::UiScript {
     }
 
     /// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): each quest into its slot or the first slot
-    /// whose quest left the log (`0x5e7020`), then `QUEST_POI_UPDATE`.
+    /// whose quest left the log (`0x5e7020`); the handler queues `QUEST_POI_UPDATE` beside it.
     pub fn apply_quest_pois(&mut self, pois: Vec<QuestPoiView>) {
         {
             let mut model = self.model_mut();
@@ -437,7 +437,6 @@ impl super::UiScript {
                 };
             }
         }
-        self.fire_event("QUEST_POI_UPDATE", Vec::new());
     }
 
     /// The watch-timer update (`0x5dfef0`): drop each timed watch past its expiry, announcing the

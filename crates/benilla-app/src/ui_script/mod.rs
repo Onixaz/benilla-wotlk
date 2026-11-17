@@ -503,6 +503,16 @@ impl Plugin for UiScriptPlugin {
             )
             // In the feed phase, so an `OnUpdate` reads this frame's `GetFramerate()`.
             .add_systems(Update, feed_framerate.in_set(UiFeed))
+            // The frame's unique signals, after every feed that queues one (`0x614760`); a signal
+            // queued before the interface is up waits for it.
+            .init_resource::<live::UniqueSignals>()
+            .add_systems(
+                Update,
+                live::flush_unique_signals
+                    .in_set(UiFeed)
+                    .after(UnitFeed)
+                    .run_if(ingame_ui_up),
+            )
             // The press hit-tests the rects the last tick resolved, the ones on screen, in-world
             // or on the stock glue screens.
             .init_resource::<UiPassState>()

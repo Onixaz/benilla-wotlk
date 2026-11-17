@@ -337,20 +337,12 @@ impl super::UiScript {
     pub fn set_quest_log_selection(&mut self, i: u32) {
         set_field!(self, quest_log_selection, i);
     }
+}
 
-    /// Push the server clock in unix seconds each frame: the app's `SMSG_QUERY_TIME_RESPONSE`
-    /// sample, advanced monotonically. The reference keeps an offset `G = local - server` from the
-    /// sync and computes `deadline + G - localNow()`, the same value. Deviation: a local clock
-    /// step mid-session (an NTP correction) jumps the reference's countdown but not ours, because
-    /// the step changes no time the quest has left.
-    pub fn set_server_unix_time(&mut self, unix_secs: f64) {
-        self.model_ref().server_unix_time.set(Some(unix_secs));
-    }
-
-    /// Push the daily quest reset in server unix seconds, from the same sample.
-    pub fn set_quest_reset_unix(&mut self, unix_secs: f64) {
-        self.model_ref().quest_reset_unix.set(Some(unix_secs));
-    }
+/// The server clock in unix seconds, read at call time (`0x5e4320`); `None` with no view lent or
+/// before the first time response.
+fn server_now() -> Option<f64> {
+    super::read_live(|l| l.server_unix_time()).flatten()
 }
 
 /// Signed seconds left on a row's timer, by the reference's formula at all four of its sites:
@@ -921,7 +913,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                let now = model.server_unix_time.get();
+                let now = server_now();
                 let mut left = Vec::new();
                 let mut due = Vec::new();
                 for (i, e) in model.quest_log.entries.iter().enumerate() {
@@ -957,7 +949,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let now = model.server_unix_time.get();
+            let now = server_now();
             let index = t.checked_sub(1).and_then(|n| {
                 model
                     .quest_log
@@ -986,7 +978,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let left = (model.quest_log_selection as usize)
                 .checked_sub(1)
                 .and_then(|n| model.quest_log.entries.get(n))
-                .and_then(|e| seconds_left(e, model.server_unix_time.get()));
+                .and_then(|e| seconds_left(e, server_now()));
             Ok(match left {
                 // Clamped where the lists drop the row, as in the reference.
                 Some(s) => Value::Integer(s.max(0)),
@@ -1030,14 +1022,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `SMSG_QUERY_TIME_RESPONSE` placed; 0 before the first.
     g.set(
         "GetQuestResetTime",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model
-                .quest_reset_unix
-                .get()
-                .zip(model.server_unix_time.get())
+        lua.create_function(|_, ()| {
+            let reset = super::read_live(|l| l.quest_reset_unix()).flatten();
+            Ok(reset
+                .zip(server_now())
                 .map_or(0, |(reset, now)| reset as i64 - now.floor() as i64))
         })?,
     )?;
@@ -1139,6 +1127,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState};
     use crate::script::{QuestItemView, UiScript};
+
+    /// The server clock lent at `now`, with the daily reset at `reset`, until the loan drops; a
+    /// later loan in the same test reads over it.
+    fn clock_at(
+        now: f64,
+        reset: Option<f64>,
+    ) -> crate::script::LiveLoan<crate::script::live::TestView> {
+        let view = crate::script::live::TestView {
+            server_unix: Some(now),
+            quest_reset: reset,
+            ..Default::default()
+        };
+        // SAFETY: each test drops its loans on its own thread, in reverse order of their making.
+        unsafe { crate::script::LiveLoan::new(view) }
+    }
 
     fn two_quests() -> QuestLogState {
         QuestLogState {
@@ -1701,7 +1704,7 @@ mod tests {
             .eval::<bool>("return GetQuestLogTimeLeft() == nil")
             .unwrap());
 
-        s.set_server_unix_time(1_000_400.0);
+        let _clock = clock_at(1_000_400.0, None);
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return (GetQuestTimers())").unwrap(), 499);
         assert_eq!(s.eval::<i64>("return GetQuestIndexForTimer(1)").unwrap(), 2);
@@ -1717,15 +1720,15 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetQuestLogTimeLeft()").unwrap(), 499);
 
         // Only the clock moves, and the number falls.
-        s.set_server_unix_time(1_000_880.0);
+        let _clock = clock_at(1_000_880.0, None);
         assert_eq!(s.eval::<i64>("return GetQuestLogTimeLeft()").unwrap(), 19);
 
         // The last second reads 0.
-        s.set_server_unix_time(1_000_899.0);
+        let _clock = clock_at(1_000_899.0, None);
         assert_eq!(s.eval::<i64>("return GetQuestLogTimeLeft()").unwrap(), 0);
 
         // Past the deadline the lists drop the row and `GetQuestLogTimeLeft` clamps to 0.
-        s.set_server_unix_time(1_000_910.0);
+        let _clock = clock_at(1_000_910.0, None);
         assert_eq!(s.eval::<i64>("return GetQuestLogTimeLeft()").unwrap(), 0);
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 0);
         assert!(s
@@ -1742,7 +1745,7 @@ mod tests {
         state.entries[1].timer = 1; // failed: the server's sentinel
         state.entries[1].complete = -1;
         s.set_quest_log(state);
-        s.set_server_unix_time(1_000_400.0);
+        let _clock = clock_at(1_000_400.0, None);
 
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return (GetQuestTimers())").unwrap(), 499);
@@ -1913,12 +1916,11 @@ mod tests {
     /// last `SMSG_QUERY_TIME_RESPONSE` placed, 0 before either is known.
     #[test]
     fn quest_reset_time_counts_down_on_the_server_clock() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         assert_eq!(s.eval::<i64>("return GetQuestResetTime()").unwrap(), 0);
-        s.set_server_unix_time(1_000_000.0);
-        s.set_quest_reset_unix(1_003_600.0);
+        let _clock = clock_at(1_000_000.0, Some(1_003_600.0));
         assert_eq!(s.eval::<i64>("return GetQuestResetTime()").unwrap(), 3600);
-        s.set_server_unix_time(1_000_100.5);
+        let _clock = clock_at(1_000_100.5, Some(1_003_600.0));
         assert_eq!(s.eval::<i64>("return GetQuestResetTime()").unwrap(), 3500);
     }
 
@@ -2278,7 +2280,7 @@ mod tests {
         state.entries[0].timer = 1_000_900; // in progress
         state.entries[1].timer = 1_000_900; // complete
         s.set_quest_log(state);
-        s.set_server_unix_time(1_000_950.0);
+        let _clock = clock_at(1_000_950.0, None);
         s.model_mut().pending_events.clear();
 
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 0);

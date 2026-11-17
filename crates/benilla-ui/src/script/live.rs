@@ -114,6 +114,18 @@ pub trait LiveState {
     fn quest_special_item(&self, _quest_id: u32) -> Option<super::QuestSpecialItemView> {
         None
     }
+
+    /// The server's unix seconds now, fractional: the local clock offset by the last time
+    /// response (`0x5dff40`), which the timer verbs subtract (`0x5e4320`); `None` before one.
+    fn server_unix_time(&self) -> Option<f64> {
+        None
+    }
+
+    /// The daily quest reset in server unix seconds as the last time response placed it
+    /// (`0x5dff40`), which `GetQuestResetTime` counts down to (`0x5e6de0`); `None` before one.
+    fn quest_reset_unix(&self) -> Option<f64> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -231,6 +243,10 @@ pub(crate) struct TestView {
     pub player_flags: std::collections::HashMap<u64, u32>,
     /// Each logged quest's special item.
     pub special_items: std::collections::HashMap<u32, super::QuestSpecialItemView>,
+    /// The server's unix seconds now.
+    pub server_unix: Option<f64>,
+    /// The daily quest reset in server unix seconds.
+    pub quest_reset: Option<f64>,
 }
 
 #[cfg(test)]
@@ -270,6 +286,14 @@ impl LiveState for TestView {
 
     fn quest_special_item(&self, quest_id: u32) -> Option<super::QuestSpecialItemView> {
         self.special_items.get(&quest_id).cloned()
+    }
+
+    fn server_unix_time(&self) -> Option<f64> {
+        self.server_unix
+    }
+
+    fn quest_reset_unix(&self) -> Option<f64> {
+        self.quest_reset
     }
 }
 

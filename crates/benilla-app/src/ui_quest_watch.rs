@@ -1,6 +1,7 @@
 //! The objective tracker's feeds: the quest POI wire (`CMSG_QUEST_POI_QUERY` for the quests the VM
-//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store), and the live reads of each
-//! quest's special item (`0x5e0da0`), found in the bags with its charges and range at call time.
+//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store from the handler), and the live
+//! reads of each quest's special item (`0x5e0da0`), found in the bags with its charges and range
+//! at call time.
 
 use std::collections::HashMap;
 
@@ -16,40 +17,44 @@ use benilla_ui::script::{
 use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
 use crate::ui_quest_log::QuestLog;
+use crate::ui_script::live::{UiEvents, UniqueSignals};
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
 /// A quest template's flag that lets its drop items serve as the special item (`0x5e0df9`).
 const QUEST_FLAG_DROP_ITEM_USE: u32 = 0x20000;
 
-/// The POI responses the live VM has not taken yet.
-#[derive(Resource, Default)]
-struct PendingPois(Vec<QuestPoi>);
-
 pub(crate) struct UiQuestWatchPlugin;
 
 impl Plugin for UiQuestWatchPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PendingPois>()
+        app.init_resource::<UniqueSignals>()
             .net_handler(SessionEventKind::QuestPoi, on_quest_poi)
-            .net_handler(SessionEventKind::Disconnected, on_session_end)
             .add_systems(
                 Update,
-                (feed_quest_pois, feed_quest_poi_lines)
-                    .in_set(UnitFeed)
-                    .after(crate::ui_quest_log::feed_quest_log),
+                (
+                    feed_quest_poi_lines
+                        .in_set(UnitFeed)
+                        .after(crate::ui_quest_log::feed_quest_log),
+                    drain_quest_poi_queries.in_set(UiDrain),
+                ),
             );
     }
 }
 
-fn on_quest_poi(In(ev): In<SessionEvent>, mut pending: ResMut<PendingPois>) {
+/// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): the store takes each quest in turn with the
+/// handler's events, and `QUEST_POI_UPDATE` waits as a unique signal (`0x5e7628`).
+fn on_quest_poi(
+    In(ev): In<SessionEvent>,
+    mut ui: ResMut<UiEvents>,
+    mut signals: ResMut<UniqueSignals>,
+) {
     if let SessionEvent::QuestPoi(pois) = ev {
         debug!("ui_quest_watch: POI for {} quest(s)", pois.len());
-        pending.0.extend(pois);
+        let pois: Vec<QuestPoiView> = pois.into_iter().map(view).collect();
+        ui.run(move |script| script.apply_quest_pois(pois));
+        signals.unique_signal("QUEST_POI_UPDATE");
     }
-}
-
-fn on_session_end(In(_): In<SessionEvent>, mut pending: ResMut<PendingPois>) {
-    pending.0.clear();
 }
 
 /// The response's outline centres, the integer mean the response's handler sums (`0x5e7370`).
@@ -275,20 +280,15 @@ fn feed_quest_poi_lines(
     script.set_quest_poi_lines(lines);
 }
 
-/// Hand the VM its POI responses and send the queries it raised, at most 25 ids each, as the
+/// Send the POI queries the log update raised (`0x5e6cd1`), at most 25 ids each, as the
 /// reference's one query per log update carries.
-fn feed_quest_pois(
+fn drain_quest_poi_queries(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut pending: ResMut<PendingPois>,
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    if !pending.0.is_empty() {
-        let pois = std::mem::take(&mut pending.0);
-        script.apply_quest_pois(pois.into_iter().map(view).collect());
-    }
     let wants = script.take_quest_poi_queries();
     for chunk in wants.chunks(25) {
         debug!("ui_quest_watch: asking POI for {chunk:?}");

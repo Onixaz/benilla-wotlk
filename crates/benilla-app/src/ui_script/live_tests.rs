@@ -313,3 +313,36 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
         offenders.join("\n")
     );
 }
+
+/// A unique signal waits once however often it is queued (`0x6143f0`), in its first queueing's
+/// place, and the flush fires the queue in that order and empties it (`0x614760`).
+#[test]
+fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
+    use super::live::{flush_unique_signals, UniqueSignals};
+    let mut app = App::new();
+    app.init_resource::<UniqueSignals>()
+        .add_systems(Update, flush_unique_signals);
+    let s = UiScript::new().unwrap();
+    s.run(
+        "SEEN = {} local f = CreateFrame('Frame') \
+         f:RegisterEvent('QUEST_POI_UPDATE') f:RegisterEvent('QUEST_LOG_UPDATE') \
+         f:SetScript('OnEvent', function(_, e, ...) SEEN[#SEEN + 1] = e .. select('#', ...) end)",
+    )
+    .unwrap();
+    app.insert_non_send_resource(s);
+    {
+        let mut q = app.world_mut().resource_mut::<UniqueSignals>();
+        q.unique_signal("QUEST_POI_UPDATE");
+        q.unique_signal("QUEST_LOG_UPDATE");
+        q.unique_signal("QUEST_POI_UPDATE");
+        assert_eq!(q.names(), ["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"]);
+    }
+    app.update();
+    assert!(app.world().resource::<UniqueSignals>().names().is_empty());
+    let seen = app
+        .world()
+        .non_send_resource::<UiScript>()
+        .eval::<String>("return table.concat(SEEN, ' ')")
+        .unwrap();
+    assert_eq!(seen, "QUEST_POI_UPDATE0 QUEST_LOG_UPDATE0");
+}

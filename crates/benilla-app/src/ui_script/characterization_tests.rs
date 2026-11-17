@@ -68,6 +68,7 @@ local VERBS = {
     { "nores", function() return CannotBeResurrected() end },
     { "healer", function() return CheckSpiritHealerDist() end },
     { "restimer", function() return ResurrectHasTimer() end },
+    { "reset", function() return GetQuestResetTime() end },
 }
 local function answers()
     local verbs = {}
@@ -773,12 +774,15 @@ fn quest_accept_and_complete() {
         ],
         3,
     );
+    // The slot watcher rebuilds the rows (`0x6df3bb`) and fires `QUEST_ACCEPTED` for a cached
+    // template at once (`0x6df49c`); the rebuild's `QUEST_LOG_UPDATE` waits for the frame's flush
+    // (`0x5e6957`, `0x614760`).
     assert_eq!(
         pin(&accept, events, verbs),
         vec![
             "UNIT_QUEST_LOG_CHANGED player | quests=0",
-            "QUEST_LOG_UPDATE | quests=2",
             "QUEST_ACCEPTED 2 | quests=2",
+            "QUEST_LOG_UPDATE | quests=2",
         ]
     );
     assert_eq!(
@@ -1048,8 +1052,9 @@ fn quest_accept_shows_the_special_item_with_the_log_update() {
     assert_eq!(first.verbs["special"], "true");
 }
 
-/// The accept's `QUEST_LOG_UPDATE` and `QUEST_ACCEPTED` both read the special item: the verb reads
-/// the quest and the bags when called (`0x5e0da0`), as do the calls after the frames.
+/// The accept's `QUEST_ACCEPTED` (`0x6df49c`) and the flushed `QUEST_LOG_UPDATE` after it
+/// (`0x614760`) both read the special item: the verb reads the quest and the bags when called
+/// (`0x5e0da0`), as do the calls after the frames.
 #[test]
 fn quest_accept_with_a_carried_source_item() {
     let Some((mut rig, accept)) = accept_with_the_source_item() else {
@@ -1062,11 +1067,54 @@ fn quest_accept_with_a_carried_source_item() {
             &["special"]
         ),
         vec![
-            "QUEST_LOG_UPDATE | special=true",
             "QUEST_ACCEPTED 2 | special=true",
+            "QUEST_LOG_UPDATE | special=true",
         ]
     );
     assert_eq!(rig.live_now().verbs["special"], "true");
+}
+
+/// Two POI responses in one frame: each handler writes the store in turn (`0x5e7370`) and queues
+/// `QUEST_POI_UPDATE` as a unique signal (`0x5e7628`), which fires once, at the frame's flush
+/// (`0x614760`), never per response.
+#[test]
+fn two_poi_responses_in_one_frame_fire_one_poi_update() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let poi = |quest_id| {
+        SessionEvent::QuestPoi(vec![benilla_protocol::messages::QuestPoi {
+            quest_id,
+            blobs: Vec::new(),
+        }])
+    };
+    let seen = rig.packets(vec![poi(QUEST), poi(QUEST + 1)], 3);
+    assert_eq!(
+        pin(&seen, &["QUEST_POI_UPDATE"], &[]),
+        vec!["QUEST_POI_UPDATE"]
+    );
+}
+
+/// The time response sets the offset and the reset (`0x5dff40`) and queues `QUEST_LOG_UPDATE`
+/// (`0x5dff89`); `GetQuestResetTime` reads them when called (`0x5e6de0`), 0 before any response.
+#[test]
+fn the_time_response_updates_the_log_with_the_reset_already_read() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    assert_eq!(rig.live_now().verbs["reset"], "0");
+    let seen = rig.packets(
+        vec![SessionEvent::ServerUnixTime {
+            unix_time: 1_000_000,
+            reset_in: 3_600,
+        }],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["QUEST_LOG_UPDATE"], &["reset"]),
+        vec!["QUEST_LOG_UPDATE | reset=3600"]
+    );
+    assert_eq!(rig.live_now().verbs["reset"], "3600");
 }
 
 /// A logged-in rig carrying an on-use item in the backpack's first slot, then the accept of the

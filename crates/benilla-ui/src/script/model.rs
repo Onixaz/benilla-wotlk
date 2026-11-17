@@ -1061,12 +1061,6 @@ pub(crate) struct Model {
     pub(crate) quest_watch: super::quest_watch::QuestWatchState,
     /// The animation groups and animations, and the translation each region draws at.
     pub(crate) anims: super::anim::AnimStore,
-    /// The server's clock in Unix seconds, `None` before `SMSG_QUERY_TIME_RESPONSE`. A quest
-    /// deadline is a stamp in it, and `GetQuestTimers` subtracts per call, as the reference does.
-    /// A `Cell`: pushed every frame, read by the quest timer verbs alone (`ModelCell`).
-    pub(crate) server_unix_time: std::cell::Cell<Option<f64>>,
-    /// The daily quest reset in server unix seconds (`0x5dff40`).
-    pub(crate) quest_reset_unix: std::cell::Cell<Option<f64>>,
     /// `GetMoney()` in copper, from `PLAYER_FIELD_COINAGE`.
     pub(crate) money: u64,
 
@@ -1836,8 +1830,6 @@ impl Model {
             quest_log_expiries: Vec::new(),
             quest_watch: Default::default(),
             anims: Default::default(),
-            server_unix_time: std::cell::Cell::new(None),
-            quest_reset_unix: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
             camera_facing: std::cell::Cell::new(None),
             nameplates: super::nameplate::NamePlates::default(),

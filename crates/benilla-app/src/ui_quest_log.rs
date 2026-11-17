@@ -1,6 +1,6 @@
 //! The quest log's app side: reads the player's `PLAYER_QUEST_LOG` slots every frame, resolves
 //! each quest through the `SMSG_QUEST_QUERY_RESPONSE` cache and pushes the log, every quest with
-//! its objective lines, firing `QUEST_LOG_UPDATE` on a change. The progress lines and
+//! its objective lines, queuing `QUEST_LOG_UPDATE` on a change. The progress lines and
 //! `QUEST_WATCH_UPDATE` come from the packets ([`progress`]). Abandons and shares drain from here;
 //! header folds re-sort in the VM, and the rebuild carries their `questLogCollapseFilter`.
 
@@ -30,7 +30,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, Guid, NetCommands, ObjectStore, SelfPlayer};
 use crate::query_cache::QueryCache;
 use crate::ui_action::Spells;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
 /// Marks a GameObject objective's entry on the wire (vmangos `Quest.cpp:512-516`).
@@ -196,8 +196,6 @@ impl Plugin for UiQuestLogPlugin {
                         .in_set(UnitFeed)
                         .after(crate::ui_unit::EnterWorldFeed),
                     tooltip::feed_quest_tooltips.in_set(UnitFeed),
-                    // Before the script tick, so `QuestTimerFrame` reads this frame's clock.
-                    feed_server_clock.in_set(UiFeed),
                     drain_quest_log_abandons.in_set(UiDrain),
                     drain_quest_log_pushes.in_set(UiDrain),
                 ),
@@ -776,21 +774,6 @@ fn remap_selection(selected: u32, new: &[QuestLogEntryView]) -> u32 {
         .map_or(0, |i| i as u32 + 1)
 }
 
-/// Pushes the server's wall clock every frame, for `GetQuestTimers()`; before the first
-/// `SMSG_QUERY_TIME_RESPONSE` nothing is pushed and the bindings report no timer.
-fn feed_server_clock(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    clock: Res<crate::net::ServerWallClock>,
-) {
-    let (Some(mut script), Some(now)) = (script, clock.now_unix()) else {
-        return;
-    };
-    script.set_server_unix_time(now);
-    if let Some(reset) = clock.quest_reset_unix() {
-        script.set_quest_reset_unix(reset);
-    }
-}
-
 /// The reference's header for `zoneOrSort` 0. Only a cached template makes a header, so it never
 /// stands for a template in flight.
 const MISSING_HEADER: &str = "Missing header! (quest designers)";
@@ -862,8 +845,11 @@ pub(crate) fn feed_quest_log(
     rewards: crate::ui_quest::rewards::RewardInputs,
     spells: Option<Res<Spells>>,
     mut last: Local<crate::ui_script::VmMemo<QuestLogState>>,
-    // The accept line's queue.
-    mut quest_lines: ResMut<crate::ui_quest::QuestLines>,
+    // The accept line's queue, and the frame's unique signals.
+    (mut quest_lines, mut signals): (
+        ResMut<crate::ui_quest::QuestLines>,
+        ResMut<crate::ui_script::live::UniqueSignals>,
+    ),
     mut prior_slots: Local<crate::ui_script::VmMemo<Option<SlotStates>>>,
 ) {
     let Some(mut script) = script else {
@@ -1168,10 +1154,10 @@ pub(crate) fn feed_quest_log(
         return;
     }
     script.set_quest_log(fresh.clone());
-    // `QUEST_LOG_UPDATE` is a unique signal flushed after the frame's packets (`0x614760`), so it
-    // follows the packets' `QUEST_WATCH_UPDATE` ([`progress`]) and the tracker redraws with the
-    // progress watch already added.
-    script.fire_event("QUEST_LOG_UPDATE", vec![]);
+    // The rebuild queues `QUEST_LOG_UPDATE` as a unique signal (`0x5e6957`), flushed after the
+    // frame's packets (`0x614760`): it follows the packets' `QUEST_WATCH_UPDATE` ([`progress`])
+    // and the slot watcher's `QUEST_ACCEPTED` (`0x6df49c`).
+    signals.unique_signal("QUEST_LOG_UPDATE");
     *last = fresh;
 }
 
@@ -1820,7 +1806,8 @@ mod tests {
             .init_resource::<crate::world_state::WorldStates>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_quest::QuestLines>();
+            .init_resource::<crate::ui_quest::QuestLines>()
+            .init_resource::<crate::ui_script::live::UniqueSignals>();
         let mut log = QuestLog::default();
         let mut pairs = Vec::new();
         for (slot, id, zos, title) in quests {
@@ -1906,6 +1893,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<QuestLines>()
+            .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>();
         let player = app
@@ -1966,6 +1954,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<QuestLines>()
+            .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>();
         let player = app
@@ -2326,6 +2315,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_quest::QuestLines>()
+            .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<crate::net::ServerWallClock>();
         let mut log = QuestLog::default();
         for &(_, id, zos) in quests {

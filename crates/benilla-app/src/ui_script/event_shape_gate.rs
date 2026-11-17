@@ -159,6 +159,8 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
                 concat!("pending_events.push", "(("),
                 // An event a packet handler fires after its changes apply.
                 concat!(".fire", "("),
+                // A unique signal, which fires with no arguments at the frame's flush.
+                concat!(".unique_signal", "("),
             ] {
                 let mut from = 0;
                 while let Some(i) = text[from..].find(call) {
@@ -171,6 +173,10 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
                     };
                     let Some(end) = body.find('"') else { continue };
                     let (name, after) = (&body[..end], &body[end + 1..]);
+                    if call.starts_with(".unique") && after.trim_start().starts_with(')') {
+                        out.push((name.to_string(), Vec::new(), p.display().to_string()));
+                        continue;
+                    }
                     let Some(args) = after.trim_start().strip_prefix(',') else {
                         continue;
                     };

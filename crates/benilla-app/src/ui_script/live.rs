@@ -27,6 +27,7 @@ pub(crate) struct LiveView<'w, 's> {
     death: crate::death::DeathView<'w, 's>,
     summon: crate::ui_summon::SummonView<'w>,
     quest: crate::ui_quest_watch::QuestView<'w, 's>,
+    clock: Option<Res<'w, crate::net::ServerWallClock>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -150,6 +151,18 @@ impl LiveState for LiveView<'_, '_> {
     ) -> Option<benilla_ui::script::QuestSpecialItemView> {
         self.quest.quest_special_item(quest_id)
     }
+
+    /// The last time response advanced on our monotonic clock, where the reference adds the
+    /// local clock to its offset (`0x5dff40`). Deviation: a local clock step mid-session (an NTP
+    /// correction) moves the reference's countdowns and not ours, as the step changes no time the
+    /// server counts.
+    fn server_unix_time(&self) -> Option<f64> {
+        self.clock.as_ref()?.now_unix()
+    }
+
+    fn quest_reset_unix(&self) -> Option<f64> {
+        self.clock.as_ref()?.quest_reset_unix()
+    }
 }
 
 /// [`LiveView`] lent to every verb for the run of the system that takes it: the parameter each
@@ -234,6 +247,8 @@ enum UiEvent {
     Fire(&'static str, Vec<ScriptValue>),
     /// The cursor clear a handler runs beside its event (`0x520fab`).
     ClearCursor,
+    /// A write into the UI module's own state a handler makes in turn with its events.
+    Run(Box<dyn FnOnce(&mut UiScript) + Send + Sync>),
 }
 
 /// The events this frame's handlers fired, in order; the drain empties it after each handler.
@@ -244,6 +259,12 @@ impl UiEvents {
     /// Fire `event` once the calling handler's changes have applied, before the next handler runs.
     pub(crate) fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
         self.0.push(UiEvent::Fire(event, args));
+    }
+
+    /// Run `f` on the VM in turn with the events around it, for a handler that writes state the
+    /// UI module keeps.
+    pub(crate) fn run(&mut self, f: impl FnOnce(&mut UiScript) + Send + Sync + 'static) {
+        self.0.push(UiEvent::Run(Box::new(f)));
     }
 
     /// Clear the cursor in turn with the events around it.
@@ -259,6 +280,7 @@ impl UiEvents {
             .map(|e| match e {
                 UiEvent::Fire(name, _) => *name,
                 UiEvent::ClearCursor => "<clear cursor>",
+                UiEvent::Run(_) => "<run>",
             })
             .collect()
     }
@@ -351,7 +373,47 @@ pub(crate) fn fire_handler_events(world: &mut World) {
             match event {
                 UiEvent::Fire(event, args) => script.fire_event(event, args),
                 UiEvent::ClearCursor => script.clear_cursor_payload(),
+                UiEvent::Run(f) => f(script),
             }
         }
     });
+}
+
+/// The unique signals queued this frame: each event once, however often it is queued
+/// (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` ->
+/// `0x614760`).
+#[derive(Resource, Default)]
+pub(crate) struct UniqueSignals(Vec<&'static str>);
+
+impl UniqueSignals {
+    /// Queue `event` for the frame's flush unless it already waits (`0x615020`).
+    pub(crate) fn unique_signal(&mut self, event: &'static str) {
+        if !self.0.contains(&event) {
+            self.0.push(event);
+        }
+    }
+
+    /// The queued event names, in order.
+    #[cfg(test)]
+    pub(crate) fn names(&self) -> Vec<&'static str> {
+        self.0.clone()
+    }
+}
+
+/// Fires the frame's unique signals, in queue order and without arguments (`0x614760`), after the
+/// feeds that queue them; with no VM they are dropped.
+pub(crate) fn flush_unique_signals(
+    (script, _live): (Option<NonSendMut<UiScript>>, LendLive),
+    mut signals: ResMut<UniqueSignals>,
+) {
+    if signals.0.is_empty() {
+        return;
+    }
+    let events = std::mem::take(&mut signals.0);
+    let Some(mut script) = script else {
+        return;
+    };
+    for event in events {
+        script.fire_event(event, Vec::new());
+    }
 }

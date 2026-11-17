@@ -7,6 +7,41 @@ use benilla_ui::script::{
 
 use super::test_ui::load_ui as load_xml;
 
+/// A view holding only the server clock.
+struct Clock(f64);
+
+impl benilla_ui::script::LiveState for Clock {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn server_unix_time(&self) -> Option<f64> {
+        Some(self.0)
+    }
+}
+
+/// The server clock lent at `now` until the loan drops; a later loan reads over it.
+fn clock_at(now: f64) -> benilla_ui::script::LiveLoan<Clock> {
+    // SAFETY: each test drops its loans on its own thread, in reverse order of their making.
+    unsafe { benilla_ui::script::LiveLoan::new(Clock(now)) }
+}
+
 /// The window's own dependencies only, so a missing one shows.
 fn harness() -> UiScript {
     let mut s = UiScript::new().unwrap();
@@ -77,7 +112,7 @@ fn the_window_follows_the_timed_quests() {
     let mut s = harness();
 
     s.set_quest_log(log(vec![quest(783, "A Threat Within", 0)]));
-    s.set_server_unix_time(1_000_000.0);
+    let _clock = clock_at(1_000_000.0);
     s.fire_event("QUEST_LOG_UPDATE", vec![]);
     assert!(!shown(&s, "QuestTimerFrame"), "no timed quest, no window");
 
@@ -104,7 +139,7 @@ fn the_window_follows_the_timed_quests() {
     assert_eq!(s.eval::<i64>("return GetQuestIndexForTimer(2)").unwrap(), 3);
 
     // The clock alone moves; OnUpdate repaints with no QUEST_LOG_UPDATE (`QuestTimerFrame.lua:35`).
-    s.set_server_unix_time(1_000_030.0);
+    let _clock = clock_at(1_000_030.0);
     s.tick(0.2);
     assert_eq!(row_text(&s, 2), "14 Secs ");
 
@@ -119,7 +154,7 @@ fn the_countdown_reaches_the_draw_list() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
     s.set_quest_log(log(vec![quest(1, "Deliver the Message", 1_000_860)]));
-    s.set_server_unix_time(1_000_000.0);
+    let _clock = clock_at(1_000_000.0);
     s.fire_event("QUEST_LOG_UPDATE", vec![]);
     s.tick(0.0);
 
@@ -149,7 +184,7 @@ fn a_world_entry_paints_a_quest_already_running() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
     s.set_quest_log(log(vec![quest(1, "Deliver the Message", 1_000_090)]));
-    s.set_server_unix_time(1_000_000.0);
+    let _clock = clock_at(1_000_000.0);
     s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Bool(true)]);
     assert!(shown(&s, "QuestTimerFrame"));
     // One minute takes the singular `MINUTES_ABBR`, not its `_P1` plural; 90 s reads 89.
