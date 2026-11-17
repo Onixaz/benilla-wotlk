@@ -712,28 +712,26 @@ fn drain_battlefield(
 }
 
 /// The world-enter cascade's status request, between the mail query and the LFG entry as the
-/// cascade orders them (`0x528010`): the bodyless `CMSG_BATTLEFIELD_STATUS` of `0x54ca50`,
-/// answered slot by slot.
+/// cascade orders them (`0x528010`): both statuses go to none (`0x54cb41`), then the bodyless
+/// `CMSG_BATTLEFIELD_STATUS` goes out (`0x54cc40`), so its answers always land on the zeroed slots.
 pub(crate) fn request_status_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
+    queue: Option<ResMut<BattlefieldQueue>>,
     commands: Res<NetCommands>,
 ) {
     if cascades.read().next().is_some() {
+        if let Some(mut queue) = queue {
+            queue.zero_statuses();
+        }
         let _ = commands.0.send(ClientCommand::BattlefieldStatusRequest);
     }
 }
 
 /// The battlefield's world entry after `PLAYER_ENTERING_WORLD` (`0x528010` -> `0x54ca50`): the
-/// selection, type and battlemaster clear and both statuses go to none, in turn with the events
-/// around it.
-fn enter_world(
-    queue: Option<ResMut<BattlefieldQueue>>,
-    state: Option<ResMut<Battlefield>>,
-    ui: Option<ResMut<UiEvents>>,
-) {
-    if let Some(mut queue) = queue {
-        queue.zero_statuses();
-    }
+/// selection, type and battlemaster clear, in turn with the events around it. The statuses were
+/// zeroed with the request ([`request_status_on_world_enter`]), which an answer may follow before
+/// a deferred UI load reaches this.
+fn enter_world(state: Option<ResMut<Battlefield>>, ui: Option<ResMut<UiEvents>>) {
     if let Some(mut state) = state {
         state.battlemaster = None;
     }
@@ -1075,6 +1073,46 @@ mod tests {
             None,
             "clearing the active slot drops the instance"
         );
+    }
+
+    /// `0x54ca50` zeroes the statuses before it sends `CMSG_BATTLEFIELD_STATUS` (`0x54cb41`,
+    /// `0x54cc40`): an answer that lands before a deferred UI load's `PLAYER_ENTERING_WORLD`
+    /// survives that entry.
+    #[test]
+    fn the_status_answer_outlives_a_deferred_world_entry() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<BattlefieldQueue>()
+            .init_resource::<Battlefield>()
+            .add_message::<WorldEnterCascadeMessage>()
+            .add_systems(Update, request_status_on_world_enter);
+        let now = Instant::now();
+        app.world_mut()
+            .resource_mut::<BattlefieldQueue>()
+            .apply_at(status(0, 1), now);
+        app.world_mut().write_message(WorldEnterCascadeMessage);
+        app.update();
+        assert!(matches!(
+            rx.try_iter().collect::<Vec<_>>().as_slice(),
+            [ClientCommand::BattlefieldStatusRequest]
+        ));
+        let zeroed = app.world().resource::<BattlefieldQueue>().slots()[0]
+            .as_ref()
+            .map(|(s, _)| s.status);
+        assert_eq!(zeroed, Some(0), "the cascade zeroes before its request");
+
+        // The answer lands, then the deferred load's world entry runs.
+        app.world_mut()
+            .resource_mut::<BattlefieldQueue>()
+            .apply_at(status(0, 1), now);
+        app.world_mut()
+            .run_system_cached(enter_world)
+            .expect("the world entry runs");
+        let kept = app.world().resource::<BattlefieldQueue>().slots()[0]
+            .as_ref()
+            .map(|(s, _)| s.status);
+        assert_eq!(kept, Some(1), "the world entry keeps the answer");
     }
 
     #[test]

@@ -211,6 +211,7 @@ fn feed_inspect(
     // in call order among the notifies, so a clear then a notify in one chunk keeps the target.
     let notifies = script.take_inspect_notifies();
     let clear_at = script.take_inspect_clear();
+    let before = target.guid;
     let notified = notifies.len();
     // Each target change sets the inspected talent tabs from the player's class (`0x5c9f70`).
     let class_of = |guid: u64| {
@@ -240,6 +241,10 @@ fn feed_inspect(
         target.token = None;
         target.guid = 0;
         inspect_talents.set_target(None);
+    }
+    // A new inspect target drops the honor reply and its in-flight latch, silently (`0x5e76d9`).
+    if target.guid != before {
+        script.set_inspect_honor(None);
     }
 
     // Re-resolve the latched token every frame, so the window follows a retarget as the

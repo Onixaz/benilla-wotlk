@@ -104,22 +104,49 @@ fn two_v_two() -> ArenaTeamSlotView {
     }
 }
 
+/// A live view holding only our honor block, as the verbs read it off our descriptor.
+struct OurHonor(HonorState);
+
+impl benilla_ui::script::LiveState for OurHonor {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn honor(&self) -> Option<HonorState> {
+        Some(self.0)
+    }
+}
+
 /// The PvP tab paints the honor pane from the 3.3.5a block and the team banner from the slot.
 #[test]
 fn the_pvp_tab_paints_honor_and_a_two_v_two_team() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
     let mut s = load();
-    s.set_honor(Some(HonorState {
-        today_hk: 3,
-        today_honor: 120,
-        yesterday_hk: 7,
-        yesterday_honor: 450,
-        lifetime_hk: 900,
-        honor_currency: 12_345,
-        arena_currency: 678,
-        ..Default::default()
-    }));
+    // SAFETY: dropped on this thread at the end of the test, the only loan.
+    let _live = unsafe {
+        benilla_ui::script::LiveLoan::new(OurHonor(HonorState {
+            today_hk: 3,
+            today_honor: 120,
+            yesterday_hk: 7,
+            yesterday_honor: 450,
+            lifetime_hk: 900,
+            honor_currency: 12_345,
+            arena_currency: 678,
+            ..Default::default()
+        }))
+    };
     s.set_arena_teams([two_v_two(), Default::default(), Default::default()]);
     s.run("TogglePVPFrame()").unwrap();
     s.tick(0.0);

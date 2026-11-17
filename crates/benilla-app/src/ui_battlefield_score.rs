@@ -210,11 +210,12 @@ mod net {
 
     /// `MSG_PVP_LOG_DATA` (`0x54d280`): the old callbacks cancelled (`0x54d289`), the log written
     /// in wire order, each uncached name asked and counted (`0x54d469`), then with none pending
-    /// the rebuild (`0x54d495`).
+    /// the rebuild (`0x54d495`). A denied name is no record there (`0x67a2d0` drops it), so its
+    /// row asks again: the negative this cache keeps is dropped first.
     pub(super) fn on_pvp_log_data(
         In(ev): In<SessionEvent>,
         mut board: ResMut<BattlefieldScoreboard>,
-        names: Res<NameCache>,
+        mut names: ResMut<NameCache>,
         commands: Res<NetCommands>,
         mut ui: ResMut<UiEvents>,
     ) {
@@ -224,6 +225,9 @@ mod net {
         board.pending.clear();
         board.ended = data.ended;
         for row in &data.rows {
+            if names.answered_unknown(row.guid) {
+                names.invalidate_player(row.guid);
+            }
             if names.resolve(row.guid, &commands).is_none() {
                 board.pending.insert(row.guid);
             }
@@ -235,21 +239,22 @@ mod net {
         }
     }
 
-    /// A name answer, after the cache files it: a row waiting on it counts down, and the last one
-    /// runs the rebuild (`0x54ca30`). A retry still waits.
+    /// A name answer: a row waiting on it counts down, named or denied, and the last one runs the
+    /// rebuild (`0x54ca30`, which the deny's callbacks call too, `0x67a32d`). A retry keeps the
+    /// ask in flight (`0x67a360`) and still waits.
     fn on_name_answer(
         In(ev): In<SessionEvent>,
         mut board: ResMut<BattlefieldScoreboard>,
-        names: Res<NameCache>,
         mut ui: ResMut<UiEvents>,
     ) {
+        use benilla_protocol::messages::NameQueryMiss;
         let guid = match ev {
-            SessionEvent::PlayerName { guid, .. } | SessionEvent::PlayerNameMiss { guid, .. } => {
-                guid
-            }
+            SessionEvent::PlayerName { guid, .. } => guid,
+            SessionEvent::PlayerNameMiss { miss, .. } if miss == NameQueryMiss::Retry => return,
+            SessionEvent::PlayerNameMiss { guid, .. } => guid,
             _ => return,
         };
-        if names.peek(guid).is_none() || !board.pending.remove(&guid) {
+        if !board.pending.remove(&guid) {
             return;
         }
         if !board.names_pending() {
@@ -453,7 +458,35 @@ mod tests {
                 .resource::<BattlefieldScoreboard>()
                 .names_pending());
         }
-        crate::net::handlers::dispatch(app.world_mut(), vec![name_answer(0x13)]);
+        // A deny counts down as a name does (`0x67a32d` -> `0x54ca30`).
+        let deny = || benilla_protocol::SessionEvent::PlayerNameMiss {
+            guid: 0x13,
+            miss: benilla_protocol::messages::NameQueryMiss::Deny,
+        };
+        crate::net::handlers::dispatch(app.world_mut(), vec![deny()]);
+        assert!(!app
+            .world()
+            .resource::<BattlefieldScoreboard>()
+            .names_pending());
+
+        // The next log asks the denied row again and waits for it, then the deny ends the wait.
+        rx.try_iter().for_each(drop);
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![benilla_protocol::SessionEvent::PvpLogData(log(&[
+                0x11, 0x12, 0x13,
+            ]))],
+        );
+        let asked: Vec<_> = rx.try_iter().collect();
+        assert!(
+            matches!(asked.as_slice(), [ClientCommand::NameQuery { guid: 0x13 }]),
+            "the denied row asks again: {asked:?}"
+        );
+        assert!(app
+            .world()
+            .resource::<BattlefieldScoreboard>()
+            .names_pending());
+        crate::net::handlers::dispatch(app.world_mut(), vec![deny()]);
         assert!(!app
             .world()
             .resource::<BattlefieldScoreboard>()

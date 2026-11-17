@@ -90,12 +90,6 @@ impl super::UiScript {
         drain_field!(self, pvp_toggles)
     }
 
-    /// Push the PvP toggle timer (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
-    /// on the flag watch's five-minute stamp, or -1 once it passed.
-    pub fn set_pvp_toggle_timer(&mut self, ms: i32) {
-        set_field!(self, pvp_toggle_timer, ms);
-    }
-
     /// Drain the queued `SetPVP` calls, the one-byte `CMSG_TOGGLE_PVP` each sends.
     pub fn take_pvp_sets(&mut self) -> Vec<u8> {
         drain_field!(self, pvp_sets)
@@ -110,12 +104,6 @@ impl super::UiScript {
     /// `TogglePVP`.
     pub fn queue_pvp_toggle(&mut self) {
         self.model_mut().pvp_toggles += 1;
-    }
-
-    /// Push or clear the local player's honor snapshot, the self getters' only source. It fires
-    /// no event: the app fires `PLAYER_PVP_KILLS_CHANGED`/`PLAYER_PVP_RANK_CHANGED` alongside.
-    pub fn set_honor(&mut self, honor: Option<HonorState>) {
-        set_field!(self, honor, honor);
     }
 
     /// Push or clear the last `MSG_INSPECT_HONOR_STATS` reply, paired with the pane's
@@ -166,10 +154,9 @@ fn visual_rank(rank: i64) -> i64 {
     }
 }
 
-fn honor(lua: &Lua) -> Option<HonorState> {
-    lua.app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data")
-        .honor
+/// Our honor block, read off the active player when called.
+fn honor(_lua: &Lua) -> Option<HonorState> {
+    crate::script::live::read_live(|l| l.honor()).flatten()
 }
 
 fn read(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {
@@ -339,12 +326,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms.
+    // GetPVPTimer() (`0x51bd00`): the toggle timer plus 1000 ms, 0 without the active player
+    // (`0x51bd34`).
     g.set(
         "GetPVPTimer",
-        lua.create_function(|lua, ()| {
-            let model = read(lua);
-            Ok(f64::from(model.pvp_toggle_timer.wrapping_add(1000)))
+        lua.create_function(|_, ()| {
+            let timer = crate::script::live::read_live(|l| l.pvp_toggle_timer()).flatten();
+            Ok(timer.map_or(0.0, |t| f64::from(t.wrapping_add(1000))))
         })?,
     )?;
 

@@ -1,77 +1,67 @@
-//! The honor feed: our own 3.3.5a honor fields become the snapshot the PvP window's honor pane
-//! reads, and the inspect-honor reply is matched to the inspected player. The honor block streams
-//! only to its owner, so another player's numbers come only from `MSG_INSPECT_HONOR_STATS`; the
-//! stock pane re-asks from its `OnShow` while it holds nothing, the only retry.
+//! Honor: our own honor fields as the PvP window's honor pane reads them, the PvP toggle timer,
+//! and the inspect-honor reply. The honor block streams only to its owner, so another player's
+//! numbers come only from `MSG_INSPECT_HONOR_STATS`; the stock pane re-asks from its `OnShow`
+//! while it holds nothing, the only retry.
 //!
-//! The reference fires the pane's events from field watches (`0x6e5180`'s list): today's kills,
-//! today's honor and the lifetime kills fire `PLAYER_PVP_KILLS_CHANGED`, `PLAYER_BYTES_3` fires
-//! `PLAYER_PVP_RANK_CHANGED`, and either currency fires `HONOR_CURRENCY_UPDATE` and
+//! The verbs read our descriptor when called. The pane's events fire from our values handler's
+//! field watches (`0x6e5180`'s list), in field order: `PLAYER_BYTES_3` fires
+//! `PLAYER_PVP_RANK_CHANGED` (`0x6e5671`), today's kills (the low half), today's honor and the
+//! lifetime kills fire `PLAYER_PVP_KILLS_CHANGED` (`0x6e55fc`, `0x6e564b`, `0x6e5622`), each with
+//! `"player"` (`0x6cddd6`), and either currency fires `HONOR_CURRENCY_UPDATE` and
 //! `CURRENCY_DISPLAY_UPDATE` (`0x6da3c0`, `0x6da430`). Yesterday's numbers have no watch.
 //!
-//! Deviation: a currency gain's `LOOTWINDOWCOINSOUND` is not played, as no sound kit is keyed by
+//! Deviation: a currency loss's sound kit (`0x6da400`) is not played, as no sound kit is keyed by
 //! name here.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{HonorState, InspectHonorData, ScriptValue, UiScript};
+use benilla_protocol::ObjectFields;
+use benilla_ui::script::{HonorState, ScriptValue, UiScript};
 
-use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
-use crate::ui_script::{UiFeed, VmMemo};
-
-/// The inspect-honor replies: the one held, like the reference's `HasInspectHonorData` latch, and
-/// those arrived since the last feed, in wire order.
-#[derive(Resource, Default)]
-pub(crate) struct InspectHonor {
-    pub(crate) held: Option<benilla_protocol::messages::InspectHonorStats>,
-    arrived: Vec<benilla_protocol::messages::InspectHonorStats>,
-}
-
-/// What the last push told this VM, keyed on the VM so a `/reload`'s fresh VM is told again.
-#[derive(Resource, Default)]
-struct HonorFeedState {
-    vm: VmMemo<HonorFeedMemo>,
-}
-
-/// The per-VM change bases: the last snapshot and the held reply's guid.
-#[derive(Default)]
-struct HonorFeedMemo {
-    last: Option<HonorState>,
-    last_inspect: Option<u64>,
-}
-
-/// Each arrived reply in turn (`0x5e7a50`): one for anyone but `inspected` is dropped
-/// (`0x5e7a68`), any other is held. Returns how many were held, each one an
-/// `INSPECT_HONOR_UPDATE` (`0x5e7aee`), repeats included.
-fn take_replies(inspect: &mut InspectHonor, inspected: Option<u64>) -> usize {
-    let mut held = 0;
-    for reply in std::mem::take(&mut inspect.arrived) {
-        if Some(reply.player_guid) == inspected {
-            inspect.held = Some(reply);
-            held += 1;
-        }
-    }
-    held
-}
+use crate::net::{ClientCommand, NetCommands};
+use crate::ui_script::live::UiEvents;
 
 /// The inspect-honor reply's handler; the honor award, `SMSG_PVP_CREDIT`, is the chat family's.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
+    use benilla_ui::script::InspectHonorData;
     use bevy::prelude::*;
 
-    use super::InspectHonor;
     use crate::net::NetHandlerApp;
+    use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
         app.net_handler(SessionEventKind::InspectHonorStats, on_inspect_stats);
     }
 
-    /// Queued for the feed, which matches it to the inspected player.
-    fn on_inspect_stats(In(ev): In<SessionEvent>, mut inspect: ResMut<InspectHonor>) {
-        if let SessionEvent::InspectHonorStats(stats) = ev {
-            inspect.arrived.push(stats);
+    /// `MSG_INSPECT_HONOR_STATS` (`0x5e7a50`): a reply for anyone but the inspect target is
+    /// dropped (`0x5e7a68`); the target's is held, the in-flight latch clears (`0x5e7ae4`) and
+    /// `INSPECT_HONOR_UPDATE` fires (`0x5e7aee`), every time.
+    pub(super) fn on_inspect_stats(
+        In(ev): In<SessionEvent>,
+        target: Res<crate::ui_inspect::InspectTarget>,
+        mut ui: ResMut<UiEvents>,
+    ) {
+        let SessionEvent::InspectHonorStats(r) = ev else {
+            return;
+        };
+        if r.player_guid == 0 || r.player_guid != target.guid {
+            return;
         }
+        let data = InspectHonorData {
+            guid: r.player_guid,
+            today_hk: r.today_hk,
+            today_honor: r.today_honor,
+            yesterday_hk: r.yesterday_hk,
+            yesterday_honor: r.yesterday_honor,
+            lifetime_hk: r.lifetime_hk,
+            highest_rank: r.highest_rank,
+        };
+        ui.write(move |s| s.set_inspect_honor(Some(data)));
+        ui.fire("INSPECT_HONOR_UPDATE", Vec::new());
     }
 }
 
@@ -80,10 +70,13 @@ pub(crate) struct UiHonorPlugin;
 impl Plugin for UiHonorPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<InspectHonor>()
-            .init_resource::<HonorFeedState>()
+        app.init_resource::<PvpCooldown>()
+            .init_resource::<crate::ui_inspect::InspectTarget>()
             .init_resource::<crate::nameplates::PvpNameStrings>()
-            .add_systems(Update, (feed_honor, feed_pvp_timer).in_set(UiFeed))
+            .add_systems(
+                Update,
+                drain_inspect_honor_requests.in_set(crate::ui_script::UiDrain),
+            )
             // A VM holder, so after the tick; before the driver, so a new VM's strings reach the
             // lines the frame it arrives.
             .add_systems(
@@ -95,34 +88,53 @@ impl Plugin for UiHonorPlugin {
     }
 }
 
+/// `RequestInspectHonorData()` (`0x5e9140`): `MSG_INSPECT_HONOR_STATS` for the inspect target's
+/// guid (`0x5e91a1`), none with no target (`0x5e916c`).
+fn drain_inspect_honor_requests(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    target: Res<crate::ui_inspect::InspectTarget>,
+    commands: Res<NetCommands>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    for _ in 0..script.take_inspect_honor_requests() {
+        if target.guid == 0 {
+            debug!("honor: inspect-honor request with no inspect target — not sent");
+            continue;
+        }
+        let _ = commands.0.send(ClientCommand::InspectHonorStats {
+            target: target.guid,
+        });
+    }
+}
+
 /// `PLAYER_FLAGS_PVP_DESIRED` and `PLAYER_FLAGS_PVP_TIMER`.
 const PVP_DESIRED: u32 = 0x200;
 const PVP_TIMER: u32 = benilla_ui::script::PLAYER_FLAGS_PVP_TIMER;
 
 /// The PvP toggle timer's five minutes (`0x6de789`).
-const PVP_TIMER_SPAN: std::time::Duration = std::time::Duration::from_millis(300_000);
+const PVP_TIMER_SPAN: Duration = Duration::from_millis(300_000);
 
-/// The PvP cooldown's timestamp (`[player+0x1940]`) and the flags it was last set from.
-#[derive(Default)]
-struct PvpTimer {
-    flags: Option<u32>,
-    stamp: Option<std::time::Instant>,
+/// The active player's PvP cooldown stamp (`[player+0x1940]`), `None` for the zero stamp.
+#[derive(Resource, Default)]
+pub(crate) struct PvpCooldown {
+    stamp: Option<Instant>,
 }
 
-impl PvpTimer {
-    /// World entry (`0x6e7f50`): PvP desired clears the stamp, no timer flag starts it, a running
-    /// timer keeps the zeroed stamp.
-    fn enter(&mut self, flags: u32, now: std::time::Instant) {
-        if flags & PVP_DESIRED != 0 {
-            self.stamp = None;
-        } else if flags & PVP_TIMER == 0 {
+impl PvpCooldown {
+    /// Our create's init (`0x6e8378` -> `0x6e81f2`), over the new player's zeroed stamp
+    /// (`0x6e6dba`): PvP desired keeps it zero, a running timer keeps it zero, else it starts.
+    pub(crate) fn enter(&mut self, flags: u32, now: Instant) {
+        self.stamp = None;
+        if flags & PVP_DESIRED == 0 && flags & PVP_TIMER == 0 {
             self.stamp = Some(now + PVP_TIMER_SPAN);
         }
     }
 
-    /// The `PLAYER_FLAGS` watch (`0x6e102c`): a change in `0x40300` re-stamps unless the timer flag
-    /// was set before and after (the PvP cooldown's stamp, `0x6de750`).
-    fn watch(&mut self, old: u32, new: u32, now: std::time::Instant) {
+    /// The `PLAYER_FLAGS` watch (`0x6e102c`): a change in `0x40300` re-stamps (`0x6de750`): PvP
+    /// desired zeroes it, else it starts unless the timer flag was set before and after.
+    pub(crate) fn watch(&mut self, old: u32, new: u32, now: Instant) {
         if (old ^ new) & 0x40300 == 0 {
             return;
         }
@@ -133,9 +145,10 @@ impl PvpTimer {
         }
     }
 
-    /// The PvP toggle's timer (`0x6de7a0`).
-    fn toggle_timer(&self, now: std::time::Instant) -> i32 {
-        if self.flags.unwrap_or(0) & PVP_TIMER == 0 {
+    /// The PvP toggle timer (`0x6de7a0`) under our `flags`: the full span without the timer flag,
+    /// else the ms left on the stamp, -1 with none or once it passed.
+    pub(crate) fn toggle_timer(&self, flags: u32, now: Instant) -> i32 {
+        if flags & PVP_TIMER == 0 {
             return PVP_TIMER_SPAN.as_millis() as i32;
         }
         self.stamp
@@ -145,28 +158,66 @@ impl PvpTimer {
     }
 }
 
-/// Track the toggle timer off our `PLAYER_FLAGS` and push it for `GetPVPTimer`.
-fn feed_pvp_timer(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_store: Query<&ObjectStore, With<SelfPlayer>>,
-    mut entered: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    mut timer: Local<PvpTimer>,
-) {
-    if entered.read().next().is_some() {
-        *timer = PvpTimer::default();
-    }
-    let Some(mut script) = script else {
-        return;
-    };
-    let now = std::time::Instant::now();
-    if let Some(flags) = self_store.iter().next().map(|s| s.0.player_flags()) {
-        match timer.flags {
-            None => timer.enter(flags, now),
-            Some(old) => timer.watch(old, flags, now),
+/// What the honor verbs read live beside our descriptor: the cooldown stamp.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct HonorView<'w> {
+    cooldown: Option<Res<'w, PvpCooldown>>,
+}
+
+impl HonorView<'_> {
+    /// `GetPVPTimer`'s timer over our descriptor.
+    pub(crate) fn toggle_timer(&self, fields: &ObjectFields) -> i32 {
+        let flags = fields.player_flags();
+        match self.cooldown.as_deref() {
+            Some(c) => c.toggle_timer(flags, Instant::now()),
+            None => PvpCooldown::default().toggle_timer(flags, Instant::now()),
         }
-        timer.flags = Some(flags);
     }
-    script.set_pvp_toggle_timer(timer.toggle_timer(now));
+}
+
+/// Our own honor fields' edges, `(index, old, new)` in field order, as their watches fire.
+pub(crate) fn own_fields_changed(edges: &[(u16, u32, u32)], ui: &mut UiEvents) {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_BYTES_3, FIELD_PLAYER_FIELD_ARENA_CURRENCY, FIELD_PLAYER_FIELD_HONOR_CURRENCY,
+        FIELD_PLAYER_FIELD_KILLS, FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS,
+        FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION,
+    };
+    let player = || vec![ScriptValue::Str("player".into())];
+    for &(index, old, new) in edges {
+        match index {
+            FIELD_PLAYER_BYTES_3 => ui.fire("PLAYER_PVP_RANK_CHANGED", player()),
+            // A two-byte watch: today's kills, not yesterday's high half.
+            FIELD_PLAYER_FIELD_KILLS if (old ^ new) & 0xffff != 0 => {
+                ui.fire("PLAYER_PVP_KILLS_CHANGED", player());
+            }
+            FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION | FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS => {
+                ui.fire("PLAYER_PVP_KILLS_CHANGED", player());
+            }
+            FIELD_PLAYER_FIELD_HONOR_CURRENCY | FIELD_PLAYER_FIELD_ARENA_CURRENCY => {
+                ui.fire("HONOR_CURRENCY_UPDATE", Vec::new());
+                ui.fire("CURRENCY_DISPLAY_UPDATE", Vec::new());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whether `index` is one of our honor watches.
+pub(crate) fn is_honor_watch(index: u16) -> bool {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_BYTES_3, FIELD_PLAYER_FIELD_ARENA_CURRENCY, FIELD_PLAYER_FIELD_HONOR_CURRENCY,
+        FIELD_PLAYER_FIELD_KILLS, FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS,
+        FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION,
+    };
+    matches!(
+        index,
+        FIELD_PLAYER_BYTES_3
+            | FIELD_PLAYER_FIELD_KILLS
+            | FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION
+            | FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS
+            | FIELD_PLAYER_FIELD_HONOR_CURRENCY
+            | FIELD_PLAYER_FIELD_ARENA_CURRENCY
+    )
 }
 
 /// The overhead name's medal and flag-tag strings ([`crate::nameplates::PvpNameStrings`]), read
@@ -199,10 +250,9 @@ fn pvp_name_strings(script: &UiScript) -> HashMap<String, String> {
         .collect()
 }
 
-/// Read the honor block off our own descriptor, `None` until it streams. That decides only when
-/// the first push and its events happen: the reference reads a field it was never sent as 0.
-fn honor_snapshot(store: &ObjectStore) -> Option<HonorState> {
-    let f = &store.0;
+/// Our honor block off our own descriptor, `None` until its private fields stream: the reference
+/// reads a field it was never sent as 0.
+pub(crate) fn honor_of(f: &ObjectFields) -> Option<HonorState> {
     // Presence is tested on a private field: the public rank byte streams with the unit block.
     let today_hk = f.player_kills_today()?;
     Some(HonorState {
@@ -220,238 +270,76 @@ fn honor_snapshot(store: &ObjectStore) -> Option<HonorState> {
     })
 }
 
-/// What moved between two snapshots, by the watched fields only: `(kills, rank, currency)`. A
-/// first push fires all three.
-fn events_for(before: Option<&HonorState>, after: &HonorState) -> (bool, bool, bool) {
-    let Some(b) = before else {
-        return (true, true, true);
-    };
-    // The low half of `PLAYER_FIELD_KILLS` (a two-byte watch), today's honor, the lifetime kills.
-    let kills = |h: &HonorState| (h.today_hk, h.today_honor, h.lifetime_hk);
-    let currency = |h: &HonorState| (h.honor_currency, h.arena_currency);
-    (
-        kills(b) != kills(after),
-        b.rank != after.rank,
-        currency(b) != currency(after),
-    )
-}
-
-/// Push the self snapshot and the inspect reply, fire what moved, and drain the pane's request.
-fn feed_honor(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_store: Query<&ObjectStore, With<SelfPlayer>>,
-    inspect_target: Res<crate::ui_inspect::InspectTarget>,
-    selection: Res<crate::target::Selection>,
-    group: Res<crate::ui_party::GroupState>,
-    mut inspect_honor: ResMut<InspectHonor>,
-    mut state: ResMut<HonorFeedState>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let memo = state.vm.get(&script);
-
-    // --- the self snapshot -------------------------------------------------------------------
-    if let Ok(store) = self_store.single() {
-        if let Some(fresh) = honor_snapshot(store) {
-            if memo.last.as_ref() != Some(&fresh) {
-                let (kills, ranks, currency) = events_for(memo.last.as_ref(), &fresh);
-                script.set_honor(Some(fresh));
-                memo.last = Some(fresh);
-                if kills {
-                    script.fire_event("PLAYER_PVP_KILLS_CHANGED", vec![]);
-                }
-                if ranks {
-                    script.fire_event("PLAYER_PVP_RANK_CHANGED", vec![]);
-                }
-                if currency {
-                    script.fire_event("HONOR_CURRENCY_UPDATE", vec![]);
-                    script.fire_event("CURRENCY_DISPLAY_UPDATE", vec![]);
-                }
-            }
-        }
-    }
-
-    // --- the inspect reply ------------------------------------------------------------------- The
-    // reference's latch clears only, from a `NotifyInspect` naming another player, and on
-    // `ClearInspectPlayer`. Deviation: we clear it whenever the inspected token's guid moves,
-    // because our window re-resolves its token each frame and both tabs read it, so the reference's
-    // rule would let the two tabs show different players. `ClearInspectPlayer` drops the token,
-    // which clears the slot here too.
-    let inspected = inspect_target
-        .token
-        .as_deref()
-        .and_then(|t| crate::ui_unit::player_token_guid(t, &selection, &group));
-    if inspect_honor
-        .held
-        .as_ref()
-        .is_some_and(|reply| Some(reply.player_guid) != inspected)
-    {
-        // Dropped from the resource, so `HasInspectHonorData` and this store agree.
-        inspect_honor.held = None;
-    }
-    let replies = take_replies(&mut inspect_honor, inspected);
-    let held = inspect_honor.held.as_ref().map(|r| r.player_guid);
-    // A held reply's push goes ahead of its events; a clear fires once.
-    let fires = if replies > 0 {
-        replies
-    } else {
-        usize::from(memo.last_inspect != held)
-    };
-    if fires > 0 {
-        script.set_inspect_honor(inspect_honor.held.as_ref().map(|r| InspectHonorData {
-            guid: r.player_guid,
-            today_hk: r.today_hk,
-            today_honor: r.today_honor,
-            yesterday_hk: r.yesterday_hk,
-            yesterday_honor: r.yesterday_honor,
-            lifetime_hk: r.lifetime_hk,
-            highest_rank: r.highest_rank,
-        }));
-        memo.last_inspect = held;
-        // Fired on a clear too, so the pane stops showing the previous player's numbers.
-        for _ in 0..fires {
-            script.fire_event("INSPECT_HONOR_UPDATE", Vec::<ScriptValue>::new());
-        }
-    }
-
-    // --- the pane's request ------------------------------------------------------------------
-    // `RequestInspectHonorData()` takes no argument: it asks about the inspected token's guid now,
-    // so a re-target before the Honor tab opens asks about the new player.
-    let requests = script.take_inspect_honor_requests();
-    if requests > 0 {
-        match inspected {
-            Some(guid) => {
-                debug!("honor: inspect-honor request -> {guid:#x}");
-                let _ = commands
-                    .0
-                    .send(ClientCommand::InspectHonorStats { target: guid });
-            }
-            // Nothing to ask about; the pane asks again from its next `OnShow`.
-            None => debug!("honor: inspect-honor request with no resolvable target — not sent"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn state() -> HonorState {
-        HonorState {
-            today_hk: 3,
-            lifetime_hk: 900,
-            rank: 8,
-            highest_rank: 9,
-            honor_currency: 1_000,
-            ..Default::default()
-        }
-    }
-
+    /// Each watch fires its own event, in field order; yesterday's half and the unwatched fields
+    /// fire nothing.
     #[test]
-    fn each_event_fires_only_for_its_own_fields() {
-        let base = state();
-
-        let mut killed = base;
-        killed.today_hk += 1;
-        assert_eq!(events_for(Some(&base), &killed), (true, false, false));
-        let mut earned = base;
-        earned.today_honor = 40;
-        assert_eq!(events_for(Some(&base), &earned), (true, false, false));
-
-        let mut ranked = base;
-        ranked.rank = 9;
-        assert_eq!(events_for(Some(&base), &ranked), (false, true, false));
-
-        let mut paid = base;
-        paid.arena_currency = 50;
-        assert_eq!(events_for(Some(&base), &paid), (false, false, true));
-
-        // Unwatched in the reference, so these fire nothing.
-        for mutate in [
-            (|h: &mut HonorState| h.yesterday_hk = 42) as fn(&mut HonorState),
-            |h: &mut HonorState| h.yesterday_honor = 900,
-            |h: &mut HonorState| h.highest_rank = 18,
-        ] {
-            let mut quiet = base;
-            mutate(&mut quiet);
-            assert_eq!(
-                events_for(Some(&base), &quiet),
-                (false, false, false),
-                "an unwatched field must fire nothing"
-            );
-        }
+    fn each_watch_fires_its_own_event_in_field_order() {
+        use benilla_protocol::field::{
+            FIELD_PLAYER_BYTES_3, FIELD_PLAYER_FIELD_ARENA_CURRENCY, FIELD_PLAYER_FIELD_KILLS,
+            FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS, FIELD_PLAYER_FIELD_YESTERDAY_CONTRIBUTION,
+        };
+        let mut ui = UiEvents::default();
+        own_fields_changed(
+            &[
+                (FIELD_PLAYER_BYTES_3, 0, 1 << 24),
+                (FIELD_PLAYER_FIELD_KILLS, 3, 3 | (5 << 16)),
+                (FIELD_PLAYER_FIELD_KILLS, 3, 4),
+                (FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS, 900, 901),
+                (FIELD_PLAYER_FIELD_YESTERDAY_CONTRIBUTION, 0, 40),
+                (FIELD_PLAYER_FIELD_ARENA_CURRENCY, 0, 50),
+            ],
+            &mut ui,
+        );
+        assert_eq!(
+            ui.names(),
+            [
+                "PLAYER_PVP_RANK_CHANGED",
+                "PLAYER_PVP_KILLS_CHANGED",
+                "PLAYER_PVP_KILLS_CHANGED",
+                "HONOR_CURRENCY_UPDATE",
+                "CURRENCY_DISPLAY_UPDATE",
+            ]
+        );
     }
 
-    /// Otherwise a pane whose numbers arrived before it existed would never paint.
     #[test]
     fn the_pvp_timer_starts_when_the_flag_comes_on_and_runs_out_to_minus_one() {
-        let t0 = std::time::Instant::now();
-        let mut t = PvpTimer::default();
+        let t0 = Instant::now();
+        let mut t = PvpCooldown::default();
         t.enter(PVP_DESIRED, t0);
-        t.flags = Some(PVP_DESIRED);
-        assert_eq!(t.toggle_timer(t0), 300_000, "no timer flag: the full span");
+        assert_eq!(
+            t.toggle_timer(PVP_DESIRED, t0),
+            300_000,
+            "no timer flag: the full span"
+        );
         // Turned off: the server sets the timer flag, and the watch stamps five minutes.
         t.watch(PVP_DESIRED, PVP_TIMER, t0);
-        t.flags = Some(PVP_TIMER);
-        let left = t.toggle_timer(t0 + std::time::Duration::from_secs(60));
+        let left = t.toggle_timer(PVP_TIMER, t0 + Duration::from_secs(60));
         assert!((239_000..=240_000).contains(&left), "{left}");
-        assert_eq!(t.toggle_timer(t0 + PVP_TIMER_SPAN), -1, "past the stamp");
+        assert_eq!(
+            t.toggle_timer(PVP_TIMER, t0 + PVP_TIMER_SPAN),
+            -1,
+            "past the stamp"
+        );
         // An unrelated flag change with the timer kept does not re-stamp.
         t.watch(PVP_TIMER, PVP_TIMER | 0x1, t0 + PVP_TIMER_SPAN);
-        assert_eq!(t.toggle_timer(t0 + PVP_TIMER_SPAN), -1);
+        assert_eq!(t.toggle_timer(PVP_TIMER, t0 + PVP_TIMER_SPAN), -1);
     }
 
-    /// A login with the timer flag already on keeps the zeroed stamp, so the timer reads -1.
+    /// A login with the timer flag already on keeps the zeroed stamp, so the timer reads -1; a
+    /// fresh create drops the previous character's stamp.
     #[test]
     fn a_login_inside_the_timer_reads_it_as_run_out() {
-        let now = std::time::Instant::now();
-        let mut t = PvpTimer::default();
+        let now = Instant::now();
+        let mut t = PvpCooldown::default();
+        t.enter(0, now);
+        assert!(t.stamp.is_some());
         t.enter(PVP_TIMER, now);
-        t.flags = Some(PVP_TIMER);
-        assert_eq!(t.toggle_timer(now), -1);
-    }
-
-    fn reply(guid: u64, today_hk: u16) -> benilla_protocol::messages::InspectHonorStats {
-        benilla_protocol::messages::InspectHonorStats {
-            player_guid: guid,
-            highest_rank: 0,
-            today_hk,
-            yesterday_hk: 0,
-            today_honor: 0,
-            yesterday_honor: 0,
-            lifetime_hk: 0,
-        }
-    }
-
-    /// `0x5e7a50`: a reply for the inspected player is held and fires every time, a second one
-    /// for the same player included; one for anyone else is dropped.
-    #[test]
-    fn every_reply_for_the_inspected_player_is_held_and_fires() {
-        let mut inspect = InspectHonor::default();
-        inspect.arrived.push(reply(0x21, 3));
-        assert_eq!(take_replies(&mut inspect, Some(0x21)), 1);
-        inspect.arrived.push(reply(0x21, 5));
-        assert_eq!(
-            take_replies(&mut inspect, Some(0x21)),
-            1,
-            "the same player again"
-        );
-        assert_eq!(inspect.held.as_ref().map(|r| r.today_hk), Some(5));
-        inspect.arrived.push(reply(0x99, 7));
-        assert_eq!(
-            take_replies(&mut inspect, Some(0x21)),
-            0,
-            "not the inspect target"
-        );
-        assert_eq!(inspect.held.as_ref().map(|r| r.today_hk), Some(5));
-        assert!(inspect.arrived.is_empty());
-    }
-
-    #[test]
-    fn the_first_push_fires_all_three() {
-        assert_eq!(events_for(None, &state()), (true, true, true));
+        assert_eq!(t.toggle_timer(PVP_TIMER, now), -1);
     }
 
     fn vm(src: &str) -> UiScript {

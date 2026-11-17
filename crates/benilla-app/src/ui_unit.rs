@@ -1418,6 +1418,82 @@ pub(crate) fn fire_transitions(
     }
 }
 
+/// The opponent slots' guids then their pets' (`0x608180`, `0x60a2f0`), all zero with no arena.
+fn arena_guids(
+    arena: Option<&crate::ui_arena::ArenaOpponents>,
+    index: Option<&crate::net::GuidIndex>,
+    stores: &Query<&ObjectStore>,
+) -> Vec<u64> {
+    match (arena, index) {
+        (Some(arena), Some(index)) => {
+            let pets = arena.pets(&crate::ui_arena::pet_of(index, stores));
+            let mut guids = arena.opponents().to_vec();
+            guids.extend(pets);
+            guids
+        }
+        _ => vec![0; 2 * crate::ui_arena::ARENA_SLOTS],
+    }
+}
+
+/// The `arenaN` and `arenapetN` units, written by an arena handler just before it fires
+/// `ARENA_OPPONENT_UPDATE`, so the event's own handler resolves the token to the slot the packet
+/// just wrote, as `0x608180` reads it when called. The unit verbs still read per-token pushes
+/// (#1289), so the slots and each held unit's snapshot are pushed here at the event; the per-frame
+/// [`feed_units`] keeps them current after it.
+pub(crate) fn push_arena_units(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    tables: SnapshotTables,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    index: Option<Res<crate::net::GuidIndex>>,
+    stores: Query<&ObjectStore>,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    factions: Option<Res<Factions>>,
+    reputations: Res<Reputations>,
+    group: Res<crate::ui_party::GroupState>,
+    (arena, instance): (
+        Option<Res<crate::ui_arena::ArenaOpponents>>,
+        crate::ui_arena::ArenaInstance,
+    ),
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let held = held::HeldUnits {
+        names: &names,
+        commands: &commands,
+        factions: factions.as_deref(),
+        reputations: &reputations,
+        group: &group,
+        self_store: self_q.iter().next(),
+        classes: tables.classes(),
+        types: tables.types(&names),
+        loot_lists: tables.loot_lists(),
+        arena: instance.active(),
+    };
+    let guids = arena_guids(arena.as_deref(), index.as_deref(), &stores);
+    let mut slots = [0; crate::ui_arena::ARENA_SLOTS];
+    let mut pets = [0; crate::ui_arena::ARENA_SLOTS];
+    slots.copy_from_slice(&guids[..crate::ui_arena::ARENA_SLOTS]);
+    pets.copy_from_slice(&guids[crate::ui_arena::ARENA_SLOTS..]);
+    let count = arena
+        .as_deref()
+        .map_or(0, crate::ui_arena::ArenaOpponents::count);
+    script.set_arena_unit_guids(slots, pets, count);
+    let tokens = crate::ui_arena::ARENA_TOKENS
+        .into_iter()
+        .chain(crate::ui_arena::ARENA_PET_TOKENS);
+    for (token, &guid) in tokens.zip(&guids) {
+        let state = index
+            .as_ref()
+            .and_then(|i| i.0.get(&guid))
+            .and_then(|&e| stores.get(e).ok())
+            .filter(|_| guid != 0)
+            .map(|store| held.state(store, guid));
+        script.set_unit(token, state);
+    }
+}
+
 /// The sources `feed_units` snapshots besides the selection: the `"npc"` and `"questnpc"` units,
 /// the encounter's `"bossN"` and the arena's `"arenaN"` and `"arenapetN"`.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -1852,15 +1928,7 @@ fn feed_units(
         })
         .collect();
     // `"arenaN"` then `"arenapetN"`: each slot's unit while held, read as `"bossN"` is.
-    let arena_guids = match (interact.arena.as_deref(), index.as_deref()) {
-        (Some(arena), Some(index)) => {
-            let pets = arena.pets(&crate::ui_arena::pet_of(index, &stores.all));
-            let mut guids = arena.opponents().to_vec();
-            guids.extend(pets);
-            guids
-        }
-        _ => vec![0; 2 * crate::ui_arena::ARENA_SLOTS],
-    };
+    let arena_guids = arena_guids(interact.arena.as_deref(), index.as_deref(), &stores.all);
     let arenas: Vec<Option<UnitState>> = arena_guids
         .iter()
         .map(|&guid| {

@@ -49,8 +49,53 @@ fn player() -> UnitState {
     }
 }
 
-fn seated() -> UiScript {
-    let mut s = UiScript::new().expect("VM");
+/// A VM with our player seated and our honor block lent as the live view.
+struct Seated {
+    // Ahead of the loan, which drops after it.
+    s: UiScript,
+    live: Option<crate::script::LiveLoan<crate::script::live::TestView>>,
+}
+
+impl Seated {
+    /// Lend `honor` and `timer` as the active player's from now on.
+    fn lend(&mut self, honor: Option<HonorState>, timer: Option<i32>) {
+        self.live = None;
+        let view = crate::script::live::TestView {
+            honor,
+            pvp_timer: timer,
+            ..Default::default()
+        };
+        // SAFETY: dropped on this thread, the previous loan first.
+        self.live = Some(unsafe { crate::script::LiveLoan::new(view) });
+    }
+
+    fn set_honor(&mut self, honor: Option<HonorState>) {
+        self.lend(honor, None);
+    }
+
+    fn set_pvp_toggle_timer(&mut self, ms: i32) {
+        self.lend(Some(honor_state()), Some(ms));
+    }
+}
+
+impl std::ops::Deref for Seated {
+    type Target = UiScript;
+    fn deref(&self) -> &UiScript {
+        &self.s
+    }
+}
+
+impl std::ops::DerefMut for Seated {
+    fn deref_mut(&mut self) -> &mut UiScript {
+        &mut self.s
+    }
+}
+
+fn seated() -> Seated {
+    let mut s = Seated {
+        s: UiScript::new().expect("VM"),
+        live: None,
+    };
     s.set_honor(Some(honor_state()));
     s.set_unit("player", Some(player()));
     s

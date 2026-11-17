@@ -50,8 +50,17 @@ pub(crate) struct ArenaOpponents {
 type PetOf<'a> = &'a dyn Fn(u64) -> Option<u64>;
 
 impl ArenaOpponents {
-    /// Queue the raised events into the handler's.
+    /// Queue the raised events into the handler's, the tokens' units pushed ahead of them so
+    /// each event's handler reads the slots just written.
     fn flush(&mut self, ui: &mut UiEvents) {
+        if self.owed.is_empty() {
+            return;
+        }
+        ui.world(|world| {
+            if let Err(e) = world.run_system_cached(crate::ui_unit::push_arena_units) {
+                warn!("ui_arena: the arena units were not pushed: {e}");
+            }
+        });
         for (token, what) in self.owed.drain(..) {
             ui.fire(
                 "ARENA_OPPONENT_UPDATE",

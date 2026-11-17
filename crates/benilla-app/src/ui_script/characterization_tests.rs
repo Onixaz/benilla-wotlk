@@ -76,6 +76,12 @@ local VERBS = {
     { "bfcount", function() return GetNumBattlefields() end },
     { "wpvp", function() return (GetWorldPVPQueueStatus(1)) end },
     { "opps", function() return GetNumArenaOpponents() end },
+    { "a1name", function() return (UnitName("arena1")) end },
+    { "kills", function() return (GetPVPSessionStats()) end },
+    { "honorpts", function() return (GetHonorCurrency()) end },
+    { "pvptimer", function() return GetPVPTimer() end },
+    { "inspecthonor", function() return HasInspectHonorData() end },
+    { "a2name", function() return (UnitName("arena2")) end },
 }
 local function answers()
     local verbs = {}
@@ -1562,6 +1568,18 @@ fn duel_and_battlefield_events_fire_in_wire_order() {
 
 /// A held player of `guid`, as a stream create sends it.
 fn player_create(guid: u64) -> SessionEvent {
+    player_create_with(guid, &[])
+}
+
+/// [`player_create`] with `extra` fields.
+fn player_create_with(guid: u64, extra: &[(u16, u32)]) -> SessionEvent {
+    let mut pairs = vec![
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_HEALTH, 500),
+        (FIELD_UNIT_MAXHEALTH, 500),
+        (FIELD_UNIT_LEVEL, 80),
+    ];
+    pairs.extend_from_slice(extra);
     SessionEvent::ObjectCreate {
         guid,
         kind: EntityKind::Player,
@@ -1577,13 +1595,7 @@ fn player_create(guid: u64) -> SessionEvent {
         vehicle: None,
         attack_target: None,
         spawned: true,
-        fields: ObjectFields::from_pairs(&[
-            OBJECT_TYPE_PLAYER,
-            (FIELD_UNIT_HEALTH, 500),
-            (FIELD_UNIT_MAXHEALTH, 500),
-            (FIELD_UNIT_LEVEL, 80),
-        ])
-        .into_created(ObjectType::Player),
+        fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Player),
     }
 }
 
@@ -1880,4 +1892,200 @@ fn arena_opponents_signal_from_the_handler_and_clear_at_world_entry() {
         "a reload's world entry keeps the slots"
     );
     assert_eq!(rig.live_now().line(&["opps"]), "NOW | opps=1");
+}
+
+/// A player of the other arena side, held, as a stream create inside an arena sends it.
+fn opponent_create(guid: u64) -> SessionEvent {
+    player_create_with(
+        guid,
+        &[(benilla_protocol::field::FIELD_PLAYER_BYTES_3, 1 << 24)],
+    )
+}
+
+/// The party stats' arena byte for `guid` (`0x6cf9fa`).
+fn arena_stats(guid: u64) -> SessionEvent {
+    SessionEvent::PartyMemberStats {
+        guid,
+        full: true,
+        info: Box::new(benilla_protocol::messages::PartyMemberStatsInfo {
+            arena_opponent: true,
+            ..Default::default()
+        }),
+    }
+}
+
+/// A rig inside Nagrand Arena (map 559) on side 0, with two opponents' names cached.
+fn arena_rig() -> Option<Rig> {
+    use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
+    let mut rig = Rig::login(&[OBJECT_TYPE_PLAYER])?;
+    rig.packets(
+        vec![
+            SessionEvent::BattlefieldStatus(BattlefieldStatus {
+                slot: 0,
+                queue: (6 << 16) | 2,
+                status: 3,
+                active: Some(BattlefieldActive {
+                    map_id: 559,
+                    joined_queue: 0,
+                    shutdown_ms: 0,
+                    run_ms: 30_000,
+                    arena_faction: 0,
+                }),
+                ..Default::default()
+            }),
+            name_answer(0x55, "Rival"),
+            name_answer(0x56, "Other"),
+        ],
+        2,
+    );
+    Some(rig)
+}
+
+/// `arenaN` names the slot the handler just wrote when `ARENA_OPPONENT_UPDATE` fires
+/// (`0x608180` reads the slot when called): a held opponent streaming in reads its name at its
+/// `"seen"` (`0x6e8300`), an unheld one from the party stats names nobody, in wire order.
+#[test]
+fn an_arena_event_reads_its_token_at_the_event() {
+    let Some(mut rig) = arena_rig() else {
+        return;
+    };
+    let seen = rig.packets(vec![opponent_create(0x56), arena_stats(0x55)], 2);
+    assert_eq!(
+        pin(
+            &seen,
+            &["ARENA_OPPONENT_UPDATE"],
+            &["opps", "a1name", "a2name"]
+        ),
+        vec![
+            "ARENA_OPPONENT_UPDATE arena1 seen | opps=1 a1name=Other a2name=nil",
+            "ARENA_OPPONENT_UPDATE arena2 seen | opps=2 a1name=Other a2name=nil",
+            "ARENA_OPPONENT_UPDATE arena2 unseen | opps=2 a1name=Other a2name=nil",
+        ]
+    );
+}
+
+/// The other packet order: the stats name the opponent before it streams in, so its first
+/// `"seen"` and `"unseen"` read no unit and the create's `"seen"` reads it (`0x54d100` keeps the
+/// slot, `0x54b840` signals again).
+#[test]
+fn an_arena_opponent_seen_before_it_streams_in_reads_its_unit_at_the_create() {
+    let Some(mut rig) = arena_rig() else {
+        return;
+    };
+    let seen = rig.packets(vec![arena_stats(0x56), opponent_create(0x56)], 2);
+    assert_eq!(
+        pin(&seen, &["ARENA_OPPONENT_UPDATE"], &["opps", "a1name"]),
+        vec![
+            "ARENA_OPPONENT_UPDATE arena1 seen | opps=1 a1name=nil",
+            "ARENA_OPPONENT_UPDATE arena1 unseen | opps=1 a1name=nil",
+            "ARENA_OPPONENT_UPDATE arena1 seen | opps=1 a1name=Other",
+        ]
+    );
+    // Later in the frame and the next, the per-frame push agrees with the event's.
+    assert_eq!(
+        rig.live_now().line(&["opps", "a1name"]),
+        "NOW | opps=1 a1name=Other"
+    );
+}
+
+/// Our honor watches fire from the values handler in field order (`0x6e5180`'s list):
+/// `PLAYER_BYTES_3` (`0x6e5671`), today's kills (`0x6e55fc`), the honor currency (`0x6da3c0`),
+/// each reading the update just applied; yesterday's half fires nothing.
+#[test]
+fn honor_watches_fire_in_field_order_with_the_values_just_applied() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_BYTES_3, FIELD_PLAYER_FIELD_HONOR_CURRENCY, FIELD_PLAYER_FIELD_KILLS,
+    };
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_PLAYER_FIELD_KILLS, 2),
+        (FIELD_PLAYER_FIELD_HONOR_CURRENCY, 100),
+    ]) else {
+        return;
+    };
+    assert_eq!(
+        rig.live_now().line(&["kills", "honorpts"]),
+        "NOW | kills=2 honorpts=100"
+    );
+    let events = [
+        "PLAYER_PVP_RANK_CHANGED",
+        "PLAYER_PVP_KILLS_CHANGED",
+        "HONOR_CURRENCY_UPDATE",
+        "CURRENCY_DISPLAY_UPDATE",
+    ];
+    let seen = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_FIELD_HONOR_CURRENCY, 150),
+            (FIELD_PLAYER_FIELD_KILLS, 3),
+            (FIELD_PLAYER_BYTES_3, 1 << 24),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &events, &["kills", "honorpts"]),
+        vec![
+            "PLAYER_PVP_RANK_CHANGED player | kills=3 honorpts=150",
+            "PLAYER_PVP_KILLS_CHANGED player | kills=3 honorpts=150",
+            "HONOR_CURRENCY_UPDATE | kills=3 honorpts=150",
+            "CURRENCY_DISPLAY_UPDATE | kills=3 honorpts=150",
+        ]
+    );
+    let seen = rig.packets(
+        vec![self_values(&[(FIELD_PLAYER_FIELD_KILLS, 3 | (9 << 16))])],
+        2,
+    );
+    assert!(
+        pin(&seen, &events, &[]).is_empty(),
+        "yesterday's half has no watch"
+    );
+}
+
+/// `GetPVPTimer` reads the cooldown the flags watch stamped (`0x6e103a`): the full span plus a
+/// second without the timer flag, then under five minutes left once the flag comes on.
+#[test]
+fn the_pvp_timer_reads_the_stamp_the_flags_watch_set() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_PLAYER_FLAGS, 0x200)]) else {
+        return;
+    };
+    assert_eq!(rig.live_now().line(&["pvptimer"]), "NOW | pvptimer=301000");
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x40000)])], 1);
+    let timer: i64 = rig
+        .live_now()
+        .verbs
+        .get("pvptimer")
+        .and_then(|v| v.parse().ok())
+        .expect("a number");
+    assert!(
+        (290_000..=301_000).contains(&timer),
+        "five minutes from the flag's edge: {timer}"
+    );
+}
+
+/// `MSG_INSPECT_HONOR_STATS` for the inspect target is held and signalled from its handler
+/// (`0x5e7a50`), so `HasInspectHonorData` reads it at the event; another player's is dropped.
+#[test]
+fn the_inspect_honor_reply_signals_from_its_handler() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_inspect::InspectTarget>()
+        .guid = 0x56;
+    let reply = |guid| {
+        SessionEvent::InspectHonorStats(benilla_protocol::messages::InspectHonorStats {
+            player_guid: guid,
+            highest_rank: 0,
+            today_hk: 4,
+            yesterday_hk: 0,
+            today_honor: 0,
+            yesterday_honor: 0,
+            lifetime_hk: 0,
+        })
+    };
+    let seen = rig.packets(vec![reply(0x99), reply(0x56)], 2);
+    assert_eq!(
+        pin(&seen, &["INSPECT_HONOR_UPDATE"], &["inspecthonor"]),
+        vec!["INSPECT_HONOR_UPDATE | inspecthonor=1"]
+    );
 }

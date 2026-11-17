@@ -57,6 +57,7 @@ fn gameobject_despawn_anim(guid: u64, commands: &mut Commands, index: &GuidIndex
 /// Registers the object layer's handlers.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
+    app.init_resource::<crate::ui_honor::PvpCooldown>();
     app.net_handler(K::ObjectCreate, on_object_create)
         .net_handler(K::ItemCreate, on_item)
         .net_handler(K::ItemTemplate, on_item)
@@ -115,6 +116,7 @@ pub(crate) struct Scene<'w, 's> {
     player_init: ResMut<'w, crate::death::ActivePlayerInit>,
     arena: crate::ui_arena::ArenaInstance<'w>,
     arena_slots: ResMut<'w, crate::ui_arena::ArenaOpponents>,
+    pvp: ResMut<'w, crate::ui_honor::PvpCooldown>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
@@ -167,6 +169,9 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // (`0x6e818b`).
         if sc.self_guid.0 == Some(guid) {
             sc.player_init.0 = true;
+            // The init's PvP cooldown stamp (`0x6e8378` -> `0x6e81f2`).
+            sc.pvp
+                .enter(fields.player_flags(), std::time::Instant::now());
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {
@@ -1453,15 +1458,17 @@ fn gameobject_info(
 
 /// Our own unit's watched fields in field order, as the mirror handlers run (`0x4d5550`): health
 /// (`0x73f330`) ahead of the flags word, whose `UNIT_FLAGS` for `"player"` comes from its watch
-/// (`0x60c240` -> `0x60bf10`), then the dynamic and player flags; each keeps wire order with the
-/// next handler's events.
+/// (`0x60c240` -> `0x60bf10`), then the dynamic flags, the player flags (their PvP cooldown at
+/// `0x6e103a` ahead of the ghost status at `0x6e10fb`), then the honor fields; each keeps wire
+/// order with the next handler's events.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
+    use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
     if sc.self_guid.0 != Some(guid) {
         return;
     }
     let split = merged
         .death
-        .partition_point(|&(index, ..)| index < benilla_protocol::field::FIELD_UNIT_FLAGS);
+        .partition_point(|&(index, ..)| index < FIELD_UNIT_FLAGS);
     let (before, after) = merged.death.split_at(split);
     own_death_fields(sc, guid, before);
     if merged.flags_moved {
@@ -1470,7 +1477,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
-    own_death_fields(sc, guid, after);
+    let split = after.partition_point(|&(index, ..)| index < FIELD_PLAYER_FLAGS);
+    let (unit, player) = after.split_at(split);
+    own_death_fields(sc, guid, unit);
+    if let Some((old, new)) = merged.pvp_flags {
+        sc.pvp.watch(old, new, std::time::Instant::now());
+    }
+    own_death_fields(sc, guid, player);
+    crate::ui_honor::own_fields_changed(&merged.honor, &mut sc.ui);
 }
 
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
@@ -1525,6 +1539,12 @@ fn merge_fields(
             {
                 merged.death.push((e.index, e.old, e.new));
             }
+            if own && e.unit_field(FIELD_PLAYER_FLAGS) {
+                merged.pvp_flags = Some((e.old, e.new));
+            }
+            if own && crate::ui_honor::is_honor_watch(e.index) {
+                merged.honor.push((e.index, e.old, e.new));
+            }
             edges.write(e);
         });
     } else {
@@ -1534,6 +1554,7 @@ fn merge_fields(
         commands.entity(entity).insert(ObjectStore(delta));
     }
     merged.death.sort_by_key(|&(index, ..)| index);
+    merged.honor.sort_by_key(|&(index, ..)| index);
     merged
 }
 
@@ -1543,6 +1564,10 @@ struct Merged {
     flags_moved: bool,
     /// Our own death fields' `(index, old, new)`, in field order.
     death: Vec<(u16, u32, u32)>,
+    /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
+    pvp_flags: Option<(u32, u32)>,
+    /// Our own honor watches' `(index, old, new)`, in field order.
+    honor: Vec<(u16, u32, u32)>,
 }
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,

@@ -684,9 +684,9 @@ fn merchant_cursor_mode(model: &super::Model, index: usize) -> Option<UiCursorMo
     let Some(cost) = row.extended_cost.as_ref() else {
         return Some(UiCursorMode::Buy);
     };
-    let (honor, arena) = model
-        .honor
-        .as_ref()
+    // Our currencies off the active player when called.
+    let (honor, arena) = super::live::read_live(|l| l.honor())
+        .flatten()
         .map_or((0, 0), |h| (h.honor_currency, h.arena_currency));
     let short = honor < cost.honor
         || arena < cost.arena
@@ -1375,10 +1375,16 @@ mod tests {
         s.set_player_req_state(req);
         assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "honor");
 
-        s.set_honor(Some(HonorState {
-            honor_currency: 7000,
-            ..Default::default()
-        }));
+        // SAFETY: dropped on this thread at the end of the test, the only loan.
+        let _live = unsafe {
+            crate::script::LiveLoan::new(crate::script::live::TestView {
+                honor: Some(HonorState {
+                    honor_currency: 7000,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
         assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "cost item");
         let mut slots = std::collections::HashMap::new();
         slots.insert(

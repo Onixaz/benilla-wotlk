@@ -136,6 +136,17 @@ pub trait LiveState {
     fn arena_opponent_count(&self) -> Option<usize> {
         None
     }
+
+    /// Our own honor block off the active player's descriptor when called, `None` before its
+    /// private fields stream.
+    fn honor(&self) -> Option<super::HonorState> {
+        None
+    }
+
+    /// The PvP toggle timer (`0x6de7a0`) when called, `None` without the active player.
+    fn pvp_toggle_timer(&self) -> Option<i32> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -251,6 +262,10 @@ pub(crate) struct TestView {
     pub dynamic_flags: std::collections::HashMap<u64, u32>,
     /// Each held player's `PLAYER_FLAGS`; a held unit absent here is no player.
     pub player_flags: std::collections::HashMap<u64, u32>,
+    /// Our honor block.
+    pub honor: Option<super::HonorState>,
+    /// The PvP toggle timer, `None` without the active player.
+    pub pvp_timer: Option<i32>,
 }
 
 #[cfg(test)]
@@ -286,6 +301,14 @@ impl LiveState for TestView {
 
     fn far_sight(&self) -> bool {
         self.far_sight
+    }
+
+    fn honor(&self) -> Option<super::HonorState> {
+        self.honor
+    }
+
+    fn pvp_toggle_timer(&self) -> Option<i32> {
+        self.pvp_timer
     }
 }
 

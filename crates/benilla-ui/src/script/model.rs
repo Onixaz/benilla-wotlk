@@ -452,14 +452,10 @@ pub(crate) struct Model {
     pub(crate) pvp_toggles: u32,
     /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
     pub(crate) pvp_sets: Vec<u8>,
-    /// The player's PvP toggle timer (`0x6de7a0`) as the app computed it this frame, ms.
-    pub(crate) pvp_toggle_timer: i32,
     /// The inspected player's arena teams by slot, resolved by the app.
     pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamView>; 3],
     /// The arena-team mirror: the three teams, the roster's sort and selection.
     pub(crate) arena_teams: super::arena_team::ArenaTeams,
-    /// The player's private honor fields; before the first push the six self getters read zeros.
-    pub(crate) honor: Option<pvp::HonorState>,
     /// The last `MSG_INSPECT_HONOR_STATS` reply; its presence is `HasInspectHonorData`'s answer.
     pub(crate) inspect_honor: Option<pvp::InspectHonorData>,
     /// `RequestInspectHonorData` calls; the pending gate keeps this at 0 or 1.
@@ -1540,10 +1536,8 @@ impl Model {
             glue: Default::default(),
             pvp_toggles: 0,
             pvp_sets: Vec::new(),
-            pvp_toggle_timer: 0,
             inspect_arena_teams: Default::default(),
             arena_teams: Default::default(),
-            honor: None,
             inspect_honor: None,
             inspect_honor_requests: 0,
             inspect_honor_pending: false,
