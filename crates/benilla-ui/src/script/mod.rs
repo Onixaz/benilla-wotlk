@@ -168,6 +168,7 @@ pub use glue_realm::{
 };
 pub use glue_select::{GlueCharacter, GlueScenePane, GlueSelectCells};
 pub use glue_system::{GlueBilling, GlueFileReader, ScanDll};
+pub use movieframe::{MovieHost, MovieTick};
 mod gm_ticket;
 mod gossip;
 mod guild;
@@ -764,9 +765,15 @@ const TOOLTIP_SCRIPTS: &[&str] = &[
     "OnTooltipSetEquipmentSet",
 ];
 
-/// The script names a widget type adds over [`FRAME_SCRIPTS`]. Deviation: the MovieFrame's three
-/// (`0x95db80`) are left out, as nothing fires them; MessageFrame, Minimap, Cooldown, QuestPOIFrame
-/// and the world frame keep the frame's table in their vtables.
+/// A MovieFrame's own scripts (`0x95db80`).
+const MOVIEFRAME_SCRIPTS: &[&str] = &[
+    "OnMovieFinished",
+    "OnMovieShowSubtitle",
+    "OnMovieHideSubtitle",
+];
+
+/// The script names a widget type adds over [`FRAME_SCRIPTS`]. MessageFrame, Minimap, Cooldown,
+/// QuestPOIFrame and the world frame keep the frame's table in their vtables.
 fn type_scripts(kind: crate::widget::FrameKind) -> &'static [&'static str] {
     use crate::widget::FrameKind as K;
     match kind {
@@ -778,10 +785,10 @@ fn type_scripts(kind: crate::widget::FrameKind) -> &'static [&'static str] {
         K::ColorSelect => COLORSELECT_SCRIPTS,
         K::SimpleHtml | K::ScrollingMessageFrame => HYPERLINK_SCRIPTS,
         K::GameTooltip => TOOLTIP_SCRIPTS,
+        K::MovieFrame => MOVIEFRAME_SCRIPTS,
         K::Frame
         | K::WorldFrame
         | K::MessageFrame
-        | K::MovieFrame
         | K::Minimap
         | K::Cooldown
         | K::QuestPoiFrame => &[],
@@ -1831,6 +1838,12 @@ impl UiScript {
     pub fn key_input(&mut self, key: &str) -> bool {
         // The same two stages as `char_input`.
         keyboard::key_input(&self.lua, key) || editbox::key_input(&self.lua, key)
+    }
+
+    /// A key's release by name: it goes to the keyboard frame its press went to, which runs
+    /// `OnKeyUp`. `true` if a frame took the press, which suppresses the release's binding.
+    pub fn key_up(&mut self, key: &str) -> bool {
+        keyboard::key_up(&self.lua, key)
     }
 
     /// An editing key (BACKSPACE, DELETE, the arrows, HOME, END) offered to the keyboard frames

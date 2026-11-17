@@ -23,8 +23,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("BannedAddOns", "#245 the addon ban list"),
     ("CreatureMovementInfo", "#243 creature movement"),
     ("DanceMoves", "#243 dance studio emotes"),
-    ("DeclinedWord", "#242 Russian name declension"),
-    ("DeclinedWordCases", "#242 Russian name declension"),
     ("DestructibleModelData", "#243 destructible buildings"),
     ("GameObjectArtKit", "#243 game object art kits"),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),

@@ -31,7 +31,8 @@ mod message;
 mod meter;
 mod missile;
 mod mix_tap;
-mod mixer;
+// Crate-visible for the movie player, which streams its sound through it.
+pub(crate) mod mixer;
 mod money;
 mod mount;
 mod net;
@@ -238,6 +239,7 @@ pub(crate) struct SoundOutput {
     pub(crate) zone_streams: usize,
     pub(crate) glue_streams: usize,
     pub(crate) cinematic_streams: usize,
+    pub(crate) movie_streams: usize,
     /// One-shots that lost their slot to a louder newcomer, and plays refused because nothing
     /// live was quieter.
     pub(crate) voices_stolen: u64,
@@ -254,7 +256,11 @@ pub(crate) struct SoundOutput {
 impl SoundOutput {
     /// Everything the device is mixing, the number [`engine::EngineSettings::voices`] bounds.
     pub(crate) fn live_voices(&self) -> usize {
-        self.channels.len() + self.zone_streams + self.glue_streams + self.cinematic_streams
+        self.channels.len()
+            + self.zone_streams
+            + self.glue_streams
+            + self.cinematic_streams
+            + self.movie_streams
     }
 }
 
@@ -415,6 +421,7 @@ impl Plugin for SoundPlugin {
             zone_streams: 0,
             glue_streams: 0,
             cinematic_streams: 0,
+            movie_streams: 0,
             voices_stolen: 0,
             voices_denied: 0,
             copies_dropped: 0,

@@ -120,6 +120,8 @@ pub use creature_types::{load_creature_type_flags, CreatureTypeFlags};
 /// The chat language scramble, as the reference does it.
 mod garble;
 pub use garble::{garble, garble_chat, Garble, FLUENT_SKILL};
+mod declined_words;
+pub use declined_words::{load_declined_words, DeclinedWordRows};
 mod languages;
 pub use languages::{
     load_default_languages, load_language_words, load_languages, DefaultLanguages, LanguagePool,

@@ -535,9 +535,11 @@ fn name_and_creature_query_roundtrip() {
             race,
             gender,
             class,
+            declensions,
         } => {
             assert_eq!(guid, 7);
             assert_eq!(name, "Benilla");
+            assert_eq!(declensions, None);
             assert_eq!(realm, "");
             assert_eq!((race, gender, class), (1, 0, 1));
         }

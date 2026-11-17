@@ -3,9 +3,13 @@
 //! player in the world `PlayMovie` (`0x51d710`) fires `PLAY_MOVIE` with the file's name and the
 //! row's volume. `GameMovieFinished()` stops it (`0x518870`), which sends `CMSG_COMPLETE_MOVIE`.
 //!
-//! Deviation: benilla plays no pre-rendered movie (#130). The stock `MovieFrame`'s `StartMovie`
-//! answers nil, so the frame hides and calls `GameMovieFinished()` at once, and the server hears
-//! the end. Nothing enters the movie's input mode (`0x523604`), as no movie takes the screen.
+//! The stock `MovieFrame` plays it ([`player`]) and calls `GameMovieFinished()` when it
+//! ends or is skipped; one it cannot start ends at once, so the server still hears the end.
+//!
+//! Deviation: the mouse-mode flag `0x40` that `StartMovie` sets (`0x523604`) and the stop clears
+//! (`0x518870`) is not modelled.
+
+pub(crate) mod player;
 
 use benilla_formats::MovieCatalog;
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -162,8 +166,8 @@ mod tests {
         assert!(!playing.stop(), "a second stop sends nothing (`0x518870`)");
     }
 
-    /// The stock in-game `MovieFrame` takes `PLAY_MOVIE`, cannot start the file, and ends with one
-    /// `GameMovieFinished()`.
+    /// The stock in-game `MovieFrame` takes `PLAY_MOVIE` and, with no player seated to start the
+    /// file, ends with one `GameMovieFinished()`.
     #[test]
     fn the_stock_movie_frame_finishes_a_movie_it_cannot_play() {
         let _data = benilla_formats::wow_data_or_skip!();

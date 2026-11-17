@@ -151,6 +151,8 @@ fn probe_input_by_name(name: &str) -> Option<ProbeInput> {
 pub(super) fn probe_key_by_name(name: &str) -> Option<KeyCode> {
     Some(match name {
         "Space" => KeyCode::Space,
+        // A movie frame's skip key, beside SPACE and ENTER.
+        "Escape" => KeyCode::Escape,
         "W" => KeyCode::KeyW,
         "A" => KeyCode::KeyA,
         "S" => KeyCode::KeyS,

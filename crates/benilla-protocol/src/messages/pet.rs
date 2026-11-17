@@ -253,38 +253,35 @@ pub(super) fn read_pet_name_invalid(
 ) -> io::Result<(u32, String, Option<[String; 5]>)> {
     let code = read_u32_le(r)?;
     let name = read_cstring(r)?;
-    let declensions = if read_u8(r)? != 0 {
-        let mut forms: [String; 5] = Default::default();
-        for form in &mut forms {
-            *form = read_cstring(r)?;
-        }
-        Some(forms)
-    } else {
-        None
-    };
+    let declensions = read_declensions(r)?;
     Ok((code, name, declensions))
 }
 
-/// The declension block the pet-name packets share: a `u8` flag and, when set, five declined
-/// forms of the name (`0x63532d`, `0x6e2fb1`).
-fn skip_declined_names(r: &mut impl Read) -> io::Result<()> {
-    if read_u8(r)? != 0 {
-        for _ in 0..5 {
-            read_cstring(r)?;
-        }
+/// The declension block the name packets share: a `u8` flag and, when set, five declined forms
+/// of the name (`0x63532d`, `0x6e2fb1`).
+pub(super) fn read_declensions(r: &mut impl Read) -> io::Result<Option<[String; 5]>> {
+    if read_u8(r)? == 0 {
+        return Ok(None);
     }
-    Ok(())
+    let mut forms: [String; 5] = Default::default();
+    for form in &mut forms {
+        *form = read_cstring(r)?;
+    }
+    Ok(Some(forms))
 }
 
 /// Read `SMSG_PET_NAME_QUERY_RESPONSE` as 12340's handler does (`0x6352c0`): `u32 petNumber`,
-/// the name, `u32 nameTimestamp`, then the declension block, read and dropped. An empty name is
-/// the negative answer (the cache's deny, `0x635365`); the timestamp only ages the disk cache.
-pub(super) fn read_pet_name_query_response(r: &mut impl Read) -> io::Result<(u32, String)> {
+/// the name, `u32 nameTimestamp`, then the declension block. An empty name is the negative answer
+/// (the cache's deny, `0x635365`); the timestamp only ages the disk cache.
+#[allow(clippy::type_complexity)]
+pub(super) fn read_pet_name_query_response(
+    r: &mut impl Read,
+) -> io::Result<(u32, String, Option<[String; 5]>)> {
     let pet_number = read_u32_le(r)?;
     let name = read_cstring(r)?;
     let _name_timestamp = read_u32_le(r)?;
-    skip_declined_names(r)?;
-    Ok((pet_number, name))
+    let declensions = read_declensions(r)?;
+    Ok((pet_number, name, declensions))
 }
 
 /// The `GlobalStrings.lua` key filling `ERR_TAME_FAILED`'s `%s`: the reference's table
@@ -758,15 +755,19 @@ mod tests {
             n
         };
 
-        assert_eq!(parse(&body(b"Rex", None)), (7, "Rex".into()));
+        assert_eq!(parse(&body(b"Rex", None)), (7, "Rex".into(), None));
         assert_eq!(
             parse(&body(
                 b"Rex",
                 Some([b"Rexa", b"Rexu", b"Rexe", b"Rexom", b"Rexy"])
             )),
-            (7, "Rex".into())
+            (
+                7,
+                "Rex".into(),
+                Some(["Rexa", "Rexu", "Rexe", "Rexom", "Rexy"].map(String::from))
+            )
         );
-        assert_eq!(parse(&body(b"", None)), (7, String::new()));
+        assert_eq!(parse(&body(b"", None)), (7, String::new(), None));
 
         // A body without the declension flag is an error rather than a silent success.
         let short = &body(b"Rex", None)[..12];

@@ -14,9 +14,8 @@
 //! modified interface file is loaded rather than refused.
 //!
 //! The screen comes after the build: at startup the reference fires `SET_GLUE_SCREEN` with
-//! `"movie"` while the `movie` CVar is 1 (clearing it), else `"login"`; back from the world fires
-//! it with `"charselect"` or `"login"`. benilla plays no movie yet (#130), so its boot screen is
-//! `"login"`.
+//! `"movie"` while the `movie` CVar is 1 (clearing it), else `"login"` (`0x404234`); back from the
+//! world fires it with `"charselect"` or `"login"`.
 //!
 //! The screens' `ModelFFX` panes drive the glue booth ([`super::glue_scene`]): its scene rig, the
 //! scene M2's own point lights and the `FfxGlow::GLUE_SCENE` pass, never the `ui_models` tile
@@ -33,6 +32,8 @@ use super::reference_ui;
 pub(crate) enum GlueScreen {
     Login,
     CharSelect,
+    /// The boot movie, `MovieFrame`.
+    Movie,
 }
 
 impl GlueScreen {
@@ -41,6 +42,7 @@ impl GlueScreen {
         match self {
             GlueScreen::Login => "login",
             GlueScreen::CharSelect => "charselect",
+            GlueScreen::Movie => "movie",
         }
     }
 }
@@ -121,14 +123,9 @@ mod tests {
     /// goes on).
     const INSTALL_WARNINGS: &[&str] = &["Frame TOSText: Unknown element type: H4"];
 
-    /// The movie frame's three handlers, which benilla's `MovieFrame` does not take: it plays no
-    /// movie (#130), so nothing would fire them, where the reference takes all three. Each is a
-    /// loader warning, `<frame>: SetScript("<handler>") unsupported`; the list only shrinks.
-    const UNBUILT_HANDLERS: &[(&str, &str)] = &[
-        ("MovieFrame", "OnMovieFinished"),
-        ("MovieFrame", "OnMovieHideSubtitle"),
-        ("MovieFrame", "OnMovieShowSubtitle"),
-    ];
+    /// Handlers the stock files set that benilla's frames do not take. Each is a loader warning,
+    /// `<frame>: SetScript("<handler>") unsupported`; the list only shrinks.
+    const UNBUILT_HANDLERS: &[(&str, &str)] = &[];
 
     /// The frames each stock glue screen and dialog is, which the load must build.
     const SCREENS: [&str; 8] = [
@@ -374,9 +371,67 @@ mod tests {
         assert!(seen[0] != seen[1] && seen[1] != seen[3], "{seen:?}");
     }
 
+    /// The boot screen `"movie"` (`0x404234`) is the stock `MovieFrame`: it starts the client's
+    /// own expansion's intro, skipping the empty first slot, at its list's volume; the movie's end
+    /// walks the list out and puts the login screen back.
+    #[test]
+    fn the_movie_screen_plays_the_intro_then_logs_in() {
+        use benilla_ui::widget::{FrameHandle, MovieCaption};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        struct Host(Rc<RefCell<Vec<String>>>);
+        impl benilla_ui::script::MovieHost for Host {
+            fn open(&self, _: FrameHandle, file: &str, volume: f32) -> Option<Vec<MovieCaption>> {
+                self.0
+                    .borrow_mut()
+                    .push(format!("{file} {:.0}", volume * 255.0));
+                Some(Vec::new())
+            }
+            fn close(&self, _: FrameHandle) {}
+        }
+        let _ = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new_glue().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        s.seed_cvars(crate::cvars::Cvars::default().vm_seed());
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        s.set_movie_host(Box::new(Host(opened.clone())));
+        let _ = load_glue(&mut s);
+        set_glue_screen(&mut s, GlueScreen::Movie);
+        s.tick(0.1);
+        s.resolve();
+        assert!(s.take_errors().is_empty());
+        let started = opened.borrow().clone();
+        assert_eq!(started.len(), 1, "{started:?}");
+        assert!(
+            started[0].starts_with(r"Interface\Cinematics\WOW_Intro_LK_")
+                && started[0].ends_with(" 250"),
+            "{started:?}"
+        );
+        assert!(s.eval::<bool>("return MovieFrame:IsShown() == 1").unwrap());
+        let h = s.playing_movie().expect("the intro is open");
+        s.movie_tick(
+            h,
+            benilla_ui::script::MovieTick {
+                elapsed_ms: 200_000,
+                sound_playing: false,
+                finished: true,
+                advanced: false,
+            },
+        );
+        s.tick(0.1);
+        s.resolve();
+        assert!(s.take_errors().is_empty());
+        assert_eq!(
+            s.eval::<(bool, bool)>("return MovieFrame:IsShown() == 1, AccountLogin:IsShown() == 1")
+                .unwrap(),
+            (false, true)
+        );
+    }
+
     /// Each Cinematics button shows `MovieFrame`, whose stock walk tries every movie of its
-    /// version; `StartMovie` answers nil, so the walk ends by hiding the frame and its `OnHide`
-    /// puts the login screen back, with nothing raised (#301).
+    /// version; with no player seated `StartMovie` answers nil, as for a file that does not open, so
+    /// the walk ends by hiding the frame and its `OnHide` puts the login screen back, with nothing
+    /// raised (#301).
     #[test]
     fn the_cinematics_buttons_come_back_to_the_login_screen() {
         let _ = benilla_formats::wow_data_or_skip!();

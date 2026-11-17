@@ -22,6 +22,7 @@ anyhow.workspace = true
 # The EditBox clipboard, on the main thread as NSPasteboard requires; bevy_egui's 3.x.
 arboard = "3"
 benilla-ui = { path = "../benilla-ui" }
+benilla-cinematics = { path = "../benilla-cinematics" }
 bevy.workspace = true
 # `noop`: the characterization rig's stub device (`Device::noop`), which seats the render device
 # headless frames' main-world systems take; a normal dependency so tests and builds share artifacts.

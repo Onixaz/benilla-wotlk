@@ -1060,8 +1060,11 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // here: benilla has no doodad LOD swap, as `lodDist` above has no row.
     same("lod", "1"),
     // `movieSubtitle` ("0", flags 0), Cinematic Subtitles: the pre-rendered movies' subtitles, read
-    // by the glue's `GetMovieSubtitles`. No effect here: benilla plays no pre-rendered movie.
+    // by both `MovieFrame`s' `OnShow` through `GetCVarBool` into `EnableSubtitles`.
     same("movieSubtitle", "0"),
+    // `movie` ("1"): startup puts the glue on its `"movie"` screen while it is 1, and clears it
+    // (`0x404234`).
+    same("movie", "1"),
     // `useWeatherShaders` ("1", flags 0, no callback), Weather Shaders: read in each precipitation
     // effect's constructor, which clears the effect's shader flag at 0. No effect here: rain's two
     // legs are one draw with other scalars, but snow's fixed-function leg is a CPU-built triangle

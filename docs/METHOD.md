@@ -68,6 +68,12 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   fails a row that drifts either way.
 - **Our code is MIT OR Apache-2.0**, which is a claim about provenance: no original client
   code, no bundled assets.
+- **The binary is cited by address, never by name.** A function or global in the reference
+  binary is cited by its address alone (`0x7b8c70`), with what it does in plain words. No symbol
+  name from a decompilation, symbol file or community database lands in the tree: not in code,
+  comments, test names, doc comments or commit messages, and not a bare method name either
+  (`Animate`, not only `Class::Method` or `Class__Method`). The 3.3.5a API itself (FrameXML,
+  Lua functions, events, CVars, DBC fields, opcodes) is the surface we track and is named as is.
 
 ## Where things live
 

@@ -111,6 +111,29 @@ pub enum KindState {
     Cooldown(CooldownState),
     /// A `QuestPOIFrame`'s blob settings.
     QuestPoi(QuestPoiState),
+    /// A `MovieFrame`'s playback flags and captions; the pictures and sound are the app's.
+    Movie(MovieState),
+}
+
+/// The `MovieFrame` (`CSimpleMovieFrame`) state the verbs and the caption pass read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MovieState {
+    /// `+0x2a0`: a movie is open; `StopMovie` does nothing while it is clear.
+    pub playing: bool,
+    /// `+0x2a8`: `EnableSubtitles`, clear at construction.
+    pub subtitles: bool,
+    /// The open movie's captions.
+    pub captions: Vec<MovieCaption>,
+    /// The caption on screen, an index into `captions`.
+    pub shown: Option<usize>,
+}
+
+/// One line of a movie's `.sbt` captions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovieCaption {
+    pub start_ms: u32,
+    pub end_ms: u32,
+    pub text: String,
 }
 
 impl KindState {

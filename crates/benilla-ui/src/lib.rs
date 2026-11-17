@@ -3,6 +3,7 @@
 
 pub mod bindings_xml;
 pub mod civil;
+pub mod declension;
 pub mod framexml;
 pub mod justify;
 pub mod language;
