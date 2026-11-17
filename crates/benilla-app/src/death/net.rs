@@ -647,6 +647,7 @@ mod tests {
             race: 1,
             gender: 0,
             class: 5,
+            declensions: None,
         };
         w.run_system_once_with(on_resurrect_name, name.clone())
             .unwrap();

@@ -402,6 +402,7 @@ mod tests {
             race: 1,
             class: 1,
             gender: 0,
+            declensions: None,
         }
     }
 

@@ -479,8 +479,15 @@ pub(crate) mod net {
             race,
             class,
             gender,
+            declensions,
         } = ev
         {
+            // The name cache keeps the declined forms the `|3` rule reads (`0x6357d0`).
+            benilla_ui::declension::set_name_forms(
+                benilla_ui::declension::NameKind::Player,
+                &name,
+                declensions,
+            );
             player_name(guid, name, race, class, gender, &mut names);
             names.set_player_realm(guid, realm);
         }
@@ -497,7 +504,18 @@ pub(crate) mod net {
     }
 
     fn on_pet_name(In(ev): In<SessionEvent>, mut names: ResMut<NameCache>) {
-        if let SessionEvent::PetName { pet_number, name } = ev {
+        if let SessionEvent::PetName {
+            pet_number,
+            name,
+            declensions,
+        } = ev
+        {
+            // The pet-name cache keeps the declined forms the `|3` rule reads (`0x6352c0`).
+            benilla_ui::declension::set_name_forms(
+                benilla_ui::declension::NameKind::Pet,
+                &name,
+                declensions,
+            );
             pet_name(pet_number, name, &mut names);
         }
     }

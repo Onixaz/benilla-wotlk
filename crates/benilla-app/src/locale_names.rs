@@ -20,6 +20,11 @@ static NAMES: OnceLock<Names> = OnceLock::new();
 
 /// Load the names once for a locale that is not enUS, and hand the script layer its copy.
 pub(crate) fn boot(locale: &ClientLocale) {
+    // The `|3` rule's tables load on the first word that needs them (`0x7e0a6a`).
+    benilla_ui::declension::set_loader(|| {
+        let mut chain = Chain::open(&benilla_formats::wow_data()?).ok()?;
+        declined_words(&mut chain)
+    });
     if locale.index == 0 {
         return;
     }
@@ -36,6 +41,19 @@ pub(crate) fn boot(locale: &ClientLocale) {
     };
     benilla_ui::locale::set_names(&plain(&names.classes), &plain(&names.races));
     let _ = NAMES.set(names);
+}
+
+/// `DeclinedWord` and `DeclinedWordCases`, indexed as the `|3` rule reads them.
+fn declined_words(chain: &mut Chain) -> Option<benilla_ui::declension::DeclinedWords> {
+    match benilla_formats::load_declined_words(chain) {
+        Ok(rows) => Some(benilla_ui::declension::DeclinedWords::new(
+            rows.words, rows.cases,
+        )),
+        Err(e) => {
+            bevy::log::warn!("locale: no declined words — {e:#}");
+            None
+        }
+    }
 }
 
 fn load(chain: &mut Chain) -> Option<Names> {
@@ -91,6 +109,28 @@ pub(crate) fn language(id: u32) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shipped_declined_words_give_back_each_case_row() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = Chain::open(&data).expect("open patch chain");
+        let rows = benilla_formats::load_declined_words(&mut chain).expect("load");
+        let words = declined_words(&mut chain).expect("index");
+        // The first word with case rows, read back case by case through the index.
+        let (id, word) = rows
+            .words
+            .iter()
+            .find(|(id, _)| rows.cases.iter().any(|c| c.0 == *id))
+            .expect("a word with cases");
+        let cases: Vec<_> = rows.cases.iter().filter(|c| c.0 == *id).collect();
+        assert!(!cases.is_empty());
+        for (_, case, form) in cases {
+            assert_eq!(words.form(word, *case as i32), Some(form.as_str()));
+        }
+        // A case with no row gives the word back; a word not in the table is not indexed.
+        assert_eq!(words.form(word, 0), Some(word.as_str()));
+        assert_eq!(words.form("benilla", 1), None);
+    }
 
     #[test]
     fn a_sex_prefers_its_own_column_then_the_other_then_the_plain_name() {
