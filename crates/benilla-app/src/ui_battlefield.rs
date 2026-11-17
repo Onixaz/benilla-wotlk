@@ -706,6 +706,7 @@ fn drain_battlefield(
     let Some(mut script) = script else {
         return;
     };
+    // The interaction close's battlemaster arm clears it and signals BATTLEFIELDS_CLOSED (`0x51309f` -> `0x5496e1`).
     if std::mem::take(&mut state.closed) {
         script.close_battlemaster();
     }
