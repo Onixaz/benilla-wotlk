@@ -86,11 +86,12 @@ pub fn activate_taxi(flightmaster_guid: u64, node1: u32, node2: u32) -> Vec<u8> 
 }
 
 /// Body of `CMSG_ACTIVATETAXIEXPRESS`: the whole multi-hop chain, sent when no direct `TaxiPath`
-/// edge joins the two nodes, however many stops the drawn route has.
-pub fn activate_taxi_express(flightmaster_guid: u64, total_cost: u32, nodes: &[u32]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(16 + nodes.len() * 4);
+/// edge joins the two nodes, however many stops the drawn route has. 12340's send (`0x6d6430`)
+/// puts the flight master, the node count and the nodes, with no fare (the 1.12 packet's total
+/// cost is gone); the server prices the route itself.
+pub fn activate_taxi_express(flightmaster_guid: u64, nodes: &[u32]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12 + nodes.len() * 4);
     body.extend_from_slice(&flightmaster_guid.to_le_bytes());
-    body.extend_from_slice(&total_cost.to_le_bytes());
     body.extend_from_slice(&(nodes.len() as u32).to_le_bytes());
     for &n in nodes {
         body.extend_from_slice(&n.to_le_bytes());

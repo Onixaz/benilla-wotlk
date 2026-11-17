@@ -40,16 +40,11 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_ACTIVATETAXIEXPRESS`: the route's combined fare and its whole node chain, in order.
-    pub fn activate_taxi_express(
-        &mut self,
-        flightmaster_guid: u64,
-        total_cost: u32,
-        nodes: &[u32],
-    ) -> Result<()> {
+    /// `CMSG_ACTIVATETAXIEXPRESS`: the route's whole node chain, in order.
+    pub fn activate_taxi_express(&mut self, flightmaster_guid: u64, nodes: &[u32]) -> Result<()> {
         self.send(
             opcode::CMSG_ACTIVATETAXIEXPRESS,
-            &messages::activate_taxi_express(flightmaster_guid, total_cost, nodes),
+            &messages::activate_taxi_express(flightmaster_guid, nodes),
         )
     }
 

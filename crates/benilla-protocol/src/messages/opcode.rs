@@ -741,7 +741,7 @@ pub const CMSG_TAXIQUERYAVAILABLENODES: u16 = 0x01AC; // 428
 pub const CMSG_ACTIVATETAXI: u16 = 0x01AD; // 429
 pub const SMSG_ACTIVATETAXIREPLY: u16 = 0x01AE; // 430
 pub const SMSG_NEW_TAXI_PATH: u16 = 0x01AF; // 431
-/// A multi-hop flight: guid, total cost, node list; a single hop uses `CMSG_ACTIVATETAXI`.
+/// A multi-hop flight: guid, node count, node list; a single hop uses `CMSG_ACTIVATETAXI`.
 pub const CMSG_ACTIVATETAXIEXPRESS: u16 = 0x0312; // 786
 
 // Trainers, class and profession alike, open from `GOSSIP_OPTION_TRAINER`; there is no open verb.

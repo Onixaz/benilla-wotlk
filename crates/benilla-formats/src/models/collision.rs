@@ -75,6 +75,12 @@ pub fn parse_m2_collision_hull(model: &M2Model) -> CollisionMesh {
 const MOPY_DETAIL: u8 = 0x04;
 /// MOPY `NOCAMCOLLIDE`, the face bit the camera and line-of-sight gather skips.
 const MOPY_NOCAMCOLLIDE: u8 = 0x02;
+/// The face bits the mouse pick's world trace skips. The WMO ignore-mask builder (`0x7ae140`)
+/// turns the trace's class word `0x100_0124` into the ignore mask `0x188`; the segment query's
+/// face test (`0x7c6c30`) checks its low byte against the face's MOPY flag byte: MOPY `0x08`
+/// (the collision-only faces, such as the blockers along a bank counter) and `0x80`, which the
+/// query also ORs in as its visited bit. `DETAIL` is not in it, so a detail face occludes the pick.
+const MOPY_PICK_SKIP: u8 = 0x88;
 
 /// A WMO's walking-collidable triangles across every group file, in raw WMO-local coordinates: a
 /// face collides unless it is `DETAIL` ([`MOPY_DETAIL`]). Wider than the vmangos vmap rule
@@ -137,6 +143,32 @@ pub fn accumulate_wmo_group_camera_only_collision(
     );
 }
 
+/// Append one WMO group file's faces past MOPY `0x88` ([`MOPY_PICK_SKIP`]) in one walk, split by
+/// material class: the opaque ones are the mouse pick's occluders, the blended ones go apart. The
+/// pick trace's segment test (`0x7c6c30`) classes a face opaque (`0x200`) when its material id is
+/// `0xFF` or its MOMT `blendMode` is 0, else blended (`0x100`), and its mask `0x188` carries only
+/// `0x100`. The ground-decal gather's box and frustum tests (`0x7c9b10`, `0x7c7660`) read the flag
+/// byte alone under the mask `0x88`, so a decal drapes both halves. `blended` is
+/// [`super::WmoRoot::material_blended`], by MOPY material id; an id past it counts as opaque.
+pub fn accumulate_wmo_group_pick_collision(
+    group_bytes: &[u8],
+    blended: &[bool],
+    (positions, indices): (&mut Vec<[f32; 3]>, &mut Vec<u32>),
+    (blended_positions, blended_indices): (&mut Vec<[f32; 3]>, &mut Vec<u32>),
+) {
+    accumulate_wmo_group_faces_routed(
+        group_bytes,
+        |flags, material| {
+            (flags & MOPY_PICK_SKIP == 0).then(|| {
+                let is_blended = material != 0xFF
+                    && blended.get(usize::from(material)).copied().unwrap_or(false);
+                usize::from(is_blended)
+            })
+        },
+        [(positions, indices), (blended_positions, blended_indices)],
+    );
+}
+
 /// Append every triangle whose MOPY flags miss `skip_mask` and carry all of `require_mask`, its
 /// vertices remapped per group (the same index in two groups is two vertices).
 fn accumulate_wmo_group_faces(
@@ -146,18 +178,48 @@ fn accumulate_wmo_group_faces(
     positions: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
 ) {
+    accumulate_wmo_group_faces_where(
+        group_bytes,
+        |flags, _| flags & skip_mask == 0 && flags & require_mask == require_mask,
+        positions,
+        indices,
+    );
+}
+
+/// Append every triangle `keep(flags, material_id)` accepts, its vertices remapped per group.
+fn accumulate_wmo_group_faces_where(
+    group_bytes: &[u8],
+    keep: impl Fn(u8, u8) -> bool,
+    positions: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+) {
+    accumulate_wmo_group_faces_routed(
+        group_bytes,
+        |flags, material| keep(flags, material).then_some(0),
+        [(positions, indices)],
+    );
+}
+
+/// Append each triangle to the output `route(flags, material_id)` names (`None` drops it), in one
+/// parse of the group, its vertices remapped per group and per output.
+fn accumulate_wmo_group_faces_routed<const N: usize>(
+    group_bytes: &[u8],
+    route: impl Fn(u8, u8) -> Option<usize>,
+    mut outs: [(&mut Vec<[f32; 3]>, &mut Vec<u32>); N],
+) {
     let Ok(ParsedWmo::Group(group)) = parse_wmo(&mut Cursor::new(group_bytes)) else {
         return;
     };
     let n_tri = group.vertex_indices.len() / 3;
-    let mut map: HashMap<u16, u32> = HashMap::new();
+    let mut maps: [HashMap<u16, u32>; N] = std::array::from_fn(|_| HashMap::new());
     for t in 0..n_tri {
         let Some(mopy) = group.material_info.get(t) else {
             continue;
         };
-        if mopy.flags & skip_mask != 0 || mopy.flags & require_mask != require_mask {
+        let Some(o) = route(mopy.flags, mopy.material_id) else {
             continue;
-        }
+        };
+        let ((positions, indices), map) = (&mut outs[o], &mut maps[o]);
         for k in 0..3 {
             let Some(&vidx) = group.vertex_indices.get(t * 3 + k) else {
                 continue;
@@ -171,5 +233,104 @@ fn accumulate_wmo_group_faces(
             });
             indices.push(global);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(reversed_magic: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut out = reversed_magic.to_vec();
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+        out
+    }
+
+    /// A group file with one triangle per `(flags, material)` face, each over its own vertices.
+    fn group(faces: &[(u8, u8)]) -> Vec<u8> {
+        let mut mogp = vec![0u8; 0x44];
+        let (mut vert, mut idx, mut mopy) = (Vec::new(), Vec::new(), Vec::new());
+        for (i, &(flags, material)) in faces.iter().enumerate() {
+            for k in 0..3u16 {
+                let x = i as f32 * 10.0 + f32::from(k);
+                vert.extend([x, 0.0, f32::from(k)].map(f32::to_le_bytes).concat());
+                idx.extend((i as u16 * 3 + k).to_le_bytes());
+            }
+            mopy.extend([flags, material]);
+        }
+        mogp.extend(chunk(b"YPOM", &mopy));
+        mogp.extend(chunk(b"TVOM", &vert));
+        mogp.extend(chunk(b"IVOM", &idx));
+        chunk(b"PGOM", &mogp)
+    }
+
+    /// The (pick occluder, blended decal-only) triangle counts for `faces`.
+    fn pick_split(faces: &[(u8, u8)], blended: &[bool]) -> (usize, usize) {
+        let (mut pos, mut idx) = (Vec::new(), Vec::new());
+        let (mut bpos, mut bidx) = (Vec::new(), Vec::new());
+        accumulate_wmo_group_pick_collision(
+            &group(faces),
+            blended,
+            (&mut pos, &mut idx),
+            (&mut bpos, &mut bidx),
+        );
+        (idx.len() / 3, bidx.len() / 3)
+    }
+
+    fn pick_faces(faces: &[(u8, u8)], blended: &[bool]) -> usize {
+        pick_split(faces, blended).0
+    }
+
+    /// The pick passes Dalaran's counter blockers (MOPY `0x48`, no material) and a blended pane,
+    /// and stops on an opaque render face and on a DETAIL face, which the walking gather drops.
+    #[test]
+    fn the_pick_set_drops_collision_only_and_blended_faces_and_keeps_detail() {
+        let blended = [false, true];
+        assert_eq!(
+            pick_faces(&[(0x48, 0xFF)], &blended),
+            0,
+            "collision-only blocker"
+        );
+        assert_eq!(pick_faces(&[(0x80, 0)], &blended), 0, "MOPY 0x80");
+        assert_eq!(pick_faces(&[(0x20, 1)], &blended), 0, "blended material");
+        assert_eq!(pick_faces(&[(0x20, 0)], &blended), 1, "opaque render face");
+        assert_eq!(
+            pick_faces(&[(0x24, 0)], &blended),
+            1,
+            "DETAIL occludes the pick"
+        );
+        assert_eq!(
+            pick_faces(&[(0x20, 0xFF)], &blended),
+            1,
+            "no material is opaque"
+        );
+        assert_eq!(
+            pick_faces(&[(0x20, 7)], &blended),
+            1,
+            "an id past MOMT is opaque"
+        );
+
+        // The decal half: a blended face past `0x88` goes apart, a collision-only one nowhere.
+        assert_eq!(pick_split(&[(0x20, 1)], &blended), (0, 1), "blended");
+        assert_eq!(pick_split(&[(0x24, 1)], &blended), (0, 1), "blended DETAIL");
+        assert_eq!(
+            pick_split(&[(0x48, 1)], &blended),
+            (0, 0),
+            "blended blocker"
+        );
+        assert_eq!(
+            pick_split(&[(0x20, 0), (0x20, 1), (0x24, 0)], &blended),
+            (2, 1),
+            "one walk splits a mixed group"
+        );
+
+        let (mut pos, mut idx) = (Vec::new(), Vec::new());
+        accumulate_wmo_group_collision(&group(&[(0x24, 0), (0x48, 0xFF)]), &mut pos, &mut idx);
+        assert_eq!(
+            idx.len() / 3,
+            1,
+            "the walking gather keeps the blocker, drops DETAIL"
+        );
     }
 }

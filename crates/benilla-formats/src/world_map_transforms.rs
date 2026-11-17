@@ -51,6 +51,20 @@ impl WorldMapTransformCatalog {
         self.rows.iter().find(|r| r.holds(map_id, x, y))
     }
 
+    /// The world map transform (`0x543920`): the map and position a world position draws at,
+    /// with the region's `DungeonMap` row, through the first row holding it, else the position
+    /// itself with no row.
+    pub fn transform_position(&self, map_id: u32, x: f32, y: f32) -> (u32, f32, f32, u32) {
+        self.find(map_id, x, y).map_or((map_id, x, y, 0), |t| {
+            (
+                t.new_map_id,
+                x + t.offset_x,
+                y + t.offset_y,
+                t.new_dungeon_map_id,
+            )
+        })
+    }
+
     pub fn rows(&self) -> &[WorldMapTransform] {
         &self.rows
     }
@@ -128,5 +142,34 @@ mod tests {
         let t = cat.find(eversong.map_id, x, y).expect("a region holds it");
         assert_eq!((eversong.map_id, t.new_map_id), (530, 0));
         assert!(cat.find(0, x, y).is_none(), "map 0 has no region");
+    }
+
+    /// The taxi map's two regions: Silvermoon (`TaxiNodes` 82) draws on the Eastern Kingdoms, the
+    /// Exodar (94) on Kalimdor, each moved by its row's offset; Shattrath (128) stays on Outland.
+    #[test]
+    fn real_transforms_move_the_blood_elf_and_draenei_flight_points() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_world_map_transform_catalog(&mut chain).expect("load WorldMapTransforms");
+        let nodes = crate::load_taxi_nodes(&mut chain).expect("load TaxiNodes");
+        let at = |id: u32| {
+            let n = nodes.get(id).expect("the node");
+            cat.transform_position(n.map_id, n.pos[0], n.pos[1])
+        };
+        let (map, x, y, dungeon) = at(82);
+        assert_eq!(
+            (map, dungeon),
+            (0, 0),
+            "Silvermoon draws on the Eastern Kingdoms"
+        );
+        let n = nodes.get(82).unwrap();
+        assert_eq!((x, y), (n.pos[0] - 2400.0, n.pos[1] + 2400.0));
+        assert_eq!(at(94).0, 1, "the Exodar draws on Kalimdor");
+        let shattrath = nodes.get(128).expect("Shattrath");
+        assert_eq!(
+            at(128),
+            (530, shattrath.pos[0], shattrath.pos[1], 0),
+            "Outland stays itself"
+        );
     }
 }

@@ -91,6 +91,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("clutter::GROUND_EFFECT_DIST_RANGE", "record"),
     ("collision::ColliderEpoch", "record"),
     ("collision::MoverTraceExclusions", "record"),
+    ("collision::WalkGround", "record"),
     ("collision::WorldCollision", "record"),
     ("collision::refit_changed_collider_aabbs", "record"),
     ("decal::WorldDecal", "record"),
