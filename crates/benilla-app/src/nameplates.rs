@@ -814,6 +814,11 @@ pub(crate) fn drive_nameplates(
                 if let Some(bracketed) = bracketed {
                     lines.push(format!("<{bracketed}>"));
                 }
+                // The language pass over the whole block (`0x7e57ca`).
+                let block = lines.join("\n");
+                if let std::borrow::Cow::Owned(done) = benilla_ui::language::process(&block) {
+                    lines = done.split('\n').map(str::to_owned).collect();
+                }
                 debug!("nameplates: rebuild {entity} -> {lines:?} ({color:?})");
                 let mesh = plates
                     .meshes

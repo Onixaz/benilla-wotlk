@@ -319,7 +319,8 @@ fn drive_bubbles(
         }
     };
     for (guid, kind, raw) in queue.0.drain(..) {
-        let text = sanitize(&raw);
+        // The language pass, then the link strip (`0x56c801`).
+        let text = sanitize(&benilla_ui::language::process(&raw));
         let words = word_count(&text);
         if words == 0 {
             refuse("empty-text", guid);
