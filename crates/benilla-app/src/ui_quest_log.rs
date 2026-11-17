@@ -51,8 +51,8 @@ pub(crate) struct QuestLog {
 }
 
 /// The log's marks beside the templates: this frame's quests as `(quest id, slot)`, folded ones
-/// included (the reference's row table, which an abandon searches), the sort types, the expiry
-/// marks and the progress packets not yet announced.
+/// included (the reference's row table, which an abandon searches), the sort types and the
+/// progress packets not yet announced.
 #[derive(Resource, Default)]
 pub(crate) struct QuestLogMarks {
     row_slots: Vec<(u32, u8)>,
@@ -61,9 +61,86 @@ pub(crate) struct QuestLogMarks {
     sort_types: Vec<i32>,
     /// The progress packets not yet announced, in arrival order.
     notices: Vec<progress::QuestNotice>,
-    /// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client
-    /// (`0x5e57e0`), until they leave the log.
-    expired: HashSet<u32>,
+}
+
+/// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client
+/// (`0x5e57e0`), until they leave the log. Behind a lock, so `GetQuestTimers` marks them inside
+/// its call (`0x5e634a`) through the lent view.
+#[derive(Resource, Default)]
+pub(crate) struct QuestExpiries {
+    expired: std::sync::Mutex<HashSet<u32>>,
+    /// Quests whose expiry line waits on their template, shown by its answer (`0x5de980`).
+    failed_lines: std::sync::Mutex<HashSet<u32>>,
+}
+
+impl QuestExpiries {
+    fn set(&self) -> std::sync::MutexGuard<'_, HashSet<u32>> {
+        self.expired
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn waiting(&self) -> std::sync::MutexGuard<'_, HashSet<u32>> {
+        self.failed_lines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether `quest_id` is marked expired (`0x5dee60`).
+    pub(crate) fn is_expired(&self, quest_id: u32) -> bool {
+        self.set().contains(&quest_id)
+    }
+
+    /// Mark `quest_id` expired; whether it was not already.
+    pub(crate) fn mark(&self, quest_id: u32) -> bool {
+        self.set().insert(quest_id)
+    }
+
+    /// Keep only the marks `keep` accepts: a mark lives on its log row and leaves with it.
+    fn retain(&self, keep: impl Fn(u32) -> bool) {
+        self.set().retain(|&id| keep(id));
+    }
+
+    /// Show `quest_id`'s expiry line when its template answer lands.
+    fn wait_for_line(&self, quest_id: u32) {
+        self.waiting().insert(quest_id);
+    }
+
+    /// Whether `quest_id`'s expiry line waited on the template that just landed.
+    fn take_waiting(&self, quest_id: u32) -> bool {
+        self.waiting().remove(&quest_id)
+    }
+
+    /// Disconnect: drops every mark.
+    pub(crate) fn clear(&self) {
+        self.set().clear();
+        self.waiting().clear();
+    }
+
+    /// `GetQuestTimers`' expiry of a run-out timer, inside the call: the mark (`0x5e634a`), every
+    /// questgiver's status asked again (`0x5e582a`), and the quest's title for `ERR_QUEST_FAILED_S`
+    /// when its template is cached; a miss asks it with a callback that shows the line on the
+    /// answer (`0x5e635c`, `0x5de980`). `None` when the quest was already marked.
+    pub(crate) fn expire_in_call(
+        &self,
+        quest_id: u32,
+        log: &QuestLog,
+        commands: &NetCommands,
+    ) -> Option<Option<String>> {
+        if !self.mark(quest_id) {
+            return None;
+        }
+        let _ = commands
+            .0
+            .send(ClientCommand::QuestgiverStatusMultipleQuery);
+        match log.template(quest_id, commands) {
+            Some(t) => Some(Some(t.title.clone())),
+            None => {
+                self.wait_for_line(quest_id);
+                Some(None)
+            }
+        }
+    }
 }
 
 /// `questcache.wdb`.
@@ -108,17 +185,11 @@ impl QuestLog {
 }
 
 impl QuestLogMarks {
-    /// Whether a `_FAILEDTIMER` marked `quest_id` expired (`0x5dee60`).
-    pub(crate) fn is_expired(&self, quest_id: u32) -> bool {
-        self.expired.contains(&quest_id)
-    }
-
     /// Disconnect: drops every mark.
     pub(crate) fn clear_session(&mut self) {
         self.row_slots.clear();
         self.sort_types.clear();
         self.notices.clear();
-        self.expired.clear();
     }
 }
 
@@ -128,8 +199,9 @@ mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::{QuestLog, QuestLogMarks};
+    use super::{QuestExpiries, QuestLog, QuestLogMarks};
     use crate::net::NetHandlerApp;
+    use crate::ui_script::live::UiEvents;
 
     /// Registers the template handler and the session-end listener.
     pub(super) fn register(app: &mut App) {
@@ -150,9 +222,23 @@ mod net {
         }
     }
 
-    fn on_template(In(ev): In<SessionEvent>, mut quest_log: ResMut<QuestLog>) {
+    /// The answer lands in the cache, then an expiry line that waited on it shows (`0x5de980`).
+    fn on_template(
+        In(ev): In<SessionEvent>,
+        mut quest_log: ResMut<QuestLog>,
+        expiries: Res<QuestExpiries>,
+        mut ui: ResMut<UiEvents>,
+    ) {
         if let SessionEvent::QuestTemplate(t) = ev {
+            let (id, title) = (t.quest_id, t.title.clone());
             quest_template(t, &mut quest_log);
+            if expiries.take_waiting(id) {
+                crate::ui_action::show_in_turn(
+                    &mut ui,
+                    "ui_quest_log",
+                    crate::ui_action::UiError::s("ERR_QUEST_FAILED_S", title),
+                );
+            }
         }
     }
 
@@ -161,9 +247,11 @@ mod net {
         In(_): In<SessionEvent>,
         mut quest_log: ResMut<QuestLog>,
         mut marks: ResMut<QuestLogMarks>,
+        expiries: Res<QuestExpiries>,
     ) {
         quest_log.clear_session();
         marks.clear_session();
+        expiries.clear();
     }
 
     /// `SMSG_QUEST_QUERY_RESPONSE`, the answer to our `CMSG_QUEST_QUERY`, cached by quest id.
@@ -183,6 +271,7 @@ impl Plugin for UiQuestLogPlugin {
         crate::query_cache::register::<QuestLog>(app);
         app.init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
+            .init_resource::<QuestExpiries>()
             .add_systems(
                 Startup,
                 (
@@ -827,7 +916,7 @@ fn order_groups(rows: &[GroupRow]) -> Vec<(i32, String, Vec<usize>)> {
 pub(crate) fn feed_quest_log(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
-    (quest_log, mut marks): (Res<QuestLog>, ResMut<QuestLogMarks>),
+    (quest_log, mut marks, expiries): (Res<QuestLog>, ResMut<QuestLogMarks>, Res<QuestExpiries>),
     names: Res<NameCache>,
     // The bag walk behind an item objective's count.
     objects: crate::net::Objects,
@@ -905,9 +994,7 @@ pub(crate) fn feed_quest_log(
     }
 
     // A timer's expiry mark lives on the quest's row, so it leaves with the quest.
-    marks
-        .expired
-        .retain(|id| slots.iter().any(|&(q, _)| q == *id));
+    expiries.retain(|id| slots.iter().any(|&(q, _)| q == id));
 
     // The quest-slot watcher's accept line, whose catalog row carries `QUESTADDED`. The first
     // snapshot after login is silent: the initial create fills the whole log.
@@ -1009,7 +1096,7 @@ pub(crate) fn feed_quest_log(
     let now = clock.as_ref().and_then(|c| c.now_unix());
     let run_out: Vec<u32> = rows
         .iter()
-        .filter(|r| !marks.expired.contains(&r.quest_id) && timer_run_out(&r.log_slot, now))
+        .filter(|r| !expiries.is_expired(r.quest_id) && timer_run_out(&r.log_slot, now))
         .filter(|r| {
             quest_log
                 .templates
@@ -1020,7 +1107,7 @@ pub(crate) fn feed_quest_log(
         .collect();
     for quest_id in run_out {
         debug!("ui_quest_log: quest {quest_id}'s timer ran out — expired");
-        marks.expired.insert(quest_id);
+        expiries.mark(quest_id);
         let _ = commands
             .0
             .send(ClientCommand::QuestgiverStatusMultipleQuery);
@@ -1052,7 +1139,7 @@ pub(crate) fn feed_quest_log(
             let Some(t) = quest_log.templates.get(r.quest_id) else {
                 continue;
             };
-            let expired = marks.expired.contains(&r.quest_id);
+            let expired = expiries.is_expired(r.quest_id);
             let done = quest_complete(t, &r.log_slot, expired, &completion);
             let complete = if r.log_slot.state & quest_slot_state::FAIL != 0 || expired {
                 -1
@@ -1823,7 +1910,9 @@ mod tests {
                 id,
             ));
         }
-        app.insert_resource(log).init_resource::<QuestLogMarks>();
+        app.insert_resource(log)
+            .init_resource::<QuestLogMarks>()
+            .init_resource::<QuestExpiries>();
         app.world_mut().spawn((
             ObjectStore(ObjectFields::from_pairs(&pairs)),
             Guid(0x2A),
@@ -1896,7 +1985,8 @@ mod tests {
             .init_resource::<QuestLines>()
             .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
-            .init_resource::<QuestLogMarks>();
+            .init_resource::<QuestLogMarks>()
+            .init_resource::<QuestExpiries>();
         let player = app
             .world_mut()
             .spawn((
@@ -1957,7 +2047,8 @@ mod tests {
             .init_resource::<QuestLines>()
             .init_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
-            .init_resource::<QuestLogMarks>();
+            .init_resource::<QuestLogMarks>()
+            .init_resource::<QuestExpiries>();
         let player = app
             .world_mut()
             .spawn((
@@ -2326,7 +2417,9 @@ mod tests {
             t.title = format!("Quest {id}");
             log.insert_template(t);
         }
-        app.insert_resource(log).init_resource::<QuestLogMarks>();
+        app.insert_resource(log)
+            .init_resource::<QuestLogMarks>()
+            .init_resource::<QuestExpiries>();
         let player = app
             .world_mut()
             .spawn((ObjectStore(store_of(quests)), Guid(0x2A), SelfPlayer))
@@ -2458,7 +2551,7 @@ mod tests {
                 (FIELD_PLAYER_QUEST_LOG_1_1 + 4, 1_000_900),
             ])));
         app.update();
-        assert!(app.world().resource::<QuestLogMarks>().is_expired(201));
+        assert!(app.world().resource::<QuestExpiries>().is_expired(201));
         assert!(script(&mut app)
             .eval::<bool>("local _, _, _, _, _, _, done = GetQuestLogTitle(2) return done == -1")
             .unwrap());

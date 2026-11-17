@@ -282,6 +282,7 @@ mod tests {
             .init_resource::<QuestLines>()
             .init_resource::<QuestLog>()
             .init_resource::<crate::ui_quest_log::QuestLogMarks>()
+            .init_resource::<crate::ui_quest_log::QuestExpiries>()
             .init_resource::<Items>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()

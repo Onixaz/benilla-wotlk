@@ -2,7 +2,7 @@
 //! group (`0x6d8030`), the forced removal (`0x6d8370`) and the item push's quest-item check
 //! (`0x6d7de0`). Each line names the quest through the template cache and fires
 //! `QUEST_WATCH_UPDATE` with the quest's log row. The completed-quest answer (`0x5b5190`) lands
-//! here too, as it fires its event from the packet, and so do `GetQuestTimers`' expiries.
+//! here too, as it fires its event from the packet.
 
 use benilla_protocol::messages::{
     quest_flags, quest_slot_state, ItemPushResult, QuestLogSlot, QuestTemplate,
@@ -12,7 +12,9 @@ use benilla_ui::script::{ScriptValue, UiScript};
 use benilla_ui::strings::{fill, Arg};
 use bevy::prelude::*;
 
-use super::{quest_complete, CompletionInputs, QuestLog, QuestLogMarks, GO_OBJECTIVE_BIT};
+use super::{
+    quest_complete, CompletionInputs, QuestExpiries, QuestLog, QuestLogMarks, GO_OBJECTIVE_BIT,
+};
 use crate::go_templates::GameObjectTemplates;
 use crate::items::Items;
 use crate::names::NameCache;
@@ -227,7 +229,7 @@ fn line(key: &'static str, args: Vec<AnnounceArg>, watch: Option<u32>) -> Announ
 /// template comes back held, for the next pass.
 pub(super) fn resolve(
     log: &QuestLog,
-    marks: &mut QuestLogMarks,
+    expiries: &QuestExpiries,
     notices: Vec<QuestNotice>,
     w: &Lookups<'_>,
 ) -> (Vec<Announce>, Vec<QuestNotice>) {
@@ -241,7 +243,7 @@ pub(super) fn resolve(
                 count,
                 required,
             } => {
-                if expired(marks, quest_id, w) {
+                if expired(expiries, quest_id, w) {
                     continue;
                 }
                 let template = log.template(quest_id, w.commands);
@@ -291,7 +293,7 @@ pub(super) fn resolve(
                 }
             }
             QuestNotice::PvpKill { quest_id, count } => {
-                if expired(marks, quest_id, w) {
+                if expired(expiries, quest_id, w) {
                     continue;
                 }
                 if let Some(t) = log.template(quest_id, w.commands) {
@@ -303,7 +305,7 @@ pub(super) fn resolve(
                 }
             }
             QuestNotice::Complete { quest_id } => {
-                if expired(marks, quest_id, w) {
+                if expired(expiries, quest_id, w) {
                     continue;
                 }
                 match log.template(quest_id, w.commands) {
@@ -321,9 +323,9 @@ pub(super) fn resolve(
             }
             QuestNotice::Failed { quest_id, timed } => {
                 // The expiry is read before the timer arm marks the quest.
-                let was_expired = expired(marks, quest_id, w);
+                let was_expired = expired(expiries, quest_id, w);
                 if timed {
-                    marks.expired.insert(quest_id);
+                    expiries.mark(quest_id);
                 }
                 if was_expired {
                     continue;
@@ -354,7 +356,7 @@ pub(super) fn resolve(
                         continue;
                     };
                     let quest_id = log_slot.quest_id;
-                    if quest_id as i32 <= 0 || marks.expired.contains(&quest_id) {
+                    if quest_id as i32 <= 0 || expiries.is_expired(quest_id) {
                         continue;
                     }
                     match log.template(quest_id, w.commands) {
@@ -383,7 +385,7 @@ pub(super) fn resolve(
                 Some(t) => {
                     let entry = w
                         .slot_of(quest_id)
-                        .map(|s| (s, marks.expired.contains(&quest_id)));
+                        .map(|s| (s, expiries.is_expired(quest_id)));
                     quest_item_loot(t, Push { item, count, total }, entry, w, &mut out);
                 }
                 None if log.template_answered_unknown(quest_id) => {}
@@ -400,8 +402,8 @@ pub(super) fn resolve(
 }
 
 /// 12340's expiry test (`0x6d8030`): the client's timer mark, else the slot's fail bit.
-fn expired(marks: &QuestLogMarks, quest_id: u32, w: &Lookups<'_>) -> bool {
-    marks.expired.contains(&quest_id) || w.slot_state(quest_id) & quest_slot_state::FAIL != 0
+fn expired(expiries: &QuestExpiries, quest_id: u32, w: &Lookups<'_>) -> bool {
+    expiries.is_expired(quest_id) || w.slot_state(quest_id) & quest_slot_state::FAIL != 0
 }
 
 /// One item push: the entry, the count added and the bags' total.
@@ -468,40 +470,10 @@ fn quest_item_loot(
     true
 }
 
-/// `GetQuestTimers`' expiries (`0x5e6349`): each new one keeps its mark, asks every questgiver's
-/// status again (`0x5e582a`) and shows `ERR_QUEST_FAILED_S` with the quest's title.
-fn expiry_lines(
-    log: &QuestLog,
-    marks: &mut QuestLogMarks,
-    expiries: Vec<u32>,
-    commands: &NetCommands,
-) -> Vec<Announce> {
-    let mut out = Vec::new();
-    for quest_id in expiries {
-        if !marks.expired.insert(quest_id) {
-            continue;
-        }
-        let _ = commands
-            .0
-            .send(ClientCommand::QuestgiverStatusMultipleQuery);
-        if let Some(t) = log.template(quest_id, commands) {
-            out.push(line(
-                "ERR_QUEST_FAILED_S",
-                vec![AnnounceArg::S(t.title.clone())],
-                None,
-            ));
-        }
-    }
-    out
-}
-
-/// `QueryQuestsCompleted()`'s requests and `GetQuestTimers`' expiries, drained after the tick that
-/// made them: each expiry's line shows here (`0x5e6349`).
+/// `QueryQuestsCompleted()`'s requests, sent after the tick that made them.
 pub(super) fn drain_quest_progress_sends(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    (log, mut marks): (Res<QuestLog>, ResMut<QuestLogMarks>),
     commands: Res<NetCommands>,
-    mut sink: MessageSink,
 ) {
     let Some(mut script) = script else {
         return;
@@ -509,12 +481,6 @@ pub(super) fn drain_quest_progress_sends(
     for _ in 0..script.take_quests_completed_queries() {
         let _ = commands.0.send(ClientCommand::QueryQuestsCompleted);
     }
-    let expiries = script.take_quest_log_expiries();
-    if expiries.is_empty() {
-        return;
-    }
-    let lines = expiry_lines(&log, &mut marks, expiries, &commands);
-    show_announces(&mut script, &mut sink, lines);
 }
 
 /// Announce the queued notices in the handler's turn; a notice whose quest-item check waits on a
@@ -523,7 +489,7 @@ pub(super) fn drain_quest_progress_sends(
 fn announce_notices(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
-    (log, mut marks): (Res<QuestLog>, ResMut<QuestLogMarks>),
+    (log, mut marks, expiries): (Res<QuestLog>, ResMut<QuestLogMarks>, Res<QuestExpiries>),
     names: Res<NameCache>,
     gos: Option<Res<GameObjectTemplates>>,
     items: Res<Items>,
@@ -564,7 +530,7 @@ fn announce_notices(
         player_guid: me.map_or(0, |(_, g)| g.0),
     };
     let notices = std::mem::take(&mut marks.notices);
-    let (resolved, held) = resolve(&log, &mut marks, notices, &lookups);
+    let (resolved, held) = resolve(&log, &expiries, notices, &lookups);
     marks.notices = held;
     show_announces(&mut script, &mut sink, resolved);
 }
@@ -629,7 +595,7 @@ mod tests {
     }
 
     /// Resolve `notices` with the quest in slot 0 at `state`, the template cached.
-    fn run(notices: Vec<QuestNotice>, state: u32) -> (Vec<Announce>, QuestLogMarks) {
+    fn run(notices: Vec<QuestNotice>, state: u32) -> (Vec<Announce>, QuestExpiries) {
         let mut log = QuestLog::default();
         log.insert_template(template());
         let store = benilla_protocol::ObjectFields::from_pairs(&[
@@ -658,10 +624,10 @@ mod tests {
             standing: &|_| 0,
             player_guid: 0x2A,
         };
-        let mut marks = QuestLogMarks::default();
-        let (out, held) = resolve(&log, &mut marks, notices, &w);
+        let expiries = QuestExpiries::default();
+        let (out, held) = resolve(&log, &expiries, notices, &w);
         assert!(held.is_empty());
-        (out, marks)
+        (out, expiries)
     }
 
     fn s(v: &str) -> AnnounceArg {
@@ -780,7 +746,7 @@ mod tests {
                 None
             )]
         );
-        assert!(log.expired.contains(&QUEST));
+        assert!(log.is_expired(QUEST));
     }
 
     /// `0x6d7c30`: a push that lifts the bags past what they held shows the capped count; one
@@ -847,7 +813,7 @@ mod tests {
                 count: 1,
                 total: in_bags,
             };
-            let (out, _) = resolve(&log, &mut QuestLogMarks::default(), vec![push], &w);
+            let (out, _) = resolve(&log, &QuestExpiries::default(), vec![push], &w);
             assert_eq!(out.len(), 1, "the line shows either way");
             rx.try_iter()
                 .filter_map(|c| match c {
@@ -864,30 +830,34 @@ mod tests {
         assert!(complete_sent(0, 8).is_empty());
     }
 
-    /// `GetQuestTimers`' expiry keeps the mark, re-asks the status and shows the failure, once.
+    /// `GetQuestTimers`' expiry inside the call: the mark and the status re-ask once (`0x5e634a`,
+    /// `0x5e582a`), the cached title for the line; an uncached template is asked and its answer
+    /// owes the line (`0x5e635c`).
     #[test]
-    fn a_timer_expiry_is_marked_announced_and_reasked_once() {
+    fn a_timer_expiry_is_marked_and_reasked_once_in_the_call() {
         let mut log = QuestLog::default();
         log.insert_template(template());
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let mut marks = QuestLogMarks::default();
-        let out = expiry_lines(&log, &mut marks, vec![QUEST, QUEST], &commands);
+        let expiries = QuestExpiries::default();
         assert_eq!(
-            out,
-            [line(
-                "ERR_QUEST_FAILED_S",
-                vec![s("Wolves Across the Border")],
-                None
-            )]
+            expiries.expire_in_call(QUEST, &log, &commands),
+            Some(Some("Wolves Across the Border".to_string()))
         );
-        assert!(marks.is_expired(QUEST));
+        assert_eq!(expiries.expire_in_call(QUEST, &log, &commands), None);
+        assert!(expiries.is_expired(QUEST));
         assert_eq!(
             rx.try_iter()
                 .filter(|c| matches!(c, ClientCommand::QuestgiverStatusMultipleQuery))
                 .count(),
             1
         );
+        assert_eq!(expiries.expire_in_call(77, &log, &commands), Some(None));
+        assert!(rx
+            .try_iter()
+            .any(|c| matches!(c, ClientCommand::QuestQuery { quest: 77 })));
+        assert!(expiries.take_waiting(77));
+        assert!(!expiries.take_waiting(77));
     }
 
     /// A logged quest whose template is not cached holds the push for its own pass.
@@ -911,7 +881,7 @@ mod tests {
         };
         let (out, held) = resolve(
             &log,
-            &mut QuestLogMarks::default(),
+            &QuestExpiries::default(),
             vec![QuestNotice::ItemPush {
                 item: 750,
                 count: 1,

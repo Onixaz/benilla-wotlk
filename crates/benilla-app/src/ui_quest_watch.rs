@@ -269,9 +269,20 @@ pub(crate) struct QuestView<'w, 's> {
     names: Option<Res<'w, crate::names::NameCache>>,
     gos: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
     areas: Option<Res<'w, crate::sound::AreaSounds>>,
+    expiries: Option<Res<'w, crate::ui_quest_log::QuestExpiries>>,
 }
 
 impl QuestView<'_, '_> {
+    /// `GetQuestTimers`' expiry inside the call ([`crate::ui_quest_log::QuestExpiries::expire_in_call`]).
+    pub(crate) fn expire_quest(&self, quest_id: u32) -> Option<Option<String>> {
+        let (expiries, log, net) = (
+            self.expiries.as_deref()?,
+            self.quest_log.as_deref()?,
+            self.net.as_deref()?,
+        );
+        Some(expiries.expire_in_call(quest_id, log, net).flatten())
+    }
+
     /// One logged quest's POI lines at the call, formatted through `get`.
     pub(crate) fn quest_poi_lines(
         &self,
@@ -433,5 +444,92 @@ mod tests {
         world.get_mut::<Transform>(mob).unwrap().translation.x = 19.0;
         assert_eq!(in_range(&mut world, MOB), Some(true));
         assert_eq!(in_range(&mut world, 0x99), None, "nobody holds the guid");
+    }
+
+    /// Us with quest 33 in slot 0 at `kills` of 8 wolves, its template cached, the wolf's name
+    /// `wolf` when known.
+    fn poi_world(kills: u16, wolf: Option<&str>) -> World {
+        use benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1;
+        let mut world = World::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        world.insert_resource(NetCommands(tx));
+        world.init_resource::<Items>();
+        let mut names = crate::names::NameCache::default();
+        if let Some(name) = wolf {
+            names.insert_creature(
+                299,
+                Some(crate::names::CreatureRecord {
+                    name: name.into(),
+                    ..Default::default()
+                }),
+            );
+        }
+        world.insert_resource(names);
+        let mut log = QuestLog::default();
+        let mut t = benilla_protocol::messages::QuestTemplate {
+            quest_id: 33,
+            end_text: "Return to Eagan.".into(),
+            ..Default::default()
+        };
+        t.objectives[0].creature_or_go = 299;
+        t.objectives[0].required_count = 8;
+        log.insert_template(t);
+        world.insert_resource(log);
+        let me = world
+            .spawn((
+                SelfPlayer,
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                    (2, 0x19),
+                    (FIELD_PLAYER_QUEST_LOG_1_1, 33),
+                    (FIELD_PLAYER_QUEST_LOG_1_1 + 2, u32::from(kills)),
+                ])),
+            ))
+            .id();
+        world.insert_resource(crate::net::GuidIndex([(ME, me)].into()));
+        world
+    }
+
+    fn poi_board(world: &mut World, quest: u32) -> Option<Vec<Option<String>>> {
+        world
+            .run_system_once(move |v: QuestView| {
+                let get = |key: &str| {
+                    (key == "QUEST_MONSTERS_KILLED").then(|| "%s slain: %d/%d".to_string())
+                };
+                v.quest_poi_lines(quest, &get)
+                    .map(|l| l.board.into_iter().map(|b| b.map(|b| b.text)).collect())
+            })
+            .expect("the quest view runs")
+    }
+
+    /// The POI leaderboard builds at the call (`0x5e58c0`) from the slot's counter and the name
+    /// cache as they stand: a counter moved between two calls reads the new count, a name in flight
+    /// the placeholder, and a quest not logged no lines.
+    #[test]
+    fn the_poi_lines_read_the_slot_and_the_names_at_each_call() {
+        let mut world = poi_world(3, None);
+        let board = poi_board(&mut world, 33).expect("logged and cached");
+        assert_eq!(board[0].as_deref(), Some("... slain: 3/8"));
+        assert_eq!(
+            board.last().cloned().flatten().as_deref(),
+            Some("Return to Eagan.")
+        );
+        let mut world = poi_world(5, Some("Diseased Wolf"));
+        assert_eq!(
+            poi_board(&mut world, 33).unwrap()[0].as_deref(),
+            Some("Diseased Wolf slain: 5/8")
+        );
+        let me = world.resource::<crate::net::GuidIndex>().0[&ME];
+        world.get_mut::<ObjectStore>(me).unwrap().0.merge(
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1 + 2,
+                6,
+            )]),
+        );
+        assert_eq!(
+            poi_board(&mut world, 33).unwrap()[0].as_deref(),
+            Some("Diseased Wolf slain: 6/8"),
+            "the next call reads the moved counter"
+        );
+        assert_eq!(poi_board(&mut world, 34), None, "not logged");
     }
 }

@@ -1021,8 +1021,6 @@ pub(crate) struct Model {
     /// `SpellItemEnchantment.dbc`, pushed whole at startup: a link names any row.
     pub(crate) enchant_rows: HashMap<u32, super::EnchantRowView>,
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
-    pub(crate) quest_tooltips: HashMap<u32, super::QuestTooltipView>,
-    pub(crate) quest_tooltip_asks: HashSet<u32>,
     pub(crate) quest_tooltip_waits: HashMap<FrameHandle, Vec<super::QuestRecord>>,
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
@@ -1044,8 +1042,6 @@ pub(crate) struct Model {
     /// The collapse filter where no `questLogCollapseFilter` CVar is registered; -1, every header
     /// open, as the register site sets it (`0x51df3d`).
     pub(crate) quest_log_collapse_filter: i32,
-    /// Quests `GetQuestTimers` marked expired, for the app to keep, announce and re-ask.
-    pub(crate) quest_log_expiries: Vec<u32>,
     /// The quest watches, the POI store and the special items the objective tracker reads.
     pub(crate) quest_watch: super::quest_watch::QuestWatchState,
     /// The animation groups and animations, and the translation each region draws at.
@@ -1796,8 +1792,6 @@ impl Model {
             random_suffixes: HashMap::new(),
             scaling: Default::default(),
             enchant_rows: HashMap::new(),
-            quest_tooltips: HashMap::new(),
-            quest_tooltip_asks: HashSet::new(),
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
             item_stat_asks: HashSet::new(),
@@ -1810,7 +1804,6 @@ impl Model {
             item_tooltip_waits: HashMap::new(),
             item_render: None,
             quest_log_collapse_filter: -1,
-            quest_log_expiries: Vec::new(),
             quest_watch: Default::default(),
             anims: Default::default(),
             worldmap: super::worldmap::WorldMapState::default(),

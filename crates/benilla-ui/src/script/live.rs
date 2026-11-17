@@ -165,6 +165,14 @@ pub trait LiveState {
         None
     }
 
+    /// `GetQuestTimers`' expiry of a run-out timer inside the call (`0x5e634a`): marks the quest
+    /// expired and asks every questgiver's status again. `Some(Some(title))` for a new mark whose
+    /// template is cached, `Some(None)` for a quest already marked or one whose line waits on its
+    /// template's answer (`0x5e635c`); `None` where no view lends it.
+    fn expire_quest(&self, _quest_id: u32) -> Option<Option<String>> {
+        None
+    }
+
     /// The server's unix seconds now, fractional: the local clock offset by the last time
     /// response (`0x5dff40`), which the timer verbs subtract (`0x5e4320`); `None` before one.
     fn server_unix_time(&self) -> Option<f64> {
@@ -458,6 +466,11 @@ pub(crate) struct TestView {
     pub arena_teams: [super::ArenaTeamSlotView; 3],
     /// The inspect target the inspect verbs set.
     pub inspect_target: Cell<u64>,
+    /// Each logged quest's title by id, and the quests `expire_quest` marked, in order.
+    pub quest_titles: std::collections::HashMap<u32, String>,
+    pub expired: std::cell::RefCell<Vec<u32>>,
+    /// Each logged quest's POI lines.
+    pub poi_lines: std::collections::HashMap<u32, super::QuestPoiLines>,
 }
 
 #[cfg(test)]
@@ -501,6 +514,23 @@ impl LiveState for TestView {
 
     fn server_unix_time(&self) -> Option<f64> {
         self.server_unix
+    }
+
+    fn quest_poi_lines(
+        &self,
+        quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<super::QuestPoiLines>> {
+        Some(self.poi_lines.get(&quest_id).cloned())
+    }
+
+    fn expire_quest(&self, quest_id: u32) -> Option<Option<String>> {
+        let mut expired = self.expired.borrow_mut();
+        if expired.contains(&quest_id) {
+            return Some(None);
+        }
+        expired.push(quest_id);
+        Some(self.quest_titles.get(&quest_id).cloned())
     }
 
     fn quest_reset_unix(&self) -> Option<f64> {

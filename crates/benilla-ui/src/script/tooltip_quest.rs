@@ -1,7 +1,8 @@
 //! The quest tooltip (`0x622960`): `SetHyperlink` on a `quest:` link, for any quest the template
 //! cache can answer, in the log or not, read at the call. A template miss leaves the tooltip
-//! cleared; each record the build missed (the template, a name in the leaderboard) builds it again
-//! when it lands, through the tooltip's quest callback (`0x61de20`).
+//! cleared, and a name in flight reads as the placeholder; each record the build missed (the
+//! template, a name in the leaderboard) builds it again when it lands, through the tooltip's quest
+//! callback (`0x61de20`).
 
 use mlua::{Lua, Table};
 
@@ -72,34 +73,6 @@ impl super::UiScript {
             }
         }
     }
-
-    /// The quests a tooltip is waiting on, oldest answer first; the asks stay until answered.
-    pub fn quest_tooltip_asks(&self) -> Vec<u32> {
-        self.model_ref()
-            .quest_tooltip_asks
-            .iter()
-            .copied()
-            .collect()
-    }
-
-    /// Where no view lends the caches: a pushed record, building every tooltip waiting on it.
-    pub fn set_quest_tooltip(&mut self, quest_id: u32, view: QuestTooltipView) {
-        {
-            let mut model = self.model_mut();
-            model.quest_tooltip_asks.remove(&quest_id);
-            model.quest_tooltips.insert(quest_id, view);
-        }
-        self.quest_record_landed(QuestRecord::Quest(quest_id));
-    }
-
-    /// The server does not know `quest_id`: the ask closes and the tooltip stays cleared.
-    pub fn drop_quest_tooltip_ask(&mut self, quest_id: u32) {
-        let mut model = self.model_mut();
-        model.quest_tooltip_asks.remove(&quest_id);
-        model
-            .quest_tooltip_waits
-            .retain(|_, w| !w.contains(&QuestRecord::Quest(quest_id)));
-    }
 }
 
 fn rebuild(lua: &Lua, h: FrameHandle, quest_id: u32) -> mlua::Result<()> {
@@ -120,21 +93,11 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
         let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
         tip_mut(&mut model, h)?.quest_id = quest_id;
-        let (view, waits) = match read {
-            Some(read) => (read.view, read.waits),
-            None => {
-                let view = model.quest_tooltips.get(&quest_id).cloned();
-                if view.is_none() {
-                    model.quest_tooltip_asks.insert(quest_id);
-                }
-                let waits = view
-                    .is_none()
-                    .then_some(QuestRecord::Quest(quest_id))
-                    .into_iter()
-                    .collect();
-                (view, waits)
-            }
-        };
+        // Without a view the template reads as in flight.
+        let QuestTooltipRead { view, waits } = read.unwrap_or_else(|| QuestTooltipRead {
+            view: None,
+            waits: vec![QuestRecord::Quest(quest_id)],
+        });
         if !waits.is_empty() {
             model.quest_tooltip_waits.insert(h, waits);
         }
@@ -176,10 +139,56 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
 
 #[cfg(test)]
 mod tests {
-    use super::QuestTooltipView;
-    use crate::script::UiScript;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
 
-    fn tip() -> UiScript {
+    use super::{QuestRecord, QuestTooltipRead, QuestTooltipView};
+    use crate::script::{LiveLoan, LiveState, UiScript};
+
+    /// The caches as a test sets them between calls.
+    #[derive(Default)]
+    struct Caches(RefCell<HashMap<u32, QuestTooltipRead>>);
+
+    impl LiveState for Caches {
+        fn unit_flags(&self, _guid: u64) -> Option<u32> {
+            None
+        }
+
+        fn unit_health(&self, _guid: u64) -> Option<u32> {
+            None
+        }
+
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+
+        fn has_control(&self) -> bool {
+            true
+        }
+
+        fn far_sight(&self) -> bool {
+            false
+        }
+
+        fn quest_tooltip(
+            &self,
+            quest_id: u32,
+            _get: &dyn Fn(&str) -> Option<String>,
+        ) -> Option<QuestTooltipRead> {
+            Some(
+                self.0
+                    .borrow()
+                    .get(&quest_id)
+                    .cloned()
+                    .unwrap_or(QuestTooltipRead {
+                        view: None,
+                        waits: vec![QuestRecord::Quest(quest_id)],
+                    }),
+            )
+        }
+    }
+
+    fn tip() -> (UiScript, LiveLoan<Caches>) {
         let mut s = UiScript::new().unwrap();
         s.set_screen_size(800.0, 600.0);
         s.run(
@@ -194,24 +203,39 @@ mod tests {
             "#,
         )
         .unwrap();
-        s
+        // SAFETY: each test drops its loan on its own thread.
+        let loan = unsafe { LiveLoan::new(Caches::default()) };
+        (s, loan)
     }
 
+    fn hogger(requirement: &str) -> QuestTooltipView {
+        QuestTooltipView {
+            title: "Wanted: Hogger".into(),
+            objectives_text: "Bring the paw.".into(),
+            requirements: vec![requirement.into()],
+        }
+    }
+
+    fn cache(loan: &LiveLoan<Caches>, read: QuestTooltipRead) {
+        loan.view().0.borrow_mut().insert(176, read);
+    }
+
+    /// A template miss leaves the tooltip cleared; its answer builds it (`0x61de20`), and a second
+    /// click hides it.
     #[test]
-    fn a_quest_link_asks_then_builds_and_a_second_click_hides() {
-        let mut s = tip();
+    fn a_quest_link_waits_on_its_template_then_builds_and_a_second_click_hides() {
+        let (mut s, caches) = tip();
         s.run(r#"T:SetHyperlink("quest:176:13")"#).unwrap();
-        assert_eq!(s.quest_tooltip_asks(), vec![176]);
         assert_eq!(s.eval::<i64>("return T:NumLines()").unwrap(), 0);
-        s.set_quest_tooltip(
-            176,
-            QuestTooltipView {
-                title: "Wanted: Hogger".into(),
-                objectives_text: "Bring the paw.".into(),
-                requirements: vec!["Huge Gnoll Claw x 1".into()],
+        assert_eq!(s.eval::<i64>("return fired").unwrap(), 0);
+        cache(
+            &caches,
+            QuestTooltipRead {
+                view: Some(hogger("Huge Gnoll Claw x 1")),
+                waits: Vec::new(),
             },
         );
-        assert!(s.quest_tooltip_asks().is_empty());
+        s.quest_record_landed(QuestRecord::Quest(176));
         assert_eq!(s.eval::<i64>("return fired").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return T:NumLines()").unwrap(), 6);
         assert_eq!(
@@ -223,11 +247,63 @@ mod tests {
         assert!(s.eval::<bool>("return T:IsShown() == nil").unwrap());
     }
 
+    /// A name in flight shows at once as the placeholder, and its answer builds the tooltip again
+    /// with the name; another record's answer builds nothing.
     #[test]
-    fn an_unknown_quest_closes_its_ask() {
-        let mut s = tip();
-        s.run(r#"T:SetHyperlink("quest:999999:1")"#).unwrap();
-        s.drop_quest_tooltip_ask(999_999);
-        assert!(s.quest_tooltip_asks().is_empty());
+    fn a_name_in_flight_shows_the_placeholder_and_its_answer_rebuilds() {
+        let (mut s, caches) = tip();
+        cache(
+            &caches,
+            QuestTooltipRead {
+                view: Some(hogger("... slain: 0/1")),
+                waits: vec![QuestRecord::Creature(448)],
+            },
+        );
+        s.run(r#"T:SetHyperlink("quest:176:13")"#).unwrap();
+        assert_eq!(s.eval::<i64>("return fired").unwrap(), 1);
+        assert_eq!(
+            s.eval::<String>("return TTextLeft6:GetText()").unwrap(),
+            " - ... slain: 0/1"
+        );
+        cache(
+            &caches,
+            QuestTooltipRead {
+                view: Some(hogger("Hogger slain: 0/1")),
+                waits: Vec::new(),
+            },
+        );
+        s.quest_record_landed(QuestRecord::Creature(99));
+        assert_eq!(s.eval::<i64>("return fired").unwrap(), 1, "not its record");
+        s.quest_record_landed(QuestRecord::Creature(448));
+        assert_eq!(s.eval::<i64>("return fired").unwrap(), 2);
+        assert_eq!(
+            s.eval::<String>("return TTextLeft6:GetText()").unwrap(),
+            " - Hogger slain: 0/1"
+        );
+        // Answered once: a second answer finds no wait.
+        s.quest_record_landed(QuestRecord::Creature(448));
+        assert_eq!(s.eval::<i64>("return fired").unwrap(), 2);
+    }
+
+    /// The callback builds only a tooltip still showing a quest (`0x61de2d`).
+    #[test]
+    fn an_answer_after_the_tooltip_moved_on_builds_nothing() {
+        let (mut s, caches) = tip();
+        s.run(r#"T:SetHyperlink("quest:176:13")"#).unwrap();
+        s.run(r#"T:SetOwner(Owner, "ANCHOR_PRESERVE") T:SetText("other")"#)
+            .unwrap();
+        cache(
+            &caches,
+            QuestTooltipRead {
+                view: Some(hogger("Huge Gnoll Claw x 1")),
+                waits: Vec::new(),
+            },
+        );
+        s.quest_record_landed(QuestRecord::Quest(176));
+        assert_eq!(s.eval::<i64>("return fired").unwrap(), 0);
+        assert_eq!(
+            s.eval::<String>("return TTextLeft1:GetText()").unwrap(),
+            "other"
+        );
     }
 }

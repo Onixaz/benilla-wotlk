@@ -308,12 +308,6 @@ impl super::UiScript {
         }
     }
 
-    /// Drain the quests `GetQuestTimers` found run out and marked expired (`0x5e6349`); the app
-    /// keeps the mark, shows `ERR_QUEST_FAILED_S` and sends the status query.
-    pub fn take_quest_log_expiries(&mut self) -> Vec<u32> {
-        drain_field!(self, quest_log_expiries)
-    }
-
     /// Drain the abandons, quest ids marked by `SetAbandonQuest` and confirmed by
     /// `AbandonQuest()`; the app sends each slot's `CMSG_QUESTLOG_REMOVE_QUEST`.
     pub fn take_quest_log_abandons(&mut self) -> Vec<u32> {
@@ -903,8 +897,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // One return per live timer, in log order, re-read every OnUpdate: `QuestTimerFrame_Update`
     // takes them as varargs and hides on none (`QuestTimerFrame.lua:11`, `:26`, `:37`). A timer
-    // run out marks its quest expired unless it is complete (`0x5e6349` -> `0x5e57e0`): it reads
-    // failed at once, and `QUEST_LOG_UPDATE` follows.
+    // run out marks its quest expired unless it is complete, inside the call (`0x5e634a` ->
+    // `0x5e57e0`): it reads failed at once, the questgivers are asked again, its line shows
+    // (`0x5e6385`), and `QUEST_LOG_UPDATE` follows (`0x5e63b0`). Deviation: the line goes out
+    // with the engine verbs' other lines after the tick, not inside the call (#1306).
     g.set(
         "GetQuestTimers",
         lua.create_function(|lua, ()| {
@@ -930,9 +926,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     let e = &mut model.quest_log.entries[i];
                     e.complete = -1;
                     let id = e.quest_id;
-                    model.quest_log_expiries.push(id);
+                    if let Some(Some(Some(title))) = super::live::read_live(|l| l.expire_quest(id))
+                    {
+                        model.ui_errors_s.push(("ERR_QUEST_FAILED_S", title));
+                    }
                 }
-                // `0x5e63b0`.
                 super::live::unique_signal(&mut model, "QUEST_LOG_UPDATE");
             }
             Ok(MultiValue::from_vec(left))
@@ -2269,8 +2267,9 @@ mod tests {
         );
     }
 
-    /// A timer run out marks its quest expired in `GetQuestTimers` (`0x5e6240` -> `0x5e57e0`),
-    /// unless it is complete, and the mark drains to the app with `QUEST_LOG_UPDATE`.
+    /// A timer run out marks its quest expired in `GetQuestTimers`, inside the call (`0x5e6240` ->
+    /// `0x5e57e0`), unless it is complete; its cached title queues the line, and
+    /// `QUEST_LOG_UPDATE` follows.
     #[test]
     fn a_run_out_timer_marks_its_quest_failed_at_once() {
         let mut s = UiScript::new().unwrap();
@@ -2278,7 +2277,13 @@ mod tests {
         state.entries[0].timer = 1_000_900; // in progress
         state.entries[1].timer = 1_000_900; // complete
         s.set_quest_log(state);
-        let _clock = clock_at(1_000_950.0, None);
+        let view = crate::script::live::TestView {
+            server_unix: Some(1_000_950.0),
+            quest_titles: [(783, "The Fargodeep Mine".to_string())].into(),
+            ..Default::default()
+        };
+        // SAFETY: the test drops its loan on its own thread.
+        let clock = unsafe { crate::script::LiveLoan::new(view) };
         s.model_mut().pending_events.clear();
 
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 0);
@@ -2292,7 +2297,11 @@ mod tests {
         assert!(s
             .eval::<bool>("local _, _, _, _, _, _, done = GetQuestLogTitle(2) return done == 1")
             .unwrap());
-        assert_eq!(s.take_quest_log_expiries(), vec![783]);
+        assert_eq!(*clock.view().expired.borrow(), vec![783]);
+        assert_eq!(
+            s.take_ui_errors_s(),
+            vec![("ERR_QUEST_FAILED_S", "The Fargodeep Mine".to_string())]
+        );
         assert!(s
             .model_ref()
             .pending_events
@@ -2300,6 +2309,7 @@ mod tests {
             .any(|(e, _)| e == "QUEST_LOG_UPDATE"));
         // Marked once: the next call finds it failed.
         s.run("GetQuestTimers()").unwrap();
-        assert!(s.take_quest_log_expiries().is_empty());
+        assert_eq!(*clock.view().expired.borrow(), vec![783]);
+        assert!(s.take_ui_errors_s().is_empty());
     }
 }

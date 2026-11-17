@@ -207,7 +207,7 @@ fn on_giver_invalid(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
 fn on_giver_failed(
     In(ev): In<SessionEvent>,
     mut quest: ResMut<QuestGiver>,
-    (quest_log, marks): (Res<QuestLog>, Res<crate::ui_quest_log::QuestLogMarks>),
+    (quest_log, marks): (Res<QuestLog>, Res<crate::ui_quest_log::QuestExpiries>),
     commands: Res<NetCommands>,
 ) {
     if let SessionEvent::QuestGiverFailed { quest_id, reason } = ev {
@@ -401,7 +401,7 @@ fn quest_giver_failed(
     quest_id: u32,
     reason: u32,
     quest: &mut QuestGiver,
-    (quest_log, marks): (&QuestLog, &crate::ui_quest_log::QuestLogMarks),
+    (quest_log, marks): (&QuestLog, &crate::ui_quest_log::QuestExpiries),
     net_commands: &NetCommands,
 ) {
     debug!("net: quest {quest_id} accept failed (reason {reason})");
@@ -622,7 +622,7 @@ mod tests {
     fn a_full_bag_refusal_names_the_quest_and_adds_the_inventory_line() {
         let mut giver = open_detail(373);
         let log = QuestLog::default();
-        let marks = crate::ui_quest_log::QuestLogMarks::default();
+        let marks = crate::ui_quest_log::QuestExpiries::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
         quest_giver_failed(373, 4, &mut giver, (&log, &marks), &commands);
@@ -665,7 +665,7 @@ mod tests {
     fn a_refusal_for_another_quest_does_not_borrow_the_open_title() {
         let mut giver = open_detail(373);
         let log = QuestLog::default();
-        let marks = crate::ui_quest_log::QuestLogMarks::default();
+        let marks = crate::ui_quest_log::QuestExpiries::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
         quest_giver_failed(999, 17, &mut giver, (&log, &marks), &commands);

@@ -1553,6 +1553,133 @@ fn a_dialog_and_a_slot_update_in_one_frame_fire_the_log_update_last() {
     );
 }
 
+/// The events the progress, completed-quest and escort handlers fire, beside the control
+/// handler's, in one frame.
+const TURN_EVENTS: &[&str] = &[
+    "UI_INFO_MESSAGE",
+    "QUEST_WATCH_UPDATE",
+    "QUEST_QUERY_COMPLETE",
+    "QUEST_ACCEPT_CONFIRM",
+    "PLAYER_CONTROL_LOST",
+    "PLAYER_CONTROL_GAINED",
+];
+
+/// The add-kill line and `QUEST_WATCH_UPDATE` (`0x6d82e9`, `0x6d8241`), `QUEST_QUERY_COMPLETE`
+/// (`0x5b5270`) and `QUEST_ACCEPT_CONFIRM` (`0x58bc50`) fire in their packet's turn: ahead of a
+/// later packet's handler event in the same frame, behind an earlier one's.
+#[test]
+fn progress_completed_and_confirm_fire_in_their_packets_turn() {
+    use benilla_protocol::messages::QuestConfirmAccept;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            name_answer(0x99, "Escort"),
+            SessionEvent::CreatureName {
+                entry: 299,
+                name: Some("Wolf".into()),
+                subname: None,
+                cursor_name: None,
+                creature_type: Some(1),
+                pet_family: 0,
+                rank: 0,
+                type_flags: 0,
+                display_id: 0,
+                civilian: false,
+                racial_leader: false,
+                modifiers: (1.0, 1.0),
+            },
+            kill_quest_template(),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+        ],
+        3,
+    );
+    let [counter, line] = kill(1);
+    rig.packets(vec![counter], 2);
+    let line_first = rig.packets(vec![line, control(false)], 1);
+    let [counter, line] = kill(2);
+    rig.packets(vec![counter], 2);
+    let control_first = rig.packets(vec![control(true), line], 1);
+    let completed = || SessionEvent::QuestsCompleted(vec![QUEST]);
+    let confirm = |sender| {
+        SessionEvent::QuestConfirmAccept(QuestConfirmAccept {
+            quest_id: QUEST,
+            title: "Charz".into(),
+            sender,
+        })
+    };
+    let answers_first = rig.packets(vec![completed(), confirm(0x99), control(false)], 1);
+    let control_ahead = rig.packets(vec![control(true), completed(), confirm(0x99)], 1);
+    assert_eq!(
+        (
+            fired(&line_first, TURN_EVENTS),
+            fired(&control_first, TURN_EVENTS),
+            fired(&answers_first, TURN_EVENTS),
+            fired(&control_ahead, TURN_EVENTS),
+        ),
+        (
+            vec![
+                "UI_INFO_MESSAGE".to_string(),
+                "QUEST_WATCH_UPDATE".into(),
+                "PLAYER_CONTROL_LOST".into(),
+            ],
+            vec![
+                "PLAYER_CONTROL_GAINED".to_string(),
+                "UI_INFO_MESSAGE".into(),
+                "QUEST_WATCH_UPDATE".into(),
+            ],
+            vec![
+                "QUEST_QUERY_COMPLETE".to_string(),
+                "QUEST_ACCEPT_CONFIRM".into(),
+                "PLAYER_CONTROL_LOST".into(),
+            ],
+            vec![
+                "PLAYER_CONTROL_GAINED".to_string(),
+                "QUEST_QUERY_COMPLETE".into(),
+                "QUEST_ACCEPT_CONFIRM".into(),
+            ],
+        )
+    );
+}
+
+/// The escort confirm and the push verdict read the member's name with no callback (`0x58bc85`,
+/// `0x6e3a61`): a name not cached drops them, and its answer later in the frame raises nothing;
+/// a cached name shows the verdict's line.
+#[test]
+fn an_unnamed_member_drops_the_confirm_and_the_verdict() {
+    use benilla_protocol::messages::{QuestConfirmAccept, QuestShareMsg};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let confirm = SessionEvent::QuestConfirmAccept(QuestConfirmAccept {
+        quest_id: QUEST,
+        title: "Charz".into(),
+        sender: 0x77,
+    });
+    let verdict = |member| SessionEvent::QuestPushResult {
+        member,
+        msg: QuestShareMsg::SHARING_QUEST,
+    };
+    let unnamed = rig.packets(vec![confirm, verdict(0x77), name_answer(0x77, "Late")], 3);
+    let named = rig.packets(vec![verdict(0x77)], 3);
+    let events = &["QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM"];
+    assert_eq!(fired(&unnamed, events), Vec::<String>::new());
+    let lines: Vec<&str> = named
+        .iter()
+        .filter(|s| s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.args.split(' ').take(4).collect::<Vec<_>>().join(" "))
+        .map(|l| {
+            if l.starts_with("Sharing quest with Late") {
+                "shared"
+            } else {
+                "other"
+            }
+        })
+        .collect();
+    assert_eq!(lines, ["shared"], "{named:?}");
+}
+
 // ── The live infrastructure end to end ───────────────────────────────────────────────────────────
 
 /// A test handler on the control update firing `CHARZ_HANDLER`, as the reference's handler fires

@@ -220,6 +220,7 @@ fn on_record(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
 mod tests {
     use super::*;
     use benilla_formats::FactionCatalog;
+    use benilla_ui::script::UiScript;
     use std::collections::HashMap;
 
     /// The leaderboard lines for a quest needing `faction`, over a catalog where 6 is named and 7
@@ -261,6 +262,127 @@ mod tests {
         assert_eq!(rep_lines(6), ["Darnassus: Friendly"]);
         assert_eq!(rep_lines(7), [": Friendly"]);
         assert!(rep_lines(8).is_empty());
+    }
+
+    /// A minimal app with the record handlers, the caches holding quest 176 (Hogger, creature
+    /// 448 in flight), and a VM with a quest tooltip `T`.
+    fn tooltip_app() -> App {
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<UiEvents>()
+            .init_resource::<NameCache>()
+            .init_resource::<Items>()
+            .init_resource::<crate::world_state::WorldStates>()
+            .insert_resource(NetCommands(tx));
+        register(&mut app);
+        let mut log = QuestLog::default();
+        let mut t = QuestTemplate {
+            quest_id: 176,
+            title: "Wanted: Hogger".into(),
+            objectives_text: "Bring the paw.".into(),
+            ..Default::default()
+        };
+        t.objectives[0].creature_or_go = 448;
+        t.objectives[0].required_count = 1;
+        log.insert_template(t);
+        app.insert_resource(log);
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                r#"
+                QUEST_TOOLTIP_REQUIREMENTS = "Requirements:"
+                QUEST_MONSTERS_KILLED_NOPROGRESS = "%s slain: %d"
+                fired = 0
+                T = CreateFrame("GameTooltip", "T")
+                CreateFrame("Frame", "Owner")
+                T:SetOwner(Owner, "ANCHOR_PRESERVE")
+                T:SetScript("OnTooltipSetQuest", function() fired = fired + 1 end)
+                "#,
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app
+    }
+
+    fn line(app: &App, n: u32) -> String {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .eval(&format!("return TTextLeft{n}:GetText()"))
+            .unwrap()
+    }
+
+    fn creature_answer(entry: u32) -> SessionEvent {
+        SessionEvent::CreatureName {
+            entry,
+            name: Some("Hogger".into()),
+            subname: None,
+            cursor_name: None,
+            creature_type: None,
+            pet_family: 0,
+            rank: 0,
+            type_flags: 0,
+            display_id: 0,
+            civilian: false,
+            racial_leader: false,
+            modifiers: (0.0, 0.0),
+        }
+    }
+
+    /// `SetHyperlink` reads the caches at the call (`0x622960`): the name in flight shows as the
+    /// placeholder and is asked; its answer builds the tooltip again with the name (`0x61de20`),
+    /// and another creature's answer builds nothing.
+    #[test]
+    fn the_tooltip_reads_the_caches_at_the_call_and_a_name_answer_rebuilds_it() {
+        use crate::net::handlers::dispatch;
+        let mut app = tooltip_app();
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.run(r#"T:SetHyperlink("quest:176:1")"#).unwrap();
+        });
+        assert_eq!(line(&app, 1), "Wanted: Hogger");
+        assert_eq!(line(&app, 6), " - ... slain: 1");
+        let fired = |app: &App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<i64>("return fired")
+                .unwrap()
+        };
+        assert_eq!(fired(&app), 1);
+
+        // Another creature's answer: no rebuild.
+        dispatch(app.world_mut(), vec![creature_answer(99)]);
+        assert_eq!(fired(&app), 1);
+
+        // The cache holds the name before the callback runs, as the cache's handler comes first.
+        app.world_mut().resource_mut::<NameCache>().insert_creature(
+            448,
+            Some(crate::names::CreatureRecord {
+                name: "Hogger".into(),
+                ..Default::default()
+            }),
+        );
+        dispatch(app.world_mut(), vec![creature_answer(448)]);
+        assert_eq!(fired(&app), 2);
+        assert_eq!(line(&app, 6), " - Hogger slain: 1");
+    }
+
+    /// A template the server does not know waits on nothing; one in flight waits on its answer.
+    #[test]
+    fn a_template_miss_reads_no_view_and_waits_only_while_in_flight() {
+        let mut app = tooltip_app();
+        let mut state =
+            bevy::ecs::system::SystemState::<QuestTooltipLive<'_, '_>>::new(app.world_mut());
+        let get = |_: &str| None;
+        let read = state.get(app.world()).read(500, &get).unwrap();
+        assert_eq!(read.view, None);
+        assert_eq!(read.waits, [QuestRecord::Quest(500)]);
+        app.world_mut()
+            .resource_mut::<QuestLog>()
+            .templates
+            .insert(500, None);
+        let read = state.get(app.world()).read(500, &get).unwrap();
+        assert_eq!(read.view, None);
+        assert!(read.waits.is_empty());
     }
 
     #[test]

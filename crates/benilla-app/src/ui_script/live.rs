@@ -226,6 +226,10 @@ impl LiveState for LiveView<'_, '_> {
         self.quest.quest_special_item(quest_id)
     }
 
+    fn expire_quest(&self, quest_id: u32) -> Option<Option<String>> {
+        self.quest.expire_quest(quest_id)
+    }
+
     /// The last time response advanced on our monotonic clock, where the reference adds the
     /// local clock to its offset (`0x5dff40`). Deviation: a local clock step mid-session (an NTP
     /// correction) moves the reference's countdowns and not ours, as the step changes no time the

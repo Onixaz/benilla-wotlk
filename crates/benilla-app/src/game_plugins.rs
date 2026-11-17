@@ -978,14 +978,14 @@ pub(crate) mod schedule_tests {
     ///   drain, against `finish_colliders`, as the other such drains pair; and
     ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over
     ///   `Items`: it only reads templates.
-    /// - The quest progress lines (#638) add 1: `ui_quest_log::progress::announce_quest_progress`
-    ///   against `feed_item_stats` over `Items`: it only reads templates.
+    /// - The quest progress lines (#638) added 1, which left when the lines moved into their
+    ///   packets' handlers (#1276).
     /// - The quest panels and the world map's quest lines add 11: the NPC emote queue's
     ///   `set_emote_queues` and `drive_emote_queues` against `finish_colliders`, as the other
     ///   animation drivers pair; `ui_quest::lines::feed_quest_lines`, now a `TutorialEvent`
     ///   writer, against the other writers of that queue (whose events commute) and the feeds it
-    ///   shares the VM with; and `ui_quest_watch::feed_quest_poi_lines` against `feed_item_stats`
-    ///   over `Items`: it only reads templates.
+    ///   shares the VM with; the POI lines' pair against `feed_item_stats` left when the POI
+    ///   verbs began building them at the call (#1276).
     /// - The update-object deck passengers (#902) add 25: `transport::compose_deck_passengers`
     ///   against the same 24 `Transform` readers `compose_riders` pairs with (the range, reach,
     ///   threat and NPC-session feeds, the art scope, the WDL stream and the booth billboards),
