@@ -1139,6 +1139,93 @@ fn quest_accept_reads_a_source_item_created_in_the_same_frame() {
     assert_eq!(rig.live_now().verbs["special"], "true");
 }
 
+/// A required item's create and destroy run the stack watch's walk (`0x5e1250`): the create's post-init with its record, at once with the record cached (`0x70af37` -> `0x70adfc`) or at the record's answer (`0x70ae90`), and the disable on a destroy (`0x70b0eb`); each on an item we own (`0x70ad20`-`0x70ad2f`, `0x70b0b5`-`0x70b0be`) queues `QUEST_LOG_UPDATE` and re-asks every giver's status (`0x5e12e5`). Another owner's item does neither.
+#[test]
+fn a_required_items_create_and_destroy_signal_the_log_and_reask_the_givers() {
+    use benilla_protocol::field::{FIELD_ITEM_OWNER, FIELD_OBJECT_ENTRY};
+    const ITEM: u32 = 5100;
+    const LATE: u32 = 5101;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let mut t = benilla_protocol::messages::QuestTemplate {
+        quest_id: QUEST,
+        level: 80,
+        zone_or_sort: 12,
+        title: "Charz".into(),
+        ..Default::default()
+    };
+    t.required_items[0] = (ITEM, 5);
+    t.required_items[1] = (LATE, 1);
+    rig.packets(
+        vec![
+            SessionEvent::QuestTemplate(Box::new(t)),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+            SessionEvent::ItemTemplate {
+                entry: ITEM,
+                info: Some(Box::new(crate::items::test_template("Charz Pelt"))),
+            },
+        ],
+        3,
+    );
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let reasks = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter(|c| matches!(c, crate::net::ClientCommand::QuestgiverStatusMultipleQuery))
+            .count()
+    };
+    let item = |guid: u64, entry: u32, owner: u64| SessionEvent::ItemCreate {
+        guid,
+        container: false,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_OWNER, owner as u32),
+            (FIELD_ITEM_OWNER + 1, (owner >> 32) as u32),
+        ])
+        .into_created(ObjectType::Item),
+    };
+    let updates = |seen: &[Seen]| fired(seen, &["QUEST_LOG_UPDATE"]).len();
+
+    let seen = rig.packets(vec![item(0x4000_0000_0000_0200, ITEM, ME)], 2);
+    assert_eq!(
+        updates(&seen),
+        1,
+        "a cached record: the post-init at the create"
+    );
+    assert_eq!(reasks(&rx), 1);
+
+    let seen = rig.packets(vec![item(0x4000_0000_0000_0201, ITEM, 0x99)], 2);
+    assert_eq!(updates(&seen), 0, "another owner's item");
+    assert_eq!(reasks(&rx), 0);
+
+    let seen = rig.packets(vec![item(0x4000_0000_0000_0202, LATE, ME)], 2);
+    assert_eq!(updates(&seen), 0, "the record is asked for, not cached");
+    assert_eq!(reasks(&rx), 0);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: LATE,
+            info: Some(Box::new(crate::items::test_template("Charz Tooth"))),
+        }],
+        2,
+    );
+    assert_eq!(updates(&seen), 1, "the record's answer runs the post-init");
+    assert_eq!(reasks(&rx), 1);
+
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectDestroyed(0x4000_0000_0000_0200)],
+        2,
+    );
+    assert_eq!(updates(&seen), 1, "the destroy's disable");
+    assert_eq!(reasks(&rx), 1);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectDestroyed(0x4000_0000_0000_0201)],
+        2,
+    );
+    assert_eq!(updates(&seen), 0, "another owner's item");
+    assert_eq!(reasks(&rx), 0);
+}
+
 /// Two POI responses in one frame: each handler writes the store in turn (`0x5e7370`) and queues `QUEST_POI_UPDATE` as a unique signal (`0x5e7628`), which fires once, at the frame's flush (`0x614760`), never per response.
 #[test]
 fn two_poi_responses_in_one_frame_fire_one_poi_update() {

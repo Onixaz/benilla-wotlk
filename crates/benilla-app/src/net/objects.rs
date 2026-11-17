@@ -424,8 +424,12 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
         } => {
             sc.parked
                 .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
-            if !sc.index.0.contains_key(&guid) && sc.parked.contains(guid) {
+            // A held item takes the fields alone; a new or re-enabled one runs its post-init (`0x70af80`, `0x70afb0`).
+            let fresh = !sc.index.0.contains_key(&guid);
+            let post_init = (fields.object_entry().unwrap_or(0), fields.item_owner());
+            if fresh && sc.parked.contains(guid) {
                 revive(&mut sc, guid, Some(fields), None);
+                item_post_init(&mut sc, guid, post_init);
                 return;
             }
             item_create(
@@ -438,11 +442,31 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                 &mut sc.field_changes,
                 &mut sc.items,
             );
+            if fresh {
+                item_post_init(&mut sc, guid, post_init);
+            }
         }
         SessionEvent::ItemTemplate { entry, info } => {
             let info = info.map(|b| *b);
             debug!("net: item template {entry} → {info:?}");
+            let waited = info.is_some() && sc.items.template_cached(entry).is_none();
             sc.items.insert_template(entry, info);
+            // Each item that asked for this record runs its post-init now (`0x70ae90` -> `0x70aa40`).
+            if waited {
+                let owners: Vec<Option<u64>> = sc
+                    .index
+                    .0
+                    .iter()
+                    .filter(|(&g, _)| guid::is_item(g))
+                    .filter_map(|(_, &e)| {
+                        let item = &sc.stores.get(e).ok()?.0;
+                        (item.object_entry() == Some(entry)).then(|| item.item_owner())
+                    })
+                    .collect();
+                for owner in owners {
+                    item_record_watch(&mut sc, (entry, owner));
+                }
+            }
         }
         // The reference's item-time handler has two arms that share the item lookup
         // (`TYPEMASK_ITEM`) and differ on a miss.
@@ -658,6 +682,7 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
 /// The party hook runs first: the reference's deactivate reads the descriptor about to go.
 fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectDestroyed(guid) = ev {
+        item_disable_watch(&mut sc, guid);
         crate::death::net::forget_corpse(guid, &mut sc.death_net);
         let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
         crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
@@ -674,6 +699,7 @@ fn on_objects_removed(In(ev): In<SessionEvent>, mut sc: Scene) {
             .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
         guids.retain(|&g| sc.self_guid.0 != Some(g));
         for &guid in &guids {
+            item_disable_watch(&mut sc, guid);
             let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
             crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         }
@@ -1684,6 +1710,46 @@ fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
             &mut sc.signals,
         );
     }
+}
+
+/// An item's post-init (`0x70af00`): its record asked for, and with it cached the post-init with the record runs now (`0x70af37`), else when the answer lands (`0x70ae90`).
+fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>)) {
+    if entry != 0 && sc.items.template(entry, guid, &sc.net).is_some() {
+        item_record_watch(sc, (entry, owner));
+    }
+}
+
+/// The post-init with the record's quest-log test (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), the stack watch's walk (`0x70adfc` -> `0x5e1250`).
+fn item_record_watch(sc: &mut Scene, (entry, owner): (u32, Option<u64>)) {
+    let me = sc.self_guid.0.filter(|g| sc.index.0.contains_key(g));
+    if me.is_none() || owner != me {
+        return;
+    }
+    item_log_walk(sc, entry, true);
+}
+
+/// An item's disable on a destroy or out-of-range (`0x70afc0`): on an item we own (`0x70b0b5`-`0x70b0be`), the stack watch's walk (`0x70b0eb` -> `0x5e1250`).
+fn item_disable_watch(sc: &mut Scene, guid: u64) {
+    if !guid::is_item(guid) {
+        return;
+    }
+    let Some(item) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) else {
+        return;
+    };
+    let (entry, owner) = (item.0.object_entry().unwrap_or(0), item.0.item_owner());
+    if owner.is_none() || owner != sc.self_guid.0 {
+        return;
+    }
+    let me = sc.self_guid.0.is_some_and(|g| sc.index.0.contains_key(&g));
+    item_log_walk(sc, entry, me);
+}
+
+/// The stack watch's walk over the logged quests for `entry` ([`crate::ui_quest_log::rows::item_moved`]).
+fn item_log_walk(sc: &mut Scene, entry: u32, me: bool) {
+    let (Some(log), Some(rows)) = (sc.quest_log.as_deref(), sc.quest_rows.as_deref()) else {
+        return;
+    };
+    crate::ui_quest_log::rows::item_moved(entry, me, log, rows, &sc.net, &mut sc.signals);
 }
 
 /// The slots `fields` moved, in slot order, each slot's `(quest id, state)` before and after.
