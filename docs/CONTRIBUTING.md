@@ -60,7 +60,9 @@ pins the benilla revision it builds on. What a crate cannot reach stays a fork's
    its own tests; the maintainers' own pull requests run that instead.
 2. The reference fact is stated: what 3.3.5a does, and where that is known from (the client's
    behaviour you observed, a DBC field, a FrameXML line, a packet capture). The names and shapes
-   under `reference/` are the surface benilla tracks.
+   under `reference/` are the surface benilla tracks. A function in the client binary is cited
+   by its address alone (`0x7b8c70`), never by a decompiled or community symbol name
+   (`docs/METHOD.md`, "Hard rules").
 3. A comment where it matters, one line, saying what the code does and the reference fact behind
    it.
    No history.
