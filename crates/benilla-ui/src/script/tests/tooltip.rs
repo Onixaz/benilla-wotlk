@@ -142,13 +142,14 @@ fn owner_clear_and_hide_lifecycle() {
         local tt = CreateFrame("GameTooltip", "TT2")
         tt:SetScript("OnTooltipCleared", function() cleared = cleared + 1 end)
         tt:SetOwner(a, "ANCHOR_RIGHT")
+        assert(cleared == 0, "empty SetOwner did not fire OnTooltipCleared")
         tt:AddLine("first hover")
         tt:Show()
         assert(tt:IsOwned(a) and not tt:IsOwned(b), "owned by a")
         tt:SetScript("OnHide", function() hidden = (hidden or 0) + 1 end)
         tt:SetOwner(b, "ANCHOR_LEFT")
         assert(not tt:IsShown() and hidden == 1, "SetOwner hid the shown tooltip")
-        assert(cleared >= 1, "SetOwner cleared the old content")
+        assert(cleared == 1, "SetOwner cleared the old content exactly once")
         assert(tt:NumLines() == 0, "content cleared on re-own")
         assert(tt:IsOwned(b) and not tt:IsOwned(a), "owner moved")
         tt:AddLine("second hover")
@@ -156,7 +157,7 @@ fn owner_clear_and_hide_lifecycle() {
         assert(not tt:IsShown(), "hidden")
         assert(not tt:IsOwned(b), "owner dropped on hide")
         assert(tt:NumLines() == 0, "content cleared on hide")
-        assert(cleared >= 2, "hide fired OnTooltipCleared")
+        assert(cleared == 2, "hide fired OnTooltipCleared for filled content")
     "#,
     )
     .unwrap();
@@ -965,9 +966,9 @@ fn get_owner_answers_the_owner_frame_or_nil() {
 }
 
 /// A Lua `SetOwner` runs the tooltip's `Hide` first, which clears the shown flag before the hide
-/// override (`0x48f620` → `0x61eb20`): its clear fires OnTooltipCleared with the old owner still
-/// set and `IsShown` already false, then OnHide fires for a shown plate only. The core's own clear
-/// then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before `0x61ea7e`).
+/// override (`0x48f620` → `0x61eb20`): a filled clear fires OnTooltipCleared with the old owner
+/// still set and `IsShown` already false, then OnHide fires for a shown plate only. The core's
+/// empty clear before the new owner is stored (`0x61ea06` before `0x61ea7e`) is silent.
 #[test]
 fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     let s = script();
@@ -996,12 +997,12 @@ fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     .unwrap();
     assert_eq!(
         s.eval::<String>("return first").unwrap(),
-        "cleared:SeqA:hidden hide cleared:nil:hidden"
+        "cleared:SeqA:hidden hide"
     );
     assert_eq!(
         s.eval::<String>("return second").unwrap(),
-        "cleared:SeqB:hidden cleared:nil:hidden",
-        "an already hidden plate fires no OnHide"
+        "",
+        "an already hidden plate fires neither OnHide nor OnTooltipCleared for an empty clear"
     );
     assert!(s.eval::<bool>("return Tip:IsOwned(SeqA)").unwrap());
 }
