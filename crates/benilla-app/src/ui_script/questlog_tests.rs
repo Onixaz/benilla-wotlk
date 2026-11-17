@@ -349,23 +349,28 @@ fn progress_auto_watches_for_five_minutes() {
     assert!(s.eval::<bool>("return IsQuestWatched(1)").unwrap());
     assert!(s.eval::<bool>("return WatchFrameHeader:IsShown()").unwrap());
 
-    s.tick(299.0);
+    // Each frame's game UI idle runs the watch timers after the tick (`0x52b229`).
+    let frame = |s: &mut benilla_ui::script::UiScript, secs: f32| {
+        s.tick(secs);
+        s.update_quest_watch_timers();
+    };
+    frame(&mut s, 299.0);
     assert!(s.eval::<bool>("return IsQuestWatched(1)").unwrap());
     s.fire_event(
         "QUEST_WATCH_UPDATE",
         vec![benilla_ui::script::ScriptValue::Int(1)],
     );
-    s.tick(299.0);
+    frame(&mut s, 299.0);
     assert!(
         s.eval::<bool>("return IsQuestWatched(1)").unwrap(),
         "re-armed by fresh progress"
     );
-    s.tick(2.0);
+    frame(&mut s, 2.0);
     assert!(
         !s.eval::<bool>("return IsQuestWatched(1)").unwrap(),
         "expired after 300 s without progress"
     );
-    s.tick(0.1);
+    frame(&mut s, 0.1);
     assert!(!s.eval::<bool>("return WatchFrameHeader:IsShown()").unwrap());
     let errors = super::test_ui::errors_but_unported(&s);
     assert!(errors.is_empty(), "expiry errors: {errors:?}");

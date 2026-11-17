@@ -36,6 +36,8 @@ pub(crate) struct LiveView<'w, 's> {
     positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
     inspect: crate::ui_inspect::InspectLive<'w>,
     world_state_ui: crate::world_state_ui::WorldStateUiLive<'w>,
+    signals: Option<Res<'w, UniqueSignals>>,
+    item_range: crate::ui_quest_watch::ItemRangeLive<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -166,6 +168,17 @@ impl LiveState for LiveView<'_, '_> {
 
     fn summon_time_left_ms(&self) -> u32 {
         self.summon.time_left_ms()
+    }
+
+    fn item_spell_in_range(&self, spell_id: u32, target: u64) -> Option<Option<bool>> {
+        Some(self.item_range.in_range(spell_id, target))
+    }
+
+    fn unique_signal(&self, event: &'static str) -> bool {
+        self.signals
+            .as_ref()
+            .map(|s| s.unique_signal(event))
+            .is_some()
     }
 
     fn world_state_ui_count(&self) -> Option<usize> {
@@ -596,39 +609,60 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
 
 /// The unique signals queued this frame: each event once, however often it is queued
 /// (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` ->
-/// `0x614760`).
+/// `0x614760`). Behind a lock so the lent view queues the verbs' signals into the same queue the
+/// handlers fill.
 #[derive(Resource, Default)]
-pub(crate) struct UniqueSignals(Vec<&'static str>);
+pub(crate) struct UniqueSignals(std::sync::Mutex<Vec<&'static str>>);
 
 impl UniqueSignals {
+    fn queue(&self) -> std::sync::MutexGuard<'_, Vec<&'static str>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Queue `event` for the frame's flush unless it already waits (`0x615020`).
-    pub(crate) fn unique_signal(&mut self, event: &'static str) {
-        if !self.0.contains(&event) {
-            self.0.push(event);
+    pub(crate) fn unique_signal(&self, event: &'static str) {
+        let mut queue = self.queue();
+        if !queue.contains(&event) {
+            queue.push(event);
         }
+    }
+
+    /// The game UI's shutdown empties the queue (`0x52902f`), so nothing waits for the next login.
+    pub(crate) fn clear(&self) {
+        self.queue().clear();
     }
 
     /// The queued event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
-        self.0.clone()
+        self.queue().clone()
     }
 }
 
-/// Fires the frame's unique signals, in queue order and without arguments (`0x614760`), after the
-/// feeds that queue them; with no VM they are dropped.
+/// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique
+/// signals fire in queue order without arguments (`0x52b247` -> `0x614760`), after the feeds that
+/// queue them; with no VM they are dropped.
 pub(crate) fn flush_unique_signals(
     (script, _live): (Option<NonSendMut<UiScript>>, LendLive),
-    mut signals: ResMut<UniqueSignals>,
+    signals: Res<UniqueSignals>,
 ) {
-    if signals.0.is_empty() {
-        return;
-    }
-    let events = std::mem::take(&mut signals.0);
     let Some(mut script) = script else {
+        signals.clear();
         return;
     };
+    script.update_quest_watch_timers();
+    let events = std::mem::take(&mut *signals.queue());
     for event in events {
         script.fire_event(event, Vec::new());
     }
+}
+
+/// The disconnect runs the game UI's shutdown, which empties the unique signals (`0x52902f`).
+pub(crate) fn clear_unique_signals(
+    In(_): In<benilla_protocol::SessionEvent>,
+    signals: Res<UniqueSignals>,
+) {
+    signals.clear();
 }

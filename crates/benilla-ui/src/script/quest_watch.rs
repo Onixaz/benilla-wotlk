@@ -444,26 +444,24 @@ impl super::UiScript {
         }
     }
 
-    /// The watch-timer update (`0x5dfef0`): drop each timed watch past its expiry, announcing the
-    /// log.
-    pub(crate) fn expire_quest_watches(&mut self) {
-        let expired = {
-            let mut model = self.model_mut();
-            let now = model.now;
-            let due: Vec<u32> = model
-                .quest_watch
-                .watches
-                .iter()
-                .filter(|w| w.expire_at > 0.0 && now >= w.expire_at)
-                .map(|w| w.quest_id)
-                .collect();
-            for id in &due {
-                remove_watch(&mut model, *id);
-            }
-            !due.is_empty()
-        };
-        if expired {
-            self.fire_event("QUEST_LOG_UPDATE", Vec::new());
+    /// The watch-timer update (`0x5dfef0`), which the game UI's idle runs ahead of the unique
+    /// signals' flush (`0x52b229`): drop each timed watch past its expiry, queueing the log's update
+    /// (`0x5dff1d`).
+    pub fn update_quest_watch_timers(&mut self) {
+        let mut model = self.model_mut();
+        let now = model.now;
+        let due: Vec<u32> = model
+            .quest_watch
+            .watches
+            .iter()
+            .filter(|w| w.expire_at > 0.0 && now >= w.expire_at)
+            .map(|w| w.quest_id)
+            .collect();
+        for id in &due {
+            remove_watch(&mut model, *id);
+        }
+        if !due.is_empty() {
+            super::live::unique_signal(&mut model, "QUEST_LOG_UPDATE");
         }
     }
 }
@@ -751,12 +749,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             } else {
                 model.unit_guids.guid_of(&token)
             };
-            // The item's spell through the spell range check, as `IsItemInRange` runs it (`0x5e55b6`).
+            // The item's spell through the range check at the call (`0x5e55b6`).
             let spell = special_item(&model, index).map(|(i, _)| i.spell_id);
-            let near = spell
-                .zip(model.spell_info.clone())
-                .zip(target)
-                .and_then(|((id, s), guid)| s.spell_in_range(id, false, guid));
+            let near = spell.zip(target).and_then(|(id, guid)| {
+                super::read_live(|l| l.item_spell_in_range(id, guid))
+                    .flatten()
+                    .unwrap_or_else(|| model.spell_info.clone()?.spell_in_range(id, false, guid))
+            });
             Ok(super::spell_info::range_answer(near))
         })?,
     )?;
@@ -817,7 +816,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// The special item of the quest at a 1-based row, read live (`0x5e0da0`), and its bag slot,
-/// while the slot holds it.
+/// while the slot holds it. The slot's link, texture and cooldown are the container feed's
+/// until #1278 reads the bags live.
 fn special_item(
     model: &Model,
     index: i32,
@@ -1010,6 +1010,7 @@ mod tests {
             "nil"
         );
         assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 5)"), "nil");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 1)"), "nil");
         // Row 1 holds no special item.
         assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(1)"), "nil");
         // No target: nobody to range.
@@ -1054,14 +1055,18 @@ mod tests {
         assert_eq!(s.quest_log_watched(), vec![1, 2]);
         let saved = s.cvar("trackedQuests").unwrap();
         assert_eq!(super::super::achievement::decode_tracked(&saved), vec![1]);
+        // The game UI's idle runs the watch timers after the frame (`0x52b229`).
         s.tick(299.0);
+        s.update_quest_watch_timers();
         assert_eq!(s.quest_log_watched(), vec![1, 2]);
         s.tick(2.0);
+        s.update_quest_watch_timers();
         assert_eq!(s.quest_log_watched(), vec![1]);
         // A plain add to a timed watch makes it permanent; a timed add never shortens a plain one.
         s.run("AddQuestWatch(2, 5) AddQuestWatch(2) AddQuestWatch(1, 5)")
             .unwrap();
         s.tick(10.0);
+        s.update_quest_watch_timers();
         assert_eq!(s.quest_log_watched(), vec![1, 2]);
     }
 

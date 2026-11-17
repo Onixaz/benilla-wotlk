@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use benilla_ui::script::{ActionSlot, ScriptValue, UiScript, UnitState};
 
+use crate::net::NetHandlerApp;
 use crate::ui_unit::UnitFeed;
 use benilla_world::schedule::WorldStage;
 
@@ -514,6 +515,10 @@ impl Plugin for UiScriptPlugin {
             // The frame's unique signals, after every feed that queues one (`0x614760`); a signal
             // queued before the interface is up waits for it.
             .init_resource::<live::UniqueSignals>()
+            .net_handler(
+                benilla_protocol::SessionEventKind::Disconnected,
+                live::clear_unique_signals,
+            )
             .add_systems(
                 Update,
                 live::flush_unique_signals

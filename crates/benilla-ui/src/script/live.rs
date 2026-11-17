@@ -108,6 +108,17 @@ pub trait LiveState {
         0
     }
 
+    /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)`
+    /// with no answer, `None` where no view lends the check.
+    fn item_spell_in_range(&self, _spell_id: u32, _target: u64) -> Option<Option<bool>> {
+        None
+    }
+
+    /// Queue `event` with the frame's unique signals (`0x615020`); false where no queue is lent.
+    fn unique_signal(&self, _event: &'static str) -> bool {
+        false
+    }
+
     /// The world-state readout's admitted row count at the call (`0x548720`), `None` without one.
     fn world_state_ui_count(&self) -> Option<usize> {
         None
@@ -339,6 +350,14 @@ pub(crate) fn has_control() -> bool {
 }
 
 /// `f` over the view lent right now, `None` with none lent.
+/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the
+/// frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
+pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
+    if read_live(|l| l.unique_signal(event)) != Some(true) {
+        model.pending_events.push((event.to_string(), Vec::new()));
+    }
+}
+
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
     // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or

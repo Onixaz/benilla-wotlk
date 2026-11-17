@@ -107,7 +107,7 @@ pub(crate) struct Scene<'w, 's> {
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
     control: ResMut<'w, super::ControlFlag>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
-    signals: ResMut<'w, crate::ui_script::live::UniqueSignals>,
+    signals: Res<'w, crate::ui_script::live::UniqueSignals>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -1486,7 +1486,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     own_death_fields(sc, guid, player);
     // The quest-slot watch (`0x6df370`, one per slot's five fields) rebuilds the log (`0x6df3bb`),
-    // which queues `QUEST_LOG_UPDATE` (`0x5e6957`) in turn with the frame's other unique signals.
+    // which queues `QUEST_LOG_UPDATE` (`0x5e6cb9`) in turn with the frame's other unique signals.
     if merged.quest_log_moved {
         sc.signals.unique_signal("QUEST_LOG_UPDATE");
     }

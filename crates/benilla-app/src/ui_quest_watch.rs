@@ -44,11 +44,7 @@ impl Plugin for UiQuestWatchPlugin {
 
 /// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): the store takes each quest in turn with the
 /// handler's events, and `QUEST_POI_UPDATE` waits as a unique signal (`0x5e7628`).
-fn on_quest_poi(
-    In(ev): In<SessionEvent>,
-    mut ui: ResMut<UiEvents>,
-    mut signals: ResMut<UniqueSignals>,
-) {
+fn on_quest_poi(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, signals: Res<UniqueSignals>) {
     if let SessionEvent::QuestPoi(pois) = ev {
         debug!("ui_quest_watch: POI for {} quest(s)", pois.len());
         let pois: Vec<QuestPoiView> = pois.into_iter().map(view).collect();
@@ -314,6 +310,8 @@ impl QuestView<'_, '_> {
     /// The quest's special item (`0x5e0da0`): the template's starting item, else under flag
     /// `0x20000` its drop items in order (`0x5e0df9`), the first carried copy that can be used
     /// (`0x708c10`), with the bag slot it sits in, its charges and its on-use spell.
+    /// A template or item record not cached is asked here, as the reference's cache lookup with a
+    /// callback asks it (`0x5e0da0`), and reads as no item until it lands.
     pub(crate) fn quest_special_item(&self, quest_id: u32) -> Option<QuestSpecialItemView> {
         let (quest_log, objects, items, net) = (
             self.quest_log.as_deref()?,
@@ -355,5 +353,29 @@ impl QuestView<'_, '_> {
             charges,
             spell_id,
         })
+    }
+}
+
+/// What the special item's range verb reads at the call (`0x5e54c0`): the spell, our modifiers and
+/// the range facts of us and the unit, none of them sampled.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ItemRangeLive<'w, 's> {
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    facts: crate::spell::cast_target::RangeFactsView<'w, 's>,
+}
+
+impl ItemRangeLive<'_, '_> {
+    /// The item's spell through the range check toward `target` (`0x5e55b6`), `None` with no
+    /// answer.
+    pub(crate) fn in_range(&self, spell_id: u32, target: u64) -> Option<bool> {
+        let spells = self.spells.as_deref()?;
+        let def = spells.catalog.get(spell_id)?;
+        self.facts.player_range_check(
+            def,
+            spells.ranges.get(def.range_index),
+            self.mods.as_deref()?,
+            target,
+        )
     }
 }

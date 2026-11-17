@@ -805,7 +805,7 @@ fn quest_accept_and_complete() {
     );
     // The slot watcher rebuilds the rows (`0x6df3bb`) and fires `QUEST_ACCEPTED` for a cached
     // template at once (`0x6df49c`); the rebuild's `QUEST_LOG_UPDATE` waits for the frame's flush
-    // (`0x5e6957`, `0x614760`).
+    // (`0x5e6cb9`, `0x614760`).
     assert_eq!(
         pin(&accept, events, verbs),
         vec![
@@ -1191,7 +1191,7 @@ fn the_poi_and_time_responses_signal_in_wire_order() {
     );
 }
 
-/// The quest-slot watch rebuilds the log (`0x6df3bb`), queueing `QUEST_LOG_UPDATE` (`0x5e6957`)
+/// The quest-slot watch rebuilds the log (`0x6df3bb`), queueing `QUEST_LOG_UPDATE` (`0x5e6cb9`)
 /// from the update handler, so it keeps wire order with a POI response's `QUEST_POI_UPDATE`
 /// (`0x5e7628`) at the flush (`0x614760`).
 #[test]

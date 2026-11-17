@@ -331,7 +331,7 @@ fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
     .unwrap();
     app.insert_non_send_resource(s);
     {
-        let mut q = app.world_mut().resource_mut::<UniqueSignals>();
+        let q = app.world().resource::<UniqueSignals>();
         q.unique_signal("QUEST_POI_UPDATE");
         q.unique_signal("QUEST_LOG_UPDATE");
         q.unique_signal("QUEST_POI_UPDATE");
@@ -345,4 +345,53 @@ fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
         .eval::<String>("return table.concat(SEEN, ' ')")
         .unwrap();
     assert_eq!(seen, "QUEST_POI_UPDATE0 QUEST_LOG_UPDATE0");
+}
+
+/// A verb's unique signal joins the handlers' queue through the lent view, so the frame fires the
+/// log's update once however many sites queue it (`0x5e0c7c`, `0x5e6cb9`, `0x614760`); the game UI's
+/// shutdown at a disconnect empties the queue (`0x52902f`), so nothing fires at the next login.
+#[test]
+fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
+    use super::live::{clear_unique_signals, flush_unique_signals, UniqueSignals};
+    let mut app = App::new();
+    app.init_resource::<UniqueSignals>()
+        .net_handler(SessionEventKind::Disconnected, clear_unique_signals)
+        .add_systems(Update, flush_unique_signals);
+    let s = UiScript::new().unwrap();
+    s.run(
+        "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('QUEST_LOG_UPDATE') \
+         f:SetScript('OnEvent', function(_, e) SEEN[#SEEN + 1] = e end)",
+    )
+    .unwrap();
+    app.insert_non_send_resource(s);
+    let seen = |app: &App| {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("local t = table.concat(SEEN, ' ') SEEN = {} return t")
+            .unwrap()
+    };
+    super::live::with_live_world(app.world_mut(), |s| s.run("ExpandQuestHeader(0)").unwrap());
+    assert_eq!(
+        app.world().resource::<UniqueSignals>().names(),
+        ["QUEST_LOG_UPDATE"],
+        "the verb's signal waits in the handlers' queue"
+    );
+    app.world()
+        .resource::<UniqueSignals>()
+        .unique_signal("QUEST_LOG_UPDATE");
+    app.update();
+    assert_eq!(seen(&app), "QUEST_LOG_UPDATE");
+
+    super::live::with_live_world(app.world_mut(), |s| {
+        s.run("CollapseQuestHeader(0)").unwrap()
+    });
+    dispatch(
+        app.world_mut(),
+        vec![SessionEvent::Disconnected {
+            reason: String::new(),
+            end: benilla_protocol::SessionEnd::LoggedOut,
+        }],
+    );
+    app.update();
+    assert_eq!(seen(&app), "", "the shutdown emptied the queue");
 }

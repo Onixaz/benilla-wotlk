@@ -146,7 +146,7 @@ mod net {
     /// (`0x5dff89`) in turn with the frame's other unique signals.
     fn on_server_time(
         In(ev): In<SessionEvent>,
-        mut signals: ResMut<crate::ui_script::live::UniqueSignals>,
+        signals: Res<crate::ui_script::live::UniqueSignals>,
     ) {
         if let SessionEvent::ServerUnixTime { .. } = ev {
             signals.unique_signal("QUEST_LOG_UPDATE");
@@ -856,9 +856,9 @@ pub(crate) fn feed_quest_log(
     spells: Option<Res<Spells>>,
     mut last: Local<crate::ui_script::VmMemo<QuestLogState>>,
     // The accept line's queue, and the frame's unique signals.
-    (mut quest_lines, mut signals): (
+    (mut quest_lines, signals): (
         ResMut<crate::ui_quest::QuestLines>,
-        ResMut<crate::ui_script::live::UniqueSignals>,
+        Res<crate::ui_script::live::UniqueSignals>,
     ),
     mut prior_slots: Local<crate::ui_script::VmMemo<Option<SlotStates>>>,
 ) {
@@ -1160,7 +1160,7 @@ pub(crate) fn feed_quest_log(
         return;
     }
     script.set_quest_log(fresh.clone());
-    // The rebuild queues `QUEST_LOG_UPDATE` as a unique signal (`0x5e6957`), flushed after the
+    // The rebuild queues `QUEST_LOG_UPDATE` as a unique signal (`0x5e6cb9`), flushed after the
     // frame's packets (`0x614760`): it follows the packets' `QUEST_WATCH_UPDATE` ([`progress`])
     // and the slot watcher's `QUEST_ACCEPTED` (`0x6df49c`).
     signals.unique_signal("QUEST_LOG_UPDATE");

@@ -262,9 +262,8 @@ fn collapse_header(model: &mut Model, index: i64, collapse: bool) {
             .position(|e| !e.is_header && e.quest_id == selected)
             .map_or(0, |i| i as u32 + 1);
     }
-    model
-        .pending_events
-        .push(("QUEST_LOG_UPDATE".to_string(), Vec::new()));
+    // `0x5e0c7c`.
+    super::live::unique_signal(model, "QUEST_LOG_UPDATE");
 }
 
 impl super::UiScript {
@@ -933,9 +932,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     let id = e.quest_id;
                     model.quest_log_expiries.push(id);
                 }
-                model
-                    .pending_events
-                    .push(("QUEST_LOG_UPDATE".to_string(), Vec::new()));
+                // `0x5e63b0`.
+                super::live::unique_signal(&mut model, "QUEST_LOG_UPDATE");
             }
             Ok(MultiValue::from_vec(left))
         })?,
