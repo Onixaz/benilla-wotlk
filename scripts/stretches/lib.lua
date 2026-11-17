@@ -91,13 +91,37 @@ function S.list(...)
 end
 
 -- The quest dialogs, answered as a player would, while `S.want` names what to do:
--- { accept = <id>, turnin = <id>, reward = <choice index or 1> }.
+-- { accept = <id>, turnin = <id>, reward = <choice index or 1> }. Each answer waits STRETCH_DIALOG
+-- seconds (default 5) with its window up, so a watcher can read it; the step machine holds still
+-- meanwhile (no click, no timeout clock).
 S.want = {}
+local DIALOG_HOLD = STRETCH_DIALOG or 5
+local held
+local function answer(what, fn)
+  if DIALOG_HOLD <= 0 then
+    return fn()
+  end
+  S.log("holding the dialog %d s, then %s", DIALOG_HOLD, what)
+  held = { at = now() + DIALOG_HOLD, fn = fn }
+end
+
+-- Whether a dialog is up and waiting for its answer.
+function S.dialogHeld()
+  return held ~= nil
+end
+
 local dialogs = CreateFrame("Frame")
 for _, e in ipairs({ "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL", "QUEST_PROGRESS",
   "QUEST_COMPLETE", "QUEST_ACCEPTED", "QUEST_FINISHED" }) do
   pcall(dialogs.RegisterEvent, dialogs, e)
 end
+dialogs:SetScript("OnUpdate", function()
+  if held and now() >= held.at then
+    local fn = held.fn
+    held = nil
+    fn()
+  end
+end)
 dialogs:SetScript("OnEvent", function(_, e)
   S.log("event %s", e)
   -- A turn-in goes first: the follow-up quest it unlocks is offered after the reward.
@@ -105,22 +129,33 @@ dialogs:SetScript("OnEvent", function(_, e)
     S.log("gossip: available {%s} active {%s}", S.list(GetGossipAvailableQuests()),
       S.list(GetGossipActiveQuests()))
     if S.want.turnin and S.questIndex(S.want.turnin) and GetNumGossipActiveQuests() > 0 then
-      SelectGossipActiveQuest(1)
+      answer("pick the quest to turn in", function()
+        SelectGossipActiveQuest(1)
+      end)
     elseif S.want.accept and GetNumGossipAvailableQuests() > 0 then
-      SelectGossipAvailableQuest(1)
+      answer("pick the quest to accept", function()
+        SelectGossipAvailableQuest(1)
+      end)
     end
   elseif e == "QUEST_GREETING" then
     if S.want.turnin and S.questIndex(S.want.turnin) and GetNumActiveQuests() > 0 then
-      SelectActiveQuest(1)
+      answer("pick the quest to turn in", function()
+        SelectActiveQuest(1)
+      end)
     elseif S.want.accept and GetNumAvailableQuests() > 0 then
-      SelectAvailableQuest(1)
+      answer("pick the quest to accept", function()
+        SelectAvailableQuest(1)
+      end)
     end
   elseif e == "QUEST_DETAIL" and S.want.accept then
-    AcceptQuest()
+    answer("accept", AcceptQuest)
   elseif e == "QUEST_PROGRESS" and S.want.turnin then
-    CompleteQuest()
+    answer("continue", CompleteQuest)
   elseif e == "QUEST_COMPLETE" and S.want.turnin then
-    GetQuestReward(S.want.reward or 1)
+    local choice = S.want.reward or 1
+    answer("take the reward", function()
+      GetQuestReward(choice)
+    end)
   end
 end)
 
@@ -238,9 +273,22 @@ end
 
 -- A turn starts past TURN_START radians off the heading and stops inside TURN_STOP.
 local TURN_START, TURN_STOP = 0.12, 0.03
+-- The loading screen lets go of every held key, as the reference's held key comes back released
+-- on world enter, and a press under it is swallowed: a key still held here is pressed again every
+-- REPRESS seconds, as a player presses again once the screen drops. A press of a key already down
+-- changes nothing.
+local REPRESS, pressedAt = 0.5, 0
 local steerer = CreateFrame("Frame")
 steerer:SetScript("OnUpdate", function()
   S.crumb()
+  if now() - pressedAt >= REPRESS then
+    pressedAt = now()
+    for key, on in pairs(held) do
+      if on then
+        ProbeKeyDown(KEYS[key])
+      end
+    end
+  end
   -- A goal no step renews is dropped: the step that set it has moved on.
   if goal and now() - goal.at > 0.6 then
     S.release()
@@ -432,10 +480,129 @@ function S.talk(text, npc, want, done)
   }
 end
 
+-- The strikes on the main bar's keys, found by name at the first fight: pressed in turn, as a
+-- player's rotation (nothing with a long cast or a summon). Icy Touch and Death Coil reach a
+-- fleeing unit.
+local STRIKES = { ["Icy Touch"] = true, ["Plague Strike"] = true, ["Blood Strike"] = true,
+  ["Death Strike"] = true, ["Death Coil"] = true, ["Heart Strike"] = true, ["Obliterate"] = true,
+  ["Scourge Strike"] = true }
+local strikeKeys, nextStrike = nil, 1
+local function strikes()
+  if not strikeKeys then
+    strikeKeys = {}
+    for slot = 1, 12 do
+      -- A spell action's second value is its spellbook slot, its fourth the spell.
+      local kind, id, _, spell = GetActionInfo(slot)
+      local name = kind == "spell" and (spell and GetSpellInfo(spell) or GetSpellName(id, "spell"))
+      if name and STRIKES[name] then
+        table.insert(strikeKeys, slot)
+        S.log("strike key %d: %s", slot, name)
+      end
+    end
+  end
+  return strikeKeys
+end
+
+-- The nearest living unit of any of `entries`: its entry, yards and position.
+function S.nearestOf(entries)
+  local best, bd, bx, by, bz
+  for _, e in ipairs(entries) do
+    local d, x, y, z = ProbeNearest(e, true)
+    if d and (not bd or d < bd) then
+      best, bd, bx, by, bz = e, d, x, y, z
+    end
+  end
+  return best, bd, bx, by, bz
+end
+
+-- A step that fights until `done`, a player's way: right-click the nearest unit `want` names
+-- (entry, yards, x, y, z; which targets it and starts the swings), close in on the target where it
+-- runs, press the strikes in turn, and on its death take the next. A target that loses no health
+-- for 20 s (out of reach, or evading) is skipped for good; with no wanted unit in sight the step
+-- walks the `roam` spots. `progress`, when given, adds to the step's status line.
+local STALL = 20
+function S.fight(text, want, done, roam, timeout, progress)
+  local spot, guid, hp, hpAt, swungAt = 1, nil, 0, 0, 0
+  return {
+    text,
+    done = function()
+      if done() then
+        S.release()
+        return true
+      end
+      local now = GetTime()
+      local live = UnitExists("target") and not UnitIsDead("target") and UnitCanAttack("player", "target")
+      if live then
+        local g = UnitGUID("target")
+        if g ~= guid or UnitHealth("target") < hp then
+          guid, hpAt = g, now
+        end
+        hp = UnitHealth("target")
+        if now - hpAt > STALL then
+          S.log("skipping %s (%s): no damage in %d s", tostring(UnitName("target")), g, STALL)
+          ProbeSkip(g)
+          ClearTarget()
+          S.release()
+          return false
+        end
+        local x, y, z = ProbeTargetPos()
+        if x then
+          S.steer(x, y, z, 3, false, 8)
+        end
+        if now - swungAt > 1.5 then
+          swungAt = now
+          local keys = strikes()
+          if #keys > 0 then
+            nextStrike = nextStrike % #keys + 1
+            S.pressKey(keys[nextStrike])
+          end
+        end
+        return false
+      end
+      guid, hp = nil, 0
+      local e, d, x, y, z = want()
+      if e then
+        if d > 25 then
+          S.steer(x, y, z, 20, false, 10)
+        elseif now - swungAt > 1 then
+          swungAt = now
+          ProbeInteractEntry(e, true)
+        end
+        return false
+      end
+      local p = roam[spot]
+      if S.steer(p[1], p[2], p[3], 4, false, 10) then
+        spot = spot % #roam + 1
+      end
+      return false
+    end,
+    status = function()
+      return "at " .. S.where() .. (progress and (", " .. progress()) or "")
+    end,
+    timeout = timeout,
+  }
+end
+
 -- The step machine.
 local f = CreateFrame("Frame")
 local acc, setupAt, stepAt, idx, started, finished, pokedAt = 0, 0, 0, 0, false, false, 0
-local t0 = now()
+local t0, lastTick = now(), now()
+
+-- Every stretch's setup opens on the character's level, reset to STRETCH_LEVEL (default 60): the
+-- quests along the chain raise it, and a stretch reads the same at any point of a long series. By
+-- name, as the selection a level command would take follows the server's, not ours.
+local setup
+local function setupLines()
+  local lines = {
+    function()
+      S.gm(string.format(".character level %s %d", UnitName("player"), STRETCH_LEVEL or 60))
+    end,
+  }
+  for _, line in ipairs(STRETCH.setup or {}) do
+    table.insert(lines, line)
+  end
+  return lines
+end
 
 local function fail(why)
   finished = true
@@ -454,12 +621,15 @@ local function tick(el)
     return
   end
   acc = 0
+  local dt = now() - lastTick
+  lastTick = now()
   local t = now() - t0
+  setup = setup or setupLines()
   -- Setup: one GM line a second.
-  if setupAt < #(STRETCH.setup or {}) then
+  if setupAt < #setup then
     if t >= setupAt + 1 then
       setupAt = setupAt + 1
-      local line = STRETCH.setup[setupAt]
+      local line = setup[setupAt]
       if type(line) == "function" then
         local ok, err = pcall(line)
         if not ok then
@@ -503,6 +673,12 @@ local function tick(el)
       end
     end
     pokedAt = 0
+  end
+  -- A held dialog stops the step, as a player reads: its time counts toward neither the timeout
+  -- nor the next poke.
+  if S.dialogHeld() then
+    stepAt, pokedAt = stepAt + dt, pokedAt + dt
+    return
   end
   if step.poke and now() - pokedAt >= (step.every or 4) then
     pokedAt = now()
