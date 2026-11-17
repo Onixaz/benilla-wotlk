@@ -2229,11 +2229,9 @@ pub(super) fn writer_loop(
                         source_node,
                         dest_node,
                     } => w.activate_taxi(guid, source_node, dest_node),
-                    ClientCommand::ActivateTaxiExpress {
-                        guid,
-                        total_cost,
-                        nodes,
-                    } => w.activate_taxi_express(guid, total_cost, &nodes),
+                    ClientCommand::ActivateTaxiExpress { guid, nodes } => {
+                        w.activate_taxi_express(guid, &nodes)
+                    }
                 };
                 // Send failures (tag `wire`): the controller's `snd` line records a decision, not a
                 // transmission, so a silent `wire` log beside a busy `snd` log means all went out.

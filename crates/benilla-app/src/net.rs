@@ -2658,10 +2658,9 @@ pub(crate) enum ClientCommand {
         dest_node: u32,
     },
     /// `CMSG_ACTIVATETAXIEXPRESS`: sent when no direct `TaxiPath` edge joins the two nodes, not by
-    /// hop count; the combined fare and the node chain in order.
+    /// hop count; the node chain in order.
     ActivateTaxiExpress {
         guid: u64,
-        total_cost: u32,
         nodes: Vec<u32>,
     },
 }

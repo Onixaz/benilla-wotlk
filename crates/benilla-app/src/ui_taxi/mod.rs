@@ -263,7 +263,7 @@ fn taxi_fares(
 
 /// Drain the Lua intents. `TakeTaxiNode(i)` sends `CMSG_ACTIVATETAXI` when a direct `TaxiPath` edge
 /// joins the current node and the target, as its one drawn segment shows, and otherwise
-/// `CMSG_ACTIVATETAXIEXPRESS` with the chain and its fare, as the reference's test decides; the
+/// `CMSG_ACTIVATETAXIEXPRESS` with the chain, as the reference's test decides; the
 /// `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
 fn drain_taxi(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -308,7 +308,6 @@ fn drain_taxi(
             );
             let _ = commands.0.send(ClientCommand::ActivateTaxiExpress {
                 guid: open.flightmaster,
-                total_cost: resolved.cost,
                 nodes: chain.to_vec(),
             });
         }
@@ -347,12 +346,12 @@ mod tests {
     use benilla_protocol::field::FIELD_UNIT_FLAGS;
     use benilla_protocol::ObjectFields;
 
-    /// The map's fares take the flight master's discount and the express leg sends the raw route
-    /// sum. Honored makes 0.1, as no 3.3.5a field carries an honor rank: Sentinel Hill's direct 110
-    /// shows 99, and Thelsamar's route through Ironforge, 50 + 110, shows 144 and sends 160.
-    /// With the flight master unresolved the fares show 0.
+    /// The map's fares take the flight master's discount and the express leg sends the chain alone.
+    /// Honored makes 0.1, as no 3.3.5a field carries an honor rank: Sentinel Hill's direct 110
+    /// shows 99, and Thelsamar's route through Ironforge, 50 + 110, shows 144 and sends its three
+    /// nodes. With the flight master unresolved the fares show 0.
     #[test]
-    fn the_map_shows_discounted_fares_and_the_express_sends_the_raw_sum() {
+    fn the_map_shows_discounted_fares_and_the_express_sends_the_chain() {
         use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
         use bevy::ecs::system::RunSystemOnce;
 
@@ -438,10 +437,9 @@ mod tests {
         assert!(
             matches!(
                 sent.as_slice(),
-                [ClientCommand::ActivateTaxiExpress { total_cost: 160, nodes, .. }]
-                    if nodes == &[2, 6, 8]
+                [ClientCommand::ActivateTaxiExpress { nodes, .. }] if nodes == &[2, 6, 8]
             ),
-            "the express carries the undiscounted sum, got {sent:?}"
+            "the express carries the chain, got {sent:?}"
         );
 
         app.world_mut()

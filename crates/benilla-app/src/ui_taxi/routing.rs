@@ -320,7 +320,8 @@ impl TaxiFares {
 ///   and flies the chain.
 ///
 /// The fares are 0 without [`TaxiFares`], as `TaxiNodeCost` returns 0 when the player or the
-/// flight master does not resolve. The route's own fare is the chain's tier-0 sum, the raw fare.
+/// flight master does not resolve. The route's own fare is the chain's tier-0 sum, the raw fare,
+/// for the activate's log.
 ///
 /// `player_group` is the player's `FactionTemplate` group, for the walk's team check
 /// ([`barred_for_team`]), and `account_expansion` the account's expansion byte from
