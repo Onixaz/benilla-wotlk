@@ -33,68 +33,73 @@ pub(crate) enum QuestAsk {
     Item(u32),
 }
 
-/// The records the quest verbs asked for, each answer queuing `QUEST_LOG_UPDATE` (`0x5de94a`, `0x5de9fa`, `0x5dea2a`, `0x5dea49`).
-#[derive(Resource, Default)]
-pub(crate) struct QuestAsks(std::sync::Mutex<HashSet<QuestAsk>>);
+/// The records the quest verbs asked for, each answer queuing `QUEST_LOG_UPDATE` (`0x5de94a`, `0x5de9fa`, `0x5dea2a`, `0x5dea49`). Main-thread state a verb writes in its call, lent to it ([`crate::ui_script::live::Lent`]).
+#[derive(Default)]
+pub(crate) struct QuestAsks(HashSet<QuestAsk>);
 
 impl QuestAsks {
-    fn set(&self) -> std::sync::MutexGuard<'_, HashSet<QuestAsk>> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
     /// Note a miss a verb's lookup asked for.
-    pub(crate) fn asked(&self, ask: QuestAsk) {
-        self.set().insert(ask);
+    pub(crate) fn asked(&mut self, ask: QuestAsk) {
+        self.0.insert(ask);
     }
 
     /// Whether a verb waited on the record that just landed.
-    pub(crate) fn landed(&self, ask: QuestAsk) -> bool {
-        self.set().remove(&ask)
+    pub(crate) fn landed(&mut self, ask: QuestAsk) -> bool {
+        self.0.remove(&ask)
     }
 
     /// Disconnect: drops every ask.
-    pub(crate) fn clear(&self) {
-        self.set().clear();
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
     }
 }
 
-/// The rebuild's own state, behind a lock so the rebuild also runs inside a verb's call (`0x5e6e00`).
-#[derive(Resource, Default)]
-pub(crate) struct RebuildMarks(std::sync::Mutex<RebuildState>);
-
+/// The rebuild's own state, main-thread state lent to a verb's call, so the rebuild also runs inside one (`0x5e6e00`).
 #[derive(Default)]
-struct RebuildState {
+pub(crate) struct RebuildMarks {
     /// The templates the last rebuild missed (`0x5e6a98`); every rebuild skips while one is (`0x5e6973`).
     pending: HashSet<u32>,
     /// The last rebuild's sort types in their sorted order (`0x5e6b47`), which the collapse filter's bits follow.
     sort_types: Vec<i32>,
     /// The quest ids of the last rebuild's quest rows (`0x5e6ad6`), which the stack watch walks (`0x5e1270`).
     quest_rows: Vec<u32>,
+    /// When the rebuild next asks the time (`0x5dff77`), `None` once asked (`0x5e6daa`).
+    reask: Option<std::time::Instant>,
 }
 
 impl RebuildMarks {
-    fn state(&self) -> std::sync::MutexGuard<'_, RebuildState> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Disconnect: drops every mark.
-    pub(crate) fn clear(&self) {
-        *self.state() = RebuildState::default();
+    /// Disconnect: drops every mark, the re-ask with them (`0x5e71ee`).
+    pub(crate) fn clear(&mut self) {
+        *self = Self::default();
     }
 
     /// The world entry zeroes the pending count (`0x5e6fde`).
-    fn clear_pending(&self) {
-        self.state().pending.clear();
+    fn clear_pending(&mut self) {
+        self.pending.clear();
     }
 
     /// A template answer's count down (`0x5de913`); whether it was the last pending one (`0x5de91d`).
-    fn landed_last(&self, quest_id: u32) -> bool {
-        let mut st = self.state();
-        st.pending.remove(&quest_id) && st.pending.is_empty()
+    fn landed_last(&mut self, quest_id: u32) -> bool {
+        self.pending.remove(&quest_id) && self.pending.is_empty()
+    }
+
+    /// The time response arms the re-ask (`0x5dff77`).
+    pub(crate) fn arm_reask(&mut self, at: Option<std::time::Instant>) {
+        self.reask = at;
+    }
+
+    /// Whether the re-ask is armed and due (`0x5e6df6`-`0x5e6dfc`, `0x5e6d60`-`0x5e6d77`).
+    pub(crate) fn reask_due(&self, now: std::time::Instant) -> bool {
+        self.reask.is_some_and(|at| now >= at)
+    }
+
+    /// The rebuild's tail: a due re-ask is disarmed (`0x5e6daa`); whether it was, so the caller sends `CMSG_QUERY_TIME` (`0x5e6d79`).
+    fn take_due_reask(&mut self, now: std::time::Instant) -> bool {
+        let due = self.reask_due(now);
+        if due {
+            self.reask = None;
+        }
+        due
     }
 }
 
@@ -103,8 +108,6 @@ impl RebuildMarks {
 pub(crate) struct QuestRowLive<'w, 's> {
     me: Query<'w, 's, (&'static ObjectStore, &'static Guid), With<SelfPlayer>>,
     quest_log: Option<Res<'w, QuestLog>>,
-    expiries: Option<Res<'w, QuestExpiries>>,
-    asks: Option<Res<'w, QuestAsks>>,
     objects: Option<crate::net::Objects<'w, 's>>,
     items: Option<Res<'w, Items>>,
     icons: Option<Res<'w, ItemDisplays>>,
@@ -115,10 +118,15 @@ pub(crate) struct QuestRowLive<'w, 's> {
     states: Option<Res<'w, crate::world_state::WorldStates>>,
     rewards: crate::ui_quest::rewards::RewardInputs<'w, 's>,
     spells: Option<Res<'w, Spells>>,
-    rebuild: Option<Res<'w, RebuildMarks>>,
     headers: Option<Res<'w, QuestHeaderNamesRes>>,
     clock: Option<Res<'w, crate::net::ServerWallClock>>,
-    signals: Option<Res<'w, UniqueSignals>>,
+}
+
+/// The main-thread state the rebuild writes in its call, lent to it.
+pub(crate) struct RowWrites<'a> {
+    pub(crate) marks: &'a mut RebuildMarks,
+    pub(crate) expiries: &'a mut QuestExpiries,
+    pub(crate) signals: &'a mut UniqueSignals,
 }
 
 impl QuestRowLive<'_, '_> {
@@ -131,34 +139,26 @@ impl QuestRowLive<'_, '_> {
     }
 
     /// `GetQuestResetTime`'s due re-ask runs the rebuild in the call (`0x5e6dee`-`0x5e6e00`).
-    pub(crate) fn rebuild_if_reask_due(&self) -> Option<QuestLogPlan> {
-        let clock = self.clock.as_deref()?;
-        if !clock.reask_due(std::time::Instant::now()) {
+    pub(crate) fn rebuild_if_reask_due(&self, w: RowWrites) -> Option<QuestLogPlan> {
+        if !w.marks.reask_due(std::time::Instant::now()) {
             return None;
         }
         let (Some((store, _)), Some(objects)) = (self.me.iter().next(), self.objects.as_ref())
         else {
             return None;
         };
-        plan(&PlanInputs {
+        plan(PlanInputs {
             store,
             quest_log: self.quest_log.as_deref()?,
-            marks: self.rebuild.as_deref()?,
-            expiries: self.expiries.as_deref()?,
+            marks: w.marks,
+            expiries: w.expiries,
             headers: self.headers.as_deref(),
             net: self.net.as_deref()?,
-            clock: Some(clock),
+            clock: self.clock.as_deref(),
             objects,
             rewards: &self.rewards,
-            signals: self.signals.as_deref()?,
+            signals: w.signals,
         })
-    }
-
-    /// Note a miss for its answer's `QUEST_LOG_UPDATE`.
-    fn miss(&self, ask: QuestAsk) {
-        if let Some(asks) = self.asks.as_deref() {
-            asks.asked(ask);
-        }
     }
 
     /// A logged quest's answers at the call (`0x5e0000`, `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`); `Some(None)` when uncached.
@@ -167,6 +167,29 @@ impl QuestRowLive<'_, '_> {
         quest_id: u32,
         slot: u8,
         get: &dyn Fn(&str) -> Option<String>,
+        expiries: Option<&QuestExpiries>,
+        asks: Option<&mut QuestAsks>,
+    ) -> Option<Option<QuestLogEntryView>> {
+        // The misses the build makes, noted for their answers once it returns.
+        let misses = std::cell::RefCell::new(Vec::new());
+        let row = self.build_row(quest_id, slot, get, expiries, &|a| {
+            misses.borrow_mut().push(a)
+        });
+        if let Some(asks) = asks {
+            for ask in misses.into_inner() {
+                asks.asked(ask);
+            }
+        }
+        row
+    }
+
+    fn build_row(
+        &self,
+        quest_id: u32,
+        slot: u8,
+        get: &dyn Fn(&str) -> Option<String>,
+        expiries: Option<&QuestExpiries>,
+        miss: &dyn Fn(QuestAsk),
     ) -> Option<Option<QuestLogEntryView>> {
         let (quest_log, net, items, names) = (
             self.quest_log.as_deref()?,
@@ -185,13 +208,10 @@ impl QuestRowLive<'_, '_> {
             return Some(None);
         };
         let Some(t) = quest_log.template(quest_id, net) else {
-            self.miss(QuestAsk::Quest(quest_id));
+            miss(QuestAsk::Quest(quest_id));
             return Some(None);
         };
-        let expired = self
-            .expiries
-            .as_deref()
-            .is_some_and(|e| e.is_expired(quest_id));
+        let expired = expiries.is_some_and(|e| e.is_expired(quest_id));
         let carried = |id: u32| {
             self.objects.as_ref().map_or(0, |o| {
                 count_of(&store.0, o, id, InventoryScope::QUEST_ITEMS)
@@ -223,7 +243,6 @@ impl QuestRowLive<'_, '_> {
             states,
             achievement: None,
         };
-        let miss = |ask| self.miss(ask);
         let objectives = build_objectives(
             t,
             &log_slot,
@@ -239,7 +258,7 @@ impl QuestRowLive<'_, '_> {
                 female: store.0.unit_gender() == Some(1),
                 objectives_text: crate::npc_text::substitute(&t.objectives_text, &macros),
             },
-            &miss,
+            miss,
         );
         // Every logged quest's cached template, for the abandon items' claims.
         let logged: Vec<_> = (0..PLAYER_QUEST_LOG_SLOTS)
@@ -289,7 +308,28 @@ impl QuestRowLive<'_, '_> {
     }
 
     /// A logged quest's detail pane at the call; `Some(None)` when its slot or template is missing.
-    pub(crate) fn detail(&self, quest_id: u32, slot: u8) -> Option<Option<QuestLogDetail>> {
+    pub(crate) fn detail(
+        &self,
+        quest_id: u32,
+        slot: u8,
+        asks: Option<&mut QuestAsks>,
+    ) -> Option<Option<QuestLogDetail>> {
+        let misses = std::cell::RefCell::new(Vec::new());
+        let detail = self.build_detail(quest_id, slot, &|a| misses.borrow_mut().push(a));
+        if let Some(asks) = asks {
+            for ask in misses.into_inner() {
+                asks.asked(ask);
+            }
+        }
+        detail
+    }
+
+    fn build_detail(
+        &self,
+        quest_id: u32,
+        slot: u8,
+        miss: &dyn Fn(QuestAsk),
+    ) -> Option<Option<QuestLogDetail>> {
         let (quest_log, net, items, names) = (
             self.quest_log.as_deref()?,
             self.net.as_deref()?,
@@ -307,7 +347,7 @@ impl QuestRowLive<'_, '_> {
             return Some(None);
         }
         let Some(t) = quest_log.template(quest_id, net) else {
-            self.miss(QuestAsk::Quest(quest_id));
+            miss(QuestAsk::Quest(quest_id));
             return Some(None);
         };
         let default_states;
@@ -324,7 +364,6 @@ impl QuestRowLive<'_, '_> {
             states,
             achievement: None,
         };
-        let miss = |ask| self.miss(ask);
         Some(Some(QuestLogDetail {
             // At the level cap the reward is at least the money paid in place of XP (`0x5e48f0`).
             reward_money: {
@@ -347,7 +386,7 @@ impl QuestRowLive<'_, '_> {
                 net,
                 &macros,
                 self.spells.as_deref(),
-                &miss,
+                miss,
             )
         }))
     }
@@ -363,28 +402,30 @@ impl QuestRowLive<'_, '_> {
 struct PlanInputs<'a, 'w, 's> {
     store: &'a ObjectStore,
     quest_log: &'a QuestLog,
-    marks: &'a RebuildMarks,
-    expiries: &'a QuestExpiries,
+    marks: &'a mut RebuildMarks,
+    expiries: &'a mut QuestExpiries,
     headers: Option<&'a QuestHeaderNamesRes>,
     net: &'a NetCommands,
     clock: Option<&'a crate::net::ServerWallClock>,
     objects: &'a crate::net::Objects<'w, 's>,
     rewards: &'a crate::ui_quest::rewards::RewardInputs<'w, 's>,
-    signals: &'a UniqueSignals,
+    signals: &'a mut UniqueSignals,
 }
 
 /// The rebuild's walk (`0x5e6940`): skipped while a template is pending (`0x5e6973`), cached quests only (`0x5e6a98`), `QUEST_LOG_UPDATE` queued (`0x5e6cb9`), then a due re-ask sent (`0x5e6d60`-`0x5e6daa`).
-fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
+fn plan(p: PlanInputs) -> Option<QuestLogPlan> {
     let PlanInputs {
         store,
         quest_log,
+        marks,
         expiries,
+        headers,
         net,
+        clock,
         objects,
         rewards,
-        ..
-    } = *p;
-    let mut marks = p.marks.state();
+        signals,
+    } = p;
     if !marks.pending.is_empty() {
         return None;
     }
@@ -405,7 +446,7 @@ fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
             .filter_map(|s| store.0.player_quest_log(s))
             .any(|s| s.quest_id == id)
     });
-    let now = p.clock.and_then(|c| c.now_unix());
+    let now = clock.and_then(|c| c.now_unix());
     let carried = |id: u32| count_of(&store.0, objects, id, InventoryScope::QUEST_ITEMS);
     let standing = |faction: u32| rewards.standing(&store.0, faction);
     let completion = CompletionInputs {
@@ -440,7 +481,7 @@ fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
                 header: if zos == 0 {
                     MISSING_HEADER.to_string()
                 } else {
-                    p.headers
+                    headers
                         .and_then(|h| h.0.resolve(zos))
                         .unwrap_or_default()
                         .to_string()
@@ -474,11 +515,8 @@ fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
     }
     let old_sort_types = std::mem::replace(&mut marks.sort_types, new_sort_types.clone());
     marks.quest_rows = rows.iter().map(|(_, s)| s.quest_id).collect();
-    drop(marks);
-    p.signals.unique_signal("QUEST_LOG_UPDATE");
-    if p.clock
-        .is_some_and(|c| c.take_due_reask(std::time::Instant::now()))
-    {
+    signals.unique_signal("QUEST_LOG_UPDATE");
+    if marks.take_due_reask(std::time::Instant::now()) {
         let _ = net.0.send(crate::net::ClientCommand::QueryTime);
     }
     Some(QuestLogPlan {
@@ -493,26 +531,26 @@ fn plan(p: &PlanInputs) -> Option<QuestLogPlan> {
 fn plan_rows(
     me: Query<&ObjectStore, With<SelfPlayer>>,
     quest_log: Res<QuestLog>,
-    marks: Res<RebuildMarks>,
-    expiries: Res<QuestExpiries>,
+    mut marks: NonSendMut<RebuildMarks>,
+    mut expiries: NonSendMut<QuestExpiries>,
     headers: Option<Res<QuestHeaderNamesRes>>,
     net: Res<NetCommands>,
     clock: Option<Res<crate::net::ServerWallClock>>,
     objects: crate::net::Objects,
     rewards: crate::ui_quest::rewards::RewardInputs,
-    signals: Res<UniqueSignals>,
+    mut signals: NonSendMut<UniqueSignals>,
 ) -> Option<QuestLogPlan> {
-    plan(&PlanInputs {
+    plan(PlanInputs {
         store: me.iter().next()?,
         quest_log: &quest_log,
-        marks: &marks,
-        expiries: &expiries,
+        marks: &mut marks,
+        expiries: &mut expiries,
         headers: headers.as_deref(),
         net: &net,
         clock: clock.as_deref(),
         objects: &objects,
         rewards: &rewards,
-        signals: &signals,
+        signals: &mut signals,
     })
 }
 
@@ -592,7 +630,7 @@ pub(crate) fn announce_accept(world: &mut World, quest_id: u32) {
 /// The world entry's log part (`0x5e6fa0`): the pending count zeroed (`0x5e6fde`), then the rebuild (`0x5e6fe4`).
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
-        if let Some(marks) = world.get_resource::<RebuildMarks>() {
+        if let Some(mut marks) = world.get_non_send_resource_mut::<RebuildMarks>() {
             marks.clear_pending();
         }
         rebuild(world);
@@ -604,9 +642,9 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
 pub(super) fn template_landed(
     quest_id: u32,
     marks: &mut QuestLogMarks,
-    rebuild_marks: &RebuildMarks,
-    asks: &QuestAsks,
-    signals: &UniqueSignals,
+    rebuild_marks: &mut RebuildMarks,
+    asks: &mut QuestAsks,
+    signals: &mut UniqueSignals,
     ui: &mut UiEvents,
 ) {
     if asks.landed(QuestAsk::Quest(quest_id)) {
@@ -628,11 +666,10 @@ pub(crate) fn item_moved(
     log: &QuestLog,
     marks: &RebuildMarks,
     net: &NetCommands,
-    signals: &UniqueSignals,
+    signals: &mut UniqueSignals,
 ) {
     let required = entry != 0
         && marks
-            .state()
             .quest_rows
             .iter()
             .filter_map(|&id| log.templates.get(id))

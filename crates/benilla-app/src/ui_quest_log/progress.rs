@@ -226,7 +226,7 @@ fn line(key: &'static str, args: Vec<AnnounceArg>, watch: Option<u32>) -> Announ
 /// template comes back held, for the next pass.
 pub(super) fn resolve(
     log: &QuestLog,
-    expiries: &QuestExpiries,
+    expiries: &mut QuestExpiries,
     notices: Vec<QuestNotice>,
     w: &Lookups<'_>,
 ) -> (Vec<Announce>, Vec<QuestNotice>) {
@@ -483,9 +483,16 @@ pub(super) fn drain_quest_progress_sends(
 /// Announce the queued notices in the handler's turn; a notice whose quest-item check waits on a template stays queued for that template's answer.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 fn announce_notices(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<'_, '_, { crate::ui_script::live::lent::EXPIRIES }>,
+    ),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
-    (log, mut marks, expiries): (Res<QuestLog>, ResMut<QuestLogMarks>, Res<QuestExpiries>),
+    (log, mut marks, mut expiries): (
+        Res<QuestLog>,
+        ResMut<QuestLogMarks>,
+        NonSendMut<QuestExpiries>,
+    ),
     names: Res<NameCache>,
     gos: Option<Res<GameObjectTemplates>>,
     items: Res<Items>,
@@ -525,9 +532,11 @@ fn announce_notices(
         player_guid: me.map_or(0, |(_, g)| g.0),
     };
     let notices = std::mem::take(&mut marks.notices);
-    let (resolved, held) = resolve(&log, &expiries, notices, &lookups);
+    let (resolved, held) = resolve(&log, &mut expiries, notices, &lookups);
     marks.notices = held;
-    show_announces(&mut script, &mut sink, resolved);
+    live.lending(&mut *expiries, || {
+        show_announces(&mut script, &mut sink, resolved)
+    });
 }
 
 /// Each line, then its `QUEST_WATCH_UPDATE` with the quest's log row.
@@ -619,8 +628,8 @@ mod tests {
             standing: &|_| 0,
             player_guid: 0x2A,
         };
-        let expiries = QuestExpiries::default();
-        let (out, held) = resolve(&log, &expiries, notices, &w);
+        let mut expiries = QuestExpiries::default();
+        let (out, held) = resolve(&log, &mut expiries, notices, &w);
         assert!(held.is_empty());
         (out, expiries)
     }
@@ -808,7 +817,7 @@ mod tests {
                 count: 1,
                 total: in_bags,
             };
-            let (out, _) = resolve(&log, &QuestExpiries::default(), vec![push], &w);
+            let (out, _) = resolve(&log, &mut QuestExpiries::default(), vec![push], &w);
             assert_eq!(out.len(), 1, "the line shows either way");
             rx.try_iter()
                 .filter_map(|c| match c {
@@ -832,7 +841,7 @@ mod tests {
         log.insert_template(template());
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let expiries = QuestExpiries::default();
+        let mut expiries = QuestExpiries::default();
         assert_eq!(
             expiries.expire_in_call(QUEST, &log, &commands),
             Some(Some("Wolves Across the Border".to_string()))
@@ -874,7 +883,7 @@ mod tests {
         };
         let (out, held) = resolve(
             &log,
-            &QuestExpiries::default(),
+            &mut QuestExpiries::default(),
             vec![QuestNotice::ItemPush {
                 item: 750,
                 count: 1,

@@ -427,7 +427,7 @@ fn on_reputation_delta(
     mut chat_log: ResMut<crate::ui_chat::ChatLog>,
     mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
     mut quest: ResMut<QuestGiver>,
-    signals: Res<crate::ui_script::live::UniqueSignals>,
+    mut signals: NonSendMut<crate::ui_script::live::UniqueSignals>,
 ) {
     if let SessionEvent::ReputationDelta {
         bonus,

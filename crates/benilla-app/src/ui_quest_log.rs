@@ -43,61 +43,44 @@ pub(crate) struct QuestLogMarks {
     notices: Vec<progress::QuestNotice>,
 }
 
-/// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client (`0x5e57e0`), until they leave the log. Behind a lock, so `GetQuestTimers` marks them inside its call (`0x5e634a`) through the lent view.
-#[derive(Resource, Default)]
+/// Quests marked expired, by a `_FAILEDTIMER` (`0x5e5840`) or a timer run out on the client (`0x5e57e0`), until they leave the log. Main-thread state `GetQuestTimers` marks inside its call (`0x5e634a`), lent to it.
+#[derive(Default)]
 pub(crate) struct QuestExpiries {
-    expired: std::sync::Mutex<HashSet<u32>>,
+    expired: HashSet<u32>,
     /// Quests whose expiry line waits on their template, shown by its answer (`0x5de980`).
-    failed_lines: std::sync::Mutex<HashSet<u32>>,
+    failed_lines: HashSet<u32>,
 }
 
 impl QuestExpiries {
-    fn set(&self) -> std::sync::MutexGuard<'_, HashSet<u32>> {
-        self.expired
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn waiting(&self) -> std::sync::MutexGuard<'_, HashSet<u32>> {
-        self.failed_lines
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
     /// Whether `quest_id` is marked expired (`0x5dee60`).
     pub(crate) fn is_expired(&self, quest_id: u32) -> bool {
-        self.set().contains(&quest_id)
+        self.expired.contains(&quest_id)
     }
 
     /// Mark `quest_id` expired; whether it was not already.
-    pub(crate) fn mark(&self, quest_id: u32) -> bool {
-        self.set().insert(quest_id)
+    pub(crate) fn mark(&mut self, quest_id: u32) -> bool {
+        self.expired.insert(quest_id)
     }
 
     /// Keep only the marks `keep` accepts: a mark lives on its log row and leaves with it.
-    fn retain(&self, keep: impl Fn(u32) -> bool) {
-        self.set().retain(|&id| keep(id));
-    }
-
-    /// Show `quest_id`'s expiry line when its template answer lands.
-    fn wait_for_line(&self, quest_id: u32) {
-        self.waiting().insert(quest_id);
+    fn retain(&mut self, keep: impl Fn(u32) -> bool) {
+        self.expired.retain(|&id| keep(id));
     }
 
     /// Whether `quest_id`'s expiry line waited on the template that just landed.
-    fn take_waiting(&self, quest_id: u32) -> bool {
-        self.waiting().remove(&quest_id)
+    fn take_waiting(&mut self, quest_id: u32) -> bool {
+        self.failed_lines.remove(&quest_id)
     }
 
     /// Disconnect: drops every mark.
-    pub(crate) fn clear(&self) {
-        self.set().clear();
-        self.waiting().clear();
+    pub(crate) fn clear(&mut self) {
+        self.expired.clear();
+        self.failed_lines.clear();
     }
 
     /// `GetQuestTimers`' expiry of a run-out timer, inside the call: the mark (`0x5e634a`), every questgiver's status asked again (`0x5e582a`), and the quest's title for `ERR_QUEST_FAILED_S` when its template is cached; a miss asks it with a callback that shows the line on the answer (`0x5e635c`, `0x5de980`). `None` when the quest was already marked.
     pub(crate) fn expire_in_call(
-        &self,
+        &mut self,
         quest_id: u32,
         log: &QuestLog,
         commands: &NetCommands,
@@ -111,7 +94,7 @@ impl QuestExpiries {
         match log.template(quest_id, commands) {
             Some(t) => Some(Some(t.title.clone())),
             None => {
-                self.wait_for_line(quest_id);
+                self.failed_lines.insert(quest_id);
                 Some(None)
             }
         }
@@ -190,7 +173,11 @@ mod net {
     }
 
     /// A creature, GameObject or item record a quest verb asked for landed: `QUEST_LOG_UPDATE` waits as a unique signal (`0x5de9fa`, `0x5dea2a`, `0x5dea49`).
-    fn on_record(In(ev): In<SessionEvent>, asks: Res<QuestAsks>, signals: Res<UniqueSignals>) {
+    fn on_record(
+        In(ev): In<SessionEvent>,
+        mut asks: NonSendMut<QuestAsks>,
+        mut signals: NonSendMut<UniqueSignals>,
+    ) {
         let ask = match ev {
             SessionEvent::CreatureName {
                 entry,
@@ -209,12 +196,15 @@ mod net {
         }
     }
 
-    /// `SMSG_QUERY_TIME_RESPONSE` sets the log's clock (`0x5dff40`), then queues `QUEST_LOG_UPDATE` (`0x5dff89`) in turn with the frame's other unique signals.
+    /// `SMSG_QUERY_TIME_RESPONSE` sets the log's clock (`0x5dff40`), arms the rebuild's re-ask (`0x5dff77`), then queues `QUEST_LOG_UPDATE` (`0x5dff89`) in turn with the frame's other unique signals.
     fn on_server_time(
         In(ev): In<SessionEvent>,
-        signals: Res<crate::ui_script::live::UniqueSignals>,
+        clock: Option<Res<crate::net::ServerWallClock>>,
+        mut rebuild: NonSendMut<RebuildMarks>,
+        mut signals: NonSendMut<UniqueSignals>,
     ) {
         if let SessionEvent::ServerUnixTime { .. } = ev {
+            rebuild.arm_reask(clock.and_then(|c| c.reask_at()));
             signals.unique_signal("QUEST_LOG_UPDATE");
         }
     }
@@ -223,14 +213,25 @@ mod net {
     fn on_template(
         In(ev): In<SessionEvent>,
         mut quest_log: ResMut<QuestLog>,
-        (expiries, asks, signals): (Res<QuestExpiries>, Res<QuestAsks>, Res<UniqueSignals>),
-        (mut marks, rebuild): (ResMut<QuestLogMarks>, Res<RebuildMarks>),
+        (mut expiries, mut asks, mut signals): (
+            NonSendMut<QuestExpiries>,
+            NonSendMut<QuestAsks>,
+            NonSendMut<UniqueSignals>,
+        ),
+        (mut marks, mut rebuild): (ResMut<QuestLogMarks>, NonSendMut<RebuildMarks>),
         mut ui: ResMut<UiEvents>,
     ) {
         if let SessionEvent::QuestTemplate(t) = ev {
             let (id, title) = (t.quest_id, t.title.clone());
             quest_template(t, &mut quest_log);
-            super::rows::template_landed(id, &mut marks, &rebuild, &asks, &signals, &mut ui);
+            super::rows::template_landed(
+                id,
+                &mut marks,
+                &mut rebuild,
+                &mut asks,
+                &mut signals,
+                &mut ui,
+            );
             ui.world(move |world| crate::ui_quest::lines::quest_landed(world, id));
             if expiries.take_waiting(id) {
                 crate::ui_action::show_in_turn(
@@ -247,18 +248,18 @@ mod net {
         In(_): In<SessionEvent>,
         mut quest_log: ResMut<QuestLog>,
         mut marks: ResMut<QuestLogMarks>,
-        (expiries, asks, rebuild): (Res<QuestExpiries>, Res<QuestAsks>, Res<RebuildMarks>),
-        clock: Option<Res<crate::net::ServerWallClock>>,
+        (mut expiries, mut asks, mut rebuild): (
+            NonSendMut<QuestExpiries>,
+            NonSendMut<QuestAsks>,
+            NonSendMut<RebuildMarks>,
+        ),
     ) {
         quest_log.clear_session();
         marks.clear_session();
         expiries.clear();
         asks.clear();
+        // The next game UI's start disarms the re-ask (`0x5e71ee`) with the rest of the rebuild's marks.
         rebuild.clear();
-        // The next game UI's start disarms the re-ask (`0x5e71ee`).
-        if let Some(clock) = clock {
-            clock.disarm_reask();
-        }
     }
 
     /// `SMSG_QUEST_QUERY_RESPONSE`, the answer to our `CMSG_QUEST_QUERY`, cached by quest id.
@@ -278,9 +279,9 @@ impl Plugin for UiQuestLogPlugin {
         crate::query_cache::register::<QuestLog>(app);
         app.init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
-            .init_resource::<rows::RebuildMarks>()
-            .init_resource::<QuestExpiries>()
-            .init_resource::<rows::QuestAsks>()
+            .init_non_send_resource::<rows::RebuildMarks>()
+            .init_non_send_resource::<QuestExpiries>()
+            .init_non_send_resource::<rows::QuestAsks>()
             .add_systems(
                 Startup,
                 (
@@ -1492,7 +1493,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_quest::lines::TurnIns>()
-            .init_resource::<crate::ui_script::live::UniqueSignals>();
+            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>();
         let mut log = QuestLog::default();
         let mut pairs = Vec::new();
         for (slot, id, zos, title) in quests {
@@ -1509,8 +1510,8 @@ mod tests {
         }
         app.insert_resource(log)
             .init_resource::<QuestLogMarks>()
-            .init_resource::<rows::RebuildMarks>()
-            .init_resource::<QuestExpiries>();
+            .init_non_send_resource::<rows::RebuildMarks>()
+            .init_non_send_resource::<QuestExpiries>();
         app.world_mut().spawn((
             ObjectStore(ObjectFields::from_pairs(&pairs)),
             Guid(0x2A),
@@ -1587,11 +1588,11 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_quest::lines::TurnIns>()
-            .init_resource::<crate::ui_script::live::UniqueSignals>()
+            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<QuestLog>()
             .init_resource::<QuestLogMarks>()
-            .init_resource::<rows::RebuildMarks>()
-            .init_resource::<QuestExpiries>();
+            .init_non_send_resource::<rows::RebuildMarks>()
+            .init_non_send_resource::<QuestExpiries>();
         app.world_mut().spawn((
             ObjectStore(ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, 7)])),
             Guid(0x2A),
@@ -1919,7 +1920,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_quest::lines::TurnIns>()
-            .init_resource::<crate::ui_script::live::UniqueSignals>()
+            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>()
             .init_resource::<crate::net::ServerWallClock>();
         let mut log = QuestLog::default();
         for &(_, id, zos) in quests {
@@ -1931,8 +1932,8 @@ mod tests {
         }
         app.insert_resource(log)
             .init_resource::<QuestLogMarks>()
-            .init_resource::<rows::RebuildMarks>()
-            .init_resource::<QuestExpiries>();
+            .init_non_send_resource::<rows::RebuildMarks>()
+            .init_non_send_resource::<QuestExpiries>();
         let player = app
             .world_mut()
             .spawn((ObjectStore(store_of(quests)), Guid(0x2A), SelfPlayer))
@@ -2057,6 +2058,16 @@ mod tests {
         );
     }
 
+    /// A time response as its two handlers take it: the clock's sample, then the rebuild's re-ask armed from it (`0x5dff40`, `0x5dff77`).
+    fn answer_time(app: &mut App, unix: u32, reset_in: u32) {
+        let w = app.world_mut();
+        w.resource_mut::<crate::net::ServerWallClock>()
+            .sample(unix, reset_in);
+        let at = w.resource::<crate::net::ServerWallClock>().reask_at();
+        w.non_send_resource_mut::<rows::RebuildMarks>()
+            .arm_reask(at);
+    }
+
     fn time_asks(rx: &crossbeam_channel::Receiver<ClientCommand>) -> usize {
         rx.try_iter()
             .filter(|c| matches!(c, ClientCommand::QueryTime))
@@ -2067,14 +2078,10 @@ mod tests {
     #[test]
     fn the_rebuild_asks_the_time_once_its_reask_is_due() {
         let (mut app, _, rx) = log_app(&[(0, 201, 7)]);
-        app.world_mut()
-            .resource_mut::<crate::net::ServerWallClock>()
-            .sample(1_000_000, 3_000);
+        answer_time(&mut app, 1_000_000, 3_000);
         app.update();
         assert_eq!(time_asks(&rx), 0, "the reset is 50 minutes out");
-        app.world_mut()
-            .resource_mut::<crate::net::ServerWallClock>()
-            .sample(1_000_000, 0);
+        answer_time(&mut app, 1_000_000, 0);
         app.update();
         assert_eq!(time_asks(&rx), 1, "due: the rebuild asks");
         app.update();
@@ -2096,11 +2103,9 @@ mod tests {
             (t.quest_id, t.zone_or_sort) = (202, 7);
             t
         });
+        answer_time(&mut app, 1_000_000, 0);
         app.world_mut()
-            .resource_mut::<crate::net::ServerWallClock>()
-            .sample(1_000_000, 0);
-        app.world()
-            .resource::<crate::ui_script::live::UniqueSignals>()
+            .non_send_resource_mut::<crate::ui_script::live::UniqueSignals>()
             .clear();
         let counts = live(&mut app, |s| {
             s.eval::<(i64, i64, i64)>(
@@ -2114,7 +2119,7 @@ mod tests {
         assert_eq!(time_asks(&rx), 1);
         assert_eq!(
             app.world()
-                .resource::<crate::ui_script::live::UniqueSignals>()
+                .non_send_resource::<crate::ui_script::live::UniqueSignals>()
                 .names(),
             ["QUEST_LOG_UPDATE"]
         );
@@ -2134,16 +2139,14 @@ mod tests {
             .insert(ObjectStore(store_of(&[(0, 201, 7), (1, 303, 7)])));
         app.update();
         let _ = time_asks(&rx);
-        app.world_mut()
-            .resource_mut::<crate::net::ServerWallClock>()
-            .sample(1_000_000, 0);
+        answer_time(&mut app, 1_000_000, 0);
         live(&mut app, |s| {
             s.eval::<i64>("return GetQuestResetTime()").unwrap()
         });
         assert_eq!(time_asks(&rx), 0, "303's template is pending");
         assert!(app
             .world()
-            .resource::<crate::net::ServerWallClock>()
+            .non_send_resource::<rows::RebuildMarks>()
             .reask_due(std::time::Instant::now()));
     }
 
@@ -2168,15 +2171,14 @@ mod tests {
         let _ = reasks(&rx);
         let moved = |app: &mut App, item: u32, me: bool| {
             let w = app.world();
-            let signals = w.resource::<crate::ui_script::live::UniqueSignals>();
-            signals.clear();
+            let mut signals = crate::ui_script::live::UniqueSignals::default();
             rows::item_moved(
                 item,
                 me,
                 w.resource::<QuestLog>(),
-                w.resource::<rows::RebuildMarks>(),
+                w.non_send_resource::<rows::RebuildMarks>(),
                 w.resource::<NetCommands>(),
-                signals,
+                &mut signals,
             );
             signals.names()
         };
@@ -2213,9 +2215,7 @@ mod tests {
     fn a_run_out_timer_fails_its_quest_at_the_rebuild_and_asks_the_status_again() {
         use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1;
         let (mut app, player, rx) = log_app(&[(0, 201, 7)]);
-        app.world_mut()
-            .resource_mut::<crate::net::ServerWallClock>()
-            .sample(1_000_950, 0);
+        answer_time(&mut app, 1_000_950, 0);
         app.world_mut()
             .entity_mut(player)
             .insert(ObjectStore(ObjectFields::from_pairs(&[
@@ -2223,7 +2223,10 @@ mod tests {
                 (FIELD_PLAYER_QUEST_LOG_1_1 + 4, 1_000_900),
             ])));
         app.update();
-        assert!(app.world().resource::<QuestExpiries>().is_expired(201));
+        assert!(app
+            .world()
+            .non_send_resource::<QuestExpiries>()
+            .is_expired(201));
         assert!(live(&mut app, |s| s
             .eval::<bool>("local _, _, _, _, _, _, done = GetQuestLogTitle(2) return done == -1")
             .unwrap()));

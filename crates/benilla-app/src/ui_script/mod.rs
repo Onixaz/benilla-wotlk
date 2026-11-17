@@ -519,7 +519,7 @@ impl Plugin for UiScriptPlugin {
             // In the feed phase, so an `OnUpdate` reads this frame's `GetFramerate()`.
             .add_systems(Update, feed_framerate.in_set(UiFeed))
             // The frame's unique signals, after every handler and feed (`0x614760`); a signal queued before the interface is up waits for it.
-            .init_resource::<live::UniqueSignals>()
+            .init_non_send_resource::<live::UniqueSignals>()
             .net_handler(
                 benilla_protocol::SessionEventKind::Disconnected,
                 live::clear_unique_signals,

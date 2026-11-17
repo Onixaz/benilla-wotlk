@@ -23,14 +23,18 @@ pub(crate) struct UiQuestWatchPlugin;
 
 impl Plugin for UiQuestWatchPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UniqueSignals>()
+        app.init_non_send_resource::<UniqueSignals>()
             .net_handler(SessionEventKind::QuestPoi, on_quest_poi)
             .add_systems(Update, drain_quest_poi_queries.in_set(UiDrain));
     }
 }
 
 /// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): the store takes each quest in turn with the handler's events, and `QUEST_POI_UPDATE` waits as a unique signal (`0x5e7628`).
-fn on_quest_poi(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, signals: Res<UniqueSignals>) {
+fn on_quest_poi(
+    In(ev): In<SessionEvent>,
+    mut ui: ResMut<UiEvents>,
+    mut signals: NonSendMut<UniqueSignals>,
+) {
     if let SessionEvent::QuestPoi(pois) = ev {
         debug!("ui_quest_watch: POI for {} quest(s)", pois.len());
         let pois: Vec<QuestPoiView> = pois.into_iter().map(view).collect();
@@ -262,7 +266,6 @@ pub(crate) struct QuestView<'w, 's> {
     names: Option<Res<'w, crate::names::NameCache>>,
     gos: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
     areas: Option<Res<'w, crate::sound::AreaSounds>>,
-    expiries: Option<Res<'w, crate::ui_quest_log::QuestExpiries>>,
     /// The special item's inventory art (`0x70aa00`) and its link's suffix name (`0x61e3a0`).
     icons: Option<Res<'w, crate::entities::ItemDisplays>>,
     rolls: Option<Res<'w, crate::items::RandomProperties>>,
@@ -270,12 +273,12 @@ pub(crate) struct QuestView<'w, 's> {
 
 impl QuestView<'_, '_> {
     /// `GetQuestTimers`' expiry inside the call ([`crate::ui_quest_log::QuestExpiries::expire_in_call`]).
-    pub(crate) fn expire_quest(&self, quest_id: u32) -> Option<Option<String>> {
-        let (expiries, log, net) = (
-            self.expiries.as_deref()?,
-            self.quest_log.as_deref()?,
-            self.net.as_deref()?,
-        );
+    pub(crate) fn expire_quest(
+        &self,
+        quest_id: u32,
+        expiries: &mut crate::ui_quest_log::QuestExpiries,
+    ) -> Option<Option<String>> {
+        let (log, net) = (self.quest_log.as_deref()?, self.net.as_deref()?);
         Some(expiries.expire_in_call(quest_id, log, net).flatten())
     }
 

@@ -309,7 +309,7 @@ mod tests {
             .init_resource::<QuestGiver>()
             .init_resource::<QuestLog>()
             .init_resource::<crate::ui_quest_log::QuestLogMarks>()
-            .init_resource::<crate::ui_quest_log::QuestExpiries>()
+            .init_non_send_resource::<crate::ui_quest_log::QuestExpiries>()
             .init_resource::<Items>()
             .init_resource::<UiEvents>()
             .init_resource::<crate::ui_chat::ChatLog>()

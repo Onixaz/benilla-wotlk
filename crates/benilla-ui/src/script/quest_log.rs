@@ -182,7 +182,7 @@ fn quest_answers(
     slot: u8,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<QuestLogEntryView> {
-    match super::read_live(|l| l.quest_log_row(quest_id, slot, get)).flatten() {
+    match super::write_live(|l| l.quest_log_row(quest_id, slot, get)).flatten() {
         Some(answer) => answer,
         None => SEEDED.with(|s| s.borrow().rows.get(&quest_id).cloned()),
     }
@@ -246,7 +246,7 @@ pub(crate) fn quest_detail(row: &QuestLogRow) -> Option<QuestLogDetail> {
     if row.is_header {
         return None;
     }
-    match super::read_live(|l| l.quest_log_detail(row.quest_id, row.slot)).flatten() {
+    match super::write_live(|l| l.quest_log_detail(row.quest_id, row.slot)).flatten() {
         Some(detail) => detail,
         None => SEEDED.with(|s| s.borrow().rows.get(&row.quest_id)?.detail.clone()),
     }
@@ -1129,7 +1129,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let mut model = crate::script::model_mut_of(lua);
                 for id in due {
                     fail_seeded(id);
-                    if let Some(Some(Some(title))) = super::live::read_live(|l| l.expire_quest(id))
+                    if let Some(Some(Some(title))) = super::live::write_live(|l| l.expire_quest(id))
                     {
                         model.ui_errors_s.push(("ERR_QUEST_FAILED_S", title));
                     }
@@ -1217,7 +1217,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestResetTime",
         lua.create_function(|lua, ()| {
             // A due re-ask runs the rebuild inside the call first (`0x5e6dfa`, `0x5e6e00`).
-            if let Some(Some(plan)) = super::read_live(|l| l.rebuild_quest_log_if_reask_due()) {
+            if let Some(Some(plan)) = super::write_live(|l| l.rebuild_quest_log_if_reask_due()) {
                 apply_plan(&mut crate::script::model_mut_of(lua), plan);
             }
             let reset = super::read_live(|l| l.quest_reset_unix()).flatten();
@@ -2493,7 +2493,7 @@ mod tests {
         assert!(s
             .eval::<bool>("local _, _, _, _, _, _, done = GetQuestLogTitle(2) return done == 1")
             .unwrap());
-        assert_eq!(*clock.view().expired.borrow(), vec![783]);
+        assert_eq!(clock.view().expired, vec![783]);
         assert_eq!(
             s.take_ui_errors_s(),
             vec![("ERR_QUEST_FAILED_S", "The Fargodeep Mine".to_string())]
@@ -2505,7 +2505,7 @@ mod tests {
             .any(|(e, _)| e == "QUEST_LOG_UPDATE"));
         // Marked once: the next call finds it failed.
         s.run("GetQuestTimers()").unwrap();
-        assert_eq!(*clock.view().expired.borrow(), vec![783]);
+        assert_eq!(clock.view().expired, vec![783]);
         assert!(s.take_ui_errors_s().is_empty());
     }
 }

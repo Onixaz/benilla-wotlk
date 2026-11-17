@@ -248,7 +248,7 @@ fn on_giver_invalid(
 fn on_giver_failed(
     In(ev): In<SessionEvent>,
     mut quest: ResMut<QuestGiver>,
-    (quest_log, marks): (Res<QuestLog>, Res<crate::ui_quest_log::QuestExpiries>),
+    (quest_log, marks): (Res<QuestLog>, NonSend<crate::ui_quest_log::QuestExpiries>),
     commands: Res<NetCommands>,
     mut ui: ResMut<UiEvents>,
 ) {

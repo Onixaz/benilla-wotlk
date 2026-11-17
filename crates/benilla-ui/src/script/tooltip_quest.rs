@@ -83,7 +83,7 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
     let h = frame_handle_of(lua, this)?;
     // The caches at the call, each miss asked with the tooltip's callback (`0x622984`, `0x622a62`).
     let get = |key: &str| crate::strings::global(lua, key);
-    let read = super::read_live(|l| l.quest_tooltip(quest_id, &get)).flatten();
+    let read = super::write_live(|l| l.quest_tooltip(quest_id, &get)).flatten();
     let (view, active) = {
         let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
@@ -130,7 +130,6 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::HashMap;
 
     use super::{QuestRecord, QuestTooltipRead, QuestTooltipView};
@@ -138,7 +137,7 @@ mod tests {
 
     /// The caches as a test sets them between calls.
     #[derive(Default)]
-    struct Caches(RefCell<HashMap<u32, QuestTooltipRead>>);
+    struct Caches(HashMap<u32, QuestTooltipRead>);
 
     impl LiveState for Caches {
         fn unit_flags(&self, _guid: u64) -> Option<u32> {
@@ -162,20 +161,14 @@ mod tests {
         }
 
         fn quest_tooltip(
-            &self,
+            &mut self,
             quest_id: u32,
             _get: &dyn Fn(&str) -> Option<String>,
         ) -> Option<QuestTooltipRead> {
-            Some(
-                self.0
-                    .borrow()
-                    .get(&quest_id)
-                    .cloned()
-                    .unwrap_or(QuestTooltipRead {
-                        view: None,
-                        waits: vec![QuestRecord::Quest(quest_id)],
-                    }),
-            )
+            Some(self.0.get(&quest_id).cloned().unwrap_or(QuestTooltipRead {
+                view: None,
+                waits: vec![QuestRecord::Quest(quest_id)],
+            }))
         }
     }
 
@@ -207,19 +200,19 @@ mod tests {
         }
     }
 
-    fn cache(loan: &LiveLoan<Caches>, read: QuestTooltipRead) {
-        loan.view().0.borrow_mut().insert(176, read);
+    fn cache(loan: &mut LiveLoan<Caches>, read: QuestTooltipRead) {
+        loan.view_mut().0.insert(176, read);
     }
 
     /// A template miss leaves the tooltip cleared; its answer builds it (`0x61de20`), and a second click hides it.
     #[test]
     fn a_quest_link_waits_on_its_template_then_builds_and_a_second_click_hides() {
-        let (mut s, caches) = tip();
+        let (mut s, mut caches) = tip();
         s.run(r#"T:SetHyperlink("quest:176:13")"#).unwrap();
         assert_eq!(s.eval::<i64>("return T:NumLines()").unwrap(), 0);
         assert_eq!(s.eval::<i64>("return fired").unwrap(), 0);
         cache(
-            &caches,
+            &mut caches,
             QuestTooltipRead {
                 view: Some(hogger("Huge Gnoll Claw x 1")),
                 waits: Vec::new(),
@@ -240,9 +233,9 @@ mod tests {
     /// A name in flight shows at once as the placeholder, and its answer builds the tooltip again with the name; another record's answer builds nothing.
     #[test]
     fn a_name_in_flight_shows_the_placeholder_and_its_answer_rebuilds() {
-        let (mut s, caches) = tip();
+        let (mut s, mut caches) = tip();
         cache(
-            &caches,
+            &mut caches,
             QuestTooltipRead {
                 view: Some(hogger("... slain: 0/1")),
                 waits: vec![QuestRecord::Creature(448)],
@@ -255,7 +248,7 @@ mod tests {
             " - ... slain: 0/1"
         );
         cache(
-            &caches,
+            &mut caches,
             QuestTooltipRead {
                 view: Some(hogger("Hogger slain: 0/1")),
                 waits: Vec::new(),
@@ -277,12 +270,12 @@ mod tests {
     /// The callback builds only a tooltip still showing a quest (`0x61de2d`).
     #[test]
     fn an_answer_after_the_tooltip_moved_on_builds_nothing() {
-        let (mut s, caches) = tip();
+        let (mut s, mut caches) = tip();
         s.run(r#"T:SetHyperlink("quest:176:13")"#).unwrap();
         s.run(r#"T:SetOwner(Owner, "ANCHOR_PRESERVE") T:SetText("other")"#)
             .unwrap();
         cache(
-            &caches,
+            &mut caches,
             QuestTooltipRead {
                 view: Some(hogger("Huge Gnoll Claw x 1")),
                 waits: Vec::new(),

@@ -319,7 +319,7 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
 fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
     use super::live::{flush_unique_signals, UniqueSignals};
     let mut app = App::new();
-    app.init_resource::<UniqueSignals>()
+    app.init_non_send_resource::<UniqueSignals>()
         .add_systems(Update, flush_unique_signals);
     let s = UiScript::new().unwrap();
     s.run(
@@ -330,14 +330,18 @@ fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
     .unwrap();
     app.insert_non_send_resource(s);
     {
-        let q = app.world().resource::<UniqueSignals>();
+        let mut q = app.world_mut().non_send_resource_mut::<UniqueSignals>();
         q.unique_signal("QUEST_POI_UPDATE");
         q.unique_signal("QUEST_LOG_UPDATE");
         q.unique_signal("QUEST_POI_UPDATE");
         assert_eq!(q.names(), ["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"]);
     }
     app.update();
-    assert!(app.world().resource::<UniqueSignals>().names().is_empty());
+    assert!(app
+        .world()
+        .non_send_resource::<UniqueSignals>()
+        .names()
+        .is_empty());
     let seen = app
         .world()
         .non_send_resource::<UiScript>()
@@ -351,7 +355,7 @@ fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
 fn a_signal_queued_during_the_flush_is_dropped() {
     use super::live::{flush_unique_signals, UniqueSignals};
     let mut app = App::new();
-    app.init_resource::<UniqueSignals>()
+    app.init_non_send_resource::<UniqueSignals>()
         .add_systems(Update, flush_unique_signals);
     let s = UiScript::new().unwrap();
     s.run(
@@ -367,13 +371,16 @@ fn a_signal_queued_during_the_flush_is_dropped() {
             .eval::<String>("local t = table.concat(SEEN, ' ') SEEN = {} return t")
             .unwrap()
     };
-    app.world()
-        .resource::<UniqueSignals>()
+    app.world_mut()
+        .non_send_resource_mut::<UniqueSignals>()
         .unique_signal("QUEST_LOG_UPDATE");
     app.update();
     assert_eq!(seen(&app), "QUEST_LOG_UPDATE", "one fire for the frame");
     assert!(
-        app.world().resource::<UniqueSignals>().names().is_empty(),
+        app.world()
+            .non_send_resource::<UniqueSignals>()
+            .names()
+            .is_empty(),
         "the handler's re-queue went with the count"
     );
     app.update();
@@ -385,7 +392,7 @@ fn a_signal_queued_during_the_flush_is_dropped() {
 fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
     use super::live::{clear_unique_signals, flush_unique_signals, UniqueSignals};
     let mut app = App::new();
-    app.init_resource::<UniqueSignals>()
+    app.init_non_send_resource::<UniqueSignals>()
         .net_handler(SessionEventKind::Disconnected, clear_unique_signals)
         .add_systems(Update, flush_unique_signals);
     let s = UiScript::new().unwrap();
@@ -403,12 +410,12 @@ fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
     };
     super::live::with_live_world(app.world_mut(), |s| s.run("ExpandQuestHeader(0)").unwrap());
     assert_eq!(
-        app.world().resource::<UniqueSignals>().names(),
+        app.world().non_send_resource::<UniqueSignals>().names(),
         ["QUEST_LOG_UPDATE"],
         "the verb's signal waits in the handlers' queue"
     );
-    app.world()
-        .resource::<UniqueSignals>()
+    app.world_mut()
+        .non_send_resource_mut::<UniqueSignals>()
         .unique_signal("QUEST_LOG_UPDATE");
     app.update();
     assert_eq!(seen(&app), "QUEST_LOG_UPDATE");
@@ -425,4 +432,124 @@ fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
     );
     app.update();
     assert_eq!(seen(&app), "", "the shutdown emptied the queue");
+}
+
+/// The owner of a piece of [`super::live::Lent`] state lends its own borrow for one call: a verb inside it writes the owner's state, the loan is gone once the call returns or unwinds, and Bevy saw the write through the owner's `NonSendMut`.
+#[test]
+fn an_owners_loan_lasts_one_call_and_bevy_sees_the_write() {
+    use super::live::{lent, UniqueSignals};
+    use super::LendLive;
+    use benilla_ui::script::write_live;
+
+    #[derive(Resource, Default)]
+    struct Seen(Vec<(&'static str, bool, bool)>);
+
+    fn owner(
+        (script, mut live): (
+            Option<NonSendMut<UiScript>>,
+            LendLive<'_, '_, { lent::SIGNALS }>,
+        ),
+        mut signals: NonSendMut<UniqueSignals>,
+        mut seen: ResMut<Seen>,
+    ) {
+        let _vm = script;
+        // Outside a loan the owned state is no verb's: the write finds no queue.
+        let outside = write_live(|l| l.unique_signal("BEFORE")) == Some(true);
+        let inside = live.lending(&mut *signals, || {
+            write_live(|l| l.unique_signal("INSIDE")) == Some(true)
+        });
+        seen.0.push(("call", outside, inside));
+        seen.0
+            .push(("after", live.overlay::<UniqueSignals>(), false));
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            live.lending(&mut *signals, || panic!("a call that unwinds"))
+        }));
+        seen.0
+            .push(("unwound", unwound.is_err(), live.overlay::<UniqueSignals>()));
+    }
+
+    fn reader(signals: NonSend<UniqueSignals>, mut seen: ResMut<Seen>) {
+        seen.0.push(("changed", signals.is_changed(), false));
+    }
+
+    let mut app = App::new();
+    app.init_non_send_resource::<UniqueSignals>()
+        .init_resource::<Seen>()
+        .add_systems(Update, (owner, reader).chain());
+    app.insert_non_send_resource(UiScript::new().unwrap());
+    app.update();
+    // A later frame: the reader saw the first frame's write, and none since.
+    app.world_mut().resource_mut::<Seen>().0.clear();
+    app.update();
+    let seen = &app.world().resource::<Seen>().0;
+    assert_eq!(
+        seen[..3],
+        [
+            ("call", false, true),
+            ("after", false, false),
+            ("unwound", true, false)
+        ]
+    );
+    assert_eq!(
+        app.world().non_send_resource::<UniqueSignals>().names(),
+        ["INSIDE"]
+    );
+    // The owner reborrows mutably every run, so its write shows as a change each frame.
+    assert_eq!(seen[3], ("changed", true, false));
+}
+
+/// A system that writes none of the [`super::live::Lent`] state lends `LendLive`'s own borrow: a verb's write lands in the world's state and shows as a change, and a read-only loan writes nothing.
+#[test]
+fn a_verbs_write_through_lend_live_lands_and_shows_as_a_change() {
+    use super::live::UniqueSignals;
+    use super::LendLive;
+    use benilla_ui::script::write_live;
+
+    #[derive(Resource, Default)]
+    struct Changed(Vec<bool>);
+
+    fn verb((script, _live): (Option<NonSendMut<UiScript>>, LendLive)) {
+        let _vm = script;
+        assert_eq!(write_live(|l| l.unique_signal("VERB")), Some(true));
+    }
+
+    fn reader(signals: NonSend<UniqueSignals>, mut changed: ResMut<Changed>) {
+        changed.0.push(signals.is_changed());
+    }
+
+    let mut app = App::new();
+    app.init_non_send_resource::<UniqueSignals>()
+        .init_resource::<Changed>()
+        .add_systems(Update, (verb, reader).chain());
+    app.insert_non_send_resource(UiScript::new().unwrap());
+    app.update();
+    assert_eq!(
+        app.world().non_send_resource::<UniqueSignals>().names(),
+        ["VERB"]
+    );
+    assert_eq!(app.world().resource::<Changed>().0, [true]);
+    // A read-only loan, as a test view lends, refuses the write.
+    struct Bare;
+    impl benilla_ui::script::LiveState for Bare {
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+        fn has_control(&self) -> bool {
+            true
+        }
+        fn far_sight(&self) -> bool {
+            false
+        }
+    }
+    let mut s = UiScript::new().unwrap();
+    assert_eq!(
+        s.with_live(&Bare, |_| write_live(|l| l.unique_signal("X"))),
+        None
+    );
 }

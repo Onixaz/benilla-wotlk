@@ -10,7 +10,8 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
-/// What the verbs read live, implemented by the app over its state. Read-only.
+/// What the verbs read live, implemented by the app over its state; the `&mut self` methods write
+/// the state a verb changes in its call, reached through [`write_live`].
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
     fn unit_flags(&self, guid: u64) -> Option<u32>;
@@ -114,7 +115,7 @@ pub trait LiveState {
     }
 
     /// Queue `event` with the frame's unique signals (`0x615020`); false where no queue is lent.
-    fn unique_signal(&self, _event: &'static str) -> bool {
+    fn unique_signal(&mut self, _event: &'static str) -> bool {
         false
     }
 
@@ -135,7 +136,7 @@ pub trait LiveState {
 
     /// A quest tooltip's build from the caches at the call (`0x622960`), its title, objectives paragraph and no-progress leaderboard formatted through `get`, each miss asked; `None` where no view lends them.
     fn quest_tooltip(
-        &self,
+        &mut self,
         _quest_id: u32,
         _get: &dyn Fn(&str) -> Option<String>,
     ) -> Option<super::QuestTooltipRead> {
@@ -158,7 +159,7 @@ pub trait LiveState {
 
     /// A logged quest's answers at the call, computed from its slot and the caches (`0x5e0000`, `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`), lines formatted through `get`, its detail left out; `Some(None)` for a quest not cached, `None` where no view lends them.
     fn quest_log_row(
-        &self,
+        &mut self,
         _quest_id: u32,
         _slot: u8,
         _get: &dyn Fn(&str) -> Option<String>,
@@ -167,7 +168,11 @@ pub trait LiveState {
     }
 
     /// A logged quest's detail pane at the call; `Some(None)` for a quest not cached, `None` where no view lends it.
-    fn quest_log_detail(&self, _quest_id: u32, _slot: u8) -> Option<Option<super::QuestLogDetail>> {
+    fn quest_log_detail(
+        &mut self,
+        _quest_id: u32,
+        _slot: u8,
+    ) -> Option<Option<super::QuestLogDetail>> {
         None
     }
 
@@ -177,7 +182,7 @@ pub trait LiveState {
     }
 
     /// `GetQuestTimers`' expiry of a run-out timer inside the call (`0x5e634a`): marks the quest expired and asks every questgiver's status again. `Some(Some(title))` for a new mark whose template is cached, `Some(None)` for a quest already marked or one whose line waits on its template's answer (`0x5e635c`); `None` where no view lends it.
-    fn expire_quest(&self, _quest_id: u32) -> Option<Option<String>> {
+    fn expire_quest(&mut self, _quest_id: u32) -> Option<Option<String>> {
         None
     }
 
@@ -192,7 +197,7 @@ pub trait LiveState {
     }
 
     /// `GetQuestResetTime`'s first step (`0x5e6dee`-`0x5e6e00`): with the time response's re-ask due, the log's rebuild runs, its tail asking the time again (`0x5e6d79`); its rows to write, `None` when not due, the rebuild skipped or no view lends it.
-    fn rebuild_quest_log_if_reask_due(&self) -> Option<super::QuestLogPlan> {
+    fn rebuild_quest_log_if_reask_due(&mut self) -> Option<super::QuestLogPlan> {
         None
     }
 
@@ -331,25 +336,32 @@ pub trait LiveState {
     fn clear_inspect_target(&self) {}
 }
 
-/// A lent view's address, its lifetime erased.
-type Lent = Option<NonNull<dyn LiveState>>;
+/// A lent view's address, its lifetime erased, and whether its loan lets verbs write through it.
+type Lent = Option<(NonNull<dyn LiveState>, bool)>;
+
+/// No reference into the lent view is out.
+const FREE: u32 = 0;
+/// A [`write_live`] closure holds the view.
+const WRITING: u32 = u32::MAX;
 
 thread_local! {
-    /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of
-    /// which puts the previous one back before its borrow ends.
+    /// The view lent on this thread: set only by [`UiScript::with_live`], [`UiScript::with_live_mut`]
+    /// and [`LiveLoan`], each of which puts the previous one back before its borrow ends.
     static SLOT: Cell<Lent> = const { Cell::new(None) };
+    /// The references into the lent view now out: [`FREE`], a count of readers, or [`WRITING`].
+    static HELD: Cell<u32> = const { Cell::new(FREE) };
 }
 
 /// Lend `live` on this thread, returning what it replaces.
 ///
 /// # Safety
-/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends.
-unsafe fn lend(live: &dyn LiveState) -> Lent {
-    let ptr: NonNull<dyn LiveState + '_> = NonNull::from(live);
+/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends, and
+/// `live` came from a `&mut` borrow when `writable`.
+unsafe fn lend(live: NonNull<dyn LiveState + '_>, writable: bool) -> Lent {
     // SAFETY: only the lifetime is erased; the caller restores the slot before the borrow ends,
-    // and `read_live` hands the view out only for the length of one closure.
-    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(ptr) };
-    SLOT.with(|s| s.replace(Some(ptr)))
+    // and `read_live` and `write_live` hand the view out only for the length of one closure.
+    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(live) };
+    SLOT.with(|s| s.replace(Some((ptr, writable))))
 }
 
 fn restore(previous: Lent) {
@@ -368,48 +380,79 @@ impl Drop for Restore {
 /// A view lent to every verb on this thread until the loan drops, which puts the previous one
 /// back: the guard a host keeps for the length of a stretch of calls into Lua.
 pub struct LiveLoan<V: LiveState> {
-    /// Boxed, so the lent address holds while the loan moves.
-    view: Box<V>,
+    /// Boxed, so the lent address holds while the loan moves; held raw, so the lent pointer and
+    /// [`Self::view_mut`] share one borrow.
+    view: NonNull<V>,
     previous: Lent,
 }
 
 impl<V: LiveState> LiveLoan<V> {
-    /// Lend `view` until the loan drops.
+    /// Lend `view` until the loan drops; verbs may write through it.
     ///
     /// # Safety
     /// The loan is dropped, never leaked, on the thread that made it, and loans on one thread
     /// drop in the reverse order of their making.
     pub unsafe fn new(view: V) -> Self {
-        let view = Box::new(view);
+        let view = NonNull::from(Box::leak(Box::new(view)));
         // SAFETY: `Drop` restores the slot before the box, and with it the view, is freed.
-        let previous = unsafe { lend(&*view) };
+        let previous = unsafe { lend(view as NonNull<dyn LiveState + '_>, true) };
         Self { view, previous }
     }
 
     /// The lent view.
     pub fn view(&self) -> &V {
-        &self.view
+        // SAFETY: the box lives until the drop, and no verb writes while `self` is borrowed here.
+        unsafe { self.view.as_ref() }
+    }
+
+    /// The lent view, to change between calls into Lua: a borrow of the loan cannot span one.
+    pub fn view_mut(&mut self) -> &mut V {
+        // SAFETY: as `view`; `&mut self` keeps any call into Lua, the only other user, out.
+        unsafe { self.view.as_mut() }
     }
 }
 
 impl<V: LiveState> Drop for LiveLoan<V> {
     fn drop(&mut self) {
         restore(self.previous);
+        // SAFETY: made by `Box::leak` in `new`, and the slot no longer names it.
+        drop(unsafe { Box::from_raw(self.view.as_ptr()) });
     }
 }
 
 impl UiScript {
-    /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
-    /// nested call lends its own and restores the outer one.
+    /// Run `f` with `live` lent to every verb it reaches, to read only; the loan ends before this
+    /// returns, and a nested call lends its own and restores the outer one.
     pub fn with_live<R>(&mut self, live: &dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
+        // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too; the
+        // loan is read-only, so the shared borrow is never written through.
+        let _restore = Restore(unsafe { lend(NonNull::from(live), false) });
+        f(self)
+    }
+
+    /// [`Self::with_live`], with the verbs' writes going through `live`.
+    pub fn with_live_mut<R>(
+        &mut self,
+        live: &mut dyn LiveState,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too.
-        let _restore = Restore(unsafe { lend(live) });
+        let _restore = Restore(unsafe { lend(NonNull::from(live), true) });
         f(self)
     }
 
     /// Whether a view is lent right now.
     pub fn has_live(&self) -> bool {
         SLOT.with(|s| s.get().is_some())
+    }
+}
+
+/// Puts the hold count back, on return and on unwind.
+struct Release(u32);
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(self.0));
     }
 }
 
@@ -421,17 +464,51 @@ pub(crate) fn has_control() -> bool {
 
 /// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
 pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
-    if read_live(|l| l.unique_signal(event)) != Some(true) {
+    if write_live(|l| l.unique_signal(event)) != Some(true) {
         model.pending_events.push((event.to_string(), Vec::new()));
     }
 }
 
 /// `f` over the view lent right now, `None` with none lent.
+///
+/// # Panics
+/// Inside a [`write_live`] closure: a verb's write never reaches back into Lua.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
-    let ptr = SLOT.with(Cell::get)?;
+    let (ptr, _) = SLOT.with(Cell::get)?;
+    let held = HELD.with(Cell::get);
+    assert_ne!(
+        held, WRITING,
+        "the live view was read inside a write through it"
+    );
+    HELD.with(|h| h.set(held + 1));
+    let _release = Release(held);
     // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or
-    // `LiveLoan`, which outlives this call; the reference cannot escape `f`.
+    // `LiveLoan`, which outlives this call; no writer holds it, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
+    Some(f(live))
+}
+
+/// `f` over the view lent right now, to read and write the state a verb changes in its call;
+/// `None` with none lent or a read-only loan.
+///
+/// # Panics
+/// Inside a [`read_live`] or [`write_live`] closure: one writer and no reader at a time.
+pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
+    let (mut ptr, writable) = SLOT.with(Cell::get)?;
+    if !writable {
+        return None;
+    }
+    let held = HELD.with(Cell::get);
+    assert_eq!(
+        held, FREE,
+        "the live view was written while a reference into it was out"
+    );
+    HELD.with(|h| h.set(WRITING));
+    let _release = Release(FREE);
+    // SAFETY: a writable slot holds a live `&mut` borrow lent by an enclosing `with_live_mut` or
+    // `LiveLoan`, which outlives this call; no other reference into it is out, and this one
+    // cannot escape `f`.
+    let live = unsafe { ptr.as_mut() };
     Some(f(live))
 }
 
@@ -483,7 +560,7 @@ pub(crate) struct TestView {
     pub inspect_target: Cell<u64>,
     /// Each logged quest's title by id, and the quests `expire_quest` marked, in order.
     pub quest_titles: std::collections::HashMap<u32, String>,
-    pub expired: std::cell::RefCell<Vec<u32>>,
+    pub expired: Vec<u32>,
     /// Each logged quest's POI lines.
     pub poi_lines: std::collections::HashMap<u32, super::QuestPoiLines>,
 }
@@ -539,12 +616,11 @@ impl LiveState for TestView {
         Some(self.poi_lines.get(&quest_id).cloned())
     }
 
-    fn expire_quest(&self, quest_id: u32) -> Option<Option<String>> {
-        let mut expired = self.expired.borrow_mut();
-        if expired.contains(&quest_id) {
+    fn expire_quest(&mut self, quest_id: u32) -> Option<Option<String>> {
+        if self.expired.contains(&quest_id) {
             return Some(None);
         }
-        expired.push(quest_id);
+        self.expired.push(quest_id);
         Some(self.quest_titles.get(&quest_id).cloned())
     }
 

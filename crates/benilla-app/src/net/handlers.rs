@@ -97,7 +97,7 @@ impl NetHandlerApp for App {
             .push(kind, (id, name));
         // The queues a handler fires its UI events and unique signals into.
         self.init_resource::<crate::ui_script::live::UiEvents>()
-            .init_resource::<crate::ui_script::live::UniqueSignals>();
+            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>();
         self
     }
 }

@@ -107,7 +107,7 @@ pub(crate) struct Scene<'w, 's> {
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
     control: ResMut<'w, super::ControlFlag>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
-    signals: Res<'w, crate::ui_script::live::UniqueSignals>,
+    signals: NonSendMut<'w, crate::ui_script::live::UniqueSignals>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -127,7 +127,7 @@ pub(crate) struct Scene<'w, 's> {
     /// The templates the item watches test the logged quests' required items against.
     quest_log: Option<Res<'w, crate::ui_quest_log::QuestLog>>,
     /// The log's quest rows the stack watch walks.
-    quest_rows: Option<Res<'w, crate::ui_quest_log::rows::RebuildMarks>>,
+    quest_rows: Option<NonSend<'w, crate::ui_quest_log::rows::RebuildMarks>>,
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -1638,7 +1638,7 @@ struct Merged {
 }
 
 /// An item's watches past its create, on the quest log: its stack count's test of the logged quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own, which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
-fn item_quest_watch(sc: &Scene, guid: u64, stack: bool, entry: bool) {
+fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
     let Some(log) = sc.quest_log.as_deref() else {
         return;
     };
@@ -1660,7 +1660,7 @@ fn item_quest_watch(sc: &Scene, guid: u64, stack: bool, entry: bool) {
             log,
             rows,
             &sc.net,
-            &sc.signals,
+            &mut sc.signals,
         );
     }
 }

@@ -703,12 +703,10 @@ pub(crate) fn publish_world_time(
 
 /// The server's unix wall clock (`SMSG_QUERY_TIME_RESPONSE`), advanced monotonically. Descriptor
 /// deadlines are absolute server stamps (a timed quest's is `time(nullptr) + limitTime`, vmangos
-/// `Player::AddQuest`), so a countdown reads this, never the local clock. The re-ask sits behind a lock, so the log's rebuild disarms it inside a verb's call (`0x5e6daa`).
+/// `Player::AddQuest`), so a countdown reads this, never the local clock.
 #[derive(Resource, Default)]
 pub(crate) struct ServerWallClock {
     sample: Option<WallClockSample>,
-    /// When the log's rebuild next asks the time (`0x5dff77`), `None` once asked (`0x5e6daa`).
-    reask: std::sync::Mutex<Option<Instant>>,
 }
 
 /// One `SMSG_QUERY_TIME_RESPONSE` sample and the monotonic instant it arrived.
@@ -722,43 +720,19 @@ pub(crate) struct WallClockSample {
 }
 
 impl ServerWallClock {
-    /// Take a fresh sample; it reads about RTT/2 behind, below a countdown's one-second grain. The
-    /// re-ask is armed at the earlier of an hour and the reset (`0x5dff6a`-`0x5dff7e`).
+    /// Take a fresh sample; it reads about RTT/2 behind, below a countdown's one-second grain.
     pub(crate) fn sample(&mut self, unix_time: u32, reset_in: u32) {
-        let received = Instant::now();
-        let wait = RESYNC_AFTER.min(Duration::from_secs(u64::from(reset_in)));
         self.sample = Some(WallClockSample {
             base_unix: unix_time,
             reset_in,
-            received,
+            received: Instant::now(),
         });
-        *self.reask_at() = Some(received + wait);
     }
 
-    fn reask_at(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
-        self.reask
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Whether the re-ask is armed and due (`0x5e6df6`-`0x5e6dfc`, `0x5e6d60`-`0x5e6d77`).
-    pub(crate) fn reask_due(&self, now: Instant) -> bool {
-        self.reask_at().is_some_and(|at| now >= at)
-    }
-
-    /// The rebuild's tail: a due re-ask is disarmed (`0x5e6daa`); whether it was, so the caller sends `CMSG_QUERY_TIME` (`0x5e6d79`).
-    pub(crate) fn take_due_reask(&self, now: Instant) -> bool {
-        let mut at = self.reask_at();
-        let due = at.is_some_and(|a| now >= a);
-        if due {
-            *at = None;
-        }
-        due
-    }
-
-    /// The game UI's start disarms it (`0x5e71ee`).
-    pub(crate) fn disarm_reask(&self) {
-        *self.reask_at() = None;
+    /// When the log's rebuild asks the time again after this sample: the earlier of an hour and the reset (`0x5dff6a`-`0x5dff7e`).
+    pub(crate) fn reask_at(&self) -> Option<Instant> {
+        let s = self.sample?;
+        Some(s.received + RESYNC_AFTER.min(Duration::from_secs(u64::from(s.reset_in))))
     }
 
     /// Whether an answer has landed.
