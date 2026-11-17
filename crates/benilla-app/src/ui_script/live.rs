@@ -265,6 +265,10 @@ impl LiveState for LiveView<'_, '_> {
         self.quest_rows.rebuild_if_reask_due()
     }
 
+    fn carried_quest_item(&self, item_id: u32) -> Option<u32> {
+        self.quest_rows.carried(item_id)
+    }
+
     fn battlefield_slot(&self, index: usize) -> Option<benilla_ui::script::BattlefieldQueueSlot> {
         self.battlefield.slot(index)
     }

@@ -21,9 +21,15 @@ fn on_show_bank(
     mut bank: ResMut<BankOpen>,
     mut gossip: ResMut<GossipState>,
     mut quest: ResMut<QuestGiver>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::ShowBank { banker } = ev {
+        let quest_closes = gossip.npc.is_some() && quest.is_open();
         show_bank(banker, &mut bank, &mut gossip, &mut quest);
+        // The quest window's close fires its event in the handler's turn (`0x58cb98`).
+        if quest_closes {
+            ui.fire("QUEST_FINISHED", vec![]);
+        }
     }
 }
 

@@ -195,6 +195,11 @@ pub trait LiveState {
     fn rebuild_quest_log_if_reask_due(&self) -> Option<super::QuestLogPlan> {
         None
     }
+
+    /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
+    fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
+        None
+    }
     /// Queue slot `index` (`0xbea4b8`) at the call, `None` off the two.
     fn battlefield_slot(&self, index: usize) -> Option<super::BattlefieldQueueSlot> {
         (index < 2).then(Default::default)

@@ -120,6 +120,14 @@ pub(crate) struct QuestRowLive<'w, 's> {
 }
 
 impl QuestRowLive<'_, '_> {
+    /// Our quest-item count of `item` at the call, 0 before our create (`0x58cbd5`).
+    pub(crate) fn carried(&self, item: u32) -> Option<u32> {
+        let objects = self.objects.as_ref()?;
+        Some(self.me.iter().next().map_or(0, |(store, _)| {
+            count_of(&store.0, objects, item, InventoryScope::QUEST_ITEMS)
+        }))
+    }
+
     /// `GetQuestResetTime`'s due re-ask runs the rebuild in the call (`0x5e6dee`-`0x5e6e00`).
     pub(crate) fn rebuild_if_reask_due(&self) -> Option<QuestLogPlan> {
         let clock = self.clock.as_deref()?;
@@ -601,11 +609,12 @@ pub(super) fn template_landed(
     if asks.landed(QuestAsk::Quest(quest_id)) {
         signals.unique_signal("QUEST_LOG_UPDATE");
     }
-    if marks.accepts.remove(&quest_id) {
-        ui.world(move |world| announce_accept(world, quest_id));
-    }
+    // The rebuild's ask (`0x6df3bb`) was made before the accept's (`0x6df429`), so its callback runs first and `QUEST_ACCEPTED` reads the rebuilt rows.
     if rebuild_marks.landed_last(quest_id) {
         ui.world(rebuild);
+    }
+    if marks.accepts.remove(&quest_id) {
+        ui.world(move |world| announce_accept(world, quest_id));
     }
 }
 

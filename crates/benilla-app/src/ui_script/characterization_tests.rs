@@ -826,6 +826,23 @@ fn quest_accept_and_complete() {
     );
 }
 
+/// An accept whose template is not cached waits for its answer (`0x6df429`), its rebuild counting the miss and still signalling (`0x5e6a98`, `0x5e6cb9`); the answer rebuilds the rows first, its ask made first (`0x6df3bb`, `0x5de921`), so `QUEST_ACCEPTED` names the quest's row (`0x6df49c`).
+#[test]
+fn an_accept_waiting_on_its_template_names_the_rebuilt_row() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &["QUEST_LOG_UPDATE", "QUEST_ACCEPTED"];
+    let verbs = &["quests"];
+    let slot = rig.packets(vec![self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)])], 2);
+    let answer = rig.packets(vec![quest_template(0)], 3);
+    assert_eq!(pin(&slot, events, verbs), ["QUEST_LOG_UPDATE | quests=0"]);
+    assert_eq!(
+        pin(&answer, events, verbs),
+        vec!["QUEST_ACCEPTED 2 | quests=2", "QUEST_LOG_UPDATE | quests=2"]
+    );
+}
+
 #[test]
 fn pet_summon_and_dismiss() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1469,28 +1486,30 @@ fn quest_dialogs_and_the_escort_confirm() {
         DIALOG_EVENTS,
         &[],
     ));
-    // No NPC is held, so each dialog closes on its first distance check (`QUEST_FINISHED`).
+    // No NPC is held, so each dialog closes on its first distance check; the close zeroes the giver and leaves the panel's text (`0x58cb6b`, `0x58cb98`).
     let lines = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(
         seen,
         vec![
             lines(&[
                 "QUEST_DETAIL | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle= qdone=nil",
+                "QUEST_FINISHED | qtitle=Charz qdone=nil",
             ]),
             lines(&[
                 "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle= qdone=nil",
+                "QUEST_FINISHED | qtitle=Charz qdone=1",
             ]),
             lines(&[
                 "QUEST_COMPLETE | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle= qdone=nil",
+                "QUEST_FINISHED | qtitle=Charz qdone=nil",
             ]),
+            // The template is not cached: the turn-in waits for its answer (`0x6d1192`).
             lines(&[]),
-            // The per-frame feed shows the frame's last dialog alone: 12340's handlers fire `QUEST_DETAIL` (`0x58dfb5`) and then `QUEST_PROGRESS` (`0x58bb4c`), each in its turn.
+            // Each handler fires its panel's event in its turn (`0x58dfb5`, then `0x58bb4c`).
             lines(&[
+                "QUEST_DETAIL | qtitle=Charz qdone=nil",
                 "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle= qdone=nil",
+                "QUEST_FINISHED | qtitle=Charz qdone=1",
             ]),
             lines(&["QUEST_ACCEPT_CONFIRM Escort Charz"]),
         ]

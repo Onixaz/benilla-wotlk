@@ -10,8 +10,9 @@ use bevy::prelude::*;
 use super::QuestGiver;
 use crate::creature_anim::QueueNpcEmotes;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
-use crate::ui_action::UiError;
+use crate::ui_action::{show_in_turn, UiError};
 use crate::ui_quest_log::QuestLog;
+use crate::ui_script::live::UiEvents;
 
 /// One handler per kind, plus the session-end and world-enter listeners.
 pub(super) fn register(app: &mut App) {
@@ -29,6 +30,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::QuestLogFull, on_log_full)
         .net_handler(K::QuestGiverInvalid, on_giver_invalid)
         .net_handler(K::QuestGiverFailed, on_giver_failed)
+        .net_handler(K::ItemTemplate, on_item)
         .net_handler(K::Disconnected, on_session_end)
         .net_handler(K::Connected, on_login)
         .net_handler(K::Worldport, on_worldport);
@@ -86,10 +88,27 @@ fn queue_panel_emotes(ev: &SessionEvent, out: &mut EmoteOut) {
     }
 }
 
-fn on_greeting(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+/// Whether a panel for `npc` replaces another giver's open window.
+fn switches(quest: &QuestGiver, npc: u64) -> bool {
+    quest.is_open() && quest.npc.is_some_and(|open| open != npc)
+}
+
+/// The panel's publish and event in the handler's turn ([`super::publish_panel`]).
+fn publish(ui: &mut UiEvents, switched: bool) {
+    ui.world(move |world| super::publish_panel(world, switched));
+}
+
+fn on_greeting(
+    In(ev): In<SessionEvent>,
+    mut quest: ResMut<QuestGiver>,
+    mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
+) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestGreeting(list) = ev {
+        let switched = switches(&quest, list.npc);
         quest_greeting(list, &mut quest);
+        publish(&mut ui, switched);
     }
 }
 
@@ -98,24 +117,56 @@ fn on_detail(
     mut quest: ResMut<QuestGiver>,
     commands: Res<NetCommands>,
     mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
 ) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestDetail(d) = ev {
-        quest_detail(d, &mut quest, &commands);
+        let switched = switches(&quest, d.npc);
+        if quest_detail(d, &mut quest, &commands) {
+            publish(&mut ui, switched);
+        }
     }
 }
 
-fn on_progress(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+fn on_progress(
+    In(ev): In<SessionEvent>,
+    mut quest: ResMut<QuestGiver>,
+    mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
+) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestProgress(p) = ev {
+        let switched = switches(&quest, p.npc);
         quest_progress(p, &mut quest);
+        publish(&mut ui, switched);
     }
 }
 
-fn on_offer(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+fn on_offer(
+    In(ev): In<SessionEvent>,
+    mut quest: ResMut<QuestGiver>,
+    mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
+) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestOffer(o) = ev {
+        let switched = switches(&quest, o.npc);
         quest_offer(o, &mut quest);
+        publish(&mut ui, switched);
+    }
+}
+
+/// An item answer for a row of the open panel runs its callback (`0x58b8f0`); an unknown item fires nothing (`0x58b8f6`).
+fn on_item(In(ev): In<SessionEvent>, quest: Res<QuestGiver>, mut ui: ResMut<UiEvents>) {
+    let SessionEvent::ItemTemplate {
+        entry,
+        info: Some(_),
+    } = ev
+    else {
+        return;
+    };
+    if quest.view_lists_item(entry) {
+        ui.world(super::item_landed);
     }
 }
 
@@ -167,15 +218,30 @@ fn on_failed(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
     }
 }
 
-fn on_log_full(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
-    if let SessionEvent::QuestLogFull = ev {
-        quest_log_full(&mut quest);
+/// A refusal's lines in the handler's turn.
+fn show_lines(quest: &mut QuestGiver, ui: &mut UiEvents) {
+    for line in quest.take_messages() {
+        show_in_turn(ui, "ui_quest", line);
     }
 }
 
-fn on_giver_invalid(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_log_full(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut ui: ResMut<UiEvents>) {
+    if let SessionEvent::QuestLogFull = ev {
+        quest_log_full(&mut quest);
+        show_lines(&mut quest, &mut ui);
+    }
+}
+
+/// Its line, then the close with nothing owed (`0x6cd852`).
+fn on_giver_invalid(
+    In(ev): In<SessionEvent>,
+    mut quest: ResMut<QuestGiver>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::QuestGiverInvalid { reason } = ev {
         quest_giver_invalid(reason, &mut quest);
+        show_lines(&mut quest, &mut ui);
+        ui.world(|world| super::giver_finished(world, false, 0, false));
     }
 }
 
@@ -184,6 +250,7 @@ fn on_giver_failed(
     mut quest: ResMut<QuestGiver>,
     (quest_log, marks): (Res<QuestLog>, Res<crate::ui_quest_log::QuestExpiries>),
     commands: Res<NetCommands>,
+    mut ui: ResMut<UiEvents>,
 ) {
     if let SessionEvent::QuestGiverFailed { quest_id, reason } = ev {
         quest_giver_failed(
@@ -193,6 +260,9 @@ fn on_giver_failed(
             (&quest_log, &marks),
             &commands,
         );
+        show_lines(&mut quest, &mut ui);
+        // The close names the quest, nothing owed (`0x6cdb2b`).
+        ui.world(move |world| super::giver_finished(world, false, quest_id, false));
     }
 }
 
@@ -226,8 +296,8 @@ fn quest_greeting(list: QuestGiverList, quest: &mut QuestGiver) {
     quest.open(list.npc, crate::ui_quest::QuestView::Greeting(list));
 }
 
-/// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel.
-fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands) {
+/// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel; whether it opened.
+fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands) -> bool {
     debug!("net: quest detail — quest {} on {:#x}", d.quest_id, d.npc);
     // A share landing on an open window is refused by the client with `BUSY`, and the open panel
     // stays; the server's own busy test only knows about other shares.
@@ -242,11 +312,12 @@ fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands)
             quest: d.quest_id,
             msg: QuestShareMsg::BUSY,
         });
-        return;
+        return false;
     }
     // The auto-launched byte is the decline latch, not part of the view (`0x58de4f`).
     quest.close_on_cancel = u32::from(d.auto_launched);
     quest.open(d.npc, crate::ui_quest::QuestView::Detail(d));
+    true
 }
 
 /// `SMSG_QUESTGIVER_REQUEST_ITEMS`: the progress panel.
@@ -324,7 +395,6 @@ fn quest_giver_invalid(reason: u32, quest: &mut QuestGiver) {
     quest.push_message(with_daily_cap(crate::ui_quest::questgiver_invalid_key(
         reason,
     )));
-    quest.clear();
 }
 
 /// A reason key as its message: the daily cap's line takes the cap, the rest no fill.
@@ -369,7 +439,6 @@ fn quest_giver_failed(
     if key == "ERR_QUEST_FAILED_BAG_FULL_S" {
         quest.push_message(UiError::key("ERR_INV_FULL"));
     }
-    quest.clear();
 }
 
 #[cfg(test)]
@@ -446,7 +515,6 @@ mod tests {
             benilla_ui::messages::MsgKind::Chat
         );
         assert_eq!(msgs[0], UiError::key("ERR_QUEST_ALREADY_ON"));
-        assert!(!giver.is_open(), "the ref closes the window on a refusal");
     }
 
     #[test]
@@ -472,7 +540,6 @@ mod tests {
             benilla_ui::messages::MsgKind::Error
         );
         assert_eq!(msgs[1], UiError::key("ERR_INV_FULL"));
-        assert!(!giver.is_open());
     }
 
     #[test]

@@ -8,7 +8,9 @@
 
 use bevy::prelude::*;
 
-use crate::net::{ClientCommand, GuidIndex, NetCommands, SelfPlayer};
+#[cfg(test)]
+use crate::net::{ClientCommand, NetCommands};
+use crate::net::{GuidIndex, SelfPlayer};
 use crate::target::SERVICE_RANGE_SQ;
 use benilla_world::schedule::WorldStage;
 
@@ -42,12 +44,6 @@ pub(crate) trait NpcSession: Resource {
     fn npc(&self) -> Option<u64>;
     /// The window's client-side close, with no packet: the same clear its close button does.
     fn close(&mut self);
-    /// What a walk-away close sends first, if anything. The reference's watchdog calls the quest
-    /// session's end directly, not `DeclineQuest`, so walking away from an NPC's quest panel sends
-    /// nothing, while a shared quest still owes the sharer `MSG_QUEST_PUSH_RESULT{DECLINE_QUEST}`.
-    fn walk_away_send(&self, _npc: u64) -> Option<ClientCommand> {
-        None
-    }
 }
 
 /// The walk-away leash, set by the latched object's type, not the window: the reference's stores
@@ -77,26 +73,29 @@ pub(crate) fn npc_switched(prev: Option<u64>, now: Option<u64>) -> bool {
 pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
     mut session: ResMut<T>,
     index: Res<GuidIndex>,
-    commands: Res<NetCommands>,
     self_q: Query<&Transform, With<SelfPlayer>>,
     transforms: Query<&Transform>,
 ) {
     let Some(npc) = session.npc() else { return };
-    let Some(self_tf) = self_q.iter().next() else {
-        return;
-    };
-    // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's
-    // compare.
-    let out = match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
-        Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
-        None => true, // the NPC despawned out from under the window
-    };
-    if out {
+    if session_out_of_range(npc, &index, &self_q, &transforms) {
         debug!("ui_session: NPC {npc:#x} out of range/gone — client-side close");
-        if let Some(cmd) = session.walk_away_send(npc) {
-            let _ = commands.0.send(cmd);
-        }
         session.close();
+    }
+}
+
+/// Whether a window latched on `npc` is past its leash or its NPC despawned; centre to centre with no bounding radii, `dist² <= leash²` keeping, as the reference compares.
+pub(crate) fn session_out_of_range(
+    npc: u64,
+    index: &GuidIndex,
+    self_q: &Query<&Transform, With<SelfPlayer>>,
+    transforms: &Query<&Transform>,
+) -> bool {
+    let Some(self_tf) = self_q.iter().next() else {
+        return false;
+    };
+    match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
+        Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
+        None => true,
     }
 }
 
@@ -391,7 +390,7 @@ mod tests {
             app.insert_resource(NetCommands(tx));
             app.init_resource::<QuestGiver>();
             app.init_resource::<GuidIndex>();
-            app.add_systems(Update, close_npc_session_out_of_range::<QuestGiver>);
+            app.add_systems(Update, crate::ui_quest::close_quest_out_of_range);
             app.world_mut()
                 .spawn((SelfPlayer, Transform::from_xyz(0.0, 0.0, 0.0)));
             let e = app

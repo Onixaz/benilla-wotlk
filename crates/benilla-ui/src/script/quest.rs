@@ -344,7 +344,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(flag(model.quest.as_ref().is_some_and(|q| q.completable)))
+            // The panel's complete flag, then each required item counted in the bags at the call, up to the first empty row (`0x58cbb0`-`0x58cbfb`).
+            Ok(flag(model.quest.as_ref().is_some_and(|q| {
+                q.completable
+                    && q.required.iter().take_while(|r| r.item_id != 0).all(|r| {
+                        super::read_live(|l| l.carried_quest_item(r.item_id))
+                            .flatten()
+                            .is_none_or(|n| n >= r.count)
+                    })
+            })))
         })?,
     )?;
 

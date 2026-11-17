@@ -1603,34 +1603,16 @@ mod tests {
             .init_resource::<crate::go_templates::GameObjectTemplates>();
         // The item-stats and quest feeds share caches others are gated on: idle, they must not
         // mark them.
-        app.add_systems(
-            Update,
-            (
-                crate::ui_items::feed::feed_item_stats,
-                crate::ui_quest::feed_quest,
-            )
-                .chain(),
-        );
+        app.add_systems(Update, crate::ui_items::feed::feed_item_stats);
         app.update();
         app.update();
         let items_marked = app.world().resource_ref::<Items>().last_changed();
-        let giver_marked = app
-            .world()
-            .resource_ref::<crate::ui_quest::QuestGiver>()
-            .last_changed();
         app.update();
         app.update();
         assert_eq!(
             app.world().resource_ref::<Items>().last_changed(),
             items_marked,
             "an idle item feed leaves the cache unmarked"
-        );
-        assert_eq!(
-            app.world()
-                .resource_ref::<crate::ui_quest::QuestGiver>()
-                .last_changed(),
-            giver_marked,
-            "an idle quest feed leaves the giver unmarked"
         );
     }
 
