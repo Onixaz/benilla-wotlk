@@ -28,6 +28,9 @@ pub(crate) enum CollisionLayer {
     Walk,
     /// A WMO's camera/LOS collider, every face but NOCAMCOLLIDE (`0x02`); only the camera sees it.
     Camera,
+    /// A WMO's mouse-pick occluder, every face but MOPY `0x88` and blended materials; only the
+    /// pick's world trace sees it ([`PickOccluder`]).
+    Pick,
     /// Liquid surfaces, every MCLQ layer's and WMO pool's wet cells, hit only by a query that asks.
     /// `cameraWaterCollision` ORs `0xf0000` into the trace mask the camera solver hands its three
     /// collision queries, and the chunk query reads that nibble to gate the chunk's four MCLQ slots
@@ -48,6 +51,11 @@ pub(crate) fn walk_layers() -> CollisionLayers {
 /// `CollisionLayers` for a WMO's camera/LOS collider, which the body query never hits.
 pub(crate) fn camera_layers() -> CollisionLayers {
     CollisionLayers::new(CollisionLayer::Camera, LayerMask::ALL)
+}
+
+/// `CollisionLayers` for a WMO's mouse-pick occluder, which neither the body nor the camera hits.
+pub(crate) fn pick_layers() -> CollisionLayers {
+    CollisionLayers::new(CollisionLayer::Pick, LayerMask::ALL)
 }
 
 /// `CollisionLayers` for a liquid surface, inert to every query that does not ask for it: a
@@ -97,10 +105,11 @@ pub struct GroundDecalSurface;
 /// Marks a static collider that occludes the mouse pick: the world frame's hit test traces the
 /// world with flags `0x1000124` and drops the object hit when the world hit is strictly nearer, so
 /// a unit behind a wall is not hoverable. Occluders are terrain and WMO group faces. Doodads
-/// occlude by their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull.
-/// Deviation: the WMO term is the walk collider (every face but DETAIL `0x04`), where the trace's
-/// ignore mask (`0x7ae140` → `0x188`) drops MOPY `0x88` faces and blended materials (`0x7c6c30`); a
-/// third face set per WMO costs its build and memory.
+/// occlude by their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull. The WMO
+/// term is its own face set on [`CollisionLayer::Pick`]: `CMapObj::CreateWmoIgnoreFlags`
+/// (`0x7ae140`) gives the trace the ignore mask `0x188`, so `BspQuery_Segment` (`0x7c6c30`) passes
+/// MOPY `0x88` faces (the collision-only blockers, such as Dalaran's bank counters) and blended
+/// materials, and stops on DETAIL faces, which the walk collider drops.
 #[derive(Component)]
 pub struct PickOccluder;
 
@@ -119,11 +128,19 @@ pub struct WorldCollision<'w, 's> {
 
 impl WorldCollision<'_, '_> {
     /// What a walking body collides with: the default layer and the WMO walking colliders. Public
-    /// for the lanes that hand a filter elsewhere (the mouse pick's occlusion trace, the mount-tilt
-    /// probe); the casts below apply it themselves.
+    /// for the lanes that hand a filter elsewhere (the mouse pick's GameObject ground leg, the
+    /// mount-tilt probe); the casts below apply it themselves.
     pub fn body_filter() -> SpatialQueryFilter {
         SpatialQueryFilter::from_mask(LayerMask(
             CollisionLayer::Default.to_bits() | CollisionLayer::Walk.to_bits(),
+        ))
+    }
+
+    /// What the mouse pick's world trace reaches: the default layer (terrain) and the WMO pick
+    /// colliders; [`PickOccluder`] picks the occluders within.
+    pub fn pick_filter() -> SpatialQueryFilter {
+        SpatialQueryFilter::from_mask(LayerMask(
+            CollisionLayer::Default.to_bits() | CollisionLayer::Pick.to_bits(),
         ))
     }
 

@@ -105,7 +105,7 @@ fn trace_occlusion(
             f32::MAX,
             true,
             // The mask that reaches every `PickOccluder` collider; the marker picks the set within.
-            &benilla_world::collision::WorldCollision::body_filter(),
+            &benilla_world::collision::WorldCollision::pick_filter(),
             &|e| occluders.contains(e),
         )
         .map_or(f32::INFINITY, |hit| hit.distance);

@@ -1463,6 +1463,7 @@ mod tests {
             collision_bounds: None,
             collision: None,
             collision_camera: None,
+            collision_pick: None,
             doodads: Vec::new(),
             doodad_sets: Vec::new(),
             lights: Vec::new(),

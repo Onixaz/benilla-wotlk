@@ -20,7 +20,7 @@ use benilla_formats::{world_to_tile, M2Bounds};
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
-use crate::collision::{camera_layers, walk_layers, GroundDecalSurface, PickOccluder};
+use crate::collision::{camera_layers, pick_layers, walk_layers, GroundDecalSurface, PickOccluder};
 use crate::doodad_anim::wants_rig;
 use crate::interact::WorldObject;
 use crate::lighting::SharedLightBuffer;
@@ -708,8 +708,9 @@ pub(super) fn spawn_loaded_placements(
                             }
                         }
                     }
-                    // Two colliders, each on its layer: the reference gathers different faces for
-                    // the body (drops DETAIL) and the camera (drops NOCAMCOLLIDE, keeps DETAIL).
+                    // Three colliders, each on its layer: the reference gathers different faces for
+                    // the body (drops DETAIL), the camera (drops NOCAMCOLLIDE, keeps DETAIL) and the
+                    // mouse pick (drops MOPY `0x88` and blended faces, keeps DETAIL).
                     if let Some((verts, tris)) =
                         placement_collider_data(m.collision.as_ref(), &p.transform)
                     {
@@ -723,9 +724,6 @@ pub(super) fn spawn_loaded_placements(
                                     ),
                                     // The walk faces take the selection ring (floors, steps).
                                     GroundDecalSurface,
-                                    // Clamps the mouse pick, standing in for the trace's own
-                                    // face set (the deviation on `PickOccluder`).
-                                    PickOccluder,
                                 ))
                                 .id(),
                         );
@@ -739,6 +737,24 @@ pub(super) fn spawn_loaded_placements(
                                     build_collider_task(verts, tris),
                                     Some(camera_layers()),
                                     true,
+                                ))
+                                .id(),
+                        );
+                    }
+                    // The mouse pick's occluder, on a layer of its own: the world trace passes the
+                    // collision-only and blended faces the body stops on (`PickOccluder`).
+                    if let Some((verts, tris)) =
+                        placement_collider_data(m.collision_pick.as_ref(), &p.transform)
+                    {
+                        ents.push(
+                            commands
+                                .spawn((
+                                    PendingCollider::new(
+                                        build_collider_task(verts, tris),
+                                        Some(pick_layers()),
+                                        true,
+                                    ),
+                                    PickOccluder,
                                 ))
                                 .id(),
                         );
