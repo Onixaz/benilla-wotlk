@@ -1,6 +1,7 @@
 //! The addon-only verbs still unbuilt (#399): engine globals 12340 registers that no stock
 //! FrameXML or GlueXML file calls, so no play session notices one missing. The list is exact and
-//! only shrinks: building one fails this gate until its name leaves the list.
+//! only shrinks: building one fails this gate until its name leaves the list. The ones left out on
+//! purpose are a second list, held to `docs/DEVIATIONS.md` and to staying unbuilt.
 
 use std::collections::HashSet;
 
@@ -10,55 +11,11 @@ use super::reference_surface::engine_globals;
 /// interface. Byte-sorted.
 const ADDON_ONLY_UNBUILT: &[&str] = &[
     "AppendToFile",
-    "BNIsBlocked",
-    "BNReportFriendInvite",
-    "BNSetFocus",
     "ChangePlayerDifficulty",
-    "ChannelSilenceAll",
-    "ChannelUnSilenceAll",
-    "ChannelVoiceOff",
-    "ChannelVoiceOn",
     "ClearChannelWatch",
-    "CommentatorAddPlayer",
-    "CommentatorEnterInstance",
-    "CommentatorExitInstance",
-    "CommentatorFollowPlayer",
-    "CommentatorGetCamera",
-    "CommentatorGetCurrentMapID",
-    "CommentatorGetInstanceInfo",
-    "CommentatorGetMapInfo",
-    "CommentatorGetMode",
-    "CommentatorGetNumMaps",
-    "CommentatorGetNumPlayers",
-    "CommentatorGetPlayerInfo",
-    "CommentatorGetSkirmishMode",
-    "CommentatorGetSkirmishQueueCount",
-    "CommentatorGetSkirmishQueuePlayerInfo",
-    "CommentatorLookatPlayer",
-    "CommentatorRemovePlayer",
-    "CommentatorRequestSkirmishMode",
-    "CommentatorRequestSkirmishQueueData",
-    "CommentatorSetBattlemaster",
-    "CommentatorSetCamera",
-    "CommentatorSetCameraCollision",
-    "CommentatorSetMapAndInstanceIndex",
-    "CommentatorSetMode",
-    "CommentatorSetMoveSpeed",
-    "CommentatorSetPlayerIndex",
-    "CommentatorSetSkirmishMatchmakingMode",
-    "CommentatorSetTargetHeightOffset",
-    "CommentatorStartInstance",
-    "CommentatorStartSkirmishMatch",
-    "CommentatorToggleMode",
-    "CommentatorUpdateMapInfo",
-    "CommentatorUpdatePlayerInfo",
-    "CommentatorZoomIn",
-    "CommentatorZoomOut",
     "CursorHasMacro",
     "DeclineName",
     "DeleteFile",
-    "DisplayChannelVoiceOff",
-    "DisplayChannelVoiceOn",
     "DownloadSettings",
     "FindSpellBookSlotByID",
     "GMRequestPlayerInfo",
@@ -75,8 +32,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetMacroItem",
     "GetMacroSpell",
     "GetMaxArenaCurrency",
-    "GetMinigameState",
-    "GetMinigameType",
     "GetMouseButtonClicked",
     "GetMouseButtonName",
     "GetMovieResolution",
@@ -115,19 +70,9 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "IsSwimming",
     "IsUsableItem",
     "IsUsableSpell",
-    "IsVoiceChatAllowed",
-    "KBArticle_IsLoaded",
-    "KBQuery_GetArticleHeaderData",
-    "KBQuery_IsLoaded",
-    "KBSetup_GetArticleHeaderData",
-    "KBSetup_GetLanguageCount",
-    "KBSetup_GetLanguageData",
-    "KBSystem_GetServerStatus",
-    "MakeMinigameMove",
     "MoveAndSteerStart",
     "MoveAndSteerStop",
     "OpenTrainer",
-    "PlayDance",
     "QuestIsDaily",
     "QuestIsWeekly",
     "QuestPOIGetQuestIDByIndex",
@@ -147,7 +92,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "SetMacroItem",
     "SetMacroSpell",
     "SetMouselookOverrideBinding",
-    "SilenceMember",
     "TargetDirectionEnemy",
     "TargetDirectionFinished",
     "TargetDirectionFriend",
@@ -161,11 +105,74 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "TogglePlayerBounds",
     "TogglePortals",
     "ToggleTris",
-    "UnSilenceMember",
     "UnitIsFeignDeath",
     "UnitIsPVPSanctuary",
     "UpdateAddOnCPUUsage",
     "UploadSettings",
+];
+
+/// Addon-only engine globals benilla leaves out on purpose, each a row of `docs/DEVIATIONS.md`'s
+/// engine-verb table: Battle.net, the knowledge base, voice chat, arena spectating, minigames and the
+/// dance studio. Byte-sorted.
+const ADDON_ONLY_DEVIATED: &[&str] = &[
+    "BNIsBlocked",
+    "BNReportFriendInvite",
+    "BNSetFocus",
+    "ChannelSilenceAll",
+    "ChannelUnSilenceAll",
+    "ChannelVoiceOff",
+    "ChannelVoiceOn",
+    "CommentatorAddPlayer",
+    "CommentatorEnterInstance",
+    "CommentatorExitInstance",
+    "CommentatorFollowPlayer",
+    "CommentatorGetCamera",
+    "CommentatorGetCurrentMapID",
+    "CommentatorGetInstanceInfo",
+    "CommentatorGetMapInfo",
+    "CommentatorGetMode",
+    "CommentatorGetNumMaps",
+    "CommentatorGetNumPlayers",
+    "CommentatorGetPlayerInfo",
+    "CommentatorGetSkirmishMode",
+    "CommentatorGetSkirmishQueueCount",
+    "CommentatorGetSkirmishQueuePlayerInfo",
+    "CommentatorLookatPlayer",
+    "CommentatorRemovePlayer",
+    "CommentatorRequestSkirmishMode",
+    "CommentatorRequestSkirmishQueueData",
+    "CommentatorSetBattlemaster",
+    "CommentatorSetCamera",
+    "CommentatorSetCameraCollision",
+    "CommentatorSetMapAndInstanceIndex",
+    "CommentatorSetMode",
+    "CommentatorSetMoveSpeed",
+    "CommentatorSetPlayerIndex",
+    "CommentatorSetSkirmishMatchmakingMode",
+    "CommentatorSetTargetHeightOffset",
+    "CommentatorStartInstance",
+    "CommentatorStartSkirmishMatch",
+    "CommentatorToggleMode",
+    "CommentatorUpdateMapInfo",
+    "CommentatorUpdatePlayerInfo",
+    "CommentatorZoomIn",
+    "CommentatorZoomOut",
+    "DisplayChannelVoiceOff",
+    "DisplayChannelVoiceOn",
+    "GetMinigameState",
+    "GetMinigameType",
+    "IsVoiceChatAllowed",
+    "KBArticle_IsLoaded",
+    "KBQuery_GetArticleHeaderData",
+    "KBQuery_IsLoaded",
+    "KBSetup_GetArticleHeaderData",
+    "KBSetup_GetLanguageCount",
+    "KBSetup_GetLanguageData",
+    "KBSystem_GetServerStatus",
+    "MakeMinigameMove",
+    "PlayDance",
+    "SilenceMember",
+    "UnSilenceMember",
     "VoiceGetCurrentCaptureDevice",
     "VoiceGetCurrentOutputDevice",
     "VoicePushToTalkStart",
@@ -230,4 +237,44 @@ fn the_list_names_reference_engine_globals_in_order() {
         unordered.is_empty(),
         "out of byte order or repeated: {unordered:?}"
     );
+}
+
+/// A deviated verb stays unbuilt, is a 3.3.5a engine global, and has its row in
+/// `docs/DEVIATIONS.md`; the two lists share no name.
+#[test]
+fn the_deviated_verbs_are_written_down_and_unbuilt() {
+    let doc = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/DEVIATIONS.md"
+    ))
+    .expect("docs/DEVIATIONS.md");
+    let rows: HashSet<&str> = doc
+        .lines()
+        .filter_map(|l| l.strip_prefix("| `"))
+        .filter_map(|l| l.split('`').next())
+        .collect();
+    let engine = reference_engine();
+    let ours = engine_globals();
+    let mut wrong: Vec<String> = Vec::new();
+    for name in ADDON_ONLY_DEVIATED {
+        if !rows.contains(name) {
+            wrong.push(format!("{name}: no row in docs/DEVIATIONS.md"));
+        }
+        if !engine.contains(*name) {
+            wrong.push(format!("{name}: not an engine global of 3.3.5a"));
+        }
+        if ours.contains(*name) {
+            wrong.push(format!("{name}: built, so not a deviation any more"));
+        }
+        if ADDON_ONLY_UNBUILT.contains(name) {
+            wrong.push(format!("{name}: also listed as unbuilt"));
+        }
+    }
+    wrong.extend(
+        ADDON_ONLY_DEVIATED
+            .windows(2)
+            .filter(|w| w[0] >= w[1])
+            .map(|w| format!("out of byte order or repeated: {} {}", w[0], w[1])),
+    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
