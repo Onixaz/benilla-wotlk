@@ -186,7 +186,7 @@ pub(super) fn drain_chat_input(
     emotes: Option<Res<crate::sound::EmoteSounds>>,
     selection: Res<Selection>,
     mut group: ResMut<crate::ui_party::GroupState>,
-    mut names: ResMut<crate::names::NameCache>,
+    names: Res<crate::names::NameCache>,
     // Our stand state and move flags for the emote gates; the entity is `/castvis`'s fallback.
     self_player: Query<(Entity, &MovementState, &GlobalTransform), With<SelfPlayer>>,
     mut cast_events: MessageWriter<crate::creature_anim::CastEvent>,
@@ -533,11 +533,21 @@ pub(super) fn drain_chat_input(
                 "raid" => {
                     // The wire arm's by-key queue, so the lines resolve from GlobalStrings with
                     // each row's surface and sound.
-                    chat_out.ui_errors.0.extend(crate::ui_party::synthetic_raid(
-                        &mut group,
-                        &mut names,
-                        self_guid.0,
-                    ));
+                    // Through the console queue: the system reads the name cache the live view lends.
+                    let me = self_guid.0;
+                    chat_out.console.queue(move |world: &mut World| {
+                        world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
+                            let lines = crate::ui_party::synthetic_raid(
+                                &mut world.resource_mut::<crate::ui_party::GroupState>(),
+                                &mut names,
+                                me,
+                            );
+                            world
+                                .resource_mut::<crate::ui_action::UiErrorKeys>()
+                                .0
+                                .extend(lines);
+                        });
+                    });
                 }
                 "invite" => group.pending_invite = Some("Partner".to_string()),
                 // A group member's ping 35 yd north-east: off both axes, so a mirrored sign

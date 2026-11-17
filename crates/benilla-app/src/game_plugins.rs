@@ -1183,7 +1183,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 745, 737),
+        ("Update", 733, 725),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),

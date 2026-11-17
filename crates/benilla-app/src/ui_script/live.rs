@@ -27,6 +27,8 @@ pub(crate) struct LiveView<'w, 's> {
     death: crate::death::DeathView<'w, 's>,
     summon: crate::ui_summon::SummonView<'w>,
     battlefield: crate::ui_battlefield::BattlefieldView<'w, 's>,
+    score: crate::ui_battlefield_score::ScoreView<'w>,
+    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -150,6 +152,22 @@ impl LiveState for LiveView<'_, '_> {
 
     fn battlemaster_rows(&self) -> Vec<benilla_ui::script::BattlemasterRow> {
         self.battlefield.rows()
+    }
+
+    /// A held unit's own race and class stand in where the name answer carried none.
+    fn score_name(&self, guid: u64) -> Option<benilla_ui::script::ScoreName> {
+        self.score.name(guid, |g| {
+            let f = self.unit(g)?;
+            Some((f.unit_race()?, f.unit_class()?))
+        })
+    }
+
+    fn battlefield_score_names_pending(&self) -> bool {
+        self.score.names_pending()
+    }
+
+    fn arena_opponent_count(&self) -> Option<usize> {
+        self.arena.as_ref().map(|a| a.count())
     }
 }
 

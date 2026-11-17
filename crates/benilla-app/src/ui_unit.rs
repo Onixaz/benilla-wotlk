@@ -1822,11 +1822,11 @@ fn feed_units(
             // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
             // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             script.fire_event("UPDATE_FACTION", vec![]);
-            // The cascade's corpse and release reset and our own create's dead or alive refresh,
-            // as an exclusive command with its events fired in turn (`0x528010`, `0x6e818b`).
-            crate::death::queue_enter_world(&mut deferred);
-            // The cascade's battlefield entry (`0x54ca50`), later in its list.
+            // The cascade's battlefield entry (`0x528230` -> `0x54ca50`), ahead of its corpse and
+            // release reset (`0x528362`, `0x528378`) and our own create's dead or alive refresh
+            // (`0x6e818b`), each an exclusive command with its events fired in turn.
             crate::ui_battlefield::queue_enter_world(&mut deferred);
+            crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;
         }
     } else if memo.entered_world {

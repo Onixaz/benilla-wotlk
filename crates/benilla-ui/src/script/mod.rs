@@ -317,7 +317,7 @@ pub use battlefield_queue::{
     INSTANCE_TYPE_ARENA, RANDOM_BATTLEGROUND,
 };
 pub use battlefield_score::{
-    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView,
+    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
 };
 pub use bind_confirm::PendingEquipAnswer;
 pub use calls::{CastAt, NearestMode, ScriptCall};

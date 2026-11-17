@@ -742,12 +742,15 @@ fn enter_world(
     }
 }
 
-/// Queue the battlefield's world entry to run once the calling system's commands apply.
+/// Queue the battlefield's world entry (`0x54ca50`) to run once the calling system's commands
+/// apply: the queue's globals, the scoreboard's, then the arena slots and their events.
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");
         }
+        crate::ui_battlefield_score::enter_world(world);
+        crate::ui_arena::enter_world(world);
         crate::ui_script::live::fire_handler_events(world);
     });
 }
@@ -813,16 +816,16 @@ mod net {
     }
 
     /// `SMSG_BATTLEFIELD_STATUS` (`0x54ae40`): the slot, the confirm tutorial (48) as it reads the
-    /// invitation, on status 3 the score rebuild with its filter reset (`0x54b0cc`, `0x54aa30`)
-    /// that fires `UPDATE_BATTLEFIELD_SCORE` with every name known, the queued tutorial (47), then
-    /// `UPDATE_BATTLEFIELD_STATUS` with the 1-based slot (`0x54b1a9`); a third slot is dropped.
+    /// invitation, on status 3 the map's score columns, the filter reset and the score rebuild
+    /// (`0x54b026`, `0x54b0cc`, `0x54b0d6`) that fires `UPDATE_BATTLEFIELD_SCORE` with every name
+    /// known, the queued tutorial (47), then `UPDATE_BATTLEFIELD_STATUS` with the 1-based slot
+    /// (`0x54b1a9`); a third slot is dropped.
     pub(super) fn on_status(
         In(ev): In<SessionEvent>,
         mut queue: ResMut<BattlefieldQueue>,
         mut ui: ResMut<UiEvents>,
         mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
-        board: Option<Res<crate::ui_battlefield_score::BattlefieldScoreboard>>,
-        names: Option<Res<NameCache>>,
+        catalog: Option<Res<crate::world_state_ui::WorldStateUiRes>>,
     ) {
         let SessionEvent::BattlefieldStatus(status) = ev else {
             return;
@@ -844,14 +847,12 @@ mod net {
             tutorial(crate::tutorial::id::PORT_TO_BATTLEGROUND);
         }
         if held && active {
-            ui.write(|s| s.reset_battlefield_score_filter());
-            let pending = board
-                .as_deref()
-                .zip(names.as_deref())
-                .is_some_and(|(b, n)| b.names_pending(n));
-            if !pending {
-                ui.fire("UPDATE_BATTLEFIELD_SCORE", Vec::new());
-            }
+            let columns = queue
+                .active_map()
+                .zip(catalog.as_deref())
+                .map(|(map, cat)| crate::ui_battlefield_score::score_columns(cat, map))
+                .unwrap_or_default();
+            ui.write(move |s| s.activate_battlefield_scores(columns));
         }
         if held && state == 1 {
             tutorial(crate::tutorial::id::BATTLEGROUND_QUEUE);
@@ -917,11 +918,11 @@ mod net {
 
     /// `SMSG_BATTLEFIELD_PORT_DENIED` (`0x54d4b0`): `ERR_PLAYER_DEAD`, with our player held.
     fn on_port_denied(
-        In(_): In<SessionEvent>,
+        In(ev): In<SessionEvent>,
         me: Query<(), With<SelfPlayer>>,
         mut errors: ResMut<UiErrorKeys>,
     ) {
-        if !me.is_empty() {
+        if matches!(ev, SessionEvent::BattlefieldPortDenied) && !me.is_empty() {
             errors.0.push(UiError::key("ERR_PLAYER_DEAD"));
         }
     }

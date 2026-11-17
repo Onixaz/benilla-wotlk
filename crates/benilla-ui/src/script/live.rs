@@ -119,6 +119,23 @@ pub trait LiveState {
     fn battlemaster_rows(&self) -> Vec<super::BattlemasterRow> {
         Vec::new()
     }
+
+    /// A scoreboard row's name-cache record when called (`0x54be90`), `None` while uncached.
+    fn score_name(&self, _guid: u64) -> Option<super::ScoreName> {
+        None
+    }
+
+    /// The scoreboard's pending-name count (`0xbea590`) is not zero: the rebuild and the sort wait
+    /// (`0x54aa39`, `0x54cee3`).
+    fn battlefield_score_names_pending(&self) -> bool {
+        false
+    }
+
+    /// The leading arena slots holding an opponent or a pet (`0x549630`), `None` where the app
+    /// holds no slots.
+    fn arena_opponent_count(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.

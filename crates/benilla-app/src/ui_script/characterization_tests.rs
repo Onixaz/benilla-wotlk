@@ -70,6 +70,12 @@ local VERBS = {
     { "restimer", function() return ResurrectHasTimer() end },
     { "bf1", function() return (GetBattlefieldStatus(1)) end },
     { "bfrun", function() return GetBattlefieldInstanceRunTime() > 0 end },
+    { "scores", function() return GetNumBattlefieldScores() end },
+    { "winner", function() return GetBattlefieldWinner() end },
+    { "score1", function() return (GetBattlefieldScore(1)) end },
+    { "bfcount", function() return GetNumBattlefields() end },
+    { "wpvp", function() return (GetWorldPVPQueueStatus(1)) end },
+    { "opps", function() return GetNumArenaOpponents() end },
 }
 local function answers()
     local verbs = {}
@@ -1552,4 +1558,326 @@ fn duel_and_battlefield_events_fire_in_wire_order() {
         ],
         "a challenger no object holds raises no popup (`0x5cfd73`)"
     );
+}
+
+/// A held player of `guid`, as a stream create sends it.
+fn player_create(guid: u64) -> SessionEvent {
+    SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::Player,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+            (FIELD_UNIT_LEVEL, 80),
+        ])
+        .into_created(ObjectType::Player),
+    }
+}
+
+/// A name answer for `guid`: a human warrior.
+fn name_answer(guid: u64, name: &str) -> SessionEvent {
+    SessionEvent::PlayerName {
+        guid,
+        name: name.into(),
+        realm: String::new(),
+        race: 1,
+        class: 1,
+        gender: 0,
+    }
+}
+
+/// A finished one-row log for `guid`.
+fn pvp_log(guid: u64) -> SessionEvent {
+    SessionEvent::PvpLogData(benilla_protocol::messages::PvpLogData {
+        ended: true,
+        winner: Some(1),
+        rows: vec![benilla_protocol::messages::PvpLogRow {
+            guid,
+            killing_blows: 5,
+            ..Default::default()
+        }],
+        ..Default::default()
+    })
+}
+
+/// `MSG_PVP_LOG_DATA` with every name known runs the rebuild from its handler (`0x54d495`), so its
+/// `UPDATE_BATTLEFIELD_SCORE` reads the log just stored; a status 3 later in the same frame
+/// rebuilds that same log (`0x54b0d6`) before its `UPDATE_BATTLEFIELD_STATUS` (`0x54b1a9`). The
+/// last line is the stock score frame's own filter call on that status (`0x54c120`).
+#[test]
+fn a_log_and_a_status_in_one_frame_read_the_log_just_stored() {
+    use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let active = SessionEvent::BattlefieldStatus(BattlefieldStatus {
+        slot: 0,
+        queue: (2 << 16) | 2,
+        status: 3,
+        active: Some(BattlefieldActive {
+            map_id: 489,
+            joined_queue: 0,
+            shutdown_ms: 0,
+            run_ms: 30_000,
+            arena_faction: 0,
+        }),
+        ..Default::default()
+    });
+    let seen = rig.packets(vec![name_answer(0x77, "Rival"), pvp_log(0x77), active], 2);
+    assert_eq!(
+        pin(
+            &seen,
+            &["UPDATE_BATTLEFIELD_STATUS", "UPDATE_BATTLEFIELD_SCORE"],
+            &["scores", "winner", "score1", "bf1"]
+        ),
+        vec![
+            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=none",
+            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=active",
+            "UPDATE_BATTLEFIELD_STATUS 1 | scores=1 winner=1 score1=Rival bf1=active",
+            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Rival bf1=active",
+        ]
+    );
+}
+
+/// A log whose row's name is uncached asks it and holds the rebuild (`0x54d469`, `0x54aa39`): the
+/// log's result reads at once, its row's name not yet; the answer's callback runs the rebuild
+/// (`0x54ca30`), whose `UPDATE_BATTLEFIELD_SCORE` reads the row named; the stock score frame's
+/// filter call on it rebuilds once more (`0x54c120`).
+#[test]
+fn the_score_event_waits_for_the_last_name() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(vec![pvp_log(0x88)], 2);
+    assert!(
+        pin(&seen, &["UPDATE_BATTLEFIELD_SCORE"], &[]).is_empty(),
+        "no rebuild with a name pending"
+    );
+    let now = rig.live_now();
+    assert_eq!(
+        now.line(&["scores", "winner", "score1"]),
+        "NOW | scores=0 winner=1 score1=nil"
+    );
+    let seen = rig.packets(vec![name_answer(0x88, "Late")], 2);
+    assert_eq!(
+        pin(
+            &seen,
+            &["UPDATE_BATTLEFIELD_SCORE"],
+            &["scores", "winner", "score1"]
+        ),
+        vec![
+            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Late",
+            "UPDATE_BATTLEFIELD_SCORE | scores=1 winner=1 score1=Late",
+        ]
+    );
+}
+
+/// `SMSG_BATTLEFIELD_LIST` (`0x54e390`) writes the type and instances and fires the event its
+/// source names, each list in turn: the random battleground from a battlemaster, the PvP window,
+/// a battlemaster, then none; the last two closes are the stock frame's own close calls on the
+/// last list (`0x549b40`).
+#[test]
+fn each_battlefield_list_fires_its_source_event_with_its_instances() {
+    use benilla_protocol::messages::BattlefieldList;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let list = |battlemaster: u64, from_anywhere: bool, bg_type: u32, n: u32| {
+        SessionEvent::BattlefieldList(BattlefieldList {
+            battlemaster,
+            from_anywhere,
+            bg_type,
+            instances: (1..=n).collect(),
+            ..Default::default()
+        })
+    };
+    const BM: u64 = 0xF130_0000_0000_4242;
+    let seen = rig.packets(
+        vec![
+            list(BM, false, benilla_ui::script::RANDOM_BATTLEGROUND, 1),
+            list(0, true, 2, 2),
+            list(BM, false, 2, 3),
+            list(0, false, 3, 4),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "NPC_PVPQUEUE_ANYWHERE",
+                "PVPQUEUE_ANYWHERE_SHOW",
+                "BATTLEFIELDS_SHOW",
+                "BATTLEFIELDS_CLOSED"
+            ],
+            &["bfcount"]
+        ),
+        vec![
+            "NPC_PVPQUEUE_ANYWHERE | bfcount=1",
+            "PVPQUEUE_ANYWHERE_SHOW | bfcount=2",
+            "BATTLEFIELDS_SHOW | bfcount=3",
+            "BATTLEFIELDS_CLOSED | bfcount=4",
+            "BATTLEFIELDS_SHOW | bfcount=4",
+            "BATTLEFIELDS_CLOSED | bfcount=4",
+            "BATTLEFIELDS_CLOSED | bfcount=4",
+        ]
+    );
+}
+
+/// The battle-manager notices (`0x54b610`-`0x5499c0`) write the world-PvP slot and fire their
+/// events in wire order, each reading the slot its own packet wrote: the entry and the ejection
+/// free it (`0x54993d`, `0x549a15`).
+#[test]
+fn battle_manager_notices_fire_in_wire_order() {
+    use benilla_protocol::messages::BattlefieldMgrNotice as N;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            N::QueueRequestResponse {
+                queue_id: 7,
+                area_id: 4197,
+                accepted: true,
+                logging_in: false,
+                warmup: 0,
+            },
+            N::QueueInvite {
+                queue_id: 7,
+                warmup: 0,
+            },
+            N::EntryInvite {
+                queue_id: 7,
+                area_id: 4197,
+                expire: 0,
+            },
+            N::Entered {
+                queue_id: 7,
+                invited: true,
+                on_offense: false,
+                cleared_afk: true,
+            },
+            N::StateChange { old: 1, new: 2 },
+            N::EjectPending {
+                queue_id: 7,
+                remote: false,
+            },
+            N::Ejected {
+                queue_id: 7,
+                reason: 0,
+                battle_status: 0,
+                relocated: false,
+            },
+        ]
+        .into_iter()
+        .map(SessionEvent::BattlefieldMgr)
+        .collect(),
+        2,
+    );
+    let mgr: Vec<String> = seen
+        .iter()
+        .filter(|s| s.event.starts_with("BATTLEFIELD_MGR_"))
+        .map(|s| s.line(&["wpvp"]))
+        .collect();
+    assert_eq!(
+        mgr,
+        vec![
+            "BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE 7 true false false false | wpvp=queued",
+            "BATTLEFIELD_MGR_QUEUE_INVITE 7 false | wpvp=queued",
+            "BATTLEFIELD_MGR_ENTRY_INVITE 7 | wpvp=confirm",
+            "BATTLEFIELD_MGR_ENTERED 7 true false | wpvp=none",
+            "BATTLEFIELD_MGR_STATE_CHANGE 1 2 | wpvp=none",
+            "BATTLEFIELD_MGR_EJECT_PENDING 7 false | wpvp=none",
+            "BATTLEFIELD_MGR_EJECTED 7 false false false false | wpvp=none",
+        ]
+    );
+}
+
+/// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`) fires `DUEL_REQUESTED` only for a held player (`0x5cfd73`),
+/// with its name, `UNKNOWNOBJECT`'s text while the cache has none (`0x5cfd7b`).
+#[test]
+fn a_held_challenger_raises_the_duel_with_its_name() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.packets(vec![player_create(0x99), player_create(0x9a)], 2);
+    let arbiter = 0xF110_0000_0000_0001;
+    let seen = rig.packets(
+        vec![
+            name_answer(0x99, "Rival"),
+            SessionEvent::DuelRequested {
+                arbiter,
+                challenger: 0x99,
+            },
+            SessionEvent::DuelComplete { started: false },
+            SessionEvent::DuelRequested {
+                arbiter,
+                challenger: 0x9a,
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["DUEL_REQUESTED", "DUEL_FINISHED"], &[]),
+        vec![
+            "DUEL_REQUESTED Rival",
+            "DUEL_FINISHED",
+            "DUEL_REQUESTED Unknown",
+        ]
+    );
+}
+
+/// An opponent from the party stats' arena byte (`0x6cf9fa`) fills its slot and signals it from the
+/// handler (`0x54b840`), so `GetNumArenaOpponents` reads it at the event; the world entry clears
+/// every slot and signals `"cleared"` for each token after `PLAYER_ENTERING_WORLD` (`0x528230`,
+/// `0x54cbd9`, `0x54cc02`), which a reload's entry skips (`0x54cb51`).
+#[test]
+fn arena_opponents_signal_from_the_handler_and_clear_at_world_entry() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![SessionEvent::PartyMemberStats {
+            guid: 0x55,
+            full: true,
+            info: Box::new(benilla_protocol::messages::PartyMemberStatsInfo {
+                arena_opponent: true,
+                ..Default::default()
+            }),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["ARENA_OPPONENT_UPDATE"], &["opps"]),
+        vec![
+            "ARENA_OPPONENT_UPDATE arena1 seen | opps=1",
+            "ARENA_OPPONENT_UPDATE arena1 unseen | opps=1",
+        ]
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &[]).len() == 1
+            && pin(&seen, &["ARENA_OPPONENT_UPDATE"], &[]).is_empty(),
+        "a reload's world entry keeps the slots"
+    );
+    assert_eq!(rig.live_now().line(&["opps"]), "NOW | opps=1");
 }

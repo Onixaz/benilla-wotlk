@@ -1,23 +1,27 @@
-//! The battleground scoreboard feed, the app half of the stock `WorldStateFrame.lua` score frame.
+//! The battleground scoreboard, the app half of the stock `WorldStateFrame.lua` score frame.
 //!
-//! The reference holds a `MSG_PVP_LOG_DATA` board until every row's name has resolved, and the last
-//! name arrival rebuilds it (`0x54ca30` → `0x54aa30`); here the board is pushed the frame the last
-//! name lands. `UPDATE_BATTLEFIELD_SCORE` fires on a pushed board here, and on the status-3 arrival
-//! from the status handler, before `UPDATE_BATTLEFIELD_STATUS` (`0x54b0d6` before `0x54b1a9`).
+//! `MSG_PVP_LOG_DATA`'s handler (`0x54d280`) writes the log into the VM's board in wire order,
+//! asks each uncached name, counting it pending (`0x54d469`), and with none pending runs the
+//! rebuild that fires `UPDATE_BATTLEFIELD_SCORE` (`0x54d495` -> `0x54aa30`). Each name's answer
+//! counts down, the last one running the rebuild (`0x54ca30`). The verbs read a row's name from the
+//! name cache when called (`0x54be90`), through the live view.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
 use benilla_protocol::messages::PvpLogData;
 use benilla_ui::script::{
-    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, UiScript,
+    BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
+    UiScript,
 };
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_battlefield::BattlefieldQueue;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::live::UiEvents;
+use crate::ui_script::UiDrain;
 use crate::world_state_ui::WorldStateUiRes;
 
 /// `RequestBattlefieldScoreData`'s throttle (`0x54ce30`).
@@ -26,31 +30,28 @@ const REQUEST_THROTTLE: Duration = Duration::from_millis(5000);
 /// An arena's `InstanceType`; its board is asked once.
 const INSTANCE_TYPE_ARENA: u32 = 4;
 
-/// The last `MSG_PVP_LOG_DATA` and the request stamp, both zeroed when the session ends.
+/// The rows' names still asked for (`0xbea590`) and the finished flag (`0xbea588`), zeroed by a
+/// world entry and the session's end.
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldScoreboard {
-    log: Option<PvpLogData>,
-    /// The next log update (`0xbea584`): the next request's earliest moment, `None` until the
-    /// first.
-    next_request: Option<Instant>,
+    /// The guids whose answer the rebuild waits on: one callback each (`0x54d460`).
+    pending: HashSet<u64>,
+    ended: bool,
 }
 
 impl BattlefieldScoreboard {
-    pub(crate) fn apply(&mut self, data: PvpLogData) {
-        self.log = Some(data);
-    }
-
-    /// Whether a row's name is still being asked for (`0xbea578`), which holds the board's rebuild
-    /// and its `UPDATE_BATTLEFIELD_SCORE` back (`0x54aa30`).
-    pub(crate) fn names_pending(&self, names: &NameCache) -> bool {
-        self.log
-            .as_ref()
-            .is_some_and(|l| l.rows.iter().any(|r| names.peek(r.guid).is_none()))
+    /// Whether a row's name is still being asked for, which holds the rebuild (`0x54aa39`).
+    pub(crate) fn names_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 }
 
+/// The next log update (`0xbea584`): the next request's earliest moment, `None` until the first.
+#[derive(Resource, Default)]
+pub(crate) struct ScoreRequestClock(Option<Instant>);
+
 /// The column headers for `map`: the first contiguous run of matching `WorldStateUI.dbc` rows in
-/// table order, as the status-3 arm builds them (`0x54b0c0`).
+/// table order, as the status-3 arm builds them (`0x54b026`).
 pub(crate) fn score_columns(catalog: &WorldStateUiRes, map: u32) -> Vec<BattlefieldStatColumn> {
     let mut out = Vec::new();
     for (_, row) in catalog.0.rows() {
@@ -68,121 +69,79 @@ pub(crate) fn score_columns(catalog: &WorldStateUiRes, map: u32) -> Vec<Battlefi
     out
 }
 
-/// Resolve the raw board through the name cache; `None` while any name is still in flight.
-/// A row's race and class are the name cache's; a streamed unit's own fields stand in where the
+/// A row's name-cache record as the scoreboard reads it (`0x54be90`): `None` while uncached or
+/// denied. The race and class are the name answer's; a held unit's own fields stand in where the
 /// cache has none, as for ourselves, whose name the reference queries at login.
-fn resolve_board(
-    log: &PvpLogData,
+pub(crate) fn score_name(
     names: &NameCache,
+    guid: u64,
     unit_traits: impl Fn(u64) -> Option<(u8, u8)>,
-    commands: &NetCommands,
-) -> Option<Vec<BattlefieldScoreRow>> {
-    let mut rows = Vec::with_capacity(log.rows.len());
-    for r in &log.rows {
-        let name = names.resolve(r.guid, commands)?.to_string();
-        let (race, class) = names
-            .player_traits(r.guid)
-            .map(|(race, class, _)| (race, class))
-            .or_else(|| unit_traits(r.guid))
-            .unwrap_or((0, 0));
-        // An arena row keeps its wire team; a battleground's side comes from the race
-        // (`0x54aa94`): 0 Horde, 1 Alliance, -1 neither.
-        let faction = match r.arena_team {
-            Some(team) => i32::from(team),
-            None => i32::from(crate::ui_unit::race_pvp_team(race)),
-        };
-        let mut stats = [0u32; 8];
-        for (slot, v) in stats.iter_mut().zip(&r.stats) {
-            *slot = *v;
-        }
-        rows.push(BattlefieldScoreRow {
-            name,
-            killing_blows: r.killing_blows,
-            honorable_kills: r.honorable_kills,
-            deaths: r.deaths,
-            bonus_honor: r.bonus_honor,
-            faction,
-            race: crate::ui_unit::race_names(race).map(|(n, _)| n.to_string()),
-            class: crate::ui_unit::class_names(class).map(|(n, t)| (n.to_string(), t.to_string())),
-            class_id: u32::from(class),
-            damage_done: r.damage_done,
-            healing_done: r.healing_done,
-            stats,
-        });
-    }
-    Some(rows)
+) -> Option<ScoreName> {
+    let name = names.peek(guid).filter(|n| !n.is_empty())?;
+    let (race, class) = names
+        .player_traits(guid)
+        .map(|(race, class, _)| (race, class))
+        .or_else(|| unit_traits(guid))
+        .unwrap_or((0, 0));
+    Some(ScoreName {
+        name: name.to_string(),
+        // `"%s-%s"` with a realm (`0x54b58a`).
+        full_name: match names.player_realm(guid) {
+            Some(realm) => format!("{name}-{realm}"),
+            None => name.to_string(),
+        },
+        race: crate::ui_unit::race_names(race).map(|(n, _)| n.to_string()),
+        class: crate::ui_unit::class_names(class).map(|(n, t)| (n.to_string(), t.to_string())),
+        class_id: u32::from(class),
+        side: i32::from(crate::ui_unit::race_pvp_team(race)),
+    })
 }
 
-pub(crate) fn feed_battlefield_score(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    board: Res<BattlefieldScoreboard>,
-    queue: Res<BattlefieldQueue>,
-    catalog: Option<Res<WorldStateUiRes>>,
-    names: Res<NameCache>,
-    guids: Res<crate::net::GuidIndex>,
-    stores: Query<&crate::net::ObjectStore>,
-    commands: Res<NetCommands>,
-    mut last: Local<crate::ui_script::VmMemo<Option<BattlefieldScores>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let fresh = board.log.as_ref().and_then(|log| {
-        let unit_traits = |guid: u64| {
-            let f = &stores.get(*guids.0.get(&guid)?).ok()?.0;
-            Some((f.unit_race()?, f.unit_class()?))
-        };
-        let rows = resolve_board(log, &names, unit_traits, &commands)?;
-        let columns = queue
-            .active_map()
-            .zip(catalog.as_deref())
-            .map(|(map, cat)| score_columns(cat, map))
-            .unwrap_or_default();
-        let teams = log.arena_teams.as_ref().map_or_else(Default::default, |t| {
-            t.clone().map(|t| BattlefieldTeamView {
+/// The log as the VM's board takes it: an arena row's team byte, a battleground's side left to
+/// the rebuild.
+fn board_log(log: PvpLogData) -> BattlefieldScores {
+    let rows = log
+        .rows
+        .into_iter()
+        .map(|r| {
+            let mut stats = [0u32; 8];
+            for (slot, v) in stats.iter_mut().zip(&r.stats) {
+                *slot = *v;
+            }
+            BattlefieldScoreRow {
+                guid: r.guid,
+                killing_blows: r.killing_blows,
+                honorable_kills: r.honorable_kills,
+                deaths: r.deaths,
+                bonus_honor: r.bonus_honor,
+                faction: r.arena_team.map_or(0, i32::from),
+                damage_done: r.damage_done,
+                healing_done: r.healing_done,
+                stats,
+            }
+        })
+        .collect();
+    BattlefieldScores {
+        rows,
+        ended: log.ended,
+        winner: log.winner.unwrap_or(0),
+        teams: log.arena_teams.map(|t| {
+            t.map(|t| BattlefieldTeamView {
                 name: t.name,
                 rating: t.rating,
                 new_rating: t.new_rating,
                 matchmaking: t.matchmaking,
             })
-        });
-        Some(BattlefieldScores {
-            rows,
-            ended: log.ended,
-            winner: log.winner.unwrap_or(0),
-            columns,
-            teams,
-        })
-    });
-    // A status 3's rebuild fires from its handler (`0x54b0d6`).
-    let last = last.get(&script);
-    if sync_board(&mut script, fresh, board.log.is_none(), last) {
-        script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
+        }),
     }
-}
-
-/// `EnterWorld` (`0x54ca50`) drops the finished board, including the VM's winner and rows.
-fn sync_board(
-    script: &mut UiScript,
-    fresh: Option<BattlefieldScores>,
-    no_log: bool,
-    last: &mut Option<BattlefieldScores>,
-) -> bool {
-    // An unresolved packet keeps the prior board until its names arrive; only a missing log
-    // clears the VM, as on world entry.
-    if (fresh.is_none() && !no_log) || fresh == *last {
-        return false;
-    }
-    script.set_battlefield_scores(fresh.clone().unwrap_or_default());
-    *last = fresh;
-    true
 }
 
 /// The score request (`0x54ce30`): once asked, a finished match's or an arena's board is not
 /// asked again; otherwise once per 5000 ms.
 fn drain_battlefield_score(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut board: ResMut<BattlefieldScoreboard>,
+    mut clock: ResMut<ScoreRequestClock>,
+    board: Res<BattlefieldScoreboard>,
     queue: Res<BattlefieldQueue>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,
     commands: Res<NetCommands>,
@@ -197,24 +156,27 @@ fn drain_battlefield_score(
         .active_map()
         .and_then(|m| maps.as_deref()?.0.instance_type(m))
         == Some(INSTANCE_TYPE_ARENA);
-    let done = board.log.as_ref().is_some_and(|l| l.ended);
-    if board.next_request.is_some() && (done || in_arena) {
+    if clock.0.is_some() && (board.ended || in_arena) {
         return;
     }
     let now = Instant::now();
-    if board.next_request.is_none_or(|t| now >= t) {
-        board.next_request = Some(now + REQUEST_THROTTLE);
+    if clock.0.is_none_or(|t| now >= t) {
+        clock.0 = Some(now + REQUEST_THROTTLE);
         let _ = commands.0.send(ClientCommand::RequestBattlefieldScoreData);
     }
 }
 
-/// The world-enter reset (`EnterWorld`, `0x54ca50`): the request stamp, board and finished flag.
-fn reset_score_on_world_enter(
-    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    mut board: ResMut<BattlefieldScoreboard>,
-) {
-    if cascades.read().next().is_some() {
+/// The world entry's board part (`0x54ca50`): the request clock, the finished flag and the
+/// pending names, their callbacks cancelled (`0x54cad9`, `0x54cb03`), and the VM's board.
+pub(crate) fn enter_world(world: &mut World) {
+    if let Some(mut board) = world.get_resource_mut::<BattlefieldScoreboard>() {
         *board = BattlefieldScoreboard::default();
+    }
+    if let Some(mut clock) = world.get_resource_mut::<ScoreRequestClock>() {
+        clock.0 = None;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.write(UiScript::reset_battlefield_scores_on_world_enter);
     }
 }
 
@@ -223,23 +185,97 @@ mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::BattlefieldScoreboard;
-    use crate::net::NetHandlerApp;
+    use super::{board_log, BattlefieldScoreboard, ScoreRequestClock};
+    use crate::names::NameCache;
+    use crate::net::{NetCommands, NetHandlerApp};
+    use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
-        app.net_handler(SessionEventKind::PvpLogData, on_pvp_log_data)
-            .net_handler(SessionEventKind::Disconnected, on_session_end);
+        use SessionEventKind as K;
+        app.net_handler(K::PvpLogData, on_pvp_log_data)
+            .net_handler(K::PlayerName, on_name_answer)
+            .net_handler(K::PlayerNameMiss, on_name_answer)
+            .net_handler(K::Disconnected, on_session_end);
     }
 
     /// Zeroes the board and the stamp, as the reference's module init does at every login.
-    fn on_session_end(In(_): In<SessionEvent>, mut board: ResMut<BattlefieldScoreboard>) {
+    fn on_session_end(
+        In(_): In<SessionEvent>,
+        mut board: ResMut<BattlefieldScoreboard>,
+        mut clock: ResMut<ScoreRequestClock>,
+    ) {
         *board = BattlefieldScoreboard::default();
+        clock.0 = None;
     }
 
-    fn on_pvp_log_data(In(ev): In<SessionEvent>, mut board: ResMut<BattlefieldScoreboard>) {
-        if let SessionEvent::PvpLogData(data) = ev {
-            board.apply(data);
+    /// `MSG_PVP_LOG_DATA` (`0x54d280`): the old callbacks cancelled (`0x54d289`), the log written
+    /// in wire order, each uncached name asked and counted (`0x54d469`), then with none pending
+    /// the rebuild (`0x54d495`).
+    pub(super) fn on_pvp_log_data(
+        In(ev): In<SessionEvent>,
+        mut board: ResMut<BattlefieldScoreboard>,
+        names: Res<NameCache>,
+        commands: Res<NetCommands>,
+        mut ui: ResMut<UiEvents>,
+    ) {
+        let SessionEvent::PvpLogData(data) = ev else {
+            return;
+        };
+        board.pending.clear();
+        board.ended = data.ended;
+        for row in &data.rows {
+            if names.resolve(row.guid, &commands).is_none() {
+                board.pending.insert(row.guid);
+            }
         }
+        let log = board_log(data);
+        ui.write(move |s| s.set_battlefield_log(log));
+        if !board.names_pending() {
+            ui.write(|s| s.rebuild_battlefield_scores());
+        }
+    }
+
+    /// A name answer, after the cache files it: a row waiting on it counts down, and the last one
+    /// runs the rebuild (`0x54ca30`). A retry still waits.
+    fn on_name_answer(
+        In(ev): In<SessionEvent>,
+        mut board: ResMut<BattlefieldScoreboard>,
+        names: Res<NameCache>,
+        mut ui: ResMut<UiEvents>,
+    ) {
+        let guid = match ev {
+            SessionEvent::PlayerName { guid, .. } | SessionEvent::PlayerNameMiss { guid, .. } => {
+                guid
+            }
+            _ => return,
+        };
+        if names.peek(guid).is_none() || !board.pending.remove(&guid) {
+            return;
+        }
+        if !board.names_pending() {
+            ui.write(|s| s.rebuild_battlefield_scores());
+        }
+    }
+}
+
+/// What the verbs read live: the name cache and the pending count.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ScoreView<'w> {
+    board: Option<Res<'w, BattlefieldScoreboard>>,
+    names: Option<Res<'w, NameCache>>,
+}
+
+impl ScoreView<'_> {
+    pub(crate) fn names_pending(&self) -> bool {
+        self.board.as_ref().is_some_and(|b| b.names_pending())
+    }
+
+    pub(crate) fn name(
+        &self,
+        guid: u64,
+        unit_traits: impl Fn(u64) -> Option<(u8, u8)>,
+    ) -> Option<ScoreName> {
+        score_name(self.names.as_deref()?, guid, unit_traits)
     }
 }
 
@@ -248,16 +284,9 @@ pub(crate) struct BattlefieldScorePlugin;
 impl Plugin for BattlefieldScorePlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<BattlefieldScoreboard>().add_systems(
-            Update,
-            (
-                reset_score_on_world_enter
-                    .after(benilla_world::schedule::WorldStage::Net)
-                    .before(feed_battlefield_score),
-                feed_battlefield_score.in_set(UiFeed),
-                drain_battlefield_score.in_set(UiDrain),
-            ),
-        );
+        app.init_resource::<BattlefieldScoreboard>()
+            .init_resource::<ScoreRequestClock>()
+            .add_systems(Update, drain_battlefield_score.in_set(UiDrain));
     }
 }
 
@@ -347,20 +376,98 @@ mod tests {
         assert_eq!(cols, ["Flags Returned"]);
     }
 
+    fn app() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<NameCache>()
+            .init_resource::<BattlefieldScoreboard>()
+            .init_resource::<ScoreRequestClock>();
+        crate::names::net::register(&mut app);
+        net::register(&mut app);
+        (app, rx)
+    }
+
+    fn log(guids: &[u64]) -> PvpLogData {
+        PvpLogData {
+            ended: true,
+            winner: Some(1),
+            rows: guids
+                .iter()
+                .map(|&guid| benilla_protocol::messages::PvpLogRow {
+                    guid,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn name_answer(guid: u64) -> benilla_protocol::SessionEvent {
+        benilla_protocol::SessionEvent::PlayerName {
+            guid,
+            name: format!("P{guid:x}"),
+            realm: String::new(),
+            race: 1,
+            class: 1,
+            gender: 0,
+        }
+    }
+
+    /// `0x54d280`: each uncached row asks its name and counts pending (`0x54d469`). Each answer
+    /// counts down and the last ends the wait (`0x54ca30`); an answer for no row or a retry does
+    /// not.
+    #[test]
+    fn the_rebuild_waits_for_the_last_name() {
+        let (mut app, rx) = app();
+        app.world_mut().resource_mut::<NameCache>().insert_player(
+            0x11,
+            "Known".into(),
+            Some((1, 1, 0)),
+        );
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![benilla_protocol::SessionEvent::PvpLogData(log(&[
+                0x11, 0x12, 0x13,
+            ]))],
+        );
+        let asked: Vec<_> = rx.try_iter().collect();
+        assert_eq!(asked.len(), 2, "one query per uncached row: {asked:?}");
+        assert!(app
+            .world()
+            .resource::<BattlefieldScoreboard>()
+            .names_pending());
+        assert!(app.world().resource::<BattlefieldScoreboard>().ended);
+
+        for ev in [
+            name_answer(0x99),
+            benilla_protocol::SessionEvent::PlayerNameMiss {
+                guid: 0x12,
+                miss: benilla_protocol::messages::NameQueryMiss::Retry,
+            },
+            name_answer(0x12),
+        ] {
+            crate::net::handlers::dispatch(app.world_mut(), vec![ev]);
+            assert!(app
+                .world()
+                .resource::<BattlefieldScoreboard>()
+                .names_pending());
+        }
+        crate::net::handlers::dispatch(app.world_mut(), vec![name_answer(0x13)]);
+        assert!(!app
+            .world()
+            .resource::<BattlefieldScoreboard>()
+            .names_pending());
+    }
+
     #[test]
     fn the_session_end_zeroes_the_scoreboard() {
-        let mut app = App::new();
-        app.init_resource::<BattlefieldScoreboard>();
-        net::register(&mut app);
-        {
-            let mut board = app.world_mut().resource_mut::<BattlefieldScoreboard>();
-            board.apply(PvpLogData {
-                ended: true,
-                winner: Some(1),
-                ..Default::default()
-            });
-            board.next_request = Some(Instant::now());
-        }
+        let (mut app, _rx) = app();
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![benilla_protocol::SessionEvent::PvpLogData(log(&[0x12]))],
+        );
+        app.world_mut().resource_mut::<ScoreRequestClock>().0 = Some(Instant::now());
 
         crate::net::handlers::dispatch(
             app.world_mut(),
@@ -371,41 +478,27 @@ mod tests {
         );
 
         let board = app.world().resource::<BattlefieldScoreboard>();
-        assert!(board.log.is_none());
-        assert!(board.next_request.is_none());
+        assert!(!board.names_pending());
+        assert!(!board.ended);
+        assert!(app.world().resource::<ScoreRequestClock>().0.is_none());
     }
 
+    /// `0x54ca50` zeroes the result, the rows and the counts and fires no score event: the stock
+    /// frame keeps what it showed until its own events.
     #[test]
-    fn world_entry_drops_an_ended_board_before_new_zone_states_arrive() {
+    fn world_entry_drops_an_ended_board() {
         benilla_formats::wow_data_or_skip!();
-        let mut app = App::new();
-        app.add_message::<crate::net::WorldEnterCascadeMessage>()
-            .init_resource::<BattlefieldScoreboard>()
-            .add_systems(Update, reset_score_on_world_enter);
-        app.world_mut()
-            .resource_mut::<BattlefieldScoreboard>()
-            .apply(PvpLogData {
-                ended: true,
-                winner: Some(1),
-                ..Default::default()
-            });
         let mut script = wotlk_score_frame();
-        let mut last = None;
-        assert!(sync_board(
-            &mut script,
-            Some(BattlefieldScores {
-                ended: true,
-                winner: 1,
-                rows: vec![BattlefieldScoreRow {
-                    name: "Player".into(),
-                    ..Default::default()
-                }],
+        script.set_battlefield_log(BattlefieldScores {
+            ended: true,
+            winner: 1,
+            rows: vec![BattlefieldScoreRow {
+                guid: 0x11,
                 ..Default::default()
-            }),
-            false,
-            &mut last,
-        ));
-        script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
+            }],
+            ..Default::default()
+        });
+        script.rebuild_battlefield_scores();
         assert!(script
             .eval::<bool>("return WorldStateScoreFrame:IsShown()")
             .unwrap());
@@ -413,29 +506,18 @@ mod tests {
             script.eval::<i64>("return GetBattlefieldWinner()").unwrap(),
             1
         );
-        assert!(!sync_board(&mut script, None, false, &mut last));
-        assert_eq!(
-            script.eval::<i64>("return GetBattlefieldWinner()").unwrap(),
-            1
-        );
 
-        app.world_mut()
-            .write_message(crate::net::WorldEnterCascadeMessage);
-        app.update();
-        assert!(app
-            .world()
-            .resource::<BattlefieldScoreboard>()
-            .log
-            .is_none());
-        // The feed must also push the cascade's empty board into the VM.
-        assert!(sync_board(&mut script, None, true, &mut last));
-        script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
-        script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-        script.fire_event("UPDATE_WORLD_STATES", vec![]);
+        let mut world = World::new();
+        world.init_resource::<UiEvents>();
+        world.init_resource::<BattlefieldScoreboard>();
+        world.insert_resource(ScoreRequestClock(Some(Instant::now())));
+        enter_world(&mut world);
+        assert!(world.resource::<ScoreRequestClock>().0.is_none());
+        script.reset_battlefield_scores_on_world_enter();
         assert!(script
             .eval::<bool>(
-                "return not WorldStateScoreFrame:IsShown() and GetBattlefieldWinner() == nil \
-                 and GetNumBattlefieldScores() == 0",
+                "return GetBattlefieldWinner() == nil and GetNumBattlefieldScores() == 0 \
+                 and GetBattlefieldScore(1) == nil",
             )
             .unwrap());
         let errors = script.take_errors();

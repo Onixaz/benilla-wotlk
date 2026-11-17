@@ -145,10 +145,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok(0))?,
     )?;
     // GetNumArenaOpponents() (`0x54a2c0`): the leading opponent slots holding an opponent or a pet
-    // (`0x549630`), pushed with the unit tokens.
+    // (`0x549630`), read when called; with no view lent, as pushed with the unit tokens.
     g.set(
         "GetNumArenaOpponents",
         lua.create_function(|lua, ()| {
+            if let Some(n) = super::live::read_live(|l| l.arena_opponent_count()).flatten() {
+                return Ok(n as i64);
+            }
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");

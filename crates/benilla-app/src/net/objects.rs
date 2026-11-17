@@ -114,6 +114,7 @@ pub(crate) struct Scene<'w, 's> {
     death_globals: ResMut<'w, crate::death::DeathGlobals>,
     player_init: ResMut<'w, crate::death::ActivePlayerInit>,
     arena: crate::ui_arena::ArenaInstance<'w>,
+    arena_slots: ResMut<'w, crate::ui_arena::ArenaOpponents>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
@@ -216,6 +217,17 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             std::time::Instant::now(),
             ALLOC_EXPIRE,
         );
+        let arena_side = (kind == EntityKind::Player && sc.self_guid.0 != Some(guid))
+            .then(|| fields.player_arena_faction())
+            .flatten();
+        let own_pet = {
+            let charm = fields.unit_charm().unwrap_or(0);
+            if charm != 0 {
+                charm
+            } else {
+                fields.unit_summon().unwrap_or(0)
+            }
+        };
         object_create(
             guid,
             kind,
@@ -247,6 +259,18 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
             sc.commands.entity(e).insert(FreshSpawn);
+        }
+        // A player of the other arena side, as its init runs inside an arena (`0x6e8300`).
+        if let Some(side) = arena_side {
+            let (index, stores) = (&sc.index, &sc.stores);
+            let pet_of = |g: u64| {
+                if g == guid {
+                    return Some(own_pet);
+                }
+                crate::ui_arena::pet_of_store(stores.get(*index.0.get(&g)?).ok()?)
+            };
+            sc.arena_slots
+                .streamed_player(side, &sc.arena, guid, &pet_of, &mut sc.ui);
         }
     }
 }
