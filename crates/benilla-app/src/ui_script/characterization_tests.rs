@@ -1226,6 +1226,65 @@ fn a_required_items_create_and_destroy_signal_the_log_and_reask_the_givers() {
     assert_eq!(reasks(&rx), 0);
 }
 
+/// Every write to one of our quest slots runs the slot watch (`0x6df370`): it re-asks every giver's status first (`0x6df3b4`), then after the rebuild and the accept an auto-complete quest (`0x6df4d6`) on a log row whose slot now passes the completion test (`0x6df4e2`) is completed toward the player itself (`0x6df505`). A kill counter short of its count, or a finished quest without the flag, sends no completion.
+#[test]
+fn the_slot_watch_reasks_then_auto_completes_a_finished_quest() {
+    use crate::net::ClientCommand;
+    use benilla_protocol::messages::{quest_flags, QuestTemplate, QUEST_LOG_SLOT_FIELDS};
+    const PLAIN: u32 = QUEST + 1;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let template = |quest_id: u32, flags: u32| {
+        let mut t = QuestTemplate {
+            quest_id,
+            level: 80,
+            zone_or_sort: 12,
+            title: "Charz".into(),
+            flags,
+            ..Default::default()
+        };
+        t.objectives[0].creature_or_go = 299;
+        t.objectives[0].required_count = 2;
+        SessionEvent::QuestTemplate(Box::new(t))
+    };
+    rig.packets(
+        vec![
+            template(QUEST, quest_flags::AUTO_COMPLETE),
+            template(PLAIN, 0),
+        ],
+        2,
+    );
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::QuestgiverStatusMultipleQuery => Some("reask".to_string()),
+                ClientCommand::QuestgiverComplete { npc, quest } => {
+                    Some(format!("complete {npc:#x} {quest}"))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let counter = FIELD_PLAYER_QUEST_LOG_1_1 + 2;
+    let plain = FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS;
+
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)])], 2);
+    assert_eq!(sends(&rx), ["reask"], "the accept, no kill yet");
+    rig.packets(vec![self_values(&[(counter, 1)])], 2);
+    assert_eq!(sends(&rx), ["reask"], "one kill of two");
+    rig.packets(vec![self_values(&[(counter, 2)])], 2);
+    assert_eq!(
+        sends(&rx),
+        ["reask".to_string(), format!("complete {ME:#x} {QUEST}")],
+        "the second kill finishes it: the re-ask, then the completion toward ourselves"
+    );
+    rig.packets(vec![self_values(&[(plain, PLAIN), (plain + 2, 2)])], 2);
+    assert_eq!(sends(&rx), ["reask"], "a finished quest without the flag");
+}
+
 /// Two POI responses in one frame: each handler writes the store in turn (`0x5e7370`) and queues `QUEST_POI_UPDATE` as a unique signal (`0x5e7628`), which fires once, at the frame's flush (`0x614760`), never per response.
 #[test]
 fn two_poi_responses_in_one_frame_fire_one_poi_update() {

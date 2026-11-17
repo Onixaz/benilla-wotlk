@@ -590,28 +590,82 @@ impl SlotEdge {
     }
 }
 
-/// The quest-slot watch (`0x6df370`) per moved slot: the rebuild (`0x6df3bb`), then the accept, or its wait on the template (`0x6df429`).
+/// The quest-slot watch (`0x6df370`) per moved slot of ours: every giver's status asked again (`0x6df3b4`), the rebuild (`0x6df3bb`), the accept or its wait on the template (`0x6df429`), then the auto-complete (`0x6df4a4`); the old quest's minimap point removal (`0x6df51c`) waits on the point itself (#1325).
 pub(crate) fn slot_watch(world: &mut World, edges: Vec<SlotEdge>) {
     for edge in edges {
-        rebuild(world);
-        if !edge.takes_quest() {
-            continue;
+        if let Some(net) = world.get_resource::<NetCommands>() {
+            let _ = net
+                .0
+                .send(crate::net::ClientCommand::QuestgiverStatusMultipleQuery);
         }
+        rebuild(world);
         let id = edge.now.0;
-        let cached = {
-            let (Some(log), Some(net)) = (
+        if edge.takes_quest() {
+            let cached = match (
                 world.get_resource::<QuestLog>(),
                 world.get_resource::<NetCommands>(),
-            ) else {
-                continue;
+            ) {
+                (Some(log), Some(net)) => Some(log.template(id, net).is_some()),
+                _ => None,
             };
-            log.template(id, net).is_some()
-        };
-        if cached {
-            announce_accept(world, id);
-        } else if let Some(mut marks) = world.get_resource_mut::<QuestLogMarks>() {
-            marks.accepts.insert(id);
+            match cached {
+                Some(true) => announce_accept(world, id),
+                Some(false) => {
+                    if let Some(mut marks) = world.get_resource_mut::<QuestLogMarks>() {
+                        marks.accepts.insert(id);
+                    }
+                }
+                None => {}
+            }
         }
+        if id != 0 {
+            if let Err(e) = world.run_system_cached_with(auto_complete, id) {
+                warn!("ui_quest_log: the slot watch's auto-complete did not run: {e}");
+            }
+        }
+    }
+}
+
+/// The slot watch's tail (`0x6df4a4`-`0x6df505`): the slot's quest, its template cached, on a log row (`0x6df4c9`), auto-completing (`0x6df4d6`) and passing the completion test (`0x6df4e2`), is completed toward the player itself (`0x6df505`).
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+fn auto_complete(
+    In(quest_id): In<u32>,
+    me: Query<(&Guid, &ObjectStore), With<SelfPlayer>>,
+    quest_log: Res<QuestLog>,
+    marks: NonSend<RebuildMarks>,
+    expiries: NonSend<QuestExpiries>,
+    net: Res<NetCommands>,
+    objects: crate::net::Objects,
+    rewards: crate::ui_quest::rewards::RewardInputs,
+) {
+    let Some((guid, store)) = me.iter().next() else {
+        return;
+    };
+    let Some(t) = quest_log.template(quest_id, &net) else {
+        return;
+    };
+    if t.flags & quest_flags::AUTO_COMPLETE == 0 || !marks.quest_rows.contains(&quest_id) {
+        return;
+    }
+    let Some(slot) = (0..PLAYER_QUEST_LOG_SLOTS)
+        .filter_map(|s| store.0.player_quest_log(s))
+        .find(|s| s.quest_id == quest_id)
+    else {
+        return;
+    };
+    let carried = |id: u32| count_of(&store.0, &objects, id, InventoryScope::QUEST_ITEMS);
+    let standing = |faction: u32| rewards.standing(&store.0, faction);
+    let inputs = CompletionInputs {
+        carried: &carried,
+        standing: &standing,
+        money: u64::from(store.0.player_money().unwrap_or(0)),
+    };
+    if quest_complete(t, &slot, expiries.is_expired(quest_id), &inputs) {
+        debug!("ui_quest_log: quest {quest_id} auto-completes from its slot");
+        let _ = net.0.send(crate::net::ClientCommand::QuestgiverComplete {
+            npc: guid.0,
+            quest: quest_id,
+        });
     }
 }
 

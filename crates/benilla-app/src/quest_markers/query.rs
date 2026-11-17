@@ -187,8 +187,8 @@ fn unit_ask_key(fields: &benilla_protocol::ObjectFields) -> u64 {
 }
 
 /// Folds the self descriptor fields the reference watches, one handler each, into one value: level,
-/// the quest log, money, every skill, `PLAYER_FLAGS`, alive or dead, and the equipment and bag
-/// guids in place of the reference's `ITEM` watch.
+/// money, every skill, `PLAYER_FLAGS`, alive or dead, and the equipment and bag guids in place of
+/// the reference's `ITEM` watch. The quest log's slots ask from their own watch (`0x6df3b4`).
 fn self_generation(fields: &benilla_protocol::ObjectFields) -> u64 {
     const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
     let mut h = 0xcbf2_9ce4_8422_2325u64; // FNV offset
@@ -202,13 +202,6 @@ fn self_generation(fields: &benilla_protocol::ObjectFields) -> u64 {
     fold(u64::from(fields.unit_health().unwrap_or(1) == 0));
     fold(u64::from(fields.player_flags()));
     fold(u64::from(fields.player_money().unwrap_or(0)));
-    for slot in 0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS {
-        if let Some(s) = fields.player_quest_log(slot) {
-            if s.quest_id != 0 {
-                fold(u64::from(s.quest_id) ^ (u64::from(s.state) << 32));
-            }
-        }
-    }
     // The reference watches the skill value word (`edx=0x84c`): a rank-up, not a bonus ticking.
     for slot in 0..benilla_protocol::messages::PLAYER_SKILL_SLOTS {
         if let Some(s) = fields.player_skill(slot) {
@@ -434,7 +427,7 @@ mod tests {
 
     /// Accepting an escort, vmangos writes the quest-log slot and zeroes the giver's
     /// `UNIT_NPC_FLAGS` in the same update (`ScriptedEscortAI.cpp:470`,
-    /// `ScriptedFollowerAI.cpp:328`): the frame is a sweep, and the flag drop must still tear the
+    /// `ScriptedFollowerAI.cpp:328`): the flag drop must tear the
     /// marker down, while a giver whose flag stays on keeps its answer.
     #[test]
     fn an_escort_giver_loses_its_marker_when_the_flag_drops_with_the_quest_log_write() {
@@ -489,7 +482,7 @@ mod tests {
                 .set_status(npc, 5);
         }
 
-        // The accept as one update: our quest-log slot (a sweep) and the escort's flag drop.
+        // The accept as one update: our quest-log slot and the escort's flag drop.
         *app.world_mut()
             .entity_mut(me)
             .get_mut::<ObjectStore>()
