@@ -762,7 +762,7 @@ fn summon_offer_and_cancel_fire_from_their_handlers() {
     let request = || SessionEvent::SummonRequest {
         summoner: 0x20,
         zone: 1519,
-        delay_ms: 120_000,
+        delay_ms: 120_500,
     };
     let events = &["CONFIRM_SUMMON", "CANCEL_SUMMON"];
     let both = rig.packets(vec![request(), SessionEvent::SummonCancel], 3);
