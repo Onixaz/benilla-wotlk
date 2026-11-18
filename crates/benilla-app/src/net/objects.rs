@@ -130,6 +130,8 @@ pub(crate) struct Scene<'w, 's> {
     quest_log: Option<Res<'w, crate::ui_quest_log::QuestLog>>,
     /// The log's quest rows the stack watch walks.
     quest_rows: Option<NonSend<'w, crate::ui_quest_log::rows::RebuildMarks>>,
+    /// The refund records the post-init asks (`0x70ae34`).
+    refunds: Option<NonSendMut<'w, crate::ui_socket::RefundRecords>>,
     /// The possess spell our pet and far-sight watches look up (`0x6d1ab1`, `0x6e5034`).
     possess: (
         ResMut<'w, crate::ui_pet::possess::PossessSpell>,
@@ -493,7 +495,7 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                     })
                     .collect();
                 for (item, owner) in owners {
-                    item_record_watch(&mut sc, (entry, owner));
+                    item_record_watch(&mut sc, item, (entry, owner));
                     sc.ui
                         .world(move |world| crate::ui_items::watch::item_changed(world, item));
                 }
@@ -2122,7 +2124,7 @@ fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
 /// An item's post-init (`0x70af00`): its record asked for, and with it cached the post-init with the record runs now (`0x70af37`), else when the answer lands (`0x70ae90`).
 fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>)) {
     if entry != 0 && sc.items.template(entry, guid, &sc.net).is_some() {
-        item_record_watch(sc, (entry, owner));
+        item_record_watch(sc, guid, (entry, owner));
         // Its container's `BAG_UPDATE` (`0x70aa40` -> `0x5d7320`).
         sc.ui
             .world(move |world| crate::ui_items::watch::item_changed(world, guid));
@@ -2130,12 +2132,18 @@ fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>))
 }
 
 /// The post-init with the record's quest-log test (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), the stack watch's walk (`0x70adfc` -> `0x5e1250`).
-fn item_record_watch(sc: &mut Scene, (entry, owner): (u32, Option<u64>)) {
+fn item_record_watch(sc: &mut Scene, item: u64, (entry, owner): (u32, Option<u64>)) {
     let me = sc.self_guid.0.filter(|g| sc.index.0.contains_key(g));
     if me.is_none() || owner != me {
         return;
     }
     item_log_walk(sc, entry, true);
+    // A refundable purchase without a record or a pending ask asks it (`0x70ae13`-`0x70ae34`).
+    if crate::ui_socket::refundable(&sc.items, entry) {
+        if let Some(refunds) = sc.refunds.as_deref_mut() {
+            refunds.ask(item, &sc.net);
+        }
+    }
 }
 
 /// An item's disable on a destroy or out-of-range (`0x70afc0`): on an item we own (`0x70b0b5`-`0x70b0be`), the stack watch's walk (`0x70b0eb` -> `0x5e1250`).

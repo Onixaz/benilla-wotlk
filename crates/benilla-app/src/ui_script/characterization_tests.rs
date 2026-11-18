@@ -130,6 +130,7 @@ local VERBS = {
     { "cnt01", function() return (select(2, GetContainerItemInfo(0, 1))) end },
     { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
     { "slots1", function() return GetContainerNumSlots(1) end },
+    { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
 }
 local function answers()
     local verbs = {}
@@ -5584,5 +5585,128 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
             "BAG_UPDATE -4",
             "BAG_UPDATE 5",
         ]
+    );
+}
+
+/// A refundable purchase's record is asked by the item's post-init, by the merchant list for one held before the player, and answered into the verbs at the call; the result's lines print from its handler (`0x70ae34`, `0x6d1760`, `0x6d1650`, `0x6d9b40`).
+#[test]
+fn a_refund_record_is_asked_read_at_the_call_and_its_result_prints_in_the_handler() {
+    use crate::net::ClientCommand;
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::{PurchaseCost, RefundRecord};
+    const BADGE_BOUGHT: u32 = 40_001;
+    const EARLY: u64 = 0x4000_0000_0000_0500;
+    const LATER: u64 = 0x4000_0000_0000_0501;
+    let item = |guid: u64| SessionEvent::ItemCreate {
+        guid,
+        container: false,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_OBJECT_ENTRY, BADGE_BOUGHT),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, ME as u32),
+            (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, 1),
+        ])
+        .into_created(ObjectType::Item),
+    };
+    let mut template = crate::items::test_template("Charz Purchase");
+    template.flags = 0x1000;
+    let template = SessionEvent::ItemTemplate {
+        entry: BADGE_BOUGHT,
+        info: Some(Box::new(template)),
+    };
+    let slot = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    // An item created ahead of our own create: its post-init has no player to ask for.
+    let Some(mut rig) = Rig::login_around(
+        vec![template, item(EARLY)],
+        &[
+            OBJECT_TYPE_PLAYER,
+            slot(FIELD_PLAYER_PACK_SLOT_1, EARLY)[0],
+            slot(FIELD_PLAYER_PACK_SLOT_1, EARLY)[1],
+        ],
+        Vec::new(),
+    ) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let asks = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<u64> {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::ItemRefundInfo { item } => Some(item),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(rig.now().verbs["refund01"], "nil");
+
+    // The merchant list asks the held purchase without a record, once.
+    let list = || SessionEvent::VendorInventory {
+        vendor: 0xF130_0000_0000_0042,
+        items: Vec::new(),
+        error: None,
+    };
+    rig.packets(vec![list()], 1);
+    assert_eq!(
+        asks(&rx),
+        [EARLY],
+        "the list asks the purchase held before the player"
+    );
+    rig.packets(vec![list()], 1);
+    assert!(
+        asks(&rx).is_empty(),
+        "the pending bit holds the second list"
+    );
+
+    // The record reads at the call, the frame its answer lands.
+    let record = RefundRecord {
+        cost: PurchaseCost {
+            honor: 2000,
+            ..Default::default()
+        },
+        played_at_purchase: 100,
+    };
+    rig.send(SessionEvent::ItemRefundInfo {
+        item: EARLY,
+        record,
+    });
+    rig.app.update();
+    assert_eq!(rig.live_now().verbs["refund01"], "2000");
+
+    // An item made with the player held asks from its post-init.
+    rig.packets(vec![item(LATER)], 1);
+    assert_eq!(asks(&rx), [LATER], "the post-init asks the new purchase");
+
+    // The result prints its lines in its handler, ahead of the next packet's events.
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ItemRefundResult {
+                item: EARLY,
+                result: 0,
+                cost: Some(record.cost),
+            },
+            SessionEvent::ObjectDestroyed(EARLY),
+        ],
+        2,
+    );
+    let lines: Vec<&str> = seen
+        .iter()
+        .filter(|s| s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.args.as_str())
+        .collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "the refund line and the honor line: {lines:?}"
+    );
+    assert!(lines[1].contains("2000"), "the honor refunded: {lines:?}");
+    assert_eq!(
+        rig.live_now().verbs["refund01"],
+        "nil",
+        "the record went with its item"
     );
 }

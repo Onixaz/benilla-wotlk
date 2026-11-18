@@ -992,10 +992,9 @@ pub(crate) mod schedule_tests {
     ///   add 3 net: `arm_go_loot_fx`, `play_delayed_area_kits` and `stamp_model_scales` write
     ///   messages or `Commands` against `finish_colliders`, and the area kit reads the caster's
     ///   `GlobalTransform` against `publish_camera_pose`, as the other such spawners pair.
-    /// - Socketing and refunds (#202, #206) add 3: `ui_socket::drain_item_sends`, an
+    /// - Socketing and refunds (#202, #206) add 1: `ui_socket::drain_item_sends`, an
     ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
-    ///   such drains pair; and `ui_socket::feed_refunds` against `ui_items::feed_item_stats` and
-    ///   `feed_spell_tooltips` over `Items`: it only reads templates.
+    ///   such drains pair; the refund feed's pairs left when its verbs began reading the records at the call (#1278).
     /// - The small notices (#641) add 3: `ui_notices::drain_level_grant`, an `.after(UiInput)`
     ///   drain, against `finish_colliders`, as the other such drains pair; and
     ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over

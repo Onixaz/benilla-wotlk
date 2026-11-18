@@ -586,6 +586,19 @@ pub trait LiveState {
     fn has_key(&self) -> Option<bool> {
         None
     }
+
+    /// The refund record on held item `item` (`item+0x3d4`, filled by `0x6d1650`); `Some(None)` for none.
+    fn refund_record(&self, _item: u64) -> Option<Option<super::RefundView>> {
+        None
+    }
+
+    /// A bound item's trade-window stamp read off its fields at the call (`0x708b40`); `Some(None)` when it has none.
+    fn bound_trade_stamp(&self, _item: u64) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
+    fn ask_refund_record(&mut self, _item: u64) {}
 }
 
 /// A lent view's address, its lifetime erased.

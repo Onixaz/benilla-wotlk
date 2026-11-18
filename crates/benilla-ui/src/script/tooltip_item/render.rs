@@ -1132,6 +1132,7 @@ fn render_lines(
                 .enchants
                 .iter()
                 .any(|e| matches!(e.slot, 0 | 2 | 3 | 6));
+            crate::script::refund::ask_if_unrecorded(&model, inst.guid);
             let refund =
                 crate::script::refund::seconds_left(&model, inst.guid).filter(|_| !enchanted);
             let trade = inst

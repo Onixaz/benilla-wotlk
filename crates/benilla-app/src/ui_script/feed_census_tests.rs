@@ -83,7 +83,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_script::feed_framerate",
     "benilla_app::ui_shapeshift::feed_shapeshift_bar",
     "benilla_app::ui_social::feed::feed_social",
-    "benilla_app::ui_socket::feed_refunds",
     "benilla_app::ui_spell_info::feed_spell_info",
     "benilla_app::ui_spellbook::feed_spellbook",
     "benilla_app::ui_tabard::feed_tabard",

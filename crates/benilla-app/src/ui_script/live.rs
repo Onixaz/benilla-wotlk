@@ -46,6 +46,10 @@ pub(crate) struct LiveView<'w, 's> {
     net: Option<Res<'w, crate::net::NetCommands>>,
     bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
     item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
+    /// The enchant catalog a bound item's trade stamp tests for a binding enchant (`0x708b40`).
+    enchants: Option<Res<'w, crate::items::Enchants>>,
+    /// The item cache, a refund ask's template test (`0x62d580`).
+    items: Option<Res<'w, crate::items::Items>>,
     /// The main-thread state a verb writes inside its call, filled by [`LendLive`].
     pub(crate) lent: Lent<'w>,
     companions: crate::ui_companion::CompanionLive<'w, 's>,
@@ -96,6 +100,7 @@ pub(crate) struct Lent<'w> {
     pub(crate) expiries: LentSlot<'w, QuestExpiries>,
     pub(crate) giver: LentSlot<'w, QuestGiver>,
     pub(crate) bank: LentSlot<'w, BankOpen>,
+    pub(crate) refunds: LentSlot<'w, crate::ui_socket::RefundRecords>,
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
@@ -106,6 +111,7 @@ pub(crate) mod lent {
     pub(crate) const EXPIRIES: u8 = 8;
     pub(crate) const GIVER: u8 = 16;
     pub(crate) const BANK: u8 = 32;
+    pub(crate) const REFUNDS: u8 = 64;
 }
 
 /// One kind of [`Lent`] state.
@@ -132,6 +138,7 @@ lendable!(RebuildMarks, marks, lent::MARKS);
 lendable!(QuestExpiries, expiries, lent::EXPIRIES);
 lendable!(QuestGiver, giver, lent::GIVER);
 lendable!(BankOpen, bank, lent::BANK);
+lendable!(crate::ui_socket::RefundRecords, refunds, lent::REFUNDS);
 
 /// One piece of [`Lent`] state: the borrow [`LendLive`] took, or the one its owner lends for the call in progress.
 pub(crate) struct LentSlot<'w, T: 'static> {
@@ -1379,6 +1386,41 @@ impl LiveState for LiveView<'_, '_> {
             b.clear();
         }
     }
+
+    fn refund_record(&self, item: u64) -> Option<Option<benilla_ui::script::RefundView>> {
+        let records = self.lent.refunds.get()?;
+        let held = self.index.as_ref()?.0.contains_key(&item);
+        Some(held.then(|| records.view(item)).flatten())
+    }
+
+    fn bound_trade_stamp(&self, item: u64) -> Option<Option<u32>> {
+        let index = self.index.as_ref()?;
+        let fields = index
+            .0
+            .get(&item)
+            .and_then(|&e| self.stores.get(e).ok())
+            .map(|s| &s.0);
+        let me = self.active_player();
+        Some(fields.and_then(|f| crate::ui_socket::trade_stamp(f, me, self.enchants.as_deref())))
+    }
+
+    fn ask_refund_record(&mut self, item: u64) {
+        let entry = self
+            .index
+            .as_ref()
+            .and_then(|i| i.0.get(&item))
+            .and_then(|&e| self.stores.get(e).ok())
+            .and_then(|s| s.0.object_entry());
+        let refundable = entry
+            .zip(self.items.as_deref())
+            .is_some_and(|(entry, items)| crate::ui_socket::refundable(items, entry));
+        let Some(commands) = self.commands.as_deref() else {
+            return;
+        };
+        if let (true, Some(records)) = (refundable, self.lent.refunds.get_mut()) {
+            records.ask(item, commands);
+        }
+    }
 }
 
 impl Lent<'_> {
@@ -1515,7 +1557,7 @@ unsafe fn slot_fetch<X: Resource>(
 }
 
 /// The [`Lent`] state's ids, in [`lent`] bit order.
-type LentIds = [ComponentId; 6];
+type LentIds = [ComponentId; 7];
 
 /// Register the [`Lent`] state's ids.
 fn lent_ids(world: &mut World) -> LentIds {
@@ -1527,6 +1569,7 @@ fn lent_ids(world: &mut World) -> LentIds {
         reg.register_non_send::<QuestExpiries>(),
         reg.register_non_send::<QuestGiver>(),
         reg.register_non_send::<BankOpen>(),
+        reg.register_non_send::<crate::ui_socket::RefundRecords>(),
     ]
 }
 
@@ -1621,7 +1664,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
         type Petitions = crate::ui_petition::PetitionState;
         slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
-        let [signals, asks, marks, expiries, giver, bank] = &state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
         lent_access::<QuestAsks>(own, lent::ASKS, asks, meta, set, world);
@@ -1629,6 +1672,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         lent_access::<QuestExpiries>(own, lent::EXPIRIES, expiries, meta, set, world);
         lent_access::<QuestGiver>(own, lent::GIVER, giver, meta, set, world);
         lent_access::<BankOpen>(own, lent::BANK, bank, meta, set, world);
+        type Refunds = crate::ui_socket::RefundRecords;
+        lent_access::<Refunds>(own, lent::REFUNDS, refunds, meta, set, world);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -1695,7 +1740,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             view.petitions
                 .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
         }
-        let [signals, asks, marks, expiries, giver, bank] = state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
         // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
         view.lent = unsafe {
@@ -1706,6 +1751,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 expiries: lent_fetch(own, lent::EXPIRIES, expiries, meta, world, tick),
                 giver: lent_fetch(own, lent::GIVER, giver, meta, world, tick),
                 bank: lent_fetch(own, lent::BANK, bank, meta, world, tick),
+                refunds: lent_fetch(own, lent::REFUNDS, refunds, meta, world, tick),
             }
         };
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
