@@ -34,6 +34,8 @@ struct WowLight {
     _light_spec: vec4<f32>,    // 3
     fog_color: vec4<f32>,      // 4 rgb = Light.dbc row 7 (gamma 0..1); w = enable (>0.5 ⇒ blend)
     fog_params: vec4<f32>,     // 5 xy = scene fog start/end (unread); w = farclip wall (0 = off)
+    _rows_6_19: array<vec4<f32>, 14>,
+    point_count: vec4<f32>,    // 20 x = live point lights (unread); y = the horizon's far plane
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(90) var<storage, read> w: WowLight;
 
@@ -65,6 +67,11 @@ fn fragment(in: WdlVsOut) -> WdlFsOut {
 
     // The near plane is `farclip - 33`, not the wall: the overlap closes the coarse-vs-fine seam.
     if (farclip > 0.0 && eye_z < farclip - WDL_OVERLAP) {
+        discard;
+    }
+    // The far plane is the horizon projection's, `horizonFarclipScale x farclip` (`0x791170`).
+    let horizon_far = w.point_count.y;
+    if (horizon_far > 0.0 && eye_z > horizon_far) {
         discard;
     }
 

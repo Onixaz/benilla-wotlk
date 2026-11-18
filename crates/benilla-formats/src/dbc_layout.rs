@@ -31,6 +31,8 @@ pub struct DbcLayouts {
 pub struct AreaTable {
     pub fields: usize,
     pub faction_group_mask: usize,
+    /// `AmbientMultiplier`, a float.
+    pub ambient_multiplier: usize,
 }
 
 /// A table of `ID`, one localized string (its enUS column 1) and its mask or flags:
@@ -289,6 +291,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
     area_table: AreaTable {
         fields: 36,
         faction_group_mask: 28,
+        ambient_multiplier: 34,
     },
 };
 

@@ -587,6 +587,7 @@ mod tests {
 
         let unit = || WorldUnit {
             wades: true,
+            character_light: true,
             scale: 1.0,
             height: 2.0,
             bound: None,

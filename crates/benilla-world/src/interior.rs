@@ -310,6 +310,26 @@ pub struct BakeState {
     ref_point: Vec3,
 }
 
+/// The character ambient on `anchor`, `None` unless it is a unit body.
+fn unit_factor(
+    units: &Query<&crate::world_unit::WorldUnit>,
+    anchor: Entity,
+    character_ambient: &crate::lighting::CharacterAmbient,
+) -> Option<f32> {
+    units
+        .get(anchor)
+        .is_ok_and(|u| u.character_light)
+        .then_some(character_ambient.factor)
+}
+
+/// The bake fold's ambient word: the node's, times the character ambient on a unit (`0x7c1968`).
+fn bake_ambient(ambient: Vec3, unit_factor: Option<f32>) -> [f32; 3] {
+    match unit_factor {
+        Some(k) => crate::lighting::unit_ambient(ambient.to_array(), k),
+        None => ambient.to_array(),
+    }
+}
+
 /// Lights each entity part by where its anchor stands: outside, the global SH × the ramped
 /// intensity byte; in a room, the footprint bake folded into the anchor's own SH probe, or the
 /// day/night matte. An anchor rays again only when it moves or a building streams; its parts are
@@ -323,7 +343,13 @@ pub fn classify_entity_interior(
     instances: Query<(Entity, &WmoPortalInstance)>,
     streamer: Res<TerrainStreamer>,
     adt_tiles: Res<Assets<AdtTile>>,
-    lighting: Res<crate::lighting::WowLighting>,
+    // The resolved scene light, and the character ambient a unit's baked ambient takes, as its
+    // exterior ambient does.
+    (lighting, character_ambient, units): (
+        Res<crate::lighting::WowLighting>,
+        Option<Res<crate::lighting::CharacterAmbient>>,
+        Query<&crate::world_unit::WorldUnit>,
+    ),
     mut probes: ResMut<PropProbes>,
     // Light nodes with a consumer, a lit mesh part or a lit emitter ([`EmitterLitBy`]): any other
     // node would still ray and take a slot from a bounded probe table.
@@ -355,6 +381,8 @@ pub fn classify_entity_interior(
     mut parts: PartWrite,
 ) {
     let _t0 = std::time::Instant::now();
+    let factor_changed = character_ambient.as_ref().is_some_and(|c| c.is_changed());
+    let character_ambient = character_ambient.as_deref().copied().unwrap_or_default();
     let (mut n_anchors, mut n_resolved, mut n_written) = (0usize, 0usize, 0usize);
     // Anchors with no part to ask, the tripwire for a fade lockout creeping back.
     let mut n_fade_blocked = 0usize;
@@ -439,9 +467,11 @@ pub fn classify_entity_interior(
                         nodes.get(anchor),
                         held.get(anchor).ok().and_then(|(b, _)| b).ok_or(()),
                     ) {
-                        if !node.ramps_settled() {
+                        let unit_factor = unit_factor(&units, anchor, &character_ambient);
+                        let factor_moved = unit_factor.is_some() && factor_changed;
+                        if !node.ramps_settled() || factor_moved {
                             let words = (
-                                node.ambient.to_array(),
+                                bake_ambient(node.ambient, unit_factor),
                                 (bake.word * node.intensity()).to_array(),
                             );
                             probes.update_owned(
@@ -513,6 +543,7 @@ pub fn classify_entity_interior(
             &mut probes,
             verdict,
             &lighting,
+            unit_factor(&units, anchor, &character_ambient),
             &mut nodes,
             anchor,
             anchor_t,
@@ -798,6 +829,8 @@ fn resolve_anchor_law(
     probes: &mut PropProbes,
     (verdict, claimed): (IndoorVerdict, Option<(Entity, usize)>),
     lighting: &crate::lighting::WowLighting,
+    // The character ambient when the anchor is a unit body ([`unit_factor`]).
+    character_factor: Option<f32>,
     nodes: &mut Query<&mut crate::entity_shade::GroundShade>,
     anchor: Entity,
     anchor_t: &GlobalTransform,
@@ -842,7 +875,10 @@ fn resolve_anchor_law(
                         // No `GroundShade` yet: the settled words.
                         Err(_) => (Vec3::from_array(cap96(mocv)), 1.0),
                     };
-                    let words = (ambient.to_array(), (word * intensity).to_array());
+                    let words = (
+                        bake_ambient(ambient, character_factor),
+                        (word * intensity).to_array(),
+                    );
                     let coeffs = fold_interior_probe(words.0, words.1, ref_point, &lobes);
                     let emitter_light = interior_light_up(words.0, words.1, ref_point, &lobes);
                     let slot = match seated {

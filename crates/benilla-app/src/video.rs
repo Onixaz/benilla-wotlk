@@ -431,6 +431,8 @@ pub(crate) fn on_cvar(
             fx.view.set_farclip(v, map);
         }
         "nearclip" => fx.view.set_nearclip(v),
+        // `0x78d7c0`: clamped to [3, 6]; the horizon pass reads it every frame.
+        "horizonfarclipscale" => fx.view.set_horizon_scale(v),
         // `0x769610`: clamped to [1, 16], then this GPU's ceiling, since an unoffered count is a
         // wgpu validation error; the camera takes it at the `RestartGx` commit.
         "gxmultisample" => {

@@ -900,6 +900,7 @@ mod tests {
                         faction_group_mask: 0,
                         exploration_level: 0,
                         name: name.to_string(),
+                        ambient_multiplier: 0.0,
                     },
                 )
             })

@@ -714,6 +714,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // `benilla_world::view::stamp_near_clip` is that. The callback's derived global has no reader.
     // pfUI's `hdgraphic` writes 0.06..0.30, inside `[0.01, 0.33]`.
     same("nearclip", "0.1"),
+    // `horizonFarclipScale` (`0x78e400`, "4.0", callback `0x78d7c0`): the horizon's reach as a
+    // multiple of the far clip, clamped to [3, 6]; the knob is `ViewDistance::set_horizon_scale`.
+    same("horizonFarclipScale", "4.0"),
     // `deselectOnClick` (`0x51d9cf`, "1"), the Controls panel's Sticky Targeting shown inverted:
     // a bare world or terrain left-click clears the target (`0x5278c0`, `0x527360`).
     same("deselectOnClick", "1").per_account(),

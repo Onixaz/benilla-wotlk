@@ -23,6 +23,10 @@ pub struct WorldUnit {
     /// Whether this body displaces water (a ripple ring and a wake): a creature or a player does,
     /// a chest or a spell's ground anchor does not. A field, so no spawn can leave it unstated.
     pub wades: bool,
+    /// Whether the body is a unit, a creature or a player, whose ambient takes the area's character
+    /// ambient (`crate::lighting::CharacterAmbient`): the entity creator (`0x743760`) flags unit
+    /// bodies, and no GameObject, corpse or dynamic object.
+    pub character_light: bool,
     /// The instance's model scale, as the ripple ring's radius input.
     pub scale: f32,
     /// The collision cylinder's height in yards, the ring's other input. Before the display

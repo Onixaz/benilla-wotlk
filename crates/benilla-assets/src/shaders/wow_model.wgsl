@@ -63,7 +63,7 @@ struct ModelParams {
 // The shared light buffer (`lighting::global_light`, rows as packed there), updated once per
 // frame; terrain.wgsl mirrors the prefix, so a tree and the ground under it fog alike.
 struct WowLight {
-    light_ambient: vec4<f32>, // rgb ambient; w = Mod2x scale
+    light_ambient: vec4<f32>, // rgb ambient; w = the character ambient, a unit's ambient factor
     light_diffuse: vec4<f32>, // rgb sun diffuse; w = clamp-light flag (>0.5 ⇒ saturate)
     light_sun: vec4<f32>,     // xyz sun travel dir (to-light = −xyz); w = directional enable
     light_spec: vec4<f32>,    // terrain's specular (w = its shininess); unread here
@@ -630,7 +630,8 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
 #endif
     // The MeshTag (mesh_tag.rs): bit 31 = highlight, bit 30 = interior fog; payload bits 0-5 = the
     // fade alpha (a zero payload is untagged, opaque), 19-29 = the rig slot, 6-13 = the ground
-    // shade (0 lit, 255 MCSH-shadowed) or, on an interior-prop material, 6-18 = the SH-probe slot.
+    // shade (0 lit, 255 MCSH-shadowed) and 14 = a unit's part, or, on an interior-prop material,
+    // 6-18 = the SH-probe slot.
     let interior_prop = m.model_flags.z > 0.5 && m.model_flags.x < 0.5;
     let raw_tag = mesh_functions::get_tag(in.instance_index);
     let highlighted = (raw_tag & 0x80000000u) != 0u;
@@ -758,7 +759,12 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // face); the reference never enables GL_LIGHT_MODEL_TWO_SIDE, so undo it.
     let n_lit = select(-n_m2, n_m2, is_front);
     let ndotl = max(dot(n_lit, L), 0.0);
-    let lit_nl = clamp(wow_light.light_ambient.rgb + wow_light.light_diffuse.rgb * ndotl, vec3<f32>(0.0), vec3<f32>(1.0));
+    // A unit's part (exterior payload bit 14) takes the character ambient, row 0 `.w`: its ambient
+    // times the area's factor, each channel held at 1 (`0x7c1968`).
+    let unit_lit = !interior_prop && (fade_tag & 0x4000u) != 0u;
+    let character_ambient = select(1.0, wow_light.light_ambient.w, unit_lit);
+    let ambient_nl = min(wow_light.light_ambient.rgb * character_ambient, vec3<f32>(1.0));
+    let lit_nl = clamp(ambient_nl + wow_light.light_diffuse.rgb * ndotl, vec3<f32>(0.0), vec3<f32>(1.0));
     // The order-2 SH basis, shared by the exterior lobe and the interior probes.
     let quad = vec4<f32>(n_lit.x * n_lit.y, n_lit.y * n_lit.z, n_lit.z * n_lit.z, n_lit.x * n_lit.z);
     let n1 = vec4<f32>(n_lit, 1.0);
@@ -781,16 +787,22 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // One `intensity` multiply covers every sun band (never I²); the c10 `.w` ambient does not
     // scale. `pack_model_core_rows` packs the same closed form.
     let sun_dc = wow_light.grade.yzw * intensity;
+    // The DC lanes carry the scene ambient alone (`pack_model_core_rows`), so a unit's is scaled
+    // here, before the sun.
+    let ambient_dc = min(
+        vec3<f32>(wow_light.sh_c10_r.w, wow_light.sh_c10_g.w, wow_light.sh_c10_b.w) * character_ambient,
+        vec3<f32>(1.0),
+    );
     let sun_lobe = vec3<f32>(
-        wow_light.sh_c10_r.w + sun_dc.x
+        ambient_dc.x + sun_dc.x
             + intensity
                 * (dot(wow_light.sh_c10_r.xyz, n_lit) + dot(wow_light.sh_c13_r, quad)
                     + wow_light.sh_c16.x * x2y2),
-        wow_light.sh_c10_g.w + sun_dc.y
+        ambient_dc.y + sun_dc.y
             + intensity
                 * (dot(wow_light.sh_c10_g.xyz, n_lit) + dot(wow_light.sh_c13_g, quad)
                     + wow_light.sh_c16.y * x2y2),
-        wow_light.sh_c10_b.w + sun_dc.z
+        ambient_dc.z + sun_dc.z
             + intensity
                 * (dot(wow_light.sh_c10_b.xyz, n_lit) + dot(wow_light.sh_c13_b, quad)
                     + wow_light.sh_c16.z * x2y2),
