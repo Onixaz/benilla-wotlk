@@ -14,8 +14,9 @@ use benilla_ui::names::NameError;
 use benilla_assets::coords::wow_to_bevy;
 
 use super::PetBar;
-use crate::net::{GuidIndex, NetHandlerApp, PetDismissSoundMessage, PetTalkMessage};
+use crate::net::{GuidIndex, NetHandlerApp, ObjectStore, PetDismissSoundMessage, PetTalkMessage};
 use crate::ui_action::{CastErrors, PetTameFailures, Spells, UiError, UiErrorKeys};
+use crate::ui_script::live::UiEvents;
 
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
@@ -40,9 +41,28 @@ fn on_session_end(In(_): In<SessionEvent>, mut bar: ResMut<PetBar>) {
     bar.clear();
 }
 
-fn on_spells(In(ev): In<SessionEvent>, catalog: Option<Res<Spells>>, mut bar: ResMut<PetBar>) {
+fn on_spells(
+    In(ev): In<SessionEvent>,
+    catalog: Option<Res<Spells>>,
+    mut bar: ResMut<PetBar>,
+    index: Res<GuidIndex>,
+    stores: Query<&ObjectStore>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::PetSpells(spells) = ev {
+        let pet = index
+            .0
+            .get(&spells.pet_guid)
+            .and_then(|&entity| stores.get(entity).ok());
+        let creator = pet
+            .and_then(|pet| pet.0.unit_created_by())
+            .and_then(|guid| index.0.get(&guid))
+            .and_then(|&entity| stores.get(entity).ok());
+        let closes_pet_ui = should_close_pet_ui(bar.spells.pet_guid, spells.pet_guid, pet, creator);
         pet_spells(*spells, catalog.as_deref(), &mut bar);
+        if closes_pet_ui {
+            ui.fire("PET_UI_CLOSE", Vec::new());
+        }
     }
 }
 
@@ -305,6 +325,30 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
     bar.bar_signals = bar.bar_signals.wrapping_add(1);
 }
 
+/// `PET_UI_CLOSE` (`0x5d6a94`) fires when the setter takes on a new pet that can gain experience:
+/// a held pet (`PETNUMBER != 0`) whose held creator is a Hunter player. The reference checks the
+/// new head before `UNIT_PET`, while a same-pet resend and an unheld creator stay silent.
+fn should_close_pet_ui(
+    previous_pet_guid: u64,
+    pet_guid: u64,
+    pet: Option<&ObjectStore>,
+    creator: Option<&ObjectStore>,
+) -> bool {
+    previous_pet_guid != pet_guid && pet_guid != 0 && is_hunter_experience_pet(pet, creator)
+}
+
+fn is_hunter_experience_pet(pet: Option<&ObjectStore>, creator: Option<&ObjectStore>) -> bool {
+    const CLASS_HUNTER: u8 = 3;
+    pet.is_some_and(|pet| pet.0.unit_pet_number() != 0)
+        && creator.is_some_and(|creator| {
+            creator.0.object_type() == Some(benilla_protocol::messages::ObjectType::Player)
+                && creator
+                    .0
+                    .unit_bytes_0()
+                    .is_some_and(|bytes| ((bytes >> 8) & 0xff) as u8 == CLASS_HUNTER)
+        })
+}
+
 /// `SMSG_PET_GUIDS` (`0x5d6550`): the list replaced whole, with no event. Every pet verb reads the
 /// list's head (`0x5d3390` with index 0), so the head is the bar's guid; an empty list is no pet
 /// while the bar's words stay for the next `SMSG_PET_SPELLS`.
@@ -449,6 +493,26 @@ mod tests {
         s
     }
 
+    fn pet_store(pet_number: u32) -> ObjectStore {
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_PETNUMBER,
+            pet_number,
+        )]))
+    }
+
+    fn player_store(class: u8) -> ObjectStore {
+        ObjectStore(
+            benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (
+                    benilla_protocol::field::FIELD_UNIT_BYTES_0,
+                    u32::from(class) << 8,
+                ),
+            ])
+            .into_created(benilla_protocol::messages::ObjectType::Player),
+        )
+    }
+
     /// The server's name code shows the client's own name error.
     #[test]
     fn a_refused_rename_shows_its_name_error() {
@@ -468,6 +532,25 @@ mod tests {
         pet_spells(PetSpells::default(), None, &mut bar);
         assert_eq!(bar.spells, PetSpells::default());
         assert!(!bar.has_bar());
+    }
+
+    #[test]
+    fn pet_ui_close_only_marks_a_new_held_hunter_pet() {
+        let hunter = player_store(3);
+        let warlock = player_store(9);
+        let pet = pet_store(42);
+        let guardian = pet_store(0);
+
+        assert!(should_close_pet_ui(0x11, 0x22, Some(&pet), Some(&hunter)));
+        assert!(!should_close_pet_ui(0x22, 0x22, Some(&pet), Some(&hunter)));
+        assert!(!should_close_pet_ui(0x11, 0x22, Some(&pet), Some(&warlock)));
+        assert!(!should_close_pet_ui(0x11, 0x22, Some(&pet), None));
+        assert!(!should_close_pet_ui(
+            0x11,
+            0x22,
+            Some(&guardian),
+            Some(&hunter)
+        ));
     }
 
     /// The pet setter: each packet re-arms the expiry from its own duration, 0 clears it, and the

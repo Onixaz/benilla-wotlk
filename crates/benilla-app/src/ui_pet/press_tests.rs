@@ -139,6 +139,7 @@ pub(super) fn listen(script: &benilla_ui::script::UiScript) {
             SEEN = {}
             local f = CreateFrame("Frame")
             f:RegisterEvent("PET_BAR_UPDATE")
+            f:RegisterEvent("PET_UI_CLOSE")
             f:RegisterEvent("PET_BAR_UPDATE_COOLDOWN")
             f:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
             f:RegisterEvent("SPELL_UPDATE_COOLDOWN")

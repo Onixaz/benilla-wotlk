@@ -239,6 +239,53 @@ fn the_pet_spells_packet_signals_the_bar_and_never_flushes() {
     assert_eq!(rig.frame(), ["PET_BAR_UPDATE"]);
 }
 
+/// The pet setter closes the paper doll before the unit feed sees the new pet, but not when the
+/// same pet's spell list is sent again.
+#[test]
+fn a_new_hunter_pet_fires_pet_ui_close_once() {
+    const NEW_PET: u64 = 0x2B;
+    let mut rig = rig(vec![], &[], Some(summoned_pet()));
+
+    let me = rig.app.world().resource::<crate::net::GuidIndex>().0[&ME];
+    rig.app
+        .world_mut()
+        .entity_mut(me)
+        .insert(super::press_tests::player_with(&[(
+            benilla_protocol::field::FIELD_UNIT_BYTES_0,
+            3 << 8,
+        )]));
+    let new_pet = rig
+        .app
+        .world_mut()
+        .spawn((
+            crate::net::Guid(NEW_PET),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+                (benilla_protocol::field::FIELD_UNIT_PETNUMBER, 42),
+                (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+                (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+            ])),
+        ))
+        .id();
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(NEW_PET, new_pet);
+
+    rig.receive(vec![SessionEvent::PetSpells(Box::new(PetSpells {
+        pet_guid: NEW_PET,
+        ..Default::default()
+    }))]);
+    assert_eq!(rig.frame(), ["PET_UI_CLOSE", "PET_BAR_UPDATE"]);
+
+    rig.receive(vec![SessionEvent::PetSpells(Box::new(PetSpells {
+        pet_guid: NEW_PET,
+        ..Default::default()
+    }))]);
+    assert_eq!(rig.frame(), ["PET_BAR_UPDATE"]);
+}
+
 /// A reset moves no counter back: a mutation, the teardown, a new bar, and the next mutation
 /// flushes once. A counter that fell back to 0 would read as a mutation at the teardown.
 #[test]
