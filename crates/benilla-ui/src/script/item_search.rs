@@ -522,7 +522,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(Value::Nil);
             }
-            let held = super::container::live_bag(&model, i64::from(bag));
+            let held = super::container::index_bag(&model, i64::from(bag));
             let held = held.as_ref();
             let size = match bag {
                 0 => 16,

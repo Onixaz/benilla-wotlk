@@ -422,7 +422,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let Some(s) = u32::try_from(slot)
                 .ok()
-                .and_then(|slot| Some((slot, super::container::live_slot(&model, bag, slot)?)))
+                .and_then(|slot| Some((slot, super::container::index_slot(&model, bag, slot)?)))
             else {
                 return Ok(());
             };

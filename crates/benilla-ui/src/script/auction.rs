@@ -1527,7 +1527,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
     if !model.auction_tab_showing || model.auction.is_none() {
         return false;
     }
-    let Some(s) = super::container::live_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
+    let Some(s) = super::container::index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
         return false;
     };
     if let Some(key) = sell_refusal(model, bag, slot, s.item_id) {

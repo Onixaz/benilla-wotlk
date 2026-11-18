@@ -64,8 +64,7 @@ pub(super) struct FedPetition {
     shown_signers: Vec<Option<String>>,
 }
 
-/// A forgotten button item keeps the pickup's lock (`0x5a22cb`, `0x5a1f57` unlock nothing) until
-/// its slot's next item update (`0x5d9790`, `0x707720`), as a pending op over that slot.
+/// A forgotten button item keeps the pickup's lock (`0x5a22cb`, `0x5a1f57` unlock nothing) until its slot's or count's watch unlocks it (`0x5d9790`, `0x707720`).
 fn keep_locked(
     held: Option<PetitionButtonItem>,
     store: Option<&ObjectStore>,
@@ -75,9 +74,9 @@ fn keep_locked(
     let Some(held) = held else {
         return;
     };
-    let (guid, count) = crate::ui_items::slot_guid_count(store, held.bag, held.slot, objects);
+    let (guid, _) = crate::ui_items::slot_guid_count(store, held.bag, held.slot, objects);
     if guid == held.item {
-        pending.add([(held.bag, held.slot, guid, count)]);
+        pending.lock(guid);
     }
 }
 
@@ -642,32 +641,10 @@ mod tests {
                 .unwrap();
         };
         forget(&mut world, 0x99);
-        assert!(!world.resource::<PendingItemOps>().contains(0, 1));
+        assert!(world.resource::<PendingItemOps>().is_empty());
         forget(&mut world, CHARTER);
-        assert!(world.resource::<PendingItemOps>().contains(0, 1));
-
-        let resolve = |world: &mut World| {
-            world
-                .run_system_once(
-                    |q: Query<&ObjectStore, With<SelfPlayer>>,
-                     objects: Objects,
-                     mut pending: ResMut<PendingItemOps>| {
-                        let me = q.iter().next();
-                        pending.resolve(|bag, slot| {
-                            crate::ui_items::slot_guid_count(me, bag, slot, &objects)
-                        })
-                    },
-                )
-                .unwrap()
-        };
-        assert!(resolve(&mut world).is_empty(), "no update, still locked");
-        world
-            .entity_mut(item)
-            .insert(ObjectStore(ObjectFields::from_pairs(&[
-                (benilla_protocol::field::FIELD_OBJECT_ENTRY, 23560),
-                (benilla_protocol::field::FIELD_ITEM_STACK_COUNT, 2),
-            ])));
-        assert_eq!(resolve(&mut world), vec![(0, 1)]);
+        assert!(world.resource::<PendingItemOps>().is_locked(CHARTER));
+        let _ = item;
     }
 
     #[test]

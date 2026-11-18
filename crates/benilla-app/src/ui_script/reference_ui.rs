@@ -1996,7 +1996,6 @@ mod tests {
         const UNPRODUCED: &[(&str, &str)] = &[
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
             ("FRIENDLIST_SHOW", R_1),
-            ("ITEM_UNLOCKED", R_1),
             ("MAIL_LOCK_SEND_ITEMS", R_1),
             ("MODIFIER_STATE_CHANGED", R_1),
             ("PARTY_CONVERTED_TO_RAID", R_1),

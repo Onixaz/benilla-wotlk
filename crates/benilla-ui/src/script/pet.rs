@@ -1,6 +1,6 @@
 //! The pet bindings: the action bar `PetActionBarFrame.lua` drives, the stat block the pet frames
-//! read, and the pet menu's predicates and verbs. The app resolves every slot and pushes it
-//! ([`super::UiScript::set_pet_actions`]); presses queue back out for the app to send. A token
+//! read, and the pet menu's predicates and verbs. Every slot reads the live view at the call; the
+//! plain orders act inside it, and the spell and Attack presses queue for the app to send. A token
 //! slot's name and texture are the names of globals, which the stock Lua resolves
 //! (`PetActionBarFrame.lua:98-104`). Booleans are 1/nil and cooldowns go cold once elapsed, as in
 //! [`super::action`].
@@ -126,9 +126,7 @@ pub struct PetStats {
     /// record. `None` is nil: no record yet, id 0, or an id with no row (10, 13, 14, 18 and 22 have
     /// none). `PetPaperDollFrame.lua:68-70` guards its level line on it.
     pub family: Option<String>,
-    /// `GetPetIcon()`: the family row's `CreatureFamily.dbc` icon, `None` on the family word's
-    /// misses. Ungated like the family word; whether the reference gates it is untraced, and no
-    /// warlock reaches its stock callers (`PetStable.lua:51`, `161-162`).
+    /// `GetPetIcon()`: the family row's `CreatureFamily.dbc` icon, gated on a hunter pet (`0x5d3d1c`).
     pub icon: Option<String>,
     /// `GetPetFoodTypes()`: the diet names the family's food mask selects, in record order (bit
     /// `1 << (id - 1)` of `CreatureFamily` column 7, names from `ItemPetFood`). Empty for a zero

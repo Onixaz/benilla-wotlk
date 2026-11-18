@@ -68,6 +68,7 @@ local VERBS = {
     { "petfollow", function() return (select(5, GetPetActionInfo(2))) end },
     { "petcd", function() return (GetPetActionCooldown(4)) > 0 end },
     { "petbar", function() return PetHasActionBar() end },
+    { "petbook", function() return (HasPetSpells()) end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
     { "button2", button2 },
@@ -129,7 +130,13 @@ local VERBS = {
     { "free0", function() return (GetContainerNumFreeSlots(0)) end },
     { "cnt01", function() return (select(2, GetContainerItemInfo(0, 1))) end },
     { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
+    { "lock02", function() return (select(3, GetContainerItemInfo(0, 2))) end },
+    { "lock05", function() return (select(3, GetContainerItemInfo(0, 5))) end },
+    { "lock11", function() return (select(3, GetContainerItemInfo(1, 1))) end },
+    { "lock12", function() return (select(3, GetContainerItemInfo(1, 2))) end },
     { "slots1", function() return GetContainerNumSlots(1) end },
+    { "slots5", function() return GetContainerNumSlots(5) end },
+    { "name5", function() return GetBagName(5) end },
     { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
     { "binderdist", function() return CheckBinderDist() end },
     { "talentdist", function() return CheckTalentMasterDist() end },
@@ -4461,6 +4468,46 @@ fn the_pet_number_handler_signals_its_tokens_and_updates_the_pet_ui() {
     assert_eq!(rig.now().line(&["petname"]), "NOW | petname=Fang");
 }
 
+/// An empty `SMSG_PET_GUIDS` (`0x5d6550`) empties the list and leaves the book: `HasPetSpells` reads the count the last `SMSG_PET_SPELLS` left (`0x53dd34`), until a zero-guid one clears it (`0x5d6d88`).
+#[test]
+fn the_pet_book_outlives_an_empty_pet_list() {
+    use benilla_protocol::messages::{PetActionEntry, PetSpells};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let mut spells = PetSpells {
+        pet_guid: PET,
+        ..Default::default()
+    };
+    // Growl, a book spell, as its packed word.
+    spells.spells = vec![PetActionEntry::from(0xC100_0000 | 2649)];
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(spells)),
+        ],
+        3,
+    );
+    assert_eq!(
+        rig.live_now().line(&["petbar", "petbook"]),
+        "NOW | petbar=1 petbook=1"
+    );
+    rig.packets(vec![SessionEvent::PetGuids(Vec::new())], 3);
+    assert_eq!(
+        rig.live_now().line(&["petbar", "petbook"]),
+        "NOW | petbar=nil petbook=1"
+    );
+    rig.packets(vec![SessionEvent::PetSpells(Box::default())], 3);
+    assert_eq!(
+        rig.live_now().line(&["petbar", "petbook"]),
+        "NOW | petbar=nil petbook=nil"
+    );
+}
+
 /// The pet's packets fire their events from their handlers in wire order, each after its change: `SMSG_PET_MODE`'s `PET_BAR_UPDATE` (`0x5d3689`), a pet-addressed `SMSG_SPELL_COOLDOWN`'s flush (`0x80702e`, `0x807039`), and `SMSG_PET_SPELLS`' temporary bar `PET_BAR_UPDATE` then `SPELLS_CHANGED` (`0x5d6ad2`, `0x5d6d70`); both orders of the first two.
 #[test]
 fn the_pet_packets_fire_their_events_in_wire_order() {
@@ -4805,18 +4852,19 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     );
 }
 
-/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat our create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
+/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat our create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`; the pet book keeps the packet's count throughout (`0x53dd34`).
 #[test]
 fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
-    let Some((_rig, seen)) = ported(
-        vec![SessionEvent::PetSpells(Box::new(
-            benilla_protocol::messages::PetSpells {
-                pet_guid: PET,
-                ..Default::default()
-            },
-        ))],
-        Vec::new(),
-    ) else {
+    let mut spells = benilla_protocol::messages::PetSpells {
+        pet_guid: PET,
+        ..Default::default()
+    };
+    // Growl, a book spell, as its packed word.
+    spells.spells = vec![benilla_protocol::messages::PetActionEntry::from(
+        0xC100_0000 | 2649,
+    )];
+    let Some((_rig, seen)) = ported(vec![SessionEvent::PetSpells(Box::new(spells))], Vec::new())
+    else {
         return;
     };
     let entry: Vec<String> = pin(
@@ -4827,7 +4875,7 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
             "PET_BAR_UPDATE",
             "UPDATE_FACTION",
         ],
-        &["petbar"],
+        &["petbar", "petbook"],
     )
     .into_iter()
     .skip_while(|l| !l.starts_with("PLAYER_ENTERING_WORLD"))
@@ -4835,10 +4883,10 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
     assert_eq!(
         entry,
         vec![
-            "PLAYER_ENTERING_WORLD | petbar=1",
-            "UNIT_PET player | petbar=nil",
-            "PET_BAR_UPDATE | petbar=nil",
-            "UPDATE_FACTION | petbar=nil",
+            "PLAYER_ENTERING_WORLD | petbar=1 petbook=1",
+            "UNIT_PET player | petbar=nil petbook=1",
+            "PET_BAR_UPDATE | petbar=nil petbook=1",
+            "UPDATE_FACTION | petbar=nil petbook=1",
         ]
     );
 }
@@ -5541,7 +5589,7 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
     );
 }
 
-/// The bag watches fire from the update's handler in field order, each read at its own event: a pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update (`0x5d99f9`, `0x5d9aa1`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
+/// The bag watches fire from the update's handler in field order, each read at its own event: a pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update (`0x5d9a87`, `0x5d9b16`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
 #[test]
 fn the_bag_watches_fire_from_the_update_in_field_order() {
     use benilla_protocol::field::{
@@ -5605,35 +5653,41 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
         "a pack slot's watch, read at its event"
     );
 
-    // The move's send locks both ends; the server's slot words unlock them ahead of the updates.
+    // The move's send locks the item at its one held end (`0x706fe0`).
     super::live::with_live_world(rig.app.world_mut(), |s| {
         s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
     })
     .expect("a VM")
     .expect("the move runs");
     let seen = rig.packets(Vec::new(), 2);
-    let locks = pin(&seen, &["ITEM_LOCK_CHANGED"], &["lock01"]);
+    let lock_events = &["ITEM_LOCK_CHANGED", "ITEM_LOCKED", "ITEM_UNLOCKED"];
+    let locks = pin(&seen, lock_events, &["lock01"]);
     assert_eq!(
-        locks.last().map(String::as_str),
-        Some("ITEM_LOCK_CHANGED 0 1 | lock01=1"),
-        "the send's lock reads locked at its event: {locks:?}"
+        locks[locks.len().saturating_sub(2)..],
+        [
+            "ITEM_LOCK_CHANGED 0 1 | lock01=1",
+            "ITEM_LOCKED 0 1 | lock01=1"
+        ],
+        "the send's lock reads locked at its events: {locks:?}"
     );
+    // Slot 1's watch unlocks its new item, none (`0x5d9863` -> `0x513770`), then our updates; slot 2's unlocks the arrows at their new place, then ours again.
     let mut words = slot(FIELD_PLAYER_PACK_SLOT_1, 0).to_vec();
     words.extend(slot(FIELD_PLAYER_PACK_SLOT_1 + 2, ARROWS));
     let seen = rig.packets(vec![self_values(&words)], 2);
+    let moved: Vec<&str> = events.iter().chain(lock_events).copied().collect();
     assert_eq!(
-        pin(&seen, events, &["free0", "lock01"]),
+        pin(&seen, &moved, &["free0", "lock02"]),
         [
-            "ITEM_LOCK_CHANGED 0 1 | free0=15 lock01=nil",
-            "ITEM_LOCK_CHANGED 0 2 | free0=15 lock01=nil",
-            "BAG_UPDATE 0 | free0=15 lock01=nil",
-            "BAG_UPDATE -2 | free0=15 lock01=nil",
-            "BAG_UPDATE -4 | free0=15 lock01=nil",
-            "BAG_UPDATE 0 | free0=15 lock01=nil",
-            "BAG_UPDATE -2 | free0=15 lock01=nil",
-            "BAG_UPDATE -4 | free0=15 lock01=nil",
+            "BAG_UPDATE 0 | free0=15 lock02=1",
+            "BAG_UPDATE -2 | free0=15 lock02=1",
+            "BAG_UPDATE -4 | free0=15 lock02=1",
+            "ITEM_LOCK_CHANGED 0 2 | free0=15 lock02=nil",
+            "ITEM_UNLOCKED 0 2 | free0=15 lock02=nil",
+            "BAG_UPDATE 0 | free0=15 lock02=nil",
+            "BAG_UPDATE -2 | free0=15 lock02=nil",
+            "BAG_UPDATE -4 | free0=15 lock02=nil",
         ],
-        "slot 1's watch unlocks the move before its updates, then slot 2's watch"
+        "no event for the emptied slot; the arrows unlock where they landed"
     );
 
     // A bag in the first bag slot, then another over it.
@@ -5648,11 +5702,12 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
     assert_eq!(
         pin(&seen, events, &["slots1"]),
         [
-            "BAG_UPDATE 0 | slots1=6",
-            "BAG_UPDATE -2 | slots1=6",
-            "BAG_UPDATE -4 | slots1=6",
+            "BAG_UPDATE 0 | slots1=0",
+            "BAG_UPDATE -2 | slots1=0",
+            "BAG_UPDATE -4 | slots1=0",
             "BAG_UPDATE 1 | slots1=6",
-        ]
+        ],
+        "our contents update before the refresh watches the new bag (0x5d9bf9, 0x5d9bfe)"
     );
     let seen = rig.packets(
         vec![
@@ -5664,10 +5719,10 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
     assert_eq!(
         pin(&seen, events, &["slots1"]),
         [
-            "BAG_UPDATE 0 | slots1=8",
-            "BAG_UPDATE -2 | slots1=8",
-            "BAG_UPDATE -4 | slots1=8",
-            "BAG_CLOSED 1 | slots1=8",
+            "BAG_UPDATE 0 | slots1=6",
+            "BAG_UPDATE -2 | slots1=6",
+            "BAG_UPDATE -4 | slots1=6",
+            "BAG_CLOSED 1 | slots1=6",
             "BAG_UPDATE 1 | slots1=8",
         ]
     );
@@ -5694,6 +5749,282 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
             "BAG_UPDATE -4",
             "BAG_UPDATE 5",
         ]
+    );
+}
+
+/// A watched bag's slot watch runs once per slot field (`0x5d9600`, registered per slot at `0x5d9af8`): a swap inside a bag unlocks each slot's new item before that slot's `BAG_UPDATE`; the count watch unlocks every stack of a stackable kind at its place (`0x7077c1` -> `0x754d90`); the enchant watch unlocks nothing and returns on a charter (`0x707f6b`); `BAG_OPEN` names the container (`0x5d7110`).
+#[test]
+fn a_bag_slot_count_and_enchant_watch_each_run_their_own_handler() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_CONTAINER_SLOT_1, FIELD_ITEM_CONTAINED,
+        FIELD_ITEM_ENCHANTMENT_1_1, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const SACK: u64 = 0x4000_0000_0000_0500;
+    const CLOTH: u64 = 0x4000_0000_0000_0501;
+    const HIDE: u64 = 0x4000_0000_0000_0502;
+    const ARROW_A: u64 = 0x4000_0000_0000_0503;
+    const ARROW_B: u64 = 0x4000_0000_0000_0504;
+    const CHARTER: u64 = 0x4000_0000_0000_0505;
+    const ARROW_ENTRY: u32 = 2512;
+    const CHARTER_ENTRY: u32 = 5863;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let mut arrows = crate::items::test_template("Rough Arrow");
+    arrows.stackable = 200;
+    let mut charter = crate::items::test_template("Guild Charter");
+    charter.flags = 0x2000;
+    rig.packets(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: ARROW_ENTRY,
+                info: Some(Box::new(arrows)),
+            },
+            SessionEvent::ItemTemplate {
+                entry: CHARTER_ENTRY,
+                info: Some(Box::new(charter)),
+            },
+        ],
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let item = |guid: u64, entry: u32, inside: u64, extra: &[(u16, u32)]| {
+        let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 20)];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, inside));
+        pairs.extend_from_slice(extra);
+        let bag = extra.iter().any(|&(f, _)| f == FIELD_CONTAINER_NUM_SLOTS);
+        SessionEvent::ItemCreate {
+            guid,
+            container: bag,
+            fields: ObjectFields::from_pairs(&pairs).into_created(if bag {
+                ObjectType::Container
+            } else {
+                ObjectType::Item
+            }),
+        }
+    };
+    let lock_events = &[
+        "BAG_UPDATE",
+        "BAG_OPEN",
+        "ITEM_LOCK_CHANGED",
+        "ITEM_LOCKED",
+        "ITEM_UNLOCKED",
+        "PLAYERBANKSLOTS_CHANGED",
+    ];
+    let mut sack = vec![(FIELD_CONTAINER_NUM_SLOTS, 8)];
+    sack.extend(guid_pair(FIELD_CONTAINER_SLOT_1, CLOTH));
+    sack.extend(guid_pair(FIELD_CONTAINER_SLOT_1 + 2, HIDE));
+    let mut pack = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19, SACK).to_vec();
+    pack.extend(guid_pair(FIELD_PLAYER_PACK_SLOT_1 + 2, ARROW_A));
+    pack.extend(guid_pair(FIELD_PLAYER_PACK_SLOT_1 + 4, CHARTER));
+    pack.extend(guid_pair(FIELD_PLAYER_PACK_SLOT_1 + 8, ARROW_B));
+    rig.packets(
+        vec![
+            item(SACK, 4496, ME, &sack),
+            item(CLOTH, 2589, SACK, &[]),
+            item(HIDE, 2318, SACK, &[]),
+            item(ARROW_A, ARROW_ENTRY, ME, &[]),
+            item(ARROW_B, ARROW_ENTRY, ME, &[]),
+            item(CHARTER, CHARTER_ENTRY, ME, &[]),
+            self_values(&pack),
+        ],
+        2,
+    );
+
+    // A swap inside the worn bag locks both items; the bag's two slot fields then run its slot watch twice, each unlocking its own new item.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(1, 1) PickupContainerItem(1, 2)")
+    })
+    .expect("a VM")
+    .expect("the swap runs");
+    let seen = rig.packets(Vec::new(), 2);
+    let locks = pin(&seen, lock_events, &["lock11", "lock12"]);
+    assert_eq!(
+        locks[locks.len().saturating_sub(4)..],
+        [
+            "ITEM_LOCK_CHANGED 1 1 | lock11=1 lock12=nil",
+            "ITEM_LOCKED 1 1 | lock11=1 lock12=nil",
+            "ITEM_LOCK_CHANGED 1 2 | lock11=1 lock12=1",
+            "ITEM_LOCKED 1 2 | lock11=1 lock12=1",
+        ]
+    );
+    let mut swap = guid_pair(FIELD_CONTAINER_SLOT_1, HIDE).to_vec();
+    swap.extend(guid_pair(FIELD_CONTAINER_SLOT_1 + 2, CLOTH));
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SACK,
+            fields: ObjectFields::from_pairs(&swap),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, lock_events, &["lock11", "lock12"]),
+        [
+            "ITEM_LOCK_CHANGED 1 1 | lock11=nil lock12=1",
+            "ITEM_UNLOCKED 1 1 | lock11=nil lock12=1",
+            "BAG_UPDATE 1 | lock11=nil lock12=1",
+            "ITEM_LOCK_CHANGED 1 2 | lock11=nil lock12=nil",
+            "ITEM_UNLOCKED 1 2 | lock11=nil lock12=nil",
+            "BAG_UPDATE 1 | lock11=nil lock12=nil",
+        ],
+        "one handler run per slot field, each unlock before its slot's update"
+    );
+
+    // A merge locks both arrow stacks; the count watch on one unlocks every stack of the kind in the search's order, each read at its own event.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 2) PickupContainerItem(0, 5)")
+    })
+    .expect("a VM")
+    .expect("the merge runs");
+    rig.packets(Vec::new(), 2);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: ARROW_B,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_STACK_COUNT, 40)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, lock_events, &["lock02", "lock05"]),
+        [
+            "ITEM_LOCK_CHANGED 0 2 | lock02=nil lock05=1",
+            "ITEM_UNLOCKED 0 2 | lock02=nil lock05=1",
+            "ITEM_LOCK_CHANGED 0 5 | lock02=nil lock05=nil",
+            "ITEM_UNLOCKED 0 5 | lock02=nil lock05=nil",
+            "BAG_UPDATE 0 | lock02=nil lock05=nil",
+            "BAG_UPDATE -2 | lock02=nil lock05=nil",
+            "BAG_UPDATE -4 | lock02=nil lock05=nil",
+        ]
+    );
+
+    // A locked stack's enchant change unlocks nothing and updates its bag; a charter's fires nothing at all.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 5) PickupContainerItem(0, 7)")
+    })
+    .expect("a VM")
+    .expect("the move runs");
+    rig.packets(Vec::new(), 2);
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ObjectValues {
+                guid: ARROW_B,
+                fields: ObjectFields::from_pairs(&[(FIELD_ITEM_ENCHANTMENT_1_1, 1)]),
+            },
+            SessionEvent::ObjectValues {
+                guid: CHARTER,
+                fields: ObjectFields::from_pairs(&[(FIELD_ITEM_ENCHANTMENT_1_1, 1)]),
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, lock_events, &["lock05"]),
+        [
+            "BAG_UPDATE 0 | lock05=1",
+            "BAG_UPDATE -2 | lock05=1",
+            "BAG_UPDATE -4 | lock05=1",
+        ],
+        "the stack stays locked; the charter's watch returns before any update"
+    );
+
+    // `SMSG_OPEN_CONTAINER`: our own guid is the backpack, the worn bag its id, anything else nothing.
+    let seen = rig.packets(
+        vec![
+            SessionEvent::OpenContainer { item: SACK },
+            SessionEvent::OpenContainer { item: ME },
+            SessionEvent::OpenContainer { item: CHARTER },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["BAG_OPEN"], &["slots1"]),
+        ["BAG_OPEN 1 | slots1=8", "BAG_OPEN 0 | slots1=8"]
+    );
+}
+
+/// A Lua bag index reads the watched-bag array (`0x5d6f20`): a bank bag answers only with a banker set (`0x5d6f34`-`0x5d6f3f`), and during a bank-bag slot's update the inventory watch's `PLAYERBANKSLOTS_CHANGED` (`0x6deed6`) still reads the old bag, as does the refresh's `BAG_CLOSED` (`0x5d9a87`), until the array takes the new one (`0x5d9a96`).
+#[test]
+fn a_bag_index_reads_the_watched_bag_behind_the_banker_gate() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_BANK_BAG_SLOT_1,
+    };
+    const POUCH: u64 = 0x4000_0000_0000_0601;
+    const SACK: u64 = 0x4000_0000_0000_0602;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let bag = |guid: u64, entry: u32, slots: u32| {
+        let mut pairs = vec![
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_CONTAINER_NUM_SLOTS, slots),
+        ];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+        SessionEvent::ItemCreate {
+            guid,
+            container: true,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Container),
+        }
+    };
+    let events = &[
+        "PLAYERBANKSLOTS_CHANGED",
+        "BAG_CLOSED",
+        "BAG_UPDATE",
+        "BANKFRAME_OPENED",
+    ];
+    let verbs = &["slots5"];
+    let seen = rig.packets(
+        vec![
+            bag(POUCH, 828, 6),
+            bag(SACK, 4496, 8),
+            self_values(&guid_pair(FIELD_PLAYER_BANK_BAG_SLOT_1, POUCH)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "PLAYERBANKSLOTS_CHANGED 29 | slots5=0",
+            "BAG_UPDATE 0 | slots5=0",
+            "BAG_UPDATE -2 | slots5=0",
+            "BAG_UPDATE -4 | slots5=0",
+            "BAG_UPDATE 5 | slots5=0",
+        ],
+        "no banker: the bank bag answers nothing"
+    );
+    let seen = rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["slots5", "name5"]),
+        ["BANKFRAME_OPENED | slots5=6 name5=nil"],
+        "a banker set: the watched pouch answers; its record is not cached"
+    );
+    let seen = rig.packets(
+        vec![self_values(&guid_pair(FIELD_PLAYER_BANK_BAG_SLOT_1, SACK))],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "PLAYERBANKSLOTS_CHANGED 29 | slots5=6",
+            "BAG_UPDATE 0 | slots5=6",
+            "BAG_UPDATE -2 | slots5=6",
+            "BAG_UPDATE -4 | slots5=6",
+            "BAG_CLOSED 5 | slots5=6",
+            "BAG_UPDATE 5 | slots5=8",
+        ],
+        "the old bag answers until the refresh takes the new one"
     );
 }
 

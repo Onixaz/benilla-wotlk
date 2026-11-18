@@ -335,7 +335,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
     if !model.mail_send_showing || !model.mail_mailbox {
         return false;
     }
-    let Some(s) = super::container::live_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
+    let Some(s) = super::container::index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
         return false;
     };
     add_item_to_outgoing(

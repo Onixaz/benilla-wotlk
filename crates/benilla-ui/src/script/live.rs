@@ -602,6 +602,28 @@ pub trait LiveState {
             .map(|c| c.and_then(|mut c| c.slots.remove(&slot)))
     }
 
+    /// Container `bag` as a Lua bag index names it (`0x5d7380` -> `0x5d6f20`): bags 1..11 through the watched-bag array, the bank's only with a banker set; else as [`Self::container`].
+    fn indexed_container(
+        &self,
+        bag: i64,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<super::ContainerState>> {
+        self.container(bag, anchor, ui_now)
+    }
+
+    /// One slot of container `bag` as [`Self::indexed_container`] names the bag.
+    fn indexed_container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<super::ContainerSlot>> {
+        self.indexed_container(bag, anchor, ui_now)
+            .map(|c| c.and_then(|mut c| c.slots.remove(&slot)))
+    }
+
     /// Whether the keyring holds a key (`0x51ae80`); `None` with no active player.
     fn has_key(&self) -> Option<bool> {
         None

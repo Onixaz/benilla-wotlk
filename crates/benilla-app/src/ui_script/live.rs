@@ -240,6 +240,7 @@ impl LiveView<'_, '_> {
             cooldowns: self.cooldowns.get(),
             pending: self.pending.get(),
             petitions: self.petitions.get(),
+            banker: self.lent.bank.get().is_some_and(|b| b.banker.is_some()),
         }
     }
 
@@ -1384,9 +1385,12 @@ impl LiveState for LiveView<'_, '_> {
         anchor: std::time::Instant,
         ui_now: f64,
     ) -> Option<Option<benilla_ui::script::ContainerState>> {
-        self.containers
-            .as_ref()?
-            .bag(&self.container_lent(), bag, (anchor, ui_now))
+        self.containers.as_ref()?.bag(
+            &self.container_lent(),
+            bag,
+            crate::ui_items::BagRead::Held,
+            (anchor, ui_now),
+        )
     }
 
     fn container_slot(
@@ -1396,9 +1400,43 @@ impl LiveState for LiveView<'_, '_> {
         anchor: std::time::Instant,
         ui_now: f64,
     ) -> Option<Option<benilla_ui::script::ContainerSlot>> {
-        self.containers
-            .as_ref()?
-            .slot(&self.container_lent(), bag, slot, (anchor, ui_now))
+        self.containers.as_ref()?.slot(
+            &self.container_lent(),
+            bag,
+            slot,
+            crate::ui_items::BagRead::Held,
+            (anchor, ui_now),
+        )
+    }
+
+    fn indexed_container(
+        &self,
+        bag: i64,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::ContainerState>> {
+        self.containers.as_ref()?.bag(
+            &self.container_lent(),
+            bag,
+            crate::ui_items::BagRead::Index,
+            (anchor, ui_now),
+        )
+    }
+
+    fn indexed_container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::ContainerSlot>> {
+        self.containers.as_ref()?.slot(
+            &self.container_lent(),
+            bag,
+            slot,
+            crate::ui_items::BagRead::Index,
+            (anchor, ui_now),
+        )
     }
 
     fn has_key(&self) -> Option<bool> {
