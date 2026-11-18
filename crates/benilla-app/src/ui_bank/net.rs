@@ -121,7 +121,7 @@ fn on_show_bank(
     }
 }
 
-/// `SMSG_BUY_BANK_SLOT_RESULT` (`0x6e354c`): a code below 3 shows its line in the handler's turn; vmangos sends one only on failure.
+/// `SMSG_BUY_BANK_SLOT_RESULT` (`0x6e354c`): a code below 3 shows its line in the handler's turn.
 fn on_buy_slot_result(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::BuyBankSlotResult { result } = ev {
         debug!("net: bank slot purchase refused (code {result})");
