@@ -670,8 +670,7 @@ fn merchant_cursor_mode(model: &super::Model, index: usize) -> Option<UiCursorMo
     };
     // The standing test (`0x585798`), as ranks, as the usable gate reads it.
     if t.required_rep_faction != 0
-        && model
-            .player_req
+        && crate::script::item_stats::player_req()
             .rep_ranks
             .get(&t.required_rep_faction)
             .map_or(0, |&r| u32::from(r))

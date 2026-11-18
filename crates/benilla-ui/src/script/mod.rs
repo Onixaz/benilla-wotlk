@@ -1269,6 +1269,7 @@ impl UiScript {
     }
 
     fn host(lua: Lua) -> UiScript {
+        item_stats::clear_fixture_player();
         UiScript {
             lua,
             instructions: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),

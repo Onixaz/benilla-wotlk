@@ -120,6 +120,7 @@ local VERBS = {
     { "atstable", function() return IsAtStableMaster() end },
     { "stabled", function() return GetNumStablePets() end },
     { "stablesel", function() return GetSelectedStablePet() end },
+    { "greenrange", function() return GetQuestGreenRange() end },
 }
 local function answers()
     local verbs = {}
@@ -4972,5 +4973,20 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
             "COMPANION_UPDATE | mounts=0 critters=1",
             "COMPANION_LEARNED | mounts=0 critters=1",
         ]
+    );
+}
+
+/// The requirement state is the active player's, read at the call: a level update's own events
+/// read the new level's green band (`0x5e28a1`) with no frame between.
+#[test]
+fn a_level_update_reads_the_new_level_in_its_own_events() {
+    use benilla_protocol::field::FIELD_UNIT_LEVEL;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)]) else {
+        return;
+    };
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_LEVEL, 40)])], 2);
+    assert_eq!(
+        pin(&seen, &["UNIT_LEVEL", "PLAYER_LEVEL_UP"], &["greenrange"]),
+        vec!["UNIT_LEVEL player | greenrange=8"]
     );
 }

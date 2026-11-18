@@ -139,7 +139,7 @@ impl StatSummary {
     /// leaves it empty; else its spells, the budget's stats by the distribution, armor by the
     /// mask or the template's, damage by the mask or the template's, and the spell power bit.
     fn fill_scaling(&mut self, model: &Model, v: &ItemTemplateView, level: i32) {
-        let player = model.player_req.level as i32;
+        let player = crate::script::item_stats::player_level() as i32;
         let (d, row) = super::item_stats::with_item_tables(|t| {
             let tables = &t.scaling;
             let level = if level == 0 {
@@ -175,11 +175,11 @@ impl StatSummary {
             let total = min + max;
             self.dps = 0.5 * total;
             let damage = total * v.delay_ms as i32 as f32 * 0.0005;
-            if model.player_req.class_id == 11 {
+            if crate::script::item_stats::player_req().class_id == 11 {
                 self.stats[10] += self.stats[8] + feral_attack_power(v, damage);
             }
         } else {
-            self.add_template_dps(model, v);
+            self.add_template_dps(v);
         }
         if mask & 0x8000 != 0 {
             self.stats[56] += row.spell_power();
@@ -275,11 +275,11 @@ impl StatSummary {
             }
         }
         self.stats[60] += v.block as i32;
-        self.add_template_dps(model, v);
+        self.add_template_dps(v);
     }
 
     /// The template's two damage blocks over its delay (`0x61f410`).
-    fn add_template_dps(&mut self, model: &Model, v: &ItemTemplateView) {
+    fn add_template_dps(&mut self, v: &ItemTemplateView) {
         // The two-block average over the delay, without a guard: no damage on no delay reads NaN,
         // which no comparison passes, so a non-weapon's DPS shows nowhere.
         let delay = v.delay_ms as f32;
@@ -291,7 +291,7 @@ impl StatSummary {
         let (main, off) = (average(0), average(1));
         self.dps += main / (delay * 0.001);
         self.dps += off / (0.001 * delay);
-        if model.player_req.class_id == 11 {
+        if crate::script::item_stats::player_req().class_id == 11 {
             self.stats[10] += self.stats[8] + feral_attack_power(v, main + off);
         }
     }

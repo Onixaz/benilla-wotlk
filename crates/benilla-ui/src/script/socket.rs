@@ -561,7 +561,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(Value::Nil);
             };
             let gem = gem_template(&mut crate::script::model_mut_of(lua), i, true);
-            let level = crate::script::model_mut_of(lua).player_req.level;
+            let level = crate::script::item_stats::player_level();
             match gem {
                 Some((id, t)) => Ok(Value::String(lua.create_string(
                     super::item_stats::item_link(id, &t.name, t.quality, level),

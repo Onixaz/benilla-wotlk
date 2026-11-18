@@ -259,8 +259,8 @@ pub(super) fn seed_ui_fixture(
                 })
                 .collect();
             merchant.open(NPC_GUID, rows);
-            // The usable gate's player half, by hand: with no SelfPlayer in capture,
-            // `feed_player_req` never runs to overwrite it. A level-12 human warrior.
+            // The usable gate's player half: with no active player in capture, the fixture's
+            // level-12 human warrior stands in.
             if let Some(s) = script.as_mut() {
                 s.set_player_req_state(benilla_ui::script::PlayerReqState {
                     level: 12,

@@ -186,6 +186,32 @@ pub struct PlayerReqState {
     pub class_flags: u32,
 }
 
+thread_local! {
+    /// The player `set_player_req_state` stands in with no active player.
+    static FIXTURE_PLAYER: std::cell::RefCell<Option<PlayerReqState>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A new VM drops the stand-in an earlier one on this thread set.
+pub(crate) fn clear_fixture_player() {
+    FIXTURE_PLAYER.with(|f| *f.borrow_mut() = None);
+}
+
+/// The active player's requirement state, read live at the call; with none held, the fixture's player or the default.
+pub(crate) fn player_req() -> PlayerReqState {
+    super::read_live(|l| l.player_req())
+        .flatten()
+        .or_else(|| FIXTURE_PLAYER.with(|f| f.borrow().clone()))
+        .unwrap_or_default()
+}
+
+/// The active player's level as [`player_req`] reads it, without building the rest.
+pub(crate) fn player_level() -> u32 {
+    super::read_live(|l| l.player_level())
+        .flatten()
+        .or_else(|| FIXTURE_PLAYER.with(|f| f.borrow().as_ref().map(|r| r.level)))
+        .unwrap_or(0)
+}
+
 /// [`item_usable`] by item entry: entry 0 and a template not yet answered are usable, as the
 /// merchant getter skips an uncached record.
 pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
@@ -204,7 +230,7 @@ pub(super) fn item_use_refusal_by_id(model: &super::Model, item_id: u32) -> Opti
         return None;
     }
     let v = model.item_templates.get(&item_id)?;
-    item_use_refusal(v, &model.player_req, |id| {
+    item_use_refusal(v, &player_req(), |id| {
         model.known_spells.known_or_higher(id)
     })
 }
@@ -376,9 +402,9 @@ impl super::UiScript {
         drain_set!(self, item_set_asks)
     }
 
-    /// Pushes the player state the red lines compare against.
+    /// The requirement state a call reads while the live view holds no active player: a test's or a capture fixture's player.
     pub fn set_player_req_state(&mut self, state: PlayerReqState) {
-        set_field!(self, player_req, state);
+        FIXTURE_PLAYER.with(|f| *f.borrow_mut() = Some(state));
     }
 }
 
@@ -621,7 +647,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // The name takes the link's random property (`0x706d70`): a positive id's
                 // non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.
                 let suffix = roll_suffix(fields.random_property);
-                (v, suffix, model.player_req.level)
+                (v, suffix, player_level())
             };
             let Some(v) = view else {
                 return Ok(MultiValue::new());

@@ -551,7 +551,7 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
                         a.action,
                         &t.name,
                         t.quality,
-                        model.player_req.level,
+                        crate::script::item_stats::player_level(),
                     ))?,
                 ],
                 None => Vec::new(),

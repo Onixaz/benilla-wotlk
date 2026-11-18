@@ -66,8 +66,12 @@ pub(crate) struct LiveView<'w, 's> {
     pet_unit: Option<crate::ui_pet::PetUnit<'w, 's>>,
     /// The spell records, the cooldown query's category and global-cooldown legs.
     spells: Option<Res<'w, crate::ui_action::Spells>>,
-    /// `ChrClasses.dbc`, the pet book's token.
+    /// `ChrClasses.dbc`, the pet book's token and the requirement state's class flags.
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
+    /// The requirement state's proficiency masks, standings and faction table.
+    proficiencies: Option<Res<'w, crate::net::Proficiencies>>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
+    factions: Option<Res<'w, crate::target::Factions>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1233,6 +1237,24 @@ impl LiveState for LiveView<'_, '_> {
 
     fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {
         self.item_tables.as_deref().map(|t| &t.tables)
+    }
+
+    fn player_req(&self) -> Option<benilla_ui::script::PlayerReqState> {
+        let me = self.unit(self.active_player()?)?;
+        Some(crate::ui_items::player_req(
+            me,
+            self.proficiencies.as_deref(),
+            self.reputations.as_deref(),
+            self.factions.as_deref(),
+            self.actions.get(),
+            self.spells.as_deref(),
+            self.classes.as_deref(),
+        ))
+    }
+
+    fn player_level(&self) -> Option<u32> {
+        let me = self.unit(self.active_player()?)?;
+        Some(me.unit_level().unwrap_or(0))
     }
 
     fn clear_banker(&mut self) {

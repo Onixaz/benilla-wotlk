@@ -202,7 +202,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     t.enchant_rows.get(&id).map_or(0, |r| r.gem_item)
                 })
             });
-            let level = model.player_req.level;
+            let level = crate::script::item_stats::player_level();
             let Some(t) = model.item_templates.get(&gem).cloned() else {
                 if gem != 0 {
                     model.item_stat_asks.insert(gem);

@@ -716,7 +716,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         rolled_name(lua, &v.name, fields.random_property)
                     });
                     let quality = view.map_or(1, |v| v.quality);
-                    (id, name, quality, fields, model.player_req.level)
+                    (
+                        id,
+                        name,
+                        quality,
+                        fields,
+                        crate::script::item_stats::player_level(),
+                    )
                 })
             };
             let Some((id, name, quality, fields, level)) = shown else {

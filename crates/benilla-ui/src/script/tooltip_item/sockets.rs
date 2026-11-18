@@ -220,7 +220,7 @@ pub(super) fn socket_lines(
         } else {
             crate::script::socket::equipped_gem_counts(&model)
         };
-        (counts, model.player_req.clone())
+        (counts, crate::script::item_stats::player_req())
     };
     let skill_ok = |r: &crate::script::EnchantRequirementView| {
         r.skill == 0

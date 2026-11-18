@@ -11,8 +11,8 @@ use super::{
     loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
     quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
     taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
-    ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
-    UnitState, UnitTokenParse,
+    ItemTemplateView, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
+    UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -1003,7 +1003,6 @@ pub(crate) struct Model {
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
-    pub(crate) player_req: PlayerReqState,
     /// Spell id to its tooltip view, and the misses asked for.
     pub(crate) spell_tooltips: HashMap<u32, super::SpellTooltipView>,
     pub(crate) spell_tooltip_asks: HashSet<u32>,
@@ -1764,7 +1763,6 @@ impl Model {
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
             item_stat_asks: HashSet::new(),
-            player_req: PlayerReqState::default(),
             spell_tooltips: HashMap::new(),
             spell_tooltip_asks: HashSet::new(),
             pet_spell_tooltips: HashMap::new(),

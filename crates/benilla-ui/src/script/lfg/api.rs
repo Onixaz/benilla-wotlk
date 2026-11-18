@@ -1407,7 +1407,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let link = {
                 let mut model = crate::script::model_mut_of(lua);
-                let level = model.player_req.level;
+                let level = crate::script::item_stats::player_level();
                 match model.item_templates.get(&item.item) {
                     Some(t) => Some(crate::script::item_stats::item_link(
                         item.item, &t.name, t.quality, level,

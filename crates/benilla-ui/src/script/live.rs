@@ -535,6 +535,16 @@ pub trait LiveState {
     fn item_tables(&self) -> Option<&super::ItemTables> {
         None
     }
+
+    /// The active player's requirement state, built at the call; `None` with no active player.
+    fn player_req(&self) -> Option<super::PlayerReqState> {
+        None
+    }
+
+    /// The active player's level (`UNIT_FIELD_LEVEL`); `None` with no active player.
+    fn player_level(&self) -> Option<u32> {
+        self.player_req().map(|r| r.level)
+    }
 }
 
 /// A lent view's address, its lifetime erased.

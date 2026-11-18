@@ -104,7 +104,6 @@ pub(super) struct Scaled {
 impl Scaled {
     /// The rows of `v` at its shown level; `None` for an item that does not scale.
     pub(super) fn of(
-        model: &crate::script::Model,
         v: &ItemTemplateView,
         flags: BuilderFlags,
         inst: Option<&ItemInstance>,
@@ -112,7 +111,7 @@ impl Scaled {
         if v.scaling_value == 0 {
             return None;
         }
-        let player = model.player_req.level as i32;
+        let player = crate::script::item_stats::player_level() as i32;
         crate::script::item_stats::with_item_tables(|t| {
             let tables = &t.scaling;
             let level = crate::script::item_scaling::shown_level(
@@ -249,7 +248,7 @@ pub(super) fn render_view(
     let h = crate::script::object::frame_handle_of(lua, this)?;
     let scaled = {
         let mut model = crate::script::model_mut_of(lua);
-        let scaled = Scaled::of(&model, v, flags, inst);
+        let scaled = Scaled::of(v, flags, inst);
         if let Ok(t) = crate::script::tooltip::tip_mut(&mut model, h) {
             t.item_guid = inst.map_or(0, |i| i.guid);
             t.item_link = inst.map_or_else(Default::default, |i| i.link);
@@ -425,7 +424,7 @@ fn render_lines(
             None => Vec::new(),
         };
         (
-            model.player_req.clone(),
+            crate::script::item_stats::player_req(),
             known,
             taught,
             set_view,

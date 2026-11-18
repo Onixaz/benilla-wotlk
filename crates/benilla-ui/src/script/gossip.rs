@@ -214,7 +214,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let player_level = model.player_req.level;
+            let player_level = crate::script::item_stats::player_level();
             model.gossip.as_ref().map_or_else(Vec::new, |m| {
                 m.quests
                     .iter()
@@ -515,7 +515,10 @@ mod tests {
             },
         ];
         s.set_gossip(Some(m));
-        s.model_mut().player_req.level = 10;
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 10,
+            ..Default::default()
+        });
         // Quest 60 is complete in the log, which `isComplete` reads (`0x58bcb0`).
         s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![crate::script::QuestLogEntryView {

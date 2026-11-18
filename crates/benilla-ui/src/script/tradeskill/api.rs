@@ -275,7 +275,12 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 .then(|| model.item_templates.get(&r.product_item))
                 .flatten();
             let link = match item {
-                Some(t) => item_link(r.product_item, &t.name, t.quality, model.player_req.level),
+                Some(t) => item_link(
+                    r.product_item,
+                    &t.name,
+                    t.quality,
+                    crate::script::item_stats::player_level(),
+                ),
                 None => format!("|cffffd000|Henchant:{}|h[{}]|h|r", r.spell_id, r.name),
             };
             Ok(MultiValue::from_vec(vec![Value::String(
@@ -395,10 +400,14 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                         .and_then(|i| r.reagents.get(i))
                 })
                 .and_then(|re| {
-                    model
-                        .item_templates
-                        .get(&re.item)
-                        .map(|t| item_link(re.item, &t.name, t.quality, model.player_req.level))
+                    model.item_templates.get(&re.item).map(|t| {
+                        item_link(
+                            re.item,
+                            &t.name,
+                            t.quality,
+                            crate::script::item_stats::player_level(),
+                        )
+                    })
                 });
             opt_str(lua, link.as_deref())
         })?,

@@ -796,82 +796,37 @@ pub(crate) fn feed_item_stats(
     }
 }
 
-/// The player state the tooltip's red requirement lines check: level, class, race, skills,
-/// proficiencies (`SMSG_SET_PROFICIENCY`) and reputation ranks (the DBC base plus the
-/// `SMSG_INITIALIZE_FACTIONS` standing), pushed on change.
-pub(super) fn feed_player_req(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
-    proficiencies: Res<crate::net::Proficiencies>,
-    reputations: Res<crate::net::Reputations>,
-    factions: Option<Res<crate::target::Factions>>,
-    actions: Res<crate::ui_action::PlayerActions>,
-    spells: Option<Res<crate::ui_action::Spells>>,
-    // The class flags the scaling armor alternates read (`0x6288f5`).
-    classes: Option<Res<crate::chr_classes::ChrClassTable>>,
-    mut last: Local<crate::ui_script::VmMemo<Option<benilla_ui::script::PlayerReqState>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let (last, vm_reset) = last.get_reset(&script);
-    // The state is a function of these inputs alone.
-    let self_changed = !changed_self.is_empty();
-    let prof_changed = proficiencies.is_changed();
-    let reps_changed = reputations.is_changed();
-    let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
-    let actions_changed = actions.is_changed();
-    let spells_changed = spells.as_ref().is_some_and(|r| r.is_changed());
-    gate::trace(
-        "feed_player_req",
-        &[
-            ("vm_reset", vm_reset),
-            ("self", self_changed),
-            ("proficiencies", prof_changed),
-            ("reputations", reps_changed),
-            ("factions", factions_changed),
-            ("actions", actions_changed),
-            ("spells", spells_changed),
-        ],
-    );
-    let gate = gate::Gate::new(
-        vm_reset
-            || self_changed
-            || prof_changed
-            || reps_changed
-            || factions_changed
-            || actions_changed
-            || spells_changed,
-    );
-    if gate.skip() {
-        return;
-    }
-    let Some(store) = self_q.iter().next() else {
-        return;
-    };
+/// The player state the tooltip's red lines and the usable gate check, built from the live state at the call: level, class, race, each skill with its permanent bonus, the proficiency masks (`SMSG_SET_PROFICIENCY`), each faction's rank (the DBC base plus the standing), the dual-wield test, the honor rank, the medals and the class flags (`0x6288f5`).
+pub(crate) fn player_req(
+    me: &benilla_protocol::ObjectFields,
+    proficiencies: Option<&crate::net::Proficiencies>,
+    reputations: Option<&crate::net::Reputations>,
+    factions: Option<&crate::target::Factions>,
+    actions: Option<&crate::ui_action::PlayerActions>,
+    spells: Option<&crate::ui_action::Spells>,
+    classes: Option<&crate::chr_classes::ChrClassTable>,
+) -> benilla_ui::script::PlayerReqState {
     let mut skills = std::collections::HashMap::new();
     for slot in 0..benilla_protocol::messages::PLAYER_SKILL_SLOTS {
-        let Some(s) = store.0.player_skill(slot) else {
+        let Some(s) = me.player_skill(slot) else {
             continue;
         };
         if s.skill_id != 0 {
-            // The requirement checks read the value plus the permanent bonus, never the temporary
-            // one; the bonus is never negative in live data.
+            // The value plus the permanent bonus, never the temporary one.
             skills.insert(
                 u32::from(s.skill_id),
                 u32::from(s.value).saturating_add_signed(i32::from(s.perm_bonus)),
             );
         }
     }
-    let race = store.0.unit_race().unwrap_or(0);
-    let class = store.0.unit_class().unwrap_or(0);
+    let race = me.unit_race().unwrap_or(0);
+    let class = me.unit_class().unwrap_or(0);
     let mut rep_ranks = std::collections::HashMap::new();
-    if let Some(cat) = factions.as_deref().map(|f| f.catalog()) {
+    if let Some(cat) = factions.map(|f| f.catalog()) {
         for (id, info) in cat.reputation_factions() {
             let standing = usize::try_from(info.rep_index)
                 .ok()
-                .and_then(|i| reputations.0.get(i))
+                .and_then(|i| reputations?.0.get(i))
                 .map(|&(_, s)| s)
                 .unwrap_or(0);
             rep_ranks.insert(
@@ -880,30 +835,24 @@ pub(super) fn feed_player_req(
             );
         }
     }
-    // The reference's dual-wield test: a known spell whose Effect[0] is 40
-    // (`SPELL_EFFECT_DUAL_WIELD`).
-    let can_dual_wield = spells.as_deref().is_some_and(|s| {
+    // The dual-wield test: a known spell whose Effect[0] is 40 (`SPELL_EFFECT_DUAL_WIELD`).
+    let can_dual_wield = spells.zip(actions).is_some_and(|(s, actions)| {
         actions
             .spells
             .iter()
             .any(|&id| s.catalog.get(id).is_some_and(|sd| sd.effects[0] == 40))
     });
-    let state = benilla_ui::script::PlayerReqState {
-        level: store.0.unit_level().unwrap_or(0),
+    benilla_ui::script::PlayerReqState {
+        level: me.unit_level().unwrap_or(0),
         class_id: u32::from(class),
         race_id: u32::from(race),
         skills,
-        proficiency: proficiencies.0.clone(),
+        proficiency: proficiencies.map(|p| p.0.clone()).unwrap_or_default(),
         rep_ranks,
         can_dual_wield,
-        honor_rank: store.0.player_honor_rank().unwrap_or(0),
-        pvp_medals: store.0.player_pvp_medals().unwrap_or(0),
+        honor_rank: me.player_honor_rank().unwrap_or(0),
+        pvp_medals: me.player_pvp_medals().unwrap_or(0),
         class_flags: classes.map_or(0, |c| c.0.flags(u32::from(class))),
-    };
-    if last.as_ref() != Some(&state) {
-        gate.audit("feed_player_req", "the player-requirement state");
-        *last = Some(state.clone());
-        script.set_player_req_state(state);
     }
 }
 
