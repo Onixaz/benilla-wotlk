@@ -1091,6 +1091,21 @@ impl LiveState for LiveView<'_, '_> {
         }
     }
 
+    /// A reaction or non-Attack command press on the lent words inside the call (`0x5d4210`): gate, latch and signal, then the send.
+    fn pet_press(&mut self, slot: u32, order: Option<u32>) -> Option<bool> {
+        let entry = crate::ui_pet::plain_press_word(self.pet_bar.get()?, slot, order)?;
+        let selected = self.selection.get().and_then(|s| s.guid);
+        let pet = self.pet_unit.as_ref()?;
+        let bar = self.pet_bar.get_mut()?;
+        Some(crate::ui_pet::press_plain(
+            bar,
+            pet,
+            entry,
+            selected,
+            self.commands.as_deref(),
+        ))
+    }
+
     /// The bar toggle (`0x5d5d20`) on the lent words: gate, flip, send, in 12340's order.
     fn pet_toggle_autocast(&mut self, index: u32) -> bool {
         let usable = self.pet_bar.get().is_some_and(|bar| {

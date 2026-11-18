@@ -879,3 +879,115 @@ fn an_abandon_at_a_stable_master_lists_the_stable_again() {
         assert_eq!(relisted, at_stable, "at a stable master: {at_stable}");
     }
 }
+
+/// The bar's words with `word` in slot 3 and `state` as the pet's mode and orders word, fed once.
+fn scene_with(word: u32, state: u32) -> Rig {
+    let mut rig = scene();
+    let mut bar = rig.app.world_mut().resource_mut::<PetBar>();
+    bar.spells.bar[2] = PetActionEntry::from(word);
+    bar.spells.state = state;
+    rig.frame();
+    let _ = rig.sent();
+    rig
+}
+
+/// A Stay, Follow or reaction order latches, signals and sends inside the call (`0x5d453b`, `0x5d448e`, `0x5d4530`, `0x5d4556`): a handler of its `PET_BAR_UPDATE` and the next verb in the chunk both read the new word, and the packet is out before the verb returns.
+#[test]
+fn an_order_latches_signals_and_sends_inside_the_call() {
+    let follow_state = PET_COMMAND_FOLLOW << 8;
+    for (verb, word, state) in [
+        ("PetFollow()", FOLLOW, 0),
+        ("PetWait()", STAY, follow_state),
+        ("PetAggressiveMode()", AGGRESSIVE, 0),
+        ("CastPetAction(3)", FOLLOW, 0),
+    ] {
+        let mut rig = scene_with(word, state);
+        let read = "(select(5, GetPetActionInfo(3)) and 1 or 0)";
+        let (before, nested, after, queued) = ui(&mut rig, |s| {
+            s.run(&format!(
+                "NESTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE') f:SetScript('OnEvent', function() if NESTED == nil then NESTED = {read} end end)"
+            ))
+            .unwrap();
+            let got = s
+                .eval::<(i64, i64, i64)>(&format!(
+                    "local b = {read} {verb} return b, NESTED or -1, {read}"
+                ))
+                .unwrap();
+            (got.0, got.1, got.2, s.take_script_calls().len())
+        });
+        assert_eq!((before, nested, after), (0, 1, 1), "{verb}");
+        assert_eq!(queued, 0, "{verb}: nothing is left to the script calls");
+        let sent = rig.sent();
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [ClientCommand::PetAction { pet_guid: PET, packed, target_guid: FOE }] if *packed == word
+            ),
+            "{verb}: {sent:?}"
+        );
+    }
+}
+
+/// A press behind a queued call keeps its turn, so `/target` then `/petfollow` sends at the new selection (`0x5d4240` reads it as the earlier call left it).
+#[test]
+fn an_order_behind_a_queued_select_keeps_its_turn() {
+    let mut rig = scene_with(FOLLOW, 0);
+    let queued = ui(&mut rig, |s| {
+        s.run("TargetUnit('player') PetFollow()").unwrap();
+        s.take_script_calls()
+    });
+    assert_eq!(queued.len(), 2, "{queued:?}");
+    assert!(
+        rig.sent().is_empty(),
+        "nothing goes before the select applies"
+    );
+    ui(&mut rig, |s| s.requeue_script_calls(queued));
+    rig.app
+        .world_mut()
+        .run_system_once(crate::script_calls::apply_script_calls)
+        .unwrap();
+    let sent = rig.sent();
+    assert!(
+        sent.iter().any(|c| matches!(
+            c,
+            ClientCommand::PetAction {
+                packed: FOLLOW,
+                target_guid: ME,
+                ..
+            }
+        )),
+        "{sent:?}"
+    );
+}
+
+/// Attack keeps its script call turn: its validator's pick writes the selection and the TAB history, applied in call order with the player's own casts and selects (#1235); applied, any pet's pass raises the global (`0x5d4509`).
+#[test]
+fn an_attack_order_is_applied_in_call_order_and_raises_the_global() {
+    let mut rig = scene_with(ATTACK, 0);
+    let (in_call, queued) = ui(&mut rig, |s| {
+        let a = s
+            .eval::<bool>("PetAttack() return IsPetAttackActive()")
+            .unwrap();
+        (a, s.take_script_calls())
+    });
+    assert!(!in_call);
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    ui(&mut rig, |s| s.requeue_script_calls(queued));
+    rig.app
+        .world_mut()
+        .run_system_once(crate::script_calls::apply_script_calls)
+        .unwrap();
+    assert!(rig.app.world().resource::<PetBar>().attacking);
+    let sent = rig.sent();
+    assert!(
+        sent.iter().any(|c| matches!(
+            c,
+            ClientCommand::PetAction {
+                packed: ATTACK,
+                target_guid: FOE,
+                ..
+            }
+        )),
+        "{sent:?}"
+    );
+}

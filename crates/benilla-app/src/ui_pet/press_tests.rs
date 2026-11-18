@@ -597,8 +597,7 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
 
     assert_press_refused(&mut rig, before);
 
-    // The same press with the pet streamed in goes out at the selection, and an ordinary pet's
-    // Attack raises no latch.
+    // The same press with the pet streamed in goes out at the selection and raises the latch (`0x5d4509`).
     let world = rig.app.world_mut();
     let pet = world
         .spawn((
@@ -621,5 +620,8 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
         ),
         "{sent:?}"
     );
-    assert!(!latched(&rig).2, "an ordinary pet's Attack raises no latch");
+    assert!(
+        latched(&rig).2,
+        "a hunter's pet raises the attacking global"
+    );
 }

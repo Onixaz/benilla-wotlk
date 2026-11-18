@@ -207,6 +207,22 @@ pub(crate) fn live_slots() -> Vec<PetActionView> {
         .collect()
 }
 
+/// A press run inside the verb (`0x5d4210`) when no earlier script call waits, so it reads the selection those calls would move; its `PET_BAR_UPDATE` fires before the verb returns (`0x5d4530`). False leaves it to the script call: a spell or Attack, or a press behind a queued call.
+fn press_in_call(lua: &Lua, slot: u32, order: Option<u32>) -> bool {
+    if !crate::script::model_mut_of(lua).script_calls.is_empty() {
+        return false;
+    }
+    match super::live::write_live(|l| l.pet_press(slot, order)).flatten() {
+        Some(signalled) => {
+            if signalled {
+                crate::script::tick::fire_event_into(lua, "PET_BAR_UPDATE", Vec::new());
+            }
+            true
+        }
+        None => false,
+    }
+}
+
 /// Register the pet-bar globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
@@ -372,7 +388,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CastPetAction",
         lua.create_function(|lua, i: u32| {
-            if live_slot(lua, i).is_some_and(|s| s.name.is_some()) {
+            if live_slot(lua, i).is_some_and(|s| s.name.is_some()) && !press_in_call(lua, i, None) {
                 crate::script::model_mut_of(lua)
                     .script_calls
                     .push(super::ScriptCall::PetAction(i));
@@ -514,7 +530,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                if live_bar().has_bar {
+                if live_bar().has_bar && !press_in_call(lua, 0, Some(packed)) {
                     crate::script::model_mut_of(lua)
                         .script_calls
                         .push(super::ScriptCall::PetOrder(packed));
