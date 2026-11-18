@@ -38,7 +38,7 @@ use drain::{
 };
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
-use feed::{feed_containers, feed_item_sets, feed_item_stats, feed_item_tables, feed_player_req};
+use feed::{build_item_tables, feed_containers, feed_item_sets, feed_item_stats, feed_player_req};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
 pub(super) const PACK_SLOTS: u8 = 16;
@@ -1066,7 +1066,13 @@ impl Plugin for UiItemsPlugin {
             // After the chain opens: unordered, it can run first and skip every item DBC.
             .add_systems(
                 Startup,
-                load_item_dbcs.after(benilla_assets::AssetSet::Open),
+                (
+                    load_item_dbcs.after(benilla_assets::AssetSet::Open),
+                    // The roll and scaling tables, once their catalogs are in.
+                    build_item_tables
+                        .after(load_item_dbcs)
+                        .after(crate::entities::setup_entities),
+                ),
             )
             .add_systems(
                 Update,
@@ -1095,8 +1101,6 @@ impl Plugin for UiItemsPlugin {
                     feed_item_sets
                         .in_set(UnitFeed)
                         .after(crate::ui_action::SlotIdentityFeed),
-                    // The roll and scaling tables, pushed whole once per VM, before the first hover.
-                    feed_item_tables.in_set(UnitFeed),
                     feed_player_req.in_set(UnitFeed),
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a

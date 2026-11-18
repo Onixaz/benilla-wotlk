@@ -40,6 +40,7 @@ pub(crate) struct LiveView<'w, 's> {
     quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     net: Option<Res<'w, crate::net::NetCommands>>,
     bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
+    item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -649,6 +650,10 @@ impl LiveState for LiveNow<'_, '_> {
             .bank
             .get_mut()
             .is_some_and(|b| b.close_interaction())
+    }
+
+    fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {
+        self.view.item_tables.as_deref().map(|t| &t.tables)
     }
 
     fn clear_banker(&mut self) {

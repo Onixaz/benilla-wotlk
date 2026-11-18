@@ -112,19 +112,22 @@ impl Scaled {
         if v.scaling_value == 0 {
             return None;
         }
-        let tables = &model.scaling;
-        let level = crate::script::item_scaling::shown_level(
-            v,
-            tables,
-            flags.minimum_level,
-            inst.map_or(0, |i| i.link_level),
-            inst.map_or(0, |i| i.requester_level),
-            model.player_req.level as i32,
-        );
-        Some(Self {
-            level,
-            distribution: tables.distributions.get(&v.scaling_distribution).copied(),
-            values: tables.values_at(level).copied(),
+        let player = model.player_req.level as i32;
+        crate::script::item_stats::with_item_tables(|t| {
+            let tables = &t.scaling;
+            let level = crate::script::item_scaling::shown_level(
+                v,
+                tables,
+                flags.minimum_level,
+                inst.map_or(0, |i| i.link_level),
+                inst.map_or(0, |i| i.requester_level),
+                player,
+            );
+            Some(Self {
+                level,
+                distribution: tables.distributions.get(&v.scaling_distribution).copied(),
+                values: tables.values_at(level).copied(),
+            })
         })
     }
 }

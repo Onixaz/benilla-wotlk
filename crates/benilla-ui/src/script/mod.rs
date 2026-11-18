@@ -420,7 +420,8 @@ pub use item_scaling::{ScalingDistributionView, ScalingTables, ScalingValuesView
 pub use item_stats::equip_loc_token;
 pub use item_stats::{
     item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemLimitView,
-    ItemSetMember, ItemSetView, ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,
+    ItemSetMember, ItemSetView, ItemSpellView, ItemTables, ItemTemplateView, PlayerReqState,
+    RandomSuffixView,
 };
 pub use item_text::ItemTextState;
 pub use layout_cache::PlacedFrame;

@@ -197,10 +197,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .and_then(|h| h.link_fields())
                     .map_or(0, |f| f.gems[i])
             };
-            let gem = u32::try_from(enchant)
-                .ok()
-                .and_then(|id| model.enchant_rows.get(&id))
-                .map_or(0, |r| r.gem_item);
+            let gem = u32::try_from(enchant).ok().map_or(0, |id| {
+                super::item_stats::with_item_tables(|t| {
+                    t.enchant_rows.get(&id).map_or(0, |r| r.gem_item)
+                })
+            });
             let level = model.player_req.level;
             let Some(t) = model.item_templates.get(&gem).cloned() else {
                 if gem != 0 {

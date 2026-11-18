@@ -384,6 +384,11 @@ pub trait LiveState {
 
     /// The banker cleared, the banker setter's tail with no banker (`0x57b8f9`).
     fn clear_banker(&mut self) {}
+
+    /// The client's loaded item tables, `None` before their catalogs load.
+    fn item_tables(&self) -> Option<&super::ItemTables> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased, and whether its loan lets verbs write through it.
@@ -629,10 +634,16 @@ pub(crate) struct TestView {
     /// The purchased bank bag slots, `None` without the active player, and the price rows.
     pub bank_slots: Option<u8>,
     pub bank_costs: std::collections::HashMap<u32, u32>,
+    /// The item tables.
+    pub item_tables: Option<super::ItemTables>,
 }
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn item_tables(&self) -> Option<&super::ItemTables> {
+        self.item_tables.as_ref()
+    }
+
     fn banker(&self) -> Option<u64> {
         self.banker
     }

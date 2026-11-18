@@ -196,10 +196,12 @@ fn suffix_line(lua: &Lua, inst: &ItemInstance, e: &crate::script::EnchantView) -
     if roll >= 0 || !(7..=11).contains(&e.slot) || !e.name.contains("$i") {
         return e.name.clone();
     }
-    let value = crate::script::model_mut_of(lua)
-        .random_suffixes
-        .get(&roll.unsigned_abs())
-        .map_or(0, |r| r.value(usize::from(e.slot) - 7, inst.link.seed));
+    let _ = lua;
+    let value = crate::script::item_stats::with_item_tables(|t| {
+        t.random_suffixes
+            .get(&roll.unsigned_abs())
+            .map_or(0, |r| r.value(usize::from(e.slot) - 7, inst.link.seed))
+    });
     e.name.replace("$i", &value.to_string())
 }
 

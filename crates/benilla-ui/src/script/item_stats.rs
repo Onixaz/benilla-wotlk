@@ -376,34 +376,50 @@ impl super::UiScript {
         drain_set!(self, item_set_asks)
     }
 
-    /// Pushes the whole `ItemRandomProperties` table once, at load: a clicked tooltip cannot
-    /// repaint on a late answer.
-    pub fn set_random_properties(
-        &mut self,
-        rows: std::collections::HashMap<u32, super::RandomPropertyView>,
-    ) {
-        set_field!(self, random_properties, rows);
-    }
-
-    /// Pushes the `ItemRandomSuffix` names once, at load.
-    pub fn set_random_suffixes(&mut self, rows: std::collections::HashMap<u32, RandomSuffixView>) {
-        set_field!(self, random_suffixes, rows);
-    }
-
-    /// Pushes the two scaling tables whole, once at load.
-    pub fn set_scaling_tables(&mut self, tables: super::ScalingTables) {
-        set_field!(self, scaling, tables);
-    }
-
-    /// Push `SpellItemEnchantment.dbc` whole: a link can name any row.
-    pub fn set_enchant_rows(&mut self, rows: std::collections::HashMap<u32, EnchantRowView>) {
-        set_field!(self, enchant_rows, rows);
-    }
-
     /// Pushes the player state the red lines compare against.
     pub fn set_player_req_state(&mut self, state: PlayerReqState) {
         set_field!(self, player_req, state);
     }
+}
+
+/// The client's loaded item tables, read in place at the call: `ItemRandomProperties`, `ItemRandomSuffix`, `SpellItemEnchantment` and the two scaling tables.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemTables {
+    pub random_properties: std::collections::HashMap<u32, super::RandomPropertyView>,
+    pub random_suffixes: std::collections::HashMap<u32, RandomSuffixView>,
+    pub enchant_rows: std::collections::HashMap<u32, EnchantRowView>,
+    pub scaling: super::ScalingTables,
+}
+
+/// `f` over the item tables through the lent view; empty tables with none lent.
+pub(crate) fn with_item_tables<R>(f: impl FnOnce(&ItemTables) -> R) -> R {
+    let mut f = Some(f);
+    let lent = super::read_live(|l| l.item_tables().map(|t| f.take().map(|f| f(t))))
+        .flatten()
+        .flatten();
+    match (lent, f) {
+        (Some(r), _) => r,
+        (None, Some(f)) => f(&ItemTables::default()),
+        (None, None) => unreachable!("the tables call runs once"),
+    }
+}
+
+/// A roll's name suffix (`0x706d70`): a positive id's non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.
+pub(crate) fn roll_suffix(roll: i32) -> Option<String> {
+    with_item_tables(|t| match roll {
+        1.. => t
+            .random_properties
+            .get(&(roll as u32))
+            .map(|r| r.suffix.clone())
+            .filter(|s| !s.is_empty()),
+        0 => None,
+        _ => Some(
+            t.random_suffixes
+                .get(&roll.unsigned_abs())
+                .map(|r| r.name.clone())
+                .unwrap_or_default(),
+        ),
+    })
 }
 
 /// One `ItemRandomSuffix` row.
@@ -604,22 +620,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 // The name takes the link's random property (`0x706d70`): a positive id's
                 // non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.
-                let rp = fields.random_property;
-                let suffix = match rp {
-                    1.. => model
-                        .random_properties
-                        .get(&(rp as u32))
-                        .map(|r| r.suffix.clone())
-                        .filter(|s| !s.is_empty()),
-                    0 => None,
-                    _ => Some(
-                        model
-                            .random_suffixes
-                            .get(&rp.unsigned_abs())
-                            .map(|r| r.name.clone())
-                            .unwrap_or_default(),
-                    ),
-                };
+                let suffix = roll_suffix(fields.random_property);
                 (v, suffix, model.player_req.level)
             };
             let Some(v) = view else {

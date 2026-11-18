@@ -542,76 +542,60 @@ pub(super) fn feed_item_sets(
     }
 }
 
-/// Which of the whole tables [`feed_item_tables`] has pushed to the current VM.
-#[derive(Default)]
-pub(super) struct TablesPushed {
-    random_properties: bool,
-    scaling: bool,
+/// The client's loaded item tables in the shape the verbs read, built at load and read in place through the lent view at each call, as the reference reads its loaded stores.
+#[derive(Resource, Default)]
+pub(crate) struct ItemTablesLive {
+    pub(crate) tables: benilla_ui::script::ItemTables,
 }
 
-/// Pushes the whole item tables once per VM, each as soon as its catalogs are in: the random-suffix
-/// table (consumers are click-driven, and a chat-link tooltip has no hover loop to repaint a late
-/// answer) and the two scaling tables (a link's heirloom reads them on its first hover). One
-/// system: once both are in, a frame costs a VM check and two flags.
-pub(super) fn feed_item_tables(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+/// Builds [`ItemTablesLive`] once the catalogs load: the roll tables need the enchant catalog (without it every row would build empty), the two scaling tables stand alone.
+pub(super) fn build_item_tables(
+    mut commands: Commands,
     props: Option<Res<crate::items::RandomProperties>>,
     enchants: Option<Res<crate::items::Enchants>>,
     scaling: Option<Res<super::ScalingStats>>,
-    mut pushed: Local<crate::ui_script::VmMemo<TablesPushed>>,
 ) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let pushed = pushed.get(&script);
-    if !pushed.random_properties {
-        // Without the enchant catalog every row would push empty, never to be retried.
-        if let (Some(props), Some(enchants)) = (props, enchants) {
-            push_random_properties(&mut script, &props, &enchants);
-            pushed.random_properties = true;
-        }
+    let mut tables = benilla_ui::script::ItemTables::default();
+    if let (Some(props), Some(enchants)) = (props, enchants) {
+        build_random_properties(&mut tables, &props, &enchants);
     }
-    if !pushed.scaling {
-        if let Some(tables) = scaling {
-            push_scaling_tables(&mut script, &tables);
-            pushed.scaling = true;
-        }
+    if let Some(scaling) = scaling {
+        tables.scaling = scaling_tables(&scaling);
     }
+    commands.insert_resource(ItemTablesLive { tables });
 }
 
-fn push_random_properties(
-    script: &mut UiScript,
+fn build_random_properties(
+    out: &mut benilla_ui::script::ItemTables,
     props: &crate::items::RandomProperties,
     enchants: &crate::items::Enchants,
 ) {
     let rows = crate::items::random_property_views(props, Some(enchants));
     let with_lines = rows.values().filter(|v| !v.enchants.is_empty()).count();
     info!(
-        "random-property table: {} rows pushed, {with_lines} with enchant lines",
+        "random-property table: {} rows, {with_lines} with enchant lines",
         rows.len()
     );
-    script.set_random_properties(rows);
-    script.set_random_suffixes(
-        props
-            .0
-            .iter_suffixes()
-            .map(|(id, r)| {
-                (
-                    id,
-                    benilla_ui::script::RandomSuffixView {
-                        name: r.name.clone(),
-                        enchants: r.enchants,
-                        allocation: r.allocation,
-                    },
-                )
-            })
-            .collect(),
-    );
-    script.set_enchant_rows(crate::items::enchant_rows(enchants));
+    out.random_properties = rows;
+    out.random_suffixes = props
+        .0
+        .iter_suffixes()
+        .map(|(id, r)| {
+            (
+                id,
+                benilla_ui::script::RandomSuffixView {
+                    name: r.name.clone(),
+                    enchants: r.enchants,
+                    allocation: r.allocation,
+                },
+            )
+        })
+        .collect();
+    out.enchant_rows = crate::items::enchant_rows(enchants);
 }
 
-fn push_scaling_tables(script: &mut UiScript, tables: &super::ScalingStats) {
-    script.set_scaling_tables(benilla_ui::script::ScalingTables {
+fn scaling_tables(tables: &super::ScalingStats) -> benilla_ui::script::ScalingTables {
+    benilla_ui::script::ScalingTables {
         distributions: tables
             .0
             .distributions
@@ -633,7 +617,7 @@ fn push_scaling_tables(script: &mut UiScript, tables: &super::ScalingStats) {
             .iter()
             .map(|&row| benilla_ui::script::ScalingValuesView(row))
             .collect(),
-    });
+    }
 }
 
 /// The templates landed since [`feed_item_stats`] last pushed, moved out of the cache by

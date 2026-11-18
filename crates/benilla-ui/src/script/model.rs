@@ -1011,15 +1011,6 @@ pub(crate) struct Model {
     /// Set id to its tooltip set block, and the misses asked for.
     pub(crate) item_sets: HashMap<u32, super::ItemSetView>,
     pub(crate) item_set_asks: HashSet<u32>,
-    /// `ItemRandomProperties` id to its view, pushed whole at startup: a clicked tooltip cannot
-    /// repaint on a late answer. The reference reads its loaded store.
-    pub(crate) random_properties: HashMap<u32, super::RandomPropertyView>,
-    /// `ItemRandomSuffix.dbc`, what a negative random-property id takes.
-    pub(crate) random_suffixes: HashMap<u32, super::RandomSuffixView>,
-    /// `ScalingStatDistribution` and `ScalingStatValues`, pushed whole at startup.
-    pub(crate) scaling: super::ScalingTables,
-    /// `SpellItemEnchantment.dbc`, pushed whole at startup: a link names any row.
-    pub(crate) enchant_rows: HashMap<u32, super::EnchantRowView>,
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
     pub(crate) quest_tooltip_waits: HashMap<FrameHandle, Vec<super::QuestRecord>>,
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
@@ -1785,11 +1776,7 @@ impl Model {
             item_templates: HashMap::new(),
             item_sets: HashMap::new(),
             item_set_asks: HashSet::new(),
-            random_properties: HashMap::new(),
             hovered_link: None,
-            random_suffixes: HashMap::new(),
-            scaling: Default::default(),
-            enchant_rows: HashMap::new(),
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
             item_stat_asks: HashSet::new(),

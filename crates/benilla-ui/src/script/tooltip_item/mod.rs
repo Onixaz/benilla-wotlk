@@ -106,10 +106,14 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
 
 /// A link block's enchant lines: the enchant and gems in their slots, then the roll's five in
 /// slots 7..11, as the reference copies a block source's row.
-fn link_enchants(lua: &Lua, f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
-    let model = lua
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data");
+fn link_enchants(_lua: &Lua, f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
+    crate::script::item_stats::with_item_tables(|t| link_enchants_in(t, f))
+}
+
+fn link_enchants_in(
+    model: &crate::script::ItemTables,
+    f: &ItemLinkFields,
+) -> Vec<crate::script::EnchantView> {
     let line = |slot: u8, id: i32| {
         let row = model.enchant_rows.get(&id.unsigned_abs())?;
         let mut e = row.line.clone()?;
@@ -155,22 +159,8 @@ fn block_instance(lua: &Lua, name: Option<String>, link: Option<&str>) -> render
 }
 
 /// The item's name with its roll's suffix (`0x706d70`).
-fn rolled_name(model: &crate::script::Model, lua: &Lua, name: &str, roll: i32) -> String {
-    let suffix = match roll {
-        1.. => model
-            .random_properties
-            .get(&(roll as u32))
-            .map(|r| r.suffix.clone())
-            .filter(|s| !s.is_empty()),
-        0 => None,
-        _ => Some(
-            model
-                .random_suffixes
-                .get(&roll.unsigned_abs())
-                .map(|r| r.name.clone())
-                .unwrap_or_default(),
-        ),
-    };
+fn rolled_name(_model: &crate::script::Model, lua: &Lua, name: &str, roll: i32) -> String {
+    let suffix = crate::script::item_stats::roll_suffix(roll);
     match (suffix, crate::strings::global(lua, "ITEM_SUFFIX_TEMPLATE")) {
         (Some(sfx), Some(t)) => crate::strings::fill(
             &t,
