@@ -45,7 +45,7 @@ struct LiquidParams {
 
 // The prefix of the shared global light (`lighting::global_light`); it must match row for row.
 struct WowLight {
-    light_ambient: vec4<f32>,      // 0  rgb = ambient; w = Mod2x scale
+    light_ambient: vec4<f32>,      // 0  rgb = ambient; w = the character ambient (unread)
     light_diffuse: vec4<f32>,      // 1  rgb = sun diffuse; w = clamp flag
     light_sun: vec4<f32>,          // 2  xyz = sun travel direction (to-light = −xyz)
     light_spec: vec4<f32>,         // 3  rgb = row-9 specular colour; w = terrain shininess, unread

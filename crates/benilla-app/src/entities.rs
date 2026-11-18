@@ -586,6 +586,7 @@ fn publish_world_units(
         let want = benilla_world::world_unit::WorldUnit {
             // A live body wades; a GameObject or dynamic object standing in a lake makes no ripple.
             wades: matches!(net.kind, EntityKind::Unit | EntityKind::Player),
+            character_light: matches!(net.kind, EntityKind::Unit | EntityKind::Player),
             scale: net.scale,
             // The client's constructor default until the display resolves, never 0.0, at which
             // every depth line collapses.
@@ -604,6 +605,7 @@ fn publish_world_units(
         // Written only on a real change: its readers are change-detected.
         let same = current.is_some_and(|c| {
             c.wades == want.wades
+                && c.character_light == want.character_light
                 && c.scale == want.scale
                 && c.height == want.height
                 && c.bound == want.bound
