@@ -186,30 +186,161 @@ pub struct PlayerReqState {
     pub class_flags: u32,
 }
 
+/// The fields of the active player a requirement gate reads in one go: none of them walks a table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayerFields {
+    pub level: u32,
+    pub class_id: u32,
+    pub race_id: u32,
+    pub honor_rank: u8,
+    pub pvp_medals: u32,
+    pub class_flags: u32,
+}
+
+/// What a requirement gate tests of the player, one field per read, as 12340's gates read the player object (`0x6dc3f0`).
+pub trait ReqFields {
+    fn level(&self) -> u32;
+    fn class_id(&self) -> u32;
+    fn race_id(&self) -> u32;
+    /// The value plus the permanent bonus in `skill`, `None` for a skill not held.
+    fn skill(&self, skill: u32) -> Option<u32>;
+    /// `SMSG_SET_PROFICIENCY`'s subclass mask for item class `class`, `None` for a class never sent.
+    fn proficiency(&self, class: u32) -> Option<u32>;
+    /// The reputation rank with `faction`, 0 hated … 7 exalted; 0 for an unknown faction.
+    fn rep_rank(&self, faction: u32) -> u8;
+    fn can_dual_wield(&self) -> bool;
+    fn honor_rank(&self) -> u8;
+    fn pvp_medals(&self) -> u32;
+    fn class_flags(&self) -> u32;
+}
+
+impl ReqFields for PlayerReqState {
+    fn level(&self) -> u32 {
+        self.level
+    }
+    fn class_id(&self) -> u32 {
+        self.class_id
+    }
+    fn race_id(&self) -> u32 {
+        self.race_id
+    }
+    fn skill(&self, skill: u32) -> Option<u32> {
+        self.skills.get(&skill).copied()
+    }
+    fn proficiency(&self, class: u32) -> Option<u32> {
+        self.proficiency.get(&class).copied()
+    }
+    fn rep_rank(&self, faction: u32) -> u8 {
+        self.rep_ranks.get(&faction).copied().unwrap_or(0)
+    }
+    fn can_dual_wield(&self) -> bool {
+        self.can_dual_wield
+    }
+    fn honor_rank(&self) -> u8 {
+        self.honor_rank
+    }
+    fn pvp_medals(&self) -> u32 {
+        self.pvp_medals
+    }
+    fn class_flags(&self) -> u32 {
+        self.class_flags
+    }
+}
+
+#[cfg(any(test, feature = "fixtures"))]
 thread_local! {
-    /// The player `set_player_req_state` stands in with no active player.
+    /// The player `set_player_req_state` stands in with no active player: a test's or a capture fixture's, compiled out of the player build.
     static FIXTURE_PLAYER: std::cell::RefCell<Option<PlayerReqState>> = const { std::cell::RefCell::new(None) };
 }
 
 /// A new VM drops the stand-in an earlier one on this thread set.
 pub(crate) fn clear_fixture_player() {
+    #[cfg(any(test, feature = "fixtures"))]
     FIXTURE_PLAYER.with(|f| *f.borrow_mut() = None);
 }
 
-/// The active player's requirement state, read live at the call; with none held, the fixture's player or the default.
-pub(crate) fn player_req() -> PlayerReqState {
-    super::read_live(|l| l.player_req())
-        .flatten()
-        .or_else(|| FIXTURE_PLAYER.with(|f| f.borrow().clone()))
-        .unwrap_or_default()
+/// `f` over the fixture's player, `None` with none set or in the player build.
+fn fixture<R>(f: impl FnOnce(&PlayerReqState) -> R) -> Option<R> {
+    #[cfg(any(test, feature = "fixtures"))]
+    return FIXTURE_PLAYER.with(|p| p.borrow().as_ref().map(f));
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = f;
+        None
+    }
 }
 
-/// The active player's level as [`player_req`] reads it, without building the rest.
+/// The active player's requirement fields, each read live at the call; with no active player, the fixture's player or the default.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LiveReq;
+
+/// The active player's requirement fields through the lent view.
+pub(crate) fn player_req() -> LiveReq {
+    LiveReq
+}
+
+impl LiveReq {
+    fn read<R>(
+        live: impl FnOnce(&dyn super::LiveState) -> Option<R>,
+        stand_in: impl FnOnce(&PlayerReqState) -> R,
+    ) -> Option<R> {
+        super::read_live(live)
+            .flatten()
+            .or_else(|| fixture(stand_in))
+    }
+
+    fn fields(self) -> PlayerFields {
+        Self::read(
+            |l| l.player_fields(),
+            |r| PlayerFields {
+                level: r.level,
+                class_id: r.class_id,
+                race_id: r.race_id,
+                honor_rank: r.honor_rank,
+                pvp_medals: r.pvp_medals,
+                class_flags: r.class_flags,
+            },
+        )
+        .unwrap_or_default()
+    }
+}
+
+impl ReqFields for LiveReq {
+    fn level(&self) -> u32 {
+        player_level()
+    }
+    fn class_id(&self) -> u32 {
+        self.fields().class_id
+    }
+    fn race_id(&self) -> u32 {
+        self.fields().race_id
+    }
+    fn skill(&self, skill: u32) -> Option<u32> {
+        Self::read(|l| l.player_skill(skill), |r| r.skill(skill)).flatten()
+    }
+    fn proficiency(&self, class: u32) -> Option<u32> {
+        Self::read(|l| l.player_proficiency(class), |r| r.proficiency(class)).flatten()
+    }
+    fn rep_rank(&self, faction: u32) -> u8 {
+        Self::read(|l| l.player_rep_rank(faction), |r| r.rep_rank(faction)).unwrap_or(0)
+    }
+    fn can_dual_wield(&self) -> bool {
+        Self::read(|l| l.player_can_dual_wield(), |r| r.can_dual_wield).unwrap_or(false)
+    }
+    fn honor_rank(&self) -> u8 {
+        self.fields().honor_rank
+    }
+    fn pvp_medals(&self) -> u32 {
+        self.fields().pvp_medals
+    }
+    fn class_flags(&self) -> u32 {
+        self.fields().class_flags
+    }
+}
+
+/// The active player's level (`UNIT_FIELD_LEVEL`), read at the call.
 pub(crate) fn player_level() -> u32 {
-    super::read_live(|l| l.player_level())
-        .flatten()
-        .or_else(|| FIXTURE_PLAYER.with(|f| f.borrow().as_ref().map(|r| r.level)))
-        .unwrap_or(0)
+    LiveReq::read(|l| l.player_level(), |r| r.level).unwrap_or(0)
 }
 
 /// [`item_usable`] by item entry: entry 0 and a template not yet answered are usable, as the
@@ -220,8 +351,8 @@ pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
 
 /// Medal `rank` is held: bit `rank - 1` of the medal field (`0x61dcb0`); a shift past the word
 /// wraps as the x86 `shl` does.
-pub(super) fn has_medal(req: &PlayerReqState, rank: u32) -> bool {
-    req.pvp_medals & 1u32.wrapping_shl(rank.wrapping_sub(1)) != 0
+pub(super) fn has_medal(req: &impl ReqFields, rank: u32) -> bool {
+    req.pvp_medals() & 1u32.wrapping_shl(rank.wrapping_sub(1)) != 0
 }
 
 /// [`item_use_refusal`] by item entry: entry 0 and a template not yet answered are refused nothing.
@@ -258,7 +389,7 @@ pub(super) fn quest_item_quality_usable(
 /// An unpushed state (level 0) declines to judge, answering usable.
 pub fn item_usable(
     v: &ItemTemplateView,
-    req: &PlayerReqState,
+    req: &impl ReqFields,
     knows_spell: impl Fn(u32) -> bool,
 ) -> bool {
     item_use_refusal(v, req, knows_spell).is_none()
@@ -268,23 +399,26 @@ pub fn item_usable(
 /// for the proficiency leg, `ERR_CANT_USE_ITEM` (`0xa9`) for every other.
 pub fn item_use_refusal(
     v: &ItemTemplateView,
-    req: &PlayerReqState,
+    req: &impl ReqFields,
     knows_spell: impl Fn(u32) -> bool,
 ) -> Option<&'static str> {
     const CANT_USE: Option<&str> = Some("ERR_CANT_USE_ITEM");
-    if req.level == 0 {
+    let level = req.level();
+    if level == 0 {
         return None;
     }
-    if v.required_level > req.level {
+    if v.required_level > level {
         return CANT_USE;
     }
-    if req.class_id == 0 || v.allowable_class as u32 & (1 << (req.class_id - 1)) == 0 {
+    let class_id = req.class_id();
+    if class_id == 0 || v.allowable_class as u32 & (1 << (class_id - 1)) == 0 {
         return CANT_USE;
     }
-    if req.race_id == 0 || v.allowable_race as u32 & (1 << (req.race_id - 1)) == 0 {
+    let race_id = req.race_id();
+    if race_id == 0 || v.allowable_race as u32 & (1 << (race_id - 1)) == 0 {
         return CANT_USE;
     }
-    if let Some(&mask) = req.proficiency.get(&v.class) {
+    if let Some(mask) = req.proficiency(v.class) {
         if v.class < 17 && mask != 0 && mask & (1 << v.subclass) == 0 {
             return Some("ERR_PROFICIENCY_NEEDED");
         }
@@ -293,9 +427,8 @@ pub fn item_use_refusal(
     if v.required_skill != 0
         && v.flags & 0x2004_0000 == 0
         && req
-            .skills
-            .get(&v.required_skill)
-            .is_none_or(|&val| val < v.required_skill_rank)
+            .skill(v.required_skill)
+            .is_none_or(|val| val < v.required_skill_rank)
     {
         return CANT_USE;
     }
@@ -303,19 +436,14 @@ pub fn item_use_refusal(
     if v.required_spell != 0 && !knows_spell(v.required_spell) {
         return CANT_USE;
     }
-    if v.required_honor_rank != 0 && u32::from(req.honor_rank) < v.required_honor_rank {
+    if v.required_honor_rank != 0 && u32::from(req.honor_rank()) < v.required_honor_rank {
         return CANT_USE;
     }
     if v.required_city_rank != 0 && !has_medal(req, v.required_city_rank) {
         return CANT_USE;
     }
     if v.required_rep_faction != 0 {
-        let rank = req
-            .rep_ranks
-            .get(&v.required_rep_faction)
-            .copied()
-            .unwrap_or(0);
-        if u32::from(rank) < v.required_rep_rank {
+        if u32::from(req.rep_rank(v.required_rep_faction)) < v.required_rep_rank {
             return CANT_USE;
         }
     }
@@ -403,6 +531,7 @@ impl super::UiScript {
     }
 
     /// The requirement state a call reads while the live view holds no active player: a test's or a capture fixture's player.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_player_req_state(&mut self, state: PlayerReqState) {
         FIXTURE_PLAYER.with(|f| *f.borrow_mut() = Some(state));
     }

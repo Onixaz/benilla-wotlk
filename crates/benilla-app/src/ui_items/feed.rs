@@ -756,60 +756,55 @@ pub(crate) fn feed_item_stats(
     }
 }
 
-/// The player state the tooltip's red lines and the usable gate check, built from the live state at the call: level, class, race, each skill with its permanent bonus, the proficiency masks (`SMSG_SET_PROFICIENCY`), each faction's rank (the DBC base plus the standing), the dual-wield test, the honor rank, the medals and the class flags (`0x6288f5`).
-pub(crate) fn player_req(
+/// The player's value plus permanent bonus in `skill`, never the temporary bonus (`0x51a250`); `None` for a skill not held.
+pub(crate) fn player_skill(me: &benilla_protocol::ObjectFields, skill: u32) -> Option<u32> {
+    (0..benilla_protocol::messages::PLAYER_SKILL_SLOTS)
+        .filter_map(|slot| me.player_skill(slot))
+        .find(|s| s.skill_id != 0 && u32::from(s.skill_id) == skill)
+        .map(|s| u32::from(s.value).saturating_add_signed(i32::from(s.perm_bonus)))
+}
+
+/// The player's reputation rank with `faction`: the DBC base for the race and class plus the standing; 0 for a faction with no reputation row.
+pub(crate) fn player_rep_rank(
     me: &benilla_protocol::ObjectFields,
-    proficiencies: Option<&crate::net::Proficiencies>,
     reputations: Option<&crate::net::Reputations>,
     factions: Option<&crate::target::Factions>,
+    faction: u32,
+) -> u8 {
+    let Some(info) = factions.and_then(|f| f.catalog().reputation_faction(faction)) else {
+        return 0;
+    };
+    let standing = usize::try_from(info.rep_index)
+        .ok()
+        .and_then(|i| reputations?.0.get(i))
+        .map_or(0, |&(_, s)| s);
+    let (race, class) = (me.unit_race().unwrap_or(0), me.unit_class().unwrap_or(0));
+    benilla_formats::reputation_rank(info.base_for(race, class) + standing)
+}
+
+/// The dual-wield test: a known spell whose Effect[0] is 40 (`SPELL_EFFECT_DUAL_WIELD`).
+pub(crate) fn can_dual_wield(
     actions: Option<&crate::ui_action::PlayerActions>,
     spells: Option<&crate::ui_action::Spells>,
-    classes: Option<&crate::chr_classes::ChrClassTable>,
-) -> benilla_ui::script::PlayerReqState {
-    let mut skills = std::collections::HashMap::new();
-    for slot in 0..benilla_protocol::messages::PLAYER_SKILL_SLOTS {
-        let Some(s) = me.player_skill(slot) else {
-            continue;
-        };
-        if s.skill_id != 0 {
-            // The value plus the permanent bonus, never the temporary one.
-            skills.insert(
-                u32::from(s.skill_id),
-                u32::from(s.value).saturating_add_signed(i32::from(s.perm_bonus)),
-            );
-        }
-    }
-    let race = me.unit_race().unwrap_or(0);
-    let class = me.unit_class().unwrap_or(0);
-    let mut rep_ranks = std::collections::HashMap::new();
-    if let Some(cat) = factions.map(|f| f.catalog()) {
-        for (id, info) in cat.reputation_factions() {
-            let standing = usize::try_from(info.rep_index)
-                .ok()
-                .and_then(|i| reputations?.0.get(i))
-                .map(|&(_, s)| s)
-                .unwrap_or(0);
-            rep_ranks.insert(
-                id,
-                benilla_formats::reputation_rank(info.base_for(race, class) + standing),
-            );
-        }
-    }
-    // The dual-wield test: a known spell whose Effect[0] is 40 (`SPELL_EFFECT_DUAL_WIELD`).
-    let can_dual_wield = spells.zip(actions).is_some_and(|(s, actions)| {
+) -> bool {
+    spells.zip(actions).is_some_and(|(s, actions)| {
         actions
             .spells
             .iter()
             .any(|&id| s.catalog.get(id).is_some_and(|sd| sd.effects[0] == 40))
-    });
-    benilla_ui::script::PlayerReqState {
+    })
+}
+
+/// The player's fields a gate reads without a table walk: level, class, race, honor rank, medals and the class flags (`0x6288f5`).
+pub(crate) fn player_fields(
+    me: &benilla_protocol::ObjectFields,
+    classes: Option<&crate::chr_classes::ChrClassTable>,
+) -> benilla_ui::script::PlayerFields {
+    let class = me.unit_class().unwrap_or(0);
+    benilla_ui::script::PlayerFields {
         level: me.unit_level().unwrap_or(0),
         class_id: u32::from(class),
-        race_id: u32::from(race),
-        skills,
-        proficiency: proficiencies.map(|p| p.0.clone()).unwrap_or_default(),
-        rep_ranks,
-        can_dual_wield,
+        race_id: u32::from(me.unit_race().unwrap_or(0)),
         honor_rank: me.player_honor_rank().unwrap_or(0),
         pvp_medals: me.player_pvp_medals().unwrap_or(0),
         class_flags: classes.map_or(0, |c| c.0.flags(u32::from(class))),

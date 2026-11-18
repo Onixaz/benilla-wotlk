@@ -222,14 +222,11 @@ pub(super) fn socket_lines(
         };
         (counts, crate::script::item_stats::player_req())
     };
+    use crate::script::ReqFields;
     let skill_ok = |r: &crate::script::EnchantRequirementView| {
-        r.skill == 0
-            || req
-                .skills
-                .get(&r.skill)
-                .is_some_and(|&have| have >= r.skill_rank)
+        r.skill == 0 || req.skill(r.skill).is_some_and(|have| have >= r.skill_rank)
     };
-    let level_ok = |r: &crate::script::EnchantRequirementView| r.min_level <= req.level;
+    let level_ok = |r: &crate::script::EnchantRequirementView| r.min_level <= req.level();
     // A signable item's ids read as zero.
     let enchants = match v.flags & 0x2000 != 0 {
         true => &[][..],

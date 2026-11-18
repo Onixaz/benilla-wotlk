@@ -175,7 +175,7 @@ impl StatSummary {
             let total = min + max;
             self.dps = 0.5 * total;
             let damage = total * v.delay_ms as i32 as f32 * 0.0005;
-            if crate::script::item_stats::player_req().class_id == 11 {
+            if crate::script::ReqFields::class_id(&crate::script::item_stats::player_req()) == 11 {
                 self.stats[10] += self.stats[8] + feral_attack_power(v, damage);
             }
         } else {
@@ -291,7 +291,7 @@ impl StatSummary {
         let (main, off) = (average(0), average(1));
         self.dps += main / (delay * 0.001);
         self.dps += off / (0.001 * delay);
-        if crate::script::item_stats::player_req().class_id == 11 {
+        if crate::script::ReqFields::class_id(&crate::script::item_stats::player_req()) == 11 {
             self.stats[10] += self.stats[8] + feral_attack_power(v, main + off);
         }
     }

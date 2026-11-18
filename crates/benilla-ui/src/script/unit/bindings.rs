@@ -1327,7 +1327,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let bank = |points: u8, on: u64| if on == target { points } else { 0 };
             let player = guid_of("player");
             let points = if unit != 0 && unit == player {
-                let class = crate::script::item_stats::player_req().class_id;
+                let class =
+                    crate::script::ReqFields::class_id(&crate::script::item_stats::player_req());
                 if class == CLASS_ROGUE || class == CLASS_DRUID {
                     bank(model.combo_points, model.combo_target)
                 } else {

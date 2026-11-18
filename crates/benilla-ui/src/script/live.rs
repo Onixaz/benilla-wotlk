@@ -537,14 +537,34 @@ pub trait LiveState {
         None
     }
 
-    /// The active player's requirement state, built at the call; `None` with no active player.
-    fn player_req(&self) -> Option<super::PlayerReqState> {
+    /// The active player's level, class, race, honor rank, medals and class flags; `None` with no active player.
+    fn player_fields(&self) -> Option<super::PlayerFields> {
         None
     }
 
     /// The active player's level (`UNIT_FIELD_LEVEL`); `None` with no active player.
     fn player_level(&self) -> Option<u32> {
-        self.player_req().map(|r| r.level)
+        self.player_fields().map(|r| r.level)
+    }
+
+    /// The active player's value plus permanent bonus in `skill` (`0x51a250`); `Some(None)` for a skill not held, `None` with no active player.
+    fn player_skill(&self, _skill: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The proficiency mask for item class `class`; `Some(None)` for a class never sent, `None` with no active player.
+    fn player_proficiency(&self, _class: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The active player's reputation rank with `faction`; `None` with no active player.
+    fn player_rep_rank(&self, _faction: u32) -> Option<u8> {
+        None
+    }
+
+    /// Whether the spell book holds a dual-wield spell; `None` with no active player.
+    fn player_can_dual_wield(&self) -> Option<bool> {
+        None
     }
 
     /// `CurrencyTypes.dbc` and `CurrencyCategory.dbc`, `None` before they load.

@@ -9,7 +9,7 @@ use mlua::{Lua, Table};
 
 use crate::script::item_verbs::FLAG_UNIQUE_EQUIPPED;
 use crate::script::tooltip::{append_line, duration_text, plural_template};
-use crate::script::ItemTemplateView;
+use crate::script::{ItemTemplateView, ReqFields};
 use crate::strings::{fill, Arg};
 
 use super::names::*;
@@ -559,7 +559,7 @@ fn render_lines(
         };
         let mut left_red = false;
         let mut right_red = false;
-        if let Some(&mask) = req.proficiency.get(&v.class) {
+        if let Some(mask) = req.proficiency(v.class) {
             if mask & (1 << v.subclass) == 0 {
                 let alt_ok =
                     v.class == 2 && v.proficiency_alt.is_some_and(|a| mask & (1 << a) != 0);
@@ -570,7 +570,7 @@ fn render_lines(
                 } else {
                     // A scaling plate or mail piece reads as the armor a flagged class may wear
                     // until it learns the heavier kind, unred (`0x6288b7`..`0x628974`).
-                    match scaling_armor_alternate(v, rows, req.class_flags, mask) {
+                    match scaling_armor_alternate(v, rows, req.class_flags(), mask) {
                         Some(alt) => {
                             if let Some(name) = v.scaling_armor_names[alt as usize - 2].as_deref() {
                                 ty = Some(name);
@@ -581,7 +581,7 @@ fn render_lines(
                 }
             }
         }
-        if v.inventory_type == 22 && !req.can_dual_wield {
+        if v.inventory_type == 22 && !req.can_dual_wield() {
             left_red = true;
         }
         match (slot, ty) {
@@ -810,9 +810,8 @@ fn render_lines(
             if let Some(name) = v.gem.as_ref().and_then(|g| g.enchant_name.clone()) {
                 let skill_ok = v.required_skill == 0
                     || req
-                        .skills
-                        .get(&v.required_skill)
-                        .is_some_and(|&have| have >= v.required_skill_rank);
+                        .skill(v.required_skill)
+                        .is_some_and(|have| have >= v.required_skill_rank);
                 let color = if destroy_gem {
                     GRAY
                 } else {
@@ -829,7 +828,7 @@ fn render_lines(
                 }
             }
         }
-        if req.class_id == 11
+        if req.class_id() == 11
             && v.class == 2
             && matches!(v.inventory_type, 13 | 17 | 21 | 22)
             && v.delay_ms != 0
@@ -881,7 +880,8 @@ fn render_lines(
             .map(|&(id, n)| crate::locale::class_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
-            let ok = req.class_id > 0 && v.allowable_class & (1 << (req.class_id - 1)) != 0;
+            let class_id = req.class_id();
+            let ok = class_id > 0 && v.allowable_class & (1 << (class_id - 1)) != 0;
             keyed(
                 "ITEM_CLASSES_ALLOWED",
                 &[Arg::S(&list.join(", "))],
@@ -900,7 +900,8 @@ fn render_lines(
             .map(|&(id, n)| crate::locale::race_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
-            let ok = req.race_id > 0 && v.allowable_race & (1 << (req.race_id - 1)) != 0;
+            let race_id = req.race_id();
+            let ok = race_id > 0 && v.allowable_race & (1 << (race_id - 1)) != 0;
             keyed(
                 "ITEM_RACES_ALLOWED",
                 &[Arg::S(&list.join(", "))],
@@ -913,7 +914,7 @@ fn render_lines(
     // range (`0x6277f0`, `ITEM_LEVEL_RANGE_CURRENT`); otherwise only a required level above 1.
     if let (Some(d), Some(s)) = (rows.0, scaled) {
         let required = v.required_level as i32;
-        let level = req.level as i32;
+        let level = req.level() as i32;
         keyed(
             "ITEM_LEVEL_RANGE_CURRENT",
             &[
@@ -928,7 +929,7 @@ fn render_lines(
         keyed(
             "ITEM_MIN_LEVEL",
             &[Arg::D(v.required_level.into())],
-            req_color(req.level >= v.required_level),
+            req_color(req.level() >= v.required_level),
             false,
         )?;
     }
@@ -1024,7 +1025,7 @@ fn render_lines(
             false,
         )?;
         let skill_met = set.required_skill == 0 || {
-            let have = req.skills.get(&set.required_skill).copied().unwrap_or(0);
+            let have = req.skill(set.required_skill).unwrap_or(0);
             have >= set.required_skill_rank
         };
         if let Some(skill) = &set.required_skill_name {
@@ -1182,7 +1183,7 @@ fn requirement_lines(
     keyed: &Keyed<'_>,
     add: &dyn Fn((String, [f32; 4])) -> mlua::Result<()>,
     v: &ItemTemplateView,
-    req: &crate::script::PlayerReqState,
+    req: &impl crate::script::ReqFields,
     facts: ReqFacts,
 ) -> mlua::Result<()> {
     let ReqFacts {
@@ -1192,7 +1193,7 @@ fn requirement_lines(
         player,
     } = facts;
     if v.required_skill != 0 {
-        let have = req.skills.get(&v.required_skill).copied();
+        let have = req.skill(v.required_skill);
         let color = req_color(have.is_some_and(|h| h >= v.required_skill_rank));
         // Flag `0x40000` prospects and `0x20000000` mills: their line only once the skill has a
         // value (`0x62b2a2`); every other item its skill line.
@@ -1236,7 +1237,7 @@ fn requirement_lines(
             crate::script::pvp::RankTitle { rank, team, female },
         );
         if let Some(title) = title {
-            let ok = req.honor_rank >= rank;
+            let ok = req.honor_rank() >= rank;
             keyed("ITEM_REQ_SKILL", &[Arg::S(&title)], req_color(ok), false)?;
         }
     }
@@ -1259,11 +1260,7 @@ fn requirement_lines(
     }
     if let Some(rep) = &v.required_rep_line {
         // Red below the required rank (`[+0x58]`); an unfed faction reads as unmet.
-        let rank = req
-            .rep_ranks
-            .get(&v.required_rep_faction)
-            .copied()
-            .unwrap_or(0);
+        let rank = req.rep_rank(v.required_rep_faction);
         add((
             rep.clone(),
             req_color(u32::from(rank) >= v.required_rep_rank),

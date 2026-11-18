@@ -41,8 +41,8 @@ use drain::{
 };
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
-pub(crate) use feed::player_req;
 use feed::{build_item_tables, feed_item_sets, feed_item_stats};
+pub(crate) use feed::{can_dual_wield, player_fields, player_rep_rank, player_skill};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
 pub(super) const PACK_SLOTS: u8 = 16;

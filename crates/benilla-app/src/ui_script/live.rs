@@ -1319,16 +1319,40 @@ impl LiveState for LiveView<'_, '_> {
         self.item_tables.as_deref().map(|t| &t.tables)
     }
 
-    fn player_req(&self) -> Option<benilla_ui::script::PlayerReqState> {
+    fn player_fields(&self) -> Option<benilla_ui::script::PlayerFields> {
         let me = self.unit(self.active_player()?)?;
-        Some(crate::ui_items::player_req(
+        Some(crate::ui_items::player_fields(me, self.classes.as_deref()))
+    }
+
+    fn player_skill(&self, skill: u32) -> Option<Option<u32>> {
+        let me = self.unit(self.active_player()?)?;
+        Some(crate::ui_items::player_skill(me, skill))
+    }
+
+    fn player_proficiency(&self, class: u32) -> Option<Option<u32>> {
+        self.unit(self.active_player()?)?;
+        Some(
+            self.proficiencies
+                .as_deref()
+                .and_then(|p| p.0.get(&class).copied()),
+        )
+    }
+
+    fn player_rep_rank(&self, faction: u32) -> Option<u8> {
+        let me = self.unit(self.active_player()?)?;
+        Some(crate::ui_items::player_rep_rank(
             me,
-            self.proficiencies.as_deref(),
             self.reputations.as_deref(),
             self.factions.as_deref(),
+            faction,
+        ))
+    }
+
+    fn player_can_dual_wield(&self) -> Option<bool> {
+        self.unit(self.active_player()?)?;
+        Some(crate::ui_items::can_dual_wield(
             self.actions.get(),
             self.spells.as_deref(),
-            self.classes.as_deref(),
         ))
     }
 
@@ -2160,8 +2184,7 @@ mod tests {
         }));
     }
 
-    /// The action store is lent like the history: a plain write beside a loan is refused (B0002),
-    /// the owner's handle is admitted, and its write is the next read of the view in the same run.
+    /// The action store is lent like the history: a plain write beside a loan is refused (B0002), the owner's handle is admitted, and its write is the next read of the view in the same run.
     #[test]
     fn the_action_store_is_written_by_its_owner_and_read_through_the_view() {
         use crate::ui_action::PlayerActions;
