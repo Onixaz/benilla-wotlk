@@ -179,6 +179,24 @@ impl InteractWindows<'_, '_> {
     }
 }
 
+/// A window's open with the interact target held by a window of [`InteractWindows`] past the gossip menu and the quest frame (`0x51fd1c` -> `0x512e60`): the first such window open closes, in the interaction close's order.
+pub(crate) fn close_target_holder(world: &mut World) {
+    let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
+    let mut windows = state.get_mut(world);
+    let holder = windows
+        .npcs()
+        .iter()
+        .enumerate()
+        .skip(QUEST_WINDOW + 1)
+        .find(|&(i, n)| i != BANK_WINDOW && n.is_some())
+        .map(|(i, _)| i);
+    if let Some(window) = holder {
+        debug!("ui_session: window {window} holds the interact target — closing it");
+        windows.close(window);
+    }
+    state.apply(world);
+}
+
 /// The interact slot's clear (`0x518d50`): a window closing on an NPC closes the first window, in
 /// the interaction close's order, still open on it. A lone-option gossip that handed off to a
 /// trainer, vendor or flight master is that window, so closing the hand-off's window frees the
@@ -202,13 +220,8 @@ pub(crate) fn close_interaction(
             if other == QUEST_WINDOW {
                 // The quest window's leg of the interaction close (`0x512f16`): 12340's close, `QUEST_FINISHED` with it.
                 commands.queue(crate::ui_quest::close_interaction);
-            } else if other == BANK_WINDOW {
-                // The bank's leg (`0x512fa7`), `BANKFRAME_CLOSED` with it.
-                commands.queue(|world: &mut World| {
-                    crate::ui_bank::close_by_interaction(world);
-                    crate::ui_script::live::fire_handler_events(world);
-                });
             } else {
+                // No window can open on the banker while the bank holds the target: each open closes the bank first (`0x51fd1c` -> `0x512fa7`).
                 windows.close(other);
             }
         }

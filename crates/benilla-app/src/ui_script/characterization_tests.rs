@@ -5291,8 +5291,7 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
     );
 }
 
-/// The requirement state is the active player's, read at the call: a level update's own events
-/// read the new level's green band (`0x5e28a1`) with no frame between.
+/// The requirement state is the active player's, read at the call: a level update's own events read the new level's green band (`0x5e28a1`) with no frame between.
 #[test]
 fn a_level_update_reads_the_new_level_in_its_own_events() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)]) else {
@@ -5305,11 +5304,7 @@ fn a_level_update_reads_the_new_level_in_its_own_events() {
     );
 }
 
-/// The currency list is built at 12340's triggers and its events fire from their handlers: the
-/// world entry's (`0x528299`) after `UPDATE_FACTION` (`0x528208`); the known-currencies watch's
-/// `KNOWN_CURRENCY_TYPES_UPDATE` (`0x6e5401` -> `0x5b0640`) with the row's record asked; that
-/// record's landing (`0x5b0260` -> `0x5b0660`); a token slot's (`0x5d991f`) and our token's count
-/// (`0x707832`), each read at its own event.
+/// The currency list is built at 12340's triggers and its events fire from their handlers: the world entry's (`0x528299`) after `UPDATE_FACTION` (`0x528208`); the known-currencies watch's `KNOWN_CURRENCY_TYPES_UPDATE` (`0x6e5401` -> `0x5b0640`) with the row's record asked; that record's landing (`0x5b0260` -> `0x5b0660`); a token slot's (`0x5d991f`) and our token's count (`0x707832`), each read at its own event.
 #[test]
 fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
     use benilla_protocol::field::{
@@ -5426,13 +5421,39 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
         pin(&seen, events, verbs),
         ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex7"]
     );
+    // A pack slot's leg reads the old item's class inside the field handler, before the same frame's destroy of it (`0x5d97fd`).
+    const LOOSE: u64 = 0x4000_0000_0000_0301;
+    let pack = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: LOOSE,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(pack, LOOSE as u32), (pack + 1, (LOOSE >> 32) as u32)]),
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            self_values(&[(pack, 0), (pack + 1, 0)]),
+            SessionEvent::ObjectDestroyed(LOOSE),
+        ],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["CURRENCY_DISPLAY_UPDATE"]),
+        ["CURRENCY_DISPLAY_UPDATE"],
+        "the old item is still held when its slot's handler runs"
+    );
 }
 
-/// The bag watches fire from the update's handler in field order, each read at its own event: a
-/// pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s
-/// (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the
-/// containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update
-/// (`0x5d99f9`, `0x5d9aa1`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
+/// The bag watches fire from the update's handler in field order, each read at its own event: a pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update (`0x5d99f9`, `0x5d9aa1`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
 #[test]
 fn the_bag_watches_fire_from_the_update_in_field_order() {
     use benilla_protocol::field::{
@@ -5708,5 +5729,47 @@ fn a_refund_record_is_asked_read_at_the_call_and_its_result_prints_in_the_handle
         rig.live_now().verbs["refund01"],
         "nil",
         "the record went with its item"
+    );
+}
+
+/// The bank's open takes the interact target from the vendor holding it (`0x57b909` -> `0x51fce0`): the vendor closes.
+#[test]
+fn the_banks_open_closes_the_vendor_holding_the_target() {
+    const VENDOR: u64 = 0xF130_0000_0200_0002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![banker_create(0x20000), npc_create(VENDOR, 0x80)], 1);
+    let row = benilla_protocol::messages::VendorItem {
+        slot: 1,
+        entry: 159,
+        display_id: 18084,
+        current_count: 0xFFFF_FFFF,
+        price: 5,
+        max_durability: 0,
+        buy_count: 1,
+        extended_cost: 0,
+    };
+    rig.packets(
+        vec![SessionEvent::VendorInventory {
+            vendor: VENDOR,
+            items: vec![row],
+            error: None,
+        }],
+        2,
+    );
+    let open = |rig: &App| {
+        use crate::ui_session::NpcSession;
+        rig.world()
+            .resource::<crate::ui_merchant::MerchantOpen>()
+            .npc()
+    };
+    assert_eq!(open(&rig.app), Some(VENDOR), "the vendor is open");
+    let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 3);
+    assert_eq!(open(&rig.app), None, "the bank's open closed the vendor");
+    let order = fired(&seen, &["MERCHANT_CLOSED", "BANKFRAME_OPENED"]);
+    assert!(
+        order.iter().any(|e| e == "MERCHANT_CLOSED"),
+        "the vendor's close fired: {order:?}"
     );
 }

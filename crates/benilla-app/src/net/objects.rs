@@ -130,6 +130,8 @@ pub(crate) struct Scene<'w, 's> {
     quest_log: Option<Res<'w, crate::ui_quest_log::QuestLog>>,
     /// The log's quest rows the stack watch walks.
     quest_rows: Option<NonSend<'w, crate::ui_quest_log::rows::RebuildMarks>>,
+    /// `Item.dbc`'s classes the currency slot leg reads (`0x5d98f2`).
+    icons: Option<Res<'w, crate::entities::ItemDisplays>>,
     /// The refund records the post-init asks (`0x70ae34`).
     refunds: Option<NonSendMut<'w, crate::ui_socket::RefundRecords>>,
     /// The possess spell our pet and far-sight watches look up (`0x6d1ab1`, `0x6e5034`).
@@ -1873,8 +1875,21 @@ fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: 
     };
     let old =
         u64::from(word(lo_index, new as u32)) | u64::from(word(hi_index, (new >> 32) as u32)) << 32;
-    sc.ui
-        .world(move |world| crate::ui_currency::slot_changed(world, slot, old, new));
+    // Both items' classes read inside the field's handler, as the update stands now (`0x5d97fd`, `0x5d9813`).
+    let class_of = |guid: u64| {
+        let entry = sc
+            .index
+            .0
+            .get(&guid)
+            .and_then(|&e| sc.stores.get(e).ok())?
+            .0
+            .object_entry()?;
+        let row = sc.icons.as_deref()?.item_dbc.get(&entry)?;
+        Some(u32::from(row.class))
+    };
+    if crate::ui_currency::slot_fires(slot, old, new, class_of) {
+        crate::ui_currency::display_update(&mut sc.ui);
+    }
 }
 
 /// Our player watches past the flags in field order: the bank's slot byte, honor, the currency watches, then the arena-team words once per update (`0x6cdda0`).
@@ -2086,9 +2101,6 @@ struct Merged {
 
 /// An item's watches past its create, on the quest log: its stack count's test of the logged quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own, which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
 fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
-    let Some(log) = sc.quest_log.as_deref() else {
-        return;
-    };
     let Some(item) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) else {
         return;
     };
@@ -2100,7 +2112,10 @@ fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
     if entry && me.is_some() && item.0.item_owner() == sc.self_guid.0 {
         sc.signals.unique_signal("QUEST_LOG_UPDATE");
     }
-    if let (true, Some(rows)) = (stack, sc.quest_rows.as_deref()) {
+    // The quest legs read the log's templates; the currency leg below does not (`0x70782c`).
+    if let (true, Some(rows), Some(log)) =
+        (stack, sc.quest_rows.as_deref(), sc.quest_log.as_deref())
+    {
         crate::ui_quest_log::rows::item_moved(
             item.0.object_entry().unwrap_or(0),
             me.is_some(),

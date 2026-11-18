@@ -1,9 +1,4 @@
-//! The currency tables, `CurrencyTypes.dbc` and `CurrencyCategory.dbc`, our currencies as the
-//! verbs read them at the call, and 12340's triggers: each rebuilds the display list, then fires
-//! `CURRENCY_DISPLAY_UPDATE` (`0x5b0660`) at world entry (`0x528299`), on a class 10 item's count
-//! (`0x707832`), on a watched slot (`0x5d991f`) and when a listed row's record lands (`0x5b01d7`,
-//! `0x5b0260`), or `KNOWN_CURRENCY_TYPES_UPDATE` (`0x5b0640`) on the known-currencies watch
-//! (`0x6e5401`).
+//! The currency tables, `CurrencyTypes.dbc` and `CurrencyCategory.dbc`, our currencies as the verbs read them at the call, and 12340's triggers: each rebuilds the display list, then fires `CURRENCY_DISPLAY_UPDATE` (`0x5b0660`) at world entry (`0x528299`), on a class 10 item's count (`0x707832`), on a watched slot (`0x5d991f`) and when a listed row's record lands (`0x5b01d7`, `0x5b0260`), or `KNOWN_CURRENCY_TYPES_UPDATE` (`0x5b0640`) on the known-currencies watch (`0x6e5401`).
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -67,8 +62,7 @@ fn catalog_view(t: &CurrencyTables) -> CurrencyCatalogView {
     }
 }
 
-/// What the currency verbs read live: the tables, the item cache and the bag icons, and the wire
-/// for a build's record asks.
+/// What the currency verbs read live: the tables, the item cache and the bag icons, and the wire for a build's record asks.
 #[derive(SystemParam)]
 pub(crate) struct CurrencyLive<'w> {
     tables: Option<Res<'w, Currencies>>,
@@ -83,8 +77,7 @@ impl CurrencyLive<'_> {
         self.tables.as_deref().map(|t| &t.0)
     }
 
-    /// Our currencies at the call, read off our fields, the token slots' items and the item cache;
-    /// `object` finds a held object's fields by guid.
+    /// Our currencies at the call, read off our fields, the token slots' items and the item cache; `object` finds a held object's fields by guid.
     pub(crate) fn holdings<'a>(
         &self,
         me: &ObjectFields,
@@ -146,16 +139,14 @@ pub(crate) fn display_update(ui: &mut UiEvents) {
     });
 }
 
-/// The UI's world entry (`0x528299`): the rebuild and `CURRENCY_DISPLAY_UPDATE`, past the stable's
-/// (`0x528244`).
+/// The UI's world entry (`0x528299`): the rebuild and `CURRENCY_DISPLAY_UPDATE`, past the stable's (`0x528244`).
 pub(crate) fn enter_world(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         display_update(&mut ui);
     }
 }
 
-/// The known-currencies watch (`0x6e5401`): the rebuild, then `KNOWN_CURRENCY_TYPES_UPDATE`
-/// (`0x5b0640`).
+/// The known-currencies watch (`0x6e5401`): the rebuild, then `KNOWN_CURRENCY_TYPES_UPDATE` (`0x5b0640`).
 pub(crate) fn known_update(ui: &mut UiEvents) {
     ui.write(|script: &mut UiScript| {
         script.rebuild_currency_list();
@@ -163,8 +154,7 @@ pub(crate) fn known_update(ui: &mut UiEvents) {
     });
 }
 
-/// A record landed, answered or denied: the callback a build left on it rebuilds and fires
-/// (`0x5b01d7`, `0x5b0260` -> `0x5b0660`).
+/// A record landed, answered or denied: the callback a build left on it rebuilds and fires (`0x5b01d7`, `0x5b0260` -> `0x5b0660`).
 pub(crate) fn record_landed(ui: &mut UiEvents, entry: u32) {
     ui.write(move |script: &mut UiScript| {
         if script.currency_record_landed(entry) {
@@ -173,41 +163,23 @@ pub(crate) fn record_landed(ui: &mut UiEvents, entry: u32) {
     });
 }
 
-/// Whether a player slot's change reaches the currency list: the backpack, keyring and token slots
-/// carry its handler (`0x5d9c5b`, `0x5d9cb9`, `0x5d9ce8`).
+/// Whether a player slot's change reaches the currency list: the backpack, keyring and token slots carry its handler (`0x5d9c5b`, `0x5d9cb9`, `0x5d9ce8`).
 pub(crate) fn watched_slot(slot: u8) -> bool {
     matches!(slot, 23..=38 | 86..=149)
 }
 
-/// The slot handler's currency leg (`0x5d98ee`-`0x5d991f`): the old or the new item is class 10 by
-/// its object's class (`0x5d98f2`, `0x5d9905`), or the slot is a token slot (`0x5d9915`).
-fn slot_fires(slot: u8, old: u64, new: u64, class_of: impl Fn(u64) -> Option<u32>) -> bool {
+/// The slot handler's currency leg (`0x5d98ee`-`0x5d991f`): the old or the new item is class 10 by its object's class (`0x5d98f2`, `0x5d9905`), or the slot is a token slot (`0x5d9915`).
+pub(crate) fn slot_fires(
+    slot: u8,
+    old: u64,
+    new: u64,
+    class_of: impl Fn(u64) -> Option<u32>,
+) -> bool {
     let class_10 = |guid: u64| guid != 0 && class_of(guid) == Some(CURRENCY_CLASS);
     class_10(old) || class_10(new) || (118..=149).contains(&slot)
 }
 
-/// A watched slot's change, run in turn with the handler's events: the currency leg fires when
-/// [`slot_fires`] holds, the objects read as they stand after the update applied.
-pub(crate) fn slot_changed(world: &mut World, slot: u8, old: u64, new: u64) {
-    let fires = {
-        let mut q =
-            bevy::ecs::system::SystemState::<(Objects, Option<Res<ItemDisplays>>)>::new(world);
-        let (objects, icons) = q.get(world);
-        slot_fires(slot, old, new, |guid| {
-            let entry = objects.object(guid)?.object_entry()?;
-            let row = icons.as_deref()?.item_dbc.get(&entry)?;
-            Some(u32::from(row.class))
-        })
-    };
-    if fires {
-        if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
-            display_update(&mut ui);
-        }
-    }
-}
-
-/// An item's stack count moved (`0x707720`): our own item whose cached record is class 10 fires
-/// (`0x70782c` -> `0x707832`); an uncached record is read without an ask.
+/// An item's stack count moved (`0x707720`): our own item whose cached record is class 10 fires (`0x70782c` -> `0x707832`); an uncached record is read without an ask.
 pub(crate) fn item_count_fires(
     owner: Option<u64>,
     me: Option<u64>,
@@ -231,8 +203,7 @@ mod tests {
         }
     }
 
-    /// A class 10 item into or out of a backpack or keyring slot fires; a non-token there does
-    /// not; any change in a token slot fires whatever the item.
+    /// A class 10 item into or out of a backpack or keyring slot fires; a non-token there does not; any change in a token slot fires whatever the item.
     #[test]
     fn the_slot_leg_fires_on_a_token_either_way_or_a_token_slot() {
         assert!(slot_fires(23, 0, BADGE, class));

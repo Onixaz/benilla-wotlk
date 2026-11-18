@@ -112,11 +112,16 @@ fn on_show_bank(
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::ShowBank { banker } = ev {
-        let quest_closes = gossip.npc.is_some() && quest.is_open();
+        // The setter's interaction close takes the window holding the target (`0x57b909` -> `0x51fce0`): the gossip menu with the quest frame on it, else the first other window open.
+        let gossip_held = gossip.npc.is_some();
+        let quest_closes = gossip_held && quest.is_open();
         end_gossip(&mut gossip, &mut quest);
         // The quest window's close fires its event in the handler's turn (`0x58cb98`).
         if quest_closes {
             ui.fire("QUEST_FINISHED", vec![]);
+        }
+        if !gossip_held {
+            ui.world(crate::ui_session::close_target_holder);
         }
         ui.world(move |world| super::open_bank(world, banker));
     }
@@ -158,8 +163,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut bank: NonSendMut<BankOpen>) {
     bank.clear();
 }
 
-/// `SMSG_SHOW_BANK`, sent for `CMSG_BANKER_ACTIVATE` and unprompted for the gossip bank option:
-/// the new interact target closes the gossip menu on it (`0x51fce0` -> `0x512ef6`).
+/// `SMSG_SHOW_BANK`, sent for `CMSG_BANKER_ACTIVATE` and unprompted for the gossip bank option: the new interact target closes the gossip menu on it (`0x51fce0` -> `0x512ef6`).
 fn end_gossip(gossip: &mut GossipState, quest: &mut QuestGiver) {
     if gossip.npc.is_some() {
         crate::ui_gossip::end_interaction(gossip, quest);
