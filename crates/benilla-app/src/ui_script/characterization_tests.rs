@@ -65,6 +65,8 @@ local VERBS = {
     { "possess", function() return IsPossessBarVisible() end },
     { "petattack", function() return IsPetAttackActive() end },
     { "petname", function() return (UnitName("pet")) end },
+    { "petfollow", function() return (select(5, GetPetActionInfo(2))) end },
+    { "petcd", function() return (GetPetActionCooldown(4)) > 0 end },
     { "petbar", function() return PetHasActionBar() end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
@@ -3801,6 +3803,92 @@ fn the_pet_number_handler_signals_its_tokens_and_updates_the_pet_ui() {
         ]
     );
     assert_eq!(rig.now().line(&["petname"]), "NOW | petname=Fang");
+}
+
+/// The pet's packets fire their events from their handlers in wire order, each after its change: `SMSG_PET_MODE`'s `PET_BAR_UPDATE` (`0x5d3689`), a pet-addressed `SMSG_SPELL_COOLDOWN`'s flush (`0x80702e`, `0x807039`), and `SMSG_PET_SPELLS`' temporary bar `PET_BAR_UPDATE` then `SPELLS_CHANGED` (`0x5d6ad2`, `0x5d6d70`); both orders of the first two.
+#[test]
+fn the_pet_packets_fire_their_events_in_wire_order() {
+    use benilla_protocol::messages::{PetActionEntry, PetMode, PetSpells};
+    const GROWL: u32 = 2649;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let bar = |state: u32| {
+        let mut spells = PetSpells {
+            pet_guid: PET,
+            state,
+            ..Default::default()
+        };
+        for (i, word) in [
+            0x0700_0002,
+            0x0700_0001,
+            0x0700_0000,
+            0xC100_0000 | GROWL,
+            0,
+            0,
+            0,
+            0x0600_0002,
+            0x0600_0001,
+            0x0600_0000,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            spells.bar[i] = PetActionEntry::from(word);
+        }
+        SessionEvent::PetSpells(Box::new(spells))
+    };
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            bar(0x0001),
+        ],
+        3,
+    );
+    let mode = SessionEvent::PetMode(PetMode {
+        pet_guid: PET,
+        state: 0x0101,
+    });
+    let cooldown = SessionEvent::SpellCooldowns {
+        caster: PET,
+        flags: 0,
+        cooldowns: vec![(GROWL, 30_000)],
+    };
+    let events = &[
+        "PET_BAR_UPDATE",
+        "ACTIONBAR_UPDATE_COOLDOWN",
+        "SPELL_UPDATE_COOLDOWN",
+        "PET_BAR_UPDATE_COOLDOWN",
+        "SPELLS_CHANGED",
+        "UNIT_PET",
+    ];
+    let verbs = &["petfollow", "petcd"];
+    let seen = rig.packets(vec![mode.clone(), cooldown.clone(), bar(0x0001)], 3);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "PET_BAR_UPDATE | petfollow=1 petcd=false",
+            "ACTIONBAR_UPDATE_COOLDOWN | petfollow=1 petcd=true",
+            "SPELL_UPDATE_COOLDOWN | petfollow=1 petcd=true",
+            "PET_BAR_UPDATE_COOLDOWN | petfollow=1 petcd=true",
+            "PET_BAR_UPDATE | petfollow=nil petcd=false",
+            "SPELLS_CHANGED | petfollow=nil petcd=false",
+        ]
+    );
+    let seen = rig.packets(vec![cooldown, mode], 3);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "ACTIONBAR_UPDATE_COOLDOWN | petfollow=nil petcd=true",
+            "SPELL_UPDATE_COOLDOWN | petfollow=nil petcd=true",
+            "PET_BAR_UPDATE_COOLDOWN | petfollow=nil petcd=true",
+            "PET_BAR_UPDATE | petfollow=1 petcd=true",
+        ]
+    );
 }
 
 /// A pet created already fighting fires no `PET_ATTACK_START`: a new object's create runs no field handler (`0x4d64a4`, only a re-enabled one reaches `0x4d64be`), and the setter takes the pet's combat test into the attacking global instead (`0x5d6a80`).
