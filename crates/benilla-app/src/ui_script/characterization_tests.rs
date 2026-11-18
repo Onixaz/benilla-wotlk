@@ -6546,3 +6546,56 @@ fn the_guild_bank_fires_from_its_handlers_with_the_bank_read_at_the_call() {
         ]
     );
 }
+
+/// The walk-away watchdog closes a bank whose banker is gone through the interaction close, its events fired as it runs, ahead of the frame's input: `BANKFRAME_CLOSED` with the banker still set (`0x512fa7` -> `0x57b8e6`), and the guild bank's leg through the banker setter (`0x512fd1` -> `0x5a4270`).
+#[test]
+fn the_walk_away_watchdog_closes_both_banks_with_their_events() {
+    use benilla_protocol::messages::{GuildBankList, GuildBankTab};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    // A plain destroy runs no death: the watchdog finds the banker gone.
+    let seen = rig.packets(vec![SessionEvent::ObjectDestroyed(BANKER)], 2);
+    assert_eq!(
+        pin(&seen, &["BANKFRAME_CLOSED"], &["bankopen"]),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ]
+    );
+    const VAULT: u64 = BANKER + 9;
+    rig.packets(vec![npc_create(VAULT, 0x80_0000)], 2);
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(VAULT, &net);
+    }
+    let list = SessionEvent::GuildBankList(GuildBankList {
+        tabs: Some(vec![GuildBankTab {
+            name: "Mats".into(),
+            icon: String::new(),
+        }]),
+        ..Default::default()
+    });
+    let seen = rig.packets(vec![list], 2);
+    assert_eq!(fired(&seen, &["GUILDBANKFRAME_OPENED"]).len(), 1);
+    let seen = rig.packets(vec![SessionEvent::ObjectDestroyed(VAULT)], 2);
+    assert_eq!(
+        pin(&seen, &["GUILDBANKFRAME_CLOSED"], &["gbtabs"]),
+        [
+            "GUILDBANKFRAME_CLOSED | gbtabs=1",
+            "GUILDBANKFRAME_CLOSED | gbtabs=1",
+        ]
+    );
+}
