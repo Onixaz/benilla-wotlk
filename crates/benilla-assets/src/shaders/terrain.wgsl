@@ -46,7 +46,7 @@ struct TerrainParams {
 // The shared global light (`lighting::global_light`), updated in place once a frame; this mirrors
 // its row layout, which must match.
 struct WowLight {
-    light_ambient: vec4<f32>, // rgb = row 1 ambient; w = Mod2x scale (×1).
+    light_ambient: vec4<f32>, // rgb = row 1 ambient; w = the character ambient (unread here).
     light_diffuse: vec4<f32>, // rgb = row 0 sun diffuse; w = clamp-light flag (>0.5 ⇒ saturate).
     light_sun: vec4<f32>,     // xyz = world-space sun travel direction (to-light = −xyz); w unused.
     light_spec: vec4<f32>,    // rgb = row 9 specular color; w = shininess (20). rgb == 0 disables.

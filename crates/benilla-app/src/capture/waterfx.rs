@@ -158,6 +158,7 @@ fn spawn_dummy(commands: &mut Commands, view: &WaterFxView, cx: f32, cy: f32, su
         // `WorldStage::Present` spawn and would cost the rig its first frame of foam.
         benilla_world::world_unit::WorldUnit {
             wades: true,
+            character_light: true,
             scale: 1.0,
             height: crate::entities::CollisionHeight::default().0,
             // No model box; outdoors the exterior cull stands down anyway.
