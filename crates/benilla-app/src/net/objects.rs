@@ -1669,7 +1669,8 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     let (unit, player) = after.split_at(split);
     own_death_fields(sc, guid, unit);
     if let Some(form) = merged.form {
-        sc.ui.world(move |world| crate::ui_bank::form_entered(world, form));
+        sc.ui
+            .world(move |world| crate::ui_bank::form_entered(world, form));
     }
     if let Some((old, new)) = merged.pvp_flags {
         sc.pvp.watch(old, new, std::time::Instant::now());
@@ -1847,10 +1848,9 @@ fn merge_fields(
                 merged.death.push((e.index, e.old, e.new));
             }
             // A unit's death: health crossing zero (`0x73f3fa`) or the dead bit set (`0x740623`).
-            merged.died |= (e.unit_field(FIELD_UNIT_HEALTH)
-                && (e.old as i32) > 0
-                && (e.new as i32) < 1)
-                || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS) && !e.old & e.new & 0x20 != 0);
+            merged.died |=
+                (e.unit_field(FIELD_UNIT_HEALTH) && (e.old as i32) > 0 && (e.new as i32) < 1)
+                    || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS) && !e.old & e.new & 0x20 != 0);
             // Our form byte's watch (`0x6da130`, byte `0x1d3`).
             if own
                 && e.unit_field(benilla_protocol::field::FIELD_UNIT_BYTES_2)
