@@ -444,6 +444,12 @@ pub trait LiveState {
         false
     }
 
+    /// A held unit's pet, `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`, as a token's `pet` hop
+    /// reads it (`0x60ab9a`); `None` for a guid that is no held unit or has no pet.
+    fn unit_pet(&self, _guid: u64) -> Option<u64> {
+        None
+    }
+
     /// An open-stable aura is on us (`0x5a19c0`).
     fn open_stable_aura(&self) -> bool {
         false
@@ -1053,6 +1059,8 @@ pub(crate) struct TestView {
     pub pet_out: bool,
     /// Our charm or summon is set.
     pub charm_or_summon: bool,
+    /// Each held unit's pet, for a token's `pet` hop.
+    pub unit_pets: std::collections::HashMap<u64, u64>,
     /// An open-stable aura is on us.
     pub open_stable_aura: bool,
     /// The player's cooldown history by spell, as `(start_ms, duration_ms, enabled)`.
@@ -1431,6 +1439,10 @@ impl LiveState for TestView {
 
     fn charm_or_summon(&self) -> bool {
         self.charm_or_summon
+    }
+
+    fn unit_pet(&self, guid: u64) -> Option<u64> {
+        self.unit_pets.get(&guid).copied()
     }
 
     fn open_stable_aura(&self) -> bool {

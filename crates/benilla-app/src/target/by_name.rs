@@ -630,11 +630,12 @@ fn follow_subject(
     scan_params: &ByNameScan,
     tokens: &crate::ui_unit::UnitTokens,
     selection: &Selection,
+    vm: crate::ui_unit::VmUnits<'_>,
     name: &str,
     exact: bool,
 ) -> Result<u64, &'static str> {
     let token = if name.is_empty() { "target" } else { name };
-    let found = match tokens.guid_of(token, selection) {
+    let found = match tokens.guid_of(token, selection, vm) {
         // A player the first pass filters out the second takes, so a token's subject is any held
         // unit; one the object manager does not hold is no subject.
         Some(guid) => tokens
@@ -666,6 +667,8 @@ pub(super) fn follow_requests(
     _live: crate::ui_script::LendLive,
     scan_params: ByNameScan,
     tokens: crate::ui_unit::UnitTokens,
+    // The focus and the names a token reads, which the VM owns.
+    vm: crate::ui_unit::UnitVm,
     selection: Res<Selection>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
@@ -681,6 +684,7 @@ pub(super) fn follow_requests(
             &scan_params,
             &tokens,
             &selection,
+            vm.view(),
             &request.name,
             request.exact,
         ) {

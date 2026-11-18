@@ -1105,6 +1105,10 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     /// Our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` (`0x5a1b11`); no player object refuses too (`0x5a1b0b`).
+    fn unit_pet(&self, guid: u64) -> Option<u64> {
+        self.unit(guid)?.unit_pet_guid()
+    }
+
     fn charm_or_summon(&self) -> bool {
         let Some(me) = self.active_player().and_then(|g| self.unit(g)) else {
             return true;

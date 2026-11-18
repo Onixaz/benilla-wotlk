@@ -85,7 +85,7 @@ fn unit_of(lua: &Lua, unit: Value, usage: &'static str) -> mlua::Result<(Option<
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    Ok((model.unit_guids.resolve(&token).ok().flatten(), token))
+    Ok((model.resolve_token(&token).ok().flatten(), token))
 }
 
 /// The cast's values while it runs: `now` before its end (`0x611e75`), else none.

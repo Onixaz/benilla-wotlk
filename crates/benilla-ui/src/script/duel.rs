@@ -43,11 +43,10 @@ impl super::UiScript {
 /// the token first (`0x60abf0`, which reads no token as the target), else the name.
 fn start_duel(lua: &Lua, name: &str, exact: bool) {
     let mut model = crate::script::model_mut_of(lua);
-    let guids = &model.unit_guids;
     let token = if name.is_empty() {
-        Some(Some(guids.target))
+        Some(Some(model.unit_guids.target))
     } else {
-        guids.resolve(name).ok()
+        model.resolve_token(name).ok()
     };
     let request = match token {
         // A token naming no player answers nothing, and nothing is cast (`0x5cf992`).
