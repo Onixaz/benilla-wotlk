@@ -64,6 +64,7 @@ local VERBS = {
     { "mount1cd", function() return (select(2, GetCompanionCooldown("MOUNT", 1))) end },
     { "possess", function() return IsPossessBarVisible() end },
     { "petattack", function() return IsPetAttackActive() end },
+    { "petname", function() return (UnitName("pet")) end },
     { "petbar", function() return PetHasActionBar() end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
@@ -3722,6 +3723,84 @@ fn pet_attack_events_fire_from_the_flags_field_handler() {
             "PET_ATTACK_STOP | petattack=true",
         ]
     );
+}
+
+/// The pet number's field handler (`0x72cff0`) runs on each move of a held unit's `UNIT_FIELD_PETNUMBER` after the delta applies: `UNIT_CLASSIFICATION_CHANGED` to each token naming the unit (`0x72d034`), then `PET_UI_UPDATE` only for the pet list's head (`0x72d041`, `0x72d05f`); another unit's move fires no `PET_UI_UPDATE`, an unheld guid's delta reaches no handler, and the name re-read asks the new number's name (`0x72d01c`).
+#[test]
+fn the_pet_number_handler_signals_its_tokens_and_updates_the_pet_ui() {
+    use benilla_protocol::field::FIELD_UNIT_PETNUMBER;
+    const OTHER: u64 = 0xF130_0000_0000_0099;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let other = SessionEvent::ObjectCreate {
+        guid: OTHER,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8950.0, -133.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (2, 0x9),
+            (FIELD_UNIT_HEALTH, 100),
+            (FIELD_UNIT_MAXHEALTH, 100),
+            (FIELD_UNIT_LEVEL, 10),
+        ])
+        .into_created(ObjectType::Unit),
+    };
+    let pet_name = |pet_number: u32, name: &str| SessionEvent::PetName {
+        pet_number,
+        name: name.into(),
+        declensions: None,
+    };
+    rig.packets(
+        vec![
+            pet_name(42, "Rex"),
+            pet_name(43, "Fang"),
+            hunter_pet(1_000_000, 4200),
+            other,
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            })),
+        ],
+        3,
+    );
+    assert_eq!(rig.now().line(&["petname"]), "NOW | petname=Rex");
+    let values = |guid: u64, number: u32| SessionEvent::ObjectValues {
+        guid,
+        fields: ObjectFields::from_pairs(&[(FIELD_UNIT_PETNUMBER, number)]),
+    };
+    let events = &["UNIT_CLASSIFICATION_CHANGED", "PET_UI_UPDATE"];
+    let seen = rig.packets(
+        vec![
+            values(PET, 43),
+            values(OTHER, 7),
+            values(0xF130_0000_0000_0123, 5),
+        ],
+        3,
+    );
+    // `UnitName` reads the units' pushed snapshot until #1289; 12340 re-reads the name first (`0x72d01c`), so it answers Fang at both.
+    assert_eq!(
+        pin(&seen, events, &["petui", "petname"]),
+        vec![
+            "UNIT_CLASSIFICATION_CHANGED pet | petui=1 petname=Rex",
+            "PET_UI_UPDATE | petui=1 petname=Rex",
+        ]
+    );
+    assert_eq!(rig.now().line(&["petname"]), "NOW | petname=Fang");
 }
 
 /// A pet created already fighting fires no `PET_ATTACK_START`: a new object's create runs no field handler (`0x4d64a4`, only a re-enabled one reaches `0x4d64be`), and the setter takes the pet's combat test into the attacking global instead (`0x5d6a80`).

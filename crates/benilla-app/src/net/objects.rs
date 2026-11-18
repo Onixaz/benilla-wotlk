@@ -112,6 +112,8 @@ pub(crate) struct Scene<'w, 's> {
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
     names: Res<'w, NameCache>,
+    /// The pet list whose head the pet number's handler compares (`0x72d041`).
+    pets: Option<Res<'w, crate::ui_pet::PetList>>,
     items: ResMut<'w, Items>,
     go_templates: ResMut<'w, GameObjectTemplates>,
     death_net: ResMut<'w, crate::death::DeathNet>,
@@ -1527,15 +1529,19 @@ enum PetSignal {
     Attack(bool),
     /// `UNIT_FIELD_PET_NAME_TIMESTAMP` moved: the name watcher's callback on offset `0x218`.
     Renamed,
+    /// `UNIT_FIELD_PETNUMBER` moved: its field handler (`0x72cff0`, registered on offset `0x114` at `0x741f66`).
+    Number,
 }
 
 /// The unit signal a pet stat field raises: the field's index is its event slot (`0x614190`), 23 `UNIT_HAPPINESS` and 71-72 `UNIT_PET_EXPERIENCE`.
 fn pet_signal(e: &FieldChanged) -> Option<PetSignal> {
     use benilla_protocol::field::{
-        FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_PET_NAME_TIMESTAMP,
-        FIELD_UNIT_POWER1,
+        FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_PETNUMBER,
+        FIELD_UNIT_PET_NAME_TIMESTAMP, FIELD_UNIT_POWER1,
     };
-    if e.unit_field(FIELD_UNIT_PET_NAME_TIMESTAMP) {
+    if e.unit_field(FIELD_UNIT_PETNUMBER) {
+        Some(PetSignal::Number)
+    } else if e.unit_field(FIELD_UNIT_PET_NAME_TIMESTAMP) {
         Some(PetSignal::Renamed)
     } else if e.unit_field(FIELD_UNIT_POWER1 + 4) {
         Some(PetSignal::Happiness)
@@ -1591,8 +1597,23 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
                 });
             }
             PetSignal::Renamed => crate::ui_pet::pet_renamed(guid, ours, &mut sc.ui),
+            PetSignal::Number => pet_number_watch(sc, guid),
             _ => {}
         }
+    }
+}
+
+/// The pet number's field handler (`0x72cff0`): a held unit's name re-read, asking on a miss (`0x72d01c`), its scale restamped off the moved store (`0x72d025`) and its nameplate released (`0x72d02c`); then `UNIT_CLASSIFICATION_CHANGED` to every token naming the guid (`0x72d034` -> `0x60bf10`), and `PET_UI_UPDATE` when it is the pet list's head (`0x72d041`, `0x72d05f`).
+fn pet_number_watch(sc: &mut Scene, guid: u64) {
+    if let Some(store) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) {
+        let _ = sc.names.resolve_unit(guid, Some(store), &sc.net);
+        sc.ui.write(move |script| script.release_nameplate(guid));
+    }
+    sc.ui.write(move |script| {
+        script.fire_unit_event(guid, "UNIT_CLASSIFICATION_CHANGED", Vec::new());
+    });
+    if sc.pets.as_ref().and_then(|l| l.head()) == Some(guid) {
+        sc.ui.fire("PET_UI_UPDATE", Vec::new());
     }
 }
 

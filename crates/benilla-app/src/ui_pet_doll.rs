@@ -1,12 +1,4 @@
-//! The pet paper-doll feed: `PetPaperDollFrame`'s combat stats and its model booth.
-//!
-//! The pet's [`UnitCombatStats`] come from the character sheet's descriptor-only core and
-//! bindings, as in the reference, whose page calls the `PaperDollFrame_Set*` setters with `"pet"`
-//! (`PetPaperDollFrame.lua:73-81`). The stat events fire with `arg1 = "pet"` for the page's
-//! registrations (`PetPaperDollFrame.lua:12-20`) except `UNIT_DEFENSE`, which nothing fires.
-//! `UNIT_LEVEL` and the `UNIT_PET*` events come from [`crate::ui_pet`] and
-//! [`crate::ui_pet_stats`]; `PET_UI_CLOSE` fires from [`crate::ui_pet::set_pet_tail`], and
-//! `PET_UI_UPDATE` waits on the pet number's field handler (#1331).
+//! The pet paper-doll feed: `PetPaperDollFrame`'s combat stats from the character sheet's descriptor-only core under `"pet"` (`PetPaperDollFrame.lua:12-20`, `:73-81`) and its model booth; `PET_UI_CLOSE` fires from [`crate::ui_pet::set_pet_tail`] and `PET_UI_UPDATE` from the pet number's field handler; nothing fires the page's `UNIT_DEFENSE`.
 
 use bevy::prelude::*;
 

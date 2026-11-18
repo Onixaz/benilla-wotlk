@@ -1394,7 +1394,10 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_CLASSIFICATION_CHANGED`, the target frame's border repaint, on a change of the gated
     // rank, which is the classification: the creature query landing, a mob enslaved or released.
-    if prev.is_none_or(|p| p.rank != cur.rank) {
+    // A moved pet number signals it from its own field handler (`0x72d034`).
+    let by_number =
+        prev.is_some() && edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_PETNUMBER);
+    if !by_number && prev.is_none_or(|p| p.rank != cur.rank) {
         script.fire_event("UNIT_CLASSIFICATION_CHANGED", vec![tok()]);
     }
     // `UNIT_FACTION`, the PvP-icon repaint, on the fields the icon reads, on the tapped bit (the
