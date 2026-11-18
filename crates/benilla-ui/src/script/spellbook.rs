@@ -939,7 +939,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let guid = model.unit_guids.guid_of(&token);
+            let guid = model.token_guid(&token);
             drop(model);
             let can = guid.is_some_and(|guid| {
                 super::live::read_live(|l| l.spell_can_target_unit(guid)).unwrap_or(false)

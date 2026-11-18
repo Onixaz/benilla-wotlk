@@ -1257,10 +1257,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if quest_id == 0 {
                 return Ok(Value::Nil);
             }
-            let guids = &model.unit_guids;
-            let Some(guid) = guids.guid_of(&token).filter(|&g| g != 0) else {
+            let Some(guid) = model.token_guid(&token).filter(|&g| g != 0) else {
                 return Ok(Value::Nil);
             };
+            let guids = &model.unit_guids;
             if guid != guids.player && !guids.party.contains(&guid) {
                 return Ok(Value::Nil);
             }

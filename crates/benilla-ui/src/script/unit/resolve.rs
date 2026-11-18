@@ -1,13 +1,15 @@
 //! The unit-token resolver, token to guid, over the state it reads, which the app pushes as
-//! [`UnitGuids`]: a base, then any number of `target` hops, each off the current unit's
-//! `UNIT_FIELD_TARGET`. Every compare folds ASCII case. The bases are 12340's (`0x60abf0`, in its
-//! compare order): `player`, `vehicle`, `pet`, `target`, `partypetN`, `partyN`, `raidpetN`,
-//! `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`, `focus`, then the exact
-//! `npc`, `questnpc` and `none`. The app pushes no guid for `commentatorN` or `questnpc` yet, so
-//! they name nobody (#90); 12340's `pet` and `-` suffixes and its name lookup (`0x60aaa0`,
-//! `0x60a630`) are not built.
+//! [`UnitGuids`] (`0x60abf0`). Every compare folds ASCII case. A token is a base, then hops: the
+//! bases are 12340's, in its compare order: `player`, `vehicle`, `pet`, `target`, `partypetN`,
+//! `partyN`, `raidpetN`, `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`,
+//! `focus`, then the exact `npc`, `questnpc` and `none`. Each hop after it (`0x60aaa0`), behind an
+//! optional `-`, is `target` or `pet`. A token whose base names nobody with text after it, whose
+//! text is not hops, or that no base matches goes to the name lookup (`0x60a630`): a group member's
+//! or pet's name, then hops.
 
 use std::collections::HashMap;
+
+use super::super::live::read_live;
 
 /// What the resolver reads: the guid globals, the group tables and, for each unit a token can
 /// reach, whether it is held and whom it targets. A zero guid is nobody.
@@ -90,8 +92,8 @@ const PREFIXES: [(&str, Base); 14] = [
     ("focus", Base::Focus),
 ];
 
-/// The unit a token starts from, before any `target` hop. A numbered base carries its 0-based
-/// row, [`index_of`]'s: a table lookup that fails on the reserved `u32::MAX` of a missing or zero
+/// The unit a token starts from, before any hop. A numbered base carries its 0-based row,
+/// [`index_of`]'s: a table lookup that fails on the reserved `u32::MAX` of a missing or zero
 /// number names nobody.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitBase {
@@ -99,7 +101,7 @@ pub enum UnitBase {
     Pet,
     Target,
     Mouseover,
-    /// The interaction NPC; an exact compare, so it takes no `target` hop (`0x60af58`).
+    /// The interaction NPC; an exact compare, so it takes no hop (`0x60af58`).
     Npc,
     Party(u32),
     PartyPet(u32),
@@ -121,17 +123,65 @@ pub enum UnitBase {
     Commentator(u32),
 }
 
+/// One hop after a base or a name (`0x60aaa0`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hop {
+    /// To the unit's `UNIT_FIELD_TARGET`; off the player, to the target global.
+    Target,
+    /// To the unit's pet, `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`: taken off the player or a
+    /// party or raid member, or off any unit while the player's `PLAYER_FLAGS` holds
+    /// [`PET_OF_ANYONE`]; off another unit the hops fail.
+    Pet,
+}
+
+/// The `PLAYER_FLAGS` bit that opens the `pet` hop to any unit (`0x60ab70`).
+pub const PET_OF_ANYONE: u32 = 0x8_0000;
+
+/// The text after a token's base, read hop by hop as `0x60aaa0` reads it: an optional `-`, then
+/// `target` or `pet`. Text that is neither reads as one `Err`, which ends the hops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hops<'a>(&'a [u8]);
+
+impl Hops<'_> {
+    /// No text after the base.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl Iterator for Hops<'_> {
+    type Item = Result<Hop, ()>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let text = self.0;
+        let after_dash = text.strip_prefix(b"-").unwrap_or(text);
+        let (hop, len) = if text.is_empty() {
+            return None;
+        } else if has_prefix(after_dash, "target") {
+            (Hop::Target, 6)
+        } else if has_prefix(after_dash, "pet") {
+            (Hop::Pet, 3)
+        } else {
+            self.0 = &[];
+            return Some(Err(()));
+        };
+        self.0 = &after_dash[len..];
+        Some(Ok(hop))
+    }
+}
+
 /// What the reference's unit-token resolver makes of a token's text, before it reads any state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnitTokenParse {
-    /// None of the compares match: the reference raises `Unknown unit name`.
-    Unknown,
-    /// Recognised, and names nobody whatever the state: the empty token, or text after the base,
-    /// and after each hop, that is not `target`.
+pub enum UnitTokenParse<'a> {
+    /// The empty token, which the resolver refuses (`0x60ac1d`) unless its caller defaults it to
+    /// the target.
+    Empty,
+    /// None of the compares match: the whole token goes to the name lookup (`0x60a630`).
+    Name,
+    /// `none`, the `-1` guid (`0x60afc9`), which names no object.
     Nobody,
-    /// A base and the `target` hops after it, each off the current unit's `UNIT_FIELD_TARGET`; the
-    /// loop has no depth limit.
-    Unit { base: UnitBase, hops: usize },
+    /// A base and the text after it.
+    Unit { base: UnitBase, hops: Hops<'a> },
 }
 
 /// `_strnicmp(s, lit, strlen(lit)) == 0`: ASCII fold only, bytes of 0x80 and up exact.
@@ -147,9 +197,8 @@ fn base_of(token: &[u8]) -> Option<(Base, usize)> {
         .map(|&(p, b)| (b, p.len()))
 }
 
-/// The inline base-10 parse after `party`, `partypet`, `raid` and `raidpet`, then `dec` to a
-/// 0-based index: digits accumulate with 32-bit wrap, and a missing number leaves 0, whose index
-/// `0xffffffff` every bound rejects.
+/// The inline base-10 parse after a numbered base, then `dec` to a 0-based index: digits accumulate
+/// with 32-bit wrap, and a missing number leaves 0, whose index `0xffffffff` every bound rejects.
 fn index_of(s: &[u8]) -> (u32, usize) {
     let digits = s.iter().take_while(|b| b.is_ascii_digit()).count();
     let n = s[..digits].iter().fold(0u32, |acc, &b| {
@@ -159,25 +208,27 @@ fn index_of(s: &[u8]) -> (u32, usize) {
 }
 
 /// Read `token`'s text as the reference's unit-token resolver does, before any state: the base by
-/// the compares in their order, a numbered base's row, then `target` hops to the end of the text.
+/// the compares in their order, a numbered base's row, then the text left for the hops.
 /// `"party1target"` is party1 and one hop, `"targettarget"` the target and one, and `"npctarget"`
 /// is none of the compares, as `npc` is one full-string compare.
-pub fn parse_unit_token(token: &str) -> UnitTokenParse {
+pub fn parse_unit_token(token: &str) -> UnitTokenParse<'_> {
     let bytes = token.as_bytes();
     if bytes.is_empty() {
-        return UnitTokenParse::Nobody;
+        return UnitTokenParse::Empty;
     }
     let Some((base, len)) = base_of(bytes) else {
-        let exact = |base| UnitTokenParse::Unit { base, hops: 0 };
+        let exact = |base| UnitTokenParse::Unit {
+            base,
+            hops: Hops(&[]),
+        };
         return if token.eq_ignore_ascii_case("npc") {
             exact(UnitBase::Npc)
         } else if token.eq_ignore_ascii_case("questnpc") {
             exact(UnitBase::QuestNpc)
         } else if token.eq_ignore_ascii_case("none") {
-            // The `-1` guid (`0x60afc9`), which names no object.
             UnitTokenParse::Nobody
         } else {
-            UnitTokenParse::Unknown
+            UnitTokenParse::Name
         };
     };
     let mut rest = &bytes[len..];
@@ -202,15 +253,40 @@ pub fn parse_unit_token(token: &str) -> UnitTokenParse {
         Base::RaidPet => numbered(UnitBase::RaidPet),
         Base::Raid => numbered(UnitBase::Raid),
     };
-    let mut hops = 0;
-    while !rest.is_empty() {
-        if !has_prefix(rest, "target") {
-            return UnitTokenParse::Nobody;
-        }
-        rest = &rest[6..];
-        hops += 1;
+    UnitTokenParse::Unit {
+        base,
+        hops: Hops(rest),
     }
-    UnitTokenParse::Unit { base, hops }
+}
+
+/// The name lookup's buffer (`0x60a630`): up to 48 bytes of the token, stopping where the rest is
+/// `-target` or `-pet`, whole, or begins `-target-` or `-pet-`. Any other `-` it copies asks for
+/// names with their realm. Returns the name, whether it carries a realm, and the hops after it.
+pub fn split_name(token: &str) -> (&[u8], bool, Hops<'_>) {
+    let bytes = token.as_bytes();
+    let mut with_realm = false;
+    let mut len = 0;
+    while len < bytes.len() && len < 48 {
+        let rest = &bytes[len..];
+        if rest[0] == b'-' {
+            let whole = |lit: &str| rest.eq_ignore_ascii_case(lit.as_bytes());
+            if whole("-target")
+                || whole("-pet")
+                || has_prefix(rest, "-target-")
+                || has_prefix(rest, "-pet-")
+            {
+                break;
+            }
+            with_realm = true;
+        }
+        len += 1;
+    }
+    (&bytes[..len], with_realm, Hops(&bytes[len..]))
+}
+
+/// The name compare (`SStrCmpUTF8I`): the whole text, folding case through UTF-8.
+fn same_name(buffer: &[u8], name: &str) -> bool {
+    String::from_utf8_lossy(buffer).to_lowercase() == name.to_lowercase()
 }
 
 impl UnitGuids {
@@ -251,18 +327,44 @@ impl UnitGuids {
             && *held == other.held
     }
 
-    /// The guid `token` names, or `None` for nobody; `Err` for a token none of the compares match,
-    /// where the reference raises `Unknown unit name: %s`. An empty token is nobody.
+    /// The guid `token` names with no name lookup, which needs the names [`Self::resolve_named`]
+    /// reads: `None` for nobody, `Err` where the lookup would run.
+    #[cfg(test)]
     pub(crate) fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
-        match parse_unit_token(token) {
-            UnitTokenParse::Unknown => Err(()),
-            UnitTokenParse::Nobody => Ok(None),
-            UnitTokenParse::Unit { base, hops } => Ok(self.resolve_unit(base, hops)),
-        }
+        self.resolve_named(token, |_, _| None)
     }
 
-    /// The guid a parsed token names: its base's guid, then each `target` hop. `None` is nobody.
-    pub(crate) fn resolve_unit(&self, base: UnitBase, hops: usize) -> Option<u64> {
+    /// The guid `token` names (`0x60abf0`, with no target default), `None` for nobody, `Err` where
+    /// the reference answers false: the empty token, or a name lookup that finds no one. A base
+    /// whose unit is there, or that names nobody with no text after it, takes the hops; a hop to
+    /// nobody is nobody. Otherwise the whole token is a name: `name_of(token, with_realm)` is the
+    /// name a unit token's unit goes by (`0x60a360`), `"Name-Realm"` with the realm asked for and
+    /// known.
+    pub(crate) fn resolve_named(
+        &self,
+        token: &str,
+        name_of: impl Fn(&str, bool) -> Option<String>,
+    ) -> Result<Option<u64>, ()> {
+        match parse_unit_token(token) {
+            UnitTokenParse::Empty => return Err(()),
+            UnitTokenParse::Nobody => return Ok(None),
+            UnitTokenParse::Unit { base, hops } => {
+                let guid = self.base_guid(base);
+                if guid != 0 || hops.is_empty() {
+                    if let Some(end) = self.follow(guid, hops) {
+                        return Ok(Some(end).filter(|&g| g != 0));
+                    }
+                }
+            }
+            UnitTokenParse::Name => {}
+        }
+        let (guid, hops) = self.by_name(token, name_of).ok_or(())?;
+        let end = self.follow(guid, hops).ok_or(())?;
+        Ok(Some(end).filter(|&g| g != 0))
+    }
+
+    /// The unit a base names, 0 for nobody.
+    pub(crate) fn base_guid(&self, base: UnitBase) -> u64 {
         // The indexed bases: the table's row for the parsed number.
         let at = |table: &[u64], row: u32| {
             usize::try_from(row)
@@ -271,9 +373,9 @@ impl UnitGuids {
                 .copied()
                 .unwrap_or(0)
         };
-        let guid = match base {
+        match base {
             UnitBase::Player => self.player,
-            UnitBase::Pet if self.player == 0 => return None,
+            UnitBase::Pet if self.player == 0 => 0,
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
             UnitBase::Npc => self.npc,
@@ -287,24 +389,97 @@ impl UnitGuids {
             UnitBase::Raid(row) => at(&self.raid, row),
             // Bounded by the slot count, as `0x5ed710` is.
             UnitBase::Boss(row) => at(&self.boss, row),
-            UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => return None,
+            UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => 0,
             UnitBase::Mouseover => self.mouseover,
             UnitBase::Focus => self.focus,
             UnitBase::Vehicle => self.vehicle,
             // Bounded by the five slots only (`0x608180`, `0x60a2f0`).
             UnitBase::Arena(row) => at(&self.arena, row),
             UnitBase::ArenaPet(row) => at(&self.arena_pets, row),
-            // No guid pushed for these yet (#90).
-            UnitBase::QuestNpc | UnitBase::Commentator(_) => return None,
-        };
-        self.follow(guid, hops)
+            // The open quest window's giver, read live (`0x6081b0`).
+            UnitBase::QuestNpc => read_live(|l| l.quest_npc()).flatten().unwrap_or(0),
+            // The spectated players are listed in commentator mode alone, which benilla never
+            // asks for (`CMSG_COMMENTATOR_ENABLE`), so the list is empty.
+            UnitBase::Commentator(_) => 0,
+        }
     }
 
-    /// The guids a `target` hop can end on: each held unit's target, when it names one. `held`
-    /// holds the bases' units and each unit a hop reaches from them, so a token with a hop names
-    /// one of these or nobody, and a per-guid feed over them covers the chains a script can spell.
-    /// A guid repeats when two units share a target, and the last hop's unit need not be held: the
-    /// lookup that finds its object is the reader's.
+    /// Whether `guid` is a party member or on the raid roster (`0x512a00`).
+    fn in_group(&self, guid: u64) -> bool {
+        guid != 0 && (self.party.contains(&guid) || self.raid.contains(&guid))
+    }
+
+    /// The hops from `guid` (`0x60aaa0`): `None` where they fail, which zeroes the guid and sends
+    /// the token to the name lookup; a hop to nobody goes on from nobody. A `target` hop off the
+    /// player reads the target global; off another unit, its held `UNIT_FIELD_TARGET`. A `pet`
+    /// hop reads the held unit's pet live.
+    pub(crate) fn follow(&self, mut guid: u64, hops: Hops<'_>) -> Option<u64> {
+        let me = (self.player != 0).then_some(self.player);
+        for hop in hops {
+            guid = match hop.ok()? {
+                Hop::Target if Some(guid) == me => self.target,
+                Hop::Target => self.held.get(&guid).copied().unwrap_or(0),
+                Hop::Pet => {
+                    let open = Some(guid) == me
+                        || self.in_group(guid)
+                        || me
+                            .and_then(|me| read_live(|l| l.player_flags(me)).flatten())
+                            .is_some_and(|flags| flags & PET_OF_ANYONE != 0);
+                    if !open {
+                        return None;
+                    }
+                    read_live(|l| l.unit_pet(guid)).flatten().unwrap_or(0)
+                }
+            };
+        }
+        Some(guid)
+    }
+
+    /// The name lookup (`0x60a630`): the name in [`split_name`]'s buffer against ours, then the
+    /// raid roster's, else the party's, else the counted arena opponents'; then our pet's, and the
+    /// same tables' pets. Returns the first match's guid and the hops after the name.
+    pub(crate) fn by_name<'t>(
+        &self,
+        token: &'t str,
+        name_of: impl Fn(&str, bool) -> Option<String>,
+    ) -> Option<(u64, Hops<'t>)> {
+        let (buffer, with_realm, hops) = split_name(token);
+        let named = |unit: &str| name_of(unit, with_realm).is_some_and(|n| same_name(buffer, &n));
+        let party_count = self.party.iter().take_while(|&&g| g != 0).count();
+        let arena_count = self.arena_count.min(self.arena.len());
+        let first = |prefix: &str, table: &[u64], count: usize| {
+            (0..count.min(table.len()))
+                .find(|i| named(&format!("{prefix}{}", i + 1)))
+                .map_or(0, |i| table[i])
+        };
+        let mut guid = if named("player") {
+            self.player
+        } else if !self.raid.is_empty() {
+            first("raid", &self.raid, self.raid.len())
+        } else if party_count != 0 {
+            first("party", &self.party, party_count)
+        } else {
+            first("arena", &self.arena, arena_count)
+        };
+        if guid == 0 {
+            guid = if named("pet") {
+                self.base_guid(UnitBase::Pet)
+            } else if !self.raid.is_empty() {
+                first("raidpet", &self.raid_pets, self.raid.len())
+            } else if party_count != 0 {
+                first("partypet", &self.party_pets, party_count)
+            } else {
+                first("arenapet", &self.arena_pets, arena_count)
+            };
+        }
+        (guid != 0).then_some((guid, hops))
+    }
+
+    /// The guids a hop can end on: each held unit's target, when it names one. `held` holds the
+    /// bases' units and each unit a hop reaches from them, so a token with a hop names one of
+    /// these or nobody, and a per-guid feed over them covers the chains a script can spell. A guid
+    /// repeats when two units share a target, and the last hop's unit need not be held: the lookup
+    /// that finds its object is the reader's.
     pub(crate) fn chain_ends(&self) -> impl Iterator<Item = u64> + '_ {
         // The focus and the vehicle too: they read their unit by guid, the way a hop's end is read.
         self.held
@@ -314,15 +489,15 @@ impl UnitGuids {
             .filter(|&guid| guid != 0 && guid != crate::script::focus::NOBODY)
     }
 
-    /// [`Self::resolve`], an unrecognised token naming nobody: the client's resolver raises for
-    /// none (`Wow.exe` holds no unit-name error string).
+    /// [`Self::resolve`], a token the reference refuses naming nobody.
+    #[cfg(test)]
     pub(crate) fn guid_of(&self, token: &str) -> Option<u64> {
         self.resolve(token).unwrap_or(None)
     }
 
     /// Every token naming `guid`, in the order 12340's unit-event fan-out lists them (`0x60bb70`):
     /// `player`, `vehicle`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `arenaN` or
-    /// `arenapetN`, `bossN`, `target`, `focus`, `npc`. No `target` hop and no `mouseover`.
+    /// `arenapetN`, `bossN`, `target`, `focus`, `npc`. No hop and no `mouseover`.
     pub(crate) fn tokens_naming(&self, guid: u64) -> Vec<String> {
         let mut out = Vec::new();
         if guid == 0 {
@@ -374,18 +549,6 @@ impl UnitGuids {
             out.push("npc".into());
         }
         out
-    }
-
-    /// The `target` loop: nobody stays nobody, and each hop goes to the held unit's
-    /// `UNIT_FIELD_TARGET`; a hop off a unit not held is a quiet nobody.
-    fn follow(&self, mut guid: u64, hops: usize) -> Option<u64> {
-        for _ in 0..hops {
-            if guid == 0 {
-                return None;
-            }
-            guid = *self.held.get(&guid)?;
-        }
-        Some(guid).filter(|&g| g != 0)
     }
 }
 
@@ -513,6 +676,14 @@ mod tests {
         }
     }
 
+    /// A base token's base and its hops, `None` for any other parse.
+    fn read(token: &str) -> Option<(UnitBase, Vec<Result<Hop, ()>>)> {
+        match parse_unit_token(token) {
+            UnitTokenParse::Unit { base, hops } => Some((base, hops.collect())),
+            _ => None,
+        }
+    }
+
     fn at(token: &str) -> Option<u64> {
         guids().resolve(token).expect("recognised")
     }
@@ -564,7 +735,7 @@ mod tests {
     #[test]
     fn a_token_parses_to_a_base_and_its_hops() {
         use UnitBase::*;
-        let unit = |base, hops| UnitTokenParse::Unit { base, hops };
+        let unit = |base, n: usize| Some((base, vec![Ok(Hop::Target); n]));
         for (token, want) in [
             ("player", unit(Player, 0)),
             ("pet", unit(Pet, 0)),
@@ -591,34 +762,36 @@ mod tests {
             ("PARTY1TARGET", unit(Party(0), 1)),
             ("PartyPet2TargetTarget", unit(PartyPet(1), 2)),
         ] {
-            assert_eq!(parse_unit_token(token), want, "{token}");
+            assert_eq!(read(token), want, "{token}");
         }
         let deep = format!("player{}", "target".repeat(1000));
-        assert_eq!(
-            parse_unit_token(&deep),
-            unit(Player, 1000),
-            "no depth limit"
-        );
+        assert_eq!(read(&deep), unit(Player, 1000), "no depth limit");
     }
 
-    /// Text after the base, or after any hop, that is not `target` names nobody; a token none of
-    /// the compares match is the raise, `npc` being an exact compare with no chain.
+    /// Text after the base, or after any hop, that is neither hop reads as one `Err`, which ends
+    /// the hops; a token none of the compares match is the name lookup's, `npc` being an exact
+    /// compare with no hop.
     #[test]
-    fn a_token_that_is_not_base_then_hops_parses_to_nobody_or_the_raise() {
-        for token in [
-            "",
-            "party1foo",
-            "playerfoo",
-            "player1",
-            "pet1",
-            "party1targetfoo",
-            "party1targettarge",
-            "party1 target",
-            "targetfoo",
-            "raid3x",
+    fn text_that_is_not_a_hop_ends_the_hops_and_no_base_is_a_name() {
+        use Hop::*;
+        for (token, want) in [
+            ("party1foo", vec![Err(())]),
+            ("player1", vec![Err(())]),
+            ("pet1", vec![Err(())]),
+            ("party1targetfoo", vec![Ok(Target), Err(())]),
+            ("party1targettarge", vec![Ok(Target), Err(())]),
+            ("party1 target", vec![Err(())]),
+            ("raid3x", vec![Err(())]),
+            ("party1-", vec![Err(())]),
+            ("party1--target", vec![Err(())]),
+            ("party1pet", vec![Ok(Pet)]),
+            ("party1-pet-target", vec![Ok(Pet), Ok(Target)]),
+            ("Party1PETtarget", vec![Ok(Pet), Ok(Target)]),
+            ("targetpettarget", vec![Ok(Pet), Ok(Target)]),
         ] {
-            assert_eq!(parse_unit_token(token), UnitTokenParse::Nobody, "{token}");
+            assert_eq!(read(token).map(|(_, hops)| hops), Some(want), "{token}");
         }
+        assert_eq!(parse_unit_token(""), UnitTokenParse::Empty);
         for token in [
             "npctarget",
             "npc1",
@@ -629,12 +802,12 @@ mod tests {
             "targe",
             "nonex",
         ] {
-            assert_eq!(parse_unit_token(token), UnitTokenParse::Unknown, "{token}");
+            assert_eq!(parse_unit_token(token), UnitTokenParse::Name, "{token}");
         }
     }
 
-    /// 12340's bases past 1.12.1's (`0x60abf0`): each parses, and names nobody until the app
-    /// pushes its guid.
+    /// 12340's bases past 1.12.1's (`0x60abf0`): each parses, and names nobody with no guid
+    /// pushed; `commentatorN` always, as benilla never enters commentator mode.
     #[test]
     fn the_3_3_5a_bases_parse_and_name_nobody() {
         for (token, base, hops) in [
@@ -649,30 +822,28 @@ mod tests {
             ("questnpc", UnitBase::QuestNpc, 0),
         ] {
             assert_eq!(
-                parse_unit_token(token),
-                UnitTokenParse::Unit { base, hops },
+                read(token),
+                Some((base, vec![Ok(Hop::Target); hops])),
                 "{token}"
             );
-            assert_eq!(guids().resolve(token), Ok(None), "{token}");
+            let want = if hops == 0 { Ok(None) } else { Err(()) };
+            assert_eq!(guids().resolve(token), want, "{token}");
         }
         assert_eq!(parse_unit_token("none"), UnitTokenParse::Nobody);
-        assert_eq!(parse_unit_token("questnpctarget"), UnitTokenParse::Unknown);
+        assert_eq!(parse_unit_token("questnpctarget"), UnitTokenParse::Name);
     }
 
     #[test]
     fn a_recognised_token_naming_nobody_is_quiet() {
         for t in [
-            "",
             "party",
             "party0",
             "party5",
-            "partyX",
             "raid0",
             "raid4",
             "raidpet3",
-            "playerfoo",
-            "targetfoo",
             "partypet5",
+            "none",
         ] {
             assert_eq!(guids().resolve(t), Ok(None), "{t}");
         }
@@ -692,6 +863,131 @@ mod tests {
             Ok(Some(MOB)),
             "the target global is not gated"
         );
+    }
+
+    /// The tokens the reference refuses (`0x60abf0` false): the empty one, and any token the name
+    /// lookup finds no one for, a base naming nobody with text after it and a base whose text is
+    /// not hops among them.
+    #[test]
+    fn a_token_no_name_matches_is_refused() {
+        for t in [
+            "",
+            "party1foo",
+            "playerfoo",
+            "targetfoo",
+            "partyX",
+            "pet1",
+            "party5target",
+            "raid0target",
+            "player-",
+        ] {
+            assert_eq!(guids().resolve(t), Err(()), "{t}");
+        }
+    }
+
+    /// A `-` may stand before any hop, and `target` off the player reads the target global.
+    #[test]
+    fn a_dash_may_lead_each_hop() {
+        assert_eq!(at("party1-target"), Some(ME));
+        assert_eq!(at("party1-target-target"), Some(MOB));
+        assert_eq!(at("PLAYER-TARGET"), Some(MOB));
+        let g = UnitGuids {
+            target: P1,
+            ..guids()
+        };
+        assert_eq!(
+            g.guid_of("playertarget"),
+            Some(P1),
+            "the global, not the field"
+        );
+    }
+
+    /// The `pet` hop (`0x60ab2c`-`0x60abb4`): our pet off us, a member's off a party or raid member,
+    /// and off any other unit only with [`PET_OF_ANYONE`] in our `PLAYER_FLAGS`; refused otherwise,
+    /// which sends the token to the name lookup. A unit with no pet, or not held, hops to nobody.
+    #[test]
+    fn the_pet_hop_reads_the_held_units_pet() {
+        const MOB_PET: u64 = 0xF140_0000_0000_00AA;
+        let view = |flags: u32| crate::script::live::TestView {
+            units: HashMap::from([(ME, (0, 1))]),
+            player_flags: HashMap::from([(ME, flags)]),
+            unit_pets: HashMap::from([(ME, PET), (P1, P1_PET), (MOB, MOB_PET), (R3, 0x3355)]),
+            ..Default::default()
+        };
+        let _loan = crate::script::live::lend_test(view(0));
+        assert_eq!(at("playerpet"), Some(PET));
+        assert_eq!(at("party1pet"), Some(P1_PET));
+        assert_eq!(at("Party1Pet-Target"), Some(MOB));
+        assert_eq!(at("raid3pet"), Some(0x3355), "a raid member's");
+        assert_eq!(at("party2pet"), None, "a member not held has no pet");
+        assert_eq!(at("party1pettarget"), Some(MOB));
+        assert_eq!(
+            at("targettargetpet"),
+            Some(P1_PET),
+            "the hop's unit is the member"
+        );
+        assert_eq!(guids().resolve("targetpet"), Err(()), "not ours to read");
+        assert_eq!(guids().resolve("petpet"), Err(()));
+        drop(_loan);
+        let _loan = crate::script::live::lend_test(view(PET_OF_ANYONE));
+        assert_eq!(at("targetpet"), Some(MOB_PET), "any unit's under the flag");
+        assert_eq!(at("petpet"), None);
+    }
+
+    /// Names for the lookup: ours, party1's, party2's, our pet's and party1's pet's, and party1 is
+    /// of another realm.
+    fn names(unit: &str, with_realm: bool) -> Option<String> {
+        Some(match (unit, with_realm) {
+            ("player", _) => "Me".into(),
+            ("party1", false) => "Pia".into(),
+            ("party1", true) => "Pia-Faraway".into(),
+            ("party2", _) => "Petra".into(),
+            ("pet", _) => "Fluffy".into(),
+            ("partypet1", _) => "Wolfie".into(),
+            ("raid1", _) => "Ria".into(),
+            _ => return None,
+        })
+    }
+
+    /// The name lookup (`0x60a630`): a token no base reads, or a base whose text is not hops,
+    /// matches our name, then the party's, then our pet's and the party's pets', folding case; the
+    /// hops after a `-target` or `-pet` follow it, and any other `-` asks for `Name-Realm`.
+    #[test]
+    fn a_token_that_reads_as_no_unit_is_looked_up_by_name() {
+        let g = UnitGuids {
+            raid: Vec::new(),
+            raid_pets: Vec::new(),
+            ..guids()
+        };
+        let find = |t: &str| g.resolve_named(t, names);
+        assert_eq!(find("Me"), Ok(Some(ME)));
+        assert_eq!(find("pia"), Ok(Some(P1)));
+        assert_eq!(find("Pia-target"), Ok(Some(ME)), "party1 targets us");
+        assert_eq!(find("Pia-TARGET-target"), Ok(Some(MOB)));
+        assert_eq!(find("Pia-Faraway"), Ok(Some(P1)), "with the realm");
+        assert_eq!(
+            find("Pia-Faraway-target"),
+            Ok(Some(ME)),
+            "the realm, then its hop"
+        );
+        assert_eq!(
+            find("Pia-targetx"),
+            Err(()),
+            "`-target` stops the name whole only"
+        );
+        assert_eq!(find("Petra"), Ok(Some(FAR)), "`pet` reads `ra` as no hop");
+        assert_eq!(find("Fluffy"), Ok(Some(PET)));
+        assert_eq!(find("Wolfie-target"), Ok(Some(MOB)));
+        assert_eq!(find("Piatarget"), Err(()), "only a `-` ends the name");
+        assert_eq!(find("Nobody"), Err(()));
+        assert_eq!(
+            guids().resolve_named("Pia", names),
+            Err(()),
+            "in a raid the roster's names are read, not the party's"
+        );
+        assert_eq!(guids().resolve_named("Ria", names), Ok(Some(ME)));
+        let long = format!("Pia{}", "x".repeat(60));
+        assert_eq!(find(&long), Err(()), "48 bytes at most");
     }
 
     #[test]

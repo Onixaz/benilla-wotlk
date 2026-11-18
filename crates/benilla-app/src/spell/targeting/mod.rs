@@ -452,14 +452,17 @@ impl ScriptCursor<'_, '_> {
     /// dropped a call made while not targeting. Here a token that names no unit raises "Out of
     /// range." (0x59) and ends targeting, as the reference's abort clears the word, and a unit goes
     /// to [`bind_target_unit`].
-    pub(crate) fn spell_target_unit(&mut self, token: &str) {
+    pub(crate) fn spell_target_unit(&mut self, token: &str, vm: &benilla_ui::script::UiScript) {
         // An earlier call may have bound or ended the cast: not targeting, no-op.
         let held = self.ladder.ground.read().spell();
         let Some(spell_id) = held else {
             return;
         };
         let selection = self.selection.get().map(|s| s.clone()).unwrap_or_default();
-        match self.tokens.resolve(token, &selection) {
+        match self
+            .tokens
+            .resolve(token, &selection, crate::ui_unit::VmUnits::of(vm))
+        {
             Some((entity, guid)) => bind_target_unit(&mut self.ladder, &self.checks, entity, guid),
             None => {
                 debug!("ui_action: SpellTargetUnit({token}) names no unit — cast {spell_id} ends");
@@ -645,7 +648,7 @@ mod tests {
             .run_system_cached(
                 |mut script: NonSendMut<UiScript>, mut cursor: ScriptCursor| {
                     for token in script.take_spell_target_unit() {
-                        cursor.spell_target_unit(&token);
+                        cursor.spell_target_unit(&token, &script);
                     }
                 },
             )

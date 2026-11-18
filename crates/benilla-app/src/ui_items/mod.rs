@@ -5,9 +5,8 @@
 //! 86.. with no container object, like the bank), the object index and the template cache, and
 //! fires `BAG_UPDATE(bagID)` per changed bag. [`drain`] sends the Lua intents over [`wire_pos`]:
 //! an equippable item that starts no quest goes out as `CMSG_AUTOEQUIP_ITEM`, anything else
-//! through [`send_item_use`]. A move or split locks both ends and a destroy its slot in
-//! [`PendingItemOps`], until the descriptor resolves them or the server answers a non-zero
-//! `SMSG_INVENTORY_CHANGE_FAILURE`.
+//! through [`send_item_use`]. A send locks its items in [`PendingItemOps`] until a field watch,
+//! the post-init or a refusal unlocks them ([`watch`]).
 
 use benilla_protocol::messages::{
     BAG_PLAYER_INVENTORY, SLOT_BAG_FIRST, SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST,
@@ -20,16 +19,18 @@ use bevy::prelude::*;
 
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects};
-use crate::pending_item_ops::{LockTransitions, PendingItemOps};
+use crate::pending_item_ops::PendingItemOps;
 use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
 mod drain;
 mod equip_error;
 pub(crate) use equip_error::{equip_error_key, inventory_error_key};
+mod container_live;
+pub(crate) mod watch;
+pub(crate) use container_live::{BagRead, ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
-pub(crate) mod view_reads;
 
 pub(crate) use drain::send_auto_equip;
 use drain::{
@@ -38,7 +39,10 @@ use drain::{
 };
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
-use feed::{feed_containers, feed_item_sets, feed_item_stats, feed_item_tables, feed_player_req};
+use feed::build_item_tables;
+pub(crate) use feed::ItemRecordLive;
+pub(crate) use feed::ItemSetLive;
+pub(crate) use feed::{can_dual_wield, player_fields, player_rep_rank, player_skill};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
 pub(super) const PACK_SLOTS: u8 = 16;
@@ -108,10 +112,6 @@ pub(crate) struct EquipError {
     pub bag_slot: u8,
 }
 
-/// Inventory refusals (`SMSG_INVENTORY_CHANGE_FAILURE`) queued for the UI error line.
-#[derive(Resource, Default)]
-pub(crate) struct EquipErrors(pub Vec<EquipError>);
-
 /// The item guid in a Lua-space bag slot; for [`EQUIPMENT_BAG`], `slot0` is the wire slot, as in
 /// [`wire_pos`].
 pub(crate) fn slot_guid(
@@ -156,8 +156,7 @@ pub(crate) fn slot_guid(
     }
 }
 
-/// `(item guid, stack count)` at a Lua-space `(bag, 1-based slot)`, `(0, 0)` when empty:
-/// [`PendingItemOps`]'s baseline, since a partial split or destroy changes only the count.
+/// `(item guid, stack count)` at a Lua-space `(bag, 1-based slot)`, `(0, 0)` when empty.
 pub(crate) fn slot_guid_count(
     store: Option<&ObjectStore>,
     bag: i64,
@@ -1054,50 +1053,26 @@ impl Plugin for UiItemsPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         // The icons come from the equipment renderer's `ItemDisplays`.
-        app.init_resource::<EquipErrors>()
-            .init_resource::<PendingItemOps>()
+        app.init_resource::<PendingItemOps>()
+            .init_resource::<watch::WatchedBags>()
             // The soulbind confirmations' pending records: the client's pending-equip array and
             // its one bind-on-use cell.
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
-            .init_resource::<LockTransitions>()
-            .init_resource::<net::BagOpens>()
-            .init_resource::<feed::FreshTemplates>()
             // After the chain opens: unordered, it can run first and skip every item DBC.
             .add_systems(
                 Startup,
-                load_item_dbcs.after(benilla_assets::AssetSet::Open),
+                (
+                    load_item_dbcs.after(benilla_assets::AssetSet::Open),
+                    // The roll and scaling tables, once their catalogs are in.
+                    build_item_tables
+                        .after(load_item_dbcs)
+                        .after(crate::entities::setup_entities),
+                ),
             )
             .add_systems(
                 Update,
                 (
-                    // The pending-lock clear, ahead of both feeds that push `locked` and of the
-                    // press, whose item uses read the locks.
-                    feed::resolve_item_locks
-                        .before(feed_containers)
-                        .before(crate::ui_char::feed_char)
-                        .before(crate::ui_script::UiPress),
-                    // The slot cooldowns must be in the VM before `feed_action_state`'s
-                    // synchronous `BAG_UPDATE_COOLDOWN` makes the bag handlers re-read them.
-                    feed_containers
-                        .in_set(UnitFeed)
-                        .before(crate::ui_action::CooldownEvents),
-                    // The item-tooltip store answers before the input pass, so a re-hover the
-                    // next frame sees the answer.
-                    // After the book feed, so a `$?s` reads this frame's learns.
-                    feed_item_stats
-                        .in_set(UnitFeed)
-                        .after(crate::ui_action::SlotIdentityFeed),
-                    // In the net drain, ahead of every system lending the VM.
-                    feed::take_fresh_templates
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::apply_net_updates),
-                    feed_item_sets
-                        .in_set(UnitFeed)
-                        .after(crate::ui_action::SlotIdentityFeed),
-                    // The roll and scaling tables, pushed whole once per VM, before the first hover.
-                    feed_item_tables.in_set(UnitFeed),
-                    feed_player_req.in_set(UnitFeed),
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
                     // plain `UseContainerItem` is a script call.

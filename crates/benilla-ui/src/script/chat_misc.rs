@@ -63,7 +63,7 @@ impl super::UiScript {
             return EmoteTarget::Guid(NONE_TOKEN_GUID);
         }
         // A token naming nobody falls to the name scan, as one no compare matches does.
-        let guid = self.model_ref().unit_guids.guid_of(arg);
+        let guid = self.model_ref().token_guid(arg);
         match guid.filter(|&g| g != super::focus::NOBODY) {
             Some(guid) if non_player(guid) => EmoteTarget::Guid(0),
             Some(guid) => EmoteTarget::Guid(guid),

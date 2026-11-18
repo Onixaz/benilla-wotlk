@@ -62,11 +62,12 @@ impl SummonState {
         (self.summoner != 0).then_some(self.summoner)
     }
 
-    /// Ms left, clamped at zero; the binding truncates to seconds.
+    /// Ms left, clamped at zero; the binding truncates to seconds. Both stamps are whole ms before the subtraction, as the deadline and the clock are (`0x5164c8`), so the frame that latched reads the packet's delay exactly.
     fn time_left_ms(&self, now: f64) -> u32 {
-        self.expires_at.map_or(0.0, |at| {
-            ((at - now).max(0.0) * 1000.0).min(f64::from(u32::MAX))
-        }) as u32
+        let ms = |secs: f64| (secs * 1000.0).round() as i64;
+        self.expires_at.map_or(0, |at| {
+            (ms(at) - ms(now)).clamp(0, i64::from(u32::MAX)) as u32
+        })
     }
 }
 
@@ -346,6 +347,10 @@ mod tests {
         assert_eq!(summon.time_left_ms(160.0), 60_000);
         assert_eq!(summon.time_left_ms(220.0), 0, "expired, not negative");
         assert_eq!(summon.time_left_ms(9_999.0), 0);
+        // A clock whose seconds do not survive the add: the latching frame still reads the whole delay (`0x5164c8`).
+        let now = 36.886_194_806_050_03;
+        summon.latch(0x2a, 1519, 120_000, now);
+        assert_eq!(summon.time_left_ms(now) / 1000, 120);
     }
 
     /// `0x6d86fc`: a dead or ghost player declines and leaves a live question exactly as it was;

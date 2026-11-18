@@ -49,8 +49,12 @@ impl ItemNames {
     }
 }
 
-/// `SMSG_ITEM_NAME_QUERY_RESPONSE`: an answer lands, an unknown entry answers `None`.
-fn on_item_name(In(ev): In<SessionEvent>, mut names: ResMut<ItemNames>) {
+/// `SMSG_ITEM_NAME_QUERY_RESPONSE`: an answer lands, an unknown entry answers `None`, then the tooltips whose set block asked render again (`0x62ba29`).
+fn on_item_name(
+    In(ev): In<SessionEvent>,
+    mut names: ResMut<ItemNames>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+) {
     if let SessionEvent::ItemName { entry, name } = ev {
         debug!("item names: {entry} answered: {name:?}");
         names.names.insert(
@@ -60,6 +64,9 @@ fn on_item_name(In(ev): In<SessionEvent>, mut names: ResMut<ItemNames>) {
                 inventory_type,
             }),
         );
+        if let Some(mut ui) = ui {
+            ui.write(move |script| script.item_name_landed(entry));
+        }
     }
 }
 

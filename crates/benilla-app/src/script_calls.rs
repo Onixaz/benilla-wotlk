@@ -25,8 +25,11 @@ pub(crate) fn apply_script_calls(
     (script, _live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<(
-            crate::ui_script::OwnsCooldowns,
-            crate::ui_script::OwnsSelection,
+            (
+                crate::ui_script::OwnsCooldowns,
+                crate::ui_script::OwnsSelection,
+            ),
+            crate::ui_script::OwnsPending,
         )>,
     ),
     mut appliers: ParamSet<(
@@ -60,7 +63,7 @@ pub(crate) fn apply_script_calls(
                 unit: Some(unit),
                 exact,
             } => {
-                let named = appliers.p0().attack_unit(&unit, exact);
+                let named = appliers.p0().attack_unit(&unit, exact, script);
                 if appliers.p7().may_start() {
                     match named {
                         Some((entity, guid)) => {
@@ -76,7 +79,9 @@ pub(crate) fn apply_script_calls(
             ScriptCall::CancelShapeshiftForm => {
                 crate::ui_shapeshift::cancel_form(&mut appliers.p3());
             }
-            ScriptCall::SpellTargetUnit(token) => appliers.p1().spell_target_unit(&token),
+            ScriptCall::SpellTargetUnit(token) => {
+                appliers.p1().spell_target_unit(&token, script);
+            }
             ScriptCall::SpellStopTargeting => appliers.p1().stop_targeting(),
             ScriptCall::PlaceGlyph { socket, verdict } => {
                 appliers.p1().place_glyph(socket, verdict);
@@ -87,7 +92,7 @@ pub(crate) fn apply_script_calls(
                 at,
                 via_book,
             } => {
-                crate::ui_spellbook::cast_spell(&mut appliers.p3(), spell_id, at, via_book);
+                crate::ui_spellbook::cast_spell(&mut appliers.p3(), spell_id, at, via_book, script);
             }
             ScriptCall::CastShapeshiftForm(spell_id) => {
                 crate::ui_shapeshift::cast_form(&mut appliers.p3(), spell_id);
@@ -123,7 +128,9 @@ pub(crate) fn apply_script_calls(
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
             ScriptCall::UseItemAt { bag, slot, at } => {
                 let cast = appliers.p3();
-                let aim = cast.targeting.aim(&cast.tokens, &at);
+                let aim =
+                    cast.targeting
+                        .aim(&cast.tokens, &at, crate::ui_unit::VmUnits::of(script));
                 appliers.p5().use_item_at(script, bag, slot, aim);
             }
             ScriptCall::EquipItem { bag, slot, dst } => {

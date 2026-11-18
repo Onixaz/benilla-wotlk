@@ -11,7 +11,7 @@ use crate::script::tooltip::{clear_content, fire_cleared, show_or_hide_empty};
 
 /// A held item's instance block, as `SetBagItem` and `SetInventoryItem` build theirs.
 fn instance_of(held: &Held<'_>) -> (ItemInstance, u32) {
-    match *held {
+    match held {
         Held::Bag(_, _, s) => (
             ItemInstance {
                 name: held.name(),
@@ -119,8 +119,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 find(&model, model.socket_info.item).map(|held| {
                     let (mut inst, stack) = instance_of(&held);
                     let preview = model.socket_info.gems.map(|gem| {
-                        find(&model, gem)
-                            .and_then(|g| model.item_templates.get(&g.item_id()).cloned())
+                        find(&model, gem).and_then(|g| {
+                            crate::script::item_stats::item_record(&model, g.item_id())
+                        })
                     });
                     inst.socket_preview = Some(preview);
                     (held.item_id(), inst, sell_of(&held, stack))

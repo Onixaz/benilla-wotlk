@@ -591,7 +591,6 @@ fn shipped_panel_slot_pushable_promotes_to_center() {
 /// the window; the bank then opens on `BANKFRAME_OPENED` straight into the left slot.
 #[test]
 fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
-    use benilla_ui::script::BankState;
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
 
@@ -621,7 +620,7 @@ fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
     );
 
     s.set_money(0);
-    s.set_bank(Some(BankState::default()));
+    let _bank = super::test_ui::lend_bank(0, 0);
     s.set_gossip(None);
     s.fire_event("GOSSIP_CLOSED", vec![]);
     s.fire_event("BANKFRAME_OPENED", vec![]);

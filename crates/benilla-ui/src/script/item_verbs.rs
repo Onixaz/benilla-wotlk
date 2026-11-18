@@ -7,6 +7,7 @@ use mlua::{Lua, MultiValue, Table, Value};
 use super::binding_abi::{flag, ftol};
 use super::item_link::{item_hyperlink, reference_atoi, ItemLinkFields};
 use super::item_search::{find_item, held_count, ItemQuery, CARRIED};
+use super::item_stats::{ask_item_record, item_record};
 use super::item_summary::StatSummary;
 use super::model::Model;
 use super::{ItemTemplateView, ModelCell};
@@ -40,9 +41,9 @@ fn item_arg(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
 fn template_of(lua: &Lua, v: &Value) -> mlua::Result<Option<ItemTemplateView>> {
     let mut model = crate::script::model_mut_of(lua);
     let id = item_arg(lua, &model, v)?;
-    let view = model.item_templates.get(&id).cloned();
-    if view.is_none() && id != 0 {
-        model.item_stat_asks.insert(id);
+    let view = item_record(&model, id);
+    if view.is_none() {
+        ask_item_record(&mut model, id);
     }
     Ok(view)
 }
@@ -62,10 +63,10 @@ fn bool_arg(v: &Value) -> bool {
 /// `GetItemStats`'s and `GetItemStatDelta`'s item: a link's template and fields (`0x6207a0`).
 fn link_summary(model: &mut Model, link: &str) -> Option<StatSummary> {
     let (id, fields) = ItemLinkFields::parse(link)?;
-    match model.item_templates.get(&id) {
-        Some(v) => Some(StatSummary::of(model, v, &fields)),
+    match item_record(model, id) {
+        Some(v) => Some(StatSummary::of(model, &v, &fields)),
         None => {
-            model.item_stat_asks.insert(id);
+            ask_item_record(model, id);
             None
         }
     }
@@ -212,15 +213,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .and_then(|h| h.link_fields())
                     .map_or(0, |f| f.gems[i])
             };
-            let gem = u32::try_from(enchant)
-                .ok()
-                .and_then(|id| model.enchant_rows.get(&id))
-                .map_or(0, |r| r.gem_item);
-            let level = model.player_req.level;
-            let Some(t) = model.item_templates.get(&gem).cloned() else {
-                if gem != 0 {
-                    model.item_stat_asks.insert(gem);
-                }
+            let gem = u32::try_from(enchant).ok().map_or(0, |id| {
+                super::item_stats::with_item_tables(|t| {
+                    t.enchant_rows.get(&id).map_or(0, |r| r.gem_item)
+                })
+            });
+            let level = crate::script::item_stats::player_level();
+            let Some(t) = item_record(&model, gem) else {
+                ask_item_record(&mut model, gem);
                 return Ok(MultiValue::new());
             };
             let link = item_hyperlink(gem, t.quality, &ItemLinkFields::default(), level, &t.name);
@@ -242,9 +242,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let held = (id != 0)
                 .then(|| find_item(&model, &ItemQuery::Id(id), CARRIED))
                 .flatten();
-            let cooldown = held.and_then(|h| model.container_cooldowns.get(&(h.bag, h.slot)));
+            let cooldown =
+                held.and_then(|h| super::container::live_cooldown(&model, h.bag, h.slot));
             Ok(match cooldown {
-                Some(&(start, duration, enabled)) if start + duration > now || !enabled => {
+                Some((start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
                 }
                 _ => (0.0, 0.0, 1),
@@ -325,7 +326,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model
                     .inv_slot("player", slot)
                     .filter(|s| s.item_id != 0)
-                    .and_then(|s| model.item_templates.get(&s.item_id))
+                    .and_then(|s| item_record(&model, s.item_id))
                     .is_some_and(|t| match inventory_type {
                         Some(i) => t.inventory_type == i,
                         None => names(&t.item_type) || names(&t.item_sub_type),

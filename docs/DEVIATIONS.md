@@ -185,6 +185,27 @@ addon calls (#399).
 | `MakeMinigameMove` | `0x5c5550` | minigames not planned (#806) |
 | `PlayDance` | `0x5761f0` | dance studio not planned (#801) |
 
+## Bugs in 12340
+
+Where 12340's code does something other than what it is written to do, benilla does what the code
+means and records the difference here.
+
+- **World map: an instance's entrance on its continent's zone grid.** For an instance with no
+  `WorldMapArea` row, the current-zone lookup (`0x547170`) carries the `Map.dbc` entrance to its
+  continent and reads the `.zmp` cell under it, to open that zone. Before the read, its range test
+  clamps each grid coordinate to [0, 1], stores it as a float and compares it back with the
+  unrounded value (`0x547649`, `0x547661`). The client's x87 runs at double precision, so the test
+  fails unless the coordinate is exactly a float. None of the 71 entrances that land on a continent
+  passes, so 12340 falls through to the zone walk, finds no zone for the instance's area and opens
+  the continent: Outland in Hellfire Ramparts and the Underbog (`GetCurrentMapAreaID()` 467,
+  `GetCurrentMapZone()` 0). benilla runs the test in single precision, where it passes, and opens
+  the zone the lookup is written to find: Hellfire Peninsula and Zangarmarsh. An instance whose
+  `Map.dbc` entrance is zero (Tempest Keep) opens the cosmic map in both.
+  The Mac build of 12340 opens the zone as benilla does: its copy of the lookup (`0x6286d0`, i386)
+  works each coordinate out in SSE single precision (`0x628f38`–`0x628f65`) and compares the
+  clamped value with it as floats (`0x629485` for x, `0x6295ff` for y), so the cell read at
+  `0x62960e` is reached.
+
 ## The Mac build
 
 On macOS benilla answers as the Mac build of 12340: `IsMacClient()` is 1, the `platform="mac"` rows

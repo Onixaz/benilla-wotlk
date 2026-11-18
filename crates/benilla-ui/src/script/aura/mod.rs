@@ -207,7 +207,7 @@ impl AuraQuery {
 
     /// The guid the token names, nobody for an unknown token (`0x60abf0` raises for none).
     pub(crate) fn guid(&self, model: &Model) -> Option<u64> {
-        model.unit_guids.guid_of(&self.token)
+        model.token_guid(&self.token)
     }
 }
 
@@ -245,9 +245,8 @@ pub(crate) fn find(model: &Model, q: &AuraQuery) -> Option<AuraState> {
 /// The list of the unit `token` names: the player's for the player, else that guid's; `None` for
 /// nobody or a unit with no list.
 pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> Option<&'m [AuraState]> {
-    let guids = &model.unit_guids;
-    guids.guid_of(token).and_then(|g| {
-        if g == guids.player {
+    model.token_guid(token).and_then(|g| {
+        if g == model.unit_guids.player {
             Some(model.player_auras.as_slice())
         } else {
             model.unit_auras.get(&g).map(Vec::as_slice)
@@ -255,10 +254,8 @@ pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> Option<&'m [AuraSta
     })
 }
 
-/// The token names a caster by: the first of `player`, `pet`, `partyN`, `partypetN`, `raidN`,
-/// `raidpetN`, `target`, `npc` and `mouseover` that is the caster, nil for none. The reference also
-/// tries `vehicle`, `arenaN`, `arenapetN` and `focus`, which the resolver has no guid for yet
-/// (#90).
+/// The token names a caster by: the first token the unit-event fan-out lists for it
+/// ([`super::UnitGuids::tokens_naming`]), else `mouseover`; nil for none.
 fn caster_token(model: &Model, caster: u64) -> Option<String> {
     let guids = &model.unit_guids;
     guids
@@ -371,6 +368,16 @@ impl super::UiScript {
         let mut model = self.model_mut();
         let g = &mut model.unit_guids;
         (g.arena, g.arena_pets, g.arena_count) = (arena, pets, count);
+    }
+
+    /// The name lookup alone (`0x60a630`), for the host's resolver, which reads every other part
+    /// of a token live: the guid a group member's or pet's name in `token` names, and the hops
+    /// after it.
+    pub fn unit_by_name<'t>(&self, token: &'t str) -> Option<(u64, super::Hops<'t>)> {
+        let model = self.model_ref();
+        model
+            .unit_guids
+            .by_name(token, |unit, with_realm| model.token_name(unit, with_realm))
     }
 
     /// Every token naming `guid` against the last push, for a per-token unit event (`0x60bb70`).

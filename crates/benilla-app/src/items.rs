@@ -458,16 +458,48 @@ pub(crate) struct Items {
     /// A `None` answer is the server's unknown entry, kept for the polling readers; a reader's own
     /// ask ([`Self::ask_template`]) asks it again.
     templates: QueryCache<u32, ItemInfo>,
-    /// Landed since the last [`Self::take_fresh`]; pushed to the UI unprompted.
-    fresh: Vec<u32>,
     /// The reference's pending item-expiration list (at player object `+0x1cc8`): `(guid, slot,
     /// seconds)` enchant updates for an item not yet held. The reference applies them when the item
     /// is set up, counting seconds from then; they live as long as the player, here the session.
     /// `SMSG_ITEM_TIME_UPDATE` has no such list.
     pending_enchant_times: Vec<(u64, u32, u32)>,
+    /// The record callbacks waiting on their record, in ask order: `(entry, item, callback)`.
+    record_waiters: Vec<(u32, u64, RecordWait)>,
+}
+
+/// A record callback an item registered with its ask.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecordWait {
+    /// The post-init's (`0x70af17` -> `0x70ae90`).
+    PostInit,
+    /// The entry watch's (`0x7079cf` -> `0x7078e0`).
+    Entry,
 }
 
 impl Items {
+    /// The entry watch's drop of the old record (`0x7079bb`): the next read asks again.
+    pub(crate) fn evict_template(&mut self, entry: u32) {
+        self.templates.evict(entry);
+    }
+
+    /// `item`'s `callback`, run when `entry`'s record lands.
+    pub(crate) fn wait_record(&mut self, entry: u32, item: u64, callback: RecordWait) {
+        self.record_waiters.push((entry, item, callback));
+    }
+
+    /// The callbacks waiting on `entry`'s record, in ask order.
+    pub(crate) fn take_record_waiters(&mut self, entry: u32) -> Vec<(u64, RecordWait)> {
+        let mut taken = Vec::new();
+        self.record_waiters.retain(|&(e, item, callback)| {
+            let hit = e == entry;
+            if hit {
+                taken.push((item, callback));
+            }
+            !hit
+        });
+        taken
+    }
+
     /// Queue an `SMSG_ITEM_ENCHANT_TIME_UPDATE` for an item not held. The caller has checked the
     /// active player resolves: the reference drops the update when none does.
     pub(crate) fn queue_enchant_time(&mut self, guid: u64, slot: u32, seconds: u32) {
@@ -542,9 +574,6 @@ impl Items {
 
     /// Record a template answer (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`); `None` = unknown entry.
     pub(crate) fn insert_template(&mut self, entry: u32, info: Option<ItemInfo>) {
-        if info.is_some() {
-            self.fresh.push(entry);
-        }
         // A negative answer moves the generation too: "still asking" to "answered unknown" is a
         // display transition for the cast-fail redisplay.
         self.templates.insert(entry, info);
@@ -554,25 +583,6 @@ impl Items {
     /// reference's cache-callback redisplay.
     pub(crate) fn template_epoch(&self) -> u64 {
         self.templates.generation()
-    }
-
-    /// Every entry with a cached template.
-    pub(crate) fn cached_template_ids(&self) -> Vec<u32> {
-        self.templates
-            .iter()
-            .filter_map(|(&id, t)| t.is_some().then_some(id))
-            .collect()
-    }
-
-    /// Whether a template landed since the last [`Self::take_fresh`]: read first, so an idle frame
-    /// leaves the cache unmarked for every reader gated on it.
-    pub(crate) fn has_fresh(&self) -> bool {
-        !self.fresh.is_empty()
-    }
-
-    /// Drain the entries whose template landed since the last drain.
-    pub(crate) fn take_fresh(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.fresh)
     }
 
     /// World enter: release the ask-once latch and keep what the cache learned. An ask is marked
@@ -585,6 +595,7 @@ impl Items {
     /// item objects and their countdowns go with the index's sweep.
     pub(crate) fn clear_session(&mut self) {
         self.pending_enchant_times.clear();
+        self.record_waiters.clear();
         self.templates.clear_pending();
     }
 }
@@ -937,15 +948,6 @@ mod tests {
 
         assert_eq!(c.enchant_deadline_ms(0), None, "never set");
         assert!(c.enchant_deadline_ms(11).is_some_and(|ms| ms <= 30_000));
-    }
-
-    #[test]
-    fn landed_templates_drain_as_fresh_once() {
-        let mut items = Items::default();
-        items.insert_template(117, Some(info("Tough Jerky")));
-        items.insert_template(9999, None);
-        assert_eq!(items.take_fresh(), vec![117]);
-        assert!(items.take_fresh().is_empty(), "a drain empties the queue");
     }
 
     /// The tooltip's open line waits for an unlocked instance; the click is the bare template bit,

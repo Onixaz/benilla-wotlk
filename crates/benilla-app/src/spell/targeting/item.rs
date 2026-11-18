@@ -130,7 +130,7 @@ pub(crate) fn item_bind_verdict(
 /// `ReplaceEnchant` calls directly. An empty slot (the reference's null-item guard), a refusal or a
 /// confirm keeps the mode.
 pub(crate) fn commit_item_cast_on_pick(
-    (script, _live): (
+    (script, live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -138,13 +138,12 @@ pub(crate) fn commit_item_cast_on_pick(
     enchants: Option<Res<crate::items::Enchants>>,
     mut parked: ResMut<EnchantConfirmItem>,
     windows: (
-        Res<crate::ui_socket::RefundRecords>,
         Res<crate::net::PlayedClock>,
         Option<Res<crate::ui_trade::TradeSession>>,
     ),
     mut ladder: crate::spell::CastLadder,
 ) {
-    let (refunds, played, trade) = windows;
+    let (played, trade) = windows;
     let played_now = played.now();
     let Some(mut script) = script else {
         return;
@@ -284,7 +283,13 @@ pub(crate) fn commit_item_cast_on_pick(
             already_bound: fields.is_some_and(|f| crate::items::already_bound(f, cat)),
             existing_enchant: [0u8, 1]
                 .map(|slot| fields.and_then(|f| crate::items::live_enchant(f, slot, cat))),
-            refund_open: refunds.open(item_guid, played_now),
+            // The record on the item (`item+0x3d4`), read through the lent view.
+            refund_open: live
+                .view()
+                .lent
+                .refunds
+                .get()
+                .is_some_and(|r| r.open(item_guid, played_now)),
             bound_tradeable: fields.is_some_and(|f| {
                 crate::ui_socket::bound_tradeable(
                     f,

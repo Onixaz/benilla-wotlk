@@ -139,17 +139,20 @@ impl StatSummary {
     /// leaves it empty; else its spells, the budget's stats by the distribution, armor by the
     /// mask or the template's, damage by the mask or the template's, and the spell power bit.
     fn fill_scaling(&mut self, model: &Model, v: &ItemTemplateView, level: i32) {
-        let tables = &model.scaling;
-        let level = if level == 0 {
-            let player = model.player_req.level as i32;
-            super::item_scaling::shown_level(v, tables, false, 0, 0, player)
-        } else {
-            level
-        };
-        let (Some(d), Some(row)) = (
-            tables.distributions.get(&v.scaling_distribution),
-            tables.values_at(level),
-        ) else {
+        let player = crate::script::item_stats::player_level() as i32;
+        let (d, row) = super::item_stats::with_item_tables(|t| {
+            let tables = &t.scaling;
+            let level = if level == 0 {
+                super::item_scaling::shown_level(v, tables, false, 0, 0, player)
+            } else {
+                level
+            };
+            (
+                tables.distributions.get(&v.scaling_distribution).copied(),
+                tables.values_at(level).copied(),
+            )
+        });
+        let (Some(d), Some(row)) = (d.as_ref(), row.as_ref()) else {
             return;
         };
         for s in v.item_spells.iter().filter(|s| s.spell as i32 > 0) {
@@ -172,11 +175,11 @@ impl StatSummary {
             let total = min + max;
             self.dps = 0.5 * total;
             let damage = total * v.delay_ms as i32 as f32 * 0.0005;
-            if model.player_req.class_id == 11 {
+            if crate::script::ReqFields::class_id(&crate::script::item_stats::player_req()) == 11 {
                 self.stats[10] += self.stats[8] + feral_attack_power(v, damage);
             }
         } else {
-            self.add_template_dps(model, v);
+            self.add_template_dps(v);
         }
         if mask & 0x8000 != 0 {
             self.stats[56] += row.spell_power();
@@ -272,11 +275,11 @@ impl StatSummary {
             }
         }
         self.stats[60] += v.block as i32;
-        self.add_template_dps(model, v);
+        self.add_template_dps(v);
     }
 
     /// The template's two damage blocks over its delay (`0x61f410`).
-    fn add_template_dps(&mut self, model: &Model, v: &ItemTemplateView) {
+    fn add_template_dps(&mut self, v: &ItemTemplateView) {
         // The two-block average over the delay, without a guard: no damage on no delay reads NaN,
         // which no comparison passes, so a non-weapon's DPS shows nowhere.
         let delay = v.delay_ms as f32;
@@ -288,7 +291,7 @@ impl StatSummary {
         let (main, off) = (average(0), average(1));
         self.dps += main / (delay * 0.001);
         self.dps += off / (0.001 * delay);
-        if model.player_req.class_id == 11 {
+        if crate::script::ReqFields::class_id(&crate::script::item_stats::player_req()) == 11 {
             self.stats[10] += self.stats[8] + feral_attack_power(v, main + off);
         }
     }
@@ -363,19 +366,27 @@ impl StatSummary {
 
     /// An enchant effect: 3 a spell, 4 a resistance, 5 a stat (`0x61f2b0`).
     fn add_enchant(&mut self, model: &Model, id: u32, amount: Option<i32>) {
-        let Some(row) = model.enchant_rows.get(&id) else {
-            return;
-        };
-        for e in &row.effects {
-            let value = amount.unwrap_or((e.points_min + e.points_max) / 2);
-            match e.kind {
-                3 => self.add_spell(model, e.arg),
+        // Each effect's kind, argument and amount, read in place off the row.
+        let effects = super::item_stats::with_item_tables(|t| {
+            t.enchant_rows.get(&id).map(|row| {
+                row.effects
+                    .iter()
+                    .map(|e| {
+                        let value = amount.unwrap_or((e.points_min + e.points_max) / 2);
+                        (e.kind, e.arg, value)
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+        for (kind, arg, value) in effects.into_iter().flatten() {
+            match kind {
+                3 => self.add_spell(model, arg),
                 4 => {
-                    if let Some(cell) = self.stats.get_mut(e.arg as usize) {
+                    if let Some(cell) = self.stats.get_mut(arg as usize) {
                         *cell += value;
                     }
                 }
-                5 => self.add_stat(e.arg as usize, value),
+                5 => self.add_stat(arg as usize, value),
                 _ => {}
             }
         }
@@ -383,21 +394,29 @@ impl StatSummary {
 
     /// A roll: a positive id's enchants at their average, a negative id's by the seed (`0x61fa20`).
     fn add_roll(&mut self, model: &Model, f: &ItemLinkFields) {
-        if f.random_property > 0 {
-            let Some(row) = model.random_properties.get(&(f.random_property as u32)) else {
-                return;
-            };
-            for e in &row.enchants {
-                self.add_enchant(model, e.id, None);
+        // The roll's enchant ids with their amounts, read in place off its row.
+        let parts = super::item_stats::with_item_tables(|t| {
+            if f.random_property > 0 {
+                t.random_properties
+                    .get(&(f.random_property as u32))
+                    .map(|row| {
+                        row.enchants
+                            .iter()
+                            .map(|e| (e.id, None))
+                            .collect::<Vec<_>>()
+                    })
+            } else {
+                t.random_suffixes
+                    .get(&f.random_property.unsigned_abs())
+                    .map(|row| {
+                        (0..row.enchants.len())
+                            .map(|slot| (row.enchants[slot], Some(row.value(slot, f.seed))))
+                            .collect()
+                    })
             }
-            return;
-        }
-        let Some(row) = model.random_suffixes.get(&f.random_property.unsigned_abs()) else {
-            return;
-        };
-        for slot in 0..row.enchants.len() {
-            let amount = row.value(slot, f.seed);
-            self.add_enchant(model, row.enchants[slot], Some(amount));
+        });
+        for (id, amount) in parts.into_iter().flatten() {
+            self.add_enchant(model, id, amount);
         }
     }
 
@@ -514,9 +533,13 @@ mod tests {
 
     /// A model holding one distribution (id 3: stamina 50%, attack power 100%, a mana slot at 0
     /// skipped) and two values rows, the second level 2's.
-    fn scaling_model() -> Model {
+    fn scaling_model() -> (
+        Model,
+        crate::script::live::LiveLoan<crate::script::live::TestView>,
+    ) {
         use crate::script::{ScalingDistributionView, ScalingValuesView};
-        let mut model = Model::new();
+        let model = Model::new();
+        let mut tables = crate::script::ItemTables::default();
         let mut d = ScalingDistributionView {
             stat_ids: [-1; 10],
             max_level: 80,
@@ -524,15 +547,19 @@ mod tests {
         };
         d.stat_ids[..3].copy_from_slice(&[7, 38, 0]);
         d.bonuses[..3].copy_from_slice(&[5_000, 10_000, 9_000]);
-        model.scaling.distributions.insert(3, d);
+        tables.scaling.distributions.insert(3, d);
         let mut row = [0; 24];
         row[1] = 2;
         row[17] = 200; // primary budget
         row[9] = 300; // plate shoulder armor
         row[10] = 100; // one-hand weapon DPS
         row[16] = 40; // spell power
-        model.scaling.values = vec![ScalingValuesView([1; 24]), ScalingValuesView(row)];
-        model
+        tables.scaling.values = vec![ScalingValuesView([1; 24]), ScalingValuesView(row)];
+        let loan = crate::script::live::lend_test(crate::script::live::TestView {
+            item_tables: Some(tables),
+            ..Default::default()
+        });
+        (model, loan)
     }
 
     fn heirloom(mask: u32) -> ItemTemplateView {
@@ -553,7 +580,7 @@ mod tests {
     /// none of the template's stats, sockets or armor.
     #[test]
     fn a_scaling_item_folds_its_level_row() {
-        let model = scaling_model();
+        let (model, _tables) = scaling_model();
         let f = ItemLinkFields {
             level: 2,
             ..Default::default()
@@ -579,7 +606,7 @@ mod tests {
     /// the link's level is not held to the item's range.
     #[test]
     fn a_scaling_weapon_reads_its_band_and_an_unrowed_level_reads_empty() {
-        let model = scaling_model();
+        let (model, _tables) = scaling_model();
         let at = |level| ItemLinkFields {
             level,
             ..Default::default()

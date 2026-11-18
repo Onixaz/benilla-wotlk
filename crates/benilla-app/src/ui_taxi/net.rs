@@ -32,9 +32,7 @@ fn on_nodes_shown(
         mut known_mask,
     } = ev
     {
-        if let Some(catalogs) = catalogs {
-            known_mask.resize(catalogs.mask_words());
-        }
+        size_mask(&mut known_mask, catalogs.as_deref());
         taxi_nodes_shown(
             flightmaster,
             nearest_node,
@@ -43,6 +41,20 @@ fn on_nodes_shown(
             &mut gossip,
         );
     }
+}
+
+/// The known-node mask read at the catalog's word count (`0x593904`).
+fn size_mask(known_mask: &mut TaxiMask, catalogs: Option<&TaxiCatalogs>) {
+    if let Some(catalogs) = catalogs {
+        known_mask.resize(catalogs.mask_words());
+    }
+}
+
+/// Whether `SMSG_SHOWTAXINODES` shows the map, which takes the interact target (`0x6d61e7` -> `0x59374d`): two known nodes; fewer show `ERR_TAXINOPATHS` and touch only the gossip (`0x6d61b5`-`0x6d61d1`).
+pub(crate) fn shows_map(world: &World, known_mask: &TaxiMask) -> bool {
+    let mut mask = known_mask.clone();
+    size_mask(&mut mask, world.get_resource::<TaxiCatalogs>());
+    mask.count() >= 2
 }
 
 fn on_node_status(In(ev): In<SessionEvent>, mut commands: Commands, index: Res<GuidIndex>) {

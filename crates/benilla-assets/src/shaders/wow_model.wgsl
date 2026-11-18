@@ -533,6 +533,15 @@ fn wow_m2_unlit(
     return unlit_tex * clamp(unlit_sum, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// The reference's fog curve (every world vertex program, `0x7ecd80`): the linear factor
+// `(end - z) / (end - start)` clamped to [0, 1], raised to the rate (row 20; 0 reads as 1). The
+// reference raises per vertex and interpolates; per pixel here, which agrees exactly only at rate 1.
+fn fog_curve(span: vec2<f32>, rate: f32, eye_z: f32) -> f32 {
+    let linear = clamp((span.y - eye_z) / max(span.y - span.x, 0.001), 0.0, 1.0);
+    let r = select(1.0, rate, rate > 0.0);
+    return select(pow(linear, r), linear, r == 1.0);
+}
+
 @fragment
 fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // The UI model tile's cell clip: the reference gives each `<Model>` pane its widget rect as the
@@ -1010,15 +1019,16 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     }
     var fog_color = wow_light.fog_color;
     var fog_span = wow_light.fog_params.xy;
+    var fog_rate = wow_light.point_count.z;
     if (interior_fogged) {
         fog_color = wow_light.wmo_fog_color;
         fog_span = wow_light.wmo_fog_params.xy;
+        fog_rate = wow_light.point_count.w;
     }
     let fog_policy = (u32(m.clutter_fade.z) >> 4u) & 7u;
     if (fog_color.w > 0.5 && fog_policy != 4u) {
         let eye_z = -(view.view_from_world * vec4<f32>(in.world_position.xyz, 1.0)).z;
-        let denom = max(fog_span.y - fog_span.x, 0.001);
-        let factor = clamp((fog_span.y - eye_z) / denom, 0.0, 1.0);
+        let factor = fog_curve(fog_span, fog_rate, eye_z);
         var fog_rgb = fog_color.xyz;
         if (fog_policy == 1u) { fog_rgb = vec3<f32>(0.0); }
         else if (fog_policy == 2u) { fog_rgb = vec3<f32>(1.0); }

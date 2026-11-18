@@ -1017,7 +1017,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: AddAchievementComparisonUnit(unitToken)",
             )?;
             let mut m = crate::script::model_mut_of(lua);
-            let Some(guid) = m.unit_guids.guid_of(&token).filter(|&g| g != 0) else {
+            let Some(guid) = m.token_guid(&token).filter(|&g| g != 0) else {
                 return none();
             };
             m.achievement.book.inspect_guid = guid;

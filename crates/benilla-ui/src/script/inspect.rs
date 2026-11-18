@@ -96,7 +96,7 @@ fn reach(lua: &Lua, token: &Option<String>) -> Option<UnitReach> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let guid = model.unit_guids.resolve(token).ok().flatten()?;
+    let guid = model.resolve_token(token).ok().flatten()?;
     model.unit_reach.get(&guid).copied()
 }
 
@@ -159,10 +159,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let guids = &model.unit_guids;
-            let Some(guid) = guids.resolve(&unit).ok().flatten() else {
+            let Some(guid) = model.resolve_token(&unit).ok().flatten() else {
                 return Ok(Value::Nil);
             };
+            let guids = &model.unit_guids;
             let ours = guid == guids.player
                 || guid == guids.pet
                 || guids.party.contains(&guid)
@@ -185,7 +185,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                let guid = model.unit_guids.resolve(&unit).ok().flatten();
+                let guid = model.resolve_token(&unit).ok().flatten();
                 guid.filter(|g| model.unit_reach.get(g).is_some_and(inspectable))
             };
             let Some(guid) = guid else {

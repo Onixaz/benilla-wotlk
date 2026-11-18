@@ -29,6 +29,15 @@ pub(crate) fn report_recorded_hover_log(_path: &str) {
     crate::hover_log::report_recorded_file(_path);
 }
 
+/// A capture fixture's stand-in player (`UiScript::set_player_req_state`), which the player build compiles out with the fixtures.
+pub(crate) fn set_fixture_player(
+    _script: &mut benilla_ui::script::UiScript,
+    _state: benilla_ui::script::PlayerReqState,
+) {
+    #[cfg(feature = "dev")]
+    _script.set_player_req_state(_state);
+}
+
 /// The instruments, debug panel first: `PerfPlugin` needs the egui plugin and context it sets up.
 pub(crate) struct DevToolsPlugin;
 

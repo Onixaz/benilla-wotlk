@@ -208,13 +208,13 @@ fn equipped(model: &super::Model, slot0: usize) -> Option<&super::InvSlotView> {
 
 /// Every held item and its place, in the reference's search order: the equipment, the backpack,
 /// the worn bags, then with a banker open the vault and the bank bags (`0x5ae860`).
-fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, &ContainerSlot)> {
+fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, ContainerSlot)> {
     let mut out = Vec::new();
     let mut bag = |cid: i64, place: &dyn Fn(u32) -> ItemPlace| {
-        if let Some(c) = model.containers.get(&cid) {
-            let mut slots: Vec<_> = c.slots.iter().collect();
-            slots.sort_by_key(|(n, _)| **n);
-            for (&n, s) in slots {
+        if let Some(c) = super::container::live_bag(model, cid) {
+            let mut slots: Vec<_> = c.slots.into_iter().collect();
+            slots.sort_by_key(|(n, _)| *n);
+            for (n, s) in slots {
                 if s.guid != 0 {
                     out.push((place(n), s.guid, s));
                 }
@@ -225,7 +225,7 @@ fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, &ContainerSlot)> {
     for cid in 1..=4 {
         bag(cid, &|n| ItemPlace::Bag(cid, n));
     }
-    if model.bank.is_some() {
+    if super::bank::bank_open() {
         bag(-1, &|n| {
             ItemPlace::Player(BANK_VAULT_FIRST + i64::from(n) - 1)
         });
@@ -256,10 +256,9 @@ fn item_by_guid(model: &super::Model, guid: u64) -> Option<(u32, u32)> {
         .find(|v| v.guid == guid)
         .map(|v| (v.item_id, v.flags))
         .or_else(|| {
-            model
-                .containers
-                .values()
-                .flat_map(|c| c.slots.values())
+            super::container::live_bags(model)
+                .into_iter()
+                .flat_map(|(_, c)| c.slots.into_values())
                 .find(|s| s.guid == guid)
                 .map(|s| (s.item_id, s.flags))
         })
@@ -921,12 +920,9 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
 /// A container slot's field, `None` for an empty slot or unknown bag.
 fn container_slot<T>(lua: &Lua, bag: i64, slot: u32, f: impl Fn(&ContainerSlot) -> T) -> Option<T> {
     let model = read(lua);
-    model
-        .containers
-        .get(&bag)
-        .and_then(|c| c.slots.get(&slot))
+    super::container::index_slot(&model, bag, slot)
         .filter(|s| s.item_id != 0 || s.guid != 0)
-        .map(f)
+        .map(|s| f(&s))
 }
 
 /// The three gem returns, nil per empty socket.
@@ -1210,7 +1206,10 @@ mod tests {
         assert_eq!(loc(&s, 16), 0x300000 | (1 << 8) | 3);
         assert_eq!(loc(&s, 17), -1, "the vault needs a banker");
         assert_eq!(loc(&s, 18), -1);
-        s.set_bank(Some(Default::default()));
+        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+            banker: Some(0x42),
+            ..Default::default()
+        });
         assert_eq!(loc(&s, 17), 0x400000 | 41, "vault slot 2 is player slot 40");
         let id = |s: &UiScript, i: u32| -> i64 {
             s.eval(&format!("return GetEquipmentSetItemIDs(\"Mix\")[{i}]"))

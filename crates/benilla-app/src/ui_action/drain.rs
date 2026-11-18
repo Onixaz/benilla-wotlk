@@ -365,7 +365,7 @@ pub(crate) fn use_action(
                 "ui_action: cast {} at {:?} (selection {:?})",
                 b.action, press.at, selection.guid
             );
-            let aim = targeting.aim(tokens, &press.at);
+            let aim = targeting.aim(tokens, &press.at, crate::ui_unit::VmUnits::of(script));
             ladder.send_spell(b.action, &targeting.context_at(aim), aim.passed());
         }
         // An item action names an entry, so the click finds a copy. A miss only logs, with no
@@ -467,8 +467,11 @@ pub(crate) fn use_action(
 /// Applies the queued `PickupAction`/`PlaceAction` writes (packed 0 clears) to the store, which
 /// the VM already mirrors, marks it dirty for the feed and sends each as `CMSG_SET_ACTION_BUTTON`.
 pub(super) fn drain_action_sets(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut actions: ResMut<PlayerActions>,
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsActions>,
+    ),
+    mut actions: crate::ui_script::OwnedMut<PlayerActions>,
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else {
@@ -482,6 +485,6 @@ pub(super) fn drain_action_sets(
         debug!(
             "ui_action: set_action_button lua {lua_id} (wire slot {slot}) packed {packed:#010x}"
         );
-        actions.write_slot(slot, packed, &commands);
+        actions.write().write_slot(slot, packed, &commands);
     }
 }

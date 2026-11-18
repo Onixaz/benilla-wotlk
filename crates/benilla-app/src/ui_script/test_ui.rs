@@ -833,6 +833,193 @@ pub(crate) fn seat_chain_addon(s: &mut UiScript, name: &str) {
     s.register_addons(vec![info], None, None, None);
 }
 
+/// A bank lent to the verbs: `slots` purchased, every next slot at `cost`, the banker open with the interact target on it, and each `PurchaseSlot` send counted.
+pub(crate) struct BankView {
+    pub(crate) slots: u8,
+    pub(crate) cost: u32,
+    pub(crate) banker: Option<u64>,
+    pub(crate) interacting: bool,
+    pub(crate) purchases: std::cell::Cell<u32>,
+}
+
+impl benilla_ui::script::LiveState for BankView {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn banker(&self) -> Option<u64> {
+        self.banker
+    }
+
+    fn bank_bag_slots(&self) -> Option<u8> {
+        Some(self.slots)
+    }
+
+    fn bank_slot_cost(&self, _slot: u32) -> u32 {
+        self.cost
+    }
+
+    fn purchase_bank_slot(&self) -> Option<&'static str> {
+        self.purchases.set(self.purchases.get() + 1);
+        None
+    }
+
+    fn close_bank_interaction(&mut self) -> bool {
+        std::mem::take(&mut self.interacting) && self.banker.is_some()
+    }
+
+    fn clear_banker(&mut self) {
+        self.banker = None;
+    }
+}
+
+/// A guild bank lent to the verbs: its tabs, slots and logs, the locks, the current tab and the money.
+pub(crate) struct GuildBankTestView {
+    pub(crate) bank: benilla_ui::script::GuildBankView,
+    pub(crate) locks: Vec<(u8, u8, u32)>,
+    pub(crate) tab: u8,
+    pub(crate) money: u64,
+    pub(crate) withdraw_money: i32,
+}
+
+impl benilla_ui::script::LiveState for GuildBankTestView {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn guild_bank_open(&self) -> bool {
+        self.bank.open
+    }
+
+    fn guild_bank_current_tab(&self) -> u8 {
+        self.tab
+    }
+
+    fn set_guild_bank_current_tab(&mut self, tab: u8) {
+        self.tab = tab;
+    }
+
+    fn guild_bank_num_tabs(&self) -> u8 {
+        self.bank.num_tabs
+    }
+
+    fn guild_bank_tab(&self, tab: u8) -> Option<benilla_ui::script::GuildBankTabView> {
+        self.bank.tabs.get(usize::from(tab)).cloned()
+    }
+
+    fn guild_bank_item(&self, tab: u8, slot: u8) -> Option<(u32, u32)> {
+        self.bank
+            .slot(usize::from(tab), usize::from(slot))
+            .map(|s| (s.item_id, s.count))
+    }
+
+    fn guild_bank_slot(&self, tab: u8, slot: u8) -> Option<benilla_ui::script::GuildBankSlotView> {
+        self.bank.slot(usize::from(tab), usize::from(slot)).cloned()
+    }
+
+    fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
+        self.locks.contains(&(tab, slot, item_id))
+    }
+
+    fn set_guild_bank_lock(&mut self, tab: u8, slot: u8, item_id: u32, locked: bool) {
+        self.locks.retain(|&l| l != (tab, slot, item_id));
+        if locked {
+            self.locks.push((tab, slot, item_id));
+        }
+    }
+
+    fn guild_bank_withdrawals(&self) -> i32 {
+        self.bank.withdrawals_remaining
+    }
+
+    fn guild_bank_money(&self) -> u64 {
+        self.money
+    }
+
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        self.withdraw_money
+    }
+
+    fn guild_bank_log_len(&self, tab: u8) -> usize {
+        self.bank.logs.get(usize::from(tab)).map_or(0, Vec::len)
+    }
+
+    fn guild_bank_log(&self, tab: u8, index: u8) -> Option<benilla_ui::script::GuildBankLogView> {
+        self.bank
+            .logs
+            .get(usize::from(tab))?
+            .get(usize::from(index))
+            .cloned()
+    }
+
+    fn clear_guild_banker(&mut self) {
+        self.bank.open = false;
+    }
+}
+
+/// Lend `bank` with `money` copper in it until the loan drops.
+pub(crate) fn lend_guild_bank(
+    bank: benilla_ui::script::GuildBankView,
+    money: u64,
+) -> benilla_ui::script::LiveLoan<GuildBankTestView> {
+    // SAFETY: a test drops its loans on its own thread, the latest first.
+    unsafe {
+        benilla_ui::script::LiveLoan::new(GuildBankTestView {
+            bank,
+            locks: Vec::new(),
+            tab: 0,
+            money,
+            withdraw_money: -1,
+        })
+    }
+}
+
+/// Lend an open bank with `slots` purchased and the next slot at `cost` until the loan drops.
+pub(crate) fn lend_bank(slots: u8, cost: u32) -> benilla_ui::script::LiveLoan<BankView> {
+    // SAFETY: a test drops its loans on its own thread, the latest first.
+    unsafe {
+        benilla_ui::script::LiveLoan::new(BankView {
+            slots,
+            cost,
+            banker: Some(0x42),
+            interacting: true,
+            purchases: std::cell::Cell::new(0),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use benilla_ui::script::UiScript;

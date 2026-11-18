@@ -10,6 +10,9 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
+/// The VM's own strings by key, which a read building display text formats through.
+pub type GlobalStrings<'a> = &'a dyn Fn(&str) -> Option<String>;
+
 /// What the verbs read live, implemented by the app over its state; the `&mut self` methods, reached through [`write_live`], write what a verb changes in its call, as `ClosePetStables` clears the master inside its call.
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
@@ -441,6 +444,12 @@ pub trait LiveState {
         false
     }
 
+    /// A held unit's pet, `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`, as a token's `pet` hop
+    /// reads it (`0x60ab9a`); `None` for a guid that is no held unit or has no pet.
+    fn unit_pet(&self, _guid: u64) -> Option<u64> {
+        None
+    }
+
     /// An open-stable aura is on us (`0x5a19c0`).
     fn open_stable_aura(&self) -> bool {
         false
@@ -557,6 +566,246 @@ pub trait LiveState {
     /// The rune table (`0xc24304`-`0xc24388`) and the active player's `PLAYER_RUNE_REGEN` rates, read at the call; `None` without the active player object (`0x61306f`).
     fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
         None
+    }
+
+    /// The open bank's banker (`0xbeb9a0`), `None` with no bank open.
+    fn banker(&self) -> Option<u64> {
+        None
+    }
+
+    /// The active player's purchased bank bag slots, `PLAYER_BYTES_2` byte 2 (`0x57badb`); `None` with no active player (`0x57bae1`).
+    fn bank_bag_slots(&self) -> Option<u8> {
+        None
+    }
+
+    /// `BankBagSlotPrices.dbc` row `slot`'s cost, 0 with no row (`0x57ba30`).
+    fn bank_slot_cost(&self, _slot: u32) -> u32 {
+        0
+    }
+
+    /// `PurchaseSlot`'s gates and send (`0x57bbc0`): the refusal line's key, `None` once sent or gated silently.
+    fn purchase_bank_slot(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The interaction close's bank leg when the interact target is the banker (`0x518d50` -> `0x512fa7`): the target zeroed, whether it was.
+    fn close_bank_interaction(&mut self) -> bool {
+        false
+    }
+
+    /// The banker cleared, the banker setter's tail with no banker (`0x57b8f9`).
+    fn clear_banker(&mut self) {}
+
+    /// The client's loaded item tables, `None` before their catalogs load.
+    fn item_tables(&self) -> Option<&super::ItemTables> {
+        None
+    }
+
+    /// The active player's level, class, race, honor rank, medals and class flags; `None` with no active player.
+    fn player_fields(&self) -> Option<super::PlayerFields> {
+        None
+    }
+
+    /// The active player's level (`UNIT_FIELD_LEVEL`); `None` with no active player.
+    fn player_level(&self) -> Option<u32> {
+        self.player_fields().map(|r| r.level)
+    }
+
+    /// The active player's value plus permanent bonus in `skill` (`0x51a250`); `Some(None)` for a skill not held, `None` with no active player.
+    fn player_skill(&self, _skill: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The proficiency mask for item class `class`; `Some(None)` for a class never sent, `None` with no active player.
+    fn player_proficiency(&self, _class: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The active player's reputation rank with `faction`; `None` with no active player.
+    fn player_rep_rank(&self, _faction: u32) -> Option<u8> {
+        None
+    }
+
+    /// Whether the spell book holds a dual-wield spell; `None` with no active player.
+    fn player_can_dual_wield(&self) -> Option<bool> {
+        None
+    }
+
+    /// `CurrencyTypes.dbc` and `CurrencyCategory.dbc`, `None` before they load.
+    fn currency_catalog(&self) -> Option<&super::CurrencyCatalogView> {
+        None
+    }
+
+    /// The active player's currencies at the call: the known bits, the token slots' counts, the two point balances and each known row's cached item name and icon; `None` with no active player.
+    fn currency_holdings(&self) -> Option<super::CurrencyHoldings> {
+        None
+    }
+
+    /// Ask for item `id`'s record when the cache holds none, as a cache read with a landing callback does (`0x5b01ef`).
+    fn ask_item_record(&self, _id: u32) {}
+
+    /// Item `id`'s record read from the item cache at the call (`0x67ca30`), its catalog names resolved now; `tooltip`, the VM's strings, adds the lines only the tooltip prints, the trigger spells' `$`-text and the reputation requirement. `Some(None)` for a record not cached, `None` where no view lends the cache.
+    fn item_record(
+        &self,
+        _id: u32,
+        _tooltip: Option<GlobalStrings<'_>>,
+    ) -> Option<Option<super::ItemTemplateView>> {
+        None
+    }
+
+    /// The bind point's area name at the call, through the catalog the `$z` token reads; `None` where no view lends it.
+    fn bind_location(&self) -> Option<String> {
+        None
+    }
+
+    /// Container `bag` of the active player at the call (`0x5d7380`): `Some(None)` for an empty bag slot or an id past the eleven bags, `None` with no active player. Cooldowns on the `GetTime` clock that `ui_now` seconds names at `anchor`.
+    fn container(
+        &self,
+        _bag: i64,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<Option<super::ContainerState>> {
+        None
+    }
+
+    /// One slot of container `bag` at the call, 1-based, without building the rest of the bag; `Some(None)` for an empty or missing slot, `None` with no active player.
+    fn container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<super::ContainerSlot>> {
+        self.container(bag, anchor, ui_now)
+            .map(|c| c.and_then(|mut c| c.slots.remove(&slot)))
+    }
+
+    /// Container `bag` as a Lua bag index names it (`0x5d7380` -> `0x5d6f20`): bags 1..11 through the watched-bag array, the bank's only with a banker set; else as [`Self::container`].
+    fn indexed_container(
+        &self,
+        bag: i64,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<super::ContainerState>> {
+        self.container(bag, anchor, ui_now)
+    }
+
+    /// One slot of container `bag` as [`Self::indexed_container`] names the bag.
+    fn indexed_container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<super::ContainerSlot>> {
+        self.indexed_container(bag, anchor, ui_now)
+            .map(|c| c.and_then(|mut c| c.slots.remove(&slot)))
+    }
+
+    /// Whether the keyring holds a key (`0x51ae80`); `None` with no active player.
+    fn has_key(&self) -> Option<bool> {
+        None
+    }
+
+    /// The refund record on held item `item` (`item+0x3d4`, filled by `0x6d1650`); `Some(None)` for none.
+    fn refund_record(&self, _item: u64) -> Option<Option<super::RefundView>> {
+        None
+    }
+
+    /// A bound item's trade-window stamp read off its fields at the call (`0x708b40`); `Some(None)` when it has none.
+    fn bound_trade_stamp(&self, _item: u64) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
+    fn ask_refund_record(&mut self, _item: u64) {}
+
+    /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
+    fn item_set(
+        &self,
+        _set_id: u32,
+        _global: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::ItemSetView> {
+        None
+    }
+
+    /// Whether a guild banker is open (`0xc1dc10`).
+    fn guild_bank_open(&self) -> bool {
+        false
+    }
+
+    /// The current guild bank tab, 0-based (`0xc1dc0d`).
+    fn guild_bank_current_tab(&self) -> u8 {
+        0
+    }
+
+    /// `SetCurrentGuildBankTab`'s write (`0x5a43c0`).
+    fn set_guild_bank_current_tab(&mut self, _tab: u8) {}
+
+    /// The bought guild bank tabs (`0xc1dc0c`).
+    fn guild_bank_num_tabs(&self) -> u8 {
+        0
+    }
+
+    /// Tab `tab`'s name, icon and text (`0xc11458`); `None` past the six.
+    fn guild_bank_tab(&self, _tab: u8) -> Option<super::GuildBankTabView> {
+        None
+    }
+
+    /// Slot `(tab, slot)`'s item id and count; `None` for an empty or unlisted slot (`0x5a4c10`).
+    fn guild_bank_item(&self, _tab: u8, _slot: u8) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Slot `(tab, slot)` resolved at the call: icon, link, name, enchants and stack size.
+    fn guild_bank_slot(&self, _tab: u8, _slot: u8) -> Option<super::GuildBankSlotView> {
+        None
+    }
+
+    /// Slot `(tab, slot)`'s icon alone, the read `GetGuildBankItemInfo` makes per slot (`0x5a6000`).
+    fn guild_bank_texture(&self, tab: u8, slot: u8) -> Option<String> {
+        self.guild_bank_slot(tab, slot).and_then(|s| s.texture)
+    }
+
+    /// Whether slot `(tab, slot)` holds `item_id` locked (`0x5a4c40`).
+    fn guild_bank_locked(&self, _tab: u8, _slot: u8, _item_id: u32) -> bool {
+        false
+    }
+
+    /// Lock or unlock slot `(tab, slot)` while it holds `item_id` (`0x5a4c90`, `0x5a4ce0`).
+    fn set_guild_bank_lock(&mut self, _tab: u8, _slot: u8, _item_id: u32, _locked: bool) {}
+
+    /// The last list's item withdrawals left (`0xc1dc30`).
+    fn guild_bank_withdrawals(&self) -> i32 {
+        0
+    }
+
+    /// The guild bank's money (`0xc1dc20`).
+    fn guild_bank_money(&self) -> u64 {
+        0
+    }
+
+    /// Today's money withdrawal left (`0xc1dc34`), -1 unlimited.
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        0
+    }
+
+    /// The rows of log `tab`, 6 the money log.
+    fn guild_bank_log_len(&self, _tab: u8) -> usize {
+        0
+    }
+
+    /// Row `index` of log `tab` resolved at the call.
+    fn guild_bank_log(&self, _tab: u8, _index: u8) -> Option<super::GuildBankLogView> {
+        None
+    }
+
+    /// The banker setter's clear with no banker (`0x5a4270`): both bankers zeroed.
+    fn clear_guild_banker(&mut self) {}
+
+    /// `QueryGuildBankText`'s gate and send (`0x5a5940`): `true` when the text answers at once.
+    fn guild_bank_query_text(&mut self, _tab: u8) -> bool {
+        true
     }
 }
 
@@ -831,6 +1080,18 @@ pub(crate) struct TestView {
     /// The questgiver calls made, in order, and the outcome each answers.
     pub quest_calls: Vec<Result<super::QuestAction, super::QuestSelect>>,
     pub quest_outcome: super::QuestActOutcome,
+    /// The open banker and whether the interact target is it.
+    pub banker: Option<u64>,
+    pub bank_interacting: bool,
+    /// The purchased bank bag slots, `None` without the active player, and the price rows.
+    pub bank_slots: Option<u8>,
+    pub bank_costs: std::collections::HashMap<u32, u32>,
+    /// The item tables.
+    pub item_tables: Option<super::ItemTables>,
+    /// The currency tables, our currencies, and the item records asked, in order.
+    pub currency_catalog: Option<super::CurrencyCatalogView>,
+    pub currency_holdings: Option<super::CurrencyHoldings>,
+    pub item_asks: std::cell::RefCell<Vec<u32>>,
     /// The companion lists and pool.
     pub companions: super::CompanionState,
     /// The pet stat block and `HasPetUI`'s first return.
@@ -853,6 +1114,8 @@ pub(crate) struct TestView {
     pub pet_out: bool,
     /// Our charm or summon is set.
     pub charm_or_summon: bool,
+    /// Each held unit's pet, for a token's `pet` hop.
+    pub unit_pets: std::collections::HashMap<u64, u64>,
     /// An open-stable aura is on us.
     pub open_stable_aura: bool,
     /// The player's cooldown history by spell, as `(start_ms, duration_ms, enabled)`.
@@ -882,6 +1145,20 @@ pub(crate) struct TestView {
     pub totem_category_names: std::collections::HashMap<u32, String>,
     /// The rune table and the player's rates; `None` without the player object.
     pub runes: Option<(super::RuneState, super::RuneRegen)>,
+    /// The guild bank, its locks as `(tab, slot, item)`, the current tab and the two moneys.
+    pub guild_bank: super::GuildBankView,
+    pub guild_bank_locks: Vec<(u8, u8, u32)>,
+    pub guild_bank_tab: u8,
+    pub guild_bank_money: u64,
+    pub guild_bank_withdraw_money: i32,
+    /// The tabs whose text is stale, and the text asks sent, in order.
+    pub guild_bank_text_stale: Vec<u8>,
+    pub guild_bank_text_sent: Vec<u8>,
+    /// The item cache's records, and each read made, `(id, tooltip)`, in order.
+    pub item_records: std::cell::RefCell<std::collections::HashMap<u32, super::ItemTemplateView>>,
+    pub item_record_reads: std::cell::RefCell<Vec<(u32, bool)>>,
+    /// The bind point's area name.
+    pub bind_location: std::cell::RefCell<Option<String>>,
 }
 
 #[cfg(test)]
@@ -951,6 +1228,151 @@ impl LiveState for TestView {
 
     fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
         self.runes.clone()
+    }
+
+    fn item_tables(&self) -> Option<&super::ItemTables> {
+        self.item_tables.as_ref()
+    }
+
+    fn guild_bank_open(&self) -> bool {
+        self.guild_bank.open
+    }
+
+    fn guild_bank_current_tab(&self) -> u8 {
+        self.guild_bank_tab
+    }
+
+    fn set_guild_bank_current_tab(&mut self, tab: u8) {
+        self.guild_bank_tab = tab;
+    }
+
+    fn guild_bank_num_tabs(&self) -> u8 {
+        self.guild_bank.num_tabs
+    }
+
+    fn guild_bank_tab(&self, tab: u8) -> Option<super::GuildBankTabView> {
+        self.guild_bank.tabs.get(usize::from(tab)).cloned()
+    }
+
+    fn guild_bank_item(&self, tab: u8, slot: u8) -> Option<(u32, u32)> {
+        self.guild_bank
+            .slot(usize::from(tab), usize::from(slot))
+            .map(|s| (s.item_id, s.count))
+    }
+
+    fn guild_bank_slot(&self, tab: u8, slot: u8) -> Option<super::GuildBankSlotView> {
+        self.guild_bank
+            .slot(usize::from(tab), usize::from(slot))
+            .cloned()
+    }
+
+    fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
+        self.guild_bank_locks.contains(&(tab, slot, item_id))
+    }
+
+    fn set_guild_bank_lock(&mut self, tab: u8, slot: u8, item_id: u32, locked: bool) {
+        if self.guild_bank_item(tab, slot).map(|(id, _)| id) != Some(item_id) {
+            return;
+        }
+        self.guild_bank_locks.retain(|&l| l != (tab, slot, item_id));
+        if locked {
+            self.guild_bank_locks.push((tab, slot, item_id));
+        }
+    }
+
+    fn guild_bank_withdrawals(&self) -> i32 {
+        self.guild_bank.withdrawals_remaining
+    }
+
+    fn guild_bank_money(&self) -> u64 {
+        self.guild_bank_money
+    }
+
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        self.guild_bank_withdraw_money
+    }
+
+    fn guild_bank_log_len(&self, tab: u8) -> usize {
+        self.guild_bank
+            .logs
+            .get(usize::from(tab))
+            .map_or(0, Vec::len)
+    }
+
+    fn guild_bank_log(&self, tab: u8, index: u8) -> Option<super::GuildBankLogView> {
+        self.guild_bank
+            .logs
+            .get(usize::from(tab))?
+            .get(usize::from(index))
+            .cloned()
+    }
+
+    fn clear_guild_banker(&mut self) {
+        self.guild_bank.open = false;
+    }
+
+    fn guild_bank_query_text(&mut self, tab: u8) -> bool {
+        if !self.guild_bank.open || !self.guild_bank_text_stale.contains(&tab) {
+            return true;
+        }
+        self.guild_bank_text_stale.retain(|&t| t != tab);
+        self.guild_bank_text_sent.push(tab);
+        false
+    }
+
+    fn banker(&self) -> Option<u64> {
+        self.banker
+    }
+
+    fn close_bank_interaction(&mut self) -> bool {
+        std::mem::take(&mut self.bank_interacting) && self.banker.is_some()
+    }
+
+    fn clear_banker(&mut self) {
+        self.banker = None;
+    }
+
+    fn bank_bag_slots(&self) -> Option<u8> {
+        self.bank_slots
+    }
+
+    fn bank_slot_cost(&self, slot: u32) -> u32 {
+        self.bank_costs.get(&slot).copied().unwrap_or(0)
+    }
+
+    fn currency_catalog(&self) -> Option<&super::CurrencyCatalogView> {
+        self.currency_catalog.as_ref()
+    }
+
+    fn currency_holdings(&self) -> Option<super::CurrencyHoldings> {
+        self.currency_holdings.clone()
+    }
+
+    fn ask_item_record(&self, id: u32) {
+        let cached = self
+            .currency_holdings
+            .as_ref()
+            .and_then(|h| h.items.get(&id))
+            .is_some_and(|(name, _)| name.is_some())
+            || self.item_records.borrow().contains_key(&id);
+        if !cached {
+            self.item_asks.borrow_mut().push(id);
+        }
+    }
+
+    fn item_record(
+        &self,
+        id: u32,
+        tooltip: Option<GlobalStrings<'_>>,
+    ) -> Option<Option<super::ItemTemplateView>> {
+        self.item_record_reads
+            .borrow_mut()
+            .push((id, tooltip.is_some()));
+        Some(self.item_records.borrow().get(&id).cloned())
+    }
+
+    fn bind_location(&self) -> Option<String> {
+        self.bind_location.borrow().clone()
     }
 
     fn unit_flags(&self, guid: u64) -> Option<u32> {
@@ -1146,6 +1568,10 @@ impl LiveState for TestView {
 
     fn charm_or_summon(&self) -> bool {
         self.charm_or_summon
+    }
+
+    fn unit_pet(&self, guid: u64) -> Option<u64> {
+        self.unit_pets.get(&guid).copied()
     }
 
     fn open_stable_aura(&self) -> bool {

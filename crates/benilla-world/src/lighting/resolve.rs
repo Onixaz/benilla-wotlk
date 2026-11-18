@@ -22,6 +22,40 @@ fn scene_fog(fog_end_raw: f32, fog_start_frac: f32, farclip: f32) -> (f32, f32) 
     (fog_start_frac * end, end)
 }
 
+/// One committed fog: colour, the start/end pair and the curve's rate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fog {
+    color: [f32; 3],
+    start: f32,
+    end: f32,
+    rate: f32,
+}
+
+/// A WMO fog record staged as the reference stages it (`0x7ed1b0`): `end = min(farclip, end)`,
+/// `start = end × start_scalar`, rate 1 and the end floored at 30 yd; under the rate law the rate
+/// comes off that span, the end moves to the far clip and the start is held at 0.
+fn wmo_fog_settings(s: &crate::wmo_portal::WmoFogTarget, law: benilla_formats::FogLaw) -> Fog {
+    let mut end = s.end.min(law.farclip);
+    let mut start = s.start_scalar * end;
+    let mut rate = 1.0;
+    if end < 30.0 {
+        end = 30.0;
+    }
+    if law.rate_law {
+        rate = benilla_formats::fog_rate(start, end, law.farclip);
+        end = law.farclip;
+        if start < 0.0 {
+            start = 0.0;
+        }
+    }
+    Fog {
+        color: s.color,
+        start,
+        end,
+        rate,
+    }
+}
+
 /// The camera-in-WMO fog crossfade rate, 0.25/s: 4 s in and 4 s out.
 const WMO_FOG_RAMP_PER_SEC: f32 = 0.25;
 
@@ -42,41 +76,40 @@ impl WmoCrossfade {
     pub fn t(&self) -> f32 {
         self.t
     }
-    /// Advances the ramp by `dt` toward `target` and returns the committed `(color, start, end)`,
-    /// staged as `end = min(end, farclip)` and `start = end × start_scalar`.
+    /// Advances the ramp by `dt` toward `target` and returns the committed `scene` fog crossfaded
+    /// toward the staged record's ([`wmo_fog_settings`]).
     fn blend(
         &mut self,
         target: Option<crate::wmo_portal::WmoFogTarget>,
-        scene_color: [f32; 3],
-        scene_start: f32,
-        scene_end: f32,
-        farclip: f32,
+        scene: Fog,
+        law: benilla_formats::FogLaw,
         dt: f32,
-    ) -> ([f32; 3], f32, f32) {
+    ) -> Fog {
         if target.is_some() {
             self.staged = target;
         }
         let dir = if target.is_some() { 1.0 } else { -1.0 };
         self.t = (self.t + dir * WMO_FOG_RAMP_PER_SEC * dt).clamp(0.0, 1.0);
         let Some(s) = self.staged else {
-            return (scene_color, scene_start, scene_end);
+            return scene;
         };
         if self.t <= 0.0 {
             self.staged = None;
-            return (scene_color, scene_start, scene_end);
+            return scene;
         }
-        let end = s.end.min(farclip);
-        let start = end * s.start_scalar;
+        let room = wmo_fog_settings(&s, law);
         let k = self.t;
-        let mut color = scene_color;
-        for (c, w) in color.iter_mut().zip(s.color) {
+        let mut color = scene.color;
+        for (c, w) in color.iter_mut().zip(room.color) {
             *c += (w - *c) * k;
         }
-        (
+        let mix = |a: f32, b: f32| a + (b - a) * k;
+        Fog {
             color,
-            scene_start + (start - scene_start) * k,
-            scene_end + (end - scene_end) * k,
-        )
+            start: mix(scene.start, room.start),
+            end: mix(scene.end, room.end),
+            rate: mix(scene.rate, room.rate),
+        }
     }
 }
 
@@ -110,6 +143,7 @@ pub(super) fn setup_lighting(
                 false,
                 benilla_formats::Submersion::Dry,
                 false,
+                view.farclip,
             )
         })
         .unwrap_or(Atmosphere::DEFAULT);
@@ -130,10 +164,12 @@ pub(super) fn setup_lighting(
         fog_color: atmo.fog_color,
         fog_start,
         fog_end,
+        fog_rate: atmo.fog_rate,
         // The camera starts outdoors, so the interior fog equals the scene's.
         wmo_fog_color: atmo.fog_color,
         wmo_fog_start: fog_start,
         wmo_fog_end: fog_end,
+        wmo_fog_rate: atmo.fog_rate,
         sky: atmo.sky,
         water_river: atmo.water_river,
         water_ocean: atmo.water_ocean,
@@ -240,7 +276,16 @@ pub(super) fn update_time_lighting(
         .as_ref()
         .map(|s| {
             let blend = |stormy| {
-                s.0.sample_blended_with(map, wow_pos, minute * 2, stormy, submerged, ghost, &live)
+                s.0.sample_blended_with(
+                    map,
+                    wow_pos,
+                    minute * 2,
+                    stormy,
+                    submerged,
+                    ghost,
+                    view.farclip,
+                    &live,
+                )
             };
             let clear = blend(false);
             if storm > 0.0 {
@@ -257,22 +302,28 @@ pub(super) fn update_time_lighting(
     // Elwynn commits 125/500 clear and −139/278 at full storm: the negative start is the near veil,
     // and the short storm end whites out the middle distance.
     let (fog_start, fog_end) = scene_fog(atmo.fog_end, atmo.fog_start_frac, view.farclip);
+    let law = benilla_formats::FogLaw::for_map(map, view.farclip);
+    let scene = Fog {
+        color: atmo.fog_color,
+        start: fog_start,
+        end: fog_end,
+        rate: atmo.fog_rate,
+    };
     // The interior crossfade is its own triple; the scene fog stays untouched. Submerged, the
     // underwater param owns the fog and the ramp is bypassed, as the reference snaps it for magma
     // and slime inside an MFOG interior; the reference's MFOG underwater block (`+0x24`, flags
     // 0x100/0x10) is not applied.
-    let (wmo_fog_color, wmo_fog_start, wmo_fog_end) = if submerged.any() {
-        (atmo.fog_color, fog_start, fog_end)
+    let mut room = if submerged.any() {
+        scene
     } else {
-        wmo_ramp.blend(
-            wmo_fog.0,
-            atmo.fog_color,
-            fog_start,
-            fog_end,
-            view.farclip,
-            time.delta_secs(),
-        )
+        wmo_ramp.blend(wmo_fog.0, scene, law, time.delta_secs())
     };
+    // With the camera in liquid the rate law doubles both rates (`0x7f16f0`).
+    let mut fog_rate = scene.rate;
+    if law.rate_law && submerged.any() {
+        fog_rate *= 2.0;
+        room.rate *= 2.0;
+    }
     let moon02 = daynight::moon02_state(day_f);
     // The ocean depth ramp, ocean only: ambient (`DNState+0x178`) × `fac1` down to 0.5 and diffuse
     // (`+0x174`) × `fac2` down to 0.75 over the first 30 yd. The block's fog-colour commit is dead,
@@ -289,9 +340,11 @@ pub(super) fn update_time_lighting(
         fog_color: atmo.fog_color,
         fog_start,
         fog_end,
-        wmo_fog_color,
-        wmo_fog_start,
-        wmo_fog_end,
+        fog_rate,
+        wmo_fog_color: room.color,
+        wmo_fog_start: room.start,
+        wmo_fog_end: room.end,
+        wmo_fog_rate: room.rate,
         sky: atmo.sky,
         // Area-blended like every band (merges all 18 colour rows): a single-sphere pick snaps the
         // tint where a sphere's weight reaches zero.
@@ -336,15 +389,17 @@ pub(super) fn update_time_lighting(
             *last_fog_dump = sec;
             let b = |c: [f32; 3]| c.map(|v| (v * 255.0).round() as i32);
             eprintln!(
-                "[fog] t {:.2} target {:?} scene {:?} {:.0}/{:.0} interior {:?} {:.0}/{:.0}",
+                "[fog] t {:.2} target {:?} scene {:?} {:.0}/{:.0} rate {:.2} interior {:?} {:.0}/{:.0} rate {:.2}",
                 wmo_ramp.t,
                 wmo_fog.0,
                 b(resolved.fog_color),
                 resolved.fog_start,
                 resolved.fog_end,
+                resolved.fog_rate,
                 b(resolved.wmo_fog_color),
                 resolved.wmo_fog_start,
                 resolved.wmo_fog_end,
+                resolved.wmo_fog_rate,
             );
         }
     }
@@ -465,6 +520,21 @@ mod ocean_ramp_tests {
 mod tests {
     use super::*;
     use crate::wmo_portal::WmoFogTarget;
+    use benilla_formats::FogLaw;
+
+    /// The old world's law at `farclip`: linear, rate 1.
+    fn old_world(farclip: f32) -> FogLaw {
+        FogLaw::for_map(0, farclip)
+    }
+
+    fn fog(color: [f32; 3], start: f32, end: f32) -> Fog {
+        Fog {
+            color,
+            start,
+            end,
+            rate: 1.0,
+        }
+    }
 
     /// The 4 s crossfade (0.25/s): the staged fog latches on exit and releases at 0.
     #[test]
@@ -475,25 +545,25 @@ mod tests {
             end: 194.4,
             start_scalar: 0.25,
         };
-        let scene = ([0.2, 0.2, 0.2], -139.0, 278.0);
+        let scene = fog([0.2, 0.2, 0.2], -139.0, 278.0);
+        let law = old_world(1100.0);
         // 2 s in: the end is midway between the storm's 278 and the room's 194.4.
-        let (_, _, end) = ramp.blend(Some(target), scene.0, scene.1, scene.2, 1100.0, 2.0);
+        let f = ramp.blend(Some(target), scene, law, 2.0);
         assert!((ramp.t - 0.5).abs() < 1e-6);
-        assert!((end - (278.0 + (194.4 - 278.0) * 0.5)).abs() < 1e-3);
+        assert!((f.end - (278.0 + (194.4 - 278.0) * 0.5)).abs() < 1e-3);
         // 4 s in: the room's fog alone, start = end × scalar.
-        let (color, start, end) = ramp.blend(Some(target), scene.0, scene.1, scene.2, 1100.0, 2.0);
-        assert!((end - 194.4).abs() < 1e-3);
-        assert!((start - 194.4 * 0.25).abs() < 1e-3);
-        assert!((color[0] - 1.0).abs() < 1e-6);
+        let f = ramp.blend(Some(target), scene, law, 2.0);
+        assert!((f.end - 194.4).abs() < 1e-3);
+        assert!((f.start - 194.4 * 0.25).abs() < 1e-3);
+        assert!((f.color[0] - 1.0).abs() < 1e-6);
+        assert_eq!(f.rate, 1.0);
         // 2 s out with no target: the latched room fog still blends at half weight.
-        let (_, _, end) = ramp.blend(None, scene.0, scene.1, scene.2, 1100.0, 2.0);
+        let f = ramp.blend(None, scene, law, 2.0);
         assert!((ramp.t - 0.5).abs() < 1e-6);
-        assert!((end - (278.0 + (194.4 - 278.0) * 0.5)).abs() < 1e-3);
+        assert!((f.end - (278.0 + (194.4 - 278.0) * 0.5)).abs() < 1e-3);
         // 4 s out: the scene fog verbatim.
-        let (color, start, end) = ramp.blend(None, scene.0, scene.1, scene.2, 1100.0, 2.0);
-        assert_eq!((color, start, end), scene);
-        let (c2, s2, e2) = ramp.blend(None, scene.0, scene.1, scene.2, 1100.0, 2.0);
-        assert_eq!((c2, s2, e2), scene);
+        assert_eq!(ramp.blend(None, scene, law, 2.0), scene);
+        assert_eq!(ramp.blend(None, scene, law, 2.0), scene);
         assert!(ramp.staged.is_none(), "latch releases at t = 0");
     }
 
@@ -506,8 +576,34 @@ mod tests {
             end: 444.4,
             start_scalar: 0.25,
         };
-        let (_, start, end) = ramp.blend(Some(target), [0.0; 3], 0.0, 200.0, 300.0, 4.0);
-        assert!((end - 300.0).abs() < 1e-4);
-        assert!((start - 75.0).abs() < 1e-4);
+        let f = ramp.blend(
+            Some(target),
+            fog([0.0; 3], 0.0, 200.0),
+            old_world(300.0),
+            4.0,
+        );
+        assert!((f.end - 300.0).abs() < 1e-4);
+        assert!((f.start - 75.0).abs() < 1e-4);
+    }
+
+    /// `0x7ed1b0`: the end floors at 30 yd after the start is taken; from map 530 the rate comes
+    /// off that span, the end moves to the far clip and a negative start is held at 0.
+    #[test]
+    fn wmo_fog_staging_takes_the_floor_and_the_rate_law() {
+        let short = WmoFogTarget {
+            color: [1.0; 3],
+            end: 20.0,
+            start_scalar: 0.5,
+        };
+        let f = wmo_fog_settings(&short, old_world(777.0));
+        assert_eq!((f.start, f.end, f.rate), (10.0, 30.0, 1.0));
+        let room = WmoFogTarget {
+            color: [1.0; 3],
+            end: 150.0,
+            start_scalar: -0.5,
+        };
+        let f = wmo_fog_settings(&room, FogLaw::for_map(530, 1277.0));
+        assert_eq!(f.rate, benilla_formats::fog_rate(-75.0, 150.0, 1277.0));
+        assert_eq!((f.start, f.end), (0.0, 1277.0));
     }
 }

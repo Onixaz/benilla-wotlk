@@ -153,17 +153,8 @@ impl super::UiScript {
     /// its item without unlocking it; the app keeps the returned item locked until its update.
     pub fn clear_petition_button(&mut self) -> Option<PetitionButtonItem> {
         let held = self.model_ref().petition_button?;
-        let mut model = self.model_mut();
-        model.petition_button = None;
-        // The slot reads locked until the app's next push carries the pending lock.
-        if let Some(s) = model
-            .containers
-            .get_mut(&held.bag)
-            .and_then(|c| c.slots.get_mut(&held.slot))
-            .filter(|s| s.guid == held.item)
-        {
-            s.locked = true;
-        }
+        // The app keeps the slot's lock at once, read by the bag verbs at the call.
+        self.model_mut().petition_button = None;
         Some(held)
     }
 
@@ -554,11 +545,7 @@ pub(super) fn holds_slot(model: &super::Model, bag: i64, slot: u32) -> bool {
     model.petition_button.is_some_and(|b| {
         b.bag == bag
             && b.slot == slot
-            && model
-                .containers
-                .get(&bag)
-                .and_then(|c| c.slots.get(&slot))
-                .is_some_and(|s| s.guid == b.item)
+            && super::container::live_slot(model, bag, slot).is_some_and(|s| s.guid == b.item)
     })
 }
 
@@ -578,15 +565,10 @@ fn click_petition_button(model: &mut super::Model) {
     match &held {
         None => model.petition_button = None,
         Some(item) => {
-            let Some(guid) = model
-                .containers
-                .get(&item.bag)
-                .and_then(|c| c.slots.get(&item.slot))
+            let Some(guid) = super::container::live_slot(model, item.bag, item.slot)
                 .filter(|s| s.guid != 0 && s.item_id == item.item_id)
                 .filter(|s| {
-                    model
-                        .item_templates
-                        .get(&s.item_id)
+                    crate::script::item_stats::item_record(model, s.item_id)
                         .is_some_and(|t| t.flags & ITEM_FLAG_PETITION != 0)
                 })
                 .map(|s| s.guid)
@@ -613,10 +595,7 @@ fn click_petition_button(model: &mut super::Model) {
     let Some(prev) = previous else {
         return;
     };
-    let back = model
-        .containers
-        .get(&prev.bag)
-        .and_then(|c| c.slots.get(&prev.slot))
+    let back = super::container::live_slot(model, prev.bag, prev.slot)
         .filter(|s| s.guid == prev.item)
         .map(|s| CursorItem {
             bag: prev.bag,
@@ -1089,8 +1068,7 @@ mod tests {
         assert_eq!(held_slot(&s), Some(1));
     }
 
-    /// The list's show forgets the button's item but leaves it locked, with no lock event
-    /// (`0x5a22cb`); an empty button forgets nothing.
+    /// The list's show forgets the button's item with no lock event (`0x5a22cb`), the app keeping its lock; an empty button forgets nothing.
     #[test]
     fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
         let mut s = vendor_with_charters();
@@ -1114,6 +1092,15 @@ mod tests {
                 .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
             "no unlock"
         );
+        // The app keeps the slot's send lock (`keep_locked`), which the bag verbs read at the call.
+        if let Some(slot) = s
+            .model_mut()
+            .containers
+            .get_mut(&0)
+            .and_then(|c| c.slots.get_mut(&1))
+        {
+            slot.locked = true;
+        }
         assert!(locked(&s, 1), "the forgotten charter stays locked");
         s.run("PickupContainerItem(0, 1)").unwrap();
         assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
