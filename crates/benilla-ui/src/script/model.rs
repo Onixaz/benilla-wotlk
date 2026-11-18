@@ -1322,17 +1322,93 @@ impl Model {
         }
     }
 
-    /// The unit a token with a `target` hop and no push of its own names: the resolver's guid
-    /// (which the getters call before their own object lookup), then that guid's snapshot. A token
-    /// without a hop is the app's to push, base by base, and reads nothing here.
+    /// The unit a token with a hop, or a name, and no push of its own names: the resolver's guid
+    /// (which the getters call before their own object lookup), then that guid's snapshot. A base
+    /// token alone is the app's to push, base by base, and reads nothing here.
     fn chained_unit(&self, token: &str) -> Option<&UnitState> {
         match parse_unit_token(token) {
-            UnitTokenParse::Unit { base, hops } if hops > 0 => {
-                let guid = self.unit_guids.resolve_unit(base, hops)?;
-                self.units_by_guid.get(&guid)
-            }
-            _ => None,
+            UnitTokenParse::Unit { hops, .. } if !hops.is_empty() => {}
+            UnitTokenParse::Name => {}
+            _ => return None,
         }
+        let guid = self.resolve_token(token).ok().flatten()?;
+        self.units_by_guid.get(&guid).or_else(|| {
+            self.units_by_lower
+                .values()
+                .find(|u| u.exists && u.guid == guid)
+        })
+    }
+
+    /// The guid `token` names (`0x60abf0`, with no target default), the name lookup reading the
+    /// names the units' snapshots go by: `None` for nobody, `Err` where the reference answers
+    /// false.
+    pub(crate) fn resolve_token(&self, token: &str) -> Result<Option<u64>, ()> {
+        self.unit_guids
+            .resolve_named(token, |unit, with_realm| self.token_name(unit, with_realm))
+    }
+
+    /// Whether the resolver refuses `token` whatever units the host holds now: the empty token, or
+    /// one no base reads and no group member's or pet's name matches. A base token the host
+    /// resolves where its call takes effect, after the calls before it moved the target, so its
+    /// refusal is the host's.
+    pub(crate) fn token_unknown(&self, token: &str) -> bool {
+        match parse_unit_token(token) {
+            UnitTokenParse::Empty => true,
+            UnitTokenParse::Name => self
+                .unit_guids
+                .by_name(token, |unit, with_realm| self.token_name(unit, with_realm))
+                .is_none(),
+            UnitTokenParse::Nobody | UnitTokenParse::Unit { .. } => false,
+        }
+    }
+
+    /// [`Self::resolve_token`], a token the reference refuses naming nobody.
+    pub(crate) fn token_guid(&self, token: &str) -> Option<u64> {
+        self.resolve_token(token).unwrap_or(None)
+    }
+
+    /// The name a base token's unit goes by (`0x60a360`): ours from the local name buffer, any
+    /// other unit's from its snapshot, else, for a unit out of view, the name cache's record or the
+    /// roster's; with the realm asked for, a player of another realm's as `Name-Realm`.
+    pub(crate) fn token_name(&self, token: &str, with_realm: bool) -> Option<String> {
+        let guid = self
+            .unit_guids
+            .resolve_named(token, |_, _| None)
+            .ok()
+            .flatten()?;
+        let record = self.name_records.get(&guid);
+        let snapshot = || {
+            self.pushed_unit(token)
+                .filter(|u| u.guid == guid)
+                .and_then(|u| u.name.as_deref())
+        };
+        let roster = || {
+            self.party
+                .raid
+                .iter()
+                .find(|m| m.guid == guid)
+                .map(|m| m.name.as_str())
+                .or_else(|| {
+                    let m = self.party.members.iter().find(|m| m.guid == guid)?;
+                    Some(m.name.as_str())
+                })
+                .filter(|n| !n.is_empty())
+        };
+        let name = if guid == self.unit_guids.player && !self.player_record.name.is_empty() {
+            self.player_record.name.as_str()
+        } else {
+            snapshot()
+                .or_else(|| record.map(|r| r.name.as_str()).filter(|n| !n.is_empty()))
+                .or_else(roster)?
+        };
+        let realm = record
+            .filter(|_| with_realm)
+            .map(|r| r.realm.as_str())
+            .filter(|r| !r.is_empty());
+        Some(match realm {
+            Some(realm) => format!("{name}-{realm}"),
+            None => name.to_string(),
+        })
     }
 
     pub(crate) fn new() -> Model {

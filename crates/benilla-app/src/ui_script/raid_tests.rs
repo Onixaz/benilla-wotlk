@@ -84,6 +84,19 @@ fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
         });
         s.set_unit(&format!("raid{i}"), snap);
     }
+    // The resolver's tables, which the aura feed pushes beside the snapshots: the rows, and the
+    // own subgroup's slots.
+    let mut party = [0; 4];
+    for (slot, r) in party.iter_mut().zip(raid.iter().skip(1)) {
+        *slot = r.guid;
+    }
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: raid.first().map_or(0, |r| r.guid),
+        party,
+        raid: raid.iter().map(|r| r.guid).collect(),
+        raid_pets: vec![0; raid.len()],
+        ..Default::default()
+    });
     // `members` is our own subgroup's slice; non-empty, it makes `IsPartyLeader()` and
     // `IsRaidLeader()` answer 1 for `leader_index` 0.
     let members = raid

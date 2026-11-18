@@ -359,7 +359,7 @@ pub(crate) fn use_action(
                 "ui_action: cast {} at {:?} (selection {:?})",
                 b.action, press.at, selection.guid
             );
-            let aim = targeting.aim(tokens, &press.at);
+            let aim = targeting.aim(tokens, &press.at, crate::ui_unit::VmUnits::of(script));
             ladder.send_spell(b.action, &targeting.context_at(aim), aim.passed());
         }
         // An item action names an entry, so the click finds a copy. A miss only logs, with no

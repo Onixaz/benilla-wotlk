@@ -208,31 +208,10 @@ pub(super) fn grant_level_refusal(model: &Model, token: &str) -> u8 {
     }
 }
 
-/// A token or a roster name to its guid, as the token-to-guid read with its flag false
+/// A token or a group member's name to its guid, as the token-to-guid read with its flag false
 /// (`0x60abf0`).
 pub(super) fn guid_of(model: &Model, unit: &str) -> Option<u64> {
-    if let Some(u) = model.unit(unit).filter(|u| u.exists) {
-        return Some(u.guid);
-    }
-    let raid = model
-        .party
-        .raid
-        .iter()
-        .find(|m| m.name.eq_ignore_ascii_case(unit));
-    if let Some(m) = raid {
-        return Some(m.guid);
-    }
-    (1..=4).find_map(|i| {
-        model
-            .unit(&format!("party{i}"))
-            .filter(|u| {
-                u.exists
-                    && u.name
-                        .as_deref()
-                        .is_some_and(|n| n.eq_ignore_ascii_case(unit))
-            })
-            .map(|u| u.guid)
-    })
+    model.token_guid(unit)
 }
 
 fn model_of(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {

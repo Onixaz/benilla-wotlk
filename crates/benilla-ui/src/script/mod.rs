@@ -513,8 +513,9 @@ pub use types::{
 };
 pub(crate) use types::{FontExplicit, MeasuredText, RegionData};
 pub use unit::{
-    grey_band, level_reads_unknown, parse_unit_token, power_token, unit_is_grey, PlayerRecord,
-    SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
+    grey_band, level_reads_unknown, parse_unit_token, power_token, split_name, unit_is_grey, Hop,
+    Hops, PlayerRecord, SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
+    PET_OF_ANYONE,
 };
 pub use vehicle::{
     AimRec, AimUnit, PowerDisplayView, VehicleIndicatorView, VehicleRequest, VehicleSeatView,

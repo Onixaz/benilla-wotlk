@@ -222,8 +222,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let guid = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model")
-                .unit_guids
-                .guid_of(&unit);
+                .token_guid(&unit);
             let riding = crate::script::read_live(|live| {
                 guid.and_then(|g| live.unit_flags(g))
                     .is_some_and(|f| f & UNIT_FLAG_TAXI_FLIGHT != 0)

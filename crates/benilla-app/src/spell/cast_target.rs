@@ -445,12 +445,20 @@ impl CastTargeting<'_, '_> {
     }
 
     /// Resolve a cast verb's target where its call takes effect, after the calls before it
-    /// committed: the selection, the active player, or the unit a token names (`None`, nobody).
-    pub(crate) fn aim(&self, tokens: &crate::ui_unit::UnitTokens, at: &CastAt) -> Aim {
+    /// committed: the selection, the active player, or the unit a token names (`None`, nobody),
+    /// `vm` answering the focus and a name.
+    pub(crate) fn aim(
+        &self,
+        tokens: &crate::ui_unit::UnitTokens,
+        at: &CastAt,
+        vm: crate::ui_unit::VmUnits<'_>,
+    ) -> Aim {
         match at {
             CastAt::Selection => Aim::Selection,
             CastAt::Player => Aim::Unit(self.self_guid.0),
-            CastAt::Unit(token) => Aim::Unit(tokens.resolve(token, &self.selection()).map(|u| u.1)),
+            CastAt::Unit(token) => {
+                Aim::Unit(tokens.resolve(token, &self.selection(), vm).map(|u| u.1))
+            }
         }
     }
 }
