@@ -1595,12 +1595,8 @@ pub(crate) mod schedule_tests {
 
     /// The consumer markers: a VM holder that does one of these to host state has spent
     /// something this frame that nothing can re-spend.
-    const CONSUMES: &[&str] = &[
-        "fire_event(",
-        "fire_lock_edge_now(",
-        "mem::take(",
-        ".drain(",
-    ];
+    #[rustfmt::skip]
+    const CONSUMES: &[&str] = &["fire_event(", "fire_lock_edge_now(", "mem::take(", ".drain("];
 
     /// Why an ungated one-shot consumer holding the VM loses nothing in the one-frame window
     /// where the wire is in world and the boot VM is still live and frameless.
