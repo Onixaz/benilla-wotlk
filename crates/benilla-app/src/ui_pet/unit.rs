@@ -1,5 +1,4 @@
-//! The `"pet"` unit token: our `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON` (`0x60acc3`), pushed
-//! ahead of each `UNIT_PET` ([`push_pet_token`]). Its per-field `UNIT_*` fan-out is the units' (#1289).
+//! The `"pet"` unit token: our `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON` (`0x60acc3`), pushed ahead of each `UNIT_PET` ([`push_pet_token`]). Its per-field `UNIT_*` fan-out is the units' (#1289).
 
 use bevy::prelude::*;
 
@@ -26,8 +25,7 @@ pub(crate) struct PetUnitMemory {
 /// `PET_ATTACK_START`/`PET_ATTACK_STOP`.
 pub(super) const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
 
-/// The `"pet"` token's snapshot: our charm, else our summon (`0x60acc3`-`0x60acd3`), `None` while
-/// neither is set or streamed. The reaction is 0: the pet frame reads none.
+/// The `"pet"` token's snapshot: our charm, else our summon (`0x60acc3`-`0x60acd3`), `None` while neither is set or streamed. The reaction is 0: the pet frame reads none.
 fn pet_snapshot(
     pet: &PetUnit,
     names: &NameCache,
@@ -44,8 +42,7 @@ fn pet_snapshot(
     Some(snapshot(store, pet_guid, name, 0, None, types))
 }
 
-/// Push the `"pet"` token ahead of `UNIT_PET`, whose handlers read it: the setter's step
-/// (`0x5d6aca`) and our charm and summon watches' (event slots 0 and 2).
+/// Push the `"pet"` token ahead of `UNIT_PET`, whose handlers read it: the setter's step (`0x5d6aca`) and our charm and summon watches' (event slots 0 and 2).
 pub(crate) fn push_pet_token(world: &mut World) {
     if let Err(e) = world.run_system_cached(push_pet_token_system) {
         warn!("ui_pet: the pet token was not pushed: {e}");
@@ -134,9 +131,7 @@ pub(crate) fn feed_pet_unit(
     }
 }
 
-/// The name watcher's field callback on offset `0x218` (`UNIT_FIELD_PET_NAME_TIMESTAMP`): any
-/// unit's rename drops its cached pet name so the next read asks again, and our charm or summon's
-/// (`owner_is_us`) fires `LOCALPLAYER_PET_RENAMED`.
+/// The name watcher's field callback on offset `0x218` (`UNIT_FIELD_PET_NAME_TIMESTAMP`): any unit's rename drops its cached pet name so the next read asks again, and our charm or summon's (`owner_is_us`) fires `LOCALPLAYER_PET_RENAMED`.
 pub(crate) fn pet_renamed(
     pet_guid: u64,
     owner_is_us: bool,

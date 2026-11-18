@@ -114,10 +114,7 @@ fn init(pending: Option<u32>) -> (CompanionLists, Vec<&'static str>) {
     (lists, ui.names())
 }
 
-/// `0x5426a5` files a summon into a slot-5 row as a critter and a `MOUNTED` spell as a mount;
-/// a guardian summon, a `0x80` spell and a plain spell join neither. With every record cached the
-/// login's update sorts each list by name, case-insensitively (`0x53c7c0`), and fires
-/// `COMPANION_UPDATE` once (`0x53cec0`).
+/// `0x5426a5` files a summon into a slot-5 row as a critter and a `MOUNTED` spell as a mount; a guardian summon, a `0x80` spell and a plain spell join neither. With every record cached the login's update sorts each list by name, case-insensitively (`0x53c7c0`), and fires `COMPANION_UPDATE` once (`0x53cec0`).
 #[test]
 fn the_lists_take_companions_alone_and_sort_by_creature_name() {
     let (lists, fired) = init(None);
@@ -134,8 +131,7 @@ fn the_lists_take_companions_alone_and_sort_by_creature_name() {
     assert_eq!(fired, ["COMPANION_UPDATE"]);
 }
 
-/// The update does not sort while a record is pending: the lists keep add order and nothing
-/// fires; the answer's callback then sorts and fires `COMPANION_UPDATE` (`0x53ebc0`).
+/// The update does not sort while a record is pending: the lists keep add order and nothing fires; the answer's callback then sorts and fires `COMPANION_UPDATE` (`0x53ebc0`).
 #[test]
 fn a_pending_record_holds_the_sort_until_its_answer() {
     let (mut lists, fired) = init(Some(801));
@@ -161,9 +157,7 @@ fn a_pending_record_holds_the_sort_until_its_answer() {
     assert_eq!(ui.names(), ["COMPANION_UPDATE"]);
 }
 
-/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`,
-/// then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs
-/// the same three (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`, then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs the same three (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
 #[test]
 fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     let (catalog, summons, commands) = (catalog(), summons(), commands());

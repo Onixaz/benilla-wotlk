@@ -91,22 +91,18 @@ pub struct PetStats {
     pub talent_tree: Option<String>,
 }
 
-/// The pet bar's bar-wide state as its verbs read it at the call: the pet setter's guid, words and
-/// globals (`0x5d6900`).
+/// The pet bar's bar-wide state as its verbs read it at the call: the pet setter's guid, words and globals (`0x5d6900`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PetBarLive {
     /// `PetHasActionBar()`: the cached pet guid is nonzero, even for ten empty slots.
     pub has_bar: bool,
-    /// `GetPetActionsUsable()` (`0x5d3e80`): false desaturates the whole bar, and refuses the
-    /// drag's bar writes with it.
+    /// `GetPetActionsUsable()` (`0x5d3e80`): false desaturates the whole bar, and refuses the drag's bar writes with it.
     pub actions_usable: bool,
-    /// `PickupPetAction`'s gate: the pet's object resolves and `UNIT_FLAG_POSSESSED` is clear,
-    /// which blocks the drop as well as the pick-up.
+    /// `PickupPetAction`'s gate: the pet's object resolves and `UNIT_FLAG_POSSESSED` is clear, which blocks the drop as well as the pick-up.
     pub pickup_allowed: bool,
     /// `IsPetAttackActive()`, the pet-attacking global (`[0xc234dc]`, `0x5d3163`).
     pub attacking: bool,
-    /// `GetPetTimeRemaining()`: the charm expiry less the tick count as an unsigned difference
-    /// (`[0xc234cc]`), `None` while no expiry is held.
+    /// `GetPetTimeRemaining()`: the charm expiry less the tick count as an unsigned difference (`[0xc234cc]`), `None` while no expiry is held.
     pub time_remaining_ms: Option<u32>,
 }
 
@@ -217,9 +213,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
 
-    // GetPetTimeRemaining() (`0x5d3180`): nil with no expiry, else the milliseconds to it as an
-    // unsigned 32-bit tick difference, so one past its expiry wraps to about 4.29e9 until the next
-    // packet. The stock caller is commented out (`PetFrame.lua:91-97`).
+    // GetPetTimeRemaining() (`0x5d3180`): nil with no expiry, else the milliseconds to it as an unsigned 32-bit tick difference, so one past its expiry wraps to about 4.29e9 until the next packet. The stock caller is commented out (`PetFrame.lua:91-97`).
     g.set(
         "GetPetTimeRemaining",
         lua.create_function(|_, ()| {
@@ -290,8 +284,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(move |_, ()| Ok(flag(live_bar().actions_usable)))?,
     )?;
 
-    // GetPetActionInfo(index) (`0x5d4ec0`): the slot word read at the call; an out-of-range index
-    // answers a single nil, which the Lua reads as an empty slot.
+    // GetPetActionInfo(index) (`0x5d4ec0`): the slot word read at the call; an out-of-range index answers a single nil, which the Lua reads as an empty slot.
     g.set(
         "GetPetActionInfo",
         lua.create_function(move |lua, i: u32| {
@@ -314,8 +307,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPetActionCooldown(index) (`0x5d5280`): the pet's cooldown history asked at the call
-    // (`0x5d5345` into `0x809000`); an elapsed or absent cooldown answers (0, 0, 1).
+    // GetPetActionCooldown(index) (`0x5d5280`): the pet's cooldown history asked at the call (`0x5d5345` into `0x809000`); an elapsed or absent cooldown answers (0, 0, 1).
     g.set(
         "GetPetActionCooldown",
         lua.create_function(|lua, i: u32| {
@@ -369,8 +361,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsPetAttackActive() (`0x5d3160`): the pet-attacking global as a real boolean; any argument is
-    // ignored.
+    // IsPetAttackActive() (`0x5d3160`): the pet-attacking global as a real boolean; any argument is ignored.
     g.set(
         "IsPetAttackActive",
         lua.create_function(move |_, _: MultiValue| Ok(live_bar().attacking))?,
@@ -390,9 +381,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // TogglePetAutocast(index) (`0x5d66f0`): `index - 1` in 0..=10 (`0x5d6745`), the cursor
-    // cleared or its pet action dropped (`0x5d676d`), else the toggle runs inside the call and
-    // signals the bar after its send (`0x5d6794`, `0x5d5e01`).
+    // TogglePetAutocast(index) (`0x5d66f0`): `index - 1` in 0..=10 (`0x5d6745`), the cursor cleared or its pet action dropped (`0x5d676d`), else the toggle runs inside the call and signals the bar after its send (`0x5d6794`, `0x5d5e01`).
     g.set(
         "TogglePetAutocast",
         lua.create_function(|lua, i: Value| {
@@ -433,8 +422,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPetExperience() (`0x5d3a20`): numbers on every path, `(0, 0)` unless the pet can gain
-    // experience (`0x5d3a5d`).
+    // GetPetExperience() (`0x5d3a20`): numbers on every path, `(0, 0)` unless the pet can gain experience (`0x5d3a5d`).
     g.set(
         "GetPetExperience",
         lua.create_function(move |_, ()| {
@@ -444,8 +432,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitCreatureFamily(unit) (`0x611820`): any unit's family off its cached creature record, nil
-    // without a record or a row; a non-string raises the usage.
+    // UnitCreatureFamily(unit) (`0x611820`): any unit's family off its cached creature record, nil without a record or a row; a non-string raises the usage.
     g.set(
         "UnitCreatureFamily",
         lua.create_function(move |lua, unit: Value| {
@@ -469,8 +456,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPetIcon() (`0x5d3ce0`): the family's icon for a pet that can gain experience; a real nil,
-    // never "", since the stable reads it as a predicate and as a texture (`PetStable.lua:51`).
+    // GetPetIcon() (`0x5d3ce0`): the family's icon for a pet that can gain experience; a real nil, never "", since the stable reads it as a predicate and as a texture (`PetStable.lua:51`).
     g.set(
         "GetPetIcon",
         lua.create_function(move |lua, ()| {
@@ -494,8 +480,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPetFoodTypes() (`0x5d3bd0`): one return per diet and never a nil: an empty diet is zero
-    // values, for which `BuildListString` answers nil (`PetPaperDollFrame.xml:269`).
+    // GetPetFoodTypes() (`0x5d3bd0`): one return per diet and never a nil: an empty diet is zero values, for which `BuildListString` answers nil (`PetPaperDollFrame.xml:269`).
     g.set(
         "GetPetFoodTypes",
         lua.create_function(move |lua, ()| {
@@ -610,8 +595,7 @@ mod tests {
     use super::{PetActionView, PetStats};
     use crate::script::UiScript;
 
-    /// A charmed or possessed unit's time left in ms as the view reads it at the call, nil for
-    /// none, and a wrapped difference passed through as a number.
+    /// A charmed or possessed unit's time left in ms as the view reads it at the call, nil for none, and a wrapped difference passed through as a number.
     #[test]
     fn pet_time_remaining_reads_the_expiry_at_the_call() {
         let s = UiScript::new().unwrap();
@@ -865,8 +849,7 @@ mod tests {
         );
     }
 
-    /// `TogglePetAutocast` toggles inside the call (`0x5d6794`): the bar's handler and next verb
-    /// read the flipped slot, a token signals unflipped, and slot 11 passes the gate (`0x5d6745`).
+    /// `TogglePetAutocast` toggles inside the call (`0x5d6794`): the bar's handler and next verb read the flipped slot, a token signals unflipped, and slot 11 passes the gate (`0x5d6745`).
     #[test]
     fn the_autocast_toggle_flips_and_signals_inside_the_call() {
         let s = UiScript::new().unwrap();
@@ -958,8 +941,7 @@ mod tests {
         assert!(err.contains("Usage: IsPetAttackAction(index)"), "{err}");
     }
 
-    /// `GetPetActionSlotUsable` answers the lent slot's walk at the call, and 1 with no slot
-    /// (`0x5d5400`).
+    /// `GetPetActionSlotUsable` answers the lent slot's walk at the call, and 1 with no slot (`0x5d5400`).
     #[test]
     fn slot_usable_reads_the_lent_walk_and_no_slot_is_usable() {
         let s = UiScript::new().unwrap();

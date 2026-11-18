@@ -176,8 +176,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             own_flags_watch(&mut sc, guid, merged);
             return;
         }
-        // Our own create's init replays the known-spell buffer into the companion lists and
-        // updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
+        // Our own create's init replays the known-spell buffer into the companion lists and updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
         if sc.self_guid.0 == Some(guid) {
             let me = (
                 fields.unit_race().unwrap_or(0),
@@ -1526,8 +1525,7 @@ enum PetSignal {
     Renamed,
 }
 
-/// The unit signal a pet stat field raises: the field's index is its event slot (`0x614190`), 23
-/// `UNIT_HAPPINESS` and 71-72 `UNIT_PET_EXPERIENCE`.
+/// The unit signal a pet stat field raises: the field's index is its event slot (`0x614190`), 23 `UNIT_HAPPINESS` and 71-72 `UNIT_PET_EXPERIENCE`.
 fn pet_signal(e: &FieldChanged) -> Option<PetSignal> {
     use benilla_protocol::field::{
         FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_PET_NAME_TIMESTAMP,
@@ -1544,10 +1542,7 @@ fn pet_signal(e: &FieldChanged) -> Option<PetSignal> {
     }
 }
 
-/// The unit signals of the unit the `"pet"` token names, our charm else our summon, with that
-/// token (`0x60bb70`); the fan-out to the other tokens naming it is the units' (#1289). The flags
-/// callback's pet arm (`0x73c503`-`0x73c53d`) fires `PET_ATTACK_START`/`STOP` for a unit whose
-/// charmer, else summoner, is us (`0x5d30a0`), in field order with the others.
+/// The unit signals of the unit the `"pet"` token names, our charm else our summon, with that token (`0x60bb70`); the fan-out to the other tokens naming it is the units' (#1289). The flags callback's pet arm (`0x73c503`-`0x73c53d`) fires `PET_ATTACK_START`/`STOP` for a unit whose charmer, else summoner, is us (`0x5d30a0`), in field order with the others.
 fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
     if merged.pet_signals.is_empty() {
         return;
@@ -1575,8 +1570,7 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
             PetSignal::Experience if pet == Some(guid) => sc
                 .ui
                 .fire("UNIT_PET_EXPERIENCE", vec![ScriptValue::Str("pet".into())]),
-            // The signal, then the pet-attacking global (`0x5d30b2` then `0x5d30ba`, `0x5d30c8`
-            // then `0x5d30d0`): a handler of the event reads the old value.
+            // The signal, then the pet-attacking global (`0x5d30b2` then `0x5d30ba`, `0x5d30c8` then `0x5d30d0`): a handler of the event reads the old value.
             PetSignal::Attack(on) if ours => {
                 sc.ui.fire(
                     if on {
@@ -1644,8 +1638,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     if merged.pet_moved {
         possess_lookup(sc, guid);
-        // Our charm and summon fields' unit watches, event slots 0 and 2 (`0x614190`): `UNIT_PET`
-        // with the `"pet"` token pushed ahead.
+        // Our charm and summon fields' unit watches, event slots 0 and 2 (`0x614190`): `UNIT_PET` with the `"pet"` token pushed ahead.
         sc.ui.world(crate::ui_pet::push_pet_token);
         sc.ui.fire(
             "UNIT_PET",
@@ -1724,8 +1717,7 @@ fn possess_lookup(sc: &mut Scene, guid: u64) {
     );
 }
 
-/// Our far-sight watch's possess half: a subject held as an object looks the spell up
-/// (`0x6e5034`), any other clears it (`0x6e5042`).
+/// Our far-sight watch's possess half: a subject held as an object looks the spell up (`0x6e5034`), any other clears it (`0x6e5042`).
 fn farsight_possess(sc: &mut Scene, guid: u64) {
     let subject = sc
         .index

@@ -799,8 +799,7 @@ pub(crate) mod schedule_tests {
                 || self.streams.contains(&id)
         }
 
-        /// Which class explains this pair, `both_hold_vm` when each side's access names the VM;
-        /// `None` if it is actionable.
+        /// Which class explains this pair, `both_hold_vm` when each side's access names the VM; `None` if it is actionable.
         pub fn class_of(&self, what: &[ComponentId], both_hold_vm: bool) -> Option<&'static str> {
             // An exclusive system on one side: bevy cannot see its access, so no class applies.
             if what.is_empty() {
@@ -1196,7 +1195,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 706, 698),
+        ("Update", 707, 699),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),

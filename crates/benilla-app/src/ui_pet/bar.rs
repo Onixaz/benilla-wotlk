@@ -1,6 +1,4 @@
-//! The pet action bar as its verbs read it at the call: the ten packed words of the last
-//! `SMSG_PET_SPELLS`, which the server owns whole, each resolved into a `PetActionView` when a verb
-//! asks (`0x5d4ec0`).
+//! The pet action bar as its verbs read it at the call: the ten packed words of the last `SMSG_PET_SPELLS`, which the server owns whole, each resolved into a `PetActionView` when a verb asks (`0x5d4ec0`).
 
 use std::time::Instant;
 
@@ -163,8 +161,7 @@ pub(super) fn slot_paint(
         .then(|| command_token(action))
         .flatten()
     {
-        // Attack is lit by the pet-attacking global alone (`0x5d51ea`); the others when the
-        // unmasked `state >> 8` equals the action (`0x5d51fc`), so a disabled bar lights none.
+        // Attack is lit by the pet-attacking global alone (`0x5d51ea`); the others when the unmasked `state >> 8` equals the action (`0x5d51fc`), so a disabled bar lights none.
         let attacking = pet_attacking && action == PET_COMMAND_ATTACK;
         return PetActionView {
             name: Some(name.to_string()),
@@ -246,12 +243,9 @@ pub(super) fn active_aura_press(
     crate::ui_action::toggle::active_action_toggle(spell_id, spell?, pet).then_some(spell_id)
 }
 
-/// The bar-wide answers at the call: `PetHasActionBar`, the usability predicate, the drag's gate,
-/// the attacking global and the expiry's tick difference (`0x5d3185`-`0x5d31a5`).
+/// The bar-wide answers at the call: `PetHasActionBar`, the usability predicate, the drag's gate, the attacking global and the expiry's tick difference (`0x5d3185`-`0x5d31a5`).
 pub(crate) fn bar_live(bar: &PetBar, pet: Option<&PetUnit>) -> PetBarLive {
-    // `PickupPetAction`'s gate alone: the pet's object must resolve and not be possessed. A
-    // possessed unit's bar cannot be rearranged but its buttons work, so possession stays out of
-    // `actions_usable`; an unstreamed pet has no flags to test and lifts nothing.
+    // `PickupPetAction`'s gate alone: the pet's object must resolve and not be possessed. A possessed unit's bar cannot be rearranged but its buttons work, so possession stays out of `actions_usable`; an unstreamed pet has no flags to test and lifts nothing.
     let pickup_allowed = pet
         .and_then(|p| p.store(bar.spells.pet_guid))
         .is_some_and(|s| s.0.unit_flags() & UNIT_FLAG_POSSESSED == 0);
@@ -273,9 +267,7 @@ pub(crate) fn bar_live(bar: &PetBar, pet: Option<&PetUnit>) -> PetBarLive {
     }
 }
 
-/// Slot `index`'s view at the call: the word as `GetPetActionInfo` paints it, its cooldown from the
-/// pet's history on the VM clock `(anchor, ui_now)` names, and `GetPetActionSlotUsable`'s answer.
-/// `None` with no bar or past the ten words.
+/// Slot `index`'s view at the call: the word as `GetPetActionInfo` paints it, its cooldown from the pet's history on the VM clock `(anchor, ui_now)` names, and `GetPetActionSlotUsable`'s answer. `None` with no bar or past the ten words.
 pub(crate) fn action_live(
     bar: &PetBar,
     index: usize,

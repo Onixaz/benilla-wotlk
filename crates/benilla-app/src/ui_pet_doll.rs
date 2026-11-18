@@ -26,8 +26,7 @@ impl Plugin for UiPetDollPlugin {
     }
 }
 
-/// The booth `PetModelFrame` draws, read each frame as the model frame renders (`0x960240`): its
-/// facing, which the rotate buttons write (`0x9606e0`), and the pet's model.
+/// The booth `PetModelFrame` draws, read each frame as the model frame renders (`0x960240`): its facing, which the rotate buttons write (`0x9606e0`), and the pet's model.
 fn sync_pet_booth(
     (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     pet: PetUnit,

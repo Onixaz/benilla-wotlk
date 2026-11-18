@@ -23,8 +23,7 @@ use benilla_ui::script::{PetBookState, SpellSlotView};
 use crate::ui_action::Spells;
 use crate::ui_pet::{PetBar, PetUnit};
 
-/// The pet's book as its verbs read it at the call (`[0xbe7d98]`): every word with a `Spell.dbc`
-/// record not `DO_NOT_DISPLAY`, re-sorted as each `SMSG_PET_SPELLS` sorts it (`0x53cad4`).
+/// The pet's book as its verbs read it at the call (`[0xbe7d98]`): every word with a `Spell.dbc` record not `DO_NOT_DISPLAY`, re-sorted as each `SMSG_PET_SPELLS` sorts it (`0x53cad4`).
 pub(crate) fn book_live(
     bar: &PetBar,
     spells: &Spells,
@@ -35,8 +34,7 @@ pub(crate) fn book_live(
     let now = Instant::now();
     let pet_auras = pet.auras(bar.spells.pet_guid);
     let mut book = PetBookState {
-        // `HasPetSpells`'s token is the player's class, not the pet's (`player.fields + 0x79`),
-        // named by `ChrClasses.dbc` field 4.
+        // `HasPetSpells`'s token is the player's class, not the pet's (`player.fields + 0x79`), named by `ChrClasses.dbc` field 4.
         token: pet.player_store().and_then(|s| {
             let class = u32::from(s.0.unit_class()?);
             classes.map(|t| t.0.pet_name_token(class).to_string())
@@ -107,8 +105,7 @@ pub(crate) fn cast_pet_spell(
     p.cast_book_spell(spell_id, target)
 }
 
-/// The book's set (`0x5d5e10`): the last word for the spell (`0x5d3410`) must hold bit 31; set bit
-/// 30, `None` flipping, and copy it onto every bar slot equal under `& 0x3FFFFFFF` (`0x5d5e90`).
+/// The book's set (`0x5d5e10`): the last word for the spell (`0x5d3410`) must hold bit 31; set bit 30, `None` flipping, and copy it onto every bar slot equal under `& 0x3FFFFFFF` (`0x5d5e90`).
 pub(crate) fn set_autocast(
     spells: &mut benilla_protocol::messages::PetSpells,
     spell_id: u32,

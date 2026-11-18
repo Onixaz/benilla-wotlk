@@ -1,5 +1,4 @@
-//! The possess spell `[0xc234e0]`: the aura walk (`0x5d62a0`), the two verbs' reads of its
-//! record, and the handlers that look it up.
+//! The possess spell `[0xc234e0]`: the aura walk (`0x5d62a0`), the two verbs' reads of its record, and the handlers that look it up.
 
 use std::collections::HashMap;
 
@@ -139,8 +138,7 @@ fn the_view_reads_the_spell_record_as_the_verbs_do() {
     );
 }
 
-/// The lookup holds what the walk finds and keeps the held spell on no find; each change fires
-/// `UPDATE_BONUS_ACTIONBAR` once (`0x5d30e0`).
+/// The lookup holds what the walk finds and keeps the held spell on no find; each change fires `UPDATE_BONUS_ACTIONBAR` once (`0x5d30e0`).
 #[test]
 fn the_lookup_holds_a_find_and_fires_on_a_change() {
     let me = benilla_protocol::ObjectFields::default().into_created(ObjectType::Player);

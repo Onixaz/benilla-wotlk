@@ -44,8 +44,8 @@ pub struct EntityUvLane<'a> {
     pub instance: Option<Entity>,
 }
 
-/// One skybox batch's pair ([`M2BatchMaterials::skybox`]): the authored blend at full weight, and
-/// the SRC_ALPHA twin the 4-second crossfade rides.
+/// One skybox batch's pair ([`M2BatchMaterials::skybox`]): the authored blend at full alpha, and
+/// the SRC_ALPHA twin a partial weight or a fading batch rides.
 pub struct SkyboxBatch {
     /// Slot weight 1.0: the authored blend mode.
     pub steady: Handle<WowModelMaterial>,
@@ -96,16 +96,22 @@ impl M2BatchMaterials<'_> {
         ))
     }
 
-    /// The pair for a batch of a WMO skybox ([`crate::skybox`]), an ordinary M2 but for its depth:
-    /// it draws at the reverse-Z far value ([`crate::sky_order`]), never writes depth, and always
-    /// tests it, overriding M2 flag `0x08`, which the reference uses only to order the sky inside
-    /// its own depth slice `[0.975, 0.98]` (ported as [`super::skybox_sort_bias`]). The slot weight
-    /// (model `[+0x180]`) scales every batch's alpha, and `0 < A < 1` promotes a batch to
-    /// SRC_ALPHA blending: `fade_blend` is that twin, or `steady` when the batch already blends.
+    /// The pair for a batch of a skybox ([`crate::skybox`]), an ordinary M2 but for its depth and
+    /// its clock: it draws at the reverse-Z far value ([`crate::sky_order`]), never writes depth,
+    /// and always tests it, overriding M2 flag `0x08`, which the reference uses only to order the
+    /// sky inside its own depth slice `[0.975, 0.98]` (ported as [`super::skybox_sort_bias`]). The
+    /// batch alpha (`fadeAlpha · colour · weight`) rides the `MeshTag`, and `0 < A < 1` promotes a
+    /// batch to SRC_ALPHA blending: `fade_blend` is that twin, or `steady` when the batch already
+    /// blends. `order` is [`super::skybox_order`]'s rung and batch.
+    ///
+    /// No material-table loop is wired: the sky lane writes its texture transforms, tint and alpha
+    /// itself, on the sky scene's clock. `stage2` is the batch's combiner (its stage-1 transform
+    /// stripped, as the lane writes those coordinates too) and stage 1's texture.
     pub fn skybox(
         &mut self,
         sub: &benilla_formats::RenderSubmesh,
         texture: Option<Handle<Image>>,
+        stage2: Option<(&benilla_formats::Combiner, Option<&Handle<Image>>)>,
         order: u16,
     ) -> Option<SkyboxBatch> {
         let light = self.light.as_ref()?.0.clone();
@@ -125,20 +131,18 @@ impl M2BatchMaterials<'_> {
                 false, // …and never skips the test
                 sub.fog_policy,
                 sub.env_map,
-                ShadeSel::Lit, // unread: every shipped skybox batch is UNLIT (0x01)
+                ShadeSel::Lit, // unread: every shipped sky batch is UNLIT (0x01)
                 order,
-                // No texture-transform or colour loop: neither shipped skybox authors one. Wiring
-                // one needs the `M2Model` lane's `Arc`, which the material key identifies it by.
-                None,
-                None,
+                None, // the lane writes the coordinates
+                None, // …and the tint, into the vertex colours
                 None, // M2: no MOBA class, no SIDN, no WINDOW
                 None,
                 false,
                 None,
                 true, // the sky lane
                 &light,
-                None, // one shared sky material, no per-sequence channel to key on
-                None, // a skybox batch draws one stage
+                None, // one material per batch and rung, no per-sequence channel to key on
+                stage2.map(|(combiner, texture)| super::Stage2 { combiner, texture }),
             )
         };
         let steady = mk(false);

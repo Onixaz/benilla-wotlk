@@ -91,18 +91,13 @@ fn assign(slots: &mut [u32], target: usize, source: u32, passive: bool) -> Optio
     })
 }
 
-/// The pet bar as one `PickupPetAction` call reads it: the bar-wide state and the ten slots, both
-/// read live at the call's start (`0x5d6020` reads the words in place).
+/// The pet bar as one `PickupPetAction` call reads it: the bar-wide state and the ten slots, both read live at the call's start (`0x5d6020` reads the words in place).
 struct BarRead {
     bar: crate::script::pet::PetBarLive,
     slots: Vec<crate::script::PetActionView>,
 }
 
-/// `PickupPetAction(slot)`, 1-based. A pet whose object does not resolve or is
-/// `UNIT_FLAG_POSSESSED` blocks both ends, the gate sitting above the cursor fork, so the cursor is
-/// left as it was. Another payload stays held here, where the reference clears it and picks the
-/// slot up. A pickup blanks only a spell slot, so a dragged token is copied, not moved. Returns
-/// whether it took or placed, and the bar write it made, for the caller to apply to the live bar.
+/// `PickupPetAction(slot)`, 1-based. A pet whose object does not resolve or is `UNIT_FLAG_POSSESSED` blocks both ends, the gate sitting above the cursor fork, so the cursor is left as it was. Another payload stays held here, where the reference clears it and picks the slot up. A pickup blanks only a spell slot, so a dragged token is copied, not moved. Returns whether it took or placed, and the bar write it made, for the caller to apply to the live bar.
 fn pickup_pet_action(
     model: &mut Model,
     read: &mut BarRead,
@@ -141,8 +136,7 @@ fn pickup_pet_action(
     (true, written)
 }
 
-/// The drop: the cursor always empties, and only a homeless occupant refills it. Returns whether
-/// anything was written, and the write; the cursor empties on `false` too.
+/// The drop: the cursor always empties, and only a homeless occupant refills it. Returns whether anything was written, and the write; the cursor empties on `false` too.
 fn place_pet_action(
     model: &mut Model,
     read: &mut BarRead,
@@ -185,8 +179,7 @@ fn slot_index(read: &BarRead, slot: u32) -> Option<usize> {
     (index < read.slots.len()).then_some(index)
 }
 
-/// Run [`assign`] on the ten words as read, for the caller's write and send, the pickup's blank
-/// too; it asks the usability predicate first, as both callers' send flag makes it (`0x5d5af5`).
+/// Run [`assign`] on the ten words as read, for the caller's write and send, the pickup's blank too; it asks the usability predicate first, as both callers' send flag makes it (`0x5d5af5`).
 fn write_slot(
     read: &mut BarRead,
     target: usize,
@@ -245,8 +238,7 @@ fn bar_read(lua: &Lua) -> BarRead {
     }
 }
 
-/// Land a bar write in the pet's words inside the call and signal the bar there (the pickup's
-/// `0x5d5ce6`, the drop's `0x5d6257`), then resolve a token the cursor now holds.
+/// Land a bar write in the pet's words inside the call and signal the bar there (the pickup's `0x5d5ce6`, the drop's `0x5d6257`), then resolve a token the cursor now holds.
 fn apply_write(lua: &Lua, written: Option<Vec<(u32, u32)>>) {
     if let Some(entries) = written {
         crate::script::live::write_live(|l| l.pet_place_action(&entries));
@@ -255,8 +247,7 @@ fn apply_write(lua: &Lua, written: Option<Vec<(u32, u32)>>) {
     resolve_token_icon(lua);
 }
 
-/// `TogglePetAutocast`'s cursor fork (`0x5d6763`-`0x5d6781`): a held pet action drops on `slot`
-/// with no pickup gate, any other payload clears; whether a pet action was held.
+/// `TogglePetAutocast`'s cursor fork (`0x5d6763`-`0x5d6781`): a held pet action drops on `slot` with no pickup gate, any other payload clears; whether a pet action was held.
 pub(crate) fn toggle_cursor_fork(lua: &Lua, slot: u32) -> bool {
     let held = matches!(
         lua.app_data_ref::<crate::script::ModelCell>()

@@ -200,7 +200,8 @@ pub use ground_effects::{
 };
 mod light;
 pub use light::{
-    Atmosphere, LightCatalog, LightOverride, Submersion, ZERO_KEY_COLOR, ZERO_KEY_SCALAR,
+    Atmosphere, LightCatalog, LightOverride, SkyboxDraw, Submersion, SKYBOX_FLAG_COMBINE,
+    SKYBOX_FLAG_SYNC_TIME, ZERO_KEY_COLOR, ZERO_KEY_SCALAR,
 };
 mod loading_screen;
 pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};
@@ -324,9 +325,9 @@ pub use models::{
     accumulate_wmo_group_camera_collision, accumulate_wmo_group_camera_only_collision,
     accumulate_wmo_group_collision, accumulate_wmo_group_pick_collision, anim_paths,
     authored_half_height, batch_footprint, glue_art_extent, hand_grip_finger_poses,
-    load_m2_animation_summary, load_m2_bone_spins, load_m2_bounds, load_m2_collision_hull,
-    load_m2_mesh, load_m2_mesh_skinned, load_object_model, load_wmo, load_wmo_collision_tris,
-    m2_bone_spins, m2_owner_reach, m2_ribbon_emitter_count, m2_sequence_visible_textures,
+    load_m2_animation_summary, load_m2_bounds, load_m2_collision_hull, load_m2_mesh,
+    load_m2_mesh_skinned, load_object_model, load_sky_model, load_wmo, load_wmo_collision_tris,
+    m2_owner_reach, m2_ribbon_emitter_count, m2_sequence_visible_textures,
     m2_texture_transform_count, md20_version, non_separable_billboard_bones, owner_last_rung,
     owner_last_rung_bucket, parse_m2, parse_m2_animation_lookup, parse_m2_animation_summary,
     parse_m2_animations, parse_m2_attachments, parse_m2_bounds, parse_m2_camera,
@@ -334,19 +335,20 @@ pub use models::{
     parse_m2_global_sequence_bones, parse_m2_lights, parse_m2_pane_cameras,
     parse_m2_portrait_camera, parse_m2_render_submeshes, parse_m2_skeleton,
     parse_m2_string_anchors, parse_wmo_fogs, parse_wmo_lights, parse_wmo_portals, parse_wmo_root,
-    read_m2, rotation_2x2, shipped_glue_art_extent, skin_path, uv_transform, wmo_group_doodad_refs,
-    wmo_group_fixed_colors, wmo_group_footprint_tris, wmo_group_has_liquid_grid, wmo_group_header,
-    wmo_group_light_refs, wmo_group_liquid_mesh, wmo_group_raw_colors, wmo_group_submeshes,
-    wmo_root_bbox, wmo_root_id, AlphaAnim, AlphaMap, AlphaSeq, AnimEvent, AnimFiles, ArtExtent,
-    BatchFootprint, BatchSort, Billboard, BillboardKind, BoneKeys, BoneScaleAnim, BoneSpin,
-    CharSkinSlot, CollisionMesh, Combiner, CombinerOp, CombinerShader, Coverage, CoverageReader,
-    EmitterBoneLink, EventMarker, FogPolicy, FootprintTris, GlobalSeqBone, GlobalSeqChannel,
-    GroundQuad, KeyAnim, M2AnimSummary, M2Attachment, M2Bounds, M2CameraTracks, M2Light, M2Model,
-    M2PaneCamera, M2PortraitCamera, ModelAnimation, ModelBlend, ParentArm, ParentBasis,
-    PlayableAnim, RenderSubmesh, RgbAnim, ScalarAnim, SeqLoops, ShippedGlueScene, Skeleton,
-    SkeletonBone, StageUv, StringAnchors, UvAnim, UvRotAnim, WmoBatchClass, WmoDoodad,
-    WmoDoodadSet, WmoFog, WmoGroupHeader, WmoGroupInfo, WmoLight, WmoLightLaw, WmoLiquidRule,
-    WmoPortalInfo, WmoPortalRef, WmoPortals, WmoRoot, ALPHA_KEY_REF, DEGENERATE_RING_FOOTPRINT,
+    read_m2, rotation_2x2, shipped_glue_art_extent, skin_path, skin_point, sky_band_time,
+    sync_sky_anim, uv_transform, wmo_group_doodad_refs, wmo_group_fixed_colors,
+    wmo_group_footprint_tris, wmo_group_has_liquid_grid, wmo_group_header, wmo_group_light_refs,
+    wmo_group_liquid_mesh, wmo_group_raw_colors, wmo_group_submeshes, wmo_root_bbox, wmo_root_id,
+    AlphaAnim, AlphaMap, AlphaSeq, AnimEvent, AnimFiles, ArtExtent, BatchFootprint, BatchSort,
+    Billboard, BillboardKind, BoneKeys, BoneMatrix, BoneScaleAnim, CharSkinSlot, CollisionMesh,
+    Combiner, CombinerOp, CombinerShader, Coverage, CoverageReader, EmitterBoneLink, EventMarker,
+    FogPolicy, FootprintTris, GlobalSeqBone, GlobalSeqChannel, GroundQuad, KeyAnim, M2AnimSummary,
+    M2Attachment, M2Bounds, M2CameraTracks, M2Light, M2Model, M2PaneCamera, M2PortraitCamera,
+    ModelAnimation, ModelBlend, ParentArm, ParentBasis, PlayableAnim, RenderSubmesh, RgbAnim,
+    ScalarAnim, SeqLoops, ShippedGlueScene, Skeleton, SkeletonBone, SkyRig, SkySync, StageUv,
+    StringAnchors, UvAnim, UvRotAnim, WmoBatchClass, WmoDoodad, WmoDoodadSet, WmoFog,
+    WmoGroupHeader, WmoGroupInfo, WmoLight, WmoLightLaw, WmoLiquidRule, WmoPortalInfo,
+    WmoPortalRef, WmoPortals, WmoRoot, ALPHA_KEY_REF, DEGENERATE_RING_FOOTPRINT,
     GLUE_AUTHORED_ASPECT, NO_GROUP_LIQUID, OWNER_RUNG_BUCKETS, SHIPPED_GLUE_SCENES, VERSION_264,
 };
 mod terrain;

@@ -926,9 +926,7 @@ fn pet_summon_and_dismiss() {
         ],
         3,
     );
-    // Our summon field's watch fires `UNIT_PET` (`0x614190` slot 2), the token already our summon
-    // (`0x60acd0`); the packet's setter fires its own on the new guid (`0x5d6aca`), then the
-    // temporary bar's `PET_BAR_UPDATE` (`0x5d6ad2` -> `0x5d4c1b`).
+    // Our summon field's watch fires `UNIT_PET` (`0x614190` slot 2), the token already our summon (`0x60acd0`); the packet's setter fires its own on the new guid (`0x5d6aca`), then the temporary bar's `PET_BAR_UPDATE` (`0x5d6ad2` -> `0x5d4c1b`).
     assert_eq!(
         pin(&summon, events, verbs),
         vec![
@@ -3935,12 +3933,7 @@ fn book(spell_ids: &[u32]) -> SessionEvent {
     }
 }
 
-/// The companion lists fill as the spell handlers add the known spells (`0x5426a5`) and every
-/// companion event fires from the handler that causes it: our create's init replays the book
-/// and its update waits on the mount's record, firing from its answer (`0x6e7f50`, `0x53ebc0`); a
-/// live learn's line and `COMPANION_LEARNED` wait on the critter's; the mount aura's arrival and
-/// removal fire `"MOUNT"` (`0x724a6b`, `0x71e9b2`), and an `ALL` packet re-applies the mount we
-/// hold (`0x72f904`); an unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+/// The companion lists fill as the spell handlers add the known spells (`0x5426a5`) and every companion event fires from the handler that causes it: our create's init replays the book and its update waits on the mount's record, firing from its answer (`0x6e7f50`, `0x53ebc0`); a live learn's line and `COMPANION_LEARNED` wait on the critter's; the mount aura's arrival and removal fire `"MOUNT"` (`0x724a6b`, `0x71e9b2`), and an `ALL` packet re-applies the mount we hold (`0x72f904`); an unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
 #[test]
 fn companion_events_fire_from_the_spell_and_creature_handlers() {
     // `OBJECT_FIELD_TYPE` with the unit bit: the aura handler skips a non-unit (`0x4d4db0`).
@@ -3980,9 +3973,7 @@ fn companion_events_fire_from_the_spell_and_creature_handlers() {
     );
 }
 
-/// Our object's re-create, as a far teleport makes it, runs the init again: the lists clear and
-/// refill from the buffer the login set, and with the record cached the update fires at once
-/// (`0x6e8378` -> `0x6e7fe3`). A spell learned live since never entered the buffer (`0x6e7d60`).
+/// Our object's re-create, as a far teleport makes it, runs the init again: the lists clear and refill from the buffer the login set, and with the record cached the update fires at once (`0x6e8378` -> `0x6e7fe3`). A spell learned live since never entered the buffer (`0x6e7d60`).
 #[test]
 fn our_recreate_replays_the_login_book_into_the_companion_lists() {
     let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
@@ -4016,9 +4007,7 @@ fn our_recreate_replays_the_login_book_into_the_companion_lists() {
     );
 }
 
-/// A learn or an unlearn landing in the same frame as our create, after it, files into the lists
-/// at once: the handlers ask the object manager for our object, which holds it from the create on
-/// (`0x6e7d60`, `0x6e7840`), not from the frame's player tag.
+/// A learn or an unlearn landing in the same frame as our create, after it, files into the lists at once: the handlers ask the object manager for our object, which holds it from the create on (`0x6e7d60`, `0x6e7840`), not from the frame's player tag.
 #[test]
 fn a_learn_and_an_unlearn_after_our_create_in_one_frame_reach_the_lists() {
     let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
@@ -4071,10 +4060,7 @@ fn a_learn_and_an_unlearn_after_our_create_in_one_frame_reach_the_lists() {
     );
 }
 
-/// The bar's `PET_BAR_UPDATE` handler re-tests the Pets tab off `GetNumCompanions` (#1244): it
-/// reads the lists the spell handler filled, whichever of the mount's record and the pet packet
-/// lands first. `COMPANION_UPDATE` fires from the record's answer, `PET_BAR_UPDATE` from the pet
-/// packet's setter (`0x5d6ad2` -> `0x5d4c1b`), each in its own packet's turn.
+/// The bar's `PET_BAR_UPDATE` handler re-tests the Pets tab off `GetNumCompanions` (#1244): it reads the lists the spell handler filled, whichever of the mount's record and the pet packet lands first. `COMPANION_UPDATE` fires from the record's answer, `PET_BAR_UPDATE` from the pet packet's setter (`0x5d6ad2` -> `0x5d4c1b`), each in its own packet's turn.
 #[test]
 fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
     let events = &["COMPANION_UPDATE", "PET_BAR_UPDATE"];
@@ -4110,8 +4096,7 @@ fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
     );
 }
 
-/// A Hunter's pet: its unit type, pet number, creator and summoner us, happiness, experience and
-/// the abandon flag.
+/// A Hunter's pet: its unit type, pet number, creator and summoner us, happiness, experience and the abandon flag.
 fn hunter_pet(happiness: u32, xp: u32) -> SessionEvent {
     use benilla_protocol::field::{
         FIELD_UNIT_BYTES_2, FIELD_UNIT_CREATEDBY, FIELD_UNIT_PETEXPERIENCE,
@@ -4155,10 +4140,7 @@ fn hunter_pet(happiness: u32, xp: u32) -> SessionEvent {
     }
 }
 
-/// The pet frame's unit signals fire from the field handler of the unit the `"pet"` token names,
-/// one per changed field, each after the delta applies (`0x614190`, event slots 23 and 71-72):
-/// `UNIT_HAPPINESS` on every happiness change, the bucket kept or not, and `UNIT_PET_EXPERIENCE`
-/// on the experience fields; the stat and menu verbs read the pet list's head at each.
+/// The pet frame's unit signals fire from the field handler of the unit the `"pet"` token names, one per changed field, each after the delta applies (`0x614190`, event slots 23 and 71-72): `UNIT_HAPPINESS` on every happiness change, the bucket kept or not, and `UNIT_PET_EXPERIENCE` on the experience fields; the stat and menu verbs read the pet list's head at each.
 #[test]
 fn pet_stat_events_fire_from_the_pets_field_handler() {
     use benilla_protocol::field::{
@@ -4206,9 +4188,7 @@ fn pet_stat_events_fire_from_the_pets_field_handler() {
     );
 }
 
-/// `PET_ATTACK_START`/`STOP` fire from the flags field handler of a unit we charm, else summon,
-/// on each move of its `0x800` bit, in field order with the pet's other signals (`0x73f29b` ->
-/// `0x73c503`-`0x73c53d` -> `0x5d30a0`); another bit, or another owner's unit, fires none.
+/// `PET_ATTACK_START`/`STOP` fire from the flags field handler of a unit we charm, else summon, on each move of its `0x800` bit, in field order with the pet's other signals (`0x73f29b` -> `0x73c503`-`0x73c53d` -> `0x5d30a0`); another bit, or another owner's unit, fires none.
 #[test]
 fn pet_attack_events_fire_from_the_flags_field_handler() {
     use benilla_protocol::field::{FIELD_UNIT_POWER1, FIELD_UNIT_SUMMONEDBY};
@@ -4247,8 +4227,7 @@ fn pet_attack_events_fire_from_the_flags_field_handler() {
         ],
         3,
     );
-    // The setter writes the pet-attacking global after its signal (`0x5d30b2` then `0x5d30ba`), so
-    // a handler reads the old value; `IsPetAttackActive` reads the global whatever its argument.
+    // The setter writes the pet-attacking global after its signal (`0x5d30b2` then `0x5d30ba`), so a handler reads the old value; `IsPetAttackActive` reads the global whatever its argument.
     assert_eq!(
         pin(&seen, events, &["petattack"]),
         vec![
@@ -4259,9 +4238,7 @@ fn pet_attack_events_fire_from_the_flags_field_handler() {
     );
 }
 
-/// A pet created already fighting fires no `PET_ATTACK_START`: a new object's create runs no field
-/// handler (`0x4d64a4`, only a re-enabled one reaches `0x4d64be`), and the setter takes the pet's
-/// combat test into the attacking global instead (`0x5d6a80`).
+/// A pet created already fighting fires no `PET_ATTACK_START`: a new object's create runs no field handler (`0x4d64a4`, only a re-enabled one reaches `0x4d64be`), and the setter takes the pet's combat test into the attacking global instead (`0x5d6a80`).
 #[test]
 fn a_pet_created_in_combat_fires_no_attack_start_and_reads_attacking() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -4292,8 +4269,7 @@ fn a_pet_created_in_combat_fires_no_attack_start_and_reads_attacking() {
     );
 }
 
-/// `COMPANION_UPDATE "CRITTER"` fires from our `UNIT_FIELD_CRITTER` watch after the field applies
-/// (`0x6cf722`), so the critter's active flag reads the new critter at it.
+/// `COMPANION_UPDATE "CRITTER"` fires from our `UNIT_FIELD_CRITTER` watch after the field applies (`0x6cf722`), so the critter's active flag reads the new critter at it.
 #[test]
 fn the_critter_update_fires_from_our_critter_field() {
     use benilla_protocol::field::FIELD_UNIT_CRITTER;
@@ -4324,10 +4300,7 @@ fn the_critter_update_fires_from_our_critter_field() {
     );
 }
 
-/// `UPDATE_BONUS_ACTIONBAR` fires from our field handler once the possess spell changes: our
-/// charm's move looks it up in our auras (`0x6d1ab1`), a far sight on a held subject looks again
-/// and finds the same (`0x6e5034`), and one with no held subject clears it (`0x6e5042`); the possess
-/// verbs read the held spell at each.
+/// `UPDATE_BONUS_ACTIONBAR` fires from our field handler once the possess spell changes: our charm's move looks it up in our auras (`0x6d1ab1`), a far sight on a held subject looks again and finds the same (`0x6e5034`), and one with no held subject clears it (`0x6e5042`); the possess verbs read the held spell at each.
 #[test]
 fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
     use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_UNIT_CHARM};
@@ -4375,8 +4348,7 @@ fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
             "UPDATE_BONUS_ACTIONBAR | possess=false possname=nil",
         ]
     );
-    // A far sight on a subject we do not hold misses its lookup (`0x6e5020`) and clears too
-    // (`0x6e5042`), after one on the held victim found the spell again (`0x6e5034`).
+    // A far sight on a subject we do not hold misses its lookup (`0x6e5020`) and clears too (`0x6e5042`), after one on the held victim found the spell again (`0x6e5034`).
     const UNHELD: u64 = 0xF130_0000_0000_0099;
     let unheld = rig.packets(
         vec![
@@ -4394,9 +4366,7 @@ fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
     );
 }
 
-/// A world entry with our charm set asks for the pet and looks up the possess spell after
-/// `PLAYER_ENTERING_WORLD` and before the reputation's `UPDATE_FACTION` (`0x5281a6`, `0x5281fe`
-/// -> `0x5d6ede`, `0x528208`), so the bonus bar's handler runs after the UI's world entry.
+/// A world entry with our charm set asks for the pet and looks up the possess spell after `PLAYER_ENTERING_WORLD` and before the reputation's `UPDATE_FACTION` (`0x5281a6`, `0x5281fe` -> `0x5d6ede`, `0x528208`), so the bonus bar's handler runs after the UI's world entry.
 #[test]
 fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     use benilla_protocol::field::FIELD_UNIT_CHARM;
@@ -4436,9 +4406,7 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     );
 }
 
-/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` ->
-/// `0x5d6e6d`), ahead of the ask's gate: a bar that beat the create still reads at the entry's
-/// event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
+/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat the create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
 #[test]
 fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
     let Some(mut rig) = Rig::login_after(
@@ -4477,8 +4445,40 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
     );
 }
 
-/// With no pet at all the setter's tail still runs at the entry: no `UNIT_PET`, the temporary
-/// bar's `PET_BAR_UPDATE` (`0x5d6a34` -> `0x5d6ad2` -> `0x5d4c1b`).
+/// A bar the server sets after our create stands through the entry: 12340 clears at the create (`0x5281fe` -> `0x5d6e6d`), ahead of every packet behind it, so the later `SMSG_PET_SPELLS` (a pet re-added after a worldport) is never wiped.
+#[test]
+fn a_pet_bar_set_after_the_create_stands_through_the_entry() {
+    let Some(mut rig) = Rig::login_around(
+        Vec::new(),
+        &[OBJECT_TYPE_PLAYER],
+        vec![SessionEvent::PetSpells(Box::new(
+            benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            },
+        ))],
+    ) else {
+        return;
+    };
+    let seen = rig.take();
+    let entry: Vec<String> = pin(
+        &seen,
+        &["PLAYER_ENTERING_WORLD", "UNIT_PET", "UPDATE_FACTION"],
+        &["petbar"],
+    )
+    .into_iter()
+    .skip_while(|l| !l.starts_with("PLAYER_ENTERING_WORLD"))
+    .collect();
+    assert_eq!(
+        entry,
+        vec![
+            "PLAYER_ENTERING_WORLD | petbar=1",
+            "UPDATE_FACTION | petbar=1",
+        ]
+    );
+}
+
+/// With no pet at all the setter's tail still runs at the entry: no `UNIT_PET`, the temporary bar's `PET_BAR_UPDATE` (`0x5d6a34` -> `0x5d6ad2` -> `0x5d4c1b`).
 #[test]
 fn the_world_entry_signals_the_pet_bar_with_no_pet() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -4508,9 +4508,7 @@ fn the_world_entry_signals_the_pet_bar_with_no_pet() {
     );
 }
 
-/// The setter closes the pet UI for a new pet that can gain experience (`0x5d6a85` -> `0x71b630`,
-/// `0x5d6a94`), before its `UNIT_PET`: never on a re-send, for a pet with no pet number, or for one
-/// whose creator is not held.
+/// The setter closes the pet UI for a new pet that can gain experience (`0x5d6a85` -> `0x71b630`, `0x5d6a94`), before its `UNIT_PET`: never on a re-send, for a pet with no pet number, or for one whose creator is not held.
 #[test]
 fn the_pet_setter_closes_the_pet_ui_for_a_new_hunter_pet() {
     use benilla_protocol::field::{FIELD_UNIT_BYTES_0, FIELD_UNIT_CREATEDBY, FIELD_UNIT_PETNUMBER};
@@ -4602,8 +4600,7 @@ fn the_pet_setter_closes_the_pet_ui_for_a_new_hunter_pet() {
     );
 }
 
-/// `GetCompanionCooldown` (`0x53e490`) reads the cooldown history a `SMSG_SPELL_COOLDOWN` of an
-/// earlier frame wrote, both from a handler's event and between frames.
+/// `GetCompanionCooldown` (`0x53e490`) reads the cooldown history a `SMSG_SPELL_COOLDOWN` of an earlier frame wrote, both from a handler's event and between frames.
 #[test]
 fn the_companion_cooldown_reads_the_history_an_earlier_frame_wrote() {
     let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
@@ -4629,9 +4626,7 @@ fn the_companion_cooldown_reads_the_history_an_earlier_frame_wrote() {
     );
 }
 
-/// A `SMSG_SPELL_COOLDOWN` and the mount's aura in one frame: the aura handler's
-/// `COMPANION_UPDATE` reads the history the cooldown packet just wrote, as `GetCompanionCooldown`
-/// asks it at the call (`0x53e54c`), not the frame before's.
+/// A `SMSG_SPELL_COOLDOWN` and the mount's aura in one frame: the aura handler's `COMPANION_UPDATE` reads the history the cooldown packet just wrote, as `GetCompanionCooldown` asks it at the call (`0x53e54c`), not the frame before's.
 #[test]
 fn the_companion_cooldown_reads_the_history_the_same_frame_wrote() {
     let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
@@ -4751,8 +4746,7 @@ fn stable_list() -> SessionEvent {
     }
 }
 
-/// A frame logging each stable event with the first stabled pet's family as `GetStablePetInfo`
-/// answers it inside that event.
+/// A frame logging each stable event with the first stabled pet's family as `GetStablePetInfo` answers it inside that event.
 const STABLE_LOG: &str = r#"
 STABLE_LOG = {}
 local f = CreateFrame("Frame")
@@ -4774,11 +4768,7 @@ fn lua(rig: &mut Rig, lua: &str) -> Vec<String> {
     .expect("a VM")
 }
 
-/// The stable list's handler stores the globals and fires `PET_STABLE_SHOW` (`0x5a131a`); its
-/// verbs read the globals when called. A record missed by `GetStablePetInfo` fires
-/// `PET_STABLE_UPDATE` from its answer (`0x5a0e80`), once per ask, with the record read; a record
-/// cached before the list answers inside `PET_STABLE_SHOW`, with no update. Result 11 fires the
-/// update from its handler (`0x5a1904`).
+/// The stable list's handler stores the globals and fires `PET_STABLE_SHOW` (`0x5a131a`); its verbs read the globals when called. A record missed by `GetStablePetInfo` fires `PET_STABLE_UPDATE` from its answer (`0x5a0e80`), once per ask, with the record read; a record cached before the list answers inside `PET_STABLE_SHOW`, with no update. Result 11 fires the update from its handler (`0x5a1904`).
 #[test]
 fn stable_events_fire_from_the_list_and_the_record_answer_in_wire_order() {
     let Some(mut rig) = Rig::login_around(
@@ -4812,8 +4802,7 @@ fn stable_events_fire_from_the_list_and_the_record_answer_in_wire_order() {
         "{log:#?}"
     );
 
-    // The record cached before the next list: the show reads it, and no update follows; the
-    // stock window's re-pick (`PetStable.lua:48-63`) finds the family and selects before we read.
+    // The record cached before the next list: the show reads it, and no update follows; the stock window's re-pick (`PetStable.lua:48-63`) finds the family and selects before we read.
     let seen = rig.packets(vec![stable_list()], 3);
     assert_eq!(
         pin(&seen, events, verbs),
@@ -4829,12 +4818,7 @@ fn stable_events_fire_from_the_list_and_the_record_answer_in_wire_order() {
     );
 }
 
-/// `ClosePetStables` clears the master and fires `PET_STABLE_CLOSED` inside the call, so the next
-/// verb in the same chunk reads it gone, while the list stays (`0x5a1996`, `0x5a19aa`); a second
-/// close fires nothing. The master is the interact target the list set (`0x5a11d9`), so its clear
-/// runs the interaction close's stable arm first, which fires too (`0x5a198a`, `0x513065`,
-/// `0x5a0f4c`). The connection's end leaves the world, closing a held stable the same two ways
-/// (`0x528d5a`, `0x5a1174`, `0x5a1194`).
+/// `ClosePetStables` clears the master and fires `PET_STABLE_CLOSED` inside the call, so the next verb in the same chunk reads it gone, while the list stays (`0x5a1996`, `0x5a19aa`); a second close fires nothing. The master is the interact target the list set (`0x5a11d9`), so its clear runs the interaction close's stable arm first, which fires too (`0x5a198a`, `0x513065`, `0x5a0f4c`). The connection's end leaves the world, closing a held stable the same two ways (`0x528d5a`, `0x5a1174`, `0x5a1194`).
 #[test]
 fn the_stable_close_fires_inside_the_call_and_the_session_end_closes() {
     let Some(mut rig) = Rig::login_around(
@@ -4875,11 +4859,7 @@ fn the_stable_close_fires_inside_the_call_and_the_session_end_closes() {
     );
 }
 
-/// A list from another master moves the interact target (`0x5a11d9` -> `0x51fd1c`), whose clear
-/// runs the interaction close's stable arm on the held master (`0x518db7` -> `0x512e60` ->
-/// `0x513065` -> `0x5a0f10`): `PET_STABLE_CLOSED` (`0x5a0f4c`) before the new list's
-/// `PET_STABLE_SHOW` (`0x5a131a`), the close with no master held, so the stock window's hide
-/// (`ClosePetStables`) clears nothing. The same master's list closes nothing.
+/// A list from another master moves the interact target (`0x5a11d9` -> `0x51fd1c`), whose clear runs the interaction close's stable arm on the held master (`0x518db7` -> `0x512e60` -> `0x513065` -> `0x5a0f10`): `PET_STABLE_CLOSED` (`0x5a0f4c`) before the new list's `PET_STABLE_SHOW` (`0x5a131a`), the close with no master held, so the stock window's hide (`ClosePetStables`) clears nothing. The same master's list closes nothing.
 #[test]
 fn another_masters_list_closes_the_held_stable_before_its_show() {
     let Some(mut rig) = Rig::login_around(
@@ -4921,8 +4901,7 @@ fn another_masters_list_closes_the_held_stable_before_its_show() {
     );
 }
 
-/// An open-stable aura's removal closes the stable forced: `PET_STABLE_CLOSED` fires from the
-/// aura handler with no master held too (`0x71ea25`); its arrival fires nothing.
+/// An open-stable aura's removal closes the stable forced: `PET_STABLE_CLOSED` fires from the aura handler with no master held too (`0x71ea25`); its arrival fires nothing.
 #[test]
 fn an_open_stable_auras_removal_closes_the_stable() {
     /// Call Stabled Pet, whose aura opens the stable.
@@ -4937,8 +4916,7 @@ fn an_open_stable_auras_removal_closes_the_stable() {
     );
 }
 
-/// A supersede with our object held runs the removal's companion arm, then the registrar's with
-/// notify set (`0x542eba`, `0x542ec6`): the old mount leaves, the new critter joins and is learned.
+/// A supersede with our object held runs the removal's companion arm, then the registrar's with notify set (`0x542eba`, `0x542ec6`): the old mount leaves, the new critter joins and is learned.
 #[test]
 fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
     let Some(mut rig) = Rig::login_after(vec![book(&[HORSE])], &[(2, 0x19)]) else {
@@ -4968,8 +4946,7 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
             ],
             &["mounts", "critters"]
         ),
-        // The emptied lists sort nothing, so the removal fires no update; the handler's events
-        // fire once its changes apply, so each reads both lists moved.
+        // The emptied lists sort nothing, so the removal fires no update; the handler's events fire once its changes apply, so each reads both lists moved.
         vec![
             "COMPANION_UNLEARNED | mounts=0 critters=1",
             "COMPANION_UPDATE | mounts=0 critters=1",

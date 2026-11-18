@@ -83,7 +83,7 @@ impl LightOverrides {
     }
 
     /// The overrides at their current fades, for the blend.
-    pub(super) fn current(&self) -> Vec<LightOverride> {
+    pub(crate) fn current(&self) -> Vec<LightOverride> {
         self.entries
             .iter()
             .map(|e| LightOverride {

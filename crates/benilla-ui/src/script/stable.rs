@@ -1,12 +1,4 @@
-//! The stable-master verbs. 12340 keeps the stable in globals the list handler (`0x5a11a0`) writes,
-//! and each verb reads them when called, here through the lent live view.
-//!
-//! The list holds the current pet's record, index 0, and the stabled pets packed in wire order,
-//! indices `1..=GetNumStablePets()`. A pet's icon, family, talent tree and diet come from its
-//! creature record; a miss asks for it, and the answer fires `PET_STABLE_UPDATE` (`0x5a13c1`).
-//!
-//! `PickupStablePet` puts the pet on the global cursor as payload mode 10
-//! ([`super::cursor::CursorPayload::StablePet`]).
+//! The stable-master verbs, reading the list handler's globals (`0x5a11a0`) at the call: index 0 the current pet, `1..=GetNumStablePets()` the stabled ones in wire order; a pet's family comes from its creature record (`0x5a13c1`), and `PickupStablePet` is cursor payload mode 10.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -41,8 +33,7 @@ pub struct StableList {
 }
 
 impl StableList {
-    /// The record `GetStablePetInfo` and `PickupStablePet` pick (`0x5a1330`): below 1 the current
-    /// pet, `1..=n` a stabled pet, past that none.
+    /// The record `GetStablePetInfo` and `PickupStablePet` pick (`0x5a1330`): below 1 the current pet, `1..=n` a stabled pet, past that none.
     fn pick(&self, i: i64) -> Option<&StableRow> {
         match i.saturating_sub(1) {
             ..0 => Some(&self.current),
@@ -139,8 +130,7 @@ fn selected_index(selected: i32, list: &StableList) -> i32 {
     }
 }
 
-/// `0x5a0e00`, 0-based index `k` held as the selection: -1 the current pet, a listed stabled pet by
-/// its number, anything else nothing.
+/// `0x5a0e00`, 0-based index `k` held as the selection: -1 the current pet, a listed stabled pet by its number, anything else nothing.
 fn select(k: i64, list: &StableList) -> i32 {
     match k {
         -1 => -1,
@@ -148,9 +138,7 @@ fn select(k: i64, list: &StableList) -> i32 {
     }
 }
 
-/// The verb a drop of the held pet (0-based cursor index `held`) onto Lua index `number` sends
-/// (`0x5a1ca0`): a stabled pet onto 0 swaps with a pet out, else unstables; the current pet onto a
-/// stabled pet swaps, onto a free bought slot stables. Anything else sends nothing.
+/// The verb a drop of the held pet (0-based cursor index `held`) onto Lua index `number` sends (`0x5a1ca0`): a stabled pet onto 0 swaps with a pet out, else unstables; the current pet onto a stabled pet swaps, onto a free bought slot stables. Anything else sends nothing.
 fn drop_verb(held: i64, number: i64, list: &StableList, pet_out: bool) -> Option<StableIntent> {
     if held != -1 {
         if number != 0 {
@@ -171,8 +159,7 @@ fn drop_verb(held: i64, number: i64, list: &StableList, pet_out: bool) -> Option
     }
 }
 
-/// The family off `row`'s creature record, a miss asking it with `callback`, or asking nothing
-/// with none (`0x5a13c1`, `0x67b6d0`).
+/// The family off `row`'s creature record, a miss asking it with `callback`, or asking nothing with none (`0x5a13c1`, `0x67b6d0`).
 fn family_of(row: &StableRow, callback: Option<StableCallback>) -> Option<StableFamily> {
     // A zero entry is the cache's null key: no record and no ask.
     if row.entry == 0 {
@@ -229,8 +216,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetStablePetFoodTypes(i) (`0x5a16a0`) → one localized diet name per value: 0 the current
-    // pet, `1..=n` a stabled pet, anything else none.
+    // GetStablePetFoodTypes(i) (`0x5a16a0`) → one localized diet name per value: 0 the current pet, `1..=n` a stabled pet, anything else none.
     g.set(
         "GetStablePetFoodTypes",
         lua.create_function(|lua, i: i64| {
@@ -263,8 +249,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok(live_stable().stabled.len() as i64))?,
     )?;
 
-    // GetNextStableSlotCost() (`0x5a14d0`) → `StableSlotPrices.dbc` row `slots + 1`'s price, 0 past
-    // the table.
+    // GetNextStableSlotCost() (`0x5a14d0`) → `StableSlotPrices.dbc` row `slots + 1`'s price, 0 past the table.
     g.set(
         "GetNextStableSlotCost",
         lua.create_function(|_, ()| {
@@ -315,9 +300,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // PickupStablePet(i) (`0x5a0fe0`): a listed pet with a pet number goes to the cursor grab
-    // (`0x520c60`), which clears the cursor, then takes the pet only with its creature record
-    // cached, asking nothing on a miss (`0x520cc1`), and a family icon (`0x520cf2`); no return.
+    // PickupStablePet(i) (`0x5a0fe0`): a listed pet with a pet number goes to the cursor grab (`0x520c60`), which clears the cursor, then takes the pet only with its creature record cached, asking nothing on a miss (`0x520cc1`), and a family icon (`0x520cf2`); no return.
     g.set(
         "PickupStablePet",
         lua.create_function(|lua, i: i64| {
@@ -353,8 +336,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnstablePet(i) (`0x5a1ac0`): silently refused while our charm or summon is set; its unsigned
-    // bound takes stabled pets only, master held or not.
+    // UnstablePet(i) (`0x5a1ac0`): silently refused while our charm or summon is set; its unsigned bound takes stabled pets only, master held or not.
     g.set(
         "UnstablePet",
         lua.create_function(|_, i: i64| {
@@ -367,9 +349,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetPetStablePaperdoll(model) (`0x5a1530`): the selection's creature record, the current
-    // pet's live body first (`0x5a15df`-`0x5a160a`), else the row's record, whose miss asks with
-    // `PET_STABLE_UPDATE_PAPERDOLL` (`0x5a1615`, `0x5a1657`). The pane follows the selection app-side.
+    // SetPetStablePaperdoll(model) (`0x5a1530`): the selection's creature record, the current pet's live body first (`0x5a15df`-`0x5a160a`), else the row's record, whose miss asks with `PET_STABLE_UPDATE_PAPERDOLL` (`0x5a1615`, `0x5a1657`). The pane follows the selection app-side.
     g.set(
         "SetPetStablePaperdoll",
         lua.create_function(|lua, model: Value| {
@@ -397,8 +377,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // BuyStableSlot() (`0x5a1bd0`): the client's silent gates, in order: a master held, fewer than
-    // 4 slots, a price row and affordability.
+    // BuyStableSlot() (`0x5a1bd0`): the client's silent gates, in order: a master held, fewer than 4 slots, a price row and affordability.
     g.set(
         "BuyStableSlot",
         lua.create_function(|lua, ()| {
@@ -415,14 +394,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ClosePetStables() (`0x5a1963`-`0x5a19aa`): no packet of its own; our open-stable aura is
-    // cancelled, a held master cleared and `PET_STABLE_CLOSED` fired twice inside the call.
+    // ClosePetStables() (`0x5a1963`-`0x5a19aa`): no packet of its own; our open-stable aura is cancelled, a held master cleared and `PET_STABLE_CLOSED` fired twice inside the call.
     g.set(
         "ClosePetStables",
         lua.create_function(|lua, ()| {
-            // A held master is the interact target the list set (`0x5a11d9`), so its clear runs
-            // the interaction close's stable arm, which fires first (`0x5a198a`, `0x513065`,
-            // `0x5a0f4c`), then the verb fires its own (`0x5a19aa`).
+            // A held master is the interact target the list set (`0x5a11d9`), so its clear runs the interaction close's stable arm, which fires first (`0x5a198a`, `0x513065`, `0x5a0f4c`), then the verb fires its own (`0x5a19aa`).
             if write_live(|l| l.close_stables()).unwrap_or(false) {
                 super::tick::fire_event_into(lua, "PET_STABLE_CLOSED", Vec::new());
                 super::tick::fire_event_into(lua, "PET_STABLE_CLOSED", Vec::new());
@@ -458,8 +434,7 @@ mod tests {
         }
     }
 
-    /// A hunter at master 0x42 with Rex out, Bruiser and Ghost stabled, three slots bought; entry
-    /// 3 (Ghost) has no record yet.
+    /// A hunter at master 0x42 with Rex out, Bruiser and Ghost stabled, three slots bought; entry 3 (Ghost) has no record yet.
     fn view() -> TestView {
         let v = TestView {
             pet_out: true,
@@ -529,8 +504,7 @@ mod tests {
         drop(loan);
     }
 
-    /// A miss answers nil, nil, 0 and asks the record with the update callback, once per call, as
-    /// the cache's non-unique ask appends one (`0x5a13c1`, `0x5a1738`).
+    /// A miss answers nil, nil, 0 and asks the record with the update callback, once per call, as the cache's non-unique ask appends one (`0x5a13c1`, `0x5a1738`).
     #[test]
     fn a_missed_record_answers_three_values_and_asks_once_per_call() {
         let s = UiScript::new().unwrap();
@@ -672,8 +646,7 @@ mod tests {
         );
     }
 
-    /// The grab takes a pet only with its record cached: a miss clears the cursor, asks nothing
-    /// and grabs nothing (`0x520c6b`, `0x520cc1`, `0x520cc8`).
+    /// The grab takes a pet only with its record cached: a miss clears the cursor, asks nothing and grabs nothing (`0x520c6b`, `0x520cc1`, `0x520cc8`).
     #[test]
     fn a_grab_without_the_record_clears_the_cursor_and_asks_nothing() {
         let s = UiScript::new().unwrap();
@@ -765,9 +738,7 @@ mod tests {
         assert_eq!(loan.view().take_sent(), vec![StableIntent::Stable]);
     }
 
-    /// The close clears the master and fires `PET_STABLE_CLOSED` inside the call, the interaction
-    /// close's then its own, so the next read in the same chunk sees it gone; with none held it
-    /// fires nothing.
+    /// The close clears the master and fires `PET_STABLE_CLOSED` inside the call, the interaction close's then its own, so the next read in the same chunk sees it gone; with none held it fires nothing.
     #[test]
     fn the_close_fires_inside_the_call_and_leaves_the_cursor_alone() {
         let s = UiScript::new().unwrap();
@@ -792,8 +763,7 @@ mod tests {
         drop(loan);
     }
 
-    /// The setter asks the selection's record with the paperdoll callback: the current pet's only
-    /// without its live body, a stabled pet's always, nothing selected nothing (`0x5a1530`).
+    /// The setter asks the selection's record with the paperdoll callback: the current pet's only without its live body, a stabled pet's always, nothing selected nothing (`0x5a1530`).
     #[test]
     fn the_paperdoll_setter_asks_the_selected_record() {
         let s = UiScript::new().unwrap();

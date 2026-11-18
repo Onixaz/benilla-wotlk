@@ -2,8 +2,7 @@
 //! tufts, the night star dome and a doodad's bounds and hull all decode.
 
 use benilla_formats::{
-    load_m2_bone_spins, load_m2_bounds, load_m2_collision_hull, load_m2_mesh, md20_version,
-    open_chain, VERSION_264,
+    load_m2_bounds, load_m2_collision_hull, load_m2_mesh, md20_version, open_chain, VERSION_264,
 };
 
 /// Northshire's ground-effect detail models (grass, flowers) and the night sky's star dome.
@@ -33,7 +32,6 @@ fn version_264_models_decode_through_the_chain_loaders() {
             subs.iter().any(|s| s.indices.len() >= 3),
             "{path} must build at least one triangle"
         );
-        load_m2_bone_spins(&mut chain, path).unwrap_or_else(|e| panic!("spins {path}: {e:#}"));
         load_m2_bounds(&mut chain, path).unwrap_or_else(|e| panic!("bounds {path}: {e:#}"));
         load_m2_collision_hull(&mut chain, path).unwrap_or_else(|e| panic!("hull {path}: {e:#}"));
     }

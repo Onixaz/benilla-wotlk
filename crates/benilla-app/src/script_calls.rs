@@ -147,8 +147,7 @@ pub(crate) fn apply_script_calls(
     });
 }
 
-/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and the flush its
-/// cooldown start made (`0x805ec3`, `0x805eda`), fired as the press returns.
+/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and the flush its cooldown start made (`0x805ec3`, `0x805eda`), fired as the press returns.
 pub(crate) fn pet_press(
     press: &mut crate::ui_pet::PetPress,
     script: &mut UiScript,
