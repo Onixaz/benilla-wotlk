@@ -72,6 +72,8 @@ pub(crate) struct LiveView<'w, 's> {
     proficiencies: Option<Res<'w, crate::net::Proficiencies>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
     factions: Option<Res<'w, crate::target::Factions>>,
+    /// The currency tables, the item cache and the bag icons.
+    currency: crate::ui_currency::CurrencyLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1255,6 +1257,23 @@ impl LiveState for LiveView<'_, '_> {
     fn player_level(&self) -> Option<u32> {
         let me = self.unit(self.active_player()?)?;
         Some(me.unit_level().unwrap_or(0))
+    }
+
+    fn currency_catalog(&self) -> Option<&benilla_ui::script::CurrencyCatalogView> {
+        self.currency.catalog()
+    }
+
+    fn currency_holdings(&self) -> Option<benilla_ui::script::CurrencyHoldings> {
+        let me = self.unit(self.active_player()?)?;
+        let index = self.index.as_ref()?;
+        Some(self.currency.holdings(me, |guid| {
+            let &entity = index.0.get(&guid)?;
+            Some(&self.stores.get(entity).ok()?.0)
+        }))
+    }
+
+    fn ask_item_record(&self, id: u32) {
+        self.currency.ask(id);
     }
 
     fn clear_banker(&mut self) {

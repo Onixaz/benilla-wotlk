@@ -38,7 +38,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_chat::feed::feed_chat",
     "benilla_app::ui_chat::feed::played_time_bridge",
     "benilla_app::ui_chat::net::feed_channel_roster_names",
-    "benilla_app::ui_currency::feed_currencies",
     "benilla_app::ui_dialog_verbs::feed_dialog_verbs",
     "benilla_app::ui_dressup::feed_dressup",
     "benilla_app::ui_focus::feed_focus",

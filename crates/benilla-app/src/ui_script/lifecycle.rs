@@ -1168,28 +1168,49 @@ mod tests {
     fn a_reload_keeps_the_closed_currency_categories() {
         use benilla_ui::script::CurrencyTypeView;
         use benilla_ui::script::{CurrencyCatalogView, CurrencyCategoryView, CurrencyHoldings};
-        let feed = |script: &mut UiScript| {
-            script.set_currency_catalog(CurrencyCatalogView {
-                types: vec![CurrencyTypeView {
-                    item_id: 29434,
-                    category_id: 2,
-                    bit_index: 1,
-                }],
-                categories: vec![CurrencyCategoryView {
-                    id: 2,
-                    flags: 0,
-                    name: "Dungeon".into(),
-                }],
-            });
-            script.set_currency_holdings(Some(CurrencyHoldings {
-                known: 1,
-                ..Default::default()
-            }));
-        };
+        /// The tables and our currencies a trigger's build reads.
+        struct Held(CurrencyCatalogView);
+        impl benilla_ui::script::LiveState for Held {
+            fn unit_flags(&self, _: u64) -> Option<u32> {
+                None
+            }
+            fn unit_health(&self, _: u64) -> Option<u32> {
+                None
+            }
+            fn active_player(&self) -> Option<u64> {
+                None
+            }
+            fn has_control(&self) -> bool {
+                true
+            }
+            fn far_sight(&self) -> bool {
+                false
+            }
+            fn currency_catalog(&self) -> Option<&CurrencyCatalogView> {
+                Some(&self.0)
+            }
+            fn currency_holdings(&self) -> Option<CurrencyHoldings> {
+                Some(CurrencyHoldings {
+                    known: 1,
+                    ..Default::default()
+                })
+            }
+        }
+        let mut held = Held(CurrencyCatalogView {
+            types: vec![CurrencyTypeView {
+                item_id: 29434,
+                category_id: 2,
+                bit_index: 1,
+            }],
+            categories: vec![CurrencyCategoryView {
+                id: 2,
+                flags: 0,
+                name: "Dungeon".into(),
+            }],
+        });
         let expanded = |world: &mut World| {
-            let mut script = world.non_send_resource_mut::<UiScript>();
-            feed(&mut script);
-            script
+            world
+                .non_send_resource::<UiScript>()
                 .eval::<bool>("return select(3, GetCurrencyListInfo(1))")
                 .unwrap()
         };
@@ -1200,11 +1221,15 @@ mod tests {
         world.init_resource::<Messages<WorldLeaveSweepMessage>>();
         world.init_resource::<LeavingWorldArmed>();
         world.insert_non_send_resource(UiScript::new().unwrap());
-        assert!(expanded(&mut world), "a category starts open");
+        // The world entry's build (`0x528299`), then the fold, which rebuilds in its call.
         world
             .non_send_resource_mut::<UiScript>()
-            .run("ExpandCurrencyList(1, 0)")
+            .with_live(&mut held, |s| {
+                s.rebuild_currency_list();
+                s.run("ExpandCurrencyList(1, 0)")
+            })
             .unwrap();
+        assert!(!expanded(&mut world), "folded");
         let before = world.non_send_resource::<UiScript>().session();
         world.insert_resource(ReloadUiPending(true));
         run_pending_reload(&mut world);
@@ -1213,7 +1238,10 @@ mod tests {
             before,
             "a new VM"
         );
-        assert!(!expanded(&mut world), "still closed after the reload");
+        assert!(
+            !expanded(&mut world),
+            "the list and its fold outlive the reload, as the list lives outside the Lua state"
+        );
     }
 
     /// The IO thread's roster policy follows the VM that came up: the screen asks only when the

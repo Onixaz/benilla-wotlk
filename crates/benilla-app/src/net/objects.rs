@@ -473,6 +473,7 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             debug!("net: item template {entry} → {info:?}");
             let waited = info.is_some() && sc.items.template_cached(entry).is_none();
             sc.items.insert_template(entry, info);
+            crate::ui_currency::record_landed(&mut sc.ui, entry);
             // Each item that asked for this record runs its post-init now (`0x70ae90` -> `0x70aa40`).
             if waited {
                 let owners: Vec<Option<u64>> = sc
@@ -1739,10 +1740,64 @@ fn farsight_possess(sc: &mut Scene, guid: u64) {
     }
 }
 
-/// Our player watches past the flags in field order: the bank's slot byte, honor, then the arena-team words once per update (`0x6cdda0`).
+/// Our currency watches: the backpack, keyring and token slots' guids (`0x5d9c5b`, `0x5d9cb9`, `0x5d9ce8`) and the known-currencies pair (`0x6e5401`).
+fn is_currency_watch(index: u16) -> bool {
+    use benilla_protocol::field::{player_slot_of_field, FIELD_PLAYER_KNOWN_CURRENCIES};
+    (FIELD_PLAYER_KNOWN_CURRENCIES..FIELD_PLAYER_KNOWN_CURRENCIES + 2).contains(&index)
+        || player_slot_of_field(index)
+            .is_some_and(|(slot, _)| crate::ui_currency::watched_slot(slot))
+}
+
+/// Our currency watches' edges at `at` in `edges`, each 8-byte field's handler once (`0x4d5a80`'s size 8): the known pair's, or a slot's with its old and new guid.
+fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: usize) {
+    use benilla_protocol::field::{player_slot_of_field, FIELD_PLAYER_KNOWN_CURRENCIES};
+    let (index, ..) = edges[at];
+    let pair = index & !1;
+    // The field's low word when it moved, else its high word: the handler runs once per field.
+    if index & 1 == 1 && at > 0 && edges[at - 1].0 == pair {
+        return;
+    }
+    if (FIELD_PLAYER_KNOWN_CURRENCIES..FIELD_PLAYER_KNOWN_CURRENCIES + 2).contains(&index) {
+        crate::ui_currency::known_update(&mut sc.ui);
+        return;
+    }
+    let Some((slot, _)) = player_slot_of_field(index) else {
+        return;
+    };
+    let Some(new) = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .and_then(|s| s.0.player_slot(slot))
+    else {
+        return;
+    };
+    let word = |i: u16, now: u32| {
+        edges
+            .iter()
+            .find(|&&(at, ..)| at == i)
+            .map_or(now, |&(_, old, _)| old)
+    };
+    let (lo_index, hi_index) = if player_slot_of_field(pair) == Some((slot, false)) {
+        (pair, pair + 1)
+    } else {
+        (pair + 1, pair)
+    };
+    let old =
+        u64::from(word(lo_index, new as u32)) | u64::from(word(hi_index, (new >> 32) as u32)) << 32;
+    sc.ui
+        .world(move |world| crate::ui_currency::slot_changed(world, slot, old, new));
+}
+
+/// Our player watches past the flags in field order: the bank's slot byte, honor, the currency watches, then the arena-team words once per update (`0x6cdda0`).
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
-    for &(index, old, new) in edges {
+    for (at, &(index, old, new)) in edges.iter().enumerate() {
+        if is_currency_watch(index) {
+            own_currency_watch(sc, guid, edges, at);
+            continue;
+        }
         // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
         if index == benilla_protocol::field::FIELD_PLAYER_BYTES_2 {
             if (old >> 16) as u8 != (new >> 16) as u8 {
@@ -1875,7 +1930,8 @@ fn merge_fields(
             if own
                 && (crate::ui_honor::is_honor_watch(e.index)
                     || crate::ui_arena_team::is_team_info(e.index)
-                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2))
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
+                    || is_currency_watch(e.index))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
@@ -1955,6 +2011,15 @@ fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
             &sc.net,
             &mut sc.signals,
         );
+    }
+    // The currency leg past the quest log's (`0x70782c`).
+    let class = item
+        .0
+        .object_entry()
+        .and_then(|e| sc.items.template_cached(e))
+        .map(|r| r.class);
+    if stack && crate::ui_currency::item_count_fires(item.0.item_owner(), sc.self_guid.0, class) {
+        crate::ui_currency::display_update(&mut sc.ui);
     }
 }
 

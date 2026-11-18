@@ -549,10 +549,10 @@ pub(crate) struct Model {
     pub(crate) actions: HashMap<u32, ActionSlot>,
     /// The saved equipment sets by id, their names, which a set slot answers.
     pub(crate) equipment_sets: HashMap<u32, String>,
-    /// `CurrencyTypes.dbc` and `CurrencyCategory.dbc`.
-    pub(crate) currency_catalog: super::currency::CurrencyCatalogView,
-    /// The player's currencies, `None` with no player.
-    pub(crate) currency_holdings: Option<super::currency::CurrencyHoldings>,
+    /// The currency display list as its last build left it (`0xc1e960`, `0xc1f44c`).
+    pub(crate) currency_list: Vec<super::currency::Entry>,
+    /// The items whose record a build asked for with its landing callback (`0x5b01d7`, `0x5b0260`).
+    pub(crate) currency_waiting: HashSet<u32>,
     /// The token slots, player slots `0x76..=0x95` as slots 1..=32; `None` with no player.
     pub(crate) token_slots: Option<container::ContainerState>,
     /// Each category's open flag, all open at a world entry from the character screen (`0x5afde2`).
@@ -1536,8 +1536,8 @@ impl Model {
             keybinds: super::keybind::KeybindState::default(),
             actions: HashMap::new(),
             equipment_sets: HashMap::new(),
-            currency_catalog: Default::default(),
-            currency_holdings: None,
+            currency_list: Vec::new(),
+            currency_waiting: HashSet::new(),
             token_slots: None,
             currency_collapsed: HashMap::new(),
             equipment_manager: Default::default(),

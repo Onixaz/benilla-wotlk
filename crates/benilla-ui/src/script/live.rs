@@ -545,6 +545,19 @@ pub trait LiveState {
     fn player_level(&self) -> Option<u32> {
         self.player_req().map(|r| r.level)
     }
+
+    /// `CurrencyTypes.dbc` and `CurrencyCategory.dbc`, `None` before they load.
+    fn currency_catalog(&self) -> Option<&super::CurrencyCatalogView> {
+        None
+    }
+
+    /// The active player's currencies at the call: the known bits, the token slots' counts, the two point balances and each known row's cached item name and icon; `None` with no active player.
+    fn currency_holdings(&self) -> Option<super::CurrencyHoldings> {
+        None
+    }
+
+    /// Ask for item `id`'s record when the cache holds none, as a cache read with a landing callback does (`0x5b01ef`).
+    fn ask_item_record(&self, _id: u32) {}
 }
 
 /// A lent view's address, its lifetime erased.
@@ -839,6 +852,10 @@ pub(crate) struct TestView {
     pub bank_costs: std::collections::HashMap<u32, u32>,
     /// The item tables.
     pub item_tables: Option<super::ItemTables>,
+    /// The currency tables, our currencies, and the item records asked, in order.
+    pub currency_catalog: Option<super::CurrencyCatalogView>,
+    pub currency_holdings: Option<super::CurrencyHoldings>,
+    pub item_asks: std::cell::RefCell<Vec<u32>>,
     /// The companion lists and pool.
     pub companions: super::CompanionState,
     /// The pet stat block and `HasPetUI`'s first return.
@@ -909,6 +926,25 @@ impl LiveState for TestView {
 
     fn bank_slot_cost(&self, slot: u32) -> u32 {
         self.bank_costs.get(&slot).copied().unwrap_or(0)
+    }
+
+    fn currency_catalog(&self) -> Option<&super::CurrencyCatalogView> {
+        self.currency_catalog.as_ref()
+    }
+
+    fn currency_holdings(&self) -> Option<super::CurrencyHoldings> {
+        self.currency_holdings.clone()
+    }
+
+    fn ask_item_record(&self, id: u32) {
+        let cached = self
+            .currency_holdings
+            .as_ref()
+            .and_then(|h| h.items.get(&id))
+            .is_some_and(|(name, _)| name.is_some());
+        if !cached {
+            self.item_asks.borrow_mut().push(id);
+        }
     }
 
     fn unit_flags(&self, guid: u64) -> Option<u32> {

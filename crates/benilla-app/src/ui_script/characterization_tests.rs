@@ -121,6 +121,8 @@ local VERBS = {
     { "stabled", function() return GetNumStablePets() end },
     { "stablesel", function() return GetSelectedStablePet() end },
     { "greenrange", function() return GetQuestGreenRange() end },
+    { "cursize", function() return GetCurrencyListSize() end },
+    { "cur2", function() local n, _, _, _, _, c = GetCurrencyListInfo(2) return tostring(n) .. "x" .. tostring(c) end },
 }
 local function answers()
     local verbs = {}
@@ -4980,7 +4982,6 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
 /// read the new level's green band (`0x5e28a1`) with no frame between.
 #[test]
 fn a_level_update_reads_the_new_level_in_its_own_events() {
-    use benilla_protocol::field::FIELD_UNIT_LEVEL;
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)]) else {
         return;
     };
@@ -4988,5 +4989,118 @@ fn a_level_update_reads_the_new_level_in_its_own_events() {
     assert_eq!(
         pin(&seen, &["UNIT_LEVEL", "PLAYER_LEVEL_UP"], &["greenrange"]),
         vec!["UNIT_LEVEL player | greenrange=8"]
+    );
+}
+
+/// The currency list is built at 12340's triggers and its events fire from their handlers: the
+/// world entry's (`0x528299`) after `UPDATE_FACTION` (`0x528208`); the known-currencies watch's
+/// `KNOWN_CURRENCY_TYPES_UPDATE` (`0x6e5401` -> `0x5b0640`) with the row's record asked; that
+/// record's landing (`0x5b0260` -> `0x5b0660`); a token slot's (`0x5d991f`) and our token's count
+/// (`0x707832`), each read at its own event.
+#[test]
+fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1, FIELD_PLAYER_KNOWN_CURRENCIES,
+    };
+    const BADGE: u32 = 29434;
+    const BADGE_GUID: u64 = 0x4000_0000_0000_0300;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let login = fired(
+        &rig.take(),
+        &[
+            "PLAYER_ENTERING_WORLD",
+            "UPDATE_FACTION",
+            "CURRENCY_DISPLAY_UPDATE",
+        ],
+    );
+    assert_eq!(
+        login,
+        [
+            "UPDATE_FACTION",
+            "PLAYER_ENTERING_WORLD",
+            "UPDATE_FACTION",
+            "CURRENCY_DISPLAY_UPDATE"
+        ],
+        "the first UPDATE_FACTION is the pre-player faction packet's"
+    );
+    let bit = rig
+        .app
+        .world()
+        .resource::<crate::ui_currency::Currencies>()
+        .0
+        .types
+        .iter()
+        .find(|t| t.item_id == BADGE)
+        .map(|t| t.bit_index)
+        .expect("the badge's row");
+    let known = 1u64 << (bit - 1);
+    let events = &["KNOWN_CURRENCY_TYPES_UPDATE", "CURRENCY_DISPLAY_UPDATE"];
+    let verbs = &["cursize", "cur2"];
+    let seen = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_KNOWN_CURRENCIES, known as u32),
+            (FIELD_PLAYER_KNOWN_CURRENCIES + 1, (known >> 32) as u32),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["KNOWN_CURRENCY_TYPES_UPDATE | cursize=2 cur2=nilx0"],
+        "one watch for the pair; the record is not cached yet"
+    );
+    let mut badge = crate::items::test_template("Badge of Justice");
+    badge.class = 10;
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: BADGE,
+            info: Some(Box::new(badge)),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex0"]
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: BADGE_GUID,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 5),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[
+                (FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1, BADGE_GUID as u32),
+                (
+                    FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1 + 1,
+                    (BADGE_GUID >> 32) as u32,
+                ),
+            ]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex5"],
+        "one watch for the slot's two words"
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BADGE_GUID,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_STACK_COUNT, 7)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex7"]
     );
 }

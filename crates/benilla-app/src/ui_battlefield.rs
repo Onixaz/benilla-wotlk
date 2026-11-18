@@ -854,6 +854,7 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
         crate::ui_stable::enter_world(world);
+        crate::ui_currency::enter_world(world);
         if world.contains_resource::<NetCommands>()
             && world.contains_resource::<StatusRequestOwed>()
         {
