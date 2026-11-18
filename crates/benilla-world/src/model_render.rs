@@ -442,9 +442,8 @@ pub fn skybox_order(rung: usize, batch_order: u16) -> u16 {
         .saturating_add(batch_order.min(SKYBOX_RUNG_STRIDE - 1))
 }
 
-/// A batch's slot in the skybox band: its rung's integer (one pipeline key per rung, `RenderSky`'s
-/// sky order), pulled onto that key, plus its batch order. The reference draws each sky's model
-/// whole, in its own depth slice, before the next sky.
+/// A batch's slot in the skybox band: its rung's pipeline-key integer plus its batch order, so each
+/// sky draws whole before the next, as the sky render does (`0x7f09b0`).
 fn skybox_sort_bias(order: u16) -> f32 {
     let rung = f32::from(order / SKYBOX_RUNG_STRIDE);
     let batch = order % SKYBOX_RUNG_STRIDE;
@@ -1232,7 +1231,7 @@ mod tests {
                 );
             }
         }
-        // `RenderSky`'s order: every batch of a rung before any of the next.
+        // The sky render's order (`0x7f09b0`): every batch of a rung before any of the next.
         for rung in 1..crate::skybox::SKY_RUNGS {
             assert!(rung_band(rung)[0] > *rung_band(rung - 1).last().unwrap());
         }

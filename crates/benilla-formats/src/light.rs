@@ -13,6 +13,7 @@ use crate::Chain;
 mod atmosphere;
 mod skybox;
 mod tables;
+mod zone_paths;
 mod zones;
 
 pub use atmosphere::Atmosphere;
@@ -351,9 +352,7 @@ impl LightCatalog {
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
                 if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 1)) {
-                    // An empty name stays a record: `GetOverrideSky` (`0x7f30c0`) returns null
-                    // for it, which still takes its place in the draw list, a full-weight one
-                    // clearing the skies before it. An empty path is that null.
+                    // An unnamed record is a null sky that still holds its list place (`0x7f30c0`).
                     let flags = u32_at(r, 2).unwrap_or(0);
                     let path = if path.is_empty() {
                         String::new()
@@ -474,8 +473,7 @@ impl LightCatalog {
             .filter(|p| !p.is_empty())
     }
 
-    /// The ghost sky's `LightSkybox` flags, beside [`Self::ghost_skybox`]: the override sky reads
-    /// its own bit 1 for the time-of-day sync (`SyncSkyAnimWithTime` takes `m_skybox` too).
+    /// The ghost sky's `LightSkybox` flags, for its time-of-day sync (`0x7ecf20`).
     pub fn ghost_skybox_flags(&self, map: u32, pos: [f32; 3]) -> u32 {
         self.pick_light(map, pos)
             .and_then(|l| self.light_params_skybox.get(&l.params[SLOT_DEATH]))
@@ -483,44 +481,35 @@ impl LightCatalog {
             .map_or(0, |(_, flags)| *flags)
     }
 
-    /// `FindAndAddZoneLight` (`0x77eed0`) and `BlendZoneLight`'s weight (`0x7ee6b0`): the zone
-    /// lights at `pos`, in table order, each with its blend weight. The light rows are looked up by
-    /// id on any map, as `g_lightDB.GetRecord` does.
+    /// A `Light.dbc` row by id, on any map.
+    fn light_by_id(&self, id: u32) -> Option<&Light> {
+        self.lights.iter().find(|l| l.id == id)
+    }
+
+    /// The zone lights at `pos` with their blend weights, in table order (`0x77eed0`, `0x7ee6b0`).
     fn zone_lights(&self, map: u32, pos: [f32; 3]) -> Vec<(&Light, f32)> {
         if !zones::USE_ZONE_LIGHTS {
             return Vec::new();
         }
-        let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
-        zones::zone_lights(map, pos, |id| by_id(id).is_some())
+        zones::zone_lights(map, pos, |id| self.light_by_id(id).is_some())
             .into_iter()
-            .filter_map(|(id, dist)| Some((by_id(id)?, zones::zone_weight(dist).min(1.0))))
+            .filter_map(|(id, dist)| {
+                Some((self.light_by_id(id)?, zones::zone_weight(dist).min(1.0)))
+            })
             .filter(|(_, w)| *w > 0.0)
             .collect()
     }
 
-    /// `DoAreaLights` skips an area light with a falloff end under 3 yards while zone lights run:
-    /// those rows are the zone lights' own records.
+    /// A zone light's own row (falloff end under 3 yards), which `0x7f1360` skips as a sphere.
     fn zone_marker(l: &Light) -> bool {
         zones::USE_ZONE_LIGHTS && l.falloff_end < 3.0
     }
 
-    /// The zone skies this frame, in draw order, at most three: the reference's skybox pairs
-    /// through the same area-light blend [`Self::sample_blended_with`] runs, then `SetColors`'
-    /// compaction ([`compact_pairs`]).
-    ///
-    /// - The base is the map's global light (else the zero-match record), seeded by
-    ///   `LoadLightingBands` (`0x7ebff0`): its skybox id at weight 1.0 ([`seed_pairs`]).
-    /// - Each zone light the camera is in or near folds its id in at its zone weight, in table
-    ///   order (`BlendZoneLight`, `0x7ee6b0`).
-    /// - Each local sphere containing `pos`, farthest first, folds its id in at its blend weight
-    ///   (`BlendAreaLight` `0x7ee5d0` → `BlendOutputs` `0x7ec9a0`, [`merge_pair`]); then each
-    ///   server override at its weight capped by its fade (`DoAreaLights`, `0x7f1360`).
-    /// - Magma and slime take the liquid's fixed row alone, as `SetColors` calls `CalcColors` on
-    ///   the liquid's `LightParams` and runs no area lights.
-    ///
-    /// The slot is the clear one, or the underwater one under a water kind. Storm never moves a
-    /// sky: `BlendColors` (`0x7ec220`), the storm lerp, leaves the pairs alone. The ghost is not a
-    /// slot here: its sky is the override ([`Self::ghost_skybox`]), drawn over this list.
+    /// The zone skies this frame, at most three in draw order: the global light's sky seeded at 1.0
+    /// (`0x7ebff0`), then the zone lights, the area spheres farthest first and the server overrides
+    /// folded in at their weights (`0x7f1360`, `0x7ed4c0`), compacted (`0x7f3230`). Magma and slime
+    /// take their fixed row alone; storm leaves the skies alone (`0x7ec220`); the ghost sky is the
+    /// override ([`Self::ghost_skybox`]).
     pub fn skybox_blend(
         &self,
         map: u32,
@@ -536,8 +525,7 @@ impl LightCatalog {
             }
         }
         let slot = weather_slot(false, false, submersion.is_water());
-        // `GetLightParams(light, slot)`, the clear slot standing in for an unset one as the
-        // atmosphere's `atmo_of` does; `None` where the row names no param at all.
+        // The row's params for the slot, the clear slot standing in for an unset one (`0x7eb180`).
         let param_of = |l: &Light| -> Option<u32> {
             let p = match l.params[slot] {
                 0 => l.params[SLOT_CLEAR],
@@ -554,7 +542,7 @@ impl LightCatalog {
             .find(|l| l.map == map && l.global)
             .or_else(|| {
                 map_has_no_light
-                    .then(|| self.lights.iter().find(|l| l.id == FALLBACK_LIGHT_ID))
+                    .then(|| self.light_by_id(FALLBACK_LIGHT_ID))
                     .flatten()
             })
             .and_then(param_of);
@@ -591,8 +579,9 @@ impl LightCatalog {
             }
         }
         for o in overrides.iter().filter(|o| o.fade > 0.0) {
-            let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
-            let (Some(base), Some(with)) = (by_id(o.light), by_id(o.override_id)) else {
+            let (Some(base), Some(with)) =
+                (self.light_by_id(o.light), self.light_by_id(o.override_id))
+            else {
                 continue;
             };
             let d = dist(base);
@@ -668,8 +657,7 @@ impl LightCatalog {
             .and_then(atmo_of)
             .unwrap_or(Atmosphere::DEFAULT);
 
-        // The zone lights first, in table order (`DoAreaLights`' `m_nearLight` loop,
-        // `BlendZoneLight`): Northrend's zones are lit by these, not by area spheres.
+        // The zone lights first, in table order (`0x7f1360`, `0x7ee6b0`).
         for (light, weight) in self.zone_lights(map, pos) {
             if let Some(atmo) = atmo_of(light) {
                 acc = acc.lerp(&atmo, weight);
@@ -698,8 +686,9 @@ impl LightCatalog {
             }
         }
         for o in overrides.iter().filter(|o| o.fade > 0.0) {
-            let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
-            let (Some(base), Some(with)) = (by_id(o.light), by_id(o.override_id)) else {
+            let (Some(base), Some(with)) =
+                (self.light_by_id(o.light), self.light_by_id(o.override_id))
+            else {
                 continue;
             };
             let d = (0..3)

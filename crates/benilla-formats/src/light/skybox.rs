@@ -1,27 +1,20 @@
-//! The zone skybox slots: which `LightSkybox.dbc` models the area-light blend asks for, and at what
-//! weight, as `DayNight` builds them.
+//! The zone skies: which `LightSkybox.dbc` models the area-light blend asks for, at what weight.
 //!
-//! The reference carries three `(lightSkyboxID, weight)` pairs in its blended light record
-//! (`CurrentLight::m_skyboxes`). `LoadLightingBands` (`0x7ebff0`) seeds pair 0 with the row's
-//! `LightParams.lightSkyboxID` at weight 1.0 and leaves the other two empty. `BlendOutputs`
-//! (`0x7ec9a0`) then folds each area light's id in at that light's blend weight: onto the pair
-//! already holding the id (summed, capped at 1.0) or into the first empty pair. The other pairs
-//! keep their weights; nothing fades out. `SetColors` (`0x7f3230`) compacts the pairs into the
-//! frame's draw list, and that list is what [`crate::LightCatalog::skybox_blend`] returns.
+//! The blended light record carries three (skybox id, weight) pairs: the band load (`0x7ebff0`)
+//! seeds them, the output blend (`0x7ed4c0`) folds each area light's id in, and the colour pass
+//! (`0x7f3230`) compacts them into the draw list [`crate::LightCatalog::skybox_blend`] returns.
 
-/// One `CurrentLight::SkyboxBlend` pair: a `LightSkybox.dbc` id (0 = empty) and its weight.
+/// One pair of the blended light record: a `LightSkybox.dbc` id (0 = empty) and its weight.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SkyboxPair {
     pub id: u32,
     pub weight: f32,
 }
 
-/// The three pairs of one blended light record (`CurrentLight::m_skyboxes`).
+/// The three pairs of one blended light record.
 pub type SkyboxPairs = [SkyboxPair; 3];
 
-/// `LoadLightingBands`' seed (`0x7ebff0`): pair 0 is the row's skybox id at weight 1.0, the other
-/// two empty (the `CurrentLight` constructor, `0x7ee360`). An id of 0 still takes weight 1.0, which
-/// the merge reads as an empty pair.
+/// The band load's seed (`0x7ebff0`, empty pairs from `0x7ee360`): pair 0 is the row's id at 1.0.
 pub fn seed_pairs(skybox_id: u32) -> SkyboxPairs {
     let mut pairs = SkyboxPairs::default();
     pairs[0] = SkyboxPair {
@@ -31,9 +24,8 @@ pub fn seed_pairs(skybox_id: u32) -> SkyboxPairs {
     pairs
 }
 
-/// `BlendOutputs`' skybox fold (`0x7ec9a0`): with a non-zero `id` and `t > 0`, add `t` to the pair
-/// already holding `id` (capped at 1.0), else write `(id, t)` into the first empty pair. A full set
-/// of three other ids drops it. `t` arrives clamped, as the blend weight always is.
+/// The output blend's skybox fold (`0x7ed4c0`): sum onto the pair holding `id` (capped at 1.0),
+/// else take the first empty pair; a full set drops it.
 pub fn merge_pair(pairs: &mut SkyboxPairs, id: u32, t: f32) {
     if id == 0 || t <= 0.0 {
         return;
@@ -50,40 +42,32 @@ pub fn merge_pair(pairs: &mut SkyboxPairs, id: u32, t: f32) {
     }
 }
 
-/// `LightSkybox.dbc` `Flags` bit 1 (`0x1`): the model's sequence is pinned to the time of day
-/// (`SyncSkyAnimWithTime`, `0x7ecf20`).
+/// `LightSkybox.dbc` flag `0x1`: the sequence is pinned to the time of day (`0x7ecf20`).
 pub const SKYBOX_FLAG_SYNC_TIME: u32 = 0x1;
 
-/// `LightSkybox.dbc` `Flags` bit 2 (`0x2`): the sky combines with the procedural one. It never
-/// hides the stars, sun, moons, gradient and clouds, and a later full-weight sky does not displace
-/// it (`SetColors`; `RenderSky`, `0x7f09b0`). The auroras carry it.
+/// `LightSkybox.dbc` flag `0x2`: the sky combines with the procedural one and never hides it or
+/// clears the list (`0x7f3230`, `0x7f09b0`); the auroras carry it.
 pub const SKYBOX_FLAG_COMBINE: u32 = 0x2;
 
-/// One sky of the frame's draw list (`DNInfo::m_blendSkybox[i]`, `m_blendSkyboxWeight[i]`,
-/// `m_blendSkyboxFlags[i]`), resolved to its model.
+/// One sky of the frame's draw list, resolved to its model.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyboxDraw {
-    /// The model's chain path, spelled as [`crate::models::model_path`] spells it; empty for a
-    /// record with no name, the null sky `GetOverrideSky` returns, which holds its place in the
-    /// list but draws nothing.
+    /// The model's chain path; empty for an unnamed record, a null sky that holds its place.
     pub path: String,
     pub weight: f32,
-    /// The record's whole `Flags` column; the reference stores only `& 2` in the draw list and
-    /// reads `& 1` off the model's own copy, which is the same record's.
+    /// The record's `Flags`: the list keeps `0x2`, the model keeps `0x1`.
     pub flags: u32,
 }
 
 impl SkyboxDraw {
-    /// `m_blendSkyboxFlags`: the [`SKYBOX_FLAG_COMBINE`] bit.
+    /// The [`SKYBOX_FLAG_COMBINE`] bit.
     pub fn combines(&self) -> bool {
         self.flags & SKYBOX_FLAG_COMBINE != 0
     }
 }
 
-/// `SetColors`' compaction (`0x7f3230`, the loop after the planet colours): walk the pairs in
-/// order, skipping an empty id, a weight ≤ 0 or an id with no `LightSkybox` record. A sky above
-/// 0.99 without [`SKYBOX_FLAG_COMBINE`] restarts the list at index 0, so a full-weight zone sky
-/// replaces the skies before it while the ones after it still append.
+/// The colour pass's compaction (`0x7f3230`): skip empty, weightless or recordless pairs; a
+/// non-combining sky above 0.99 restarts the list.
 pub fn compact_pairs(
     pairs: &SkyboxPairs,
     record: impl Fn(u32) -> Option<(String, u32)>,

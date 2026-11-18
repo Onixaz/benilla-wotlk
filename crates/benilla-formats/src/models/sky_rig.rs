@@ -1,27 +1,19 @@
-//! A sky model's bones, evaluated on the CPU on the sky scene's own clock.
+//! A sky model's bones, evaluated on the CPU on the sky's own clock.
 //!
-//! The reference draws every sky (`LightSkybox.dbc` zone skies, the ghost sky, a WMO's MOSB sky)
-//! as an ordinary `CM2Model` in a scene of its own (`DayNight::GetOverrideSky`, `0x7f30c0`, creates
-//! it in `s_skyScene`), armed with the loader's sequence and animated like any model: bones,
-//! colour alpha, texture weights and texture transforms all run. What sets a sky apart is its clock
-//! (`SyncSkyAnimWithTime`, `0x7ecf20`, pins a flag-1 sky's sequence to the time of day), so the sky
-//! lane samples its own: [`SkyRig::pose`] takes the band time and the global-sequence cursor.
-//!
-//! The bone law is `CM2Model::AnimateMT`'s (`Engine/Source/Model2/M2Model.cpp`): a bone with flags
-//! `& 0x280` composes `T(pivot + translation) · R · S · T(−pivot)` onto its parent's matrix, the
-//! rotation `Nlerp`ed between keys (`M2AnimateTrack<C4Quaternion>`, `0x82ad50`); any other bone
-//! takes its parent's matrix as it is.
+//! 12340 draws every sky as an ordinary animated M2 in a scene of its own (`0x7f30c0`), so the
+//! lane samples the bones on that scene's clock. The bone law is the model animator's
+//! (`0x82f0f0`): a bone with flags `& 0x280` composes `T(pivot + t) · R · S · T(−pivot)`
+//! onto its parent, the rotation lerped and normalised between keys (`0x82ad50`); any other
+//! bone takes its parent's.
 
 use benilla_m2::{M2Model, M2Track};
 
 use super::key_anim::{bake_track, KeyAnim, SeqSlot};
 
-/// Bone flag `0x200` (transformed) or `0x80` (procedural): the bone composes a local matrix
-/// (`animated = boneFlags & 0x280`).
+/// Bone flags `0x200 | 0x80`: the bone composes a local matrix (`0x82f0f0`).
 const BONE_ANIMATED: u32 = 0x280;
 
-/// A bone's model-space matrix: the linear part (rows) and the translation, WoW model space. The
-/// reference's `C44Matrix` with its fourth column `(0, 0, 0, 1)`, as a bone matrix always is.
+/// A bone's affine model-space matrix: the linear part (rows) and the translation, WoW space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoneMatrix {
     pub linear: [[f32; 3]; 3],
@@ -92,8 +84,7 @@ fn mul3(m: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// The rotation matrix of `q = [x, y, z, w]`, normalised first (`NormalizeApprox` after the lerp);
-/// a degenerate quaternion is the identity.
+/// The rotation matrix of `q = [x, y, z, w]`, normalised first; a degenerate one is the identity.
 fn quat_rows(q: [f32; 4]) -> [[f32; 3]; 3] {
     let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
     if n <= 1e-6 {
@@ -135,8 +126,7 @@ struct SkyBone {
 /// shipped sky is file slot 0 and its only sequence.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyRig {
-    /// The armed sequence's length in seconds, the reference's `m_animLengthMs`
-    /// (`GetBoneSequenceInfo`: `endTime − startTime`); 0 for a model with no sequence.
+    /// The armed sequence's length in seconds (`0x8266b0`); 0 for a model with no sequence.
     pub length: f32,
     /// Whether the armed sequence loops (sequence flags bit 0 clear); a one-shot holds its tail.
     pub looping: bool,
@@ -233,7 +223,7 @@ impl SkyRig {
             let t = b.translation.as_ref().map_or([0.0; 3], |a| {
                 a.sample_or(a.clock(band_t, gseq_now), [0.0; 3])
             });
-            // `Nlerp`: the component lerp the bake's sampler does, normalised in `quat_rows`.
+            // The component lerp the bake's sampler does, normalised in `quat_rows` (`0x982630`).
             let q = b.rotation.as_ref().map_or([0.0, 0.0, 0.0, 1.0], |a| {
                 a.sample_or(a.clock(band_t, gseq_now), [0.0, 0.0, 0.0, 1.0])
             });
@@ -291,13 +281,8 @@ pub fn sky_band_time(rig: &SkyRig, elapsed: f64) -> f32 {
     }
 }
 
-/// `SyncSkyAnimWithTime` (`0x7ecf20`) for one sky: the sequence time it seeks to, and the speed it
-/// plays at, when the minute of day jumps by two or more since the last call and the sky's
-/// `LightSkybox` flags carry bit 1. The seek is `length · minutes / 1440` and the speed
-/// `length / 86 400 000` per ms (`0.000000011574074 · length`), so the sequence spans one game day.
-/// `None` leaves the model's clock alone. The caller keeps `last_minutes`, which the reference
-/// stamps on every call, synced or not, and which starts at 0, so a sky first seen in the first two
-/// minutes after midnight never syncs until the clock next jumps.
+/// The time-of-day sync (`0x7ecf20`): on a minute jump of two or more, a flag-`0x1` sky seeks to
+/// the day fraction and plays one sequence per game day; `last_minutes` is stamped on every call.
 pub fn sync_sky_anim(
     rig: &SkyRig,
     flags: u32,
@@ -311,7 +296,7 @@ pub fn sync_sky_anim(
     let jumped = minutes.abs_diff(*last_minutes) >= 2;
     *last_minutes = minutes;
     (jumped && flags & crate::SKYBOX_FLAG_SYNC_TIME != 0).then_some(SkySync {
-        // `(uint32_t)(length * (minutes * 0.00069444446f))`.
+        // `length · minutes / 1440`, in 12340's float order.
         seek_ms: (length_ms as f32 * (minutes as f32 * 0.000_694_444_46)) as u32,
         speed: 0.000_000_011_574_074 * length_ms as f32,
     })

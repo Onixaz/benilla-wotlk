@@ -181,8 +181,7 @@ pub(super) struct FlareGate<'w, 's> {
     submerged: Res<'w, crate::liquid::SubmergedEye>,
     /// The cloud coverage `occ1` samples; as in the reference, the visible clouds draw from it too.
     clouds: Res<'w, CloudCoverage>,
-    /// The skies' glare fade: `DNGlare::Update` (`0x7ef6e0`) multiplies its target by
-    /// `1 − w` for the strongest sky, before the day curve and the occlusion.
+    /// The skies' glare fade: the target takes `1 − w` of the strongest sky (`0x7ef6e0`).
     skybox: Res<'w, crate::skybox::SkyboxWeight>,
     env: Local<'s, f32>,
     /// Cached cell verdicts (bit = clear); `primed` falls when the probe is skipped.

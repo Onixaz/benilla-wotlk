@@ -1,7 +1,5 @@
-//! The zone skies on the shipped data: `LightParams.lightSkyboxID` names a `LightSkybox.dbc` model
-//! for most Outland and Northrend lights and none on the old continents, the area blend hands it
-//! out at the light's weight (`SetColors`, `0x7f3230`), and the model loads as an animated sky
-//! (`DayNight::GetOverrideSky`, `0x7f30c0`).
+//! The zone skies on the shipped data: Outland and Northrend lights name `LightSkybox.dbc` models,
+//! the old continents none; the blend hands them out by weight and each loads as an animated sky.
 
 use benilla_formats::{Chain, LightCatalog, Submersion, SKYBOX_FLAG_SYNC_TIME};
 
@@ -70,7 +68,7 @@ fn the_old_continents_name_no_zone_sky_and_outland_and_northrend_do() {
     );
     assert!(peaks.len() <= 3, "at most three blend skies");
 
-    // The zone lights (`FindAndAddZoneLight`): no area sphere covers these spots.
+    // The zone lights (`0x77eed0`): no area sphere covers these spots.
     let k3 = names(&cat, MAP_NORTHREND, K3);
     assert!(
         k3.iter()

@@ -1,37 +1,28 @@
 //! The zone lights: 12340's hardcoded Northrend zone outlines, each naming the `Light.dbc` row that
-//! lights the zone (`s_zones`, `s_zonePaths` in `WoW/Source/WorldClient/World.cpp`).
-//!
-//! Northrend's area spheres are sparse: most of its zones are lit by these instead. Each frame
-//! `DayNight::Update` (`0x7816f0`) clears the list and `FindAndAddZoneLight` (`0x77eed0`) adds every
-//! zone whose outline the camera is inside, or within 50 yards outside of, with its blend
-//! distance. `DoAreaLights` (`0x7f1360`) then blends them, in table order, before the area spheres
-//! (`BlendZoneLight`, `0x7ee6b0`), and skips any area sphere with a falloff end under 3 yards.
+//! lights the zone. Each frame the zone search (`0x77eed0`) collects them, and the area-light pass
+//! (`0x7f1360`) blends them before the area spheres (`0x7ee6b0`).
 
-#[path = "zone_paths.rs"]
-mod zone_paths;
-use zone_paths::{ZONE_LIGHTS, ZONE_PATHS};
+use super::zone_paths::{ZONE_LIGHTS, ZONE_PATHS};
 
-/// `s_useZoneLights`, 1 in 12340.
+/// The zone-light switch, on in 12340.
 pub(super) const USE_ZONE_LIGHTS: bool = true;
 
-/// `AddZoneLight`'s cap (`m_nearLight[5]`).
+/// The zone-light list's capacity (`0x7ed150`).
 const MAX_ZONE_LIGHTS: usize = 5;
 
-/// `FindAndAddZoneLight`'s margin: the bound grows and the distance shrinks by 50 yards.
+/// The zone search's margin in yards (`0x77eed0`).
 const MARGIN: f32 = 50.0;
 
-/// One parsed zone outline (`ZonePath` after `ZonesInitialize`, `0x77ed40`).
+/// One parsed zone outline (`0x77ed40`).
 struct Zone {
     map: u32,
     light: u32,
     points: Vec<[f32; 2]>,
-    /// `m_minX, m_minY, m_maxX, m_maxY`, grown by [`MARGIN`].
+    /// `[min_x, min_y, max_x, max_y]`, grown by [`MARGIN`].
     bounds: [f32; 4],
 }
 
-/// `ZonesInitialize`: read each `M`/`L` point of the path up to the `z`, then map it from the
-/// outline's 1024-unit page to the zone plane: `x = (x + offX) · 33.333332`,
-/// `y = (y + offY) / 1024 · 34133.332`, with `ZonePath`'s offsets `(−1.66233754, −145.731598)`.
+/// Each `M`/`L` point up to the `z`, mapped from the outline's page to the zone plane (`0x77ed40`).
 fn parse(path: &str) -> Vec<[f32; 2]> {
     const OFFSET_X: f32 = -1.662_337_5;
     const OFFSET_Y: f32 = -145.731_6;
@@ -82,7 +73,7 @@ fn zones() -> &'static [Zone] {
     })
 }
 
-/// `CWorldMath::DistanceSquaredFromEdge`: the squared distance from `p` to the segment `a`–`b`.
+/// The squared distance from `p` to the segment `a`–`b` (`0x7f9bf0`).
 fn distance_sq_from_edge(a: [f32; 2], b: [f32; 2], p: [f32; 2]) -> f32 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let len = dx * dx + dy * dy;
@@ -95,8 +86,7 @@ fn distance_sq_from_edge(a: [f32; 2], b: [f32; 2], p: [f32; 2]) -> f32 {
     (p[0] - qx).powi(2) + (p[1] - qy).powi(2)
 }
 
-/// `CWorldMath::PointInPolygon` (`0x7f9c90`): the crossing test (a half-open `y` span per edge) and
-/// the distance to the nearest edge.
+/// The crossing test and the nearest-edge distance (`0x7f9c90`).
 fn point_in_polygon(points: &[[f32; 2]], p: [f32; 2]) -> (bool, f32) {
     let mut nearest = f32::MAX;
     let mut inside = false;
@@ -112,10 +102,8 @@ fn point_in_polygon(points: &[[f32; 2]], p: [f32; 2]) -> (bool, f32) {
     (inside, nearest.sqrt())
 }
 
-/// `FindAndAddZoneLight` at camera `pos` (world yards) on `map`: each zone light's `Light.dbc` id
-/// and its blend distance, in table order, at most five. The distance is `50 + d` inside an outline
-/// (`d` to its nearest edge) and `50 − d` within 50 yards outside it. `exists` is
-/// `g_lightDB.GetRecord`: `AddZoneLight` drops an id with no row.
+/// The zone search (`0x77eed0`): each zone light's id and blend distance (`50 ± edge distance`),
+/// in table order, at most five, an id with no `Light.dbc` row dropped.
 pub(super) fn zone_lights(
     map: u32,
     pos: [f32; 3],
@@ -142,8 +130,7 @@ pub(super) fn zone_lights(
     out
 }
 
-/// `BlendZoneLight`'s weight (`0x7ee6b0`) for blend distance `dist`: `1 − (100 − dist) / 100`,
-/// 1 from 100 on, so a zone fades in over the 100 yards across its edge; capped by `maxFade` 1.0.
+/// The zone blend weight (`0x7ee6b0`): a 100-yard ramp across the outline, 1 from 100 on.
 pub(super) fn zone_weight(dist: f32) -> f32 {
     let fade = (100.0 - dist) * 0.01;
     if fade <= 0.0 {

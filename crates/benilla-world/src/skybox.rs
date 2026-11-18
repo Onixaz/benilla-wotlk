@@ -2,30 +2,14 @@
 //! anchored at the far depth ([`crate::sky_order`]) through the ordinary M2 material lane
 //! ([`M2BatchMaterials::skybox`]).
 //!
-//! The reference (`WoW/Source/WorldClient/DayNight.cpp`) keeps two kinds of sky in `DNInfo`:
+//! 12340 keeps three blend skies, filled each frame from the area-light blend (`0x7f3230`) with a
+//! seen WMO's MOSB sky overwriting slot 0 (`0x7f31c0`), and one override sky, the ghost's. The sky
+//! render (`0x7f09b0`) draws them in that order; a non-combining sky above 0.99 hides the celestial
+//! pass, and the glares fade by the strongest sky's weight (`0x7ef6e0`).
 //!
-//! - **Three blend skies** (`m_blendSkybox[3]`, with a weight and a flag each). `SetColors`
-//!   (`0x7f3230`) fills them every frame from the area-light blend's `LightSkybox.dbc` pairs
-//!   ([`benilla_formats::LightCatalog::skybox_blend`]): the zone skies of Outland and Northrend and
-//!   their instances. When the camera sees a WMO group flagged `0x40000`, the scene render
-//!   (`CWorldSceneRender`) overwrites slot 0 with the root's MOSB sky at the interior crossfade
-//!   and clears slot 1 (`DayNight::SetBlendSky`, `0x7f31c0`).
-//! - **The override sky** (`m_skybox`, weight 1.0): the override light params' skybox, which here
-//!   is the ghost sky ([`benilla_formats::LightCatalog::ghost_skybox`]).
-//!
-//! `RenderSky` (`0x7f09b0`) draws the blend skies in slot order unless the override sky is at full
-//! weight, then the override sky, each at its weight. A sky above 0.99 hides the stars, sun disc,
-//! moons, gradient and cloud dome unless its record combines (`LightSkybox` flag `0x2`, the
-//! auroras); below it they draw under it. The sun and moon glares fade by `1 − w` for the strongest
-//! sky (`DNGlare::Update`, `0x7ef6e0`).
-//!
-//! Each sky is a whole animated `CM2Model` in a scene of its own (`s_skyScene`): bones, colour
-//! alpha, texture weights, texture transforms and tint all run on that scene's clock, which
-//! advances only while the sky renders. A sky whose `LightSkybox` flags carry bit 1 has its
-//! sequence pinned to the time of day (`SyncSkyAnimWithTime`, `0x7ecf20`). This lane evaluates the
-//! model on the CPU each frame ([`benilla_formats::SkyRig`]) and writes the skinned positions, both
-//! stages' coordinates, the tint and the batch alpha into its own meshes, so no shared animation
-//! table or rig palette has to run on a clock that is not the sky's.
+//! Each sky is a whole animated M2 on its own scene clock, which runs only while the sky renders;
+//! a flag-`0x1` sky is pinned to the time of day (`0x7ecf20`). This lane evaluates the model on the
+//! CPU ([`benilla_formats::SkyRig`]) and writes positions, coordinates, tint and alpha itself.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,9 +30,8 @@ use benilla_formats::{RenderSubmesh, SkyRig, SkyboxDraw};
 /// `WmoGroupNav::flags`.
 const SHOW_SKYBOX: u32 = 0x40000;
 
-/// The draw rungs: blend slots 0 to 2, then the override sky. Each rung is its own pipeline-key
-/// integer in the sky band ([`crate::model_render`]'s `skybox_sort_bias`), so the skies stack in
-/// `RenderSky`'s order whatever their batch counts.
+/// The draw rungs, blend slots 0 to 2 then the override sky, each its own pipeline-key integer so
+/// the skies stack in the sky render's order (`0x7f09b0`).
 pub const SKY_RUNGS: usize = 4;
 /// The override sky's rung, drawn last.
 const OVERRIDE_RUNG: usize = 3;
@@ -56,18 +39,15 @@ const OVERRIDE_RUNG: usize = 3;
 /// A sky above this weight hides the celestial pass and restarts the draw list (`0.99000001f`).
 const FULL_WEIGHT: f32 = 0.99;
 
-/// One sky the frame asks for: a `DNOverrideSky` at a weight.
+/// One sky the frame asks for, at a weight.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyboxSlot {
-    /// The model's chain path; empty for the null sky an unnamed `LightSkybox` record resolves to,
-    /// which holds its slot but draws nothing.
+    /// The model's chain path; empty for an unnamed record's null sky, which holds its slot.
     pub path: String,
     pub weight: f32,
-    /// `m_blendSkyboxFlags[i]`: the record's combine bit ([`benilla_formats::SKYBOX_FLAG_COMBINE`]).
-    /// Always clear for the WMO sky and the override sky.
+    /// The record's [`benilla_formats::SKYBOX_FLAG_COMBINE`] bit; clear for the WMO and ghost sky.
     pub combine: bool,
-    /// The record's `Flags`, which `GetOverrideSky` stores on the model when it first creates it
-    /// (bit 1, the time-of-day sync, is read off that copy).
+    /// The record's `Flags`, kept on the model when first built (`0x7f30c0`).
     pub flags: u32,
 }
 
@@ -81,26 +61,24 @@ impl SkyboxSlot {
         }
     }
 
-    /// `DNOverrideSky*` non-null: a named model.
+    /// A named model, not a null sky.
     fn is_sky(&self) -> bool {
         !self.path.is_empty()
     }
 }
 
-/// The skies this frame asks for, `DNInfo`'s sky fields after `SetColors` and the scene render's
-/// WMO overwrite.
+/// The skies this frame asks for, after the blend (`0x7f3230`) and the WMO overwrite (`0x7f31c0`).
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
 pub struct CameraSkybox {
-    /// `m_blendSkybox[0..3]`, `None` for a cleared slot.
+    /// The three blend skies, `None` for a cleared slot.
     pub blend: [Option<SkyboxSlot>; 3],
-    /// `m_skybox`, the override (ghost) sky.
+    /// The override (ghost) sky.
     pub over: Option<SkyboxSlot>,
 }
 
 impl CameraSkybox {
-    /// `RenderSky`'s draws, in order, with each one's rung: the blend skies unless the override
-    /// sky is at full weight (`!m_skybox || m_skyboxWeight < 1.0`), then the override sky. A weight
-    /// of 0 or a null sky draws nothing (`DrawSky`'s guard).
+    /// The sky render's draws with their rungs (`0x7f09b0`): the blend skies unless the override is
+    /// at full weight, then the override; a weightless or null sky draws nothing (`0x7f08c0`).
     pub fn draws(&self) -> Vec<(usize, &SkyboxSlot)> {
         let mut out = Vec::with_capacity(SKY_RUNGS);
         let over_full = self
@@ -120,7 +98,7 @@ impl CameraSkybox {
         out
     }
 
-    /// Every named sky the frame holds a pointer to, drawn or not: the ones `RenderSky` syncs.
+    /// Every named sky the frame holds, drawn or not: the ones the sky render syncs.
     fn held(&self) -> impl Iterator<Item = &SkyboxSlot> {
         self.blend
             .iter()
@@ -147,11 +125,9 @@ impl CameraSkybox {
 /// What the skies do to the celestial pass this frame.
 #[derive(Resource, Default, PartialEq)]
 pub struct SkyboxWeight {
-    /// `RenderSky`'s `drawObjects = false`: a drawable override sky above 0.99, or a drawable
-    /// blend sky above 0.99 that does not combine.
+    /// The celestial pass is off (`0x7f09b0`): a drawable non-combining sky above 0.99.
     hides: bool,
-    /// `DNGlare::Update`'s skybox weight: the override sky's while it is set, else the strongest
-    /// blend sky's.
+    /// The glare fade's weight (`0x7ef6e0`): the override sky's, else the strongest blend sky's.
     glare: f32,
 }
 
@@ -168,18 +144,17 @@ impl SkyboxWeight {
     }
 }
 
-/// The sky scene's clock in seconds (`s_skySceneTimeMs`): `RenderSky` advances it, so it stops
-/// while the sky does not render (under liquid). Frozen at 0 for a deterministic capture.
+/// The sky scene's clock in seconds, advanced only while the sky renders (`0x7f09b0`); frozen at 0
+/// for a deterministic capture.
 #[derive(Resource, Default)]
 struct SkyScene {
     now: f64,
 }
 
-/// One built sky model (`DNOverrideSky`), shared by every slot that names its path.
+/// One built sky model, shared by every slot that names its path.
 struct SkyModel {
     rig: SkyRig,
-    /// The `LightSkybox` flags of the request that first created it (`sky->m_flags`): the cache
-    /// returns the existing model with them, whoever asks next.
+    /// The `LightSkybox` flags of the request that first built it, kept for every later one.
     flags: u32,
     /// The scene clock when created: the global sequences' attach time.
     born: f64,
@@ -188,7 +163,7 @@ struct SkyModel {
     base_ms: f64,
     base_at: f64,
     speed: f64,
-    /// `m_lastTimeOfDay`, 0 at creation.
+    /// The sync's last minute of day, 0 at creation (`0x7ecf20`).
     last_minutes: u32,
     parts: Vec<Entity>,
 }
@@ -209,7 +184,7 @@ impl SkyModel {
 struct SkyModels(HashMap<String, Option<SkyModel>>);
 
 impl SkyModels {
-    /// `IsDrawable`: loaded with something to draw.
+    /// Loaded with something to draw.
     fn drawable(&self, path: &str) -> bool {
         self.0.get(path).is_some_and(Option::is_some)
     }
@@ -272,7 +247,7 @@ impl Plugin for SkyboxPlugin {
     }
 }
 
-/// `SetColors`' sky half, then the scene render's WMO overwrite, then the override sky.
+/// The blend skies (`0x7f3230`), the WMO overwrite (`0x7f31c0`), then the override sky.
 #[allow(clippy::too_many_arguments)]
 fn resolve_camera_skybox(
     instances: Query<&crate::wmo_portal::WmoPortalInstance>,
@@ -323,9 +298,7 @@ fn resolve_camera_skybox(
         })
         .min();
     if let Some(sky) = interior {
-        // `SetBlendSky(0, s_interiorSkybox, 0, m_interiorFogBlend)` then `SetBlendSky(1, null)`:
-        // slot 0 takes the WMO sky at the crossfade, even at weight 0 (seen through a doorway it
-        // holds the slot and draws nothing), slot 1 empties and slot 2 stays.
+        // Slot 0 takes the WMO sky at the crossfade, even at 0; slot 1 empties (`0x7f31c0`).
         next.blend[0] = Some(SkyboxSlot {
             path: sky,
             weight: crossfade.t(),
@@ -355,8 +328,7 @@ fn resolve_camera_skybox(
     }
 }
 
-/// Build each named sky on first request (`GetOverrideSky` creates the model the first time a path
-/// is asked for); the models are few, so they stay built.
+/// Build each named sky on its first request, as `0x7f30c0` does; the few models stay built.
 #[allow(clippy::too_many_arguments)]
 fn build_skyboxes(
     mut commands: Commands,
@@ -567,7 +539,7 @@ fn static_colors(sub: &RenderSubmesh) -> Vec<[f32; 4]> {
     }
 }
 
-/// `RenderSky`'s celestial gate and `DNGlare::Update`'s skybox weight, off this frame's skies.
+/// The celestial gate (`0x7f09b0`) and the glare fade's weight (`0x7ef6e0`) for this frame.
 fn resolve_skybox_weight(
     want: Res<CameraSkybox>,
     models: Res<SkyModels>,
@@ -583,7 +555,7 @@ fn resolve_skybox_weight(
         .iter()
         .flatten()
         .any(|s| drawable(s) && s.weight > FULL_WEIGHT && !s.combine);
-    // The glare reads the pointers, not `IsDrawable`: a sky still loading dims it too.
+    // The glare reads the named skies, loaded or not: a sky still loading dims it too.
     let glare = match want.over.as_ref().filter(|o| o.is_sky() && o.weight > 0.0) {
         Some(o) => o.weight,
         None => want
@@ -599,9 +571,8 @@ fn resolve_skybox_weight(
     });
 }
 
-/// `RenderSky`'s model half: advance the sky scene, sync each held sky to the time of day, then
-/// animate and show the drawn skies at their weights and hide every other batch. The sole writer of
-/// these entities' `Visibility`, material, `MeshTag` and mesh attributes.
+/// The sky render's model half (`0x7f09b0`): advance the scene clock, sync, animate and show the
+/// drawn skies; the sole writer of these entities' visibility, material, tag and mesh.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn animate_skyboxes(
     time: Res<Time>,
@@ -621,14 +592,14 @@ fn animate_skyboxes(
     )>,
     mut commands: Commands,
 ) {
-    // The sky render is skipped under liquid (`!s_liquidTypeId`), and its scene clock with it.
+    // The sky render, and its scene clock, stop under liquid (`0x7f09b0`).
     let rendering = !underwater.0.any();
     if rendering && !crate::dev_state::deterministic_run() {
         scene.now += f64::from(time.delta_secs());
     }
     let now = scene.now;
 
-    // `SyncSkyAnimWithTime` on each held sky, before any draws (`GetHourAndMinutes`).
+    // The time-of-day sync on each held sky, before any draws (`0x7ecf20`).
     if rendering {
         for slot in want.held() {
             let Some(Some(model)) = models.0.get_mut(&slot.path) else {
@@ -645,7 +616,7 @@ fn animate_skyboxes(
         }
     }
 
-    // Each drawn part's rung and alpha: the slot weight is the model's fade alpha (`[+0x180]`).
+    // Each drawn part's rung and alpha: the slot weight is the model's fade alpha (`0x7f08c0`).
     let mut drawn: HashMap<Entity, (usize, f32, f32, f64, Arc<Vec<benilla_formats::BoneMatrix>>)> =
         HashMap::new();
     if rendering {
@@ -857,10 +828,8 @@ fn write_animated_attributes(
     }
 }
 
-/// Pin every sky to the camera, world-aligned and at authored scale, the model's origin at the eye
-/// as the reference places it (`s_skyScene->Animate(C3Vector(0, 0, 0))` with the view's translation
-/// removed): `StratholmeSkybox` is authored off-centre, so recentring it would be wrong. The bones
-/// are already in the mesh, so every batch shares this one translation.
+/// Pin every sky to the camera, world-aligned and unscaled, its origin at the eye (`0x7f08c0`);
+/// `StratholmeSkybox` is authored off-centre, so it is never recentred.
 #[allow(clippy::type_complexity)]
 fn follow_camera(
     cam: Query<&GlobalTransform, With<WorldCamera>>,
