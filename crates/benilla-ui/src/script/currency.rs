@@ -10,7 +10,7 @@ use super::who_sort::sort_utf8i;
 /// Honor and arena points, counted from the player's fields, not a token slot (`0x5b0757`).
 const ARENA_POINTS_ITEM: u32 = 43307;
 const HONOR_POINTS_ITEM: u32 = 43308;
-/// The display list's capacity (`0xc1e960`, 95 entries of 24 bytes).
+/// The display list's capacity (95 entries of 24 bytes, indexed at `0x5b06dd`).
 const MAX_ENTRIES: usize = 95;
 
 /// One `CurrencyTypes.dbc` row.
@@ -60,7 +60,7 @@ pub struct CurrencyFolds {
     waiting: std::collections::HashSet<u32>,
 }
 
-/// One display-list entry (24 bytes at `0xc1e960`).
+/// One display-list entry (24 bytes, indexed at `0x5b06dd`).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Entry {
     name: Option<String>,

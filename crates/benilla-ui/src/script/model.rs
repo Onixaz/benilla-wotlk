@@ -549,7 +549,7 @@ pub(crate) struct Model {
     pub(crate) actions: HashMap<u32, ActionSlot>,
     /// The saved equipment sets by id, their names, which a set slot answers.
     pub(crate) equipment_sets: HashMap<u32, String>,
-    /// The currency display list as its last build left it (`0xc1e960`, `0xc1f44c`).
+    /// The currency display list as its last build left it (`0x5b06dd`, its count zeroed at `0x5b0044`).
     pub(crate) currency_list: Vec<super::currency::Entry>,
     /// The items whose record a build asked for with its landing callback (`0x5b01d7`, `0x5b0260`).
     pub(crate) currency_waiting: HashSet<u32>,
