@@ -67,7 +67,8 @@ pub(crate) enum PetCast {
 impl PetPress<'_, '_> {
     /// `CastPetAction(slot)`, a 1-based bar slot.
     pub(crate) fn press_slot(&mut self, slot: u32) -> PetCast {
-        match slot_entry(&self.bar, slot) {
+        let entry = slot_entry(&self.bar.read(), slot);
+        match entry {
             Some(entry) => self.press(slot, entry, None),
             None => PetCast::Done,
         }
@@ -116,11 +117,11 @@ impl PetPress<'_, '_> {
             names,
         } = self;
         // The spell arm asks with `ignoreControl` set (`0x5d4283 push 1`), the others without.
-        let Some(pet_store) = pet.usable_pet_with(bar, entry.is_spell()) else {
+        let Some(pet_store) = pet.usable_pet_with(&bar.read(), entry.is_spell()) else {
             debug!("ui_pet: slot {slot} refused, the pet's actions are not usable — no packet");
             return PetCast::Done;
         };
-        let pet_guid = bar.spells.pet_guid;
+        let pet_guid = bar.read().spells.pet_guid;
         let possessing = possessing(Some(pet_store), pet.self_guid.0);
         // A press on a running spell cancels its aura (`0x5d4325`), kept if cast under 1.5 s ago.
         let display = entry
@@ -132,7 +133,12 @@ impl PetPress<'_, '_> {
                 .as_ref()
                 .and_then(|c| c.num("secureAbilityToggle"))
                 .is_some_and(|v| v != 0.0);
-            if secure && bar.cooldowns.recently_cast(spell_id, 0, Instant::now()) {
+            if secure
+                && bar
+                    .read()
+                    .cooldowns
+                    .recently_cast(spell_id, 0, Instant::now())
+            {
                 debug!("ui_pet: slot {slot} (spell {spell_id}) was just cast — the aura stays");
                 return PetCast::Done;
             }
@@ -268,7 +274,7 @@ pub(super) fn drain_pet_actions(
     if toggles.is_empty() && stops == 0 && writes.is_empty() {
         return;
     }
-    let pet_guid = bar.spells.pet_guid;
+    let pet_guid = bar.read().spells.pet_guid;
     if pet_guid == 0 {
         debug!("ui_pet: dropping queued pet intents — the bar is gone");
         return;
@@ -276,7 +282,7 @@ pub(super) fn drain_pet_actions(
     // The toggle (`0x5d5d20`): past the usability gate every slot signals the bar, a token's
     // right-click too (`0x5d5e01`); only a slot with bit 31 flips and sends.
     for slot in toggles {
-        if !pet.actions_usable(&bar) {
+        if !pet.actions_usable(&bar.read()) {
             debug!(
                 "ui_pet: autocast toggle on slot {slot} refused, the pet's actions are not usable"
             );

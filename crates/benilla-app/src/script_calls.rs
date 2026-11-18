@@ -150,12 +150,17 @@ pub(crate) fn pet_press(
     script: &mut UiScript,
     f: impl FnOnce(&mut crate::ui_pet::PetPress) -> crate::ui_pet::PetCast,
 ) -> crate::ui_pet::PetCast {
-    let (signals, generation) = (press.bar.bar_signals, press.bar.cooldowns.generation);
+    let at = |press: &crate::ui_pet::PetPress| {
+        let bar = press.bar.read();
+        (bar.bar_signals, bar.cooldowns.generation)
+    };
+    let (signals, generation) = at(press);
     let out = f(press);
-    if press.bar.cooldowns.generation != generation {
+    let (now_signals, now_generation) = at(press);
+    if now_generation != generation {
         crate::ui_pet::pet_cooldown_flush_now(script);
     }
-    crate::ui_pet::fire_bar_signals(script, signals, press.bar.bar_signals);
+    crate::ui_pet::fire_bar_signals(script, signals, now_signals);
     out
 }
 

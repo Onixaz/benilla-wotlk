@@ -204,8 +204,10 @@ pub(crate) fn feed_action_state(
     // pair, so a running cooldown derives the same start every frame.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
     cooldowns.write().prune(now);
-    let gen_changed = memory.last_generation != Some(cooldowns.generation);
-    memory.last_generation = Some(cooldowns.generation);
+    // Read until the pushes below, which call into Lua, so no verb's write meets it.
+    let cd = cooldowns.read();
+    let gen_changed = memory.last_generation != Some(cd.generation);
+    memory.last_generation = Some(cd.generation);
     // The cooldown-clock trace (`WOW_MOVE_TRACE` sink, tag "cd"): once per second.
     let trace_cd = benilla_assets::trace::enabled()
         && memory
@@ -401,7 +403,7 @@ pub(crate) fn feed_action_state(
                         factions: factions.as_deref(),
                         reputations: &reputations,
                         party: crate::target::party_of(group.as_deref()),
-                        cooldowns: &cooldowns,
+                        cooldowns: &cd,
                         carried: &carried,
                         spell_mods,
                         runes: rune_check,
@@ -446,16 +448,11 @@ pub(crate) fn feed_action_state(
                     }
                     _ => None,
                 };
-                let info = cooldowns.info(button.action, 0, Some(d), now);
+                let info = cd.info(button.action, 0, Some(d), now);
                 st.cooldown = info.ui_triple(anchor, ui_now);
                 if let Some(check) = rune_check {
-                    st.cooldown = cooldowns.with_rune_leg(
-                        button.action,
-                        d,
-                        st.cooldown,
-                        &rune_leg(check),
-                        now_ms,
-                    );
+                    st.cooldown =
+                        cd.with_rune_leg(button.action, d, st.cooldown, &rune_leg(check), now_ms);
                 }
                 if st.cooldown.is_some() && trace_cd {
                     // The store's clock against the widget's; the sink stamps wall time.
@@ -497,7 +494,7 @@ pub(crate) fn feed_action_state(
                         factions: factions.as_deref(),
                         reputations: &reputations,
                         party: crate::target::party_of(group.as_deref()),
-                        cooldowns: &cooldowns,
+                        cooldowns: &cd,
                         carried: &carried,
                         spell_mods,
                         runes: rune_check,
@@ -520,7 +517,7 @@ pub(crate) fn feed_action_state(
                 }
                 if let Some(u) = use_spell {
                     let d = spells.as_ref().and_then(|s| s.catalog.get(u.spell_id));
-                    let info = cooldowns.info(u.spell_id, button.action, d, now);
+                    let info = cd.info(u.spell_id, button.action, d, now);
                     st.cooldown = info.ui_triple(anchor, ui_now);
                 }
             }
@@ -530,6 +527,7 @@ pub(crate) fn feed_action_state(
         // a re-arm, even within one frame gap, restarts the sweep.
         fresh.insert(action, st);
     }
+    drop(cd);
 
     let mut usable_changed = false;
     let mut state_changed = false;
@@ -592,6 +590,7 @@ pub(crate) fn feed_action_state(
                     .collect(),
             );
         }
+        let cd = cooldowns.read();
         let ctx = usable::UsableCtx {
             self_auras: usable_auras.me.single().ok(),
             target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
@@ -600,7 +599,7 @@ pub(crate) fn feed_action_state(
             factions: factions.as_deref(),
             reputations: &reputations,
             party: crate::target::party_of(group.as_deref()),
-            cooldowns: &cooldowns,
+            cooldowns: &cd,
             carried: &carried,
             spell_mods,
             runes: rune_check,
@@ -608,6 +607,7 @@ pub(crate) fn feed_action_state(
             auto_unshift,
             place,
         };
+        let mut active = Vec::new();
         for (id, was_ready) in memory.reactive.iter_mut().flatten() {
             let Some(d) = sp.catalog.get(*id) else {
                 continue;
@@ -615,15 +615,20 @@ pub(crate) fn feed_action_state(
             let (usable, oom) = usable::spell_usable(*id, d, sp, &ctx, &objects, &items, &commands);
             let ready = usable && !oom;
             if ready && !*was_ready {
-                script.fire_event(
-                    "COMBAT_TEXT_UPDATE",
-                    vec![
-                        ScriptValue::Str("SPELL_ACTIVE".into()),
-                        ScriptValue::Str(d.name.clone()),
-                    ],
-                );
+                active.push(d.name.clone());
             }
             *was_ready = ready;
+        }
+        drop(ctx);
+        drop(cd);
+        for name in active {
+            script.fire_event(
+                "COMBAT_TEXT_UPDATE",
+                vec![
+                    ScriptValue::Str("SPELL_ACTIVE".into()),
+                    ScriptValue::Str(name),
+                ],
+            );
         }
     }
     if auto_repeat.0 != memory.auto_repeat {

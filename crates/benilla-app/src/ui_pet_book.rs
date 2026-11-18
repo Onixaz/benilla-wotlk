@@ -116,7 +116,7 @@ pub(crate) fn cast_pet_spell(
     spell_id: u32,
     on_self: bool,
 ) -> crate::ui_pet::PetCast {
-    if p.bar.spells.pet_guid == 0 {
+    if p.bar.read().spells.pet_guid == 0 {
         debug!("ui_pet_book: dropping a queued pet book cast — the bar is gone");
         return crate::ui_pet::PetCast::Done;
     }
@@ -153,13 +153,13 @@ pub(crate) fn drain_pet_book(
     if autocasts.is_empty() {
         return;
     }
-    let pet_guid = bar.spells.pet_guid;
+    let pet_guid = bar.read().spells.pet_guid;
     if pet_guid == 0 {
         debug!("ui_pet_book: dropping queued pet book intents — the bar is gone");
         return;
     }
     for (spell_id, state) in autocasts {
-        if !pet.actions_usable(&bar) {
+        if !pet.actions_usable(&bar.read()) {
             debug!("ui_pet_book: autocast {spell_id} refused, the pet's actions are not usable");
             continue;
         }

@@ -174,7 +174,10 @@ impl CastLadder<'_, '_> {
     /// press does nothing.
     pub(crate) fn keeps_fresh_toggle(&self, spell_id: u32) -> bool {
         self.secure_toggle.as_deref().is_none_or(|s| s.0)
-            && self.cooldowns.recently_cast(spell_id, 0, Instant::now())
+            && self
+                .cooldowns
+                .read()
+                .recently_cast(spell_id, 0, Instant::now())
     }
 
     /// The click paths' active-spell test on our own player (`0x802cb0`).

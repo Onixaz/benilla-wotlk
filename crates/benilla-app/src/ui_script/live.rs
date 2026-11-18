@@ -200,12 +200,17 @@ impl<X: Resource> OwnedMut<'_, X> {
     }
 }
 
-impl<X: Resource> std::ops::Deref for OwnedMut<'_, X> {
-    type Target = X;
-
-    fn deref(&self) -> &X {
-        // SAFETY: as `write`, shared; a verb's read beside it is shared too.
-        unsafe { self.ptr.as_ref() }
+impl<X: Resource> OwnedMut<'_, X> {
+    /// The resource, counted as a shared read while the returned borrow lives, so a verb's write
+    /// or the owner's own write panics beside it.
+    pub(crate) fn read(&self) -> LentRead<'_, X> {
+        let held = benilla_ui::script::shared_read();
+        // SAFETY: the system's access is registered; `held` keeps every write off the storage
+        // while the borrow lives.
+        LentRead {
+            x: unsafe { self.ptr.as_ref() },
+            _held: held,
+        }
     }
 }
 
@@ -1270,11 +1275,17 @@ mod tests {
             let _view = live.view();
             benilla_ui::script::write_live(|_| ());
         }));
+        // The owner's own read is counted too: a verb's write beside it panics.
+        assert!(run(|_, c| {
+            let _read = c.read();
+            benilla_ui::script::write_live(|_| ());
+        }));
         // Apart, each goes through, and the guards are back to zero after a run that unwound.
         assert!(!run(|live, c| {
             let seen = live.view().cooldowns.get().map(|c| c.generation);
             c.write().generation += 1;
             assert_eq!(seen, Some(0));
+            assert_eq!(c.read().generation, 1);
             assert_eq!(benilla_ui::script::read_live(|_| ()), Some(()));
             assert_eq!(benilla_ui::script::write_live(|_| ()), Some(()));
         }));
