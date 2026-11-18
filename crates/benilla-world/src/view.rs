@@ -394,9 +394,12 @@ pub fn stamp_near_clip(
     }
 }
 /// The vertical field of view in radians, shared by the projection and every consumer of the near
-/// rectangle: 45°, Bevy's `PerspectiveProjection` default; the reference's follows the aspect,
-/// 44.1° at 16:9.
-pub const CAM_FOVY: f32 = std::f32::consts::FRAC_PI_4;
+/// rectangle: 54° at any aspect, the reference's. Its world projection (`0x607cb0`) takes the game
+/// camera's fov, π/2 from the constructor (`0x606b30`), times 0.6 as a vertical angle (`0x6bf370`).
+pub const CAM_FOVY: f32 = REFERENCE_CAMERA_FOV * 0.6;
+
+/// The game camera's fov in radians, π/2 (`0x606b30`); the projection uses 0.6 of it vertically.
+const REFERENCE_CAMERA_FOV: f32 = std::f32::consts::FRAC_PI_2;
 
 /// The world camera's pose made current within `Update`, for every viewer authority there: Bevy
 /// propagates `GlobalTransform` in `PostUpdate`, a whole jump late after a teleport snap.
@@ -487,6 +490,18 @@ pub(crate) fn plugin(app: &mut App) {
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// The world projection opens 0.6 of the camera's π/2 vertically: 54° at any aspect, so the
+    /// camera at a given zoom frames as much of the scene as the reference's does.
+    #[test]
+    fn the_vertical_field_of_view_is_the_references_54_degrees() {
+        assert!(
+            (CAM_FOVY.to_degrees() - 54.0).abs() < 1e-4,
+            "{}",
+            CAM_FOVY.to_degrees()
+        );
+        assert_eq!(CAM_FOVY, std::f32::consts::FRAC_PI_2 * 0.6_f32);
+    }
 
     /// The scale callback's clamp, and the two products the horizon pass reads off it.
     #[test]

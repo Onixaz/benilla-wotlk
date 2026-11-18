@@ -200,8 +200,8 @@ pub use ground_effects::{
 };
 mod light;
 pub use light::{
-    Atmosphere, LightCatalog, LightOverride, SkyboxDraw, Submersion, SKYBOX_FLAG_COMBINE,
-    SKYBOX_FLAG_SYNC_TIME, ZERO_KEY_COLOR, ZERO_KEY_SCALAR,
+    fog_rate, rate_law_map, Atmosphere, FogLaw, LightCatalog, LightOverride, SkyboxDraw,
+    Submersion, SKYBOX_FLAG_COMBINE, SKYBOX_FLAG_SYNC_TIME, ZERO_KEY_COLOR, ZERO_KEY_SCALAR,
 };
 mod loading_screen;
 pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};

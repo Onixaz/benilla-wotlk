@@ -506,8 +506,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 model
-                    .unit_guids
-                    .guid_of(&unit)
+                    .token_guid(&unit)
                     .or_else(|| model.unit(&unit).filter(|u| u.exists).map(|u| u.guid))
             };
             let family = guid.and_then(|g| super::read_live(|l| l.creature_family(g)).flatten());

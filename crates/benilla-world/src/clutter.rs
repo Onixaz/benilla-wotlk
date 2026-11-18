@@ -493,15 +493,14 @@ pub(crate) fn stream_chunk_clutter(
         return;
     };
     let cam_pos = cam_tf.translation();
-    // Without a perspective projection, Bevy's default stands in: the one `view.rs` keeps, about
-    // the reference's 44.1° vertical, at 16:9.
+    // Without a perspective projection, the world camera's fovy stands in, at Bevy's default aspect.
     let reach = cfg.fade_far
         * match projection {
             Some(Projection::Perspective(p)) => frustum_corner_reach(p.fov, p.aspect_ratio),
-            _ => {
-                let d = PerspectiveProjection::default();
-                frustum_corner_reach(d.fov, d.aspect_ratio)
-            }
+            _ => frustum_corner_reach(
+                crate::view::CAM_FOVY,
+                PerspectiveProjection::default().aspect_ratio,
+            ),
         };
     let build_d2 = (reach + CLUTTER_BUILD_MARGIN).powi(2);
     let drop_d2 = (reach + CLUTTER_BUILD_MARGIN + CLUTTER_TEARDOWN_HYSTERESIS).powi(2);

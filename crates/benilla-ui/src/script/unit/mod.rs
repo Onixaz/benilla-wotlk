@@ -610,6 +610,8 @@ mod resolve;
 #[cfg(test)]
 mod tests;
 
-pub use resolve::{parse_unit_token, UnitBase, UnitGuids, UnitTokenParse};
+pub use resolve::{
+    parse_unit_token, split_name, Hop, Hops, UnitBase, UnitGuids, UnitTokenParse, PET_OF_ANYONE,
+};
 
 pub(super) use bindings::install;

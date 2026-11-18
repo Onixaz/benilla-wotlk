@@ -407,8 +407,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     );
     rgb = rgb * lit;
 #endif
-    // Scene fog: the world's linear fog (same start and end, planar eye-Z) in gamma space before
-    // the blend; only its colour follows the per-blend policy in `wow_params.fog.x`.
+    // Scene fog: the world's start and end on planar eye-Z, in gamma space before the blend; only
+    // its colour follows the per-blend policy in `wow_params.fog.x`. Linear, without the world
+    // shaders' rate: this lane is fixed-function in the reference, with no vertex program.
     if (wow_light.fog_color.w > 0.5 && wow_params.fog.x > 0.5) {
         let denom = max(wow_light.fog_params.y - wow_light.fog_params.x, 0.001);
         let factor = clamp((wow_light.fog_params.y - in.view_z) / denom, 0.0, 1.0);

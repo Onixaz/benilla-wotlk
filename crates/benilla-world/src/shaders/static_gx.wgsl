@@ -179,6 +179,15 @@ fn vertex(v: GxVertex) -> GxVsOut {
     return out;
 }
 
+// The reference's fog curve (every world vertex program, `0x7ecd80`): the linear factor
+// `(end - z) / (end - start)` clamped to [0, 1], raised to the rate (row 20; 0 reads as 1). The
+// reference raises per vertex and interpolates; per pixel here, which agrees exactly only at rate 1.
+fn fog_curve(span: vec2<f32>, rate: f32, eye_z: f32) -> f32 {
+    let linear = clamp((span.y - eye_z) / max(span.y - span.x, 0.001), 0.0, 1.0);
+    let r = select(1.0, rate, rate > 0.0);
+    return select(pow(linear, r), linear, r == 1.0);
+}
+
 @fragment
 fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     // The hard farclip wall: per-pixel planar eye-Z, the same plane as the entity path.
@@ -417,13 +426,14 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     //.
     var fog_color = wow_light.fog_color;
     var fog_span = wow_light.fog_params.xy;
+    var fog_rate = wow_light.point_count.z;
     if ((recs[in.word & 0xffffu].w & 16384u) != 0u) {
         fog_color = wow_light.wmo_fog_color;
         fog_span = wow_light.wmo_fog_params.xy;
+        fog_rate = wow_light.point_count.w;
     }
     if (fog_color.w > 0.5 && (in.word & WORD_FOG_OFF) == 0u) {
-        let denom = max(fog_span.y - fog_span.x, 0.001);
-        let factor = clamp((fog_span.y - eye_z) / denom, 0.0, 1.0);
+        let factor = fog_curve(fog_span, fog_rate, eye_z);
         rgb = mix(fog_color.xyz * fog_weight, rgb, factor);
     }
     // Gamma-space output; alpha pinned 1.0, every draw here is opaque.

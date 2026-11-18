@@ -204,7 +204,7 @@ fn role_token(roles: u32) -> &'static str {
 
 /// An aura check for a unit token: nothing for nobody or a unit with no aura list.
 fn unit_has_aura(model: &Model, token: &str, spell: u32) -> Option<bool> {
-    model.unit_guids.guid_of(token).filter(|&g| g != 0)?;
+    model.token_guid(token).filter(|&g| g != 0)?;
     crate::script::aura::auras_of(model, token).map(|list| list.iter().any(|a| a.spell_id == spell))
 }
 

@@ -9,8 +9,8 @@ use bevy::prelude::*;
 use benilla_formats::ChrClasses;
 use benilla_protocol::messages::ObjectType;
 use benilla_ui::script::{
-    parse_unit_token, power_token, ScriptValue, UiScript, UnitBase, UnitState, UnitTokenParse,
-    WornDisplay,
+    parse_unit_token, power_token, Hop, Hops, ScriptValue, UiScript, UnitBase, UnitState,
+    UnitTokenParse, WornDisplay, PET_OF_ANYONE,
 };
 
 use crate::creature_type::CreatureTypeSources;
@@ -703,9 +703,42 @@ pub(crate) fn player_token_guid(
     }
 }
 
-/// The one unit-token resolver, the reference's: case-insensitive compares, then the object
-/// manager; a caller wanting a type tests the resolved unit. [`Selection`] is a parameter because
-/// [`crate::target::SelectCommit`] writes it through its own borrow.
+/// What the unit-token resolver reads from the VM, which owns both: the focus `[0xbd07d0]`, which
+/// `FocusUnit` sets inside the call before, and the names the name lookup (`0x60a630`) matches.
+/// The default reads neither, so `focus` and a name name nobody.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct VmUnits<'a>(Option<&'a UiScript>);
+
+impl<'a> VmUnits<'a> {
+    pub(crate) fn of(vm: &'a UiScript) -> Self {
+        Self(Some(vm))
+    }
+
+    fn focus(self) -> Option<u64> {
+        self.0.map(UiScript::focus_guid)
+    }
+
+    fn unit_by_name<'t>(self, token: &'t str) -> Option<(u64, Hops<'t>)> {
+        self.0?.unit_by_name(token)
+    }
+}
+
+/// [`VmUnits`] for a system that holds the VM for nothing else.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct UnitVm<'w> {
+    script: Option<NonSend<'w, UiScript>>,
+}
+
+impl UnitVm<'_> {
+    pub(crate) fn view(&self) -> VmUnits<'_> {
+        VmUnits(self.script.as_deref())
+    }
+}
+
+/// The one unit-token resolver, the reference's (`0x60abf0`): case-insensitive compares, the hops,
+/// the name lookup, then the object manager; a caller wanting a type tests the resolved unit.
+/// [`Selection`] is a parameter because [`crate::target::SelectCommit`] writes it through its own
+/// borrow, and the VM's part is one too ([`VmUnits`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
@@ -717,12 +750,21 @@ pub(crate) struct UnitTokens<'w, 's> {
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
     pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
-    me: Query<'w, 's, (Entity, &'static Guid), With<SelfPlayer>>,
+    me: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static Guid,
+            Option<&'static crate::vehicle::Passenger>,
+        ),
+        With<SelfPlayer>,
+    >,
 }
 
 impl UnitTokens<'_, '_> {
     fn me(&self) -> Option<(Entity, u64)> {
-        self.me.iter().next().map(|(e, g)| (e, g.0))
+        self.me.iter().next().map(|(e, g, _)| (e, g.0))
     }
 
     /// The guid lookup, `pub(crate)` for `TargetLastEnemy`, which starts from a guid.
@@ -730,38 +772,75 @@ impl UnitTokens<'_, '_> {
         Some((*self.index.as_ref()?.0.get(&guid)?, guid))
     }
 
-    /// Resolve `token` as the reference does: its base, then a hop for each `target` after it. The
-    /// text is read by [`parse_unit_token`], which the VM's resolver shares, so both take the same
-    /// tokens; a token that names nobody, or a base or hop the object manager does not hold, is
-    /// `None`.
-    pub(crate) fn resolve(&self, token: &str, selection: &Selection) -> Option<(Entity, u64)> {
-        let UnitTokenParse::Unit { base, hops } = parse_unit_token(token) else {
-            return None;
+    /// The held unit `token` names: [`Self::guid_of`], then the object manager, the player, the
+    /// selection and the hover pick answering for their own units.
+    pub(crate) fn resolve(
+        &self,
+        token: &str,
+        selection: &Selection,
+        vm: VmUnits<'_>,
+    ) -> Option<(Entity, u64)> {
+        let guid = self.guid_of(token, selection, vm)?;
+        let picked = || {
+            let hovered = self.hovered.as_ref()?;
+            hovered.mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default())
         };
-        let mut unit = self.base(base, selection)?;
-        for _ in 0..hops {
-            unit = self.target_of(unit.0)?;
-        }
-        Some(unit)
+        self.held(guid)
+            .or_else(|| self.me().filter(|&(_, g)| g == guid))
+            .or_else(|| {
+                selection
+                    .target
+                    .filter(|_| selection.guid == Some(guid))
+                    .map(|e| (e, guid))
+            })
+            .or_else(|| picked().filter(|&(_, g)| g == guid))
     }
 
-    /// The guid a token names, held or not: a held unit's, else a group base's off the roster
-    /// (`partyN`, `raidN` and their pets), as the reference's token resolve answers before any
-    /// object lookup. A hop needs a held unit to read, so a chain answers only through [`Self::resolve`].
-    pub(crate) fn guid_of(&self, token: &str, selection: &Selection) -> Option<u64> {
-        if let Some((_, guid)) = self.resolve(token, selection) {
-            return Some(guid);
+    /// The guid `token` names, held or not, as the reference's resolve answers before any object
+    /// lookup; `None` for nobody and for a token it refuses. The text is read by
+    /// [`parse_unit_token`], which the VM's resolver shares, so both take the same tokens: a base
+    /// whose unit is there, or that names nobody with no text after it, takes its hops; any other
+    /// token is a name, which the VM looks up ([`VmUnits`]), and its hops.
+    pub(crate) fn guid_of(
+        &self,
+        token: &str,
+        selection: &Selection,
+        vm: VmUnits<'_>,
+    ) -> Option<u64> {
+        match parse_unit_token(token) {
+            UnitTokenParse::Empty | UnitTokenParse::Nobody => return None,
+            UnitTokenParse::Unit { base, hops } => {
+                let guid = self.base(base, selection, vm).unwrap_or(0);
+                if guid != 0 || hops.is_empty() {
+                    if let Some(end) = self.follow(guid, hops, selection) {
+                        return Some(end).filter(|&g| g != 0);
+                    }
+                }
+            }
+            UnitTokenParse::Name => {}
         }
-        let UnitTokenParse::Unit { base, hops: 0 } = parse_unit_token(token) else {
-            return None;
-        };
+        let (guid, hops) = vm.unit_by_name(token)?;
+        self.follow(guid, hops, selection).filter(|&g| g != 0)
+    }
+
+    /// The guid a token's base names, before any hop, held or not.
+    fn base(&self, base: UnitBase, selection: &Selection, vm: VmUnits<'_>) -> Option<u64> {
         let live = |guid: u64| {
             self.held(guid)
                 .and_then(|(e, _)| self.stores.get(e).ok())
                 .map(|s| &s.0)
         };
         match base {
+            UnitBase::Player => self.me().map(|(_, g)| g),
             UnitBase::Target => selection.guid,
+            // The same pick `ui_tooltip` pushes `"mouseover"` from.
+            UnitBase::Mouseover => self
+                .hovered
+                .as_ref()?
+                .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default())
+                .map(|(_, guid)| guid),
+            // Our charm, else our summon (`0x60acc3`-`0x60acd3`), as the `"pet"` snapshot reads it.
+            UnitBase::Pet => self.stores.get(self.me()?.0).ok()?.0.unit_pet_guid(),
             UnitBase::Party(row) => self.party_member(row),
             UnitBase::Raid(row) => self.raid_member(row),
             UnitBase::PartyPet(row) => self
@@ -770,67 +849,81 @@ impl UnitTokens<'_, '_> {
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            _ => None,
-        }
-        .filter(|&guid| guid != 0)
-    }
-
-    /// The held unit a token's base names, before any `target` hop.
-    fn base(&self, base: UnitBase, selection: &Selection) -> Option<(Entity, u64)> {
-        match base {
-            UnitBase::Player => self.me(),
-            UnitBase::Target => selection.target.zip(selection.guid),
-            // The same pick `ui_tooltip` pushes `"mouseover"` from.
-            UnitBase::Mouseover => self
-                .hovered
-                .as_ref()?
-                .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default()),
-            // Our charm, else our summon (`0x60acc3`-`0x60acd3`), as the `"pet"` snapshot reads it.
-            UnitBase::Pet => {
-                let guid = self.stores.get(self.me()?.0).ok()?.0.unit_pet_guid()?;
-                self.held(guid)
-            }
-            UnitBase::PartyPet(row) => self
-                .party_member(row)
-                .and_then(|member| self.pet_of(member, false)),
-            UnitBase::RaidPet(row) => self
-                .raid_member(row)
-                .and_then(|member| self.pet_of(member, true)),
-            UnitBase::Raid(row) => self.raid_member(row).and_then(|guid| self.held(guid)),
-            UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
             // The interaction NPC's guid.
-            UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
+            UnitBase::Npc => self.interact.as_ref()?.1,
             // The quest window's source (`0x6081b0`), read through the view lent to the call.
-            UnitBase::QuestNpc => self.held(crate::ui_script::live::quest_npc()?),
+            UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
             // The encounter's slot (`0x5ed710`).
-            UnitBase::Boss(row) => {
-                let guid = self.encounter.as_ref()?.boss(usize::try_from(row).ok()?);
-                (guid != 0).then(|| self.held(guid)).flatten()
-            }
+            UnitBase::Boss(row) => Some(self.encounter.as_ref()?.boss(usize::try_from(row).ok()?)),
             // The opponent slot (`0x608180`), and its pet (`0x60a2f0`).
-            UnitBase::Arena(row) | UnitBase::ArenaPet(row) => {
-                let arena = self.arena.as_ref()?;
-                let row = usize::try_from(row).ok()?;
-                let guid = if matches!(base, UnitBase::Arena(_)) {
-                    *arena.opponents().get(row)?
-                } else {
-                    let index = self.index.as_ref()?;
-                    *arena
-                        .pets(&crate::ui_arena::pet_of(index, &self.stores))
-                        .get(row)?
-                };
-                (guid != 0).then(|| self.held(guid)).flatten()
+            UnitBase::Arena(row) => self
+                .arena
+                .as_ref()?
+                .opponents()
+                .get(usize::try_from(row).ok()?)
+                .copied(),
+            UnitBase::ArenaPet(row) => {
+                let index = self.index.as_ref()?;
+                let pets = self
+                    .arena
+                    .as_ref()?
+                    .pets(&crate::ui_arena::pet_of(index, &self.stores));
+                pets.get(usize::try_from(row).ok()?).copied()
             }
-            // 12340's bases the app has no unit for yet (#90).
-            UnitBase::Vehicle | UnitBase::Focus | UnitBase::Commentator(_) => None,
+            // The player's transport while seated (`0x60ac87`).
+            UnitBase::Vehicle => self
+                .me
+                .iter()
+                .next()?
+                .2
+                .filter(|p| p.state == crate::vehicle::SEATED)
+                .map(|p| p.vehicle),
+            // The VM's focus `[0xbd07d0]`.
+            UnitBase::Focus => vm.focus(),
+            // Listed in commentator mode alone, which benilla never asks for.
+            UnitBase::Commentator(_) => None,
         }
     }
 
-    /// One `target` hop: the held unit's `UNIT_FIELD_TARGET`, held in turn. The lookup takes the
-    /// unit typemask, so a hop off any other object, or off a unit with no target, is nobody.
-    fn target_of(&self, unit: Entity) -> Option<(Entity, u64)> {
-        let store = self.stores.get(unit).ok().filter(|s| s.is_unit())?;
-        self.held(store.0.unit_target()?)
+    /// The hops from `guid` (`0x60aaa0`): `None` where they fail. A `target` hop off the player
+    /// reads the target global, off another unit its `UNIT_FIELD_TARGET`; a `pet` hop, the unit's
+    /// charm, else its summon, and only off the player or a party or raid member unless our
+    /// `PLAYER_FLAGS` holds [`PET_OF_ANYONE`]. The unit lookup takes the unit typemask, so a hop
+    /// off any other object, or off a unit not held, is nobody.
+    fn follow(&self, mut guid: u64, hops: Hops<'_>, selection: &Selection) -> Option<u64> {
+        let me = self.me();
+        let unit = |guid: u64| {
+            self.held(guid)
+                .or_else(|| me.filter(|&(_, g)| g == guid))
+                .and_then(|(e, _)| self.stores.get(e).ok())
+                .filter(|s| s.is_unit())
+                .map(|s| &s.0)
+        };
+        for hop in hops {
+            let ours = guid != 0 && me.is_some_and(|(_, g)| g == guid);
+            guid = match hop.ok()? {
+                Hop::Target if ours => selection.guid.unwrap_or(0),
+                Hop::Target => unit(guid).and_then(|u| u.unit_target()).unwrap_or(0),
+                Hop::Pet => {
+                    let anyone = me
+                        .and_then(|(e, _)| self.stores.get(e).ok())
+                        .is_some_and(|s| s.0.player_flags() & PET_OF_ANYONE != 0);
+                    if !(ours || self.in_group(guid) || anyone) {
+                        return None;
+                    }
+                    unit(guid).and_then(|u| u.unit_pet_guid()).unwrap_or(0)
+                }
+            };
+        }
+        Some(guid)
+    }
+
+    /// Whether `guid` is a party member or on the raid roster (`0x512a00`).
+    fn in_group(&self, guid: u64) -> bool {
+        guid != 0
+            && (self.group.party_slots().any(|m| m.guid == guid)
+                || crate::ui_party::raid_row_guids(&self.group, self.me().map(|(_, g)| g))
+                    .contains(&guid))
     }
 
     /// The guid in 0-based party slot `row`, the one `partyN` and `partypetN` share.
@@ -843,22 +936,6 @@ impl UnitTokens<'_, '_> {
     fn raid_member(&self, row: u32) -> Option<u64> {
         let index = usize::try_from(row).ok()?.checked_add(1)?;
         crate::ui_party::raid_row_guid(&self.group, self.me().map(|(_, g)| g), index)
-    }
-
-    /// A group member's pet, held: `CHARM`, else `SUMMON`, off the member's descriptor while it is
-    /// held, else off the roster record's pet guid (`partypetN`, `raidpetN`). A pet the object
-    /// manager does not hold names no unit here, as any unheld unit.
-    fn pet_of(&self, member: u64, raid: bool) -> Option<(Entity, u64)> {
-        let live = self
-            .held(member)
-            .and_then(|(entity, _)| self.stores.get(entity).ok())
-            .map(|store| &store.0);
-        let pet = if raid {
-            self.group.raid_pet_guid(member, live)
-        } else {
-            self.group.party_pet_guid(member, live)
-        };
-        self.held(pet?)
     }
 }
 
@@ -2428,7 +2505,7 @@ mod tests {
         let resolve = |app: &mut App| {
             app.world_mut()
                 .run_system_once(|tokens: UnitTokens| {
-                    tokens.resolve("mouseover", &Selection::default())
+                    tokens.resolve("mouseover", &Selection::default(), VmUnits::default())
                 })
                 .unwrap()
         };
@@ -2539,7 +2616,7 @@ mod tests {
             let token = token.to_string();
             app.world_mut()
                 .run_system_once(move |tokens: UnitTokens| {
-                    tokens.resolve(&token, &Selection::default())
+                    tokens.resolve(&token, &Selection::default(), VmUnits::default())
                 })
                 .unwrap()
         }
@@ -2875,7 +2952,7 @@ mod tests {
             let token = token.to_string();
             app.world_mut()
                 .run_system_once(move |tokens: UnitTokens, selection: Res<Selection>| {
-                    tokens.resolve(&token, &selection)
+                    tokens.resolve(&token, &selection, VmUnits::default())
                 })
                 .unwrap()
         }
@@ -3025,6 +3102,64 @@ mod tests {
             assert_eq!(guid_of(&mut app, "party4294967297target"), Some(MOB));
             assert_eq!(guid_of(&mut app, "party01target"), Some(MOB));
             assert_eq!(guid_of(&mut app, "party1x"), None);
+        }
+
+        /// 12340's other bases and hops on the host (`0x60abf0`): `focus` reads the VM's focus,
+        /// a `pet` hop off us or a group member reads its pet and off another unit is refused,
+        /// and a name the VM's lookup finds (`0x60a630`) reads as its unit, hops and all. With no
+        /// VM, `focus` and a name name nobody.
+        #[test]
+        fn the_focus_the_pet_hop_and_a_name_resolve_on_the_host() {
+            let mut app = app();
+            let mut vm = UiScript::new().expect("a VM");
+            vm.set_unit_guids(&benilla_ui::script::UnitGuids {
+                player: ME,
+                raid: vec![ME, A, B, C],
+                ..Default::default()
+            });
+            vm.set_unit(
+                "raid2",
+                Some(UnitState {
+                    exists: true,
+                    guid: A,
+                    name: Some("Alys".into()),
+                    ..Default::default()
+                }),
+            );
+            vm.set_focus_guid(B);
+            assert_eq!(guid_of(&mut app, "focus"), None, "no VM, no focus");
+            assert_eq!(guid_of(&mut app, "Alys"), None, "no VM, no names");
+            app.world_mut().insert_non_send_resource(vm);
+            let with_vm = |app: &mut App, token: &str| {
+                let token = token.to_string();
+                app.world_mut()
+                    .run_system_once(
+                        move |tokens: UnitTokens,
+                              selection: Res<Selection>,
+                              vm: NonSend<UiScript>| {
+                            tokens
+                                .resolve(&token, &selection, VmUnits::of(&vm))
+                                .map(|u| u.1)
+                        },
+                    )
+                    .unwrap()
+            };
+            for (token, want) in [
+                ("focus", Some(B)),
+                ("focustarget", Some(A)),
+                ("playerpet", Some(MY_PET)),
+                ("party1pet", Some(A_PET)),
+                ("party1-pet-target", Some(B)),
+                ("raid2pettarget", Some(B)),
+                ("targetpet", None),
+                ("alys", Some(A)),
+                ("Alys-target", Some(MOB)),
+                ("Alys-pet", Some(A_PET)),
+                ("Nobody", None),
+                ("vehicle", None),
+            ] {
+                assert_eq!(with_vm(&mut app, token), want, "{token}");
+            }
         }
     }
 

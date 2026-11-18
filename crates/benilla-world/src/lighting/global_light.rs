@@ -29,10 +29,10 @@ use crate::view::WorldCamera;
 ///   17 grade: `.x` the SIDN night fraction, `.yzw` the sun's SH DC at intensity 1 ·
 ///   18 wmo_fog_color · 19 wmo_fog_params (x=start y=end): the interior fog triple, read by
 ///      interior-tagged content in place of 4-5 ·
-///   20 point_count (x = live entries, y = the horizon's far plane, read by `wdl`) · 21+ the
-///      point-light table, two rows per light, `[pos.xyz, range]` and `[rgb, 0]`, here because
-///      Bevy's clusterable buffer is fragment-only in the view layout and the point term is per
-///      vertex.
+///   20 point_count (x = live entries, y = the horizon's far plane, read by `wdl`, z = the scene
+///      fog's rate, w = the interior fog's) · 21+ the point-light table, two rows per light,
+///      `[pos.xyz, range]` and `[rgb, 0]`, here because Bevy's clusterable buffer is
+///      fragment-only in the view layout and the point term is per vertex.
 ///
 /// The GPU buffer is larger: the interior-prop probes and the skin-palette regions follow this
 /// prefix. They stay out of this struct because the extract clones it by value every frame, and
@@ -278,6 +278,9 @@ fn build_light_data(
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
     pts.truncate(MAX_POINT_LIGHTS);
     fresh.rows[20] = [pts.len() as f32, view.horizon_far(), 0.0, 0.0];
+    // The fog curves' exponents, `factor = linear^rate` in every world shader (`0x7ecd80`).
+    fresh.rows[20][2] = l.fog_rate;
+    fresh.rows[20][3] = l.wmo_fog_rate;
     for (i, (_, p, range, rgb)) in pts.iter().enumerate() {
         fresh.points[2 * i] = [p.x, p.y, p.z, *range];
         fresh.points[2 * i + 1] = [rgb[0], rgb[1], rgb[2], 0.0];

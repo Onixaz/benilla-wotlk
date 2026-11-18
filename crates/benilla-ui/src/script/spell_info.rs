@@ -159,7 +159,7 @@ pub(super) fn spell_of(
                 .coerce_string(second)?
                 .map(|s| s.to_string_lossy())
                 .unwrap_or_default();
-            (super::parse_unit_token(&s) == super::UnitTokenParse::Unknown).then_some(s)
+            model.token_unknown(&s).then_some(s)
         }
         _ => None,
     };
@@ -196,7 +196,9 @@ fn unit_arg(lua: &Lua, args: &MultiValue) -> mlua::Result<Value> {
             .coerce_string(second.clone())?
             .map(|s| s.to_string_lossy())
             .unwrap_or_default();
-        super::parse_unit_token(&s) == super::UnitTokenParse::Unknown
+        lua.app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data")
+            .token_unknown(&s)
     } else {
         false
     };
@@ -213,7 +215,7 @@ pub(super) fn range_unit(lua: &Lua, unit: &Value) -> Option<u64> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    model.unit_guids.resolve(&token).ok().flatten()
+    model.resolve_token(&token).ok().flatten()
 }
 
 /// A range answer as Lua reads it: 1, 0, or nil where the check does not apply.
