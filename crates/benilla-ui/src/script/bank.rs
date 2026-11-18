@@ -32,6 +32,16 @@ fn close_bank_frame(lua: &Lua) {
     super::write_live(|l| l.clear_banker());
 }
 
+impl super::UiScript {
+    /// The interaction close's bank leg from a window opened in the client (`0x51fd1c` -> `0x512fa7`), taken only while the interact target is the banker: `BANKFRAME_CLOSED` with the banker still set, then the banker clears.
+    pub fn close_bank_interaction(&mut self) {
+        if super::write_live(|l| l.close_bank_interaction()).unwrap_or(false) {
+            self.fire_event("BANKFRAME_CLOSED", Vec::new());
+            super::write_live(|l| l.clear_banker());
+        }
+    }
+}
+
 /// Register the bank globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
@@ -191,6 +201,41 @@ mod tests {
         });
         s.run("CloseBankFrame()").unwrap();
         assert_eq!(seen(&s), "true");
+        drop(loan);
+    }
+
+    /// A window opened in the client takes the interact target: the bank's leg fires `BANKFRAME_CLOSED` once with the banker set, then clears it; with the interact target gone, or no banker, it does nothing (`0x51fd1c` -> `0x512fa7`).
+    #[test]
+    fn a_client_open_closes_the_bank_only_while_its_banker_holds_the_target() {
+        let mut s = UiScript::new().unwrap();
+        s.lua()
+            .globals()
+            .set(
+                "BankOpenNow",
+                s.lua()
+                    .create_function(|_, ()| Ok(super::bank_open()))
+                    .unwrap(),
+            )
+            .unwrap();
+        s.run("SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('BANKFRAME_CLOSED') f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(BankOpenNow()) end)").unwrap();
+        let seen = |s: &UiScript| {
+            s.eval::<String>("local t = table.concat(SEEN, ',') SEEN = {} return t")
+                .unwrap()
+        };
+        let loan = crate::script::live::lend_test(bank_view(Some(1), Some(0x42)));
+        s.close_bank_interaction();
+        assert_eq!(seen(&s), "true", "one fire, the banker still set");
+        assert!(!super::bank_open(), "then the banker clears");
+        s.close_bank_interaction();
+        assert_eq!(seen(&s), "", "nothing left to close");
+        drop(loan);
+        let loan = crate::script::live::lend_test(crate::script::live::TestView {
+            bank_interacting: false,
+            ..bank_view(Some(1), Some(0x42))
+        });
+        s.close_bank_interaction();
+        assert_eq!(seen(&s), "", "the interact target is no longer the banker");
+        assert!(super::bank_open(), "the banker stays");
         drop(loan);
     }
 

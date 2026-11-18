@@ -319,6 +319,7 @@ fn drain_taxi(
 }
 
 mod net;
+pub(crate) use net::shows_map;
 
 pub(crate) struct UiTaxiPlugin;
 

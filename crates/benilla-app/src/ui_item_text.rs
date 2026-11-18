@@ -134,6 +134,8 @@ pub(crate) struct ReadSession {
     pub(crate) object_guid: u64,
     pub(crate) source: ReadSource,
     check: ReadCheck,
+    /// The open took the interact target, once per open, not again on a `/reload`'s re-fire.
+    took_target: bool,
     /// Keyed on the VM, so a `/reload` re-fires `ITEM_TEXT_BEGIN` for a reader still open.
     told: crate::ui_script::VmMemo<ItemTextTold>,
 }
@@ -206,6 +208,7 @@ impl ItemTextOpen {
             object_guid,
             source,
             check: ReadCheck::Unchecked,
+            took_target: false,
             told: Default::default(),
         });
     }
@@ -484,6 +487,10 @@ fn feed_item_text(
     }
 
     if !sess.told.get(&script).begun {
+        // The open takes the interact target just before `ITEM_TEXT_BEGIN` (`0x58a33a`).
+        if !std::mem::replace(&mut sess.took_target, true) {
+            script.close_bank_interaction();
+        }
         script.set_item_text(Some(ItemTextState {
             item: readable.title.clone(),
             creator: None,

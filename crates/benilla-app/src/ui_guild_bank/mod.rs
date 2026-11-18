@@ -137,6 +137,11 @@ impl GuildBankState {
         self.pending = Some(banker);
     }
 
+    /// Whether the next `SMSG_GUILD_BANK_LIST` opens the window, which takes the interact target: no open banker and one asked (`0x5a76b3`, `0x5a76e7` -> `0x5a772b`).
+    pub(crate) fn list_opens(&self) -> bool {
+        self.banker.is_none() && self.pending.is_some()
+    }
+
     /// Whether a banker is open.
     #[cfg(test)]
     pub(crate) fn is_open(&self) -> bool {

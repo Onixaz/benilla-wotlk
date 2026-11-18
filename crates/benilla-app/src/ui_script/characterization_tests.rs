@@ -3341,6 +3341,11 @@ const BANKER: u64 = 0xF130_0000_0200_0001;
 
 /// The banker as a stream create sends it, with `npc_flags`.
 fn banker_create(npc_flags: u32) -> SessionEvent {
+    npc_create(BANKER, npc_flags)
+}
+
+/// A creature as a stream create sends it, with `npc_flags`.
+fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
     let pairs = vec![
         (2, 0x9),
         (FIELD_UNIT_HEALTH, 500),
@@ -3349,7 +3354,7 @@ fn banker_create(npc_flags: u32) -> SessionEvent {
         (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, npc_flags),
     ];
     SessionEvent::ObjectCreate {
-        guid: BANKER,
+        guid,
         kind: EntityKind::Unit,
         display_id: None,
         position: [-8949.0, -132.0, 83.5],
@@ -3587,14 +3592,15 @@ fn another_window_taking_the_interact_target_closes_the_bank() {
     );
     // A dialog that fires in its own handler: the setter runs at the start of its open, so the bank closes first (`0x58c5a0`).
     let seen = rig.packets(
-        vec![SessionEvent::QuestDetail(
-            benilla_protocol::messages::QuestDetails {
+        vec![
+            npc_create(BANKER + 2, 0),
+            SessionEvent::QuestDetail(benilla_protocol::messages::QuestDetails {
                 npc: BANKER + 2,
                 quest_id: QUEST,
                 title: "Charz".into(),
                 ..Default::default()
-            },
-        )],
+            }),
+        ],
         2,
     );
     assert_eq!(
@@ -3604,6 +3610,128 @@ fn another_window_taking_the_interact_target_closes_the_bank() {
         Some("BANKFRAME_CLOSED")
     );
     assert_eq!(fired(&seen, &["QUEST_DETAIL"]).len(), 1);
+}
+
+/// Only an open that reaches the setter closes the bank: a taxi map with one known node shows `ERR_TAXINOPATHS` instead (`0x6d61b5`-`0x6d61d1`); a quest panel from a giver not held opens without it (`0x58c5c7`); a guild bank list closes it only as the answer to a hello with no banker open (`0x5a76b3`-`0x5a772b`); the random battleground's list from a battlemaster takes it even for the PvP window (`0x54e509`-`0x54e52e`); a mailbox opened in the client takes it before `MAIL_SHOW` (`0x56da67`).
+#[test]
+fn only_an_open_reaching_the_setter_closes_the_bank() {
+    use benilla_protocol::messages::{BattlefieldList, GuildBankList, TaxiMask};
+    const CLOSED: &[&str] = &["BANKFRAME_CLOSED"];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let open = |rig: &mut Rig| {
+        rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+        assert!(rig
+            .app
+            .world()
+            .non_send_resource::<crate::ui_bank::BankOpen>()
+            .is_open());
+    };
+    let closes = |seen: &[Seen], before: &str| -> bool {
+        let order = fired(seen, &["BANKFRAME_CLOSED", before]);
+        order.first().map(String::as_str) == Some("BANKFRAME_CLOSED")
+    };
+    rig.packets(vec![banker_create(0x20000)], 2);
+    open(&mut rig);
+
+    let taxi = |nodes: &[u32]| {
+        let mut known_mask = TaxiMask::default();
+        for &n in nodes {
+            known_mask.set(n);
+        }
+        SessionEvent::TaxiNodesShown {
+            flightmaster: BANKER + 3,
+            nearest_node: 2,
+            known_mask,
+        }
+    };
+    let seen = rig.packets(vec![taxi(&[2])], 2);
+    assert!(
+        fired(&seen, CLOSED).is_empty(),
+        "one known node: no map, no setter"
+    );
+    assert_eq!(
+        fired(&seen, &["UI_ERROR_MESSAGE"]).len(),
+        1,
+        "ERR_TAXINOPATHS"
+    );
+    let seen = rig.packets(vec![taxi(&[2, 4])], 2);
+    assert!(
+        closes(&seen, "TAXIMAP_OPENED"),
+        "{:?}",
+        fired(&seen, &["BANKFRAME_CLOSED", "TAXIMAP_OPENED"])
+    );
+    open(&mut rig);
+
+    let greeting = |npc: u64| {
+        SessionEvent::QuestGreeting(benilla_protocol::messages::QuestGiverList {
+            npc,
+            ..Default::default()
+        })
+    };
+    let seen = rig.packets(vec![greeting(BANKER + 4)], 2);
+    assert!(fired(&seen, CLOSED).is_empty(), "a giver not held");
+    assert_eq!(fired(&seen, &["QUEST_GREETING"]).len(), 1);
+    let seen = rig.packets(vec![npc_create(BANKER + 4, 0), greeting(BANKER + 4)], 2);
+    assert!(closes(&seen, "QUEST_GREETING"));
+    open(&mut rig);
+
+    let list = || SessionEvent::GuildBankList(GuildBankList::default());
+    let seen = rig.packets(vec![list()], 2);
+    assert!(fired(&seen, CLOSED).is_empty(), "no hello: nothing opens");
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(BANKER + 5, &net);
+    }
+    let seen = rig.packets(vec![list()], 2);
+    assert!(
+        closes(&seen, "GUILDBANKFRAME_OPENED"),
+        "{:?}",
+        fired(&seen, &["BANKFRAME_CLOSED", "GUILDBANKFRAME_OPENED"])
+    );
+    open(&mut rig);
+    let seen = rig.packets(vec![list()], 2);
+    assert!(
+        fired(&seen, CLOSED).is_empty(),
+        "a list for the open guild bank opens nothing"
+    );
+
+    let bf = |from_anywhere: bool, bg_type: u32| {
+        SessionEvent::BattlefieldList(BattlefieldList {
+            battlemaster: BANKER + 6,
+            from_anywhere,
+            bg_type,
+            instances: vec![1],
+            ..Default::default()
+        })
+    };
+    let seen = rig.packets(vec![bf(true, 2)], 2);
+    assert!(fired(&seen, CLOSED).is_empty(), "a list for the PvP window");
+    let seen = rig.packets(vec![bf(true, benilla_ui::script::RANDOM_BATTLEGROUND)], 2);
+    assert!(closes(&seen, "NPC_PVPQUEUE_ANYWHERE"));
+    open(&mut rig);
+
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_mail::MailOpen>()
+        .click(BANKER + 7);
+    let seen = rig.packets(Vec::new(), 2);
+    assert!(
+        closes(&seen, "MAIL_SHOW"),
+        "{:?}",
+        fired(&seen, &["BANKFRAME_CLOSED", "MAIL_SHOW"])
+    );
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
 }
 
 /// The banker flag lost on the open bank's banker closes it from the NPC-flag watch (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED` with the banker set, again from the interaction close, then the banker clears.

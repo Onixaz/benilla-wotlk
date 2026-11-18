@@ -5,8 +5,9 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::BankOpen;
-use crate::net::NetHandlerApp;
+use crate::net::{GuidIndex, NetHandlerApp, ObjectStore};
 use crate::ui_gossip::GossipState;
+use crate::ui_guild_bank::GuildBankState;
 use crate::ui_quest::QuestGiver;
 
 /// Register the bank handlers and the session-end listener.
@@ -29,32 +30,70 @@ pub(super) fn register(app: &mut App) {
         .net_handler_first(K::AuctionHello, on_interact_target_taken)
         .net_handler_first(K::ListStabledPets, on_interact_target_taken)
         .net_handler_first(K::ShowMailbox, on_interact_target_taken)
+        .net_handler_first(K::GuildBankList, on_interact_target_taken)
         .net_handler_first(K::BattlefieldList, on_interact_target_taken)
         .net_handler_first(K::TradeStatus, on_interact_target_taken);
 }
 
-/// A window's open takes the interact target (`0x51fce0`): gossip (`0x58b1b0`), the quest frame (`0x6d0240`, `0x6d0460`, `0x6d08f0`, `0x6d0ab0`), the vendor (`0x6d9960`), the taxi map (`0x6d6050`), the trainer (`0x5940e0`), the tabard designer (`0x598e60`), the registrar and charter vendor (`0x599e00`, `0x5a22a0`), the auctioneer (`0x59f000`), the stable (`0x5a11a0`), the mailbox (`0x56dbc0`), the battlemaster (`0x54e57d`) and the trade window (`0x5873e0`); the setter's interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open.
+/// The object lookup a window's open makes before it takes the interact target: held, with a bit of `mask` in its type.
+fn held_as(index: Option<&GuidIndex>, stores: &Query<&ObjectStore>, guid: u64, mask: u32) -> bool {
+    index
+        .and_then(|i| i.0.get(&guid))
+        .and_then(|&e| stores.get(e).ok())
+        .is_some_and(|s| s.0.type_mask() & mask != 0)
+}
+
+/// A window's open takes the interact target (`0x51fce0`): gossip (`0x58b1b0`), the quest frame (`0x6d0240`, `0x6d0460`, `0x6d08f0`, `0x6d0ab0`), the vendor (`0x6d9960`), the taxi map (`0x6d6050`), the trainer (`0x5940e0`), the tabard designer (`0x598e60`), the registrar and charter vendor (`0x599e00`, `0x5a22a0`), the auctioneer (`0x59f000`), the stable (`0x5a11a0`), the mailbox (`0x56dbc0`), the guild bank (`0x5a7250`), the battlemaster (`0x54e390`) and the trade window (`0x5873e0`); the setter's interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open. The mailbox and item-text opens made in the client close it through [`benilla_ui::script::UiScript::close_bank_interaction`].
 fn on_interact_target_taken(
     In(ev): In<SessionEvent>,
     bank: NonSend<BankOpen>,
+    quest: NonSend<QuestGiver>,
+    guild_bank: Option<Res<GuildBankState>>,
+    index: Option<Res<GuidIndex>>,
+    stores: Query<&ObjectStore>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     use benilla_protocol::messages::TradeStatus;
+    if !bank.is_open() {
+        return;
+    }
+    let held = |guid, mask| held_as(index.as_deref(), &stores, guid, mask);
     let opens = match &ev {
         // An empty list's refusal opens nothing (`0x6d9ad2`-`0x6d9af8`).
         SessionEvent::VendorInventory { items, error, .. } => {
             !items.is_empty() || *error == Some(0)
         }
         SessionEvent::AuctionHello { enabled, .. } => *enabled,
-        // A list for the PvP window sets no battlemaster (`0x54e55d`); a zero one closes without the setter (`0x5496d9`).
-        SessionEvent::BattlefieldList(list) => !list.from_anywhere && list.battlemaster != 0,
+        // The random battleground's list from a battlemaster takes it first (`0x54e509`-`0x54e52e`); a list for the PvP window sets no battlemaster (`0x54e55d`); a zero one closes without the setter (`0x5496d9`).
+        SessionEvent::BattlefieldList(list) => {
+            list.battlemaster != 0
+                && (list.bg_type == benilla_ui::script::RANDOM_BATTLEGROUND || !list.from_anywhere)
+        }
         SessionEvent::TradeStatus { status } => matches!(status, TradeStatus::OpenWindow { .. }),
+        // Only the list answering a hello with no banker open opens the window (`0x5a76b3`-`0x5a772b`).
+        SessionEvent::GuildBankList(_) => guild_bank.is_some_and(|g| g.list_opens()),
+        // A held player's share onto an open window answers busy and opens nothing (`0x6d0753`-`0x6d07d0`).
+        SessionEvent::QuestDetail(d)
+            if benilla_protocol::guid::is_player(d.npc) && held(d.npc, 0x8) && quest.is_open() =>
+        {
+            false
+        }
+        // The quest frame takes it only for a held item, unit or GameObject giver (`0x58c5c7`, `0x58c5d0`).
+        SessionEvent::QuestDetail(d) => held(d.npc, 0x2a),
+        SessionEvent::QuestGreeting(l) => held(l.npc, 0x2a),
+        SessionEvent::QuestProgress(p) => held(p.npc, 0x2a),
+        SessionEvent::QuestOffer(o) => held(o.npc, 0x2a),
+        SessionEvent::TaxiNodesShown { known_mask, .. } => {
+            // Fewer than two known nodes show `ERR_TAXINOPATHS` and leave the interact target (`0x6d61b5`-`0x6d61d1`).
+            let mask = known_mask.clone();
+            ui.world(move |world| {
+                if crate::ui_taxi::shows_map(world, &mask) {
+                    super::close_by_interaction(world);
+                }
+            });
+            return;
+        }
         SessionEvent::GossipMenu(_)
-        | SessionEvent::QuestGreeting(_)
-        | SessionEvent::QuestDetail(_)
-        | SessionEvent::QuestProgress(_)
-        | SessionEvent::QuestOffer(_)
-        | SessionEvent::TaxiNodesShown { .. }
         | SessionEvent::TrainerList { .. }
         | SessionEvent::TabardVendorActivate(_)
         | SessionEvent::PetitionShowList(_)
@@ -62,7 +101,7 @@ fn on_interact_target_taken(
         | SessionEvent::ShowMailbox { .. } => true,
         _ => false,
     };
-    if opens && bank.is_open() {
+    if opens {
         ui.world(super::close_by_interaction);
     }
 }

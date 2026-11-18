@@ -707,6 +707,8 @@ fn feed_mail(
     }
 
     if std::mem::take(&mut mail.open_requested) {
+        // The mailbox open takes the interact target before `MAIL_SHOW` (`0x56da67`).
+        script.close_bank_interaction();
         script.open_mailbox();
     }
     if std::mem::take(&mut mail.close_requested) {

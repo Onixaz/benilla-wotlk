@@ -708,6 +708,11 @@ impl ObjectFields {
         self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0) & 0x4 != 0
     }
 
+    /// `OBJECT_FIELD_TYPE`, the type mask the object-pointer lookups test.
+    pub fn type_mask(&self) -> u32 {
+        self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0)
+    }
+
     /// `OBJECT_FIELD_TYPE`'s unit bit `0x8`, a player included: the object-pointer type mask 8.
     pub fn is_unit(&self) -> bool {
         self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0) & 0x8 != 0
