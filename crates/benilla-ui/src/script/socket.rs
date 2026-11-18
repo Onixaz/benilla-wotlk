@@ -35,18 +35,19 @@ pub struct SocketInfo {
 }
 
 /// An item the player holds, found by guid: its slot, as the lock and the tooltip address it.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) enum Held<'a> {
-    Bag(i64, u32, &'a ContainerSlot),
+    /// A bag slot, read off the World at the call.
+    Bag(i64, u32, Box<ContainerSlot>),
     Worn(u32, &'a InvSlotView),
 }
 
 impl<'a> Held<'a> {
     /// The Lua `(bag, slot)` the item's lock and events name.
     pub(super) fn position(&self) -> (i64, u32) {
-        match *self {
-            Held::Bag(bag, slot, _) => (bag, slot),
-            Held::Worn(id, _) => (EQUIPMENT_BAG, id),
+        match self {
+            Held::Bag(bag, slot, _) => (*bag, *slot),
+            Held::Worn(id, _) => (EQUIPMENT_BAG, *id),
         }
     }
 
@@ -57,7 +58,7 @@ impl<'a> Held<'a> {
         }
     }
 
-    pub(super) fn enchants(&self) -> &'a [EnchantView] {
+    pub(super) fn enchants(&self) -> &[EnchantView] {
         match self {
             Held::Bag(_, _, s) => &s.enchants,
             Held::Worn(_, s) => &s.enchants,
@@ -72,7 +73,7 @@ impl<'a> Held<'a> {
         }
     }
 
-    pub(super) fn link(&self) -> Option<&'a str> {
+    pub(super) fn link(&self) -> Option<&str> {
         match self {
             Held::Bag(_, _, s) => s.link.as_deref(),
             Held::Worn(_, s) => s.link.as_deref(),
@@ -116,12 +117,14 @@ pub(super) fn find(model: &Model, guid: u64) -> Option<Held<'_>> {
             return Some(Held::Worn(i as u32, s));
         }
     }
-    model.containers.iter().find_map(|(&bag, c)| {
-        c.slots
-            .iter()
-            .find(|(_, s)| s.guid == guid)
-            .map(|(&slot, s)| Held::Bag(bag, slot, s))
-    })
+    super::container::live_bags(model)
+        .into_iter()
+        .find_map(|(bag, c)| {
+            c.slots
+                .into_iter()
+                .find(|(_, s)| s.guid == guid)
+                .map(|(slot, s)| Held::Bag(bag, slot, Box::new(s)))
+        })
 }
 
 /// Whether the socketed item sits at `(bag, slot)`: it reads locked there (`0x5c4680`).
@@ -306,10 +309,9 @@ pub(super) fn item_id_by_name(model: &Model, name: &str) -> Option<u32> {
         .find(|s| s.item_id != 0 && s.name.as_deref().is_some_and(matches))
         .map(|s| s.item_id)
         .or_else(|| {
-            model
-                .containers
-                .values()
-                .flat_map(|c| c.slots.values())
+            super::container::live_bags(model)
+                .into_iter()
+                .flat_map(|(_, c)| c.slots.into_values())
                 .find(|s| {
                     s.item_id != 0
                         && s.link.is_some()
@@ -420,7 +422,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let Some(s) = u32::try_from(slot)
                 .ok()
-                .and_then(|slot| Some((slot, model.containers.get(&bag)?.slots.get(&slot)?)))
+                .and_then(|slot| Some((slot, super::container::live_slot(&model, bag, slot)?)))
             else {
                 return Ok(());
             };
@@ -428,7 +430,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if super::container::bag_slot_locked(&model, bag, slot, &s) {
                 return Ok(());
             }
-            let held = Held::Bag(bag, slot, &s);
+            let held = Held::Bag(bag, slot, Box::new(s.clone()));
             if num_sockets(&model, &held) == 0 {
                 return Ok(());
             }
@@ -481,7 +483,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (name, view) = {
                 let model = crate::script::model_mut_of(lua);
                 let held = find(&model, model.socket_info.item);
-                let view = held.and_then(|h| model.item_templates.get(&h.item_id()).cloned());
+                let view = held
+                    .as_ref()
+                    .and_then(|h| model.item_templates.get(&h.item_id()).cloned());
                 (held.and_then(|h| h.name()), view)
             };
             let Some(v) = view else {
@@ -608,10 +612,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let n = number_arg(lua, index, "Usage: ClickSocketButton(index)")?;
             let mut model = crate::script::model_mut_of(lua);
             let held = match &model.cursor {
-                Some(CursorPayload::Item(c)) => model
-                    .containers
-                    .get(&c.bag)
-                    .and_then(|b| b.slots.get(&c.slot))
+                Some(CursorPayload::Item(c)) => super::container::live_slot(&model, c.bag, c.slot)
                     .map(|s| s.guid)
                     .or_else(|| {
                         (c.bag == EQUIPMENT_BAG)

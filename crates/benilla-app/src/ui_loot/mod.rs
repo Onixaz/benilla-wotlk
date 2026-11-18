@@ -1174,24 +1174,35 @@ struct OpenWhileMoving<'w, 's> {
     dead: DeadUnitDeselect<'w, 's>,
 }
 
-/// The locks a loot close released, handed to the item lock store.
+/// The locks a loot close released: each unlock fires `ITEM_LOCK_CHANGED` as it clears (`0x707020`).
 #[derive(bevy::ecs::system::SystemParam)]
 struct LootUnlocks<'w> {
-    pending: ResMut<'w, crate::pending_item_ops::PendingItemOps>,
-    lock_cleared: ResMut<'w, crate::pending_item_ops::LockTransitions>,
+    pending: crate::ui_script::OwnedMut<'w, crate::pending_item_ops::PendingItemOps>,
 }
 
 impl LootUnlocks<'_> {
-    fn flush(&mut self, loot: &mut LootState) {
+    fn flush(&mut self, loot: &mut LootState, script: Option<&mut UiScript>) {
+        let mut slots = Vec::new();
         for guid in loot.take_unlocks() {
-            self.lock_cleared.0.extend(self.pending.clear_by_guid(guid));
+            slots.extend(self.pending.write().clear_by_guid(guid));
+        }
+        if let Some(script) = script {
+            for (bag, slot) in slots {
+                script.fire_event(
+                    "ITEM_LOCK_CHANGED",
+                    benilla_ui::script::item_lock_args(bag, slot),
+                );
+            }
         }
     }
 }
 
 /// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`).
 fn drain_loot(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (mut script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     commands: Res<NetCommands>,
@@ -1207,9 +1218,9 @@ fn drain_loot(
     if std::mem::take(&mut move_start.0) {
         dead.after_close(close_on_move_start(&mut loot, &mut latch, &commands));
     }
-    if let Some(mut script) = script {
+    if let Some(script) = script.as_deref_mut() {
         drain_loot_script(
-            &mut script,
+            script,
             &mut loot,
             &mut latch,
             &commands,
@@ -1222,7 +1233,7 @@ fn drain_loot(
     for display_id in loot.take_pickups() {
         pickup.write(crate::sound::LootPickupSound { display_id });
     }
-    unlocks.flush(&mut loot);
+    unlocks.flush(&mut loot, script.as_deref_mut());
 }
 
 /// [`drain_loot`]'s Lua intents; the takes' pickup sounds queue on [`LootState`].
@@ -1480,7 +1491,6 @@ mod tests {
             .init_resource::<crate::net::GuidIndex>()
             .init_resource::<UiErrorKeys>()
             .init_resource::<crate::pending_item_ops::PendingItemOps>()
-            .init_resource::<crate::pending_item_ops::LockTransitions>()
             .insert_resource(NetCommands(tx));
 
         let mut items = app.world_mut().resource_mut::<Items>();
@@ -2692,7 +2702,6 @@ mod tests {
             .init_resource::<crate::net::GuidIndex>()
             .init_resource::<UiErrorKeys>()
             .init_resource::<crate::pending_item_ops::PendingItemOps>()
-            .init_resource::<crate::pending_item_ops::LockTransitions>()
             .insert_resource(NetCommands(tx))
             .add_systems(Update, drain_loot);
         for (guid, health) in [(CORPSE, 0), (LIVE, 100)] {
@@ -2955,11 +2964,10 @@ mod tests {
                     "type {kind}: {sent:?}"
                 );
             }
-            assert_eq!(
+            assert!(
                 app.world()
-                    .resource::<crate::pending_item_ops::LockTransitions>()
-                    .0,
-                Vec::<(i64, u32)>::new(),
+                    .resource::<crate::pending_item_ops::PendingItemOps>()
+                    .is_empty(),
                 "nothing was locked"
             );
         }

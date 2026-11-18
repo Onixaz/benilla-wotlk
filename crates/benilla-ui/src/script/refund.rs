@@ -60,8 +60,8 @@ fn held_at<'a>(model: &'a Model, bag: i64, slot: u32, equipped: bool) -> Option<
         let s = model.inventory_slots.get(slot as usize)?.as_ref()?;
         return Some(Held::Worn(slot, s));
     }
-    let s = model.containers.get(&bag)?.slots.get(&slot)?;
-    Some(Held::Bag(bag, slot, s))
+    let s = super::container::live_slot(model, bag, slot)?;
+    Some(Held::Bag(bag, slot, Box::new(s)))
 }
 
 /// The record a purchase verb reads: present, enchant-free and in its window, on an item no open

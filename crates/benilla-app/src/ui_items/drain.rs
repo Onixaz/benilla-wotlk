@@ -155,13 +155,12 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     equip_sound: MessageWriter<'w, crate::sound::AutoEquipSound>,
     item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
     targeting: crate::spell::cast_target::CastTargeting<'w, 's>,
-    pending_items: ResMut<'w, PendingItemOps>,
+    pending_items: crate::ui_script::OwnedMut<'w, PendingItemOps>,
     // The loot latch the open arm sets, so `SMSG_LOOT_RESPONSE` admits an item loot.
     loot_latch: ResMut<'w, crate::ui_loot::LootLatch>,
     // The open arm's `CloseLoot(1, 0, 0)` and auto-loot flag (`0x6dcd9c`-`0x6dcdc7`).
     loot: ResMut<'w, crate::ui_loot::LootState>,
     loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
-    lock_cleared: ResMut<'w, crate::pending_item_ops::LockTransitions>,
     deselect: MessageWriter<'w, crate::target::DeselectGuid>,
     ladder: crate::spell::CastLadder<'w, 's>,
     ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
@@ -185,7 +184,7 @@ pub(crate) fn send_equip_to_slot(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut PendingItemOps,
+    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     (bag, slot, dst): (i64, u32, u8),
     suppress: bool,
 ) {
@@ -200,7 +199,7 @@ pub(crate) fn send_equip_to_slot(
         );
         return;
     }
-    pending.add([(bag, slot, guid, count)]);
+    pending.write().add([(bag, slot, guid, count)]);
     let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
         item: guid,
         slot: dst,
@@ -352,7 +351,6 @@ impl ScriptItemUse<'_, '_> {
             loot_latch,
             loot,
             loot_cfg,
-            lock_cleared,
             deselect,
             ladder,
             ui_errors,
@@ -568,8 +566,12 @@ impl ScriptItemUse<'_, '_> {
             {
                 deselect.write(crate::target::DeselectGuid(g));
             }
+            // Each unlock fires as it clears (`0x707020`).
             for item in loot.take_unlocks() {
-                lock_cleared.0.extend(pending_items.clear_by_guid(item));
+                let slots = pending_items.write().clear_by_guid(item);
+                for (bag, slot) in slots {
+                    script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+                }
             }
             let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
@@ -581,7 +583,7 @@ impl ScriptItemUse<'_, '_> {
                 .next()
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
-            pending_items.add([(bag, slot, guid, count)]);
+            pending_items.write().add([(bag, slot, guid, count)]);
             script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
@@ -702,12 +704,15 @@ struct Clicked {
 /// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, the moves
 /// through [`send_container_move`].
 pub(super) fn drain_container_moves(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     items: Res<Items>,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     let Some(mut script) = script else {
@@ -770,7 +775,7 @@ pub(crate) fn send_container_move(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut PendingItemOps,
+    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     mv: benilla_ui::script::ContainerMove,
     suppress: bool,
 ) -> bool {
@@ -855,7 +860,7 @@ pub(crate) fn send_container_move(
         // Both ends lock on their current (guid, count), which the resolving clear watches.
         let (src_guid, src_count) = slot_guid_count(store, mv.src_bag, mv.src_slot, objects);
         let (dst_guid, dst_count) = slot_guid_count(store, mv.dst_bag, mv.dst_slot, objects);
-        pending.add([
+        pending.write().add([
             (mv.src_bag, mv.src_slot, src_guid, src_count),
             (mv.dst_bag, mv.dst_slot, dst_guid, dst_count),
         ]);
@@ -875,11 +880,14 @@ pub(crate) fn send_container_move(
 /// Sends the destroys `DeleteCursorItem` queued as `CMSG_DESTROYITEM` (count 0 is the whole stack
 /// on both sides) and locks the one slot.
 pub(super) fn drain_container_destroys(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -898,7 +906,7 @@ pub(super) fn drain_container_destroys(
             count,
         });
         let (guid, stack) = slot_guid_count(store, bag, slot, &objects);
-        pending.add([(bag, slot, guid, stack)]);
+        pending.write().add([(bag, slot, guid, stack)]);
         script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
     }
 }
@@ -914,7 +922,10 @@ fn run_container_clicks(world: &mut World) {
         .run_system_once(
             |(mut script, _live): (
                 NonSendMut<UiScript>,
-                crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+                crate::ui_script::LendLive<(
+                    crate::ui_script::OwnsCooldowns,
+                    crate::ui_script::OwnsPending,
+                )>,
             ),
              mut items: ScriptItemUse| {
                 crate::script_calls::in_call_order(&mut script, |script, call| {
@@ -955,7 +966,6 @@ mod tests {
             .init_resource::<crate::ui_loot::LootLatch>()
             .init_resource::<crate::ui_loot::LootState>()
             .init_resource::<crate::ui_loot::LootConfig>()
-            .init_resource::<crate::pending_item_ops::LockTransitions>()
             .add_message::<crate::target::DeselectGuid>()
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()
@@ -1317,9 +1327,12 @@ mod tests {
 /// locks nothing while the question is up, because a [`PendingItemOps`] lock clears only against a
 /// wire op and a deferred action has none.
 pub(super) fn drain_bind_confirm_answers(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     objects: Objects,
     items: Res<Items>,
     commands: Res<NetCommands>,
@@ -1933,7 +1946,6 @@ mod bind_confirm_tests {
             .init_resource::<crate::ui_loot::LootLatch>()
             .init_resource::<crate::ui_loot::LootState>()
             .init_resource::<crate::ui_loot::LootConfig>()
-            .init_resource::<crate::pending_item_ops::LockTransitions>()
             .add_message::<crate::target::DeselectGuid>()
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()

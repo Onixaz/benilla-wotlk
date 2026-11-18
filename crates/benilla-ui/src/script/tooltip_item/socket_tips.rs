@@ -11,7 +11,7 @@ use crate::script::tooltip::{clear_content, fire_cleared, show_or_hide_empty};
 
 /// A held item's instance block, as `SetBagItem` and `SetInventoryItem` build theirs.
 fn instance_of(held: &Held<'_>) -> (ItemInstance, u32) {
-    match *held {
+    match held {
         Held::Bag(_, _, s) => (
             ItemInstance {
                 name: held.name(),

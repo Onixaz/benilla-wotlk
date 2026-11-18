@@ -554,11 +554,7 @@ pub(super) fn holds_slot(model: &super::Model, bag: i64, slot: u32) -> bool {
     model.petition_button.is_some_and(|b| {
         b.bag == bag
             && b.slot == slot
-            && model
-                .containers
-                .get(&bag)
-                .and_then(|c| c.slots.get(&slot))
-                .is_some_and(|s| s.guid == b.item)
+            && super::container::live_slot(model, bag, slot).is_some_and(|s| s.guid == b.item)
     })
 }
 
@@ -578,10 +574,7 @@ fn click_petition_button(model: &mut super::Model) {
     match &held {
         None => model.petition_button = None,
         Some(item) => {
-            let Some(guid) = model
-                .containers
-                .get(&item.bag)
-                .and_then(|c| c.slots.get(&item.slot))
+            let Some(guid) = super::container::live_slot(model, item.bag, item.slot)
                 .filter(|s| s.guid != 0 && s.item_id == item.item_id)
                 .filter(|s| {
                     model
@@ -613,10 +606,7 @@ fn click_petition_button(model: &mut super::Model) {
     let Some(prev) = previous else {
         return;
     };
-    let back = model
-        .containers
-        .get(&prev.bag)
-        .and_then(|c| c.slots.get(&prev.slot))
+    let back = super::container::live_slot(model, prev.bag, prev.slot)
         .filter(|s| s.guid == prev.item)
         .map(|s| CursorItem {
             bag: prev.bag,

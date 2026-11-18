@@ -127,11 +127,7 @@ impl ItemQuery {
 
 /// The items in Lua container `bag`, in slot order; the currency container reads the token slots.
 fn contents(model: &Model, bag: i64, out: &mut Vec<Held>) {
-    let c = match bag {
-        CURRENCY => model.token_slots.as_ref(),
-        _ => model.containers.get(&bag),
-    };
-    let Some(c) = c else {
+    let Some(c) = super::container::live_bag(model, bag) else {
         return;
     };
     for slot in 1..=c.num_slots {
@@ -526,7 +522,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(Value::Nil);
             }
-            let held = model.containers.get(&i64::from(bag));
+            let held = super::container::live_bag(&model, i64::from(bag));
+            let held = held.as_ref();
             let size = match bag {
                 0 => 16,
                 -1 => 28,

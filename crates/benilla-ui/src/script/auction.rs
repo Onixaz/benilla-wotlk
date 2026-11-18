@@ -527,7 +527,8 @@ fn sell_refusal(model: &Model, bag: i64, slot: u32, item_id: u32) -> Option<&'st
     let Some(t) = model.item_templates.get(&item_id) else {
         return Some("ERR_ITEM_NOT_FOUND");
     };
-    let s = model.containers.get(&bag).and_then(|c| c.slots.get(&slot));
+    let s = super::container::live_slot(model, bag, slot);
+    let s = s.as_ref();
     if s.and_then(|s| s.durability)
         .is_some_and(|(cur, max)| cur < max)
     {
@@ -550,9 +551,7 @@ fn sell_refusal(model: &Model, bag: i64, slot: u32, item_id: u32) -> Option<&'st
     // An equipped bag that still holds items.
     if t.container_slots > 0 && bag == cursor::EQUIPMENT_BAG {
         let equipped_bag = i64::from(slot) - 19;
-        if model
-            .containers
-            .get(&equipped_bag)
+        if super::container::live_bag(model, equipped_bag)
             .is_some_and(|c| c.slots.values().any(|s| s.item_id != 0))
         {
             return Some("ERR_AUCTION_BAG");
@@ -577,7 +576,7 @@ fn sellable_total(model: &Model, item_id: u32) -> u32 {
 fn sellable_stacks(model: &Model, item_id: u32) -> Vec<(i64, u32, u32)> {
     let mut out = Vec::new();
     for bag in 0..=4i64 {
-        let Some(c) = model.containers.get(&bag) else {
+        let Some(c) = super::container::live_bag(model, bag) else {
             continue;
         };
         let mut slots: Vec<u32> = c.slots.keys().copied().collect();
@@ -1300,10 +1299,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !model.item_templates.contains_key(&it.item_id) {
                 return Ok(());
             }
-            let worn = model
-                .containers
-                .get(&it.bag)
-                .and_then(|c| c.slots.get(&it.slot))
+            let worn = super::container::live_slot(&model, it.bag, it.slot)
                 .and_then(|s| s.durability)
                 .is_some_and(|(cur, max)| cur < max);
             if worn {
@@ -1531,13 +1527,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
     if !model.auction_tab_showing || model.auction.is_none() {
         return false;
     }
-    let Some(s) = model
-        .containers
-        .get(&bag)
-        .and_then(|c| c.slots.get(&slot))
-        .filter(|s| s.item_id != 0)
-        .cloned()
-    else {
+    let Some(s) = super::container::live_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
         return false;
     };
     if let Some(key) = sell_refusal(model, bag, slot, s.item_id) {

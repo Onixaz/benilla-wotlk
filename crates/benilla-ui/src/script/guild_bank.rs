@@ -328,11 +328,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
     if !model.guild_bank.open {
         return false;
     }
-    let occupied = model
-        .containers
-        .get(&bag)
-        .and_then(|c| c.slots.get(&slot))
-        .is_some_and(|s| s.item_id != 0);
+    let occupied = super::container::live_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
     if occupied {
         model
             .guild_bank_requests

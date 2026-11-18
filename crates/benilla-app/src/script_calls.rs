@@ -25,8 +25,11 @@ pub(crate) fn apply_script_calls(
     (script, _live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<(
-            crate::ui_script::OwnsCooldowns,
-            crate::ui_script::OwnsSelection,
+            (
+                crate::ui_script::OwnsCooldowns,
+                crate::ui_script::OwnsSelection,
+            ),
+            crate::ui_script::OwnsPending,
         )>,
     ),
     mut appliers: ParamSet<(

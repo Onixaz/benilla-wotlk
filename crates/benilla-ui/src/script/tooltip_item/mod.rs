@@ -271,7 +271,7 @@ pub(super) fn render_token(
 ) -> mlua::Result<()> {
     let held = {
         let model = crate::script::model_mut_of(lua);
-        model.token_slots.as_ref().and_then(|c| {
+        crate::script::container::live_bag(&model, -4).and_then(|c| {
             (1..=c.num_slots)
                 .filter_map(|i| c.slots.get(&i))
                 .find(|s| s.item_id == item_id)

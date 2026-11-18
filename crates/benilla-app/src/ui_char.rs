@@ -12,8 +12,7 @@ use benilla_formats::{GameTableId, GameTables};
 use benilla_protocol::messages::{PLAYER_COMBAT_RATINGS, PLAYER_SKILL_SLOTS};
 use benilla_ui::script::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, ScriptValue, SkillEntry,
-    SkillsState, UiScript, UnitCombatStats, BANK_BAG_SLOT_COUNT, EQUIPMENT_BAG, SKILL_DEFENSE,
-    SKILL_UNARMED,
+    SkillsState, UiScript, UnitCombatStats, EQUIPMENT_BAG, SKILL_DEFENSE, SKILL_UNARMED,
 };
 use benilla_ui::strings::Arg;
 
@@ -125,9 +124,6 @@ struct CharFeedMemo {
     last_stats: Option<UnitCombatStats>,
     last_inv: Option<InventorySlots>,
     last_bank_bags: Option<BankBagSlots>,
-    /// The bag guid in each bank bag slot, `PLAYERBANKSLOTS_CHANGED`'s discriminator: the pushed
-    /// view cannot tell two copies of one bag apart, and the reference fires when they swap.
-    last_bank_bag_guids: [u64; BANK_BAG_SLOT_COUNT],
     /// Counters for the stores whose lazy resolves poison `is_changed` (item templates, creator
     /// names); item objects are entities, watched through [`crate::items::ItemChanges`].
     items_templates: gate::Watch,
@@ -148,12 +144,7 @@ impl Plugin for UiCharPlugin {
         app.init_resource::<CharFeedState>().add_systems(
             Update,
             (
-                // Before `feed_containers`: a `BAG_UPDATE` handler may read the bag item's own
-                // row (`GetInventoryItemLink("player", ContainerIDToInventoryID(bag))`), so the
-                // inventory push lands first.
-                feed_char
-                    .before(crate::ui_items::feed::feed_containers)
-                    .in_set(UiFeed),
+                feed_char.in_set(UiFeed),
                 watch_skill_ups.in_set(UiFeed),
                 feed_skills.in_set(UiFeed),
                 drain_skill_abandons.in_set(UiDrain),
@@ -1193,21 +1184,6 @@ pub(crate) fn feed_char(
         sub_classes.as_deref(),
     );
     // Both bands push under one `UNIT_INVENTORY_CHANGED`: one wire update, one event.
-    // `PLAYERBANKSLOTS_CHANGED(slot)`'s two producers, planned off the old memo: the descriptor
-    // watcher (`0x6dedd0`: a bag arrived, left or was swapped) and the item-object path
-    // (`0x5e84c0`: the same bag's own fields changed), both naming the bank slot, 29-35 for the
-    // bags (player slot less 38, `0x5e857f`).
-    let bank_bag_guids: [u64; BANK_BAG_SLOT_COUNT] =
-        std::array::from_fn(|i| store.0.player_bank_bag_slot(i as u8).unwrap_or(0));
-    let repainted: Vec<i64> = (0..BANK_BAG_SLOT_COUNT)
-        .filter(|&i| {
-            let was = memo.last_bank_bags.as_ref().and_then(|b| b[i].as_ref());
-            bank_bag_guids[i] != memo.last_bank_bag_guids[i]
-                || !same_item(was, bank_bags[i].as_ref())
-        })
-        .map(|i| BANK_BAG_EVENT_FIRST + i as i64)
-        .collect();
-    memo.last_bank_bag_guids = bank_bag_guids;
     if memo.last_inv.as_ref() != Some(&inv) || memo.last_bank_bags.as_ref() != Some(&bank_bags) {
         gate.audit("feed_char", "the inventory snapshot");
         script.set_inventory_slots(inv.clone());
@@ -1219,31 +1195,6 @@ pub(crate) fn feed_char(
         // The bank bag buttons repaint only on this and `BANKFRAME_OPENED` (`BankFrame.lua`).
         memo.last_inv = Some(inv);
         memo.last_bank_bags = Some(bank_bags);
-    }
-    // Outside the push block: an identical-bag swap moves no view at all.
-    if !repainted.is_empty() {
-        gate.audit("feed_char", "a bank bag slot transition");
-    }
-    for slot in repainted {
-        script.fire_event("PLAYERBANKSLOTS_CHANGED", vec![ScriptValue::Int(slot)]);
-    }
-}
-
-/// `PLAYERBANKSLOTS_CHANGED`'s slot for the first bank bag: after the 28 vault slots.
-const BANK_BAG_EVENT_FIRST: i64 = 29;
-
-/// Whether two bank-bag views hold the same item; `locked` is `ITEM_LOCK_CHANGED`'s business.
-fn same_item(a: Option<&InvSlotView>, b: Option<&InvSlotView>) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(a), Some(b)) => {
-            let unlocked = |v: &InvSlotView| InvSlotView {
-                locked: false,
-                ..v.clone()
-            };
-            unlocked(a) == unlocked(b)
-        }
-        _ => false,
     }
 }
 
@@ -1379,23 +1330,9 @@ mod tests {
     const F_BANK_BAG_1: u16 = benilla_protocol::field::FIELD_PLAYER_BANK_BAG_SLOT_1;
     /// `OBJECT_FIELD_ENTRY` on the item object.
     const F_OBJECT_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
-    /// `ITEM_FIELD_STACK_COUNT`, one of the six item fields the reference's watcher covers.
-    const F_ITEM_STACK_COUNT: u16 = benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
     /// Any container entry ("Traveler's Backpack"); the feed only needs it to resolve.
     const BAG_ENTRY: u32 = 4500;
     const BAG: u64 = 0x4000_0000_0000_0abc;
-
-    /// Re-stream a live item object's fields as a values update does, moving its change tick.
-    fn restream(app: &mut App, guid: u64, fields: ObjectFields) {
-        let entity = app
-            .world()
-            .resource::<crate::net::GuidIndex>()
-            .0
-            .get(&guid)
-            .copied()
-            .expect("the item was streamed");
-        *app.world_mut().get_mut::<ObjectStore>(entity).unwrap() = ObjectStore(fields);
-    }
 
     /// A world with `bag`, or nothing, in the first bank bag slot, and a frame recording events.
     fn world_with_bank_bag(bag: Option<u64>) -> App {
@@ -1452,82 +1389,6 @@ mod tests {
         let out = script.eval::<Vec<String>>("return SEEN").unwrap();
         script.run("SEEN = {}").unwrap();
         out
-    }
-
-    #[test]
-    fn a_bank_bag_slot_filling_fires_playerbankslots_changed() {
-        let mut app = world_with_bank_bag(Some(BAG));
-        app.world_mut().run_system_once(feed_char).unwrap();
-        let events = seen(&mut app);
-        assert!(
-            events.contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string()),
-            "the repaint event names bank slot 29, the first bag's (`0x5e857f`). Got {events:?}"
-        );
-        assert!(
-            events.contains(&"UNIT_INVENTORY_CHANGED player".to_string()),
-            "and the doll's, unchanged, got {events:?}"
-        );
-    }
-
-    /// A bag's own field moving is the item-object path (`0x5e84c0`), which names the slot too.
-    #[test]
-    fn a_bank_bags_own_field_moving_fires_the_item_object_producer() {
-        let mut app = world_with_bank_bag(Some(BAG));
-        app.world_mut().run_system_once(feed_char).unwrap();
-        assert!(seen(&mut app).contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string()));
-
-        // The same bag guid, restacked: only the item object moved.
-        restream(
-            &mut app,
-            BAG,
-            ObjectFields::from_pairs(&[(F_OBJECT_ENTRY, BAG_ENTRY), (F_ITEM_STACK_COUNT, 3)]),
-        );
-        app.world_mut().run_system_once(feed_char).unwrap();
-        let events = seen(&mut app);
-        assert!(
-            events.contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string()),
-            "the item path names the slot, got {events:?}"
-        );
-    }
-
-    /// Identical bags push identical views; the reference watches the guids and fires twice.
-    #[test]
-    fn two_identical_bags_swapped_between_bank_bag_slots_still_announce() {
-        let mut app = world_with_bank_bag(Some(BAG));
-        // A second, byte-identical bag in bank bag slot 2.
-        const BAG2: u64 = 0x4000_0000_0000_0abd;
-        // Rewritten wholesale: `ObjectFields` has no setter.
-        let set_slots = |app: &mut App, a: u64, b: u64| {
-            let mut q = app
-                .world_mut()
-                .query_filtered::<&mut ObjectStore, With<SelfPlayer>>();
-            let mut store = q.single_mut(app.world_mut()).unwrap();
-            *store = ObjectStore(ObjectFields::from_pairs(&[
-                (F_BANK_BAG_1, a as u32),
-                (F_BANK_BAG_1 + 1, (a >> 32) as u32),
-                (F_BANK_BAG_1 + 2, b as u32),
-                (F_BANK_BAG_1 + 3, (b >> 32) as u32),
-            ]));
-        };
-        set_slots(&mut app, BAG, BAG2);
-        crate::items::test_spawn_item(
-            app.world_mut(),
-            BAG2,
-            ObjectFields::from_pairs(&[(F_OBJECT_ENTRY, BAG_ENTRY)]),
-            true,
-        );
-        app.world_mut().run_system_once(feed_char).unwrap();
-        let _ = seen(&mut app);
-
-        // Exchange them. Every pushed view is equal before and after.
-        set_slots(&mut app, BAG2, BAG);
-        app.world_mut().run_system_once(feed_char).unwrap();
-        let events = seen(&mut app);
-        assert!(
-            events.contains(&"PLAYERBANKSLOTS_CHANGED 29".to_string())
-                && events.contains(&"PLAYERBANKSLOTS_CHANGED 30".to_string()),
-            "one event per slot whose guid moved, got {events:?}"
-        );
     }
 
     /// A lock flip is `ITEM_LOCK_CHANGED`'s, not a slot change.

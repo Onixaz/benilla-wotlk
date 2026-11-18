@@ -695,7 +695,7 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
-    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`): every VM holder reaches it
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, `PetitionState`): every VM holder reaches it
     ///   through its lent view and runs on the main thread, so two VM holders fighting over it
     ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
@@ -730,6 +730,15 @@ pub(crate) mod schedule_tests {
             (
                 "PlayerActions",
                 TypeId::of::<crate::ui_action::PlayerActions>,
+            ),
+            // The item locks and charter records a bag slot reads at the call.
+            (
+                "PendingItemOps",
+                TypeId::of::<crate::pending_item_ops::PendingItemOps>,
+            ),
+            (
+                "PetitionState",
+                TypeId::of::<crate::ui_petition::PetitionState>,
             ),
         ];
         const CACHES: &[ClassRow] = &[

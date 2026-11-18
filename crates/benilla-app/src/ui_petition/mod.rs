@@ -124,9 +124,6 @@ pub(crate) struct PetitionState {
     /// Set while our sign is outstanding. A close's decline leg is gated on it, so closing while
     /// our own signature is in flight sends no decline.
     signing: bool,
-    /// One step per landed or patched record. The charter tooltip's hover issues the record query,
-    /// so `ui_items`' bag feed gates its rebuild on this or keeps the `None` it read first.
-    records_epoch: u64,
     /// Lines composed at apply time, shown by the feed, which holds the `script` handle.
     lines: Vec<lines::Line>,
     /// A rename patched a record: `PETITION_SHOW` fires whether or not a charter is shown.
@@ -192,14 +189,8 @@ impl PetitionState {
         });
     }
 
-    /// One step per landed or patched record.
-    pub(crate) fn records_epoch(&self) -> u64 {
-        self.records_epoch
-    }
-
     /// `SMSG_PETITION_QUERY_RESPONSE`: fill the cache.
     fn apply_record(&mut self, response: PetitionQueryResponse) {
-        self.records_epoch = self.records_epoch.wrapping_add(1);
         self.records.insert(
             response.petition_id,
             Some(Record {
@@ -216,7 +207,7 @@ impl PetitionState {
     /// The charter tooltip's line 3, the guild name and its master: the hover asks for the record,
     /// so an unseen charter reads `None` until the answer repaints it.
     pub(crate) fn tooltip_view(
-        &mut self,
+        &self,
         petition_id: u32,
         item: u64,
         names: &NameCache,
@@ -586,8 +577,6 @@ pub(crate) mod net {
             return;
         };
         record.name = rename.name;
-        // A patched title is a changed record: the tooltip's line 3 reads it too.
-        petition.records_epoch = petition.records_epoch.wrapping_add(1);
         petition.show_owed = true;
     }
 }

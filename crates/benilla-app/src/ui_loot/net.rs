@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use super::{LootLatch, LootMoveStart, LootState};
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfGuid};
-use crate::pending_item_ops::{LockTransitions, PendingItemOps};
+use crate::pending_item_ops::PendingItemOps;
 use crate::ui_action::{UiError, UiErrorKeys};
 
 pub(super) fn register(app: &mut App) {
@@ -45,7 +45,7 @@ fn on_response(
     index: Res<crate::net::GuidIndex>,
     mut errors: ResMut<UiErrorKeys>,
     mut pending: ResMut<PendingItemOps>,
-    mut lock_cleared: ResMut<LockTransitions>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     let SessionEvent::LootResponse {
         guid,
@@ -60,7 +60,7 @@ fn on_response(
     if !admit_response(guid, loot_type, &mut seam.loot_latch, &seam.net) {
         let mut unlock = ItemUnlock {
             pending: &mut pending,
-            lock_cleared: &mut lock_cleared,
+            ui: &mut ui,
         };
         unlock.unlock(guid);
         return;
@@ -90,12 +90,12 @@ fn on_error(
     mut errors: ResMut<UiErrorKeys>,
     mut latch: ResMut<LootLatch>,
     mut pending: ResMut<PendingItemOps>,
-    mut lock_cleared: ResMut<LockTransitions>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::LootError { guid, error } = ev {
         let unlock = ItemUnlock {
             pending: &mut pending,
-            lock_cleared: &mut lock_cleared,
+            ui: &mut ui,
         };
         loot_error(guid, error, &mut errors, &mut latch, unlock);
     }
@@ -148,14 +148,14 @@ fn on_release_response(
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     mut pending: ResMut<PendingItemOps>,
-    mut lock_cleared: ResMut<LockTransitions>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut dead: super::DeadUnitDeselect,
     net: Res<NetCommands>,
 ) {
     if let SessionEvent::LootReleaseResponse { guid, result } = ev {
         let unlock = ItemUnlock {
             pending: &mut pending,
-            lock_cleared: &mut lock_cleared,
+            ui: &mut ui,
         };
         let closed = loot_release_response(guid, result, &mut loot, &mut latch, unlock, &net);
         dead.after_close(closed);
@@ -163,15 +163,20 @@ fn on_release_response(
 }
 
 /// The item unlock on the loot guid, as the loot closes call it: only an item we locked at its
-/// `CMSG_OPEN_ITEM` send unlocks, and its slot queues for `ITEM_LOCK_CHANGED`.
+/// `CMSG_OPEN_ITEM` send unlocks, firing `ITEM_LOCK_CHANGED` in the handler's turn (`0x707020`).
 struct ItemUnlock<'a> {
     pending: &'a mut PendingItemOps,
-    lock_cleared: &'a mut LockTransitions,
+    ui: &'a mut crate::ui_script::live::UiEvents,
 }
 
 impl ItemUnlock<'_> {
     fn unlock(&mut self, guid: u64) {
-        self.lock_cleared.0.extend(self.pending.clear_by_guid(guid));
+        for (bag, slot) in self.pending.clear_by_guid(guid) {
+            self.ui.fire(
+                "ITEM_LOCK_CHANGED",
+                benilla_ui::script::item_lock_args(bag, slot),
+            );
+        }
     }
 }
 
@@ -441,14 +446,15 @@ mod tests {
         );
     }
 
-    use crate::pending_item_ops::{LockTransitions, PendingItemOps};
+    use crate::pending_item_ops::PendingItemOps;
+    use crate::ui_script::live::UiEvents;
 
     /// An [`ItemUnlock`] over no locks, for a loot source that is not an item.
     macro_rules! no_item {
         () => {
             ItemUnlock {
                 pending: &mut PendingItemOps::default(),
-                lock_cleared: &mut LockTransitions::default(),
+                ui: &mut UiEvents::default(),
             }
         };
     }
@@ -830,7 +836,7 @@ mod tests {
         world.insert_resource(net().0);
         world.insert_resource(LootLatch(Some(LOCKBOX)));
         world.init_resource::<UiErrorKeys>();
-        world.init_resource::<LockTransitions>();
+        world.init_resource::<UiEvents>();
         world.init_resource::<crate::net::GuidIndex>();
         world.init_resource::<bevy::ecs::message::Messages<crate::target::DeselectGuid>>();
         let mut pending = PendingItemOps::default();
@@ -853,9 +859,9 @@ mod tests {
             "the lockbox is no longer grey and locked"
         );
         assert_eq!(
-            world.resource::<LockTransitions>().0,
-            vec![(0, 3)],
-            "…and the container feed fires ITEM_LOCK_CHANGED for it"
+            world.resource::<UiEvents>().names(),
+            ["ITEM_LOCK_CHANGED"],
+            "…and its unlock fires ITEM_LOCK_CHANGED in the handler's turn"
         );
     }
 
@@ -867,7 +873,7 @@ mod tests {
             .open(LOCKBOX, 1, 0, Vec::new());
         release(&mut world, CORPSE, 1);
         assert!(world.resource::<PendingItemOps>().contains(0, 3));
-        assert!(world.resource::<LockTransitions>().0.is_empty());
+        assert!(world.resource::<UiEvents>().is_empty());
     }
 
     /// The server's release closes the window through the shared close, sending nothing back, and
@@ -977,7 +983,7 @@ mod tests {
         world.init_resource::<crate::target::AssistAttack>();
         world.init_resource::<crate::target::Selection>();
         world.init_resource::<PendingItemOps>();
-        world.init_resource::<LockTransitions>();
+        world.init_resource::<UiEvents>();
         world.init_resource::<UiErrorKeys>();
         world.init_resource::<bevy::ecs::message::Messages<crate::target::DeselectGuid>>();
         world.init_resource::<bevy::ecs::message::Messages<crate::player::StandStateRequest>>();
@@ -1550,7 +1556,7 @@ mod tests {
             )
             .expect("the handler runs as a one-shot system");
         assert!(!world.resource::<PendingItemOps>().contains(0, 3));
-        assert_eq!(world.resource::<LockTransitions>().0, vec![(0, 3)]);
+        assert_eq!(world.resource::<UiEvents>().names(), ["ITEM_LOCK_CHANGED"]);
     }
 
     const ME: u64 = 0x0000_0000_0000_002A;

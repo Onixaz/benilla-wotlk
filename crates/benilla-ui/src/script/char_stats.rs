@@ -597,7 +597,7 @@ impl Model {
             }
             if KEYRING_INV_SLOTS.contains(&slot) {
                 let n = (slot - KEYRING_INV_SLOTS.start() + 1) as u32;
-                let keyring = self.containers.get(&KEYRING_CONTAINER)?;
+                let keyring = super::container::live_bag(self, KEYRING_CONTAINER)?;
                 return keyring.slots.get(&n).map(InvSlotView::from_container_slot);
             }
             return self.inventory_slots.get(slot)?.clone();
@@ -630,7 +630,7 @@ impl Model {
 
     fn bank_inv_slot(&self, slot: usize) -> Option<InvSlotView> {
         if BANK_INV_SLOTS.contains(&slot) {
-            let vault = self.containers.get(&BANK_CONTAINER)?;
+            let vault = super::container::live_bag(self, BANK_CONTAINER)?;
             let n = (slot - BANK_INV_SLOTS.start() + 1) as u32;
             return vault.slots.get(&n).map(InvSlotView::from_container_slot);
         }

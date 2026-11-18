@@ -1,6 +1,6 @@
 //! The client-side pending-operation lock, the reference's `item+0x314` bit 0: a send locks both
 //! ends, and the resolving field update or a nonzero `SMSG_INVENTORY_CHANGE_FAILURE` clears it.
-//! Engine-free bookkeeping; `ui_items::feed_containers` reads it into `ContainerSlot::locked`.
+//! Engine-free bookkeeping; the bag verbs read it into `ContainerSlot::locked` at the call.
 //!
 //! The reference keys the lock on the item and its watcher clears on a slot's guid change alone;
 //! here the baseline is `(guid, stack count)` per slot, since a partial split-merge or a partial
@@ -131,12 +131,6 @@ impl PendingItemOps {
         unlocked
     }
 }
-
-/// Slots whose lock cleared this frame, from any clear; `feed_containers` drains it and fires
-/// `ITEM_LOCK_CHANGED`. `ui_items::feed::resolve_item_locks` must run ahead of every feed, since
-/// `feed_char` runs before `feed_containers` and would push a lock cleared later that frame.
-#[derive(Resource, Default)]
-pub(crate) struct LockTransitions(pub Vec<(i64, u32)>);
 
 #[cfg(test)]
 mod tests {

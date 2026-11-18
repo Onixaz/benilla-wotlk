@@ -480,18 +480,20 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             crate::ui_currency::record_landed(&mut sc.ui, entry);
             // Each item that asked for this record runs its post-init now (`0x70ae90` -> `0x70aa40`).
             if waited {
-                let owners: Vec<Option<u64>> = sc
+                let owners: Vec<(u64, Option<u64>)> = sc
                     .index
                     .0
                     .iter()
                     .filter(|(&g, _)| guid::is_item(g))
-                    .filter_map(|(_, &e)| {
+                    .filter_map(|(&g, &e)| {
                         let item = &sc.stores.get(e).ok()?.0;
-                        (item.object_entry() == Some(entry)).then(|| item.item_owner())
+                        (item.object_entry() == Some(entry)).then(|| (g, item.item_owner()))
                     })
                     .collect();
-                for owner in owners {
+                for (item, owner) in owners {
                     item_record_watch(&mut sc, (entry, owner));
+                    sc.ui
+                        .world(move |world| crate::ui_items::watch::item_changed(world, item));
                 }
             }
         }
@@ -1600,6 +1602,16 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
+    // The bag's slot watch (`0x5d9600`), only on a bag the UI watches.
+    if merged.bag_slots {
+        sc.ui
+            .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid));
+    }
+    // The count and enchant watches' container leg (`0x707720`, `0x707f50` -> `0x5d7320`).
+    if merged.item_stack || merged.item_enchants {
+        sc.ui
+            .world(move |world| crate::ui_items::watch::item_changed(world, guid));
+    }
     if merged.item_stack || merged.item_entry {
         item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
     }
@@ -1745,6 +1757,61 @@ fn is_currency_watch(index: u16) -> bool {
             .is_some_and(|(slot, _)| crate::ui_currency::watched_slot(slot))
 }
 
+/// Our bag, pack, vault, keyring and token slots' watches (`0x5d9c20`, `0x6dedd0`): slots 19 to 149.
+fn is_bag_watch(index: u16) -> bool {
+    benilla_protocol::field::player_slot_of_field(index).is_some_and(|(slot, _)| slot >= 19)
+}
+
+/// One slot field's watches at `at` in `edges`, the field's handlers once: the containers' first (`0x5d98e3`), then the currency's (`0x5d991f`).
+fn own_slot_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: usize) {
+    use benilla_protocol::field::player_slot_of_field;
+    let (index, ..) = edges[at];
+    let pair = index & !1;
+    if index & 1 == 1 && at > 0 && edges[at - 1].0 == pair {
+        return;
+    }
+    if let Some((slot, old, new)) = slot_edge(sc, guid, edges, at) {
+        sc.ui
+            .world(move |world| crate::ui_items::watch::inv_slot_changed(world, slot, old, new));
+    }
+    if is_currency_watch(index) || player_slot_of_field(index).is_none() {
+        own_currency_watch(sc, guid, edges, at);
+    }
+}
+
+/// The slot field at `at` in `edges`: its slot, old guid and new guid.
+fn slot_edge(
+    sc: &Scene,
+    guid: u64,
+    edges: &[(u16, u32, u32)],
+    at: usize,
+) -> Option<(u8, u64, u64)> {
+    use benilla_protocol::field::player_slot_of_field;
+    let (index, ..) = edges[at];
+    let pair = index & !1;
+    let (slot, _) = player_slot_of_field(index)?;
+    let new = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .and_then(|s| s.0.player_slot(slot))?;
+    let word = |i: u16, now: u32| {
+        edges
+            .iter()
+            .find(|&&(at, ..)| at == i)
+            .map_or(now, |&(_, old, _)| old)
+    };
+    let (lo_index, hi_index) = if player_slot_of_field(pair) == Some((slot, false)) {
+        (pair, pair + 1)
+    } else {
+        (pair + 1, pair)
+    };
+    let old =
+        u64::from(word(lo_index, new as u32)) | u64::from(word(hi_index, (new >> 32) as u32)) << 32;
+    Some((slot, old, new))
+}
+
 /// Our currency watches' edges at `at` in `edges`, each 8-byte field's handler once (`0x4d5a80`'s size 8): the known pair's, or a slot's with its old and new guid.
 fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: usize) {
     use benilla_protocol::field::{player_slot_of_field, FIELD_PLAYER_KNOWN_CURRENCIES};
@@ -1791,8 +1858,8 @@ fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: 
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
-        if is_currency_watch(index) {
-            own_currency_watch(sc, guid, edges, at);
+        if is_bag_watch(index) || is_currency_watch(index) {
+            own_slot_watches(sc, guid, edges, at);
             continue;
         }
         // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
@@ -1918,8 +1985,14 @@ fn merge_fields(
                 benilla_protocol::messages::ObjectType::Item
                     | benilla_protocol::messages::ObjectType::Container
             ) {
+                use benilla_protocol::field::{FIELD_CONTAINER_SLOT_1, FIELD_ITEM_ENCHANTMENT_1_1};
                 merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
                 merged.item_entry |= e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY;
+                merged.item_enchants |= (FIELD_ITEM_ENCHANTMENT_1_1
+                    ..FIELD_ITEM_ENCHANTMENT_1_1 + 36)
+                    .contains(&e.index);
+                merged.bag_slots |= e.kind == benilla_protocol::messages::ObjectType::Container
+                    && (FIELD_CONTAINER_SLOT_1..FIELD_CONTAINER_SLOT_1 + 72).contains(&e.index);
             }
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
@@ -1928,7 +2001,8 @@ fn merge_fields(
                 && (crate::ui_honor::is_honor_watch(e.index)
                     || crate::ui_arena_team::is_team_info(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
-                    || is_currency_watch(e.index))
+                    || is_currency_watch(e.index)
+                    || is_bag_watch(e.index))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
@@ -1973,6 +2047,10 @@ struct Merged {
     item_stack: bool,
     /// An item's entry moved (`0x707960`).
     item_entry: bool,
+    /// An item's enchant fields moved (`0x707f50`).
+    item_enchants: bool,
+    /// A container's own slot fields moved (`0x5d9600`).
+    bag_slots: bool,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
     /// Our own bank, honor and arena-team watches' `(index, old, new)`, in field order.
@@ -2024,6 +2102,9 @@ fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
 fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>)) {
     if entry != 0 && sc.items.template(entry, guid, &sc.net).is_some() {
         item_record_watch(sc, (entry, owner));
+        // Its container's `BAG_UPDATE` (`0x70aa40` -> `0x5d7320`).
+        sc.ui
+            .world(move |world| crate::ui_items::watch::item_changed(world, guid));
     }
 }
 

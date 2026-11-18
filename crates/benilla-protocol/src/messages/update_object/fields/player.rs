@@ -35,6 +35,10 @@ impl ObjectFields {
     pub fn item_owner(&self) -> Option<u64> {
         self.get_guid(FIELD_ITEM_OWNER).filter(|&g| g != 0)
     }
+    /// `ITEM_FIELD_CONTAINED`: the bag or player whose slots hold the item.
+    pub fn item_contained(&self) -> Option<u64> {
+        self.get_guid(FIELD_ITEM_CONTAINED).filter(|&g| g != 0)
+    }
     /// `ITEM_FIELD_CREATE_PLAYED_TIME`: the owner's played seconds when a bound item's trade window
     /// opened, read with `ITEM_FIELD_FLAGS & 0x100` (`0x708b40`).
     pub fn item_create_played_time(&self) -> Option<u32> {

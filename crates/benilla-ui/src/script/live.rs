@@ -549,6 +549,33 @@ pub trait LiveState {
 
     /// Ask for item `id`'s record when the cache holds none, as a cache read with a landing callback does (`0x5b01ef`).
     fn ask_item_record(&self, _id: u32) {}
+
+    /// Container `bag` of the active player at the call (`0x5d7380`): `Some(None)` for an empty bag slot or an id past the eleven bags, `None` with no active player. Cooldowns on the `GetTime` clock that `ui_now` seconds names at `anchor`.
+    fn container(
+        &self,
+        _bag: i64,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<Option<super::ContainerState>> {
+        None
+    }
+
+    /// One slot of container `bag` at the call, 1-based, without building the rest of the bag; `Some(None)` for an empty or missing slot, `None` with no active player.
+    fn container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<super::ContainerSlot>> {
+        self.container(bag, anchor, ui_now)
+            .map(|c| c.and_then(|mut c| c.slots.remove(&slot)))
+    }
+
+    /// Whether the keyring holds a key (`0x51ae80`); `None` with no active player.
+    fn has_key(&self) -> Option<bool> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.

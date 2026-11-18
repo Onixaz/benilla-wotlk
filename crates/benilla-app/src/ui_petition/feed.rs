@@ -84,10 +84,16 @@ fn keep_locked(
 /// Build the snapshot, push it, drain the queued lines, and fire the events on their edges.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn feed_petition(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsPetitions,
+            crate::ui_script::OwnsPending,
+        )>,
+    ),
     registrar: Res<GuildRegistrarState>,
     mut vendor: ResMut<PetitionVendorState>,
-    mut petition: ResMut<PetitionState>,
+    mut petition: crate::ui_script::OwnedMut<PetitionState>,
     names: Res<NameCache>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -97,7 +103,7 @@ pub(super) fn feed_petition(
     commands: Res<NetCommands>,
     mut sink: crate::ui_action::MessageSink,
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     mut fed: Local<crate::ui_script::VmMemo<FedPetition>>,
 ) {
     let Some(mut script) = script else {
@@ -107,12 +113,12 @@ pub(super) fn feed_petition(
     // The vendor's world entry (`0x5a1f50`) empties the petition button.
     if cascades.read().next().is_some() {
         let held = script.clear_petition_button();
-        keep_locked(held, self_q.iter().next(), &objects, &mut pending);
+        keep_locked(held, self_q.iter().next(), &objects, &mut pending.write());
     }
 
     // Shown before the snapshot, so a refusal lands the same frame as its state change; a key the
     // VM's `GlobalStrings.lua` lacks shows nothing, as in the reference.
-    let composed = std::mem::take(&mut petition.lines);
+    let composed = std::mem::take(&mut petition.write().lines);
     let resolved: Vec<crate::ui_action::Shown> = composed
         .iter()
         .filter_map(|e| {
@@ -126,7 +132,7 @@ pub(super) fn feed_petition(
 
     // Rebuilt every frame: reading the caches issues their queries, so a landing sets no flag and
     // only a rebuild sees it.
-    let open = petition.open.clone();
+    let open = petition.read().open.clone();
     let me = self_guid.0.unwrap_or(0);
 
     let signers: Vec<Option<String>> = open
@@ -139,8 +145,9 @@ pub(super) fn feed_petition(
         })
         .unwrap_or_default();
 
+    let records = petition.read();
     let record = open.as_ref().and_then(|o| {
-        let r = petition.records.get(o.petition_id)?;
+        let r = records.records.get(o.petition_id)?;
         Some(PetitionRecordView {
             petition_type: petition_type_name(r.static_type).to_string(),
             title: r.name.clone(),
@@ -153,6 +160,7 @@ pub(super) fn feed_petition(
             min_signatures: r.min_signatures,
         })
     });
+    drop(records);
 
     // `CanSignPetition` (`0x5cf040`). With no record the reference runs only the signer scan.
     let in_guild = self_q
@@ -200,7 +208,7 @@ pub(super) fn feed_petition(
     let ready = record.is_some() && signers.iter().all(Option::is_some);
     let now_charter = open.as_ref().map(|o| o.item).filter(|_| ready);
     // A rename fires `PETITION_SHOW` itself (`0x6dd33f`), once, whatever the window shows.
-    let mut show_owed = std::mem::take(&mut petition.show_owed);
+    let mut show_owed = std::mem::take(&mut petition.write().show_owed);
     match (fed.shown_charter, now_charter) {
         (Some(a), Some(b)) if a != b => {
             // Another charter while one is shown: drop the queued close intent, or the drain would
@@ -246,7 +254,7 @@ pub(super) fn feed_petition(
     // `HasFilledPetition` (`0x5a2820`), read only while a vendor is open, its one reader.
     let has_filled = vendor.npc().is_some()
         && self_q.iter().next().is_some_and(|store| {
-            arena_charter(store, &objects, &items, &petition, None, &commands).is_some()
+            arena_charter(store, &objects, &items, &petition.read(), None, &commands).is_some()
         });
     script.set_petition_vendor(VmVendor {
         open: vendor.npc().is_some(),
@@ -258,7 +266,7 @@ pub(super) fn feed_petition(
         // The petition list show (`0x5a22a0`): the button emptied, the update, then the show, with
         // no close between two.
         let held = script.clear_petition_button();
-        keep_locked(held, self_q.iter().next(), &objects, &mut pending);
+        keep_locked(held, self_q.iter().next(), &objects, &mut pending.write());
         script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
         script.fire_event("PETITION_VENDOR_SHOW", vec![]);
     } else if fed.vendor.is_some() && now_vendor.is_none() {
@@ -282,10 +290,13 @@ pub(super) fn feed_petition(
 /// (`decline_on_close`); `CloseGuildRegistrar` sends nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_petition(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPetitions>,
+    ),
     mut registrar: ResMut<GuildRegistrarState>,
     mut vendor: ResMut<PetitionVendorState>,
-    mut petition: ResMut<PetitionState>,
+    mut petition: crate::ui_script::OwnedMut<PetitionState>,
     items: Res<Items>,
     arena_teams: Res<crate::ui_arena_team::ArenaTeams>,
     names: Res<NameCache>,
@@ -305,6 +316,8 @@ pub(super) fn drain_petition(
         return;
     }
     let me = self_guid.0.unwrap_or(0);
+    // The sends make no call into Lua: the write lives for the drain.
+    let mut petition = petition.write();
     for request in requests {
         match request {
             PetitionRequest::Buy(name) => {

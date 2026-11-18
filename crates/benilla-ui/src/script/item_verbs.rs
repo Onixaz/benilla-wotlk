@@ -228,9 +228,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let held = (id != 0)
                 .then(|| find_item(&model, &ItemQuery::Id(id), CARRIED))
                 .flatten();
-            let cooldown = held.and_then(|h| model.container_cooldowns.get(&(h.bag, h.slot)));
+            let cooldown =
+                held.and_then(|h| super::container::live_cooldown(&model, h.bag, h.slot));
             Ok(match cooldown {
-                Some(&(start, duration, enabled)) if start + duration > now || !enabled => {
+                Some((start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
                 }
                 _ => (0.0, 0.0, 1),

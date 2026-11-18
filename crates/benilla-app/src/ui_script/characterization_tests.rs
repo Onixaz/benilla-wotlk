@@ -123,6 +123,10 @@ local VERBS = {
     { "greenrange", function() return GetQuestGreenRange() end },
     { "cursize", function() return GetCurrencyListSize() end },
     { "cur2", function() local n, _, _, _, _, c = GetCurrencyListInfo(2) return tostring(n) .. "x" .. tostring(c) end },
+    { "free0", function() return (GetContainerNumFreeSlots(0)) end },
+    { "cnt01", function() return (select(2, GetContainerItemInfo(0, 1))) end },
+    { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
+    { "slots1", function() return GetContainerNumSlots(1) end },
 }
 local function answers()
     local verbs = {}
@@ -5233,6 +5237,16 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
         ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex5"],
         "one watch for the slot's two words"
     );
+    // The token slot's watch updates our contents before the currency leg (`0x5d98e3`, `0x5d991f`).
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE"
+        ]
+    );
     let seen = rig.packets(
         vec![SessionEvent::ObjectValues {
             guid: BADGE_GUID,
@@ -5243,5 +5257,165 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
     assert_eq!(
         pin(&seen, events, verbs),
         ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex7"]
+    );
+}
+
+/// The bag watches fire from the update's handler in field order, each read at its own event: a
+/// pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s
+/// (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the
+/// containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update
+/// (`0x5d99f9`, `0x5d9aa1`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
+#[test]
+fn the_bag_watches_fire_from_the_update_in_field_order() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT,
+        FIELD_OBJECT_ENTRY, FIELD_PLAYER_BANK_BAG_SLOT_1, FIELD_PLAYER_BANK_SLOT_1,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const ARROWS: u64 = 0x4000_0000_0000_0400;
+    const POUCH: u64 = 0x4000_0000_0000_0401;
+    const SACK: u64 = 0x4000_0000_0000_0402;
+    const STONE: u64 = 0x4000_0000_0000_0403;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let item = |guid: u64, entry: u32, slots: Option<u32>| {
+        let mut pairs = vec![
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, ME as u32),
+            (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, 20),
+        ];
+        if let Some(n) = slots {
+            pairs.push((FIELD_CONTAINER_NUM_SLOTS, n));
+        }
+        let kind = if slots.is_some() {
+            ObjectType::Container
+        } else {
+            ObjectType::Item
+        };
+        SessionEvent::ItemCreate {
+            guid,
+            container: slots.is_some(),
+            fields: ObjectFields::from_pairs(&pairs).into_created(kind),
+        }
+    };
+    let slot = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let events = &[
+        "BAG_UPDATE",
+        "BAG_CLOSED",
+        "ITEM_LOCK_CHANGED",
+        "PLAYERBANKSLOTS_CHANGED",
+    ];
+    let verbs = &["free0", "cnt01", "lock01", "slots1"];
+
+    let seen = rig.packets(
+        vec![
+            item(ARROWS, 2512, None),
+            self_values(&slot(FIELD_PLAYER_PACK_SLOT_1, ARROWS)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "BAG_UPDATE 0 | free0=15 cnt01=20 lock01=nil slots1=0",
+            "BAG_UPDATE -2 | free0=15 cnt01=20 lock01=nil slots1=0",
+            "BAG_UPDATE -4 | free0=15 cnt01=20 lock01=nil slots1=0",
+        ],
+        "a pack slot's watch, read at its event"
+    );
+
+    // The move's send locks both ends; the server's slot words unlock them ahead of the updates.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+    })
+    .expect("a VM")
+    .expect("the move runs");
+    let seen = rig.packets(Vec::new(), 2);
+    let locks = pin(&seen, &["ITEM_LOCK_CHANGED"], &["lock01"]);
+    assert_eq!(
+        locks.last().map(String::as_str),
+        Some("ITEM_LOCK_CHANGED 0 1 | lock01=1"),
+        "the send's lock reads locked at its event: {locks:?}"
+    );
+    let mut words = slot(FIELD_PLAYER_PACK_SLOT_1, 0).to_vec();
+    words.extend(slot(FIELD_PLAYER_PACK_SLOT_1 + 2, ARROWS));
+    let seen = rig.packets(vec![self_values(&words)], 2);
+    assert_eq!(
+        pin(&seen, events, &["free0", "lock01"]),
+        [
+            "ITEM_LOCK_CHANGED 0 1 | free0=15 lock01=nil",
+            "ITEM_LOCK_CHANGED 0 2 | free0=15 lock01=nil",
+            "BAG_UPDATE 0 | free0=15 lock01=nil",
+            "BAG_UPDATE -2 | free0=15 lock01=nil",
+            "BAG_UPDATE -4 | free0=15 lock01=nil",
+            "BAG_UPDATE 0 | free0=15 lock01=nil",
+            "BAG_UPDATE -2 | free0=15 lock01=nil",
+            "BAG_UPDATE -4 | free0=15 lock01=nil",
+        ],
+        "slot 1's watch unlocks the move before its updates, then slot 2's watch"
+    );
+
+    // A bag in the first bag slot, then another over it.
+    let bag_slot = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19;
+    let seen = rig.packets(
+        vec![
+            item(POUCH, 828, Some(6)),
+            self_values(&slot(bag_slot, POUCH)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["slots1"]),
+        [
+            "BAG_UPDATE 0 | slots1=6",
+            "BAG_UPDATE -2 | slots1=6",
+            "BAG_UPDATE -4 | slots1=6",
+            "BAG_UPDATE 1 | slots1=6",
+        ]
+    );
+    let seen = rig.packets(
+        vec![
+            item(SACK, 4496, Some(8)),
+            self_values(&slot(bag_slot, SACK)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["slots1"]),
+        [
+            "BAG_UPDATE 0 | slots1=8",
+            "BAG_UPDATE -2 | slots1=8",
+            "BAG_UPDATE -4 | slots1=8",
+            "BAG_CLOSED 1 | slots1=8",
+            "BAG_UPDATE 1 | slots1=8",
+        ]
+    );
+
+    // The vault's first slot, then the first bank-bag slot.
+    let seen = rig.packets(
+        vec![
+            item(STONE, 6948, None),
+            self_values(&slot(FIELD_PLAYER_BANK_SLOT_1, STONE)),
+        ],
+        2,
+    );
+    assert_eq!(pin(&seen, events, &[]), ["PLAYERBANKSLOTS_CHANGED 1"]);
+    let seen = rig.packets(
+        vec![self_values(&slot(FIELD_PLAYER_BANK_BAG_SLOT_1, POUCH))],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &[]),
+        [
+            "PLAYERBANKSLOTS_CHANGED 29",
+            "BAG_UPDATE 0",
+            "BAG_UPDATE -2",
+            "BAG_UPDATE -4",
+            "BAG_UPDATE 5",
+        ]
     );
 }

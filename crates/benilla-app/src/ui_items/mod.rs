@@ -20,13 +20,16 @@ use bevy::prelude::*;
 
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects};
-use crate::pending_item_ops::{LockTransitions, PendingItemOps};
+use crate::pending_item_ops::PendingItemOps;
 use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
 mod drain;
 mod equip_error;
 pub(crate) use equip_error::{equip_error_key, inventory_error_key};
+mod container_live;
+pub(crate) mod watch;
+pub(crate) use container_live::{ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
 pub(crate) mod view_reads;
@@ -39,7 +42,7 @@ use drain::{
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
 pub(crate) use feed::player_req;
-use feed::{build_item_tables, feed_containers, feed_item_sets, feed_item_stats};
+use feed::{build_item_tables, feed_item_sets, feed_item_stats};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
 pub(super) const PACK_SLOTS: u8 = 16;
@@ -108,10 +111,6 @@ pub(crate) struct EquipError {
     /// drain resolves to the bag's `BagFamily` name.
     pub bag_slot: u8,
 }
-
-/// Inventory refusals (`SMSG_INVENTORY_CHANGE_FAILURE`) queued for the UI error line.
-#[derive(Resource, Default)]
-pub(crate) struct EquipErrors(pub Vec<EquipError>);
 
 /// The item guid in a Lua-space bag slot; for [`EQUIPMENT_BAG`], `slot0` is the wire slot, as in
 /// [`wire_pos`].
@@ -1055,14 +1054,12 @@ impl Plugin for UiItemsPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         // The icons come from the equipment renderer's `ItemDisplays`.
-        app.init_resource::<EquipErrors>()
-            .init_resource::<PendingItemOps>()
+        app.init_resource::<PendingItemOps>()
+            .init_resource::<watch::WatchedBags>()
             // The soulbind confirmations' pending records: the client's pending-equip array and
             // its one bind-on-use cell.
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
-            .init_resource::<LockTransitions>()
-            .init_resource::<net::BagOpens>()
             .init_resource::<feed::FreshTemplates>()
             // After the chain opens: unordered, it can run first and skip every item DBC.
             .add_systems(
@@ -1078,17 +1075,6 @@ impl Plugin for UiItemsPlugin {
             .add_systems(
                 Update,
                 (
-                    // The pending-lock clear, ahead of both feeds that push `locked` and of the
-                    // press, whose item uses read the locks.
-                    feed::resolve_item_locks
-                        .before(feed_containers)
-                        .before(crate::ui_char::feed_char)
-                        .before(crate::ui_script::UiPress),
-                    // The slot cooldowns must be in the VM before `feed_action_state`'s
-                    // synchronous `BAG_UPDATE_COOLDOWN` makes the bag handlers re-read them.
-                    feed_containers
-                        .in_set(UnitFeed)
-                        .before(crate::ui_action::CooldownEvents),
                     // The item-tooltip store answers before the input pass, so a re-hover the
                     // next frame sees the answer.
                     // After the book feed, so a `$?s` reads this frame's learns.
