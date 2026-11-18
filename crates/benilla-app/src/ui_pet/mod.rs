@@ -86,27 +86,16 @@ pub(crate) struct PetRenameable(pub(crate) u32);
 #[derive(Resource, Default)]
 pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 
-/// The cascade's pet ask (`0x5d6e60`): the bodyless `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set (`0x5d6ea6`), in the cascade's send order; the setter's clear, its events and the possess lookup wait for the UI's entry after `PLAYER_ENTERING_WORLD` ([`possess::world_entry_step`]).
+/// The cascade owes the world entry's pet step (`0x5d6e60`), run whole after `PLAYER_ENTERING_WORLD` ([`possess::world_entry_step`]): the clear, then the ask, so the ask's answer always lands on the cleared bar.
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
-    commands: Res<crate::net::NetCommands>,
     step: Option<ResMut<possess::WorldEntryPetStep>>,
 ) {
     if cascades.read().next().is_none() {
         return;
     }
-    let asked = player
-        .iter()
-        .next()
-        .and_then(|s| s.0.unit_pet_guid())
-        .is_some();
-    if asked {
-        debug!("ui_pet: world entry with a pet out, asking its bar");
-        let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
-    }
     if let Some(mut step) = step {
-        *step = possess::WorldEntryPetStep { owed: true, asked };
+        step.owed = true;
     }
 }
 

@@ -3931,6 +3931,39 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
     );
 }
 
+/// A bar the server sets after our create stands through the entry: 12340 clears at the create (`0x5281fe` -> `0x5d6e6d`), ahead of every packet behind it, so the later `SMSG_PET_SPELLS` (a pet re-added after a worldport) is never wiped.
+#[test]
+fn a_pet_bar_set_after_the_create_stands_through_the_entry() {
+    let Some(mut rig) = Rig::login_around(
+        Vec::new(),
+        &[OBJECT_TYPE_PLAYER],
+        vec![SessionEvent::PetSpells(Box::new(
+            benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            },
+        ))],
+    ) else {
+        return;
+    };
+    let seen = rig.take();
+    let entry: Vec<String> = pin(
+        &seen,
+        &["PLAYER_ENTERING_WORLD", "UNIT_PET", "UPDATE_FACTION"],
+        &["petbar"],
+    )
+    .into_iter()
+    .skip_while(|l| !l.starts_with("PLAYER_ENTERING_WORLD"))
+    .collect();
+    assert_eq!(
+        entry,
+        vec![
+            "PLAYER_ENTERING_WORLD | petbar=1",
+            "UPDATE_FACTION | petbar=1",
+        ]
+    );
+}
+
 /// With no pet at all the setter's tail still runs at the entry: no `UNIT_PET`, the temporary bar's `PET_BAR_UPDATE` (`0x5d6a34` -> `0x5d6ad2` -> `0x5d4c1b`).
 #[test]
 fn the_world_entry_signals_the_pet_bar_with_no_pet() {

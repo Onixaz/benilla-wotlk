@@ -87,8 +87,16 @@ fn on_spells(
     mut possess: ResMut<super::possess::PossessSpell>,
     combat: PetCombat,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    entry: (
+        Option<Res<crate::net::SelfGuid>>,
+        Option<ResMut<super::possess::WorldEntryPetStep>>,
+    ),
 ) {
     if let SessionEvent::PetSpells(spells) = ev {
+        let (me, step) = entry;
+        if let Some(mut step) = step {
+            step.set_after = me.and_then(|m| combat.entity(m.0?));
+        }
         let changed = pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
         let held = combat.held(bar.spells.pet_guid);
         set_pet_tail(changed, &mut bar, &mut possess, held, &mut ui);
@@ -121,6 +129,11 @@ pub(crate) struct HeldPet {
 }
 
 impl PetCombat<'_, '_> {
+    /// The entity holding `guid`, if any.
+    pub(crate) fn entity(&self, guid: u64) -> Option<Entity> {
+        self.index.as_ref()?.0.get(&guid).copied()
+    }
+
     /// `None` when `guid` names no held unit (`0x5d6a6d`), else its two tests.
     pub(crate) fn held(&self, guid: u64) -> Option<HeldPet> {
         let index = self.index.as_ref()?;

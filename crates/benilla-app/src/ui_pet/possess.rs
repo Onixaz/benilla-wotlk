@@ -68,14 +68,15 @@ pub(crate) fn find_possessed(
     }
 }
 
-/// The world entry's pet step the cascade owes, run after `PLAYER_ENTERING_WORLD` (`0x5281a6` before `0x5281fe`); `asked` when the pet ask went out, owing the possess lookup (`0x5d6ede`).
+/// The world entry's pet step the cascade owes, run after `PLAYER_ENTERING_WORLD` (`0x5281a6` before `0x5281fe`).
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WorldEntryPetStep {
     pub(crate) owed: bool,
-    pub(crate) asked: bool,
+    /// Our player's entity when `SMSG_PET_SPELLS` last set the bar: one set after this entry's create landed after 12340's clear there.
+    pub(crate) set_after: Option<Entity>,
 }
 
-/// The world entry's pet step (`0x5d6e60`): the setter's clear and its tail, then the owed lookup, each event fired in turn ahead of the reputation's entry (`0x528208`).
+/// The world entry's pet step (`0x5d6e60`): the setter's clear and its tail, then the ask and its lookup, each event fired in turn ahead of the reputation's entry (`0x528208`).
 pub(crate) fn world_entry_step(world: &mut World) {
     let step = world
         .get_resource_mut::<WorldEntryPetStep>()
@@ -84,12 +85,19 @@ pub(crate) fn world_entry_step(world: &mut World) {
     if !step.owed {
         return;
     }
-    if let Err(e) = world.run_system_cached(world_entry_clear) {
-        warn!("ui_pet: the world entry's pet setter did not run: {e}");
+    // 12340 clears at the create (`0x5d6e6d`), so a bar set since our create landed after the clear and stands.
+    let me = world
+        .query_filtered::<Entity, With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next();
+    if step.set_after.is_none() || step.set_after != me {
+        if let Err(e) = world.run_system_cached(world_entry_clear) {
+            warn!("ui_pet: the world entry's pet setter did not run: {e}");
+        }
     }
     // The setter's events fire before the ask's lookup runs (`0x5d6e6d` before `0x5d6ede`).
     crate::ui_script::live::fire_handler_events(world);
-    if step.asked {
+    if world.run_system_cached(world_entry_ask).unwrap_or(false) {
         if let Err(e) = world.run_system_cached(world_entry_lookup) {
             warn!("ui_pet: the world entry's possess lookup did not run: {e}");
         }
@@ -110,6 +118,19 @@ fn world_entry_clear(
         list.0.clear();
     }
     super::set_pet_tail(changed, &mut bar, &mut held, None, &mut ui);
+}
+
+/// The bodyless `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set (`0x5d6ea6`), sent after the clear (`0x5d6ed6`); answers whether it went out.
+fn world_entry_ask(
+    me: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
+    commands: Option<Res<crate::net::NetCommands>>,
+) -> bool {
+    let asked = me.iter().next().and_then(|s| s.0.unit_pet_guid()).is_some();
+    if let Some(commands) = commands.filter(|_| asked) {
+        debug!("ui_pet: world entry with a pet out, asking its bar");
+        let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
+    }
+    asked
 }
 
 /// Our fields, auras and transport seat, as the lookup reads them.
