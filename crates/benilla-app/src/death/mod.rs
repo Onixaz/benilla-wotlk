@@ -1135,7 +1135,8 @@ mod tests {
         let dead = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 0)];
         assert_eq!(
             rig.changed(&dead, &[(FIELD_UNIT_HEALTH, 100, 0)]),
-            ["PLAYER_DEAD", "<clear cursor>"]
+            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the interact target's clear (the bank's leg) ahead of the death anim's signal"
         );
         assert_eq!(
             rig.globals.release_left_ms(10.0),
