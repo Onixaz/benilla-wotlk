@@ -307,6 +307,16 @@ impl Plugin for UiArenaPlugin {
 }
 
 #[cfg(test)]
+impl ArenaOpponents {
+    /// `guid` in the first opponent slot, for a test.
+    pub(crate) fn with_opponent_for_test(guid: u64) -> Self {
+        let mut a = Self::default();
+        a.opponents[0] = guid;
+        a
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

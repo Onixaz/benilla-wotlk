@@ -522,11 +522,19 @@ fn focus_of(world: &World) -> Option<u64> {
         .filter(|&g| g != 0)
 }
 
-/// The watched units the cast and channel setters evaluate the bit for: the target and the focus
-/// (`0x72ac50`, `0x72ad20`).
+/// The target and the focus, whom every setter and the aura reader evaluate the bit for
+/// (`0xbd07b0`, `0xbd07d0`).
 fn watched(shield: &ShieldInputs, focus: Option<u64>) -> [Option<u64>; 2] {
     let target = shield.selection.as_ref().and_then(|s| s.guid);
     [target, focus]
+}
+
+/// An arena opponent's guid, held in any of the five opponent slots (`0x6cf670`).
+fn arena_opponent(shield: &ShieldInputs, guid: u64) -> bool {
+    shield
+        .arena
+        .as_ref()
+        .is_some_and(|a| a.opponents().contains(&guid))
 }
 
 /// One edge, in the turn of the handler or press that made it.
@@ -582,9 +590,12 @@ fn edge_system(
                 start_ms: now_ms,
                 end_ms: now_ms + f64::from(cast_time_ms),
             };
+            // The cast setter (`0x72ab60`) sets the cast, evaluates the bit for the target, the
+            // focus and an arena opponent (`0x72aba5`-`0x72ac0c`), and clears the channel
+            // (`0x72ac1e`-`0x72ac2a`).
             units.casts.insert(caster, run);
-            // The UI's cast setter evaluates the bit for the target and focus only (`0x72ac50`).
-            if watched.contains(&Some(caster)) {
+            units.channels.remove(&caster);
+            if watched.contains(&Some(caster)) || arena_opponent(&shield, caster) {
                 shield.evaluate(units, spells, &index, have_player, caster, spell_id);
             }
             unit_event(
@@ -676,10 +687,11 @@ fn edge_system(
                 start_ms: now_ms,
                 end_ms: now_ms + f64::from(duration_ms),
             };
+            // The channel setter (`0x72ad20`) sets the channel, evaluates the bit for the target,
+            // the focus and an arena opponent, and clears the cast.
             units.channels.insert(caster, run);
-            // The UI's channel setter evaluates the bit for the target and focus only
-            // (`0x72ad20`).
-            if watched.contains(&Some(caster)) {
+            units.casts.remove(&caster);
+            if watched.contains(&Some(caster)) || arena_opponent(&shield, caster) {
                 shield.evaluate(units, spells, &index, have_player, caster, spell_id);
             }
             unit_event(
@@ -691,8 +703,9 @@ fn edge_system(
                 0,
             );
         }
-        // `0x8020c0`: no attribute gate; a channel by AttributesEx `0x4` (`0x80215e`), each setter
-        // clearing the other's window (`0x72ac50`, `0x72ae00`), with cast count 0.
+        // `0x8020c0`: no attribute gate; a channel by AttributesEx `0x4` (`0x80215e`), each direct
+        // setter clearing the other's window and evaluating the bit for the target and the focus
+        // alone (`0x72ac50`, `0x72ae00`), with cast count 0.
         CastBarEdge::Resume {
             caster,
             spell_id,
@@ -806,19 +819,20 @@ impl UnitCasts {
     }
 }
 
-/// The aura reader's re-read (`0x72fd30`): an aura change on the target or the focus while it runs a
-/// cast no silence prevents is not (`PreventionType` 1) re-evaluates the bit and fires
-/// `UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE` on a change (`0x72fdbb`); queued by the aura handler, after
-/// its changes apply.
-pub(crate) fn auras_changed(world: &mut World, guid: u64) {
+/// The aura reader's re-read (`0x72fd30`): a packet that changed an aura of the target or the focus
+/// (`0x72fb6e`, `0x72fbce`-`0x72fbef`), or any packet for an arena opponent (`0x72fbf1`), re-reads
+/// the bit of the unit's cast, else its channel, when no silence prevents it (`PreventionType` 1),
+/// and fires `UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE` on a change (`0x72fdbb`); queued by the aura
+/// handler, after its changes apply.
+pub(crate) fn auras_changed(world: &mut World, guid: u64, changed: bool) {
     let focus = focus_of(world);
-    if let Err(e) = world.run_system_cached_with(aura_reread, (guid, focus)) {
+    if let Err(e) = world.run_system_cached_with(aura_reread, (guid, focus, changed)) {
         warn!("ui_cast: the aura re-read did not run: {e}");
     }
 }
 
 fn aura_reread(
-    In((guid, focus)): In<(u64, Option<u64>)>,
+    In((guid, focus, changed)): In<(u64, Option<u64>, bool)>,
     mut units: ResMut<UnitCasts>,
     spells: Option<Res<Spells>>,
     self_guid: Res<SelfGuid>,
@@ -826,7 +840,8 @@ fn aura_reread(
     shield: ShieldInputs,
     mut ui: ResMut<UiEvents>,
 ) {
-    if !watched(&shield, focus).contains(&Some(guid)) {
+    let watched = changed && watched(&shield, focus).contains(&Some(guid));
+    if !watched && !arena_opponent(&shield, guid) {
         return;
     }
     let spells = spells.as_deref();
@@ -893,6 +908,7 @@ impl TargetReread<'_, '_> {
 pub(crate) struct ShieldInputs<'w, 's> {
     schools: Option<Res<'w, InterruptSchools>>,
     selection: Option<Res<'w, crate::target::Selection>>,
+    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
 
@@ -931,7 +947,7 @@ impl ShieldInputs<'_, '_> {
 }
 
 /// `0x7fecc0`: the ending event for any cast, then, when it was the unit's running one, the unit's
-/// cast cleared and `STOP` (`0x7fee38`-`0x7fee6a`): the ending event's handlers still read it.
+/// cast cleared and `STOP` (`0x7fee38`-`0x7fee6c`): the ending event's handlers still read it.
 fn end_cast(
     ui: &mut UiEvents,
     units: &UnitCasts,
@@ -1387,9 +1403,143 @@ mod tests {
             .insert(crate::unit_auras::UnitAuras::default());
         app.world_mut()
             .resource_mut::<UiEvents>()
-            .world(|w| auras_changed(w, MOB));
+            .world(|w| auras_changed(w, MOB, true));
         assert_eq!(run(&mut app, vec![]), "INTERRUPTIBLE:target:nil:nil");
         assert!(!shield(&mut app));
+    }
+
+    /// The aura reader re-reads the target's bit only for a packet that changed an aura
+    /// (`0x72fb6e`), and an arena opponent's for any packet (`0x72fbf1`).
+    #[test]
+    fn the_aura_reread_needs_a_change_on_the_target_and_none_on_an_arena_opponent() {
+        const MOB: u64 = 0xF130_0000_0000_0042;
+        const BOLT: u32 = 9001;
+        const IMMUNE: u32 = 9002;
+        const KICK: u32 = 1766;
+        let mut app = feed_app();
+        let immune = SpellDisplay {
+            effect_apply_aura: [77, 0, 0],
+            effect_misc_value: [26, 0, 0],
+            ..Default::default()
+        };
+        app.world_mut().resource_mut::<Spells>().catalog =
+            benilla_formats::SpellCatalog::from_displays(
+                [(KICK, kick()), (BOLT, bolt()), (IMMUNE, immune)]
+                    .into_iter()
+                    .collect(),
+            );
+        let spells = app.world().resource::<Spells>().clone();
+        book_updated(
+            &mut app.world_mut().resource_mut::<InterruptSchools>(),
+            &std::collections::BTreeSet::from([KICK]),
+            Some(&spells),
+        );
+        let mob = app
+            .world_mut()
+            .spawn(crate::unit_auras::UnitAuras::of(MOB, &[(0, IMMUNE, 1)]))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(MOB, mob);
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "local g = CreateFrame('Frame') g:RegisterEvent('UNIT_SPELLCAST_INTERRUPTIBLE')
+                 g:SetScript('OnEvent', function(self, e) table.insert(SEEN, e:sub(16)) end)",
+            )
+            .unwrap();
+        // An arena opponent, not the target: its cast's start sets the bit (`0x72ab60`), and
+        // `arena1` names it for the signal's fan-out.
+        app.insert_resource(crate::ui_arena::ArenaOpponents::with_opponent_for_test(MOB));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_arena_unit_guids([MOB, 0, 0, 0, 0], [0; 5], 1);
+        app.insert_resource(crate::target::Selection::default());
+        let start = CastBarEdge::Start {
+            caster: MOB,
+            spell_id: BOLT,
+            cast_count: 0,
+            cast_time_ms: 2000,
+            immunities: None,
+            hidden: false,
+        };
+        run(&mut app, vec![start]);
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::default());
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, false));
+        assert_eq!(
+            run(&mut app, vec![]),
+            "INTERRUPTIBLE",
+            "any packet for an opponent"
+        );
+
+        // The target: an unchanged packet re-reads nothing.
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::of(MOB, &[(0, IMMUNE, 1)]));
+        app.insert_resource(crate::ui_arena::ArenaOpponents::default());
+        app.insert_resource(crate::target::Selection {
+            guid: Some(MOB),
+            ..Default::default()
+        });
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_unit_guids(&benilla_ui::script::UnitGuids {
+                player: ME,
+                target: MOB,
+                ..Default::default()
+            });
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, true));
+        run(&mut app, vec![]);
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::default());
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, false));
+        assert_eq!(run(&mut app, vec![]), "", "no aura changed");
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, true));
+        assert_eq!(run(&mut app, vec![]), "INTERRUPTIBLE");
+    }
+
+    /// Each setter clears the other's window: a cast's start ends the unit's channel window
+    /// (`0x72ac1e`-`0x72ac2a`) and a channel's start ends its cast's (`0x72ad20`).
+    #[test]
+    fn a_cast_and_a_channel_each_clear_the_other() {
+        let mut app = feed_app();
+        let channel = CastBarEdge::ChannelStart {
+            caster: ME,
+            spell_id: HEAL,
+            duration_ms: 5000,
+        };
+        let start = CastBarEdge::Start {
+            caster: ME,
+            spell_id: HEAL,
+            cast_count: 1,
+            cast_time_ms: 1500,
+            immunities: None,
+            hidden: false,
+        };
+        let held = |app: &mut App| {
+            live::<(i64, i64)>(
+                app,
+                "return select('#', UnitCastingInfo('player')), select('#', UnitChannelInfo('player'))",
+            )
+        };
+        run(&mut app, vec![channel.clone()]);
+        assert_eq!(held(&mut app), (0, 8));
+        run(&mut app, vec![start]);
+        assert_eq!(held(&mut app), (9, 0), "the cast's start ends the channel");
+        run(&mut app, vec![channel]);
+        assert_eq!(held(&mut app), (0, 8), "the channel's start ends the cast");
     }
 
     /// `0x8020c0`: a running cast reopens with its back-dated window and cast count 0; a channel

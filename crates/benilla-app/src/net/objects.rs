@@ -1627,6 +1627,12 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if merged.item_stack || merged.item_entry {
         item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
     }
+    // A unit's entry watch re-reads its creature record and renames the totem slot it holds
+    // (`0x72ceb0`, `0x72cf2b`).
+    if merged.unit_entry {
+        sc.ui
+            .world(move |world| crate::ui_totem::entry_changed(world, guid));
+    }
     // The NPC-flag watch's quest leg (`0x71a104`-`0x71a133`): the questgiver bit lost on the open window's giver closes it through the giver's close, nothing owed.
     if let Some((old, new)) = merged.npc_flags {
         if old & NPC_FLAG_QUESTGIVER != 0 && new & NPC_FLAG_QUESTGIVER == 0 {
@@ -1847,6 +1853,8 @@ fn merge_fields(
                 merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
                 merged.item_entry |= e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY;
             }
+            merged.unit_entry |=
+                e.is_unit() && e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY;
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
             }
@@ -1894,6 +1902,8 @@ struct Merged {
     item_stack: bool,
     /// An item's entry moved (`0x707960`).
     item_entry: bool,
+    /// A unit's entry moved (`0x72ceb0`).
+    unit_entry: bool,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
     /// Our own honor and arena-team watches' `(index, old, new)`, in field order.

@@ -415,8 +415,9 @@ fn pickup_spell(model: &mut Model, id: u32, book_type: &str) -> bool {
 }
 
 /// Register the spellbook globals.
-/// The targeting cursor as the lent view reads it at the call: up while its flag word is set
-/// (`0xd3f4e0`), wanting an item while the word carries an item bit (`& 0x4010`, `0x7fdd10`), and
+/// The targeting cursor as the lent view reads it at the call: up while a targeting cast is held
+/// (`0xd3f4e4`, `0x7fdcd3`), wanting an item while its word carries an item bit (`0xd3f4e0 &
+/// 0x4010`, `0x7fdd1c`), and
 /// how many times it has armed, each arm writing the Cast base mode (`0x80d7f7`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SpellTargetingLive {

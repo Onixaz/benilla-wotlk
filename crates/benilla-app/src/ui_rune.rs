@@ -25,6 +25,12 @@ const POWER_RUNE: u32 = 5;
 /// `POWER_RUNIC_POWER`: the display power the regen tick checks for (`0x728aa1`).
 const POWER_RUNIC_POWER: u8 = 6;
 
+/// `UNIT_FIELD_FLAGS_2` bit the start handler skips its power prediction under (`0x8068ad`).
+const UNIT_FLAG2_NO_POWER_PREDICT: u32 = 0x100;
+
+/// `UNIT_FIELD_FLAGS_2` bit the power regen runs under (`0x728a45`).
+const UNIT_FLAG2_REGENERATE_POWER: u32 = 0x800;
+
 /// The rune table, written by the handlers and the regen tick alone.
 #[derive(Resource, Default)]
 pub(crate) struct Runes {
@@ -95,8 +101,8 @@ fn load_rune_costs(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
 /// The rune packets and our casts' rune blocks, applied as each handler runs, their events fired
 /// once it returns: `SMSG_CONVERT_RUNE` (`0x5ee020`), `SMSG_RESYNC_RUNES` (`0x5ee440`),
 /// `SMSG_ADD_RUNE_POWER` (`0x5ee520`), and our own rune spell's start or go (`0x8068c0`-`0x8068f6`,
-/// `0x80e6ad`-`0x80e712`). The start's `UNIT_FLAG2` `0x100` gate is not built: the layout has no
-/// `FLAGS_2`.
+/// `0x80e6ad`-`0x80e712`); a start predicts only while our `UNIT_FIELD_FLAGS_2 & 0x100` is clear
+/// (`0x8068a1`-`0x8068b3`).
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn on_rune_packet(
     In(ev): In<SessionEvent>,
@@ -108,21 +114,25 @@ fn on_rune_packet(
     mut ui: ResMut<UiEvents>,
 ) {
     let me = self_q.iter().next();
-    let regen = me.map_or([0.0; benilla_ui::script::RUNE_KINDS], |m| regen_of(&m.0));
+    // The rates off our object; without it a rune's recharge time stays as it was (`0x5ee163`).
+    let regen = me.map(|m| regen_of(&m.0));
     // The milliseconds of this frame's `GetTime`, the clock the reference stamps runes on.
     let now_ms = (clock.ui_now * 1000.0) as u32;
     let state = &mut runes.state;
     let events = match ev {
         SessionEvent::ConvertRune(c) => state.convert(c.rune, c.kind),
-        SessionEvent::ResyncRunes(r) => state.resync(r.count, &r.runes, now_ms, &regen),
-        SessionEvent::AddRunePower { mask } => state.add_power(mask, now_ms, &regen),
+        SessionEvent::ResyncRunes(r) => state.resync(r.count, &r.runes, now_ms, regen.as_ref()),
+        SessionEvent::AddRunePower { mask } => state.add_power(mask, now_ms, regen.as_ref()),
         SessionEvent::CastRunes {
             caster,
             spell_id,
             cast_flags,
             runes: wire,
+            start,
         } => {
-            let ours = me.is_some() && Some(caster) == self_guid.0;
+            let held =
+                me.filter(|m| !(start && m.0.unit_flags2() & UNIT_FLAG2_NO_POWER_PREDICT != 0));
+            let ours = held.is_some() && Some(caster) == self_guid.0;
             let flagged = cast_flags & CAST_FLAG_POWER_LEFT_SELF != 0
                 && cast_flags & CAST_FLAG_RUNE_LIST != 0;
             let rune_spell = spells
@@ -132,12 +142,16 @@ fn on_rune_packet(
             if !(ours && flagged && rune_spell) {
                 return;
             }
+            // `ours` holds our object, so its rates are there.
+            let Some(regen) = regen.as_ref() else {
+                return;
+            };
             state.set_predicted(
                 u32::from(wire.before),
                 u32::from(wire.after),
                 Some(&wire.progress),
                 now_ms,
-                &regen,
+                regen,
             )
         }
         _ => return,
@@ -148,9 +162,10 @@ fn on_rune_packet(
     fire(&mut ui, events);
 }
 
-/// The regen tick, which the player's update runs for the active player while its display power is
-/// runic power (`0x728aa1`); its `UNIT_FLAG2_REGENERATE_POWER` gate (`0x728a45`) is not built. A
-/// rune coming ready fires from the tick, as the reference's update signals it.
+/// The regen tick, which the player's power regen runs for the active player, alive
+/// (`0x728a2f`-`0x728a33`) with `UNIT_FIELD_FLAGS_2 & 0x800` (`0x728a45`-`0x728a4b`), while its
+/// display power is runic power (`0x728aa1`). A rune coming ready fires from the tick, as the
+/// reference's update signals it.
 fn tick_runes(
     mut runes: ResMut<Runes>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -158,11 +173,11 @@ fn tick_runes(
     mut ui: ResMut<UiEvents>,
     mut commands: Commands,
 ) {
-    let Some(me) = self_q
-        .iter()
-        .next()
-        .filter(|me| me.0.unit_power_type() == POWER_RUNIC_POWER)
-    else {
+    let Some(me) = self_q.iter().next().filter(|me| {
+        !me.0.is_dead_or_ghost()
+            && me.0.unit_flags2() & UNIT_FLAG2_REGENERATE_POWER != 0
+            && me.0.unit_power_type() == POWER_RUNIC_POWER
+    }) else {
         return;
     };
     let now_ms = (clock.ui_now * 1000.0) as u32;
@@ -194,6 +209,109 @@ fn fire(ui: &mut UiEvents, events: Vec<RuneEvent>) {
             RuneEvent::ActionBarCooldown => ui.fire("ACTIONBAR_UPDATE_COOLDOWN", vec![]),
             // The action feed reads the table every frame and fires its own usable events.
             RuneEvent::Usable => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use benilla_protocol::field::{
+        FIELD_PLAYER_RUNE_REGEN_1, FIELD_UNIT_BYTES_0, FIELD_UNIT_FLAGS_2, FIELD_UNIT_HEALTH,
+        FIELD_UNIT_MAXHEALTH,
+    };
+    use bevy::ecs::system::RunSystemOnce;
+
+    const ME: u64 = 0x10;
+
+    /// A death knight with `health` and `UNIT_FIELD_FLAGS_2` = `flags2`, rune 1 spent at 0 s and due
+    /// at 10 s, the clock at 20 s.
+    fn world(health: u32, flags2: u32) -> World {
+        let mut world = World::new();
+        let mut pairs = vec![
+            (FIELD_UNIT_HEALTH, health),
+            (FIELD_UNIT_MAXHEALTH, 1000),
+            (FIELD_UNIT_BYTES_0, u32::from(POWER_RUNIC_POWER) << 24),
+            (FIELD_UNIT_FLAGS_2, flags2),
+        ];
+        pairs.extend((0..4).map(|k| (FIELD_PLAYER_RUNE_REGEN_1 + k, 0.1f32.to_bits())));
+        world.spawn((
+            SelfPlayer,
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&pairs)),
+        ));
+        let mut runes = Runes::default();
+        runes
+            .state
+            .set_predicted(0x3f, 0x3e, None, 1, &[0.1; benilla_ui::script::RUNE_KINDS]);
+        world.insert_resource(runes);
+        world.insert_resource(crate::ui_script::UiClock {
+            anchor: std::time::Instant::now(),
+            ui_now: 20.0,
+        });
+        world.init_resource::<UiEvents>();
+        world.insert_resource(SelfGuid(Some(ME)));
+        world
+    }
+
+    /// The regen tick runs alive (`0x728a33`) with `UNIT_FIELD_FLAGS_2 & 0x800` (`0x728a45`): only
+    /// then does the due rune come ready.
+    #[test]
+    fn the_regen_tick_runs_alive_with_the_regenerate_bit() {
+        for (health, flags2, readies) in [(1000, 0x800, true), (1000, 0, false), (0, 0x800, false)]
+        {
+            let mut world = world(health, flags2);
+            world.run_system_once(tick_runes).unwrap();
+            let ready = world.resource::<Runes>().state.ready;
+            assert_eq!(
+                ready & 1 != 0,
+                readies,
+                "health {health} flags2 {flags2:#x}: ready {ready:#x}"
+            );
+        }
+    }
+
+    /// A start predicts our runes only while `UNIT_FIELD_FLAGS_2 & 0x100` is clear
+    /// (`0x8068a1`-`0x8068b3`); a go predicts them whatever the bit.
+    #[test]
+    fn the_start_alone_gates_its_prediction_on_flags_2() {
+        let cast = |start| SessionEvent::CastRunes {
+            caster: ME,
+            spell_id: 45477,
+            cast_flags: CAST_FLAG_POWER_LEFT_SELF | CAST_FLAG_RUNE_LIST,
+            runes: benilla_protocol::messages::CastRunes {
+                before: 0x3f,
+                after: 0x3d,
+                progress: [0; 6],
+            },
+            start,
+        };
+        for (start, flags2, predicts) in
+            [(true, 0, true), (true, 0x100, false), (false, 0x100, true)]
+        {
+            let mut world = world(1000, flags2);
+            world.insert_resource(Spells {
+                catalog: benilla_formats::SpellCatalog::from_displays(
+                    [(
+                        45477,
+                        benilla_formats::SpellDisplay {
+                            power_type: POWER_RUNE,
+                            ..Default::default()
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..Spells::empty_for_tests()
+            });
+            world
+                .run_system_once_with(on_rune_packet, cast(start))
+                .unwrap();
+            let ready = world.resource::<Runes>().state.ready;
+            assert_eq!(
+                ready == 0x3d,
+                predicts,
+                "start {start} flags2 {flags2:#x}: ready {ready:#x}"
+            );
         }
     }
 }

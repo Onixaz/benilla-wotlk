@@ -103,9 +103,19 @@ impl RuneState {
     }
 
     /// The rune recharge time (`0x5ee140`): due `(1 - progress) / rate` seconds from now, or
-    /// never below 0.01 runes a second. The x87 keeps the quotient wide and truncates, so a fresh
+    /// never below 0.01 runes a second; without the player object (`regen` `None`) it is left as
+    /// it was. The x87 keeps the quotient wide and truncates, so a fresh
     /// rune at 0.1 a second is due in 9999 ms.
-    fn compute_recharge(&mut self, index: usize, progress: f32, now_ms: u32, regen: &RuneRegen) {
+    fn compute_recharge(
+        &mut self,
+        index: usize,
+        progress: f32,
+        now_ms: u32,
+        regen: Option<&RuneRegen>,
+    ) {
+        let Some(regen) = regen else {
+            return;
+        };
         let rate = self.rate(index, regen);
         self.recharge_ms[index] = if rate >= 0.01 {
             let wait = (1.0 / f64::from(rate)) * (1.0 - f64::from(progress)) * -1000.0;
@@ -143,7 +153,7 @@ impl RuneState {
         count: u32,
         runes: &[(u8, u8)],
         now_ms: u32,
-        regen: &RuneRegen,
+        regen: Option<&RuneRegen>,
     ) -> Vec<RuneEvent> {
         self.count = count;
         let mut events = Vec::new();
@@ -163,7 +173,12 @@ impl RuneState {
 
     /// `SMSG_ADD_RUNE_POWER` (`0x5ee520`): each masked live rune not already ready gets a finished
     /// recharge; the ready mask is left to the regen tick.
-    pub fn add_power(&mut self, mask: u32, now_ms: u32, regen: &RuneRegen) -> Vec<RuneEvent> {
+    pub fn add_power(
+        &mut self,
+        mask: u32,
+        now_ms: u32,
+        regen: Option<&RuneRegen>,
+    ) -> Vec<RuneEvent> {
         let mut events = Vec::new();
         for i in 0..(self.count as usize).min(MAX_RUNES) {
             let bit = 1 << i;
@@ -202,7 +217,7 @@ impl RuneState {
                         .and_then(|p| p.get(i))
                         .map_or(0.0, |&b| progress_of(b));
                     self.last_used_ms[i] = started_ago(now_ms, share);
-                    self.compute_recharge(i, share, now_ms, regen);
+                    self.compute_recharge(i, share, now_ms, Some(regen));
                     events.push(RuneEvent::Power {
                         rune,
                         usable: false,
@@ -243,8 +258,8 @@ impl RuneState {
 }
 
 /// The rune table and the active player's rates through the lent view; `None` without the
-/// active player object, which every rune verb gates on (`ClntObjMgrObjectPtr` with the player
-/// mask, `0x613078`), or with no view lent.
+/// active player object, which every rune verb gates on (the object lookup with the player
+/// mask, `0x61306f`), or with no view lent.
 fn live_runes() -> Option<(RuneState, RuneRegen)> {
     super::live::read_live(|l| l.runes()).flatten()
 }
@@ -275,7 +290,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     // GetRuneCooldown(slot): start in seconds, duration and ready. A slot past 1..8 raises, no
     // player answers nothing, and the live count is not checked. The duration is the slot kind's
-    // `PLAYER_RUNE_REGEN` rate read off the player now (`0x6130a4`).
+    // `PLAYER_RUNE_REGEN` rate read off the player now (`0x613098`).
     g.set(
         "GetRuneCooldown",
         lua.create_function(|lua, slot: Value| {
@@ -441,7 +456,7 @@ mod tests {
         assert_eq!((r.kinds[0], r.base_kinds[0]), (3, 0));
         assert!(r.convert(8, 3).is_empty());
         let wire = [(0, 255), (0, 0), (1, 255), (1, 255), (2, 255), (2, 255)];
-        assert_eq!(r.resync(6, &wire, 90_000, &DK).len(), 6);
+        assert_eq!(r.resync(6, &wire, 90_000, Some(&DK)).len(), 6);
         assert_eq!((r.kinds[0], r.base_kinds[0]), (0, 0));
         assert_eq!((r.last_used_ms[0], r.recharge_ms[0]), (80_000, 90_000));
         assert_eq!((r.last_used_ms[1], r.recharge_ms[1]), (90_000, 99_999));
@@ -453,7 +468,7 @@ mod tests {
         let mut r = dk();
         r.set_predicted(0xff, 0xfc, None, 10_000, &DK);
         assert_eq!(
-            r.add_power(0x05, 12_000, &DK),
+            r.add_power(0x05, 12_000, Some(&DK)),
             [SPENT_1, RuneEvent::ActionBarCooldown]
         );
         assert_eq!(r.recharge_ms[0], 12_000);

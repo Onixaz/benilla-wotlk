@@ -447,6 +447,9 @@ pub enum SessionEvent {
         spell_id: u32,
         cast_flags: u32,
         runes: crate::messages::CastRunes,
+        /// Off `SMSG_SPELL_START`, whose prediction alone is gated on the caster's
+        /// `UNIT_FIELD_FLAGS_2 & 0x100` (`0x8068a1`-`0x8068b3`); else off `SMSG_SPELL_GO`.
+        start: bool,
     },
     /// The saved equipment sets, whole (`SMSG_EQUIPMENT_SET_LIST`).
     EquipmentSetList(Vec<crate::messages::EquipmentSet>),

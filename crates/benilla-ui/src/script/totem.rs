@@ -44,7 +44,7 @@ fn whole_seconds(ms: i64) -> i64 {
     ms.max(0) / 1000
 }
 
-/// `PLAYER_TOTEM_UPDATE` for the 0-based `slot`, fired inside the call (`0x519843`).
+/// `PLAYER_TOTEM_UPDATE` for the 0-based `slot`, fired inside the call (`0x51986a`).
 pub(crate) fn totem_update(lua: &Lua, slot: usize) {
     super::tick::fire_event_into(
         lua,
@@ -102,7 +102,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // Live: `true, name, start, duration, icon`; empty: the tool flag, "", 0, 0, "". The flag is
-    // the bag search for the slot's tool row with the player held (`0x51d3a4`-`0x51d3f2`).
+    // the bag search for the slot's tool row with the player held (`0x51d42f`, `0x51d457`-`0x51d496`).
     g.set(
         "GetTotemInfo",
         lua.create_function(|lua, v: Value| {

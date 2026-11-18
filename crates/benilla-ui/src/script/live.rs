@@ -529,7 +529,7 @@ pub trait LiveState {
         None
     }
 
-    /// An empty totem slot's flag: the player held and a carried item covering the slot's `TotemCategory` row, the bag search run at the call (`0x51d3a4`-`0x51d3f2`).
+    /// An empty totem slot's flag: the player held and a carried item covering the slot's `TotemCategory` row, the bag search run at the call (`0x51d42f`, `0x51d457`-`0x51d496`).
     fn totem_tool(&self, _slot: usize) -> bool {
         false
     }
@@ -554,7 +554,7 @@ pub trait LiveState {
         None
     }
 
-    /// The rune table (`0xc24304`-`0xc24388`) and the active player's `PLAYER_RUNE_REGEN` rates, read at the call; `None` without the active player object (`0x613078`).
+    /// The rune table (`0xc24304`-`0xc24388`) and the active player's `PLAYER_RUNE_REGEN` rates, read at the call; `None` without the active player object (`0x61306f`).
     fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
         None
     }

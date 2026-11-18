@@ -51,7 +51,7 @@ impl Totems {
     }
 
     /// The destroy (`0x5197d0`): `CMSG_TOTEM_DESTROYED`, then the slot cleared; false for an empty
-    /// slot, which sends nothing. The caller fires `PLAYER_TOTEM_UPDATE` (`0x519843`).
+    /// slot, which sends nothing. The caller fires `PLAYER_TOTEM_UPDATE` (`0x51986a`).
     fn destroy(&mut self, slot: usize, commands: Option<&NetCommands>) -> bool {
         let Some(cell) = self.slots.get_mut(slot).filter(|c| c.is_some()) else {
             return false;
@@ -206,19 +206,47 @@ fn on_record_answer(
     }
 }
 
+/// A unit's entry watch (`0x72ceb0`): with its new creature record cached, the slot holding it is
+/// renamed and fires `PLAYER_TOTEM_UPDATE` (`0x72cf2b`); a miss asks, and the answer renames it.
+pub(crate) fn entry_changed(world: &mut World, guid: u64) {
+    if let Err(e) = world.run_system_cached_with(entry_rename, guid) {
+        warn!("ui_totem: the entry watch did not run: {e}");
+    }
+}
+
+fn entry_rename(
+    In(guid): In<u64>,
+    mut totems: ResMut<Totems>,
+    index: Res<GuidIndex>,
+    units: Query<&ObjectStore>,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    mut ui: ResMut<UiEvents>,
+) {
+    if totems.slot_of(guid).is_none() {
+        return;
+    }
+    let store = index.0.get(&guid).and_then(|&e| units.get(e).ok());
+    if names.resolve_unit(guid, store, &commands).is_some() {
+        name_slot(guid, &mut totems, &names, store, &commands, &mut ui);
+    }
+}
+
 /// A unit's disable destroys the slot holding it (`0x73574a` -> `0x5197d0`): sent, cleared and
 /// announced in the turn of the handler that removed it, on DESTROY, OUT_OF_RANGE and the world
 /// leave alike.
 pub(crate) fn unit_disabled(world: &mut World, guid: u64) {
-    let Some(mut totems) = world.get_resource_mut::<Totems>() else {
+    if !world.contains_resource::<Totems>() {
+        return;
+    }
+    let slot = world.resource_scope(|world, mut totems: Mut<Totems>| {
+        let slot = totems.slot_of(guid)?;
+        totems.destroy(slot, world.get_resource::<NetCommands>());
+        Some(slot)
+    });
+    let Some(slot) = slot else {
         return;
     };
-    let Some(slot) = totems.slot_of(guid) else {
-        return;
-    };
-    let mut totems = std::mem::take(&mut *totems);
-    totems.destroy(slot, world.get_resource::<NetCommands>());
-    world.insert_resource(totems);
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.fire(
             "PLAYER_TOTEM_UPDATE",
@@ -253,7 +281,7 @@ impl TotemLive<'_, '_> {
         })
     }
 
-    /// The bag search for the slot's tool row with flag 8, the player held (`0x51d3a4`-`0x51d3f2`).
+    /// The bag search for the slot's tool row with flag 8, the player held (`0x51d42f`, `0x51d457`-`0x51d496`).
     pub(crate) fn tool(&self, slot: usize) -> bool {
         let (Some(me), Some(objects), Some(categories), Some(items), Some(commands)) = (
             self.me.iter().next(),
@@ -297,5 +325,69 @@ impl TotemLive<'_, '_> {
         self.totems
             .as_mut()
             .is_some_and(|t| t.destroy(slot, commands))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TOTEM: u64 = 0xF130_0000_0000_0050;
+
+    /// A world with slot 1 holding `TOTEM`, its unit held with `entry`, and `entry`'s record cached
+    /// as `name` unless `None`.
+    fn with_slot(entry: u32, name: Option<&str>) -> World {
+        let mut world = World::new();
+        let unit = world
+            .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
+            ])))
+            .id();
+        let mut index = GuidIndex::default();
+        index.0.insert(TOTEM, unit);
+        world.insert_resource(index);
+        let mut names = NameCache::default();
+        if let Some(name) = name {
+            names.insert_creature(
+                entry,
+                Some(crate::names::CreatureRecord {
+                    name: name.into(),
+                    ..Default::default()
+                }),
+            );
+        }
+        world.insert_resource(names);
+        world.insert_resource(NetCommands(crossbeam_channel::unbounded().0));
+        world.init_resource::<UiEvents>();
+        let mut totems = Totems::default();
+        totems.slots[1] = Some(Totem {
+            guid: TOTEM,
+            duration_ms: 60_000,
+            start_ms: 0,
+            icon: None,
+            name: None,
+        });
+        world.insert_resource(totems);
+        world
+    }
+
+    /// The unit's entry watch renames the slot it holds and fires `PLAYER_TOTEM_UPDATE` when the new
+    /// record is cached (`0x72cf2b`); a miss asks and fires nothing, the answer renaming it later.
+    #[test]
+    fn an_entry_change_renames_the_slot_when_the_record_is_cached() {
+        let mut world = with_slot(5925, Some("Earthbind Totem"));
+        entry_changed(&mut world, TOTEM);
+        assert_eq!(
+            world.resource::<UiEvents>().names(),
+            ["PLAYER_TOTEM_UPDATE"]
+        );
+        let name = world.resource::<Totems>().slots[1]
+            .as_ref()
+            .and_then(|t| t.name.clone());
+        assert_eq!(name.as_deref(), Some("Earthbind Totem"));
+
+        let mut world = with_slot(5925, None);
+        entry_changed(&mut world, TOTEM);
+        assert!(world.resource::<UiEvents>().is_empty());
     }
 }

@@ -4789,7 +4789,7 @@ fn rune_rates() -> Vec<(u16, u32)> {
 /// `RUNE_POWER_UPDATE`s each read the whole resync applied (`0x5ee440`), the convert's
 /// `RUNE_TYPE_UPDATE` the new kind (`0x5ee020`), and the power add's `ACTIONBAR_UPDATE_COOLDOWN`
 /// comes last (`0x5ee520`). The cooldown's duration is the player's rate read at the call
-/// (`0x6130a4`).
+/// (`0x613098`).
 #[test]
 fn rune_packets_fire_from_their_handlers_in_wire_order() {
     let Some(mut rig) = Rig::login(&rune_rates()) else {

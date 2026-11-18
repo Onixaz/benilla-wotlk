@@ -295,7 +295,10 @@ fn on_aura_update(
     }
     let (me, spells, mut ui) = own;
     let mine = me.is_some_and(|m| m.0 == Some(update.unit));
-    let moves = mine.then(|| own_aura_moves(auras.as_deref(), &update));
+    // Whether the packet adds or removes an aura, the reader's `changed` (`0x72fb6e`).
+    let all_moves = own_aura_moves(auras.as_deref(), &update);
+    let changed = !all_moves.is_empty();
+    let moves = mine.then_some(all_moves);
     match auras {
         Some(mut auras) => auras.apply(&update, now),
         None => {
@@ -307,7 +310,7 @@ fn on_aura_update(
     // The reader's not-interruptible re-read for a watched caster (`0x72fd30`), after the apply.
     let unit = update.unit;
     if let Some(ui) = ui.as_mut() {
-        ui.world(move |world| crate::ui_cast::auras_changed(world, unit));
+        ui.world(move |world| crate::ui_cast::auras_changed(world, unit, changed));
     }
     // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
     if let (Some(moves), Some(spells), Some(ui)) = (moves, spells, ui.as_mut()) {

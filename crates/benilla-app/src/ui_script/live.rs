@@ -1337,7 +1337,7 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     /// The rune table and our `PLAYER_RUNE_REGEN` rates now, behind the player-mask lookup of the
-    /// active player every rune verb opens with (`0x613078`).
+    /// active player every rune verb opens with (`0x61306f`).
     fn runes(&self) -> Option<(benilla_ui::script::RuneState, benilla_ui::script::RuneRegen)> {
         let me = self.player_entity(self.self_guid.as_ref()?.0?)?;
         let fields = &self.stores.get(me).ok()?.0;
