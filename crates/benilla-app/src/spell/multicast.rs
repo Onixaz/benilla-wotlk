@@ -34,10 +34,8 @@ fn element_mask(category: u32) -> u32 {
 #[derive(Resource, Default, Debug)]
 pub(crate) struct MultiCastLists {
     pub(crate) lists: [Vec<u32>; 4],
-    /// Set by a live learn or any unlearn that calls for `0x5ab9d0`.
+    /// Set by a live learn or any unlearn that calls for `0x5ab9d0`, run in that handler's turn.
     pub(crate) refill_due: bool,
-    /// Set by a refill: the UI fires `UPDATE_MULTI_CAST_ACTIONBAR` (`0x5abaaa`).
-    pub(crate) announce: bool,
 }
 
 impl MultiCastLists {
@@ -122,12 +120,26 @@ pub(crate) fn refill(
     next
 }
 
-/// Runs a due refill, saving the mask when it moved.
-pub(crate) fn run_refill(
+/// The handler's due refill, run with the `World` once its commands apply.
+pub(crate) fn refill_if_due(world: &mut World) {
+    if world
+        .get_resource::<MultiCastLists>()
+        .is_some_and(|l| l.refill_due)
+    {
+        if let Err(e) = world.run_system_cached(run_refill) {
+            warn!("multicast: the refill did not run: {e}");
+        }
+    }
+}
+
+/// Runs a due refill, saving the mask when it moved, then queues `UPDATE_MULTI_CAST_ACTIONBAR` with
+/// the frame's unique signals (`0x5abaaa`).
+fn run_refill(
     mut lists: ResMut<MultiCastLists>,
     mut actions: ResMut<PlayerActions>,
     net: Res<NetCommands>,
     mut cvars: ResMut<Cvars>,
+    mut signals: NonSendMut<crate::ui_script::live::UniqueSignals>,
 ) {
     if !lists.refill_due {
         return;
@@ -139,7 +151,7 @@ pub(crate) fn run_refill(
         cvars.set(CVAR_AUTO_FILLED, &next.to_string());
     }
     debug!("multicast: refilled, mask {mask:#x} -> {next:#x}");
-    lists.announce = true;
+    signals.unique_signal("UPDATE_MULTI_CAST_ACTIONBAR");
 }
 
 #[cfg(test)]

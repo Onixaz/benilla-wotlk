@@ -67,6 +67,10 @@ pub(crate) struct LiveView<'w, 's> {
     mover: Query<'w, 's, &'static crate::net::Guid, With<crate::net::ActiveMover>>,
     /// `ChrClasses.dbc`, the pet book's token.
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
+    /// The rune table, which only the handlers and the regen tick write.
+    runes: Option<Res<'w, crate::ui_rune::Runes>>,
+    /// The totem table and the tool search's inputs.
+    totems: crate::ui_totem::TotemLive<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1204,6 +1208,43 @@ impl LiveState for LiveView<'_, '_> {
             .get()?
             .info(spell_id, 0, d, std::time::Instant::now())
             .ui_triple(anchor, ui_now)
+    }
+
+    fn totem(&self, slot: usize) -> Option<benilla_ui::script::TotemView> {
+        self.totems.slot(slot)
+    }
+
+    fn totem_tool(&self, slot: usize) -> bool {
+        self.totems.tool(slot)
+    }
+
+    fn destroy_totem(&mut self, slot: usize) -> bool {
+        self.totems.destroy(slot)
+    }
+
+    fn multicast_list(&self, element: usize) -> Vec<u32> {
+        self.totems.list(element)
+    }
+
+    fn spell_totem_categories(&self, spell: u32) -> Option<[u32; 2]> {
+        self.totems.spell_categories(spell)
+    }
+
+    fn totem_category_name(&self, row: u32) -> Option<String> {
+        self.totems.category_name(row)
+    }
+
+    /// The rune table and our `PLAYER_RUNE_REGEN` rates now, behind the player-mask lookup of the
+    /// active player every rune verb opens with (`0x613078`).
+    fn runes(&self) -> Option<(benilla_ui::script::RuneState, benilla_ui::script::RuneRegen)> {
+        let me = self.player_entity(self.self_guid.as_ref()?.0?)?;
+        let fields = &self.stores.get(me).ok()?.0;
+        let table = self
+            .runes
+            .as_ref()
+            .map(|r| r.state.clone())
+            .unwrap_or_default();
+        Some((table, crate::ui_rune::regen_of(fields)))
     }
 }
 

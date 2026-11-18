@@ -158,13 +158,8 @@ impl Plugin for SpellPlugin {
             .init_resource::<multicast::MultiCastLists>()
             .add_systems(
                 Update,
-                (
-                    // The player's init puts the stored table on before the totem refill reads
-                    // the bar, and both before the press reads it.
-                    net::put_action_table_on_init,
-                    multicast::run_refill,
-                )
-                    .chain()
+                // The player's init puts the stored table on before the press reads it.
+                net::put_action_table_on_init
                     .after(WorldStage::Net)
                     .before(crate::ui_script::UiPress),
             )

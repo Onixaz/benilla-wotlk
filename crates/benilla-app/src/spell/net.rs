@@ -189,7 +189,9 @@ fn on_spell_learned(
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
     stores: Query<&ObjectStore>,
+    mut commands: Commands,
 ) {
+    refill_in_turn(&mut commands);
     if let SessionEvent::SpellLearned { spell_id } = ev {
         // `0x4d4db0` on the active player (`0x10`): our own player, once its object has streamed.
         let me = our_store(&l, &stores);
@@ -227,7 +229,13 @@ fn on_spell_learned(
     }
 }
 
-fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
+fn on_spell_removed(
+    In(ev): In<SessionEvent>,
+    mut l: Lifecycle,
+    mut errors: ResMut<UiErrorKeys>,
+    mut commands: Commands,
+) {
+    refill_in_turn(&mut commands);
     if let SessionEvent::SpellRemoved { spell_id } = ev {
         // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
         if !our_object_exists(&l) {
@@ -313,6 +321,13 @@ fn companion_add(l: &mut Lifecycle, (race, class): (u8, u8), spell_id: u32) {
     }
 }
 
+/// Run the totem bar's refill once the calling handler's commands apply, when the handler made one
+/// due: a learn or unlearn refills inside its handler (`0x542df1`, `0x53ff4f`). Queued first, it
+/// still runs after the handler's own writes, which apply before its queued commands.
+fn refill_in_turn(commands: &mut Commands) {
+    commands.queue(super::multicast::refill_if_due);
+}
+
 /// The unlearn's totem sweep (`0x53fe57`); an emptied list or a call spell refills (`0x53ff4f`).
 fn unlearn_totem(lists: &mut super::multicast::MultiCastLists, spell_id: u32) {
     if lists.unlearn(spell_id) || super::multicast::CALL_SPELLS.contains(&spell_id) {
@@ -325,7 +340,9 @@ fn on_spell_superceded(
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
     stores: Query<&ObjectStore>,
+    mut commands: Commands,
 ) {
+    refill_in_turn(&mut commands);
     if let SessionEvent::SpellSuperceded {
         old_spell_id,
         new_spell_id,

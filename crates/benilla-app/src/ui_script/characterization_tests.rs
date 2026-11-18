@@ -121,6 +121,12 @@ local VERBS = {
     { "atstable", function() return IsAtStableMaster() end },
     { "stabled", function() return GetNumStablePets() end },
     { "stablesel", function() return GetSelectedStablePet() end },
+    { "rune2", function() return GetRuneType(2) end },
+    { "rune2dur", function() return (select(2, GetRuneCooldown(2))) end },
+    { "rune2ready", function() return (select(3, GetRuneCooldown(2))) end },
+    { "totem1", function() return (GetTotemInfo(1)) end },
+    { "totem1name", function() return (select(2, GetTotemInfo(1))) end },
+    { "totem1left", function() return GetTotemTimeLeft(1) end },
 }
 local function answers()
     local verbs = {}
@@ -4763,4 +4769,162 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
             "COMPANION_LEARNED | mounts=0 critters=1",
         ]
     );
+}
+
+// ── Runes and totems (#1281) ─────────────────────────────────────────────────────────────────────
+
+use benilla_protocol::field::FIELD_PLAYER_RUNE_REGEN_1;
+
+/// A death knight's rates on our create: ten seconds a rune for every kind.
+fn rune_rates() -> Vec<(u16, u32)> {
+    let mut f = vec![OBJECT_TYPE_PLAYER];
+    f.extend((0..4).map(|k| (FIELD_PLAYER_RUNE_REGEN_1 + k, 0.1f32.to_bits())));
+    f
+}
+
+/// The rune packets apply in their handlers and fire there, in wire order: the resync's six
+/// `RUNE_POWER_UPDATE`s each read the whole resync applied (`0x5ee440`), the convert's
+/// `RUNE_TYPE_UPDATE` the new kind (`0x5ee020`), and the power add's `ACTIONBAR_UPDATE_COOLDOWN`
+/// comes last (`0x5ee520`). The cooldown's duration is the player's rate read at the call
+/// (`0x6130a4`).
+#[test]
+fn rune_packets_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&rune_rates()) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ResyncRunes(benilla_protocol::messages::ResyncRunes {
+                count: 6,
+                runes: vec![(0, 255), (0, 0), (1, 255), (1, 255), (2, 255), (2, 255)],
+            }),
+            SessionEvent::ConvertRune(benilla_protocol::messages::ConvertRune { rune: 1, kind: 3 }),
+            SessionEvent::AddRunePower { mask: 0x2 },
+        ],
+        2,
+    );
+    let events = &[
+        "RUNE_POWER_UPDATE",
+        "RUNE_TYPE_UPDATE",
+        "ACTIONBAR_UPDATE_COOLDOWN",
+    ];
+    let verbs = &["rune2", "rune2dur", "rune2ready"];
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "RUNE_POWER_UPDATE 1 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 2 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 3 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 4 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 5 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 6 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_TYPE_UPDATE 2 | rune2=4 rune2dur=10 rune2ready=false",
+            "ACTIONBAR_UPDATE_COOLDOWN | rune2=4 rune2dur=10 rune2ready=false",
+        ]
+    );
+}
+
+/// The world entry resets the rune table after `PLAYER_ENTERING_WORLD` (`0x5281a6`, then
+/// `0x528294` -> `0x5edef0`), so the entry's handlers read the table the packets left, and the
+/// verbs after it the game start's.
+#[test]
+fn the_world_entry_resets_the_runes_after_entering_the_world() {
+    let Some(mut rig) = Rig::login(&rune_rates()) else {
+        return;
+    };
+    let convert =
+        SessionEvent::ConvertRune(benilla_protocol::messages::ConvertRune { rune: 1, kind: 3 });
+    rig.packets(vec![convert, SessionEvent::ObjectDestroyed(ME)], 2);
+    let seen = rig.packets(vec![self_create(&rune_rates())], 3);
+    assert_eq!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &["rune2"]),
+        vec!["PLAYER_ENTERING_WORLD | rune2=4"]
+    );
+    assert_eq!(rig.live_now().line(&["rune2"]), "NOW | rune2=1");
+}
+
+/// The totem guid.
+const TOTEM: u64 = 0xF130_0000_0000_0050;
+
+fn totem_unit() -> SessionEvent {
+    SessionEvent::ObjectCreate {
+        guid: TOTEM,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_UNIT_HEALTH, 5),
+            (FIELD_UNIT_MAXHEALTH, 5),
+            (FIELD_UNIT_LEVEL, 80),
+        ])
+        .into_created(ObjectType::Unit),
+    }
+}
+
+/// `SMSG_TOTEM_CREATED` stores its slot silently (`0x526d4c`); the totem unit's create announces
+/// it (`0x740140`), and its destroy's disable sends, clears and announces it (`0x73574a`), each
+/// in its handler's turn. The verbs read the table the handler left.
+#[test]
+fn totem_events_fire_from_the_unit_create_and_disable() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let created = SessionEvent::TotemCreated(benilla_protocol::messages::TotemCreated {
+        slot: 0,
+        guid: TOTEM,
+        duration_ms: 60_000,
+        spell_id: 3599,
+    });
+    let summoned = rig.packets(vec![created, totem_unit()], 2);
+    let gone = rig.packets(vec![SessionEvent::ObjectDestroyed(TOTEM)], 2);
+    assert_eq!(
+        pin(
+            &summoned,
+            &["PLAYER_TOTEM_UPDATE"],
+            &["totem1", "totem1name"]
+        ),
+        vec!["PLAYER_TOTEM_UPDATE 1 | totem1=true totem1name=nil"]
+    );
+    let verbs = &["totem1", "totem1left"];
+    assert_eq!(
+        pin(&gone, &["PLAYER_TOTEM_UPDATE"], verbs),
+        vec!["PLAYER_TOTEM_UPDATE 1 | totem1=false totem1left=0"]
+    );
+}
+
+/// `DestroyTotem` sends, clears and announces inside the call (`0x51d562` -> `0x5197d0`): the
+/// same chunk reads the slot empty, and the event has fired before the verb returned.
+#[test]
+fn destroy_totem_acts_inside_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let created = SessionEvent::TotemCreated(benilla_protocol::messages::TotemCreated {
+        slot: 2,
+        guid: TOTEM,
+        duration_ms: 60_000,
+        spell_id: 3599,
+    });
+    rig.packets(vec![created], 2);
+    let answers = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<(bool, usize, bool)>(
+            "local before = (GetTotemInfo(3)) DestroyTotem(3) \
+             local fired = 0 for _, l in ipairs(CHARZ_LOG) do \
+               if l:find('^PLAYER_TOTEM_UPDATE') then fired = fired + 1 end end \
+             return before, fired, (GetTotemInfo(3))",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(answers, (true, 1, false));
 }

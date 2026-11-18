@@ -1238,6 +1238,10 @@ fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidInd
 /// stays lying down). The caller has already removed the guid from the [`GuidIndex`], so a
 /// same-tick re-create spawns a fresh object beside the fading model.
 pub(crate) fn tear_down(mut ent: EntityWorldMut) {
+    // The disable destroys the totem slot the unit holds (`0x73574a`).
+    if let Some(&Guid(guid)) = ent.get::<Guid>() {
+        ent.world_scope(|world| crate::ui_totem::unit_disabled(world, guid));
+    }
     ent.remove::<Guid>();
     // The movement disable (`0x6ec390` at `0x735198`) deletes the spline and frees the move queue.
     ent.remove::<(Spline, super::motion::WalkEndFacing, RemoteMotion)>();

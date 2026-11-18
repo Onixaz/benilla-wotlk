@@ -503,6 +503,41 @@ pub trait LiveState {
     ) -> Option<(i64, u32, bool)> {
         None
     }
+
+    /// The totem table's live slot `slot` (0-based) at the call (`0xbd0b00`), `None` for an empty one.
+    fn totem(&self, _slot: usize) -> Option<super::TotemView> {
+        None
+    }
+
+    /// An empty totem slot's flag: the player held and a carried item covering the slot's `TotemCategory` row, the bag search run at the call (`0x51d3a4`-`0x51d3f2`).
+    fn totem_tool(&self, _slot: usize) -> bool {
+        false
+    }
+
+    /// Destroy the live slot `slot` inside the call: `CMSG_TOTEM_DESTROYED`, then the slot cleared (`0x5197d0`); false for an empty slot, which sends nothing. The caller fires `PLAYER_TOTEM_UPDATE`.
+    fn destroy_totem(&mut self, _slot: usize) -> bool {
+        false
+    }
+
+    /// The totem bar's element list `element` (0 fire, 1 earth, 2 water, 3 air) at the call (`0xbe8ea0`).
+    fn multicast_list(&self, _element: usize) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// `spell`'s two `TotemCategory` rows off its record (`0x5a7bc0`), `None` for no record.
+    fn spell_totem_categories(&self, _spell: u32) -> Option<[u32; 2]> {
+        None
+    }
+
+    /// The `TotemCategory.dbc` row's name, `ERR_MULTI_CAST_ACTION_TOTEM_S`'s argument (`0x5ab24b`).
+    fn totem_category_name(&self, _row: u32) -> Option<String> {
+        None
+    }
+
+    /// The rune table (`0xc24304`-`0xc24388`) and the active player's `PLAYER_RUNE_REGEN` rates, read at the call; `None` without the active player object (`0x613078`).
+    fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -812,6 +847,17 @@ pub(crate) struct TestView {
     pub pet_stops: Cell<u32>,
     /// The 0-based slots the bar toggle reached past its gate, in order.
     pub pet_toggles: std::cell::RefCell<Vec<u32>>,
+    /// The totem table's slots, which the destroy clears, and each empty slot's tool flag.
+    pub totems: std::cell::RefCell<[Option<super::TotemView>; super::MAX_TOTEM_SLOTS]>,
+    pub totem_tools: [bool; super::MAX_TOTEM_SLOTS],
+    /// The 0-based slots the destroy sent, in order.
+    pub totem_destroys: std::cell::RefCell<Vec<usize>>,
+    /// The totem bar's element lists, the spells' `TotemCategory` pairs and the rows' names.
+    pub multicast_lists: [Vec<u32>; 4],
+    pub totem_categories: std::collections::HashMap<u32, [u32; 2]>,
+    pub totem_category_names: std::collections::HashMap<u32, String>,
+    /// The rune table and the player's rates; `None` without the player object.
+    pub runes: Option<(super::RuneState, super::RuneRegen)>,
 }
 
 #[cfg(test)]
@@ -824,6 +870,46 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn multicast_list(&self, element: usize) -> Vec<u32> {
+        self.multicast_lists
+            .get(element)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn spell_totem_categories(&self, spell: u32) -> Option<[u32; 2]> {
+        self.totem_categories.get(&spell).copied()
+    }
+
+    fn totem_category_name(&self, row: u32) -> Option<String> {
+        self.totem_category_names.get(&row).cloned()
+    }
+
+    fn totem(&self, slot: usize) -> Option<super::TotemView> {
+        self.totems.borrow().get(slot).cloned().flatten()
+    }
+
+    fn totem_tool(&self, slot: usize) -> bool {
+        self.totem_tools.get(slot).copied().unwrap_or(false)
+    }
+
+    fn destroy_totem(&mut self, slot: usize) -> bool {
+        let live = self
+            .totems
+            .borrow_mut()
+            .get_mut(slot)
+            .and_then(Option::take)
+            .is_some();
+        if live {
+            self.totem_destroys.borrow_mut().push(slot);
+        }
+        live
+    }
+
+    fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
+        self.runes.clone()
+    }
+
     fn unit_flags(&self, guid: u64) -> Option<u32> {
         self.units.get(&guid).map(|u| u.0)
     }

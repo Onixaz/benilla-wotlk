@@ -668,8 +668,6 @@ pub(crate) struct Model {
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
     /// The player's raw shapeshift form byte, 0 unshifted or no player.
     pub(crate) shapeshift_form_byte: u8,
-    /// The rune table `GetRuneType` reads.
-    pub(crate) runes: super::rune::RuneState,
     /// `GlyphProperties.dbc` and `GlyphSlot.dbc`.
     pub(crate) glyph_catalog: super::glyph::GlyphCatalogView,
     /// The player's glyph fields.
@@ -716,12 +714,6 @@ pub(crate) struct Model {
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// `s_vehicleAimNormPower`, 0..1.
     pub(crate) vehicle_aim_power: f32,
-    /// The four totem slots and their tools.
-    pub(crate) totems: super::totem::TotemSlots,
-    /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
-    pub(crate) totem_destroys: Vec<u8>,
-    /// The totem bar's element lists and the tables its slot test reads.
-    pub(crate) multicast: super::multicast::MultiCastView,
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
@@ -1606,7 +1598,6 @@ impl Model {
             tutorial_resets: 0,
             shapeshift_forms: Vec::new(),
             shapeshift_form_byte: 0,
-            runes: Default::default(),
             glyph_catalog: Default::default(),
             glyph_sockets: Default::default(),
             glyph_targeting: None,
@@ -1629,9 +1620,6 @@ impl Model {
             power_displays: Default::default(),
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
-            totems: Default::default(),
-            totem_destroys: Vec::new(),
-            multicast: Default::default(),
             ui_errors_s: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,

@@ -56,7 +56,7 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
             Some(CursorPayload::Action(a)) if a.kind == ACTION_KIND_SPELL => Some(a.action),
             _ => None,
         };
-        let fits = spell.and_then(|s| crate::script::multicast::totem_fits(model, id, s));
+        let fits = spell.and_then(|s| crate::script::multicast::totem_fits(id, s));
         let on_totem = crate::script::multicast::action_category(id).is_some();
         if on_totem && fits != Some(true) {
             crate::script::multicast::refuse_totem(model, id);

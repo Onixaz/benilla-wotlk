@@ -105,6 +105,16 @@ pub(crate) fn apply_script_calls(
                     }
                 }
             }
+            // The destroy in its turn, through the lent view (`0x5197d0`).
+            ScriptCall::DestroyTotem(slot) => {
+                let slot = usize::from(slot);
+                if benilla_ui::script::write_live(|l| l.destroy_totem(slot)) == Some(true) {
+                    script.fire_event(
+                        "PLAYER_TOTEM_UPDATE",
+                        vec![benilla_ui::script::ScriptValue::Int(slot as i64 + 1)],
+                    );
+                }
+            }
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {

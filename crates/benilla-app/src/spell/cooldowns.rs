@@ -1446,12 +1446,10 @@ mod tests {
         ]));
         let mods = SpellModifiers::default();
         // Both frost runes spent, at 50.0 s and 52.0 s, ten seconds a rune.
-        let mut state = RuneState {
-            regen: [0.1; RUNE_KINDS],
-            ..Default::default()
-        };
-        state.set_predicted(0x3f, 0x2f, None, 50_000);
-        state.set_predicted(0x2f, 0x0f, None, 52_000);
+        let mut state = RuneState::default();
+        let regen = [0.1; RUNE_KINDS];
+        state.set_predicted(0x3f, 0x2f, None, 50_000, &regen);
+        state.set_predicted(0x2f, 0x0f, None, 52_000, &regen);
         let leg = RuneLeg {
             runes: super::super::usable::RuneCheck {
                 state: &state,

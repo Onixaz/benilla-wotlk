@@ -6,7 +6,8 @@ use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
     CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetActionView, PetBarLive,
-    PetBookState, PetStats, PossessView, StableCallback, StableFamily, StableList, UiScript,
+    PetBookState, PetStats, PossessView, RuneRegen, RuneState, StableCallback, StableFamily,
+    StableList, UiScript,
 };
 
 /// The death answers a test sets.
@@ -67,7 +68,15 @@ pub(crate) struct PetWrites {
     pub stops: u32,
 }
 
+/// The spell and action answers a test sets.
+#[derive(Clone, Debug, Default)]
+struct SpellAnswers {
+    /// The rune table and the player's rates; `None` without the player object.
+    runes: Option<(RuneState, RuneRegen)>,
+}
+
 thread_local! {
+    static SPELL: RefCell<SpellAnswers> = RefCell::default();
     static DEATH: RefCell<DeathUiState> = RefCell::default();
     static SUMMON: RefCell<SummonConfirmUiState> = RefCell::default();
     static PET: RefCell<PetAnswers> = RefCell::default();
@@ -93,6 +102,19 @@ pub(crate) trait PetAnswersExt {
     fn set_pet_book(&mut self, book: PetBookState);
     /// What the pet verbs wrote inside their calls since the last take.
     fn take_pet_writes(&mut self) -> PetWrites;
+}
+
+/// Set spell and action answers on a bare VM, as the app's live view answers them: the first call lends [`View`] for the rest of the test's thread.
+pub(crate) trait SpellAnswersExt {
+    /// The rune table and the player's `PLAYER_RUNE_REGEN` rates, with the player object held.
+    fn set_runes(&mut self, runes: RuneState, regen: RuneRegen);
+}
+
+impl SpellAnswersExt for UiScript {
+    fn set_runes(&mut self, runes: RuneState, regen: RuneRegen) {
+        sticky(self);
+        SPELL.with(|s| s.borrow_mut().runes = Some((runes, regen)));
+    }
 }
 
 /// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no other loan may be up when it is made.
@@ -358,6 +380,10 @@ impl LiveState for View {
 
     fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<PetBookState> {
         PET.with(|p| p.borrow().pet_book.clone())
+    }
+
+    fn runes(&self) -> Option<(RuneState, RuneRegen)> {
+        SPELL.with(|s| s.borrow().runes.clone())
     }
 }
 

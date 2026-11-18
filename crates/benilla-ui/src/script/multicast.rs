@@ -1,6 +1,6 @@
-//! `GetMultiCastTotemSpells` (`0x5a8330`), `SetMultiCastSpell` (`0x5ab8a0`), `IsSpellKnown`.
-
-use std::collections::HashMap;
+//! `GetMultiCastTotemSpells` (`0x5a8330`), `SetMultiCastSpell` (`0x5ab8a0`), `IsSpellKnown`. The
+//! element lists (`0xbe8ea0`), each spell's `TotemCategory` pair and the rows' names are read
+//! through the lent view when called.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -11,23 +11,7 @@ use super::Model;
 /// Action slot 133 in Lua (wire 132), the first of three pages of four element slots.
 pub const FIRST_TOTEM_ACTION: u32 = 133;
 
-/// What the app resolves for the bar.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MultiCastView {
-    /// The element lists, fire, earth, water, air (`0xbe8ea0`).
-    pub lists: [Vec<u32>; 4],
-    /// Every spell's `TotemCategory` pair that names an element row, for the slot test.
-    pub spell_categories: HashMap<u32, [u32; 2]>,
-    /// The element rows' names, `ERR_MULTI_CAST_ACTION_TOTEM_S`'s argument.
-    pub category_names: HashMap<u32, String>,
-}
-
 impl super::UiScript {
-    /// Replace the bar's lists and tables; the app fires `UPDATE_MULTI_CAST_ACTIONBAR` itself.
-    pub fn set_multicast(&mut self, view: MultiCastView) {
-        set_field!(self, multicast, view);
-    }
-
     /// Drain the keyed refusals that carry one `%s`; the app shows each.
     pub fn take_ui_errors_s(&mut self) -> Vec<(&'static str, String)> {
         drain_field!(self, ui_errors_s)
@@ -41,16 +25,12 @@ pub(crate) fn action_category(action: u32) -> Option<u32> {
         .then(|| [4, 2, 5, 3][((action - FIRST_TOTEM_ACTION) % 4) as usize])
 }
 
-/// Whether `spell`'s tool rows hold totem `action`'s element (`0x5a7bc0`); `None` off the pages.
-pub(crate) fn totem_fits(model: &Model, action: u32, spell: u32) -> Option<bool> {
+/// Whether `spell`'s tool rows hold totem `action`'s element (`0x5a7bc0`), the spell's record read
+/// now; `None` off the pages.
+pub(crate) fn totem_fits(action: u32, spell: u32) -> Option<bool> {
     let category = action_category(action)?;
-    Some(
-        model
-            .multicast
-            .spell_categories
-            .get(&spell)
-            .is_some_and(|cats| cats.contains(&category)),
-    )
+    let cats = super::live::read_live(|l| l.spell_totem_categories(spell)).flatten();
+    Some(cats.is_some_and(|cats| cats.contains(&category)))
 }
 
 /// `ERR_MULTI_CAST_ACTION_TOTEM_S` with the action's element name (`0x5ab24b`, `0x5ab98c`).
@@ -58,7 +38,7 @@ pub(crate) fn refuse_totem(model: &mut Model, action: u32) {
     let Some(category) = action_category(action) else {
         return;
     };
-    if let Some(name) = model.multicast.category_names.get(&category).cloned() {
+    if let Some(name) = super::live::read_live(|l| l.totem_category_name(category)).flatten() {
         model
             .ui_errors_s
             .push(("ERR_MULTI_CAST_ACTION_TOTEM_S", name));
@@ -79,10 +59,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMultiCastTotemSpells",
         lua.create_function(|lua, v: Value| {
             let n = number_arg(lua, v, "Usage: GetMultiCastTotemSpells(slot)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let list = &model.multicast.lists[((n - 1) & 3) as usize];
+            let list = super::live::read_live(|l| l.multicast_list(((n - 1) & 3) as usize))
+                .unwrap_or_default();
             Ok(MultiValue::from_vec(
                 list.iter().map(|&s| Value::Integer(i64::from(s))).collect(),
             ))
@@ -105,8 +83,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (Ok(action), Ok(spell)) = (u32::try_from(action), u32::try_from(spell)) else {
                 return Ok(());
             };
+            let fits = totem_fits(action, spell);
             let mut model = crate::script::model_mut_of(lua);
-            match totem_fits(&model, action, spell) {
+            match fits {
                 None => {}
                 Some(_) if spell == 0 => {
                     model.actions.remove(&action);
@@ -181,25 +160,40 @@ pub(super) fn has_spell(model: &Model, id: u32, is_pet: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::script::live::{lend_test, LiveLoan, TestView};
     use crate::script::{SpellSlotView, UiScript};
 
-    use super::*;
+    /// The bar's lists and tables, lent for as long as the script lives.
+    struct Bar(UiScript, #[allow(dead_code)] LiveLoan<TestView>);
 
-    fn script() -> UiScript {
-        let mut s = UiScript::new().unwrap();
-        s.set_multicast(MultiCastView {
-            lists: [vec![3599], vec![8071, 2484], vec![], vec![]],
-            spell_categories: [(3599, [4, 0]), (8071, [2, 0]), (2484, [2, 0])]
+    impl std::ops::Deref for Bar {
+        type Target = UiScript;
+        fn deref(&self) -> &UiScript {
+            &self.0
+        }
+    }
+
+    impl std::ops::DerefMut for Bar {
+        fn deref_mut(&mut self) -> &mut UiScript {
+            &mut self.0
+        }
+    }
+
+    fn script() -> Bar {
+        let view = lend_test(TestView {
+            multicast_lists: [vec![3599], vec![8071, 2484], vec![], vec![]],
+            totem_categories: [(3599, [4, 0]), (8071, [2, 0]), (2484, [2, 0])]
                 .into_iter()
                 .collect(),
-            category_names: [
+            totem_category_names: [
                 (4, "Fire Totem".to_string()),
                 (2, "Earth Totem".to_string()),
             ]
             .into_iter()
             .collect(),
+            ..Default::default()
         });
-        s
+        Bar(UiScript::new().unwrap(), view)
     }
 
     #[test]

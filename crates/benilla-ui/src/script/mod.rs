@@ -454,7 +454,6 @@ pub use merchant::{
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};
-pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetBarLive, PetMenuOutcome, PetMenuVerb, PetStats, PossessView};
 pub use pvp::{
@@ -473,7 +472,7 @@ pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};
 pub use reputation::{FactionEntry, ReputationSend, ReputationState};
-pub use rune::{RuneEvent, RuneState, MAX_RUNES, RUNE_KINDS};
+pub use rune::{RuneEvent, RuneRegen, RuneState, MAX_RUNES, RUNE_KINDS};
 pub use session::SessionRequest;
 pub use shapeshift::ShapeshiftFormView;
 pub(crate) use simplehtml::{
@@ -497,7 +496,7 @@ pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
 pub use threat::{ThreatEntry, ThreatList, ThreatReading, ThreatView};
 pub use title::{chosen_title_name, title_row, PlayerTitles, TitleRow};
 pub use tooltip_spell::SpellTooltipView;
-pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};
+pub use totem::{TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
 pub use tradeskill::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,

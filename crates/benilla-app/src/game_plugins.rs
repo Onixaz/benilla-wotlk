@@ -882,11 +882,6 @@ pub(crate) mod schedule_tests {
     ///   `act_on_right_click` and the cursor classifier already pair with: it runs the click's
     ///   dispatchers over the classifier's reading of its object, and its attack leg
     ///   selects as the click does, so it writes `Selection` where the click's drain does;
-    /// - `spell::multicast::run_refill` against the character and realm screens' `Cvars` writers
-    ///   (`apply_roster_policy`, `persist_last_character`, `apply_realm_policy`): the refill acts
-    ///   only on an in-world learn, they only before world entry;
-    /// - `ui_totem::feed_totems` against `ui_items::feed_item_stats` over `Items` and the VM: it
-    ///   only reads templates for the tool check;
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
@@ -1613,6 +1608,8 @@ pub(crate) mod schedule_tests {
          "`pending` holds only the VM's own `Screenshot()` asks, and the take spawns a capture, publishing nothing"),
         ("screenshot.rs", "report_captures", Because::FilledByVm,
          "the outcome chain starts with the VM's own `Screenshot()` call"),
+        ("script_calls.rs", "apply_script_calls", Because::FilledByVm,
+         "the queue holds only the VM's own script calls; the `PLAYER_TOTEM_UPDATE` it fires is a queued `DestroyTotem`'s, in that call's turn"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,

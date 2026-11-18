@@ -1907,6 +1907,8 @@ fn feed_units(
             });
             // The battlefield entry (`0x528230`), ahead of the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
             crate::ui_battlefield::queue_enter_world(&mut deferred);
+            // The rune table's reset (`0x528294`), ahead of the corpse step.
+            deferred.queue(crate::ui_rune::enter_world);
             crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;
         }

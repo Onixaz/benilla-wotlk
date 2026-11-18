@@ -1,4 +1,5 @@
-//! `GetTotemInfo` (`0x51d330`), `GetTotemTimeLeft` (`0x517c60`), `DestroyTotem` (`0x51d520`).
+//! `GetTotemInfo` (`0x51d330`), `GetTotemTimeLeft` (`0x517c60`), `DestroyTotem` (`0x51d520`), which
+//! read and write the totem table (`0xbd0b00`) through the lent view when called.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -8,36 +9,21 @@ use super::ScriptValue;
 /// The slots `GetTotemInfo` accepts.
 pub const MAX_TOTEM_SLOTS: usize = 4;
 
-/// One live totem, as the app resolves it.
+/// One live slot of the totem table.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TotemView {
-    /// The totem unit's name, `None` until its object streams.
+    /// The totem unit's name (`+0x10`), `None` until its object streams.
     pub name: Option<String>,
-    /// When `SMSG_TOTEM_CREATED` arrived, on the `GetTime` clock in seconds.
+    /// When `SMSG_TOTEM_CREATED` arrived (`+0x18`), on the `GetTime` clock in seconds.
     pub start: f64,
     pub duration_ms: u32,
     /// The summoning spell's icon path.
     pub icon: Option<String>,
 }
 
-/// The whole table: each slot's live totem, and whether the player carries its tool.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TotemSlots {
-    pub live: [Option<TotemView>; MAX_TOTEM_SLOTS],
-    /// The slot's `TotemCategory` row is covered by a carried item (`0x7548f0`, flag 8).
-    pub tools: [bool; MAX_TOTEM_SLOTS],
-}
-
-impl super::UiScript {
-    /// Replace the totem table; the app fires `PLAYER_TOTEM_UPDATE` itself.
-    pub fn set_totems(&mut self, slots: TotemSlots) {
-        set_field!(self, totems, slots);
-    }
-
-    /// Take the `DestroyTotem` calls, as 0-based slots; the app sends each.
-    pub fn take_totem_destroys(&mut self) -> Vec<u8> {
-        drain_field!(self, totem_destroys)
-    }
+/// The live slot `slot` (0-based) through the lent view.
+fn live_totem(slot: usize) -> Option<TotemView> {
+    super::live::read_live(|l| l.totem(slot)).flatten()
 }
 
 /// The 0-based slot argument; a non-number raises the usage line, a slot past 1..4 the range one.
@@ -58,6 +44,15 @@ fn whole_seconds(ms: i64) -> i64 {
     ms.max(0) / 1000
 }
 
+/// `PLAYER_TOTEM_UPDATE` for the 0-based `slot`, fired inside the call (`0x519843`).
+pub(crate) fn totem_update(lua: &Lua, slot: usize) {
+    super::tick::fire_event_into(
+        lua,
+        "PLAYER_TOTEM_UPDATE",
+        vec![ScriptValue::Int(slot as i64 + 1)],
+    );
+}
+
 pub(super) fn install_tooltip_method(lua: &Lua, m: &mlua::Table) -> mlua::Result<()> {
     // GameTooltip:SetTotem(slot) (`0x6205c0`): the totem's name and its time left, nothing for an
     // empty slot.
@@ -67,15 +62,13 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &mlua::Table) -> mlua::Result
             let h = super::object::frame_handle_of(lua, &this)?;
             let slot = slot_arg(lua, slot, "Usage: GameTooltip:SetTotem(slot)")?;
             let now = super::clock::now(lua);
-            let live = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.totems.live[slot]
-                    .as_ref()
-                    .map(|t| (t.name.clone(), t.start, t.duration_ms))
-            };
-            let Some((name, start, duration_ms)) = live else {
+            let Some(TotemView {
+                name,
+                start,
+                duration_ms,
+                ..
+            }) = live_totem(slot)
+            else {
                 return Ok(());
             };
             super::tooltip::clear_content(&mut super::model_mut_of(lua), h);
@@ -108,14 +101,12 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &mlua::Table) -> mlua::Result
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // Live: `true, name, start, duration, icon`; empty: the tool flag, "", 0, 0, "".
+    // Live: `true, name, start, duration, icon`; empty: the tool flag, "", 0, 0, "". The flag is
+    // the bag search for the slot's tool row with the player held (`0x51d3a4`-`0x51d3f2`).
     g.set(
         "GetTotemInfo",
         lua.create_function(|lua, v: Value| {
             let slot = slot_arg(lua, v, "Usage: GetTotemInfo(slot)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
             let opt_str = |s: &Option<String>| -> mlua::Result<Value> {
                 Ok(match s {
                     Some(s) => Value::String(lua.create_string(s)?),
@@ -123,7 +114,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 })
             };
             let empty = || lua.create_string("").map(Value::String);
-            let values = match &model.totems.live[slot] {
+            let values = match &live_totem(slot) {
                 Some(t) => vec![
                     Value::Boolean(true),
                     opt_str(&t.name)?,
@@ -132,7 +123,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     opt_str(&t.icon)?,
                 ],
                 None => vec![
-                    Value::Boolean(model.totems.tools[slot]),
+                    Value::Boolean(super::live::read_live(|l| l.totem_tool(slot)).unwrap_or(false)),
                     empty()?,
                     Value::Integer(0),
                     Value::Integer(0),
@@ -149,28 +140,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let slot = slot_arg(lua, v, "Usage: GetTotemTimeLeft(slot)")?;
             let now = crate::script::clock::now(lua);
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.totems.live[slot].as_ref().map_or(0, |t| {
+            Ok(live_totem(slot).map_or(0, |t| {
                 let end_ms = (t.start * 1000.0) as i64 + i64::from(t.duration_ms);
                 whole_seconds(end_ms - (now * 1000.0) as i64)
             }))
         })?,
     )?;
 
-    // A live slot is cleared, announced and sent (`0x5197d0`); an empty one does nothing.
+    // A live slot is sent, cleared and announced inside the call (`0x51d562` -> `0x5197d0`); an
+    // empty one does nothing. Behind a queued script call it keeps its turn, so its send follows
+    // that call's.
     g.set(
         "DestroyTotem",
         lua.create_function(|lua, v: Value| {
             let slot = slot_arg(lua, v, "Usage: DestroyTotem(slot)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            if model.totems.live[slot].take().is_some() {
-                model.totem_destroys.push(slot as u8);
-                model.pending_events.push((
-                    "PLAYER_TOTEM_UPDATE".into(),
-                    vec![ScriptValue::Int(slot as i64 + 1)],
-                ));
+            let queued = !crate::script::model_mut_of(lua).script_calls.is_empty();
+            if queued {
+                crate::script::model_mut_of(lua)
+                    .script_calls
+                    .push(super::ScriptCall::DestroyTotem(slot as u8));
+            } else if super::live::write_live(|l| l.destroy_totem(slot)) == Some(true) {
+                totem_update(lua, slot);
             }
             Ok(())
         })?,
@@ -181,15 +171,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::script::{ScriptValue, UiScript};
+    use crate::script::live::{lend_test, LiveLoan, TestView};
+    use crate::script::UiScript;
 
     use super::*;
 
-    fn script_with(slots: TotemSlots) -> UiScript {
+    fn script_with(
+        live: [Option<TotemView>; MAX_TOTEM_SLOTS],
+        tools: [bool; MAX_TOTEM_SLOTS],
+    ) -> (UiScript, LiveLoan<TestView>) {
         let mut s = UiScript::new().unwrap();
         s.set_now(100.0);
-        s.set_totems(slots);
-        s
+        let view = lend_test(TestView {
+            totems: std::cell::RefCell::new(live),
+            totem_tools: tools,
+            ..Default::default()
+        });
+        (s, view)
     }
 
     fn searing() -> TotemView {
@@ -201,11 +199,15 @@ mod tests {
         }
     }
 
+    fn one(slot: usize, t: TotemView) -> [Option<TotemView>; MAX_TOTEM_SLOTS] {
+        let mut live: [Option<TotemView>; MAX_TOTEM_SLOTS] = Default::default();
+        live[slot] = Some(t);
+        live
+    }
+
     #[test]
     fn a_live_slot_answers_its_totem_in_whole_seconds() {
-        let mut slots = TotemSlots::default();
-        slots.live[0] = Some(searing());
-        let s = script_with(slots);
+        let (s, _view) = script_with(one(0, searing()), [false; 4]);
         let (have, name, start, duration, icon): (bool, String, f64, f64, String) =
             s.eval("return GetTotemInfo(1)").unwrap();
         assert!(have);
@@ -218,9 +220,7 @@ mod tests {
 
     #[test]
     fn an_empty_slot_answers_whether_its_tool_is_carried() {
-        let mut slots = TotemSlots::default();
-        slots.tools[1] = true;
-        let s = script_with(slots);
+        let (s, _view) = script_with(Default::default(), [false, true, false, false]);
         let (have, name, start, duration, icon): (bool, String, f64, f64, String) =
             s.eval("return GetTotemInfo(2)").unwrap();
         assert!(have, "the earth tool is carried");
@@ -235,12 +235,16 @@ mod tests {
 
     #[test]
     fn an_unnamed_totem_answers_nil_for_its_name() {
-        let mut slots = TotemSlots::default();
-        slots.live[3] = Some(TotemView {
-            name: None,
-            ..searing()
-        });
-        let s = script_with(slots);
+        let (s, _view) = script_with(
+            one(
+                3,
+                TotemView {
+                    name: None,
+                    ..searing()
+                },
+            ),
+            [false; 4],
+        );
         assert!(s
             .eval::<bool>("local _, name = GetTotemInfo(4) return name == nil")
             .unwrap());
@@ -248,18 +252,22 @@ mod tests {
 
     #[test]
     fn an_expired_totem_has_no_time_left() {
-        let mut slots = TotemSlots::default();
-        slots.live[0] = Some(TotemView {
-            start: 50.0,
-            ..searing()
-        });
-        let s = script_with(slots);
+        let (s, _view) = script_with(
+            one(
+                0,
+                TotemView {
+                    start: 50.0,
+                    ..searing()
+                },
+            ),
+            [false; 4],
+        );
         assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(1)").unwrap(), 0.0);
     }
 
     #[test]
     fn slots_outside_one_to_four_and_non_numbers_raise() {
-        let s = script_with(TotemSlots::default());
+        let (s, _view) = script_with(Default::default(), [false; 4]);
         for call in [
             "GetTotemInfo(0)",
             "GetTotemInfo(5)",
@@ -272,22 +280,44 @@ mod tests {
         }
     }
 
+    /// `DestroyTotem` sends, clears and fires `PLAYER_TOTEM_UPDATE` before it returns, so the same
+    /// chunk reads the slot empty and a handler of the event has run (`0x5197d0`).
     #[test]
-    fn destroying_a_live_totem_clears_queues_and_announces_it() {
-        let mut slots = TotemSlots::default();
-        slots.live[2] = Some(searing());
-        let mut s = script_with(slots);
-        s.run("DestroyTotem(3)").unwrap();
-        assert!(!s.eval::<bool>("return (GetTotemInfo(3))").unwrap());
-        assert_eq!(s.take_totem_destroys(), vec![2]);
-        assert!(s
-            .model_ref()
-            .pending_events
-            .iter()
-            .any(|(e, a)| e == "PLAYER_TOTEM_UPDATE" && a == &vec![ScriptValue::Int(3)]));
+    fn destroying_a_live_totem_sends_clears_and_announces_it_inside_the_call() {
+        let (s, view) = script_with(one(2, searing()), [false; 4]);
+        s.run(
+            "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_TOTEM_UPDATE')
+             f:SetScript('OnEvent', function(_, _, slot) SEEN[#SEEN + 1] = slot end)",
+        )
+        .unwrap();
+        let (live, seen): (bool, i64) = s
+            .eval("DestroyTotem(3) return (GetTotemInfo(3)), #SEEN")
+            .unwrap();
+        assert!(!live);
+        assert_eq!(seen, 1);
+        assert_eq!(s.eval::<i64>("return SEEN[1]").unwrap(), 3);
+        assert_eq!(view.view().totem_destroys.borrow().as_slice(), [2]);
 
-        // An empty slot sends nothing.
+        // An empty slot sends and fires nothing.
         s.run("DestroyTotem(1)").unwrap();
-        assert!(s.take_totem_destroys().is_empty());
+        assert_eq!(view.view().totem_destroys.borrow().len(), 1);
+        assert_eq!(s.eval::<i64>("return #SEEN").unwrap(), 1);
+    }
+
+    /// Behind a queued script call the destroy keeps its turn: it is queued, and nothing is sent
+    /// or fired in the call.
+    #[test]
+    fn a_destroy_behind_a_queued_call_keeps_its_turn() {
+        let (mut s, view) = script_with(one(0, searing()), [false; 4]);
+        s.run("TargetUnit('player') DestroyTotem(1)").unwrap();
+        assert!(view.view().totem_destroys.borrow().is_empty());
+        let calls = s.take_script_calls();
+        assert!(
+            matches!(
+                calls.last(),
+                Some(crate::script::ScriptCall::DestroyTotem(0))
+            ),
+            "{calls:?}"
+        );
     }
 }

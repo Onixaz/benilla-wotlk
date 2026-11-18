@@ -62,6 +62,8 @@ pub enum ScriptCall {
     /// `UseAction(slot [, unit [, button]])` (`0x5ac000` → `0x5abbc0`); a macro slot runs its
     /// lines inside it.
     UseAction(ActionUse),
+    /// `DestroyTotem(slot)` behind a queued call, the 0-based slot (`0x5197d0`).
+    DestroyTotem(u8),
     /// `UseContainerItem(bag, slot)` outside repair mode.
     UseContainerItem { bag: i64, slot: u32 },
     /// A questgiver GameObject's use from `DeclineQuest`, its right-click (`0x58ceb2` -> `0x711140`).
