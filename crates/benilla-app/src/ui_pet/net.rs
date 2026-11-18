@@ -1,5 +1,5 @@
-//! The pet's packet handlers: `SMSG_PET_SPELLS` and `SMSG_PET_MODE` write [`PetBar`]; the refusals,
-//! the tame failure and the pet's sounds go to their queues. The pet's refusals share the player's
+//! The pet's packet handlers: `SMSG_PET_SPELLS` and `SMSG_PET_MODE` write [`PetBar`]; the refusals
+//! show in the handler's turn, the tame failure and the pet's sounds go to their queues. The pet's refusals share the player's
 //! red line but not its message tables: the reference maps them in their own handlers to say "your
 //! pet" where the player's say "you".
 
@@ -15,7 +15,7 @@ use benilla_assets::coords::wow_to_bevy;
 
 use super::PetBar;
 use crate::net::{GuidIndex, NetHandlerApp, PetDismissSoundMessage, PetTalkMessage};
-use crate::ui_action::{CastErrors, PetTameFailures, Spells, UiError, UiErrorKeys};
+use crate::ui_action::{CastErrors, PetTameFailures, Spells, UiError};
 
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
@@ -211,22 +211,35 @@ fn on_mode(
 
 fn on_action_feedback(
     In(ev): In<SessionEvent>,
-    mut errors: ResMut<UiErrorKeys>,
     catalog: Option<Res<Spells>>,
     mut bar: ResMut<PetBar>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetActionFeedback { reason, spell } = ev {
         let helpful = catalog
             .as_deref()
             .and_then(|c| c.catalog.get(spell))
             .is_some_and(|d| d.is_helpful());
-        pet_action_feedback(reason, helpful, &mut errors);
-        // A refused target refunds the spell's start cooldown and refreshes the pet's
-        // (`0x5d4e42`, `0x5d4e83` -> `0x804780`).
+        debug!("net: pet action feedback {reason}");
+        // The line shows in the handler's turn, ahead of the refund (`0x5d4e3c`, `0x5d4e65`).
+        if let Some(key) = pet_feedback_key(reason, helpful) {
+            crate::ui_action::show_in_turn(&mut ui, "ui_pet", UiError::key(key));
+        }
+        // A refused target refunds the spell's start cooldown (`0x5d4e42`, `0x5d4e83`).
         if matches!(reason, 2 | 3) {
-            bar.cooldowns.clear_gcd(spell, std::time::Instant::now());
+            pet_refund_start(&mut bar, spell, &mut ui);
         }
     }
+}
+
+/// The pet history's start-cooldown refund (`0x804780`): the spellbook's flush when a record matched (`0x80476d`), then the pet bar's (`0x804792`).
+fn pet_refund_start(bar: &mut PetBar, spell: u32, ui: &mut crate::ui_script::live::UiEvents) {
+    if bar.cooldowns.clear_gcd(spell, Instant::now()) {
+        // `UPDATE_SHAPESHIFT_COOLDOWN` between the two while the stance bar holds forms (`0x53bac5`) is #577's.
+        ui.fire("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
+        ui.fire("SPELL_UPDATE_COOLDOWN", Vec::new());
+    }
+    ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
 }
 
 fn on_cast_failed(
@@ -245,9 +258,8 @@ fn on_cast_failed(
     } = ev
     {
         bar.pending_cast = None;
-        // The start cooldown the press armed clears, then the pet bar's flush alone (`0x806d41`, `0x806d46`).
-        bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
-        ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
+        // The start cooldown the press armed refunds on the pet history, then the pet bar's flush (`0x806d41`, `0x806d46`).
+        pet_refund_start(&mut bar, spell_id, &mut ui);
         pet_cast_failed(spell_id, reason, arg, &mut errors);
         ends.end(spell_id, cast_count, wire_reason);
     }
@@ -313,11 +325,7 @@ fn on_tame_failure(In(ev): In<SessionEvent>, mut failures: ResMut<PetTameFailure
 }
 
 /// `SMSG_PET_NAME_INVALID` (`0x6e2fb1`): the name error (`0x6e2fc0`), then with declined forms `PET_FORCE_NAME_DECLENSION` (`0x6e303d`); `SMSG_PET_BROKEN`'s line.
-fn on_refusal_line(
-    In(ev): In<SessionEvent>,
-    mut errors: ResMut<UiErrorKeys>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
-) {
+fn on_refusal_line(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     use benilla_ui::script::ScriptValue;
     match ev {
         SessionEvent::PetNameInvalid {
@@ -325,7 +333,7 @@ fn on_refusal_line(
             name,
             declensions: forms,
         } => {
-            pet_name_invalid(code, &mut errors);
+            crate::ui_action::show_in_turn(&mut ui, "ui_pet", pet_name_invalid(code));
             if let Some([a, b, c, d, e]) = forms {
                 ui.fire(
                     "PET_FORCE_NAME_DECLENSION",
@@ -340,7 +348,10 @@ fn on_refusal_line(
                 );
             }
         }
-        SessionEvent::PetBroken => pet_broken(&mut errors),
+        SessionEvent::PetBroken => {
+            debug!("net: pet ran away");
+            crate::ui_action::show_in_turn(&mut ui, "ui_pet", UiError::key("ERR_PET_BROKEN"));
+        }
         _ => {}
     }
 }
@@ -364,16 +375,19 @@ fn on_dismiss_sound(In(ev): In<SessionEvent>, mut sounds: MessageWriter<PetDismi
 fn on_spell_line(
     In(ev): In<SessionEvent>,
     catalog: Option<Res<Spells>>,
-    mut errors: ResMut<UiErrorKeys>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
-    match ev {
+    let line = match ev {
         SessionEvent::PetLearnedSpell { spell_id } => {
-            pet_spell_line(spell_id, true, catalog.as_deref(), &mut errors)
+            pet_spell_line(spell_id, true, catalog.as_deref())
         }
         SessionEvent::PetUnlearnedSpell { spell_id } => {
-            pet_spell_line(spell_id, false, catalog.as_deref(), &mut errors)
+            pet_spell_line(spell_id, false, catalog.as_deref())
         }
-        _ => {}
+        _ => None,
+    };
+    if let Some(line) = line {
+        crate::ui_action::show_in_turn(&mut ui, "ui_pet", line);
     }
 }
 
@@ -495,22 +509,15 @@ const ATTR_ABILITY: u32 = 0x10;
 
 /// `SMSG_PET_LEARNED_SPELL` / `SMSG_PET_UNLEARNED_SPELL` (`0x5d4c30`): one system chat line with
 /// the name and rank, `"%s (%s)"`; an id `Spell.dbc` lacks says nothing.
-fn pet_spell_line(
-    spell_id: u32,
-    learned: bool,
-    catalog: Option<&Spells>,
-    errors: &mut UiErrorKeys,
-) {
-    let Some(display) = catalog.and_then(|c| c.catalog.get(spell_id)) else {
-        return;
-    };
+fn pet_spell_line(spell_id: u32, learned: bool, catalog: Option<&Spells>) -> Option<UiError> {
+    let display = catalog.and_then(|c| c.catalog.get(spell_id))?;
     let key = match (learned, display.attributes & ATTR_ABILITY != 0) {
         (false, _) => "ERR_PET_SPELL_UNLEARNED_S",
         (true, true) => "ERR_PET_LEARN_ABILITY_S",
         (true, false) => "ERR_PET_LEARN_SPELL_S",
     };
     debug!("net: pet spell {spell_id} — {key}");
-    errors.0.push(UiError::s(key, display.ranked_name()));
+    Some(UiError::s(key, display.ranked_name()))
 }
 
 /// `SMSG_PET_MODE` (`0x5d3630`): the state word alone, applied when the packet's guid is the pet list's `head`, 0 for an empty list (`0x5d366e`, `0x5d3683`); whether it applied.
@@ -522,15 +529,6 @@ fn pet_mode(mode: PetMode, head: u64, bar: &mut PetBar) -> bool {
     // The whole dword, as the client stores both packets' state.
     bar.spells.state = mode.state;
     true
-}
-
-/// `SMSG_PET_ACTION_FEEDBACK`: a refused order's reason byte, onto the red line; `helpful` is
-/// the refused spell's helpful-or-harmful answer, which reason 2 reads.
-fn pet_action_feedback(reason: u8, helpful: bool, errors: &mut UiErrorKeys) {
-    debug!("net: pet action feedback {reason}");
-    if let Some(key) = pet_feedback_key(reason, helpful) {
-        errors.0.push(UiError::key(key));
-    }
 }
 
 /// The reference's switch (`0x5d4dc8`): 1 `ERR_PET_SPELL_DEAD` (`0x5d4dcf`), 2
@@ -560,17 +558,10 @@ fn pet_tame_failure(reason: u8, failures: &mut PetTameFailures) {
 
 /// `SMSG_PET_NAME_INVALID`: the server's name code through the name-error display, as the client's
 /// own check would show it. No local name was applied, so nothing rolls back.
-fn pet_name_invalid(code: u32, errors: &mut UiErrorKeys) {
+fn pet_name_invalid(code: u32) -> UiError {
     let key = NameError(code).key();
     debug!("net: pet name refused, code {code} ({key})");
-    errors.0.push(UiError::key(key));
-}
-
-/// `SMSG_PET_BROKEN`, an empty body: loyalty hit zero; raise `ERR_PET_BROKEN`. The zero-guid
-/// `SMSG_PET_SPELLS` of the unsummon right after it clears the bar (`Pet.cpp:822`).
-fn pet_broken(errors: &mut UiErrorKeys) {
-    debug!("net: pet ran away");
-    errors.0.push(UiError::key("ERR_PET_BROKEN"));
+    UiError::key(key)
 }
 
 /// `SMSG_PET_ACTION_SOUND`: dropped when the pet is not streamed; the sound layer checks the
@@ -627,10 +618,10 @@ mod tests {
     /// The server's name code shows the client's own name error.
     #[test]
     fn a_refused_rename_shows_its_name_error() {
-        let mut errors = UiErrorKeys::default();
-        pet_name_invalid(NameError::TOO_LONG.0, &mut errors);
-        pet_name_invalid(99, &mut errors);
-        let keys: Vec<&str> = errors.0.iter().map(|e| e.key).collect();
+        let keys = [
+            pet_name_invalid(NameError::TOO_LONG.0).key,
+            pet_name_invalid(99).key,
+        ];
         assert_eq!(keys, ["ERR_NAME_TOO_LONG", "ERR_NAME_INVALID"]);
     }
 
@@ -749,14 +740,17 @@ mod tests {
     #[test]
     fn a_pet_learn_or_unlearn_prints_its_system_line() {
         let spells = catalog();
-        let mut errors = UiErrorKeys::default();
-        pet_spell_line(17253, true, Some(&spells), &mut errors);
-        pet_spell_line(24450, true, Some(&spells), &mut errors);
-        pet_spell_line(17253, false, Some(&spells), &mut errors);
-        pet_spell_line(99999, true, Some(&spells), &mut errors);
-        pet_spell_line(17253, true, None, &mut errors);
-        let lines: Vec<(&str, Option<&str>)> =
-            errors.0.iter().map(|e| (e.key, e.arg_s())).collect();
+        let errors: Vec<UiError> = [
+            pet_spell_line(17253, true, Some(&spells)),
+            pet_spell_line(24450, true, Some(&spells)),
+            pet_spell_line(17253, false, Some(&spells)),
+            pet_spell_line(99999, true, Some(&spells)),
+            pet_spell_line(17253, true, None),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let lines: Vec<(&str, Option<&str>)> = errors.iter().map(|e| (e.key, e.arg_s())).collect();
         assert_eq!(
             lines,
             [
@@ -819,15 +813,15 @@ mod tests {
 
     #[test]
     fn the_feedback_map_is_the_switch_at_0x5d4dc8() {
-        let mut errors = UiErrorKeys::default();
-        for reason in [0u8, 1, 2, 3, 4, 5, 200] {
-            pet_action_feedback(reason, false, &mut errors);
-        }
+        let mut keys: Vec<&str> = [0u8, 1, 2, 3, 4, 5, 200]
+            .into_iter()
+            .filter_map(|reason| pet_feedback_key(reason, false))
+            .collect();
         // A helpful spell's refusal reads as no valid targets; reason 3 ignores the spell.
-        pet_action_feedback(2, true, &mut errors);
-        pet_action_feedback(3, true, &mut errors);
+        keys.extend(pet_feedback_key(2, true));
+        keys.extend(pet_feedback_key(3, true));
         assert_eq!(
-            errors.0.iter().map(|e| e.key).collect::<Vec<_>>(),
+            keys,
             [
                 "ERR_PET_SPELL_DEAD",
                 "ERR_NO_ATTACK_TARGET",
