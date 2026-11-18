@@ -230,6 +230,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetPowerRegen() (`0x612b40`): the player's own power type's regen, out of casting and while
+    // casting, each + 0.001; 0 and 0 with no player.
+    g.set(
+        "GetPowerRegen",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            Ok(player_stats(lua, (0.0, 0.0), |s| {
+                (
+                    f64::from(s.power_regen[0]) + 0.001,
+                    f64::from(s.power_regen[1]) + 0.001,
+                )
+            }))
+        })?,
+    )?;
+
     // GetAttackPowerForStat(stat, value) → the attack power `value` points of 0-based stat
     // `stat - 1` give (`0x60e560`); both arguments must be numbers.
     g.set(

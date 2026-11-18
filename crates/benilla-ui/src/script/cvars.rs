@@ -30,6 +30,9 @@ pub(crate) struct CvarSlot {
     pub latched: bool,
     /// A latched row's staged value, reported to the host through the change queue when written.
     pub pending: Option<String>,
+    /// Saved per account (flag `0x10`) or per character (flag `0x20`), as `GetCVarInfo` reports.
+    pub per_account: bool,
+    pub per_character: bool,
 }
 
 /// One row of the host's registry as the VM's mirror is seeded from it; `value` is the applied
@@ -42,6 +45,10 @@ pub struct SeededCvar {
     /// [`CvarSlot::device_default`].
     pub device_default: Option<String>,
     pub latched: bool,
+    /// [`CvarSlot::per_account`].
+    pub per_account: bool,
+    /// [`CvarSlot::per_character`].
+    pub per_character: bool,
 }
 
 /// One multisample format the device supports, the reference's triple. `samples == 1` means no
@@ -148,6 +155,8 @@ impl super::UiScript {
                             device_default: None,
                             latched: false,
                             pending: None,
+                            per_account: false,
+                            per_character: false,
                         },
                     );
                 }
@@ -171,6 +180,8 @@ impl super::UiScript {
                     device_default: row.device_default,
                     latched: row.latched,
                     pending: None,
+                    per_account: row.per_account,
+                    per_character: row.per_character,
                 },
             );
         }
@@ -513,9 +524,41 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     device_default: None,
                     latched: false,
                     pending: None,
+                    per_account: false,
+                    per_character: false,
                 },
             );
             Ok(())
+        })?,
+    )?;
+
+    // `GetCVarInfo("cvar")` (`0x50ff50`, in game only): value, default, 1 if saved per account
+    // (flag `0x10`), 1 if saved per character (`0x20`), each flag else nil; four nils for a name
+    // not registered or hidden (`0x40`).
+    lua.globals().set(
+        "GetCVarInfo",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let Some(name) = cvar_arg(args.front()) else {
+                return Err(mlua::Error::runtime("Usage: GetCVarInfo(\"cvar\")"));
+            };
+            let flag = |on: bool| if on { Value::Number(1.0) } else { Value::Nil };
+            let row = read_cvar(lua, &name, |slot| {
+                (
+                    slot.value.clone(),
+                    slot.default.clone(),
+                    slot.per_account,
+                    slot.per_character,
+                )
+            });
+            Ok(match row {
+                Some((value, default, account, character)) => mlua::MultiValue::from_vec(vec![
+                    Value::String(lua.create_string(&value)?),
+                    Value::String(lua.create_string(&default)?),
+                    flag(account),
+                    flag(character),
+                ]),
+                None => mlua::MultiValue::from_vec(vec![Value::Nil; 4]),
+            })
         })?,
     )?;
 
@@ -1060,6 +1103,8 @@ mod tests {
                 default: "1".into(),
                 device_default: None,
                 latched: true,
+                per_account: false,
+                per_character: false,
             },
             SeededCvar {
                 name: "MusicVolume".into(),
@@ -1067,6 +1112,8 @@ mod tests {
                 default: "0.4".into(),
                 device_default: None,
                 latched: false,
+                per_account: false,
+                per_character: false,
             },
         ]);
         s.run(r#"SetCVar("gxVSync", 0)"#).unwrap();

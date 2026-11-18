@@ -154,6 +154,8 @@ fn the_read_only_flag_survives_a_host_reseed() {
         default: String::new(),
         device_default: None,
         latched: false,
+        per_account: false,
+        per_character: false,
     }]);
     assert!(raised(&s, "SetCVar(\"realmName\", \"x\")").contains("is read-only"));
 }

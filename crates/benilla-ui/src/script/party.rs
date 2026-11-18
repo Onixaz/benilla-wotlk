@@ -117,6 +117,9 @@ pub struct PartyState {
     /// battleground's list leaves as it was (`0x6d8d42`-`0x6d8d84`).
     pub real_party_members: u32,
     pub real_raid_members: u32,
+    /// The real group's leader, which `IsRealPartyLeader` and `IsRealRaidLeader` compare with the
+    /// player (`0x52cd30`, `0x573ab0`); 0 before any group.
+    pub real_leader_guid: u64,
     /// The master looter's guid, 0 unless the method is master loot: `GetRaidRosterInfo`'s eleventh
     /// return.
     pub loot_master_guid: u64,
@@ -571,6 +574,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
+
+    // IsRealPartyLeader() (`0x52cd30`) and IsRealRaidLeader() (`0x573ab0`): 1 when the player leads
+    // the real group, the one outside a battleground, else nil. The party verb also refuses a zero
+    // leader; the raid verb's bare compare matches nothing then either, as the player is never 0
+    // in world.
+    for name in ["IsRealPartyLeader", "IsRealRaidLeader"] {
+        g.set(
+            name,
+            lua.create_function(|lua, _: MultiValue| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let p = &model.party;
+                Ok(crate::script::binding_abi::flag(
+                    p.real_leader_guid != 0 && p.real_leader_guid == p.own_guid,
+                ))
+            })?,
+        )?;
+    }
 
     // GetLootMethod() (`0x52cd90`) → the method, the master looter's party index (0 the player,
     // 1-4 a party slot) and its raid index (1-40), each nil when it has none.
@@ -1215,6 +1237,7 @@ mod tests {
             loot_threshold: 2,
             real_party_members: 0,
             real_raid_members: 0,
+            real_leader_guid: 0,
             loot_master_guid: 0,
             member_assignments: [0; 4],
         }
@@ -2041,6 +2064,7 @@ mod tests {
             loot_threshold: 2,
             real_party_members: 0,
             real_raid_members: 0,
+            real_leader_guid: 0,
             loot_master_guid: 0,
             member_assignments: [0; 4],
         }

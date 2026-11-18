@@ -199,6 +199,47 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(parts.join(&separator))
         })?,
     )?;
+    // GetCoinTextureString(amount [, fontHeight]) (`0x510d00` → `0x7e7e10`): each denomination
+    // present through `GOLD_AMOUNT_TEXTURE`, `SILVER_AMOUNT_TEXTURE` or `COPPER_AMOUNT_TEXTURE`
+    // with the amount and the height twice, gold first, joined by a space; a zero amount is
+    // `COPPER_AMOUNT_TEXTURE` with 0. The height is 14 unless the second argument is a number,
+    // truncated. The usage names `GetCoinText`, as the reference's does.
+    g.set(
+        "GetCoinTextureString",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let mut args = args.into_iter();
+            let amount = args.next().unwrap_or(Value::Nil);
+            let n = number_arg(lua, amount, "Usage: GetCoinText(amount, fontHeight)")? as u32;
+            let height = match args.next() {
+                Some(v) => lua.coerce_number(v)?.map_or(14, |h| h as i64 as i32),
+                None => 14,
+            };
+            let unit = |key: &str, v: u32| {
+                let tmpl = crate::strings::global(lua, key).unwrap_or_default();
+                crate::strings::fill(
+                    &tmpl,
+                    &[
+                        crate::strings::Arg::D(v.into()),
+                        crate::strings::Arg::D(height.into()),
+                        crate::strings::Arg::D(height.into()),
+                    ],
+                )
+            };
+            if n == 0 {
+                return Ok(unit("COPPER_AMOUNT_TEXTURE", 0));
+            }
+            let parts: Vec<String> = [
+                (n / 10_000, "GOLD_AMOUNT_TEXTURE"),
+                (n / 100 % 100, "SILVER_AMOUNT_TEXTURE"),
+                (n % 100, "COPPER_AMOUNT_TEXTURE"),
+            ]
+            .into_iter()
+            .filter(|&(v, _)| v != 0)
+            .map(|(v, key)| unit(key, v))
+            .collect();
+            Ok(parts.join(" "))
+        })?,
+    )?;
     g.set(
         "GetCoinIcon",
         lua.create_function(|lua, amount: Value| {

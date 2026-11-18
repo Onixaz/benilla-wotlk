@@ -508,6 +508,61 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
+    // One side of a modifier (`0x5144c0`..`0x5147c0`): the key word's bit, 1 or nil.
+    for (name, bit) in [
+        ("IsLeftShiftKeyDown", 0x1u8),
+        ("IsRightShiftKeyDown", 0x2),
+        ("IsLeftControlKeyDown", 0x4),
+        ("IsRightControlKeyDown", 0x8),
+        ("IsLeftAltKeyDown", 0x10),
+        ("IsRightAltKeyDown", 0x20),
+    ] {
+        lua.globals().set(
+            name,
+            lua.create_function(move |lua, _: mlua::MultiValue| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
+                Ok(crate::script::binding_abi::flag(
+                    model.modifier_keys & bit != 0,
+                ))
+            })?,
+        )?;
+    }
+    // GetMouseButtonClicked() (`0x50f950`): the button of the click whose handler is running,
+    // nil outside one.
+    lua.globals().set(
+        "GetMouseButtonClicked",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            Ok(model.click_button.clone())
+        })?,
+    )?;
+    // GetMouseButtonName(button) (`0x514ba0`): a number is a button index, truncated, mapped to
+    // its name (`0x5eec20`, `0x96f530`): 1 `LeftButton`, 2 `RightButton`, 3 `MiddleButton`, 4-31
+    // `ButtonN`, anything else `UNKNOWN`. A string comes back as it is, anything else as nil.
+    lua.globals().set(
+        "GetMouseButtonName",
+        lua.create_function(|lua, args: mlua::MultiValue| {
+            let first = args.into_iter().next().unwrap_or(Value::Nil);
+            if let Some(n) = lua.coerce_number(first.clone())? {
+                let name = match n as i64 as i32 {
+                    1 => "LeftButton".to_string(),
+                    2 => "RightButton".to_string(),
+                    3 => "MiddleButton".to_string(),
+                    i @ 4..=31 => format!("Button{i}"),
+                    _ => "UNKNOWN".to_string(),
+                };
+                return Ok(Value::String(lua.create_string(&name)?));
+            }
+            Ok(match first {
+                Value::String(s) => Value::String(s),
+                _ => Value::Nil,
+            })
+        })?,
+    )?;
 
     Ok(())
 }

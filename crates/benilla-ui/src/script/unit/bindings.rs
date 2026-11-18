@@ -840,6 +840,46 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             unit_predicate(lua, &token, |u| u.is_pvp_ffa)
         })?,
     )?;
+    // UnitIsPVPSanctuary(unit) (`0x60cf20`): the held unit's sanctuary bit, 1 or nil. The reference
+    // reads its argument with no type check, so anything that names no unit is a miss, unraised.
+    g.set(
+        "UnitIsPVPSanctuary",
+        lua.create_function(|lua, token: Value| {
+            let token = lua.coerce_string(token)?.map(|s| s.to_string_lossy());
+            let hit = with_unit(lua, &token, false, |u| u.has_object && u.pvp_sanctuary)?;
+            Ok(flag(hit))
+        })?,
+    )?;
+    // UnitIsFeignDeath(unit) (`0x60f3d0`): 1 when a held unit of the player's own group shows dead
+    // by its dynamic flags (`UNIT_DYNAMIC_FLAGS` bit `0x20`), else nil. The group test
+    // (`0x512a30`) takes the player, a party or raid member, or a pet of one; a feigning stranger
+    // reads nil.
+    g.set(
+        "UnitIsFeignDeath",
+        lua.create_function(|lua, token: Value| {
+            let token = crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsFeignDeath("unit")"#,
+            )?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let Some(u) = model.unit(&token).filter(|u| u.exists && u.has_object) else {
+                return Ok(Value::Nil);
+            };
+            let me = model.party.own_guid;
+            let ours = |guid: u64| {
+                guid != 0
+                    && (guid == me
+                        || model.party.members.iter().any(|m| m.guid == guid)
+                        || model.party.raid.iter().any(|m| m.guid == guid))
+            };
+            Ok(flag(
+                (ours(u.guid) || ours(u.owner)) && u.dynamic_flags & 0x20 != 0,
+            ))
+        })?,
+    )?;
     // UnitFactionGroup(unit) → FactionGroup.dbc's `InternalName` (field 2), which stock FrameXML
     // builds texture paths from (`PlayerFrame.lua:68`), and its localized `Name0` (field 3); nil,
     // nil for a unit with no side or no snapshot.

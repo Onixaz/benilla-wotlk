@@ -213,6 +213,10 @@ pub(crate) struct Model {
     /// Event name to its frames in registration order, never a set: the event signal dispatches in
     /// that order across frames. Re-registering keeps a frame's position.
     pub(crate) event_to_frames: HashMap<String, Vec<FrameHandle>>,
+    /// Events signalled since the VM began or `ResetCPUUsage`, every event counted with
+    /// profiling on or off (`0x81aa00` bumps the event's count before its listeners run);
+    /// `GetEventCPUUsage` answers the sum. A cell, so counting is no model mutation.
+    pub(crate) event_signals: std::cell::Cell<u32>,
     pub(crate) frame_events: HashMap<FrameHandle, HashSet<String>>,
     /// `RegisterAllEvents` frames in registration order, dispatched after an event's own list and
     /// cleared only by `UnregisterAllEvents`. Deviation: a flag, not the reference's append to
@@ -1185,6 +1189,10 @@ pub(crate) struct Model {
     pub(crate) framerate: std::cell::Cell<f64>,
     /// `(shift, ctrl, alt)` for `Is*KeyDown`, pushed before the frame's mouse events.
     pub(crate) modifiers: (bool, bool, bool),
+    /// The six modifier keys by side, for `IsLeft*KeyDown`/`IsRight*KeyDown`: the reference's key
+    /// word bits (`[0xbeadd8]+0x130`), left shift `0x1`, right shift `0x2`, left control `0x4`,
+    /// right control `0x8`, left alt `0x10`, right alt `0x20`.
+    pub(crate) modifier_keys: u8,
     /// The button of the click whose `PreClick`/`OnClick`/`PostClick` is running, which a
     /// button-qualified modified click compares (`[0xb499a8]+0x1234`).
     pub(crate) click_button: Option<String>,
@@ -1381,6 +1389,7 @@ impl Model {
             model_facts_wanted: Vec::new(),
             model_instances: 0,
             event_to_frames: HashMap::new(),
+            event_signals: std::cell::Cell::new(0),
             frame_events: HashMap::new(),
             all_event_frames: Vec::new(),
             focused_editbox: None,
@@ -1792,6 +1801,7 @@ impl Model {
             summon_answers: Vec::new(),
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
+            modifier_keys: 0,
             click_button: None,
             option_state: Default::default(),
             knows_cold_weather_flying: false,

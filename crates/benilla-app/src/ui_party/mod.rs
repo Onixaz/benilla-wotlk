@@ -113,6 +113,9 @@ pub struct GroupState {
     /// (`0x52bd60`, `0x572530`), kept across groups like the difficulties.
     pub real_party_members: u32,
     pub real_raid_members: u32,
+    /// The real group's leader, beside its counts (`0x52bd60`, `0x572530`); cleared only at game
+    /// init (`0x52d0e0`).
+    pub real_leader: u64,
     /// The last list taken per group kind, the real group's and the battleground's
     /// (`0x6d8991`, `0x6d891e`): its group, counter and arrival, which a stale list repeats.
     pub list_stamps: [Option<ListStamp>; 2],
@@ -327,7 +330,8 @@ impl GroupState {
     /// list.
     /// A list outside a battleground sets the real counts (`0x6d8d42`-`0x6d8d84`): the raid's
     /// rows and the player, or none, and the party slots seated.
-    pub(super) fn set_real_counts(&mut self, raid: bool, rows: usize) {
+    pub(super) fn set_real_counts(&mut self, raid: bool, rows: usize, leader: u64) {
+        self.real_leader = leader;
         self.real_raid_members = if raid && rows != 0 {
             (rows as u32 + 1).min(40)
         } else {
@@ -338,7 +342,8 @@ impl GroupState {
 
     /// `SMSG_REAL_GROUP_UPDATE` (`0x6cc300`): a raid's count and the player, or a party's count
     /// with the raid's cleared; `PARTY_MEMBERS_CHANGED` follows.
-    pub(super) fn apply_real_group_update(&mut self, flags: u8, count: u32) {
+    pub(super) fn apply_real_group_update(&mut self, flags: u8, count: u32, leader: u64) {
+        self.real_leader = leader;
         if flags & 0x2 != 0 {
             let raid = if count != 0 { count + 1 } else { 0 };
             if raid <= 40 {
@@ -641,6 +646,7 @@ impl GroupState {
             lfg_signals: _,
             real_party_members: _,
             real_raid_members: _,
+            real_leader: _,
             // The client's statics, which outlive a group (`[0xc9eae4]`..`[0xc9eb00]`).
             list_stamps: _,
             raid_target_updates: _,

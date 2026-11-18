@@ -2185,6 +2185,7 @@ fn the_death_verbs_read_the_world_between_frames() {
         sickness: false,
         has_timer: true,
         awaiting_name: false,
+        offerer: None,
     });
     assert_eq!(read(&mut rig, "restimer"), "1");
     // A 2v2 queue word, active on Nagrand Arena, map 559.
