@@ -8,7 +8,9 @@
 
 use bevy::prelude::*;
 
-use crate::net::{ClientCommand, GuidIndex, NetCommands, SelfPlayer};
+#[cfg(test)]
+use crate::net::{ClientCommand, NetCommands};
+use crate::net::{GuidIndex, SelfPlayer};
 use crate::target::SERVICE_RANGE_SQ;
 use benilla_world::schedule::WorldStage;
 
@@ -37,17 +39,11 @@ impl Plugin for UiSessionPlugin {
 /// interact-range test against a latched guid. Each NPC window registers
 /// [`close_npc_session_out_of_range::<T>`] ahead of its feed so the close fires its `*_CLOSED` the
 /// same frame; trade does not, as its cancel is server-driven.
-pub(crate) trait NpcSession: Resource {
+pub(crate) trait NpcSession {
     /// The bound NPC's guid; `None` when no window is open.
     fn npc(&self) -> Option<u64>;
     /// The window's client-side close, with no packet: the same clear its close button does.
     fn close(&mut self);
-    /// What a walk-away close sends first, if anything. The reference's watchdog calls the quest
-    /// session's end directly, not `DeclineQuest`, so walking away from an NPC's quest panel sends
-    /// nothing, while a shared quest still owes the sharer `MSG_QUEST_PUSH_RESULT{DECLINE_QUEST}`.
-    fn walk_away_send(&self, _npc: u64) -> Option<ClientCommand> {
-        None
-    }
 }
 
 /// The walk-away leash, set by the latched object's type, not the window: the reference's stores
@@ -74,29 +70,32 @@ pub(crate) fn npc_switched(prev: Option<u64>, now: Option<u64>) -> bool {
 }
 
 /// Close `T`'s open session when the player leaves the leash or the NPC despawns.
-pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
+pub(crate) fn close_npc_session_out_of_range<T: NpcSession + Resource>(
     mut session: ResMut<T>,
     index: Res<GuidIndex>,
-    commands: Res<NetCommands>,
     self_q: Query<&Transform, With<SelfPlayer>>,
     transforms: Query<&Transform>,
 ) {
     let Some(npc) = session.npc() else { return };
-    let Some(self_tf) = self_q.iter().next() else {
-        return;
-    };
-    // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's
-    // compare.
-    let out = match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
-        Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
-        None => true, // the NPC despawned out from under the window
-    };
-    if out {
+    if session_out_of_range(npc, &index, &self_q, &transforms) {
         debug!("ui_session: NPC {npc:#x} out of range/gone — client-side close");
-        if let Some(cmd) = session.walk_away_send(npc) {
-            let _ = commands.0.send(cmd);
-        }
         session.close();
+    }
+}
+
+/// Whether a window latched on `npc` is past its leash or its NPC despawned; centre to centre with no bounding radii, `dist² <= leash²` keeping, as the reference compares.
+pub(crate) fn session_out_of_range(
+    npc: u64,
+    index: &GuidIndex,
+    self_q: &Query<&Transform, With<SelfPlayer>>,
+    transforms: &Query<&Transform>,
+) -> bool {
+    let Some(self_tf) = self_q.iter().next() else {
+        return false;
+    };
+    match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
+        Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
+        None => true,
     }
 }
 
@@ -105,7 +104,7 @@ pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InteractWindows<'w> {
     gossip: Option<ResMut<'w, crate::ui_gossip::GossipState>>,
-    quest: Option<ResMut<'w, crate::ui_quest::QuestGiver>>,
+    quest: Option<NonSendMut<'w, crate::ui_quest::QuestGiver>>,
     merchant: Option<ResMut<'w, crate::ui_merchant::MerchantOpen>>,
     taxi: Option<ResMut<'w, crate::ui_taxi::TaxiState>>,
     trainer: Option<ResMut<'w, crate::ui_trainer::TrainerOpen>>,
@@ -118,12 +117,15 @@ pub(crate) struct InteractWindows<'w> {
     battlemaster: Option<ResMut<'w, crate::ui_battlefield::Battlefield>>,
 }
 
+/// The quest window's place in [`InteractWindows`].
+const QUEST_WINDOW: usize = 1;
+
 /// [`InteractWindows`]' count; the gossip menu is first.
 const INTERACT_WINDOWS: usize = 12;
 
 impl InteractWindows<'_> {
     fn npcs(&self) -> [Option<u64>; INTERACT_WINDOWS] {
-        fn npc<T: NpcSession>(s: &Option<ResMut<T>>) -> Option<u64> {
+        fn npc<T: NpcSession>(s: &Option<impl std::ops::Deref<Target = T>>) -> Option<u64> {
             s.as_ref().and_then(|s| s.npc())
         }
         [
@@ -143,7 +145,7 @@ impl InteractWindows<'_> {
     }
 
     fn close(&mut self, window: usize) {
-        fn close<T: NpcSession>(s: &mut Option<ResMut<T>>) {
+        fn close<T: NpcSession>(s: &mut Option<impl std::ops::DerefMut<Target = T>>) {
             if let Some(s) = s.as_mut() {
                 s.close();
             }
@@ -172,6 +174,7 @@ impl InteractWindows<'_> {
 pub(crate) fn close_interaction(
     mut windows: InteractWindows,
     mut last: Local<[Option<u64>; INTERACT_WINDOWS]>,
+    mut commands: Commands,
 ) {
     let now = windows.npcs();
     for (window, (was, is)) in last.iter().zip(now).enumerate() {
@@ -183,7 +186,12 @@ pub(crate) fn close_interaction(
         }
         if let Some(other) = now.iter().position(|n| *n == Some(npc)) {
             debug!("ui_session: window {window} closed on {npc:#x} — closing window {other} too");
-            windows.close(other);
+            if other == QUEST_WINDOW {
+                // The quest window's leg of the interaction close (`0x512f16`): 12340's close, `QUEST_FINISHED` with it.
+                commands.queue(crate::ui_quest::close_interaction);
+            } else {
+                windows.close(other);
+            }
         }
     }
     *last = windows.npcs();
@@ -198,7 +206,7 @@ pub(crate) struct InteractNpc(pub(crate) Option<Entity>, pub(crate) Option<u64>)
 /// first open one in the chain wins. `Option<Res<_>>` lets a test mount it without every window.
 pub(crate) fn feed_interact_npc(
     gossip: Option<Res<crate::ui_gossip::GossipState>>,
-    quest: Option<Res<crate::ui_quest::QuestGiver>>,
+    quest: Option<NonSend<crate::ui_quest::QuestGiver>>,
     merchant: Option<Res<crate::ui_merchant::MerchantOpen>>,
     trainer: Option<Res<crate::ui_trainer::TrainerOpen>>,
     taxi: Option<Res<crate::ui_taxi::TaxiState>>,
@@ -389,9 +397,9 @@ mod tests {
             let (tx, rx) = crossbeam_channel::unbounded();
             let mut app = App::new();
             app.insert_resource(NetCommands(tx));
-            app.init_resource::<QuestGiver>();
+            app.init_non_send_resource::<QuestGiver>();
             app.init_resource::<GuidIndex>();
-            app.add_systems(Update, close_npc_session_out_of_range::<QuestGiver>);
+            app.add_systems(Update, crate::ui_quest::close_quest_out_of_range);
             app.world_mut()
                 .spawn((SelfPlayer, Transform::from_xyz(0.0, 0.0, 0.0)));
             let e = app
@@ -403,11 +411,11 @@ mod tests {
                 .0
                 .insert(giver, e);
             app.world_mut()
-                .resource_mut::<QuestGiver>()
+                .non_send_resource_mut::<QuestGiver>()
                 .open(giver, detail(giver));
             app.update();
             (
-                app.world().resource::<QuestGiver>().is_open(),
+                app.world().non_send_resource::<QuestGiver>().is_open(),
                 rx.try_iter().collect(),
             )
         }

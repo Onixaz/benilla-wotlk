@@ -1123,3 +1123,72 @@ fn a_moved_summon_field_fires_unit_pet_with_the_bar_unchanged() {
     app.update();
     assert_eq!(events(&mut app), 2, "a quiet frame fires nothing");
 }
+
+/// A moved `UNIT_FIELD_PET_NAME_TIMESTAMP` evicts the pet's cached name through the command queue, as no system holding the VM writes the name cache, and the next resolve asks it again (#1304).
+#[test]
+fn a_renamed_pets_name_is_asked_again() {
+    use benilla_protocol::field::{FIELD_UNIT_PETNUMBER, FIELD_UNIT_PET_NAME_TIMESTAMP};
+    use bevy::prelude::*;
+    const PET: u64 = 0xF140_0000_2A00_0001;
+    const NUMBER: u32 = 42;
+
+    let mut names = crate::names::NameCache::default();
+    names.insert_pet(NUMBER, "Rex".into());
+    let mut app = App::new();
+    app.add_message::<crate::net::FieldChanged>()
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<crate::net::SelfGuid>()
+        .insert_resource(names)
+        .insert_resource(PetBar {
+            spells: PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .add_systems(Update, feed_pet_unit);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    app.insert_resource(NetCommands(tx));
+    let store = |stamp: u32| {
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (FIELD_UNIT_PETNUMBER, NUMBER),
+            (FIELD_UNIT_PET_NAME_TIMESTAMP, stamp),
+        ]))
+    };
+    let pet = app
+        .world_mut()
+        .spawn((crate::net::Guid(PET), store(100)))
+        .id();
+    app.world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(PET, pet);
+    app.insert_non_send_resource(benilla_ui::script::UiScript::new().unwrap());
+    let name = |app: &mut App| {
+        app.world_mut()
+            .non_send_resource_mut::<benilla_ui::script::UiScript>()
+            .eval::<Option<String>>("return (UnitName('pet'))")
+            .unwrap()
+    };
+
+    app.update();
+    assert_eq!(name(&mut app).as_deref(), Some("Rex"));
+    assert!(rx.try_iter().next().is_none(), "a cached name asks nothing");
+
+    app.world_mut().entity_mut(pet).insert(store(200));
+    app.update();
+    app.update();
+    let asked: Vec<_> = rx
+        .try_iter()
+        .filter(|c| {
+            matches!(
+                c,
+                ClientCommand::PetNameQuery {
+                    pet_number: NUMBER,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(asked.len(), 1, "the evicted name is asked once: {asked:?}");
+}

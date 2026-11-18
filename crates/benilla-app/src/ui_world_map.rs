@@ -6,11 +6,9 @@
 //!   `0x547eb0` builds it.
 //! - [`feed_world_map`], every frame: the world positions the engine projects when Lua asks, the
 //!   WMO group under the player its floor lookup keys on (`0x5439e0`), the
-//!   discovery bits, world states and guard marker its landmarks gate on, and the first-entry
+//!   discovery bits and guard marker its landmarks gate on, and the first-entry
 //!   selection (`0x5204f9` into `0x547170`).
 //! - [`dev_map_jump`]: Alt+click the map to go there.
-
-use std::collections::HashMap;
 
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
@@ -329,7 +327,6 @@ fn build_catalog_from_world(world: &World) -> Option<WorldMapCatalog> {
 #[derive(Default)]
 struct FeedMemos {
     explored: Option<Vec<u32>>,
-    states: Option<u64>,
     marker: Option<Option<WorldMapPoiView>>,
     /// The first-entry selection has run: the reference's cached-zone `0` gate.
     map_synced: bool,
@@ -361,7 +358,6 @@ fn feed_world_map(
     group: Res<crate::ui_party::GroupState>,
     guids: Res<crate::net::GuidIndex>,
     unit_pos: Query<&GlobalTransform, With<crate::net::NetEntity>>,
-    world_states: Res<crate::world_state::WorldStates>,
     mut memo: Local<crate::ui_script::VmMemo<FeedMemos>>,
 ) {
     let (Some(mut script), Some(catalog), Some(map), Some(areas)) = (script, catalog, map, areas)
@@ -382,14 +378,6 @@ fn feed_world_map(
         if !explored.is_empty() && memo.explored.as_ref() != Some(&explored) {
             memo.explored = Some(explored.clone());
             script.set_world_map_explored(explored);
-        }
-    }
-    {
-        let generation = world_states.generation();
-        let memo = memo.get(&script);
-        if memo.states != Some(generation) {
-            memo.states = Some(generation);
-            script.set_world_map_world_states(world_states.pairs().collect::<HashMap<_, _>>());
         }
     }
     {
@@ -524,10 +512,7 @@ impl Plugin for WorldMapUiPlugin {
         app.add_systems(
             Update,
             (
-                // Ahead of the world-state event, as the handler refreshes the map first (`0x5269c5`).
-                feed_world_map
-                    .in_set(UiDrain)
-                    .before(crate::world_state_ui::feed_world_state_ui),
+                feed_world_map.in_set(UiDrain),
                 // After the script tick, so the jump hit-tests this tick's frame rects.
                 dev_map_jump.in_set(UiDrain),
             ),

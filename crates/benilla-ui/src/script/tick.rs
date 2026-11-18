@@ -117,7 +117,6 @@ impl super::UiScript {
         for (event, args) in pending {
             self.fire_event(&event, args);
         }
-        self.expire_quest_watches();
         self.resolve();
         let tracing = super::epoch_trace::enabled();
         if tracing {

@@ -4,12 +4,10 @@
 //! `SMSG_QUEST_POI_QUERY_RESPONSE`), and the verbs the stock `WatchFrame.lua` reads per watched
 //! quest: the special item, the completion text and the link.
 
-use std::collections::{HashMap, HashSet};
-
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
 use super::binding_abi::{flag, number_arg};
-use super::quest_log::QuestLogEntryView;
+
 use super::worldmap::QuestPoiPlace;
 use super::Model;
 
@@ -28,9 +26,7 @@ pub(crate) struct QuestWatch {
     distance: (i32, f32),
 }
 
-/// The special item behind a quest's tracker button (`0x5e0da0`), as the app
-/// finds it in the bags: the template's source item, else with flag `0x20000` a drop item, either
-/// one with an on-use spell.
+/// The special item behind a quest's tracker button (`0x5e0da0`), as the live view finds it in the bags at call time: the template's source item, else with flag `0x20000` a drop item, either one with an on-use spell.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestSpecialItemView {
     /// The Lua bag and 1-based slot the item sits in.
@@ -38,9 +34,11 @@ pub struct QuestSpecialItemView {
     pub slot: u32,
     /// `ITEM_FIELD_SPELL_CHARGES[0]` (`0x5e539d`).
     pub charges: i32,
-    /// The on-use spell's range against the target, `None` when there is no target or no range
-    /// (`0x5e54c0`).
-    pub in_range: Option<bool>,
+    /// The on-use spell, the first with trigger 0, the range verb checks (`0x5e5529`).
+    pub spell_id: u32,
+    /// The instance's hyperlink (`0x5e533d`) and inventory art (`0x5e536a`).
+    pub link: String,
+    pub texture: String,
 }
 
 /// One region of a quest's POI, as the `SMSG_QUEST_POI_QUERY_RESPONSE` handler keeps it
@@ -86,11 +84,6 @@ pub(crate) struct QuestWatchState {
     /// quest.
     loaded: bool,
     pub(super) pois: Vec<PoiSlot>,
-    /// Quests asked for and not yet answered, so a rebuild does not re-send.
-    poi_asked: HashSet<u32>,
-    /// `CMSG_QUEST_POI_QUERY` ids for the app to send.
-    poi_wants: Vec<u32>,
-    pub(crate) special_items: HashMap<u32, QuestSpecialItemView>,
 }
 
 impl QuestWatchState {
@@ -104,17 +97,16 @@ impl QuestWatchState {
 fn quest_index(model: &Model, quest_id: u32) -> usize {
     model
         .quest_log
-        .entries
         .iter()
         .position(|e| !e.is_header && e.quest_id == quest_id)
         .map_or(0, |i| i + 1)
 }
 
 /// The quest row at a 1-based index, headers answering none.
-fn quest_at(model: &Model, index: i64) -> Option<&QuestLogEntryView> {
+fn quest_at(model: &Model, index: i64) -> Option<&super::quest_log::QuestLogRow> {
     usize::try_from(index - 1)
         .ok()
-        .and_then(|i| model.quest_log.entries.get(i))
+        .and_then(|i| model.quest_log.get(i))
         .filter(|e| !e.is_header && e.quest_id != 0)
 }
 
@@ -125,7 +117,7 @@ pub(super) fn quest_log_index_of(model: &Model, quest_id: u32) -> i64 {
 
 /// A quest in the log, a folded one included, as `AddQuestWatch` searches (`0x5e64f8`).
 fn in_log(model: &Model, quest_id: u32) -> bool {
-    model.quest_log.quest(quest_id).is_some()
+    super::quest_log::quest_row_of(model, quest_id).is_some()
 }
 
 /// The quest a watch verb names: the row at the numeric argument, else the selection (`0x5e67c0`).
@@ -226,14 +218,16 @@ pub(crate) fn sort_watches(model: &mut Model) -> bool {
             return false;
         }
     }
-    let level = |id: u32| {
-        model
-            .quest_log
-            .entries
-            .iter()
-            .find(|e| !e.is_header && e.quest_id == id)
-            .map_or(0, |e| e.level as i32)
-    };
+    let levels: std::collections::HashMap<u32, i32> = model
+        .quest_watch
+        .watches
+        .iter()
+        .map(|w| {
+            let level = super::quest_log::quest_numbers(model, w.quest_id);
+            (w.quest_id, level.map_or(0, |e| e.level as i32))
+        })
+        .collect();
+    let level = |id: u32| levels.get(&id).copied().unwrap_or(0);
     let before: Vec<u32> = model
         .quest_watch
         .watches
@@ -278,12 +272,7 @@ fn poi_distance(model: &Model, quest_id: u32) -> (i32, f32) {
 
 /// The quest's objective mask (`0x5e2950`), which the app computes per row.
 pub(super) fn objective_mask(model: &Model, quest_id: u32) -> u32 {
-    model
-        .quest_log
-        .entries
-        .iter()
-        .find(|e| !e.is_header && e.quest_id == quest_id)
-        .map_or(0, |e| e.poi_objectives)
+    super::quest_log::quest_numbers(model, quest_id).map_or(0, |e| e.poi_objectives)
 }
 
 /// A region counts for a complete quest (mask all ones) only as the turn-in, else when it serves
@@ -348,7 +337,9 @@ fn update_all_pois(model: &mut Model) -> i64 {
 /// quests in slot order, then the watched open ones in watch order, then the rest.
 fn poi_by_visible_index(model: &Model, index: usize) -> Option<u32> {
     let pois = &model.quest_watch.pois;
-    let settled = |id: u32| super::quest_log::quest_complete_at(&model.quest_log, id);
+    let settled = |id: u32| {
+        super::quest_log::quest_numbers(model, id).is_some_and(|e| super::quest_log::settled(&e))
+    };
     let shown = |id: u32| pois.iter().any(|p| p.quest_id == id && p.shown);
     let watched = |id: u32| model.quest_watch.watches.iter().any(|w| w.quest_id == id);
     pois.iter()
@@ -396,23 +387,18 @@ impl super::UiScript {
         quest_index(&self.model_ref(), quest_id)
     }
 
-    /// Drain the quests to ask the server for (`CMSG_QUEST_POI_QUERY`, `0x5e6cd1`).
-    pub fn take_quest_poi_queries(&mut self) -> Vec<u32> {
-        // Read first: a mutable borrow moves the mutation count, and this drains every frame.
-        if self.model_ref().quest_watch.poi_wants.is_empty() {
-            return Vec::new();
-        }
-        std::mem::take(&mut self.model_mut().quest_watch.poi_wants)
+    /// Whether the POI store holds a response for `quest_id`.
+    pub fn quest_poi_held(&self, quest_id: u32) -> bool {
+        self.model_ref().quest_watch.poi(quest_id).is_some()
     }
 
     /// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): each quest into its slot or the first slot
-    /// whose quest left the log (`0x5e7020`), then `QUEST_POI_UPDATE`.
+    /// whose quest left the log (`0x5e7020`); the handler queues `QUEST_POI_UPDATE` beside it.
     pub fn apply_quest_pois(&mut self, pois: Vec<QuestPoiView>) {
         {
             let mut model = self.model_mut();
             let model = &mut *model;
             for poi in pois {
-                model.quest_watch.poi_asked.remove(&poi.quest_id);
                 if poi.quest_id == 0 || model.quest_watch.poi(poi.quest_id).is_some() {
                     continue;
                 }
@@ -439,44 +425,31 @@ impl super::UiScript {
                 };
             }
         }
-        self.fire_event("QUEST_POI_UPDATE", Vec::new());
     }
 
-    /// Push each quest's special item, found in the bags by the app.
-    pub fn set_quest_special_items(&mut self, items: HashMap<u32, QuestSpecialItemView>) {
-        if self.model_ref().quest_watch.special_items != items {
-            self.model_mut().quest_watch.special_items = items;
+    /// The watch-timer update (`0x5dfef0`), which the game UI's idle runs ahead of the unique signals' flush (`0x52b229`): drop each timed watch past its expiry, queueing the log's update (`0x5dff1d`).
+    pub fn update_quest_watch_timers(&mut self) {
+        let mut model = self.model_mut();
+        let now = model.now;
+        let due: Vec<u32> = model
+            .quest_watch
+            .watches
+            .iter()
+            .filter(|w| w.expire_at > 0.0 && now >= w.expire_at)
+            .map(|w| w.quest_id)
+            .collect();
+        for id in &due {
+            remove_watch(&mut model, *id);
         }
-    }
-
-    /// The watch-timer update (`0x5dfef0`): drop each timed watch past its expiry, announcing the
-    /// log.
-    pub(crate) fn expire_quest_watches(&mut self) {
-        let expired = {
-            let mut model = self.model_mut();
-            let now = model.now;
-            let due: Vec<u32> = model
-                .quest_watch
-                .watches
-                .iter()
-                .filter(|w| w.expire_at > 0.0 && now >= w.expire_at)
-                .map(|w| w.quest_id)
-                .collect();
-            for id in &due {
-                remove_watch(&mut model, *id);
-            }
-            !due.is_empty()
-        };
-        if expired {
-            self.fire_event("QUEST_LOG_UPDATE", Vec::new());
+        if !due.is_empty() {
+            super::live::unique_signal(&mut model, "QUEST_LOG_UPDATE");
         }
     }
 }
 
-/// After a log push: load the saved watches once the log holds a quest (`0x5e6c2b`), prune the
-/// watches of quests that left it, and queue the POI asks for quests the store lacks.
+/// After a log write: load the saved watches once the log holds a quest (`0x5e6c2b`), and prune the watches of quests that left it (`0x5e6c9e`).
 pub(crate) fn on_quest_log(model: &mut Model) {
-    let has_quest = model.quest_log.entries.iter().any(|e| !e.is_header);
+    let has_quest = model.quest_log.iter().any(|e| !e.is_header);
     if !model.quest_watch.loaded && has_quest {
         model.quest_watch.loaded = true;
         let saved = model
@@ -498,19 +471,19 @@ pub(crate) fn on_quest_log(model: &mut Model) {
     for id in gone {
         remove_watch(model, id);
     }
-    let unknown: Vec<u32> = model
+}
+
+/// The rebuild's POI asks (`0x5e6aab`-`0x5e6abe`): every logged quest the store holds no POI for (`0x5e28b0`), in log-slot order, asked again on every rebuild.
+pub(crate) fn rebuild_poi_asks(model: &Model) -> Vec<u32> {
+    let mut asks: Vec<(u8, u32)> = model
         .quest_log
-        .entries
         .iter()
         .filter(|e| !e.is_header && e.quest_id != 0)
-        .map(|e| e.quest_id)
-        .filter(|id| model.quest_watch.poi(*id).is_none())
+        .filter(|e| model.quest_watch.poi(e.quest_id).is_none())
+        .map(|e| (e.slot, e.quest_id))
         .collect();
-    for id in unknown {
-        if model.quest_watch.poi_asked.insert(id) {
-            model.quest_watch.poi_wants.push(id);
-        }
-    }
+    asks.sort_unstable();
+    asks.into_iter().map(|(_, id)| id).collect()
 }
 
 fn model_ref(lua: &Lua) -> mlua::AppDataRef<'_, super::ModelCell> {
@@ -651,7 +624,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: GetQuestSortIndex(questIndex)")?;
             let model = model_ref(lua);
-            let entries = &model.quest_log.entries;
+            let entries = &model.quest_log;
             let Some(row) = usize::try_from(index - 1)
                 .ok()
                 .filter(|&i| i < entries.len())
@@ -670,7 +643,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(row) = completion_row(lua, &model, v)? else {
                 return Ok(MultiValue::new());
             };
-            let text_value = text(lua, &model.quest_log.entries[row].completion_text)?;
+            let entry = super::quest_log::entry_at(lua, &model, row).unwrap_or_default();
+            let text_value = text(lua, &entry.completion_text)?;
             Ok(MultiValue::from_vec(vec![text_value]))
         })?,
     )?;
@@ -682,7 +656,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: GetQuestLink(questID)")?;
             let model = model_ref(lua);
-            let Some(e) = quest_at(&model, i64::from(index)) else {
+            let Some(e) =
+                quest_at(&model, i64::from(index)).map(|r| super::quest_log::resolve(lua, r))
+            else {
                 return Ok(Value::Nil);
             };
             let player = i32::try_from(model.player_req.level).unwrap_or(0);
@@ -699,20 +675,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: GetQuestLogSpecialItemInfo(index)")?;
             let model = model_ref(lua);
-            let Some((item, slot)) = special_item(&model, index) else {
+            let Some(item) = special_item(&model, index) else {
                 return Ok(MultiValue::new());
             };
-            let link = match &slot.link {
-                Some(l) => text(lua, l)?,
-                None => Value::Nil,
-            };
-            let texture = match &slot.texture {
-                Some(t) => text(lua, t)?,
-                None => Value::Nil,
-            };
             Ok(MultiValue::from_vec(vec![
-                link,
-                texture,
+                text(lua, &item.link)?,
+                text(lua, &item.texture)?,
                 Value::Integer(i64::from(item.charges)),
             ]))
         })?,
@@ -724,7 +692,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetQuestLogSpecialItemCooldown",
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: GetQuestLogSpecialItemCooldown(index)")?;
-            let at = special_item(&model_ref(lua), index).map(|(i, _)| (i.bag, i.slot));
+            let at = special_item(&model_ref(lua), index).map(|i| (i.bag, i.slot));
             let Some((bag, slot)) = at else {
                 return Ok(MultiValue::new());
             };
@@ -734,23 +702,36 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // IsQuestLogSpecialItemInRange(index [, unit]) (`0x5e54c0`) → 1, 0, or nil; the unit defaults
-    // to the target (`0x5e5589`).
+    // to the target (`0x5e557e`).
     g.set(
         "IsQuestLogSpecialItemInRange",
-        lua.create_function(|lua, (v, _unit): (Value, Value)| {
+        lua.create_function(|lua, (v, unit): (Value, Value)| {
             let index = number_arg(
                 lua,
                 v,
                 "Usage: IsQuestLogSpecialItemInRange(index [,target])",
             )?;
+            // The token as `lua_tolstring` reads it, a number in its string form, anything else none (`0x5e5589`).
+            let token = lua
+                .coerce_string(unit)?
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
             let model = model_ref(lua);
-            Ok(
-                match special_item(&model, index).and_then(|(i, _)| i.in_range) {
-                    Some(true) => Value::Integer(1),
-                    Some(false) => Value::Integer(0),
-                    None => Value::Nil,
-                },
-            )
+            // The token resolves through the unit feed's guids, not at the call (#1289). A missing or empty token is the target (`0x60b029`).
+
+            let target = if token.is_empty() {
+                Some(model.unit_guids.target).filter(|&g| g != 0)
+            } else {
+                model.unit_guids.guid_of(&token)
+            };
+            // The item's spell through the range check at the call (`0x5e55b6`).
+            let spell = special_item(&model, index).map(|i| i.spell_id);
+            let near = spell.zip(target).and_then(|(id, guid)| {
+                super::read_live(|l| l.item_spell_in_range(id, guid))
+                    .flatten()
+                    .unwrap_or_else(|| model.spell_info.clone()?.spell_in_range(id, false, guid))
+            });
+            Ok(super::spell_info::range_answer(near))
         })?,
     )?;
 
@@ -761,7 +742,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: UseQuestLogSpecialItem(index)")?;
             let mut model = super::model_mut_of(lua);
-            if let Some((bag, slot)) = special_item(&model, index).map(|(i, _)| (i.bag, i.slot)) {
+            if let Some((bag, slot)) = special_item(&model, index).map(|i| (i.bag, i.slot)) {
                 model
                     .script_calls
                     .push(super::ScriptCall::UseItem { bag, slot });
@@ -809,15 +790,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The special item of the quest at a 1-based row and its bag slot, while the slot holds it.
-fn special_item(
-    model: &Model,
-    index: i32,
-) -> Option<(&QuestSpecialItemView, &super::container::ContainerSlot)> {
+/// The special item of the quest at a 1-based row with its link, art and charges, all read from the bags at the call (`0x5e0da0`).
+fn special_item(model: &Model, index: i32) -> Option<QuestSpecialItemView> {
     let e = quest_at(model, i64::from(index))?;
-    let item = model.quest_watch.special_items.get(&e.quest_id)?;
-    let slot = model.containers.get(&item.bag)?.slots.get(&item.slot)?;
-    Some((item, slot))
+    super::read_live(|l| l.quest_special_item(e.quest_id)).flatten()
 }
 
 /// The tooltip's quest difficulty colour (`0x61e540`, strings at `0xad2a68`): red five and
@@ -840,7 +816,7 @@ fn quest_color(level: i32, player: i32) -> &'static str {
 /// `GameTooltip:SetQuestLogSpecialItem(index)` (`0x630990`): the item instance's hover, as the bag
 /// slot's.
 pub(super) fn set_tooltip_item(lua: &Lua, this: &Table, index: i32) -> mlua::Result<()> {
-    let at = special_item(&model_ref(lua), index).map(|(i, _)| (i.bag, i.slot));
+    let at = special_item(&model_ref(lua), index).map(|i| (i.bag, i.slot));
     if let Some((bag, slot)) = at {
         this.call_method::<MultiValue>("SetBagItem", (bag, slot))?;
     }
@@ -850,9 +826,14 @@ pub(super) fn set_tooltip_item(lua: &Lua, this: &Table, index: i32) -> mlua::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::{QuestLogState, UiScript};
+    use crate::script::{QuestLogEntryView, QuestLogState, UiScript};
 
     fn script(quests: u32) -> UiScript {
+        script_with(quests, |_| {})
+    }
+
+    /// [`script`] with its seeded log edited first.
+    fn script_with(quests: u32, edit: impl FnOnce(&mut QuestLogState)) -> UiScript {
         let s = UiScript::new().unwrap();
         s.register_cvars([
             ("trackedQuests", ""),
@@ -869,8 +850,136 @@ mod tests {
                 ..Default::default()
             });
         }
-        s.set_quest_log(state);
+        edit(&mut state);
+        s.seed_quest_log(state);
         s
+    }
+
+    /// `GetQuestLogSpecialItemInfo` (`0x5e52d0`) and the use verb read the item the lent view finds in the bags when called (`0x5e0da0`): nothing with no view, the view's item once one is lent, and nothing again when the view's bags no longer hold it.
+    #[test]
+    fn the_special_item_verbs_read_the_lent_view_when_called() {
+        use crate::script::live::TestView;
+        // No container is seeded: the link, art and charges come from the view alone.
+        let mut s = script(2);
+        let ask = |s: &UiScript| {
+            s.eval::<String>(
+                "local l, t, c = GetQuestLogSpecialItemInfo(2) return tostring(l) .. tostring(t) .. tostring(c)",
+            )
+            .unwrap()
+        };
+        assert_eq!(ask(&s), "nilnilnil");
+        let carried = TestView {
+            special_items: [(
+                2,
+                QuestSpecialItemView {
+                    bag: 0,
+                    slot: 3,
+                    charges: 4,
+                    spell_id: 1000,
+                    link: "|Hitem:5000|h[Relic]|h".into(),
+                    texture: r"Interface\Icons\Relic".into(),
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            s.with_live(&carried, |s| ask(s)),
+            r"|Hitem:5000|h[Relic]|hInterface\Icons\Relic4"
+        );
+        let row_one = |s: &UiScript| {
+            s.eval::<i64>("return select('#', GetQuestLogSpecialItemInfo(1))")
+                .unwrap()
+        };
+        assert_eq!(s.with_live(&carried, |s| row_one(s)), 0);
+        assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnilnil");
+    }
+
+    /// The range check's answer: spell 1000 reaches [`NEAR`] and not [`FAR`]; any other unit or spell has no answer.
+    struct Range;
+
+    impl crate::script::SpellInfoSource for Range {
+        fn spell_info(&self, _: u32, _: bool) -> Option<crate::script::SpellInfo> {
+            None
+        }
+
+        fn spell_in_range(&self, spell_id: u32, pet: bool, target: u64) -> Option<bool> {
+            assert!(!pet, "the item's spell is the player's");
+            (spell_id == 1000 && (target == NEAR || target == FAR)).then_some(target == NEAR)
+        }
+    }
+
+    const NEAR: u64 = 7;
+    const FAR: u64 = 8;
+
+    /// `IsQuestLogSpecialItemInRange(index [, unit])` (`0x5e54c0`): the row's special item (`0x5e5519`), the token's guid (`0x5e5592`), a missing or empty token naming the target (`0x60b029`), a number token read as its string (`0x5e5589`), and the item's spell through the range check (`0x5e55b6`): 1 or 0, nil for no item, no unit or no answer.
+    #[test]
+    fn the_special_item_range_resolves_its_token_then_checks_the_item_spell() {
+        use crate::script::live::TestView;
+        let mut s = script(2);
+        s.set_spell_info_source(std::rc::Rc::new(Range));
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            target: NEAR,
+            pet: FAR,
+            ..Default::default()
+        });
+        let view = TestView {
+            special_items: [(
+                2,
+                QuestSpecialItemView {
+                    bag: 0,
+                    slot: 3,
+                    charges: 0,
+                    spell_id: 1000,
+                    ..Default::default()
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let ask = |s: &mut UiScript, call: &str| {
+            s.with_live(&view, |s| {
+                s.eval::<String>(&format!("return tostring({call})"))
+                    .unwrap()
+            })
+        };
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2)"), "1");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, nil)"), "1");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, '')"), "1");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, true)"), "1");
+        assert_eq!(
+            ask(&mut s, "IsQuestLogSpecialItemInRange('2', 'target')"),
+            "1"
+        );
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'pet')"), "0");
+        assert_eq!(
+            ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'party1')"),
+            "nil"
+        );
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 5)"), "nil");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 1)"), "nil");
+        // Row 1 holds no special item.
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(1)"), "nil");
+        // No target: nobody to range.
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            pet: FAR,
+            ..Default::default()
+        });
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2)"), "nil");
+        assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'pet')"), "0");
+        // The item gone from the view: nil, whatever the unit.
+        let none = TestView::default();
+        assert_eq!(
+            s.with_live(&none, |s| s
+                .eval::<String>("return tostring(IsQuestLogSpecialItemInRange(2, 'pet'))")
+                .unwrap()),
+            "nil"
+        );
+        assert!(s
+            .eval::<mlua::Value>("return IsQuestLogSpecialItemInRange()")
+            .is_err());
     }
 
     #[test]
@@ -894,14 +1003,18 @@ mod tests {
         assert_eq!(s.quest_log_watched(), vec![1, 2]);
         let saved = s.cvar("trackedQuests").unwrap();
         assert_eq!(super::super::achievement::decode_tracked(&saved), vec![1]);
+        // The game UI's idle runs the watch timers after the frame (`0x52b229`).
         s.tick(299.0);
+        s.update_quest_watch_timers();
         assert_eq!(s.quest_log_watched(), vec![1, 2]);
         s.tick(2.0);
+        s.update_quest_watch_timers();
         assert_eq!(s.quest_log_watched(), vec![1]);
         // A plain add to a timed watch makes it permanent; a timed add never shortens a plain one.
         s.run("AddQuestWatch(2, 5) AddQuestWatch(2) AddQuestWatch(1, 5)")
             .unwrap();
         s.tick(10.0);
+        s.update_quest_watch_timers();
         assert_eq!(s.quest_log_watched(), vec![1, 2]);
     }
 
@@ -914,7 +1027,7 @@ mod tests {
             "trackedQuests",
             &super::super::achievement::encode_tracked(&[3, 9, 1]),
         );
-        s.set_quest_log(QuestLogState::default());
+        s.seed_quest_log(QuestLogState::default());
         let mut state = QuestLogState::default();
         for q in 1..=3u32 {
             state.entries.push(QuestLogEntryView {
@@ -923,7 +1036,7 @@ mod tests {
                 ..Default::default()
             });
         }
-        s.set_quest_log(state);
+        s.seed_quest_log(state);
         // Quest 9 left the log, so its watch is not restored.
         assert_eq!(s.quest_log_watched(), vec![3, 1]);
     }
@@ -947,29 +1060,30 @@ mod tests {
         assert!(!s.eval::<bool>("return SortQuestWatches()").unwrap());
     }
 
+    /// Every rebuild asks again for each quest still without a POI (`0x5e6aab`), none deduped across rebuilds.
     #[test]
-    fn the_log_asks_once_for_each_quest_without_a_poi() {
+    fn every_rebuild_asks_for_each_quest_without_a_poi() {
         let mut s = script(2);
-        assert_eq!(s.take_quest_poi_queries(), vec![1, 2]);
-        let log = s.model_ref().quest_log.clone();
-        s.set_quest_log(log);
-        assert!(s.take_quest_poi_queries().is_empty());
+        assert_eq!(rebuild_poi_asks(&s.model_ref()), vec![1, 2]);
+        assert_eq!(rebuild_poi_asks(&s.model_ref()), vec![1, 2]);
         s.apply_quest_pois(vec![QuestPoiView {
             quest_id: 1,
             regions: Vec::new(),
         }]);
         assert_eq!(s.model_ref().quest_watch.pois.len(), 1);
+        assert_eq!(rebuild_poi_asks(&s.model_ref()), vec![2]);
     }
 
     #[test]
     fn the_visible_order_puts_settled_quests_then_watches_then_the_rest() {
-        let s = script(4);
-        {
-            let mut m = s.model_mut();
-            m.quest_log.entries[0].complete = 1;
-            for e in &mut m.quest_log.entries[1..] {
+        let s = script_with(4, |log| {
+            log.entries[0].complete = 1;
+            for e in &mut log.entries[1..] {
                 e.objectives.push(Default::default());
             }
+        });
+        {
+            let mut m = s.model_mut();
             for id in [4, 3, 2, 1] {
                 m.quest_watch.pois.push(PoiSlot {
                     quest_id: id,
@@ -996,12 +1110,10 @@ mod tests {
 
     #[test]
     fn the_link_and_completion_text_read_the_row() {
-        let s = script(1);
-        {
-            let mut m = s.model_mut();
-            m.player_req.level = 29;
-            m.quest_log.entries[0].completion_text = "Return to Marshal.".into();
-        }
+        let s = script_with(1, |log| {
+            log.entries[0].completion_text = "Return to Marshal.".into();
+        });
+        s.model_mut().player_req.level = 29;
         assert_eq!(
             s.eval::<String>("return GetQuestLink(1)").unwrap(),
             "|cffffff00|Hquest:1:29|h[Quest 1]|h|r"

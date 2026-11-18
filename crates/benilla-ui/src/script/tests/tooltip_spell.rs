@@ -805,7 +805,7 @@ fn quest_reward_spell_getters_and_hovers() {
         "Fireball"
     );
 
-    s.set_quest_log(QuestLogState {
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 7,
             detail: Some(QuestLogDetail {
@@ -931,7 +931,7 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
         reward_spell: reward(133),
         ..QuestState::default()
     }));
-    s.set_quest_log(QuestLogState {
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 7,
             detail: Some(QuestLogDetail {

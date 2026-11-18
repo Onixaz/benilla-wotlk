@@ -107,6 +107,7 @@ pub(crate) struct Scene<'w, 's> {
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
     control: ResMut<'w, super::ControlFlag>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
+    signals: NonSendMut<'w, crate::ui_script::live::UniqueSignals>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -123,6 +124,10 @@ pub(crate) struct Scene<'w, 's> {
     roster_throttle: ResMut<'w, crate::ui_arena_team::RosterThrottle>,
     group: ResMut<'w, crate::ui_party::GroupState>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    /// The templates the item watches test the logged quests' required items against.
+    quest_log: Option<Res<'w, crate::ui_quest_log::QuestLog>>,
+    /// The log's quest rows the stack watch walks.
+    quest_rows: Option<NonSend<'w, crate::ui_quest_log::rows::RebuildMarks>>,
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -419,8 +424,12 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
         } => {
             sc.parked
                 .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
-            if !sc.index.0.contains_key(&guid) && sc.parked.contains(guid) {
+            // A held item takes the fields alone; a new or re-enabled one runs its post-init (`0x70af80`, `0x70afb0`).
+            let fresh = !sc.index.0.contains_key(&guid);
+            let post_init = (fields.object_entry().unwrap_or(0), fields.item_owner());
+            if fresh && sc.parked.contains(guid) {
                 revive(&mut sc, guid, Some(fields), None);
+                item_post_init(&mut sc, guid, post_init);
                 return;
             }
             item_create(
@@ -433,11 +442,31 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                 &mut sc.field_changes,
                 &mut sc.items,
             );
+            if fresh {
+                item_post_init(&mut sc, guid, post_init);
+            }
         }
         SessionEvent::ItemTemplate { entry, info } => {
             let info = info.map(|b| *b);
             debug!("net: item template {entry} → {info:?}");
+            let waited = info.is_some() && sc.items.template_cached(entry).is_none();
             sc.items.insert_template(entry, info);
+            // Each item that asked for this record runs its post-init now (`0x70ae90` -> `0x70aa40`).
+            if waited {
+                let owners: Vec<Option<u64>> = sc
+                    .index
+                    .0
+                    .iter()
+                    .filter(|(&g, _)| guid::is_item(g))
+                    .filter_map(|(_, &e)| {
+                        let item = &sc.stores.get(e).ok()?.0;
+                        (item.object_entry() == Some(entry)).then(|| item.item_owner())
+                    })
+                    .collect();
+                for owner in owners {
+                    item_record_watch(&mut sc, (entry, owner));
+                }
+            }
         }
         // The reference's item-time handler has two arms that share the item lookup
         // (`TYPEMASK_ITEM`) and differ on a miss.
@@ -653,6 +682,7 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
 /// The party hook runs first: the reference's deactivate reads the descriptor about to go.
 fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectDestroyed(guid) = ev {
+        item_disable_watch(&mut sc, guid);
         crate::death::net::forget_corpse(guid, &mut sc.death_net);
         let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
         crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
@@ -669,6 +699,7 @@ fn on_objects_removed(In(ev): In<SessionEvent>, mut sc: Scene) {
             .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
         guids.retain(|&g| sc.self_guid.0 != Some(g));
         for &guid in &guids {
+            item_disable_watch(&mut sc, guid);
             let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
             crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         }
@@ -1463,6 +1494,22 @@ fn gameobject_info(
 /// Our own unit's watches in field order (`0x4d5550`): health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
+    if merged.item_stack || merged.item_entry {
+        item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
+    }
+    // The NPC-flag watch's quest leg (`0x71a104`-`0x71a133`): the questgiver bit lost on the open window's giver closes it through the giver's close, nothing owed.
+    if let Some((old, new)) = merged.npc_flags {
+        if old & NPC_FLAG_QUESTGIVER != 0 && new & NPC_FLAG_QUESTGIVER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_non_send_resource::<crate::ui_quest::QuestGiver>()
+                    .is_some_and(|q| q.npc == Some(guid));
+                if open {
+                    crate::ui_quest::giver_finished(world, false, 0, false);
+                }
+            });
+        }
+    }
     if sc.self_guid.0 != Some(guid) {
         return;
     }
@@ -1484,6 +1531,18 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
     own_death_fields(sc, guid, player);
+    // The log window's watch (`0x60c280`), then each moved slot's watch (`0x6df370`) in slot order.
+    if !merged.quest_slots.is_empty() {
+        sc.ui.fire(
+            "UNIT_QUEST_LOG_CHANGED",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+        if let Some(store) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) {
+            let edges = quest_slot_edges(&merged.quest_slots, &store.0);
+            sc.ui
+                .world(move |world| crate::ui_quest_log::rows::slot_watch(world, edges));
+        }
+    }
     own_player_watches(sc, guid, &merged.watched);
 }
 
@@ -1559,12 +1618,26 @@ fn merge_fields(
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            if e.unit_field(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS) {
+                merged.npc_flags = Some((e.old, e.new));
+            }
             if own
                 && (e.unit_field(FIELD_UNIT_HEALTH)
                     || e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
                     || e.unit_field(FIELD_PLAYER_FLAGS))
             {
                 merged.death.push((e.index, e.old, e.new));
+            }
+            if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
+                merged.quest_slots.push((e.index, e.old, e.new));
+            }
+            if matches!(
+                e.kind,
+                benilla_protocol::messages::ObjectType::Item
+                    | benilla_protocol::messages::ObjectType::Container
+            ) {
+                merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
+                merged.item_entry |= e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY;
             }
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
@@ -1588,17 +1661,136 @@ fn merge_fields(
     merged
 }
 
+/// `UNIT_NPC_FLAG_QUESTGIVER`, the bit the NPC-flag watch tests (`0x71a104`).
+const NPC_FLAG_QUESTGIVER: u32 = 0x2;
+
 /// What [`merge_fields`] saw.
 #[derive(Default)]
 struct Merged {
     flags_moved: bool,
     /// Our own death fields' `(index, old, new)`, in field order.
     death: Vec<(u16, u32, u32)>,
+    /// Our own quest-log slots' fields' `(index, old, new)`.
+    quest_slots: Vec<(u16, u32, u32)>,
+    /// A unit's `UNIT_NPC_FLAGS` `(old, new)` when it moved (`0x71a0b0`).
+    npc_flags: Option<(u32, u32)>,
+    /// An item's stack count moved (`0x707720`).
+    item_stack: bool,
+    /// An item's entry moved (`0x707960`).
+    item_entry: bool,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
     /// Our own honor and arena-team watches' `(index, old, new)`, in field order.
     watched: Vec<(u16, u32, u32)>,
 }
+
+/// An item's watches past its create, on the quest log: its stack count's test of the logged quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own, which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
+fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
+    let Some(log) = sc.quest_log.as_deref() else {
+        return;
+    };
+    let Some(item) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) else {
+        return;
+    };
+    let me = sc
+        .self_guid
+        .0
+        .and_then(|g| sc.index.0.get(&g))
+        .and_then(|&e| sc.stores.get(e).ok());
+    if entry && me.is_some() && item.0.item_owner() == sc.self_guid.0 {
+        sc.signals.unique_signal("QUEST_LOG_UPDATE");
+    }
+    if let (true, Some(rows)) = (stack, sc.quest_rows.as_deref()) {
+        crate::ui_quest_log::rows::item_moved(
+            item.0.object_entry().unwrap_or(0),
+            me.is_some(),
+            log,
+            rows,
+            &sc.net,
+            &mut sc.signals,
+        );
+    }
+}
+
+/// An item's post-init (`0x70af00`): its record asked for, and with it cached the post-init with the record runs now (`0x70af37`), else when the answer lands (`0x70ae90`).
+fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>)) {
+    if entry != 0 && sc.items.template(entry, guid, &sc.net).is_some() {
+        item_record_watch(sc, (entry, owner));
+    }
+}
+
+/// The post-init with the record's quest-log test (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), the stack watch's walk (`0x70adfc` -> `0x5e1250`).
+fn item_record_watch(sc: &mut Scene, (entry, owner): (u32, Option<u64>)) {
+    let me = sc.self_guid.0.filter(|g| sc.index.0.contains_key(g));
+    if me.is_none() || owner != me {
+        return;
+    }
+    item_log_walk(sc, entry, true);
+}
+
+/// An item's disable on a destroy or out-of-range (`0x70afc0`): on an item we own (`0x70b0b5`-`0x70b0be`), the stack watch's walk (`0x70b0eb` -> `0x5e1250`).
+fn item_disable_watch(sc: &mut Scene, guid: u64) {
+    if !guid::is_item(guid) {
+        return;
+    }
+    let Some(item) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) else {
+        return;
+    };
+    let (entry, owner) = (item.0.object_entry().unwrap_or(0), item.0.item_owner());
+    if owner.is_none() || owner != sc.self_guid.0 {
+        return;
+    }
+    let me = sc.self_guid.0.is_some_and(|g| sc.index.0.contains_key(&g));
+    item_log_walk(sc, entry, me);
+}
+
+/// The stack watch's walk over the logged quests for `entry` ([`crate::ui_quest_log::rows::item_moved`]).
+fn item_log_walk(sc: &mut Scene, entry: u32, me: bool) {
+    let (Some(log), Some(rows)) = (sc.quest_log.as_deref(), sc.quest_rows.as_deref()) else {
+        return;
+    };
+    crate::ui_quest_log::rows::item_moved(entry, me, log, rows, &sc.net, &mut sc.signals);
+}
+
+/// The slots `fields` moved, in slot order, each slot's `(quest id, state)` before and after.
+fn quest_slot_edges(
+    fields: &[(u16, u32, u32)],
+    store: &benilla_protocol::ObjectFields,
+) -> Vec<crate::ui_quest_log::rows::SlotEdge> {
+    use benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS;
+    let base = benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1;
+    let mut slots: Vec<u8> = fields
+        .iter()
+        .map(|&(index, ..)| ((index - base) / QUEST_LOG_SLOT_FIELDS) as u8)
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots
+        .into_iter()
+        .map(|slot| {
+            let at = base + u16::from(slot) * QUEST_LOG_SLOT_FIELDS;
+            let now = store.player_quest_log(slot);
+            let now_id = now.map_or(0, |s| s.quest_id);
+            let now_state = now.map_or(0, |s| u32::from(s.state));
+            let old = |index: u16, now: u32| {
+                fields
+                    .iter()
+                    .find(|&&(i, ..)| i == index)
+                    .map_or(now, |&(_, old, _)| old)
+            };
+            crate::ui_quest_log::rows::SlotEdge {
+                was: (old(at, now_id), old(at + 1, now_state) as u8),
+                now: (now_id, now_state as u8),
+            }
+        })
+        .collect()
+}
+
+/// Every quest-log slot's fields: the slot watch's range (`0x6e52c5`-`0x6e52fb`).
+const QUEST_LOG_FIELDS: std::ops::Range<u16> = benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1
+    ..benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1
+        + benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS as u16
+            * benilla_protocol::messages::QUEST_LOG_SLOT_FIELDS;
 
 /// Writes one slot of a mover's [`UnitSpeeds`]; `false` when there is none (an untracked guid,
 /// or a create with no movement block). vmangos sends a self create and a speed change back to

@@ -162,7 +162,7 @@ pub struct QuestRequestItems {
 
 /// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): what the turn-in granted. 3.3.5a sends no item
 /// list here; the items arrive as item pushes.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct QuestComplete {
     pub quest_id: u32,
     pub xp: u32,

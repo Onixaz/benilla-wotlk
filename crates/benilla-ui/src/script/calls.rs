@@ -64,6 +64,8 @@ pub enum ScriptCall {
     UseAction(ActionUse),
     /// `UseContainerItem(bag, slot)` outside repair mode.
     UseContainerItem { bag: i64, slot: u32 },
+    /// A questgiver GameObject's use from `DeclineQuest`, its right-click (`0x58ceb2` -> `0x711140`).
+    InteractObject(u64),
     /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`0x708c20`), past the right-click's
     /// merchant, bank and equip arms.
     UseItem { bag: i64, slot: u32 },

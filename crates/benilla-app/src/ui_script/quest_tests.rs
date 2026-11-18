@@ -7,6 +7,42 @@ use benilla_ui::script::{
 
 use super::test_ui::stock_ui;
 
+/// A view that records the questgiver buttons' calls, each answering as a window left open.
+#[derive(Default)]
+struct Buttons(Vec<benilla_ui::script::QuestAction>);
+
+impl benilla_ui::script::LiveState for Buttons {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn quest_action(
+        &mut self,
+        action: benilla_ui::script::QuestAction,
+    ) -> Option<benilla_ui::script::QuestActOutcome> {
+        self.0.push(action);
+        Some(Default::default())
+    }
+}
+
+/// The questgiver calls `chunk` makes, in order.
+fn button_calls(s: &mut UiScript, chunk: &str) -> Vec<benilla_ui::script::QuestAction> {
+    let mut view = Buttons::default();
+    s.with_live_mut(&mut view, |s| s.run(chunk).unwrap());
+    view.0
+}
+
 /// The questgiver, `QuestFrame_SetPortrait`'s `"questnpc"` unit (`QuestFrame.lua:63`).
 fn seat_giver(s: &mut UiScript, name: &str) {
     s.set_unit(
@@ -246,9 +282,8 @@ fn reward_panel_choice_click_selects_and_completes_with_zero_based_index() {
         "no row picked yet"
     );
     // No choice picked: `QuestChooseRewardError()` instead.
-    s.run("QuestFrameCompleteQuestButton:Click()").unwrap();
     assert!(
-        s.take_quest_actions().is_empty(),
+        button_calls(&mut s, "QuestFrameCompleteQuestButton:Click()").is_empty(),
         "must pick a choice first"
     );
 
@@ -264,9 +299,8 @@ fn reward_panel_choice_click_selects_and_completes_with_zero_based_index() {
         2
     );
 
-    s.run("QuestFrameCompleteQuestButton:Click()").unwrap();
     assert_eq!(
-        s.take_quest_actions(),
+        button_calls(&mut s, "QuestFrameCompleteQuestButton:Click()"),
         vec![benilla_ui::script::QuestAction::Reward(1)],
         "row 2 (1-based) -> wire index 1 (0-based)"
     );
@@ -284,14 +318,14 @@ fn greeting_goodbye_button_closes_the_window() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(s.eval::<bool>("return QuestFrame:IsVisible()").unwrap());
 
-    s.run("QuestFrameGreetingGoodbyeButton:Click()").unwrap();
+    let calls = button_calls(&mut s, "QuestFrameGreetingGoodbyeButton:Click()");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
         !s.eval::<bool>("return QuestFrame:IsVisible()").unwrap(),
         "Goodbye closes the questgiver window"
     );
     assert_eq!(
-        s.take_quest_actions(),
+        calls,
         vec![benilla_ui::script::QuestAction::Close],
         "only `QuestFrame_OnHide`'s `CloseQuest()`, never a decline"
     );

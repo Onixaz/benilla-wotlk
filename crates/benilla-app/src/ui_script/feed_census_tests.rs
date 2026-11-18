@@ -88,16 +88,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_pet_doll::feed_pet_doll",
     "benilla_app::ui_pet_stats::feed_pet_stats",
     "benilla_app::ui_petition::feed::feed_petition",
-    "benilla_app::ui_quest::feed_quest",
-    "benilla_app::ui_quest::lines::feed_quest_lines",
-    "benilla_app::ui_quest_log::feed_quest_log",
-    "benilla_app::ui_quest_log::feed_server_clock",
-    "benilla_app::ui_quest_log::progress::announce_quest_progress",
-    "benilla_app::ui_quest_log::tooltip::feed_quest_tooltips",
-    "benilla_app::ui_quest_share::feed_quest_share",
-    "benilla_app::ui_quest_watch::feed_quest_poi_lines",
-    "benilla_app::ui_quest_watch::feed_quest_pois",
-    "benilla_app::ui_quest_watch::feed_special_items",
     "benilla_app::ui_reputation::feed_reputation",
     "benilla_app::ui_rune::feed_runes",
     "benilla_app::ui_script::demo_unit_feed",
@@ -148,10 +138,12 @@ const FEEDS: &[&str] = &[
 
 /// Systems in [`super::UiFeed`] that hold the VM and stay, each with why: state 12340 does not
 /// read live, or no state at all. A piece of #1245 moves a feed here only with its reason.
-const KEPT: &[(&str, &str)] = &[(
-    "benilla_app::death::update_corpse_distance",
-    "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
-)];
+const KEPT: &[(&str, &str)] = &[
+    (
+        "benilla_app::death::update_corpse_distance",
+        "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
+    ),
+];
 
 /// Every system in [`super::UiFeed`] that holds the VM, off the built `Update` schedule.
 fn scheduled_feeds() -> Vec<String> {

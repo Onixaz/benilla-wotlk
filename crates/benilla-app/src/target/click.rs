@@ -142,7 +142,7 @@ pub(crate) fn select_on_click(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ServiceArms<'w, 's> {
     /// The last `SMSG_QUESTGIVER_STATUS` per guid (`[unit+0xcb8]`), read by bit 1's.
-    pub(crate) quest: Res<'w, crate::ui_quest::QuestGiver>,
+    pub(crate) quest: Res<'w, crate::ui_quest::QuestStatuses>,
     /// Bit 7: the reference fires `CONFIRM_BINDER`; `CMSG_BINDER_ACTIVATE` is the dialog's Accept.
     pub(crate) binder: ResMut<'w, crate::ui_binder::BinderState>,
     /// Bit 5's talk runs as a command, its `CONFIRM_XP_LOSS` fired in turn (`0x6db010`).
@@ -2354,7 +2354,7 @@ mod tests {
         let with_quest = armed(&|w| {
             let mut q = crate::ui_quest::QuestGiver::default();
             q.npc = Some(NPC);
-            w.insert_resource(q);
+            w.insert_non_send_resource(q);
         });
         let with_trainer = armed(&|w| {
             let mut t = crate::ui_trainer::TrainerOpen::default();
@@ -2500,7 +2500,8 @@ mod tests {
         world.init_resource::<crate::net::GuidIndex>();
         world.init_resource::<crate::ui_action::PlayerActions>();
         world.init_resource::<crate::ui_action::LearnedAbilities>();
-        world.init_resource::<crate::ui_quest::QuestGiver>();
+        world.init_non_send_resource::<crate::ui_quest::QuestGiver>();
+        world.init_resource::<crate::ui_quest::QuestStatuses>();
         world.init_resource::<crate::ui_binder::BinderState>();
         world.init_resource::<crate::death::DeathNet>();
         world.init_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();

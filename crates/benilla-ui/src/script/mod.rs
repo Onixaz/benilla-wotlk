@@ -200,7 +200,7 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
-pub use live::{read_live, LiveLoan, LiveState};
+pub use live::{read_live, write_live, LiveLoan, LiveState};
 mod loot;
 mod loot_roll;
 mod lua51;
@@ -386,7 +386,7 @@ pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
     TABARD_CREATION_COST,
 };
-pub use tooltip_quest::QuestTooltipView;
+pub use tooltip_quest::{QuestRecord, QuestTooltipRead, QuestTooltipView};
 pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
@@ -457,11 +457,12 @@ pub use pvp::{
     PLAYER_FLAGS_PVP_TIMER,
 };
 pub use quest::{
-    QuestAction, QuestItemView, QuestPanel, QuestRewardExtras, QuestRewardSpell, QuestSelect,
-    QuestState,
+    QuestActOutcome, QuestAction, QuestItemRecord, QuestItemView, QuestPanel, QuestRewardExtras,
+    QuestRewardSpell, QuestSelect, QuestState,
 };
 pub use quest_log::{
-    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState,
+    carry_collapse_filter, fold_quest_log, remap_selection, QuestLogDetail, QuestLogEntryView,
+    QuestLogObjectiveView, QuestLogPlan, QuestLogRow, QuestLogState,
 };
 pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};

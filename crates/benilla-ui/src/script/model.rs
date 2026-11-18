@@ -985,14 +985,12 @@ pub(crate) struct Model {
 
     /// The open questgiver panel, its greeting-row selects and its button calls.
     pub(crate) quest: Option<quest::QuestState>,
-    pub(crate) quest_selects: Vec<quest::QuestSelect>,
-    pub(crate) quest_actions: Vec<quest::QuestAction>,
 
     /// The release, reclaim, resurrect, spirit-healer and soulstone calls, in order; the app sends each.
     pub(crate) death_actions: Vec<death::DeathAction>,
 
     /// The quest log, selection (1-based), abandon mark (a quest id) and abandons.
-    pub(crate) quest_log: quest_log::QuestLogState,
+    pub(crate) quest_log: Vec<quest_log::QuestLogRow>,
     pub(crate) quest_log_selection: u32,
     /// The reward-faction list, refilled by a quest panel's publish or
     /// `ProcessQuestLogRewardFactions` (`0x58d050`).
@@ -1026,9 +1024,7 @@ pub(crate) struct Model {
     /// `SpellItemEnchantment.dbc`, pushed whole at startup: a link names any row.
     pub(crate) enchant_rows: HashMap<u32, super::EnchantRowView>,
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
-    pub(crate) quest_tooltips: HashMap<u32, super::QuestTooltipView>,
-    pub(crate) quest_tooltip_asks: HashSet<u32>,
-    pub(crate) quest_tooltip_waits: HashMap<FrameHandle, u32>,
+    pub(crate) quest_tooltip_waits: HashMap<FrameHandle, Vec<super::QuestRecord>>,
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
@@ -1049,18 +1045,10 @@ pub(crate) struct Model {
     /// The collapse filter where no `questLogCollapseFilter` CVar is registered; -1, every header
     /// open, as the register site sets it (`0x51df3d`).
     pub(crate) quest_log_collapse_filter: i32,
-    /// Quests `GetQuestTimers` marked expired, for the app to keep, announce and re-ask.
-    pub(crate) quest_log_expiries: Vec<u32>,
     /// The quest watches, the POI store and the special items the objective tracker reads.
     pub(crate) quest_watch: super::quest_watch::QuestWatchState,
     /// The animation groups and animations, and the translation each region draws at.
     pub(crate) anims: super::anim::AnimStore,
-    /// The server's clock in Unix seconds, `None` before `SMSG_QUERY_TIME_RESPONSE`. A quest
-    /// deadline is a stamp in it, and `GetQuestTimers` subtracts per call, as the reference does.
-    /// A `Cell`: pushed every frame, read by the quest timer verbs alone (`ModelCell`).
-    pub(crate) server_unix_time: std::cell::Cell<Option<f64>>,
-    /// The daily quest reset in server unix seconds (`0x5dff40`).
-    pub(crate) quest_reset_unix: std::cell::Cell<Option<f64>>,
     /// `GetMoney()` in copper, from `PLAYER_FIELD_COINAGE`.
     pub(crate) money: u64,
 
@@ -1243,9 +1231,9 @@ pub(crate) struct Model {
 
 impl Model {
     /// The selected quest-log row's detail, resolved per call as the reference's bindings do.
-    pub(crate) fn selected_quest_detail(&self) -> Option<&quest_log::QuestLogDetail> {
+    pub(crate) fn selected_quest_detail(&self) -> Option<quest_log::QuestLogDetail> {
         let index = usize::try_from(self.quest_log_selection.checked_sub(1)?).ok()?;
-        self.quest_log.entries.get(index)?.detail.as_ref()
+        quest_log::quest_detail(self.quest_log.get(index)?)
     }
 }
 
@@ -1788,10 +1776,8 @@ impl Model {
             trade_set_items: Vec::new(),
             trade_clear_items: Vec::new(),
             quest: None,
-            quest_selects: Vec::new(),
-            quest_actions: Vec::new(),
             death_actions: Vec::new(),
-            quest_log: quest_log::QuestLogState::default(),
+            quest_log: Vec::new(),
             quest_log_selection: 0,
             quest_reward_factions: Vec::new(),
             quest_log_abandon_mark: 0,
@@ -1809,8 +1795,6 @@ impl Model {
             random_suffixes: HashMap::new(),
             scaling: Default::default(),
             enchant_rows: HashMap::new(),
-            quest_tooltips: HashMap::new(),
-            quest_tooltip_asks: HashSet::new(),
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
             item_stat_asks: HashSet::new(),
@@ -1823,11 +1807,8 @@ impl Model {
             item_tooltip_waits: HashMap::new(),
             item_render: None,
             quest_log_collapse_filter: -1,
-            quest_log_expiries: Vec::new(),
             quest_watch: Default::default(),
             anims: Default::default(),
-            server_unix_time: std::cell::Cell::new(None),
-            quest_reset_unix: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
             camera_facing: std::cell::Cell::new(None),
             nameplates: super::nameplate::NamePlates::default(),

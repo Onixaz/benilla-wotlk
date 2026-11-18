@@ -10,7 +10,7 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
-/// What the verbs read live, implemented by the app over its state. Read-only.
+/// What the verbs read live, implemented by the app over its state; the `&mut self` methods, reached through [`write_live`], write what a verb changes in its call.
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
     fn unit_flags(&self, guid: u64) -> Option<u32>;
@@ -108,6 +108,125 @@ pub trait LiveState {
         0
     }
 
+    /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)` with no answer, `None` where no view lends the check.
+    fn item_spell_in_range(&self, _spell_id: u32, _target: u64) -> Option<Option<bool>> {
+        None
+    }
+
+    /// Queue `event` with the frame's unique signals (`0x615020`); false where no queue is lent.
+    fn unique_signal(&mut self, _event: &'static str) -> bool {
+        false
+    }
+
+    /// The world-state readout's admitted row count at the call (`0x548720`), `None` without one.
+    fn world_state_ui_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// The `index`th admitted readout row resolved at the call (`0x548d40`); `Some(None)` past the end, `None` without a readout.
+    fn world_state_ui_info(&self, _index: usize) -> Option<Option<super::WorldStateUiView>> {
+        None
+    }
+
+    /// One world state's value at the call, a miss reading 0 (`0x549440`'s table); `None` without the table.
+    fn world_state(&self, _key: u32) -> Option<i32> {
+        None
+    }
+
+    /// A quest tooltip's build from the caches at the call (`0x622960`), its title, objectives paragraph and no-progress leaderboard formatted through `get`, each miss asked; `None` where no view lends them.
+    fn quest_tooltip(
+        &mut self,
+        _quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::QuestTooltipRead> {
+        None
+    }
+
+    /// A logged quest's POI lines as the slot, the bags and the caches read now (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`), formatted through `get`; `Some(None)` for a quest not logged or not cached, `None` where no view lends them.
+    fn quest_poi_lines(
+        &self,
+        _quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<super::QuestPoiLines>> {
+        None
+    }
+
+    /// A logged quest's special item as our bags hold it now (`0x5e0da0`): the template's starting item, else under flag `0x20000` a drop item, the first carried copy that can be used; `None` for none.
+    fn quest_special_item(&self, _quest_id: u32) -> Option<super::QuestSpecialItemView> {
+        None
+    }
+
+    /// A logged quest's answers at the call, computed from its slot and the caches (`0x5e0000`, `0x5e0070`, `0x5e0d20`, `0x5e0ea0`, `0x5e1460`), lines formatted through `get`, its detail left out; `Some(None)` for a quest not cached, `None` where no view lends them.
+    fn quest_log_row(
+        &mut self,
+        _quest_id: u32,
+        _slot: u8,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<super::QuestLogEntryView>> {
+        None
+    }
+
+    /// A logged quest's detail pane at the call; `Some(None)` for a quest not cached, `None` where no view lends it.
+    fn quest_log_detail(
+        &mut self,
+        _quest_id: u32,
+        _slot: u8,
+    ) -> Option<Option<super::QuestLogDetail>> {
+        None
+    }
+
+    /// The daily-quest fields holding a quest at the call (`0x58db30`), `None` where no view lends them.
+    fn daily_quests_completed(&self) -> Option<u32> {
+        None
+    }
+
+    /// `GetQuestTimers`' expiry of a run-out timer inside the call (`0x5e634a`): marks the quest expired and asks every questgiver's status again. `Some(Some(title))` for a new mark whose template is cached, `Some(None)` for a quest already marked or one whose line waits on its template's answer (`0x5e635c`); `None` where no view lends it.
+    fn expire_quest(&mut self, _quest_id: u32) -> Option<Option<String>> {
+        None
+    }
+
+    /// The server's unix seconds now, fractional: the local clock offset by the last time response (`0x5dff40`), which the timer verbs subtract (`0x5e4320`); `None` before one.
+    fn server_unix_time(&self) -> Option<f64> {
+        None
+    }
+
+    /// The daily quest reset in server unix seconds as the last time response placed it (`0x5dff40`), which `GetQuestResetTime` counts down to (`0x5e6de0`); `None` before one.
+    fn quest_reset_unix(&self) -> Option<f64> {
+        None
+    }
+
+    /// The rebuild's tail sends in its order: one `CMSG_QUEST_POI_QUERY` naming `pois` when any (`0x5e6cc9`, `0x5e6cd1`), then `CMSG_QUERY_TIME` when `query_time` (`0x5e6d79`).
+    fn send_quest_log_tail(&mut self, _pois: &[u32], _query_time: bool) {}
+
+    /// `GetQuestResetTime`'s first step (`0x5e6dee`-`0x5e6e00`): with the time response's re-ask due, the log's rebuild runs, its tail asking the time again (`0x5e6d79`); its rows to write, `None` when not due, the rebuild skipped or no view lends it.
+    fn rebuild_quest_log_if_reask_due(&mut self) -> Option<super::QuestLogPlan> {
+        None
+    }
+
+    /// A questgiver panel row's item from the item cache at the call (`0x58d190`); `Some(None)` while it is not cached, `None` where no view lends the cache.
+    fn quest_item_record(&self, _item_id: u32) -> Option<Option<super::QuestItemRecord>> {
+        None
+    }
+
+    /// A questgiver button's call (`0x58cd20`, `0x58ce00`, `0x58d350`, `0x58cf40`, `0x58cfa0`): its send and the window's close inside the call; `None` where no view lends the giver.
+    fn quest_action(&mut self, _action: super::QuestAction) -> Option<super::QuestActOutcome> {
+        None
+    }
+
+    /// `SelectAvailableQuest` (`0x58cc20`) or `SelectActiveQuest` (`0x58ccb0`) inside the call; `None` where no view lends the giver.
+    fn quest_select(&mut self, _select: super::QuestSelect) -> Option<super::QuestActOutcome> {
+        None
+    }
+
+    /// The `"questnpc"` unit's guid (`0x6081b0`): the open quest window's inform guid or source; `None` with the window closed or no view lending the giver.
+    fn quest_npc(&self) -> Option<u64> {
+        None
+    }
+
+    /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
+    fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
+        None
+    }
     /// Queue slot `index` (`0xbea4b8`) at the call, `None` off the two.
     fn battlefield_slot(&self, index: usize) -> Option<super::BattlefieldQueueSlot> {
         (index < 2).then(Default::default)
@@ -239,25 +358,30 @@ pub trait LiveState {
     fn clear_inspect_target(&self) {}
 }
 
-/// A lent view's address, its lifetime erased.
-type Lent = Option<NonNull<dyn LiveState>>;
+/// A lent view's address, its lifetime erased, and whether its loan lets verbs write through it.
+type Lent = Option<(NonNull<dyn LiveState>, bool)>;
+
+/// No reference into the lent view is out.
+const FREE: u32 = 0;
+/// A [`write_live`] closure holds the view.
+const WRITING: u32 = u32::MAX;
 
 thread_local! {
-    /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of
-    /// which puts the previous one back before its borrow ends.
+    /// The view lent on this thread, set only by [`UiScript::with_live`], [`UiScript::with_live_mut`] and [`LiveLoan`], each restoring the previous one.
     static SLOT: Cell<Lent> = const { Cell::new(None) };
+    /// The references into the lent view now out: [`FREE`], a count of readers, or [`WRITING`].
+    static HELD: Cell<u32> = const { Cell::new(FREE) };
 }
 
 /// Lend `live` on this thread, returning what it replaces.
 ///
 /// # Safety
-/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends.
-unsafe fn lend(live: &dyn LiveState) -> Lent {
-    let ptr: NonNull<dyn LiveState + '_> = NonNull::from(live);
+/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends; `live` came from a `&mut` borrow when `writable`.
+unsafe fn lend(live: NonNull<dyn LiveState + '_>, writable: bool) -> Lent {
     // SAFETY: only the lifetime is erased; the caller restores the slot before the borrow ends,
-    // and `read_live` hands the view out only for the length of one closure.
-    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(ptr) };
-    SLOT.with(|s| s.replace(Some(ptr)))
+    // and `read_live` and `write_live` hand the view out only for the length of one closure.
+    let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(live) };
+    SLOT.with(|s| s.replace(Some((ptr, writable))))
 }
 
 fn restore(previous: Lent) {
@@ -273,45 +397,77 @@ impl Drop for Restore {
     }
 }
 
-/// A view lent to every verb on this thread until the loan drops, which puts the previous one
-/// back: the guard a host keeps for the length of a stretch of calls into Lua.
+/// A view lent to every verb on this thread until the loan drops, which restores the previous one.
 pub struct LiveLoan<V: LiveState> {
-    /// Boxed, so the lent address holds while the loan moves.
-    view: Box<V>,
+    /// Boxed and held raw, so the lent address holds while the loan moves and [`Self::with_view_mut`] shares its borrow.
+    view: NonNull<V>,
     previous: Lent,
 }
 
 impl<V: LiveState> LiveLoan<V> {
-    /// Lend `view` until the loan drops.
+    /// Lend `view` until the loan drops; verbs may write through it.
     ///
     /// # Safety
     /// The loan is dropped, never leaked, on the thread that made it, and loans on one thread
     /// drop in the reverse order of their making.
     pub unsafe fn new(view: V) -> Self {
-        let view = Box::new(view);
+        let view = NonNull::from(Box::leak(Box::new(view)));
         // SAFETY: `Drop` restores the slot before the box, and with it the view, is freed.
-        let previous = unsafe { lend(&*view) };
+        let previous = unsafe { lend(view as NonNull<dyn LiveState + '_>, true) };
         Self { view, previous }
     }
 
-    /// The lent view.
-    pub fn view(&self) -> &V {
-        &self.view
+    /// `f` over the lent view; a verb writing through the loan from inside `f` panics.
+    pub fn with_view<R>(&self, f: impl FnOnce(&V) -> R) -> R {
+        let held = HELD.with(Cell::get);
+        assert_ne!(held, WRITING, "a loan's view was read inside a write");
+        HELD.with(|h| h.set(held + 1));
+        let _release = Release(held);
+        // SAFETY: the box lives until the drop, and the hold count keeps every writer out while
+        // the reference, which cannot escape `f`, is out.
+        f(unsafe { self.view.as_ref() })
+    }
+
+    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from inside `f` panics.
+    pub fn with_view_mut<R>(&mut self, f: impl FnOnce(&mut V) -> R) -> R {
+        let held = HELD.with(Cell::get);
+        assert_eq!(
+            held, FREE,
+            "a loan's view was written while a reference into it was out"
+        );
+        HELD.with(|h| h.set(WRITING));
+        let _release = Release(FREE);
+        // SAFETY: the box lives until the drop, and the hold count keeps every reader and writer
+        // out while the reference, which cannot escape `f`, is out.
+        f(unsafe { self.view.as_mut() })
     }
 }
 
 impl<V: LiveState> Drop for LiveLoan<V> {
     fn drop(&mut self) {
         restore(self.previous);
+        // SAFETY: made by `Box::leak` in `new`, and the slot no longer names it.
+        drop(unsafe { Box::from_raw(self.view.as_ptr()) });
     }
 }
 
 impl UiScript {
-    /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
-    /// nested call lends its own and restores the outer one.
+    /// Run `f` with `live` lent read-only to every verb it reaches, a nested call restoring the outer loan.
     pub fn with_live<R>(&mut self, live: &dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
+        // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too; the
+        // loan is read-only, so the shared borrow is never written through.
+        let _restore = Restore(unsafe { lend(NonNull::from(live), false) });
+        f(self)
+    }
+
+    /// [`Self::with_live`], with the verbs' writes going through `live`.
+    pub fn with_live_mut<R>(
+        &mut self,
+        live: &mut dyn LiveState,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too.
-        let _restore = Restore(unsafe { lend(live) });
+        let _restore = Restore(unsafe { lend(NonNull::from(live), true) });
         f(self)
     }
 
@@ -321,18 +477,67 @@ impl UiScript {
     }
 }
 
+/// Puts the hold count back, on return and on unwind.
+struct Release(u32);
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(self.0));
+    }
+}
+
 /// The UI's control flag through the lent view; with none lent, as a VM outside the app has, the
 /// value a game start sets (`0x52b8a0`).
 pub(crate) fn has_control() -> bool {
     read_live(|l| l.has_control()).unwrap_or(true)
 }
 
+/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
+pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
+    if write_live(|l| l.unique_signal(event)) != Some(true) {
+        model.pending_events.push((event.to_string(), Vec::new()));
+    }
+}
+
 /// `f` over the view lent right now, `None` with none lent.
+///
+/// # Panics
+/// Inside a [`write_live`] closure: a verb's write never reaches back into Lua.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
-    let ptr = SLOT.with(Cell::get)?;
+    let (ptr, _) = SLOT.with(Cell::get)?;
+    let held = HELD.with(Cell::get);
+    assert_ne!(
+        held, WRITING,
+        "the live view was read inside a write through it"
+    );
+    HELD.with(|h| h.set(held + 1));
+    let _release = Release(held);
     // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or
-    // `LiveLoan`, which outlives this call; the reference cannot escape `f`.
+    // `LiveLoan`, which outlives this call; no writer holds it, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
+    Some(f(live))
+}
+
+/// `f` over the view lent right now, to write what a verb changes in its call; `None` with none lent or a read-only loan.
+///
+/// # Panics
+/// Inside a [`read_live`] or [`write_live`] closure: one writer and no reader at a time.
+pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
+    let (mut ptr, writable) = SLOT.with(Cell::get)?;
+    if !writable {
+        return None;
+    }
+    let held = HELD.with(Cell::get);
+    assert_eq!(
+        held, FREE,
+        "the live view was written while a reference into it was out"
+    );
+    HELD.with(|h| h.set(WRITING));
+    let _release = Release(FREE);
+    // SAFETY: a writable slot holds a live `&mut` borrow lent by an enclosing `with_live_mut` or
+    // `LiveLoan`, which outlives this call; no other reference into it is out, and this one
+    // cannot escape `f`.
+    let live = unsafe { ptr.as_mut() };
     Some(f(live))
 }
 
@@ -368,6 +573,12 @@ pub(crate) struct TestView {
     pub dynamic_flags: std::collections::HashMap<u64, u32>,
     /// Each held player's `PLAYER_FLAGS`; a held unit absent here is no player.
     pub player_flags: std::collections::HashMap<u64, u32>,
+    /// Each logged quest's special item.
+    pub special_items: std::collections::HashMap<u32, super::QuestSpecialItemView>,
+    /// The server's unix seconds now.
+    pub server_unix: Option<f64>,
+    /// The daily quest reset in server unix seconds.
+    pub quest_reset: Option<f64>,
     /// Our honor block.
     pub honor: Option<super::HonorState>,
     /// The PvP toggle timer, `None` without the active player.
@@ -376,6 +587,14 @@ pub(crate) struct TestView {
     pub arena_teams: [super::ArenaTeamSlotView; 3],
     /// The inspect target the inspect verbs set.
     pub inspect_target: Cell<u64>,
+    /// Each logged quest's title by id, and the quests `expire_quest` marked, in order.
+    pub quest_titles: std::collections::HashMap<u32, String>,
+    pub expired: Vec<u32>,
+    /// Each logged quest's POI lines.
+    pub poi_lines: std::collections::HashMap<u32, super::QuestPoiLines>,
+    /// The questgiver calls made, in order, and the outcome each answers.
+    pub quest_calls: Vec<Result<super::QuestAction, super::QuestSelect>>,
+    pub quest_outcome: super::QuestActOutcome,
 }
 
 #[cfg(test)]
@@ -411,6 +630,44 @@ impl LiveState for TestView {
 
     fn far_sight(&self) -> bool {
         self.far_sight
+    }
+
+    fn quest_special_item(&self, quest_id: u32) -> Option<super::QuestSpecialItemView> {
+        self.special_items.get(&quest_id).cloned()
+    }
+
+    fn server_unix_time(&self) -> Option<f64> {
+        self.server_unix
+    }
+
+    fn quest_poi_lines(
+        &self,
+        quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<super::QuestPoiLines>> {
+        Some(self.poi_lines.get(&quest_id).cloned())
+    }
+
+    fn expire_quest(&mut self, quest_id: u32) -> Option<Option<String>> {
+        if self.expired.contains(&quest_id) {
+            return Some(None);
+        }
+        self.expired.push(quest_id);
+        Some(self.quest_titles.get(&quest_id).cloned())
+    }
+
+    fn quest_reset_unix(&self) -> Option<f64> {
+        self.quest_reset
+    }
+
+    fn quest_action(&mut self, action: super::QuestAction) -> Option<super::QuestActOutcome> {
+        self.quest_calls.push(Ok(action));
+        Some(self.quest_outcome)
+    }
+
+    fn quest_select(&mut self, select: super::QuestSelect) -> Option<super::QuestActOutcome> {
+        self.quest_calls.push(Err(select));
+        Some(self.quest_outcome)
     }
 
     fn honor(&self) -> Option<super::HonorState> {
@@ -626,7 +883,7 @@ mod tests {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
         });
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        assert_eq!(loan.view().flags, 5);
+        assert_eq!(loan.with_view(|v| v.flags), 5);
         drop(loan);
         assert!(!s.has_live());
     }
@@ -641,6 +898,44 @@ mod tests {
             .unwrap();
         assert_eq!(elsewhere, None);
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
+    }
+
+    /// A reference out of a loan shuts the verbs out of it, writes while the host reads and everything while it writes, until the reference is back.
+    #[test]
+    fn a_reference_out_of_a_loan_shuts_the_verbs_out() {
+        let s = UiScript::new().unwrap();
+        let lua = s.lua();
+        let write = lua
+            .create_function(|_, ()| Ok(write_live(|_| ()).is_some()))
+            .unwrap();
+        let read = lua
+            .create_function(|_, ()| Ok(read_live(|l| l.unit_flags(1)).flatten()))
+            .unwrap();
+        lua.globals().set("Write", write).unwrap();
+        lua.globals().set("Read", read).unwrap();
+        let reached = |s: &UiScript, chunk: &str| {
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                s.eval::<mlua::Value>(chunk)
+                    .map(|v| !matches!(v, mlua::Value::Nil))
+            }));
+            matches!(run, Ok(Ok(true)))
+        };
+        // SAFETY: dropped at the end of this test, on this thread.
+        let mut loan = unsafe { LiveLoan::new(One { guid: 1, flags: 5 }) };
+        loan.with_view(|v| {
+            assert_eq!(v.flags, 5);
+            assert!(!reached(&s, "return Write() or nil"));
+            assert!(reached(&s, "return Read()"));
+            assert_eq!(v.flags, 5);
+        });
+        loan.with_view_mut(|v| {
+            v.flags = 6;
+            assert!(!reached(&s, "return Write() or nil"));
+            assert!(!reached(&s, "return Read()"));
+            v.flags = 7;
+        });
+        assert!(reached(&s, "return Write() or nil"));
+        assert_eq!(s.eval::<Option<u32>>("return Read()").unwrap(), Some(7));
     }
 
     #[test]

@@ -299,7 +299,7 @@ fn quest_item_hovers_render_the_rows_item_by_id() {
         .unwrap();
     assert_eq!(s.eval::<i64>("return TT:NumLines()").unwrap(), 0);
 
-    s.set_quest_log(QuestLogState {
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 7,
             detail: Some(QuestLogDetail {

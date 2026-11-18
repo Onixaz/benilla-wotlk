@@ -700,7 +700,7 @@ pub(crate) mod schedule_tests {
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
-    ///   page texts, `WorldAssets`, `Creatures`' display models): two misses for one key commute.
+    ///   page texts, `WorldAssets`, `Creatures`' and `ItemDisplays`' display models): two misses for one key commute.
     ///   A cache that is also a window's state is not pure, and not here.
     /// - An append-only sink (`ChatLog`, `MessageSounds`, `UiErrorKeys`, `UiErrorTexts`):
     ///   writers commute, and a drain's order against a writer is one frame of latency.
@@ -731,7 +731,9 @@ pub(crate) mod schedule_tests {
             ("PageTexts", TypeId::of::<crate::ui_item_text::PageTexts>),
             ("WorldAssets", TypeId::of::<benilla_assets::WorldAssets>),
             ("Creatures", TypeId::of::<crate::entities::Creatures>),
+            ("ItemDisplays", TypeId::of::<crate::entities::ItemDisplays>),
         ];
+
         const SINKS: &[ClassRow] = &[
             ("ChatLog", TypeId::of::<crate::ui_chat::ChatLog>),
             ("MessageSounds", TypeId::of::<crate::sound::MessageSounds>),
@@ -848,9 +850,6 @@ pub(crate) mod schedule_tests {
     ///   unit seen a frame early or late is decided again next frame;
     /// - the cursor classifier against `world_focus`'s focus publish and settle release over
     ///   `Player`: it reads `control_lost`, and they write only `settling` and `world_stale`;
-    /// - `ui_quest::lines::feed_quest_lines` against `ui_items::feed_item_stats` and
-    ///   `ui_tooltip::feed_spell_tooltips` over `Items` and the VM: it only reads templates, which
-    ///   those two do not write, and a chat line commutes with their pushes;
     /// - `script_calls::apply_script_calls`, in the press pass ahead of the feeds, against the
     ///   transport chain's `Transform` and `RemoteMotion` writers (`tick_transports`,
     ///   `reseek_ridden_transport_at_worldport`, `compose_riders`, `compose_deck_passengers`,
@@ -880,18 +879,13 @@ pub(crate) mod schedule_tests {
     ///   (`apply_roster_policy`, `persist_last_character`, `apply_realm_policy`): the refill acts
     ///   only on an in-world learn, they only before world entry;
     /// - `ui_totem::feed_totems` against `ui_items::feed_item_stats` over `Items` and the VM: it
-    ///   only reads templates for the tool check, as `feed_quest_lines` does;
+    ///   only reads templates for the tool check;
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
     /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
     ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
     ///   as the guild registrar's close beside it does.
-    /// - `ui_quest_watch::feed_special_items` against `ui_items::feed_item_stats` over `Items` and
-    ///   the VM (it only reads templates, as `feed_quest_lines` does) and against the `Transform`
-    ///   writers the range compare's readers pair with (the transport riders
-    ///   and ticks, the booth billboards, the marker seat scale): it reads the player's and the
-    ///   target's position once a frame for the quest item's range dot, as `feed_action_state` does.
     /// - `ui_spell_info::feed_spell_info`, `GetSpellInfo`'s caster snapshot, is a range compare's
     ///   reader against the same `Player` and `RemoteMotion` writers, and against
     ///   `ui_pet::drain::pet_stop_on_old_target_clear` over `PetBar`: it reads the pet's guid,
@@ -984,14 +978,10 @@ pub(crate) mod schedule_tests {
     ///   drain, against `finish_colliders`, as the other such drains pair; and
     ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over
     ///   `Items`: it only reads templates.
-    /// - The quest progress lines (#638) add 1: `ui_quest_log::progress::announce_quest_progress`
-    ///   against `feed_item_stats` over `Items`: it only reads templates.
+    /// - The quest progress lines (#638) added 1, which left when the lines moved into their packets' handlers (#1276).
     /// - The quest panels and the world map's quest lines add 11: the NPC emote queue's
     ///   `set_emote_queues` and `drive_emote_queues` against `finish_colliders`, as the other
-    ///   animation drivers pair; `ui_quest::lines::feed_quest_lines`, now a `TutorialEvent`
-    ///   writer, against the other writers of that queue (whose events commute) and the feeds it
-    ///   shares the VM with; and `ui_quest_watch::feed_quest_poi_lines` against `feed_item_stats`
-    ///   over `Items`: it only reads templates.
+    ///   animation drivers pair; the turn-in lines' pairs left when the complete handler and the template's answer began showing them (#1276); the POI lines' pair against `feed_item_stats` left when the POI verbs began building them at the call (#1276).
     /// - The update-object deck passengers (#902) add 25: `transport::compose_deck_passengers`
     ///   against the same 24 `Transform` readers `compose_riders` pairs with (the range, reach,
     ///   threat and NPC-session feeds, the art scope, the WDL stream and the booth billboards),
@@ -1044,7 +1034,9 @@ pub(crate) mod schedule_tests {
     // paint): the transport chain before the press, the tick's drains (`UiDrain`) before the
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_164;
+    // The quest rows read at the call (#1276) put `ItemDisplays`, a pure display cache, in every VM system's view; classed with `Creatures`, 3108 with the place legs (#1313).
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_108;
+
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1189,7 +1181,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 733, 725),
+        ("Update", 722, 714),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1490,7 +1482,7 @@ pub(crate) mod schedule_tests {
                 continue;
             }
             let s = &c.systems[k];
-            let phase = ["UiPress", "UiFeed"]
+            let phase = ["UiPress", "UiFeed", "UiSignals"]
                 .into_iter()
                 .find(|phase| s.sets.iter().any(|set| set == phase));
             let in_feed = phase.is_some();
@@ -1644,8 +1636,8 @@ pub(crate) mod schedule_tests {
          "a buy/sell refusal answers a click on an open merchant; show/update ride `VmMemo`s"),
         ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
          "every line answers a charter action of ours; the window edges ride the `fed` memo"),
-        ("ui_quest_share.rs", "feed_quest_share", Because::PlayerRoundTrip,
-         "a verdict answers our own push and a confirm follows a party member's escort accept, both held until the name resolves (the confirm is another player's act: coincidence-only residual)"),
+        ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
+         "runs in the progress packet's handler turn, as 12340's handler shows its line (`0x6d82e9`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_script/extract/mod.rs", "paint_script", Because::Deliberate,
          "per-frame paint and cost state, not a queue"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,

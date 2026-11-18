@@ -95,8 +95,9 @@ impl NetHandlerApp for App {
         self.world_mut()
             .get_resource_or_init::<NetHandlers>()
             .push(kind, (id, name));
-        // The queue a handler fires its UI events into.
-        self.init_resource::<crate::ui_script::live::UiEvents>();
+        // The queues a handler fires its UI events and unique signals into.
+        self.init_resource::<crate::ui_script::live::UiEvents>()
+            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>();
         self
     }
 }

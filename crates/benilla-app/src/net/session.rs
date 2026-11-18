@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::items::Items;
 use crate::names::NameCache;
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::QuestStatuses;
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::ecs::system::SystemParam;
@@ -426,7 +426,8 @@ fn on_reputation_delta(
     factions: Option<Res<crate::target::ring::Factions>>,
     mut chat_log: ResMut<crate::ui_chat::ChatLog>,
     mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: ResMut<QuestStatuses>,
+    mut signals: NonSendMut<crate::ui_script::live::UniqueSignals>,
 ) {
     if let SessionEvent::ReputationDelta {
         bonus,
@@ -455,8 +456,12 @@ fn on_reputation_delta(
             log: &mut chat_log,
             texts: Vec::new(),
         };
-        reputation_delta(standings, &mut b.reputations, &mut quest, &mut lines);
+        let rank_moved = reputation_delta(standings, &mut b.reputations, &mut quest, &mut lines);
         center.write_batch(lines.texts);
+        // The log update with argument 0 queues the signal alone (`0x5d229f`, `0x5e6952`).
+        if rank_moved {
+            signals.unique_signal("QUEST_LOG_UPDATE");
+        }
     }
 }
 
@@ -839,7 +844,7 @@ fn game_speed(timescale: f32, server_time: &mut ServerTime) {
 /// `SMSG_QUERY_TIME_RESPONSE`: the server wall clock that absolute descriptor stamps (the
 /// timed-quest timer) are dated in; its skew against ours is logged once per session.
 fn server_unix_time(unix_time: u32, reset_in: u32, clock: &mut ServerWallClock) {
-    if clock.0.is_none() {
+    if !clock.is_set() {
         let local = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -882,14 +887,17 @@ const FACTION_FLAG_RANK_SHOWN: u8 = 0x80;
 /// - A rank below Unfriendly sets `AT_WAR` (`0x5d21f7`); a rise in rank clears it (`0x5d2200`).
 /// - A rank change prints `FACTION_STANDING_CHANGED` (`0x5d2243`) unless the faction is `HIDDEN`,
 ///   a header without `0x80`, or revealed by this row.
+///
+/// Returns whether any row's rank moved, which owes the log's `QUEST_LOG_UPDATE` (`0x5d2256`).
 fn reputation_delta(
     standings: Vec<(u32, i32)>,
     reputations: &mut Reputations,
-    quest: &mut QuestGiver,
+    quest: &mut QuestStatuses,
     lines: &mut FactionLines,
-) {
+) -> bool {
     use benilla_formats::faction_flags as flag;
     let (race, class, female) = lines.me;
+    let mut rank_moved = false;
     for (row, (list_id, standing)) in standings.into_iter().enumerate() {
         let Some(i) = reputation_slot(list_id, "SMSG_SET_FACTION_STANDING") else {
             continue;
@@ -941,6 +949,8 @@ fn reputation_delta(
             flags &= !flag::AT_WAR;
         }
         reputations.0[i].0 = flags;
+        // Any rank move flags the log's update, hidden or not (`0x5d2226`-`0x5d2256`).
+        rank_moved |= new_rank != old_rank;
         let shown = flags & flag::HIDDEN == 0
             && (flags & flag::HEADER == 0 || flags & FACTION_FLAG_RANK_SHOWN != 0);
         if new_rank != old_rank && shown && !revealed {
@@ -951,6 +961,7 @@ fn reputation_delta(
     }
     // Standing feeds questgiver status (`SatisfyQuestReputation`); the reference re-asks here too.
     quest.bump_reask();
+    rank_moved
 }
 
 /// `SMSG_SET_FACTION_VISIBLE`: sets `FACTION_FLAG_VISIBLE` on the slot and nothing else; it
@@ -1210,7 +1221,7 @@ mod reputation_delta_tests {
         reps.0.resize(128, (0, 0));
         reps.0[stormwind as usize].0 = flag::VISIBLE;
         reps.0[darnassus as usize].0 = flag::VISIBLE | flag::AT_WAR;
-        let mut quest = QuestGiver::default();
+        let mut quest = QuestStatuses::default();
         let mut log = crate::ui_chat::ChatLog::default();
         let mut lines = FactionLines {
             catalog: Some(&catalog),
@@ -1226,11 +1237,14 @@ mod reputation_delta_tests {
             .find(|(_, f)| f.rep_index == darnassus as i32)
             .map(|(_, f)| f.base_for(1, 1))
             .unwrap();
-        reputation_delta(
-            vec![(stormwind, 5100), (darnassus, -9000 - darnassus_base)],
-            &mut reps,
-            &mut quest,
-            &mut lines,
+        assert!(
+            reputation_delta(
+                vec![(stormwind, 5100), (darnassus, -9000 - darnassus_base)],
+                &mut reps,
+                &mut quest,
+                &mut lines,
+            ),
+            "a rank move owes the log's update"
         );
         assert_eq!(lines.texts.len(), 1, "one FACTION text, the first row's");
         assert_eq!(
@@ -1260,6 +1274,13 @@ mod reputation_delta_tests {
             &mut quest,
             &mut lines,
         );
+        // A change inside one rank owes no update (`0x5d2228`).
+        assert!(!reputation_delta(
+            vec![(darnassus, 10 - darnassus_base)],
+            &mut reps,
+            &mut quest,
+            &mut lines,
+        ));
         assert_eq!(
             reps.0[darnassus as usize].0 & flag::AT_WAR,
             0,
@@ -1276,7 +1297,10 @@ mod reputation_delta_tests {
             log: &mut log,
             texts: Vec::new(),
         };
-        reputation_delta(vec![(stormwind, 40000)], &mut reps, &mut quest, &mut lines);
+        assert!(
+            reputation_delta(vec![(stormwind, 40000)], &mut reps, &mut quest, &mut lines),
+            "a hidden faction's rank move still owes the update (`0x5d222d`)"
+        );
         assert!(lines.texts.is_empty());
         assert_eq!(log.pending_len(), 0);
         assert_eq!(reps.0[stormwind as usize].0 & flag::VISIBLE, 0);

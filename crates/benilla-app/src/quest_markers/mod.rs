@@ -1,7 +1,7 @@
 //! Overhead questgiver markers: the reference's `Interface\Buttons\TalkToMe*` M2s over NPC heads,
 //! gold `!` for a quest available, gold `?` for a turn-in, grey `!` and `?`, and the light-blue
 //! `?`. This module renders them; [`query`] decides when to ask, and the answers land in
-//! [`QuestGiver`].
+//! [`QuestStatuses`].
 //!
 //! - Attach: a child of the unit's body M2 at attachment 18, or 29 (`PlayerNameMounted`) when a
 //!   mount model exists and the body authors it ([`overhead_slot`]). With neither, the marker is
@@ -35,7 +35,7 @@ use benilla_formats::BoneScaleAnim;
 use crate::entities::BoneAttach;
 use crate::nameplates::Nameplates;
 use crate::net::GuidIndex;
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::QuestStatuses;
 use benilla_assets::m2_url;
 use benilla_assets::WorldAssets;
 use benilla_world::billboard::BillboardCard;
@@ -131,7 +131,7 @@ fn despawn_marker(commands: &mut Commands, roots: &Query<&QuestMarkerRoot>, root
 /// flight master with a live quest marker, invisible in practice.
 fn sync_markers(
     mut commands: Commands,
-    quest: Res<QuestGiver>,
+    quest: Res<QuestStatuses>,
     fm_status: Query<(&crate::net::Guid, &crate::ui_taxi::FlightMasterStatus)>,
     index: Res<GuidIndex>,
     asset_server: Res<AssetServer>,

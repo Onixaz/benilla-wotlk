@@ -58,7 +58,7 @@ local VERBS = {
     { "popup", popup },
     { "button2", button2 },
     { "soulstone", function() return HasSoulstone() end },
-    { "special", function() return GetQuestLogSpecialItemInfo(2) ~= nil end },
+    { "special", function() local l, t = GetQuestLogSpecialItemInfo(2) return l ~= nil and t ~= nil end },
     { "watchitem", function() return WatchFrameItem1 ~= nil and WatchFrameItem1:IsShown() end },
     { "release", function() return GetReleaseTimeRemaining() end },
     { "reclaim", function() return GetCorpseRecoveryDelay() end },
@@ -68,6 +68,7 @@ local VERBS = {
     { "nores", function() return CannotBeResurrected() end },
     { "healer", function() return CheckSpiritHealerDist() end },
     { "restimer", function() return ResurrectHasTimer() end },
+    { "reset", function() return GetQuestResetTime() end },
     { "bf1", function() return (GetBattlefieldStatus(1)) end },
     { "bfrun", function() return GetBattlefieldInstanceRunTime() > 0 end },
     { "scores", function() return GetNumBattlefieldScores() end },
@@ -91,6 +92,17 @@ local VERBS = {
     { "bfpos1", function() return (select(3, GetBattlefieldPosition(1))) end },
     { "bfstats", function() return GetNumBattlefieldStats() end },
     { "ap1", function() return UnitExists("arenapet1") end },
+    { "wsui", function() return GetNumWorldStateUI() end },
+    { "lb", function() return (GetQuestLogLeaderBoard(1, 2)) end },
+    { "lbdone", function() return (select(3, GetQuestLogLeaderBoard(1, 2))) end },
+    { "qtitle", function() return GetTitleText() end },
+    { "qdone", function() return IsQuestCompletable() end },
+    { "qreward", function() return GetRewardMoney() end },
+    { "ws", function()
+        local t = {}
+        for i = 1, GetNumWorldStateUI() do t[#t + 1] = (select(3, GetWorldStateUIInfo(i))) end
+        return table.concat(t, ",")
+    end },
 }
 local function answers()
     local verbs = {}
@@ -796,12 +808,13 @@ fn quest_accept_and_complete() {
         ],
         3,
     );
+    // The slot watcher rebuilds the rows (`0x6df3bb`) and fires `QUEST_ACCEPTED` for a cached template at once (`0x6df49c`); the rebuild's `QUEST_LOG_UPDATE` waits for the frame's flush (`0x5e6cb9`, `0x614760`).
     assert_eq!(
         pin(&accept, events, verbs),
         vec![
             "UNIT_QUEST_LOG_CHANGED player | quests=0",
-            "QUEST_LOG_UPDATE | quests=2",
             "QUEST_ACCEPTED 2 | quests=2",
+            "QUEST_LOG_UPDATE | quests=2",
         ]
     );
     assert_eq!(
@@ -810,6 +823,23 @@ fn quest_accept_and_complete() {
             "UNIT_QUEST_LOG_CHANGED player | quests=2",
             "QUEST_LOG_UPDATE | quests=0",
         ]
+    );
+}
+
+/// An accept whose template is not cached waits for its answer (`0x6df429`), its rebuild counting the miss and still signalling (`0x5e6a98`, `0x5e6cb9`); the answer rebuilds the rows first, its ask made first (`0x6df3bb`, `0x5de921`), so `QUEST_ACCEPTED` names the quest's row (`0x6df49c`).
+#[test]
+fn an_accept_waiting_on_its_template_names_the_rebuilt_row() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &["QUEST_LOG_UPDATE", "QUEST_ACCEPTED"];
+    let verbs = &["quests"];
+    let slot = rig.packets(vec![self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)])], 2);
+    let answer = rig.packets(vec![quest_template(0)], 3);
+    assert_eq!(pin(&slot, events, verbs), ["QUEST_LOG_UPDATE | quests=0"]);
+    assert_eq!(
+        pin(&answer, events, verbs),
+        vec!["QUEST_ACCEPTED 2 | quests=2", "QUEST_LOG_UPDATE | quests=2"]
     );
 }
 
@@ -1056,13 +1086,10 @@ fn flight_start_with_the_control_update_ahead_of_the_flags() {
     );
 }
 
-/// Accepting a quest whose source item is already carried: 12340's `GetQuestLogSpecialItemInfo`
-/// (`0x5e52d0`) reads the quest and the bags at call time, so the tracker's `QUEST_LOG_UPDATE`
-/// redraw already finds the special item.
+/// Accepting a quest whose source item is already carried: 12340's `GetQuestLogSpecialItemInfo` (`0x5e52d0`) reads the quest and the bags at call time, so the tracker's `QUEST_LOG_UPDATE` redraw already finds the special item.
 #[test]
-#[ignore = "#1245: feed_special_items pushes after feed_quest_log has fired QUEST_LOG_UPDATE"]
 fn quest_accept_shows_the_special_item_with_the_log_update() {
-    let Some((_, accept)) = accept_with_the_source_item() else {
+    let Some((_, accept)) = accept_with_the_source_item(false) else {
         return;
     };
     let first = accept
@@ -1072,10 +1099,10 @@ fn quest_accept_shows_the_special_item_with_the_log_update() {
     assert_eq!(first.verbs["special"], "true");
 }
 
-/// Today: the accept's `QUEST_LOG_UPDATE` reads no special item; `QUEST_ACCEPTED`, fired after it, does.
+/// The accept's `QUEST_ACCEPTED` (`0x6df49c`) and the flushed `QUEST_LOG_UPDATE` after it (`0x614760`) both read the special item: the verb reads the quest and the bags when called (`0x5e0da0`), as do the calls after the frames.
 #[test]
 fn quest_accept_with_a_carried_source_item() {
-    let Some((rig, accept)) = accept_with_the_source_item() else {
+    let Some((mut rig, accept)) = accept_with_the_source_item(false) else {
         return;
     };
     assert_eq!(
@@ -1085,16 +1112,313 @@ fn quest_accept_with_a_carried_source_item() {
             &["special"]
         ),
         vec![
-            "QUEST_LOG_UPDATE | special=false",
             "QUEST_ACCEPTED 2 | special=true",
+            "QUEST_LOG_UPDATE | special=true",
         ]
     );
-    assert_eq!(rig.now().verbs["special"], "true");
+    assert_eq!(rig.live_now().verbs["special"], "true");
+}
+
+/// The source item's create, its bag slot and the quest slot in one frame, as a server's accept sends them: `QUEST_ACCEPTED` and the flushed `QUEST_LOG_UPDATE` already read the item's link and art, which `0x5e52d0` builds from the instance at the call (`0x5e533d`, `0x5e536a`), no bag pass between.
+#[test]
+fn quest_accept_reads_a_source_item_created_in_the_same_frame() {
+    let Some((mut rig, accept)) = accept_with_the_source_item(true) else {
+        return;
+    };
+    assert_eq!(
+        pin(
+            &accept,
+            &["QUEST_LOG_UPDATE", "QUEST_ACCEPTED"],
+            &["special"]
+        ),
+        vec![
+            "QUEST_ACCEPTED 2 | special=true",
+            "QUEST_LOG_UPDATE | special=true",
+        ]
+    );
+    assert_eq!(rig.live_now().verbs["special"], "true");
+}
+
+/// A required item's create and destroy run the stack watch's walk (`0x5e1250`): the create's post-init with its record, at once with the record cached (`0x70af37` -> `0x70adfc`) or at the record's answer (`0x70ae90`), and the disable on a destroy (`0x70b0eb`); each on an item we own (`0x70ad20`-`0x70ad2f`, `0x70b0b5`-`0x70b0be`) queues `QUEST_LOG_UPDATE` and re-asks every giver's status (`0x5e12e5`). Another owner's item does neither.
+#[test]
+fn a_required_items_create_and_destroy_signal_the_log_and_reask_the_givers() {
+    use benilla_protocol::field::{FIELD_ITEM_OWNER, FIELD_OBJECT_ENTRY};
+    const ITEM: u32 = 5100;
+    const LATE: u32 = 5101;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let mut t = benilla_protocol::messages::QuestTemplate {
+        quest_id: QUEST,
+        level: 80,
+        zone_or_sort: 12,
+        title: "Charz".into(),
+        ..Default::default()
+    };
+    t.required_items[0] = (ITEM, 5);
+    t.required_items[1] = (LATE, 1);
+    rig.packets(
+        vec![
+            SessionEvent::QuestTemplate(Box::new(t)),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+            SessionEvent::ItemTemplate {
+                entry: ITEM,
+                info: Some(Box::new(crate::items::test_template("Charz Pelt"))),
+            },
+        ],
+        3,
+    );
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let reasks = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter(|c| matches!(c, crate::net::ClientCommand::QuestgiverStatusMultipleQuery))
+            .count()
+    };
+    let item = |guid: u64, entry: u32, owner: u64| SessionEvent::ItemCreate {
+        guid,
+        container: false,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_OWNER, owner as u32),
+            (FIELD_ITEM_OWNER + 1, (owner >> 32) as u32),
+        ])
+        .into_created(ObjectType::Item),
+    };
+    let updates = |seen: &[Seen]| fired(seen, &["QUEST_LOG_UPDATE"]).len();
+
+    let seen = rig.packets(vec![item(0x4000_0000_0000_0200, ITEM, ME)], 2);
+    assert_eq!(
+        updates(&seen),
+        1,
+        "a cached record: the post-init at the create"
+    );
+    assert_eq!(reasks(&rx), 1);
+
+    let seen = rig.packets(vec![item(0x4000_0000_0000_0201, ITEM, 0x99)], 2);
+    assert_eq!(updates(&seen), 0, "another owner's item");
+    assert_eq!(reasks(&rx), 0);
+
+    let seen = rig.packets(vec![item(0x4000_0000_0000_0202, LATE, ME)], 2);
+    assert_eq!(updates(&seen), 0, "the record is asked for, not cached");
+    assert_eq!(reasks(&rx), 0);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: LATE,
+            info: Some(Box::new(crate::items::test_template("Charz Tooth"))),
+        }],
+        2,
+    );
+    assert_eq!(updates(&seen), 1, "the record's answer runs the post-init");
+    assert_eq!(reasks(&rx), 1);
+
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectDestroyed(0x4000_0000_0000_0200)],
+        2,
+    );
+    assert_eq!(updates(&seen), 1, "the destroy's disable");
+    assert_eq!(reasks(&rx), 1);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectDestroyed(0x4000_0000_0000_0201)],
+        2,
+    );
+    assert_eq!(updates(&seen), 0, "another owner's item");
+    assert_eq!(reasks(&rx), 0);
+}
+
+/// Every write to one of our quest slots runs the slot watch (`0x6df370`): it re-asks every giver's status first (`0x6df3b4`), then after the rebuild and the accept an auto-complete quest (`0x6df4d6`) on a log row whose slot now passes the completion test (`0x6df4e2`) is completed toward the player itself (`0x6df505`). A kill counter short of its count, or a finished quest without the flag, sends no completion.
+#[test]
+fn the_slot_watch_reasks_then_auto_completes_a_finished_quest() {
+    use crate::net::ClientCommand;
+    use benilla_protocol::messages::{quest_flags, QuestTemplate, QUEST_LOG_SLOT_FIELDS};
+    const PLAIN: u32 = QUEST + 1;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let template = |quest_id: u32, flags: u32| {
+        let mut t = QuestTemplate {
+            quest_id,
+            level: 80,
+            zone_or_sort: 12,
+            title: "Charz".into(),
+            flags,
+            ..Default::default()
+        };
+        t.objectives[0].creature_or_go = 299;
+        t.objectives[0].required_count = 2;
+        SessionEvent::QuestTemplate(Box::new(t))
+    };
+    rig.packets(
+        vec![
+            template(QUEST, quest_flags::AUTO_COMPLETE),
+            template(PLAIN, 0),
+        ],
+        2,
+    );
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::QuestgiverStatusMultipleQuery => Some("reask".to_string()),
+                ClientCommand::QuestgiverComplete { npc, quest } => {
+                    Some(format!("complete {npc:#x} {quest}"))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let counter = FIELD_PLAYER_QUEST_LOG_1_1 + 2;
+    let plain = FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS;
+
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)])], 2);
+    assert_eq!(sends(&rx), ["reask"], "the accept, no kill yet");
+    rig.packets(vec![self_values(&[(counter, 1)])], 2);
+    assert_eq!(sends(&rx), ["reask"], "one kill of two");
+    rig.packets(vec![self_values(&[(counter, 2)])], 2);
+    assert_eq!(
+        sends(&rx),
+        ["reask".to_string(), format!("complete {ME:#x} {QUEST}")],
+        "the second kill finishes it: the re-ask, then the completion toward ourselves"
+    );
+    rig.packets(vec![self_values(&[(plain, PLAIN), (plain + 2, 2)])], 2);
+    assert_eq!(sends(&rx), ["reask"], "a finished quest without the flag");
+}
+
+/// Two POI responses in one frame: each handler writes the store in turn (`0x5e7370`) and queues `QUEST_POI_UPDATE` as a unique signal (`0x5e7628`), which fires once, at the frame's flush (`0x614760`), never per response.
+#[test]
+fn two_poi_responses_in_one_frame_fire_one_poi_update() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(vec![poi(QUEST), poi(QUEST + 1)], 3);
+    assert_eq!(
+        pin(&seen, &["QUEST_POI_UPDATE"], &[]),
+        vec!["QUEST_POI_UPDATE"]
+    );
+}
+
+fn poi(quest_id: u32) -> SessionEvent {
+    SessionEvent::QuestPoi(vec![benilla_protocol::messages::QuestPoi {
+        quest_id,
+        blobs: Vec::new(),
+    }])
+}
+
+fn server_time() -> SessionEvent {
+    SessionEvent::ServerUnixTime {
+        unix_time: 1_000_000,
+        reset_in: 3_600,
+    }
+}
+
+/// What [`charz_poi_seen`] read of the POI store, one answer per control update.
+#[derive(Resource, Clone, Default)]
+struct PoiSeen(std::sync::Arc<std::sync::Mutex<Vec<bool>>>);
+
+/// A test handler on the control update reading whether the POI store holds [`QUEST`] at its turn.
+fn charz_poi_seen(
+    In(ev): In<SessionEvent>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    seen: Res<PoiSeen>,
+) {
+    if let SessionEvent::ClientControl { .. } = ev {
+        let seen = seen.0.clone();
+        ui.write(move |s| {
+            seen.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(s.quest_poi_held(QUEST))
+        });
+    }
+}
+
+/// The POI response writes its store from the handler (`0x5e7370`), so the next packet's handler in the same frame already finds it; nothing waits for a per-frame pass.
+#[test]
+fn the_next_packets_handler_finds_the_poi_response_stored() {
+    use crate::net::handlers::NetHandlerApp;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = PoiSeen::default();
+    rig.app.insert_resource(seen.clone());
+    rig.app.net_handler(
+        benilla_protocol::SessionEventKind::ClientControl,
+        charz_poi_seen,
+    );
+    rig.packets(vec![control(true)], 1);
+    rig.packets(vec![poi(QUEST), control(true)], 1);
+    assert_eq!(*seen.0.lock().unwrap(), vec![false, true]);
+}
+
+/// `QUEST_POI_UPDATE` (`0x5e7628`) and the time response's `QUEST_LOG_UPDATE` (`0x5dff89`) are queued by their handlers and flushed in queue order (`0x614760`): wire order, either way round.
+#[test]
+fn the_poi_and_time_responses_signal_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"];
+    let poi_first = rig.packets(vec![poi(QUEST), server_time()], 3);
+    let time_first = rig.packets(vec![server_time(), poi(QUEST + 1)], 3);
+    assert_eq!(
+        pin(&poi_first, events, &[]),
+        vec!["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"]
+    );
+    assert_eq!(
+        pin(&time_first, events, &[]),
+        vec!["QUEST_LOG_UPDATE", "QUEST_POI_UPDATE"]
+    );
+}
+
+/// The quest-slot watch rebuilds the log (`0x6df3bb`), queueing `QUEST_LOG_UPDATE` (`0x5e6cb9`) from the update handler, so it keeps wire order with a POI response's `QUEST_POI_UPDATE` (`0x5e7628`) at the flush (`0x614760`).
+#[test]
+fn the_slot_watch_and_the_poi_response_signal_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &["QUEST_POI_UPDATE", "QUEST_LOG_UPDATE"];
+    rig.packets(vec![quest_template(0)], 3);
+    let slot_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+            poi(QUEST),
+        ],
+        3,
+    );
+    let poi_first = rig.packets(
+        vec![
+            poi(QUEST + 1),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, 0)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&slot_first, events, &["quests"]),
+        vec!["QUEST_LOG_UPDATE | quests=2", "QUEST_POI_UPDATE | quests=2"]
+    );
+    assert_eq!(
+        pin(&poi_first, events, &["quests"]),
+        vec!["QUEST_POI_UPDATE | quests=0", "QUEST_LOG_UPDATE | quests=0"]
+    );
+}
+
+/// The time response sets the offset and the reset (`0x5dff40`) and queues `QUEST_LOG_UPDATE` (`0x5dff89`); `GetQuestResetTime` reads them when called (`0x5e6de0`), 0 before any response.
+#[test]
+fn the_time_response_updates_the_log_with_the_reset_already_read() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    assert_eq!(rig.live_now().verbs["reset"], "0");
+    let seen = rig.packets(vec![server_time()], 3);
+    assert_eq!(
+        pin(&seen, &["QUEST_LOG_UPDATE"], &["reset"]),
+        vec!["QUEST_LOG_UPDATE | reset=3600"]
+    );
+    assert_eq!(rig.live_now().verbs["reset"], "3600");
 }
 
 /// A logged-in rig carrying an on-use item in the backpack's first slot, then the accept of the
 /// quest whose source item it is; what the accept's frames saw.
-fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
+fn accept_with_the_source_item(same_frame: bool) -> Option<(Rig, Vec<Seen>)> {
     const ITEM: u32 = 5000;
     const ITEM_GUID: u64 = 0x4000_0000_0000_0100;
     let mut rig = Rig::login(&[])?;
@@ -1105,38 +1429,415 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
         category: 0,
         category_cooldown_ms: -1,
     });
+    let item = vec![
+        SessionEvent::ItemTemplate {
+            entry: ITEM,
+            info: Some(Box::new(info)),
+        },
+        SessionEvent::ItemCreate {
+            guid: ITEM_GUID,
+            container: false,
+            // `OBJECT_FIELD_ENTRY`, word 3.
+            fields: ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                ITEM,
+            )])
+            .into_created(ObjectType::Item),
+        },
+        // The backpack's first slot, after the 23 equipment and bag slots.
+        self_values(&[
+            (FIELD_PLAYER_INV_SLOT_HEAD + 46, ITEM_GUID as u32),
+            (FIELD_PLAYER_INV_SLOT_HEAD + 47, (ITEM_GUID >> 32) as u32),
+        ]),
+    ];
+    let quest = vec![
+        quest_template(ITEM),
+        self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+    ];
+    if same_frame {
+        let accept = rig.packets(item.into_iter().chain(quest).collect(), 3);
+        return Some((rig, accept));
+    }
+    rig.packets(item, 3);
+    let accept = rig.packets(quest, 3);
+    Some((rig, accept))
+}
+
+/// The kill quest the progress pins accept: one creature objective, five to kill.
+fn kill_quest_template() -> SessionEvent {
+    let mut t = benilla_protocol::messages::QuestTemplate {
+        quest_id: QUEST,
+        level: 80,
+        zone_or_sort: 12,
+        title: "Charz".into(),
+        ..Default::default()
+    };
+    t.objectives[0] = benilla_protocol::messages::QuestObjective {
+        creature_or_go: 299,
+        required_count: 5,
+        ..Default::default()
+    };
+    SessionEvent::QuestTemplate(Box::new(t))
+}
+
+/// The kill's two packets: the slot's counter word (`PLAYER_QUEST_LOG_1_3`) and the add-kill line.
+fn kill(count: u32) -> [SessionEvent; 2] {
+    [
+        self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1 + 2, count)]),
+        SessionEvent::QuestObjectiveKill {
+            quest_id: QUEST,
+            entry: 299,
+            count,
+            required: 5,
+        },
+    ]
+}
+
+const PROGRESS_EVENTS: &[&str] = &[
+    "UNIT_QUEST_LOG_CHANGED",
+    "QUEST_WATCH_UPDATE",
+    "QUEST_LOG_UPDATE",
+    "UI_INFO_MESSAGE",
+];
+
+/// A kill's progress, the counter word and the add-kill line in either wire order: what fires and what the leaderboard reads at each event, pinned ahead of the progress move (#1276).
+#[test]
+fn quest_progress_in_both_packet_orders() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
     rig.packets(
         vec![
-            SessionEvent::ItemTemplate {
-                entry: ITEM,
-                info: Some(Box::new(info)),
+            // The add-kill handler names the creature from its cached record (`0x6d82bc`).
+            SessionEvent::CreatureName {
+                entry: 299,
+                name: Some("Wolf".into()),
+                subname: None,
+                cursor_name: None,
+                creature_type: Some(1),
+                pet_family: 0,
+                rank: 0,
+                type_flags: 0,
+                display_id: 0,
+                civilian: false,
+                racial_leader: false,
+                modifiers: (1.0, 1.0),
             },
-            SessionEvent::ItemCreate {
-                guid: ITEM_GUID,
-                container: false,
-                // `OBJECT_FIELD_ENTRY`, word 3.
-                fields: ObjectFields::from_pairs(&[(
-                    benilla_protocol::field::FIELD_OBJECT_ENTRY,
-                    ITEM,
-                )])
-                .into_created(ObjectType::Item),
-            },
-            // The backpack's first slot, after the 23 equipment and bag slots.
-            self_values(&[
-                (FIELD_PLAYER_INV_SLOT_HEAD + 46, ITEM_GUID as u32),
-                (FIELD_PLAYER_INV_SLOT_HEAD + 47, (ITEM_GUID >> 32) as u32),
-            ]),
-        ],
-        3,
-    );
-    let accept = rig.packets(
-        vec![
-            quest_template(ITEM),
+            kill_quest_template(),
             self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
         ],
         3,
     );
-    Some((rig, accept))
+    let [values, line] = kill(1);
+    let values_first = rig.packets(vec![values, line], 3);
+    let [values, line] = kill(2);
+    let line_first = rig.packets(vec![line, values], 3);
+    assert_eq!(
+        (
+            pin(&values_first, PROGRESS_EVENTS, &["lb", "lbdone"]),
+            pin(&line_first, PROGRESS_EVENTS, &["lb", "lbdone"]),
+            fired(&values_first, &["UI_ERROR_MESSAGE", "CHAT_MSG_SYSTEM"]),
+        ),
+        (
+            vec![
+                // The counter word fires the log window's watch (`0x60c280`); the add-kill handler's line and watch event (`0x6d82e9`, `0x6d8241`) read the slot at the call (`0x5e1460`).
+                "UNIT_QUEST_LOG_CHANGED player | lb=Wolf slain: 1/5 lbdone=nil",
+                "UI_INFO_MESSAGE Wolf slain: 1/5 | lb=Wolf slain: 1/5 lbdone=nil",
+                "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 1/5 lbdone=nil",
+                "QUEST_LOG_UPDATE | lb=Wolf slain: 1/5 lbdone=nil",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+            vec![
+                "UI_INFO_MESSAGE Wolf slain: 2/5 | lb=Wolf slain: 1/5 lbdone=nil",
+                "QUEST_WATCH_UPDATE 2 | lb=Wolf slain: 1/5 lbdone=nil",
+                "UNIT_QUEST_LOG_CHANGED player | lb=Wolf slain: 2/5 lbdone=nil",
+                "QUEST_LOG_UPDATE | lb=Wolf slain: 2/5 lbdone=nil",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        )
+    );
+}
+
+const DIALOG_EVENTS: &[&str] = &[
+    "QUEST_DETAIL",
+    "QUEST_PROGRESS",
+    "QUEST_COMPLETE",
+    "QUEST_FINISHED",
+    "QUEST_ITEM_UPDATE",
+    "QUEST_ACCEPT_CONFIRM",
+];
+
+/// The quest dialogs as their packets arrive one frame apart and two in one frame, and the escort confirm: what fires and what the dialog verbs read at each event, pinned ahead of the dialog move (#1276).
+#[test]
+fn quest_dialogs_and_the_escort_confirm() {
+    use benilla_protocol::messages::{
+        QuestConfirmAccept, QuestDetails, QuestOfferReward, QuestRequestItems,
+    };
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    const NPC: u64 = 0xF130_0000_0100_0001;
+    let detail = || {
+        SessionEvent::QuestDetail(QuestDetails {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            details: "Go.".into(),
+            objectives: "Kill.".into(),
+            ..Default::default()
+        })
+    };
+    let progress = || {
+        SessionEvent::QuestProgress(QuestRequestItems {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            request_text: "Well?".into(),
+            is_complete: true,
+            ..Default::default()
+        })
+    };
+    let offer = || {
+        SessionEvent::QuestOffer(QuestOfferReward {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            offer_text: "Thanks.".into(),
+            ..Default::default()
+        })
+    };
+    let verbs = &["qtitle", "qdone"];
+    let mut seen = Vec::new();
+    for ev in [detail(), progress(), offer()] {
+        seen.push(pin(&rig.packets(vec![ev], 2), DIALOG_EVENTS, verbs));
+    }
+    seen.push(pin(
+        &rig.packets(
+            vec![SessionEvent::QuestComplete(
+                benilla_protocol::messages::QuestComplete {
+                    quest_id: QUEST,
+                    xp: 100,
+                    ..Default::default()
+                },
+            )],
+            2,
+        ),
+        DIALOG_EVENTS,
+        verbs,
+    ));
+    seen.push(pin(
+        &rig.packets(vec![detail(), progress()], 2),
+        DIALOG_EVENTS,
+        verbs,
+    ));
+    seen.push(pin(
+        &rig.packets(
+            vec![
+                name_answer(0x99, "Escort"),
+                SessionEvent::QuestConfirmAccept(QuestConfirmAccept {
+                    quest_id: QUEST,
+                    title: "Charz".into(),
+                    sender: 0x99,
+                }),
+            ],
+            2,
+        ),
+        DIALOG_EVENTS,
+        &[],
+    ));
+    // No NPC is held, so each dialog closes on its first distance check; the close zeroes the giver and leaves the panel's text (`0x58cb6b`, `0x58cb98`).
+    let lines = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        seen,
+        vec![
+            lines(&[
+                "QUEST_DETAIL | qtitle=Charz qdone=nil",
+                "QUEST_FINISHED | qtitle=Charz qdone=nil",
+            ]),
+            lines(&[
+                "QUEST_PROGRESS | qtitle=Charz qdone=1",
+                "QUEST_FINISHED | qtitle=Charz qdone=1",
+            ]),
+            lines(&[
+                "QUEST_COMPLETE | qtitle=Charz qdone=nil",
+                "QUEST_FINISHED | qtitle=Charz qdone=nil",
+            ]),
+            // The template is not cached: the turn-in waits for its answer (`0x6d1192`).
+            lines(&[]),
+            // Each handler fires its panel's event in its turn (`0x58dfb5`, then `0x58bb4c`).
+            lines(&[
+                "QUEST_DETAIL | qtitle=Charz qdone=nil",
+                "QUEST_PROGRESS | qtitle=Charz qdone=1",
+                "QUEST_FINISHED | qtitle=Charz qdone=1",
+            ]),
+            lines(&["QUEST_ACCEPT_CONFIRM Escort Charz"]),
+        ]
+    );
+}
+
+/// A dialog and a quest-slot update in one frame, in either wire order: the dialog's event fires before the frame's `QUEST_LOG_UPDATE`, which waits for the idle tail after every handler (`0x52b247` -> `0x614760`).
+#[test]
+fn a_dialog_and_a_slot_update_in_one_frame_fire_the_log_update_last() {
+    use benilla_protocol::messages::QuestDetails;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let detail = || {
+        SessionEvent::QuestDetail(QuestDetails {
+            npc: 0xF130_0000_0100_0001,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        })
+    };
+    let events = &["QUEST_DETAIL", "QUEST_LOG_UPDATE"];
+    rig.packets(vec![quest_template(0)], 3);
+    let dialog_first = rig.packets(
+        vec![
+            detail(),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+        ],
+        1,
+    );
+    let slot_first = rig.packets(
+        vec![self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, 0)]), detail()],
+        1,
+    );
+    assert_eq!(
+        fired(&dialog_first, events),
+        ["QUEST_DETAIL", "QUEST_LOG_UPDATE"]
+    );
+    assert_eq!(
+        fired(&slot_first, events),
+        ["QUEST_DETAIL", "QUEST_LOG_UPDATE"]
+    );
+}
+
+/// The events the progress, completed-quest and escort handlers fire, beside the control handler's, in one frame.
+const TURN_EVENTS: &[&str] = &[
+    "UI_INFO_MESSAGE",
+    "QUEST_WATCH_UPDATE",
+    "QUEST_QUERY_COMPLETE",
+    "QUEST_ACCEPT_CONFIRM",
+    "PLAYER_CONTROL_LOST",
+    "PLAYER_CONTROL_GAINED",
+];
+
+/// The add-kill line and `QUEST_WATCH_UPDATE` (`0x6d82e9`, `0x6d8241`), `QUEST_QUERY_COMPLETE` (`0x5b5270`) and `QUEST_ACCEPT_CONFIRM` (`0x58bc50`) fire in their packet's turn: ahead of a later packet's handler event in the same frame, behind an earlier one's.
+#[test]
+fn progress_completed_and_confirm_fire_in_their_packets_turn() {
+    use benilla_protocol::messages::QuestConfirmAccept;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            name_answer(0x99, "Escort"),
+            SessionEvent::CreatureName {
+                entry: 299,
+                name: Some("Wolf".into()),
+                subname: None,
+                cursor_name: None,
+                creature_type: Some(1),
+                pet_family: 0,
+                rank: 0,
+                type_flags: 0,
+                display_id: 0,
+                civilian: false,
+                racial_leader: false,
+                modifiers: (1.0, 1.0),
+            },
+            kill_quest_template(),
+            self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
+        ],
+        3,
+    );
+    let [counter, line] = kill(1);
+    rig.packets(vec![counter], 2);
+    let line_first = rig.packets(vec![line, control(false)], 1);
+    let [counter, line] = kill(2);
+    rig.packets(vec![counter], 2);
+    let control_first = rig.packets(vec![control(true), line], 1);
+    let completed = || SessionEvent::QuestsCompleted(vec![QUEST]);
+    let confirm = |sender| {
+        SessionEvent::QuestConfirmAccept(QuestConfirmAccept {
+            quest_id: QUEST,
+            title: "Charz".into(),
+            sender,
+        })
+    };
+    let answers_first = rig.packets(vec![completed(), confirm(0x99), control(false)], 1);
+    let control_ahead = rig.packets(vec![control(true), completed(), confirm(0x99)], 1);
+    assert_eq!(
+        (
+            fired(&line_first, TURN_EVENTS),
+            fired(&control_first, TURN_EVENTS),
+            fired(&answers_first, TURN_EVENTS),
+            fired(&control_ahead, TURN_EVENTS),
+        ),
+        (
+            vec![
+                "UI_INFO_MESSAGE".to_string(),
+                "QUEST_WATCH_UPDATE".into(),
+                "PLAYER_CONTROL_LOST".into(),
+            ],
+            vec![
+                "PLAYER_CONTROL_GAINED".to_string(),
+                "UI_INFO_MESSAGE".into(),
+                "QUEST_WATCH_UPDATE".into(),
+            ],
+            vec![
+                "QUEST_QUERY_COMPLETE".to_string(),
+                "QUEST_ACCEPT_CONFIRM".into(),
+                "PLAYER_CONTROL_LOST".into(),
+            ],
+            vec![
+                "PLAYER_CONTROL_GAINED".to_string(),
+                "QUEST_QUERY_COMPLETE".into(),
+                "QUEST_ACCEPT_CONFIRM".into(),
+            ],
+        )
+    );
+}
+
+/// The escort confirm and the push verdict read the member's name with no callback (`0x58bc85`, `0x6e3a61`): a name not cached drops them, and its answer later in the frame raises nothing; a cached name shows the verdict's line.
+#[test]
+fn an_unnamed_member_drops_the_confirm_and_the_verdict() {
+    use benilla_protocol::messages::{QuestConfirmAccept, QuestShareMsg};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let confirm = SessionEvent::QuestConfirmAccept(QuestConfirmAccept {
+        quest_id: QUEST,
+        title: "Charz".into(),
+        sender: 0x77,
+    });
+    let verdict = |member| SessionEvent::QuestPushResult {
+        member,
+        msg: QuestShareMsg::SHARING_QUEST,
+    };
+    let unnamed = rig.packets(vec![confirm, verdict(0x77), name_answer(0x77, "Late")], 3);
+    let named = rig.packets(vec![verdict(0x77)], 3);
+    let events = &["QUEST_ACCEPT_CONFIRM", "CHAT_MSG_SYSTEM"];
+    assert_eq!(fired(&unnamed, events), Vec::<String>::new());
+    let lines: Vec<&str> = named
+        .iter()
+        .filter(|s| s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.args.split(' ').take(4).collect::<Vec<_>>().join(" "))
+        .map(|l| {
+            if l.starts_with("Sharing quest with Late") {
+                "shared"
+            } else {
+                "other"
+            }
+        })
+        .collect();
+    assert_eq!(lines, ["shared"], "{named:?}");
 }
 
 // ── The live infrastructure end to end ───────────────────────────────────────────────────────────
@@ -1569,6 +2270,52 @@ fn duel_and_battlefield_events_fire_in_wire_order() {
             "DUEL_FINISHED",
         ],
         "a challenger no object holds raises no popup (`0x5cfd73`)"
+    );
+}
+
+/// The world-state handler fires `ARENA_SEASON_WORLD_STATE` from the setter (`0x5494db`), refreshes the map (`0x5269c5`) and fires `UPDATE_WORLD_STATES` (`0x5269d1`, `0x526a17`) before the next packet's handler runs, and a moved phase fires it too (`0x51397f`); the readout reads the values each handler just wrote.
+#[test]
+fn world_state_events_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::WorldStates {
+                scope: Some((489, 3277, 3277)),
+                states: vec![(1581, 2), (0xc77, 8)],
+            },
+            SessionEvent::DuelOutOfBounds,
+            SessionEvent::PhaseShift { mask: 0x41 },
+            SessionEvent::PhaseShift { mask: 0x41 },
+            SessionEvent::WorldStates {
+                scope: None,
+                states: vec![(1581, 3), (0xc77, 8)],
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "ARENA_SEASON_WORLD_STATE",
+                "UPDATE_WORLD_STATES",
+                "DUEL_OUTOFBOUNDS",
+                "WORLD_MAP_UPDATE",
+            ],
+            &["ws"]
+        ),
+        vec![
+            "ARENA_SEASON_WORLD_STATE | ws=Time Remaining: 0 min.,2/0,0/0",
+            "WORLD_MAP_UPDATE | ws=Time Remaining: 0 min.,2/0,0/0",
+            "UPDATE_WORLD_STATES | ws=Time Remaining: 0 min.,2/0,0/0",
+            "DUEL_OUTOFBOUNDS | ws=Time Remaining: 0 min.,2/0,0/0",
+            "UPDATE_WORLD_STATES | ws=Time Remaining: 0 min.,2/0,0/0",
+            "WORLD_MAP_UPDATE | ws=Time Remaining: 0 min.,3/0,0/0",
+            "UPDATE_WORLD_STATES | ws=Time Remaining: 0 min.,3/0,0/0",
+        ],
+        "the second phase shift moves nothing and the second season write moves nothing"
     );
 }
 
@@ -2528,4 +3275,60 @@ fn the_queue_zero_arm_clears_the_active_instance_before_its_event() {
         format!("UPDATE_BATTLEFIELD_STATUS 1 | bf1=none arena=nil bfpos=1 {columns}"),
         "no active slot left for the arm"
     );
+}
+
+/// `CloseQuest` and `AcceptQuest` close inside their call (`0x58d35a` -> `0x58ca70`, `0x58cdc5`): the rest of the chunk already sees `QUEST_FINISHED` fired, the giver and its `"questnpc"` gone and the panel's text kept (`0x58cb6b`, `0x58cb98`, `0x58cded`).
+#[test]
+fn close_and_accept_finish_the_window_inside_their_call() {
+    use benilla_protocol::messages::QuestDetails;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    const NPC: u64 = 0xF130_0000_0100_0001;
+    let detail = || {
+        SessionEvent::QuestDetail(QuestDetails {
+            npc: NPC,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        })
+    };
+    let chunk = |verb: &str| {
+        format!(
+            "local before = #(CHARZ_LOG or {{}}) {verb}() local fired = 0 \
+             for i = before + 1, #(CHARZ_LOG or {{}}) do \
+               if CHARZ_LOG[i]:find('QUEST_FINISHED', 1, true) then fired = fired + 1 end end \
+             return fired .. '|' .. tostring(GetTitleText()) .. '|' .. tostring(UnitExists('questnpc'))"
+        )
+    };
+    for verb in ["CloseQuest", "AcceptQuest"] {
+        let opened = rig.packets(vec![detail()], 1);
+        assert_eq!(
+            fired(&opened, &["QUEST_DETAIL", "QUEST_FINISHED"]),
+            ["QUEST_DETAIL"],
+            "{verb}: the window is open"
+        );
+        assert!(rig
+            .app
+            .world()
+            .non_send_resource::<crate::ui_quest::QuestGiver>()
+            .is_open());
+        let read =
+            super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(&chunk(verb)))
+                .expect("a VM")
+                .expect("the chunk runs");
+        assert_eq!(read, "1|Charz|nil", "{verb}");
+        assert!(!rig
+            .app
+            .world()
+            .non_send_resource::<crate::ui_quest::QuestGiver>()
+            .is_open());
+        // The next frames drain the log: the call's own `QUEST_FINISHED`, and no second one.
+        rig.run(2);
+        assert_eq!(
+            fired(&rig.take(), &["QUEST_FINISHED"]),
+            ["QUEST_FINISHED"],
+            "{verb}"
+        );
+    }
 }

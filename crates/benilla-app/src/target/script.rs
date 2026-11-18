@@ -29,6 +29,9 @@ pub(crate) struct ScriptSelect<'w, 's> {
     time: Res<'w, Time>,
     /// `AssistUnit`'s miss lines.
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
+    /// A questgiver GameObject's use from `DeclineQuest`, its right-click (`0x711140`).
+    interacts: Option<MessageWriter<'w, super::Interact>>,
+    index: Res<'w, crate::net::GuidIndex>,
 }
 
 /// `AssistUnit`'s and `FollowUnit`'s line for a unit they cannot use: an empty or `"target"` token
@@ -42,6 +45,13 @@ pub(super) fn unit_miss_key(token: &str) -> &'static str {
 }
 
 impl ScriptSelect<'_, '_> {
+    /// A questgiver GameObject's right-click from `DeclineQuest` (`0x58ceb2` -> `0x711140`), classified as a press over it.
+    pub(crate) fn interact_object(&mut self, guid: u64) {
+        if let (Some(&entity), Some(out)) = (self.index.0.get(&guid), self.interacts.as_mut()) {
+            out.write(super::Interact(entity));
+        }
+    }
+
     /// `TargetUnit`, `TargetLastEnemy` and `TargetLastFriend` share the reference's helper
     /// (`0x5259e0`): a held unit, else a group member or pet by its guid alone, is committed;
     /// anything else is a no-op, never a deselect. An unheld pick plays its select sound

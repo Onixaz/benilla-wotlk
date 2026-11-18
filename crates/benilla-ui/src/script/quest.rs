@@ -164,6 +164,66 @@ pub enum QuestAction {
     Close,
 }
 
+/// A panel row's item as the item cache holds it at the call (`0x58d190`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuestItemRecord {
+    pub name: String,
+    pub quality: u32,
+    pub link: String,
+}
+
+/// A panel row's name, quality and link read from the item cache at the call (`0x58d190`), where a view lends it; a record not yet cached reads as the empty, white row.
+fn read_record(it: &mut QuestItemView) {
+    match super::read_live(|l| l.quest_item_record(it.item_id)).flatten() {
+        Some(Some(r)) => {
+            it.name = Some(r.name);
+            it.quality = r.quality;
+            it.link = Some(r.link);
+        }
+        Some(None) => {
+            it.name = None;
+            it.quality = 1;
+            it.link = None;
+        }
+        None => {}
+    }
+}
+
+/// What a questgiver call did beyond its send: the window's close owing `QUEST_FINISHED` (`0x58cb98`, `0x58cded`), the tutorial it triggers first (`0x58ccea`, `0x58cf76`, `0x58d00d`), the GameObject source it uses (`0x58ceb2`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QuestActOutcome {
+    pub finished: bool,
+    pub tutorial: Option<u32>,
+    pub use_object: Option<u64>,
+}
+
+/// Run a questgiver call through the lent view, then its tail inside the call: the tutorial, the GameObject's use, and with the window closed the giver's unit gone and `QUEST_FINISHED` fired.
+fn quest_call(
+    lua: &Lua,
+    call: impl FnOnce(&mut dyn super::LiveState) -> Option<QuestActOutcome>,
+) -> mlua::Result<()> {
+    let Some(out) = super::write_live(call).flatten() else {
+        return Ok(());
+    };
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        model.tutorial_triggers.extend(out.tutorial);
+        if let Some(guid) = out.use_object {
+            model
+                .script_calls
+                .push(super::ScriptCall::InteractObject(guid));
+        }
+        if out.finished {
+            // The giver zeroed, `"questnpc"` names nobody (`0x6081b0`).
+            model.units_by_lower.remove("questnpc");
+        }
+    }
+    if out.finished {
+        super::tick::fire_event_into(lua, "QUEST_FINISHED", Vec::new());
+    }
+    Ok(())
+}
+
 impl super::UiScript {
     /// Push (or clear, with `None`) the open questgiver panel snapshot. A detail or reward panel
     /// refills the reward-faction list, as its publisher does (`0x58dd50` → `0x58d050`).
@@ -175,16 +235,6 @@ impl super::UiScript {
             }
         }
         model.quest = state;
-    }
-
-    /// Drain the greeting-panel row selects queued since the last call.
-    pub fn take_quest_selects(&mut self) -> Vec<QuestSelect> {
-        drain_field!(self, quest_selects)
-    }
-
-    /// Drain the button intents queued since the last call.
-    pub fn take_quest_actions(&mut self) -> Vec<QuestAction> {
-        drain_field!(self, quest_actions)
     }
 }
 
@@ -344,7 +394,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(flag(model.quest.as_ref().is_some_and(|q| q.completable)))
+            // The panel's complete flag, then each required item counted in the bags at the call, up to the first empty row (`0x58cbb0`-`0x58cbfb`).
+            Ok(flag(model.quest.as_ref().is_some_and(|q| {
+                q.completable
+                    && q.required.iter().take_while(|r| r.item_id != 0).all(|r| {
+                        super::read_live(|l| l.carried_quest_item(r.item_id))
+                            .flatten()
+                            .is_none_or(|n| n >= r.count)
+                    })
+            })))
         })?,
     )?;
 
@@ -404,8 +462,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "Usage: GetActiveTitle(index)",
         true,
         |lua, row, model| {
-            let complete = row
-                .is_some_and(|r| super::quest_log::quest_complete_at(&model.quest_log, r.quest_id));
+            let complete =
+                row.is_some_and(|r| super::quest_log::quest_complete_at(lua, model, r.quest_id));
             Ok(MultiValue::from_vec(vec![
                 title(lua, row)?,
                 Value::Boolean(complete),
@@ -504,7 +562,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some(list) = list else {
                     return Err(invalid());
                 };
-                list.get(row as usize).cloned().map(|it| {
+                list.get(row as usize).cloned().map(|mut it| {
+                    read_record(&mut it);
                     let verdict = super::item_stats::quest_item_quality_usable(
                         &model, it.item_id, it.quality, it.usable,
                     );
@@ -545,7 +604,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.quest.as_ref().and_then(|q| {
                     item_vec(q, &kind)
                         .and_then(|v| index.checked_sub(1).and_then(|n| v.get(n)))
-                        .and_then(|it| it.link.clone())
+                        .cloned()
+                        .and_then(|mut it| {
+                            read_record(&mut it);
+                            it.link
+                        })
                 })
             };
             match link {
@@ -587,11 +650,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.globals().set(
             name,
             lua.create_function(move |lua, i: u32| {
-                let mut model = crate::script::model_mut_of(lua);
-                model
-                    .quest_selects
-                    .push(super::QuestSelect { active, index: i });
-                Ok(())
+                quest_call(lua, |l| {
+                    l.quest_select(super::QuestSelect { active, index: i })
+                })
             })?,
         )
     }
@@ -601,11 +662,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     fn install_action(lua: &Lua, name: &str, action: super::QuestAction) -> mlua::Result<()> {
         lua.globals().set(
             name,
-            lua.create_function(move |lua, ()| {
-                let mut model = crate::script::model_mut_of(lua);
-                model.quest_actions.push(action);
-                Ok(())
-            })?,
+            lua.create_function(move |lua, ()| quest_call(lua, |l| l.quest_action(action)))?,
         )
     }
     install_action(lua, "AcceptQuest", super::QuestAction::Accept)?;
@@ -681,8 +738,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(v) => lua.coerce_number(v)?.map_or(-1, |n| n as i64 - 1),
                 None => -1,
             };
-            let mut model = crate::script::model_mut_of(lua);
-            let choices = model
+            let choices = crate::script::model_mut_of(lua)
                 .quest
                 .as_ref()
                 .filter(|q| q.panel == QuestPanel::Reward)
@@ -692,10 +748,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Invalid reward choice in GetQuestReward([choice])".into(),
                 ));
             }
-            model
-                .quest_actions
-                .push(super::QuestAction::Reward(index.max(0) as u32));
-            Ok(())
+            let action = super::QuestAction::Reward(index.max(0) as u32);
+            quest_call(lua, |l| l.quest_action(action))
         })?,
     )?;
 
@@ -973,7 +1027,7 @@ mod tests {
 
         // `isComplete` reads the log: quest 60's row is complete, and quest 63's holds no
         // objective and has not failed (`0x58bcb0`).
-        s.set_quest_log(crate::script::QuestLogState {
+        s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![
                 crate::script::QuestLogEntryView {
                     quest_id: 60,
@@ -987,7 +1041,6 @@ mod tests {
                     ..Default::default()
                 },
             ],
-            num_quests: 2,
             ..Default::default()
         });
         assert_eq!(
@@ -1000,13 +1053,12 @@ mod tests {
                 .unwrap(),
             ("Bounty on Murlocs".to_string(), true)
         );
-        s.set_quest_log(crate::script::QuestLogState {
+        s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![crate::script::QuestLogEntryView {
                 quest_id: 63,
                 complete: -1,
                 ..Default::default()
             }],
-            num_quests: 1,
             ..Default::default()
         });
         assert!(
@@ -1022,22 +1074,19 @@ mod tests {
             "a quest off the log is not complete"
         );
 
-        s.run("SelectActiveQuest(1)").unwrap();
-        s.run("SelectAvailableQuest(2)").unwrap();
         assert_eq!(
-            s.take_quest_selects(),
+            calls(&mut s, "SelectActiveQuest(1) SelectAvailableQuest(2)"),
             vec![
-                QuestSelect {
+                Err(QuestSelect {
                     active: true,
                     index: 1
-                },
-                QuestSelect {
+                }),
+                Err(QuestSelect {
                     active: false,
                     index: 2
-                },
+                }),
             ]
         );
-        assert!(s.take_quest_selects().is_empty(), "drained");
     }
 
     #[test]
@@ -1085,37 +1134,90 @@ mod tests {
                 "{bad}: {err}"
             );
         }
-        s.run("GetQuestReward(2)").unwrap();
-        assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(1)]);
+        assert_eq!(
+            calls(&mut s, "GetQuestReward(2)"),
+            vec![Ok(QuestAction::Reward(1))]
+        );
         s.set_quest(Some(QuestState {
             panel: QuestPanel::Reward,
             ..QuestState::default()
         }));
-        s.run("GetQuestReward()").unwrap();
-        assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(0)]);
+        assert_eq!(
+            calls(&mut s, "GetQuestReward()"),
+            vec![Ok(QuestAction::Reward(0))]
+        );
     }
 
+    /// The questgiver calls `chunk` makes through a lent view, in order.
+    fn calls(s: &mut UiScript, chunk: &str) -> Vec<Result<QuestAction, QuestSelect>> {
+        let mut view = crate::script::live::TestView::default();
+        s.with_live_mut(&mut view, |s| s.run(chunk).unwrap());
+        view.quest_calls
+    }
+
+    /// Each button calls the view inside its own call, in order; with none lent nothing is held for later.
     #[test]
-    fn button_intents_queue() {
+    fn button_calls_reach_the_view_inside_the_call() {
         let mut s = UiScript::new().unwrap();
         s.set_quest(Some(detail()));
-        s.run("AcceptQuest()").unwrap();
-        assert_eq!(s.take_quest_actions(), vec![QuestAction::Accept]);
-
-        s.run("CompleteQuest()").unwrap(); // progress -> reward
-        s.run("GetQuestReward(2)").unwrap(); // row 2 (1-based) → wire choice 1 (0-based)
-        s.run("GetQuestReward()").unwrap(); // no-choice quest -> 0
-        s.run("DeclineQuest()").unwrap();
         assert_eq!(
-            s.take_quest_actions(),
+            calls(&mut s, "AcceptQuest()"),
+            vec![Ok(QuestAction::Accept)]
+        );
+        assert_eq!(
+            calls(
+                &mut s,
+                // Row 2 (1-based) is wire choice 1; a no-choice quest takes 0.
+                "CompleteQuest() GetQuestReward(2) GetQuestReward() DeclineQuest() CloseQuest()"
+            ),
             vec![
-                QuestAction::Continue,
-                QuestAction::Reward(1),
-                QuestAction::Reward(0),
-                QuestAction::Decline,
+                Ok(QuestAction::Continue),
+                Ok(QuestAction::Reward(1)),
+                Ok(QuestAction::Reward(0)),
+                Ok(QuestAction::Decline),
+                Ok(QuestAction::Close),
             ]
         );
-        assert!(s.take_quest_actions().is_empty(), "drained");
+        s.run("AcceptQuest()").unwrap();
+        assert!(calls(&mut s, "").is_empty(), "no view: nothing waits");
+    }
+
+    /// A call that closes the window fires `QUEST_FINISHED` before it returns, with `"questnpc"` already gone, and queues its tutorial and GameObject use.
+    #[test]
+    fn a_closing_call_fires_quest_finished_inside_it() {
+        let mut s = UiScript::new().unwrap();
+        s.set_quest(Some(detail()));
+        s.set_unit(
+            "questnpc",
+            Some(crate::script::UnitState {
+                name: Some("Marshal".into()),
+                ..Default::default()
+            }),
+        );
+        s.run(
+            "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('QUEST_FINISHED') \
+             f:SetScript('OnEvent', function(_, e) SEEN[#SEEN + 1] = e .. ':' .. tostring(UnitName('questnpc')) end)",
+        )
+        .unwrap();
+        let mut view = crate::script::live::TestView {
+            quest_outcome: super::super::QuestActOutcome {
+                finished: true,
+                tutorial: Some(10),
+                use_object: Some(7),
+            },
+            ..Default::default()
+        };
+        let seen = s.with_live_mut(&mut view, |s| {
+            s.eval::<String>(
+                "CloseQuest() return table.concat(SEEN, ' ') .. '|' .. tostring(UnitName('questnpc'))",
+            )
+            .unwrap()
+        });
+        assert_eq!(seen, "QUEST_FINISHED:nil|nil");
+        assert_eq!(s.take_tutorial_triggers(), vec![10]);
+        assert!(s
+            .take_script_calls()
+            .contains(&super::super::ScriptCall::InteractObject(7)));
     }
 
     #[test]
@@ -1129,14 +1231,12 @@ mod tests {
     }
 
     #[test]
-    fn decline_and_close_are_two_intents() {
+    fn decline_and_close_are_two_calls() {
         let mut s = UiScript::new().unwrap();
         s.set_quest(Some(detail()));
-        s.run("DeclineQuest()").unwrap();
-        s.run("CloseQuest()").unwrap();
         assert_eq!(
-            s.take_quest_actions(),
-            vec![QuestAction::Decline, QuestAction::Close]
+            calls(&mut s, "DeclineQuest() CloseQuest()"),
+            vec![Ok(QuestAction::Decline), Ok(QuestAction::Close)]
         );
     }
 

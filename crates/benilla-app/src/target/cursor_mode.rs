@@ -782,7 +782,7 @@ pub(super) struct CursorInputs<'w, 's> {
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     range_units: crate::spell::RangeUnits<'w, 's>,
     player_vehicles: crate::vehicle::PlayerVehicles<'w, 's>,
-    quest: Res<'w, crate::ui_quest::QuestGiver>,
+    quest: Res<'w, crate::ui_quest::QuestStatuses>,
     loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     keys: Res<'w, ButtonInput<KeyCode>>,
     // `[player+0x1d28/2c]`, the object whose loot window is open.

@@ -223,7 +223,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         let trivial = quest_is_trivial(q.level, player_level);
                         let flags = if active {
                             let complete =
-                                super::quest_log::quest_complete_at(&model.quest_log, q.quest_id);
+                                super::quest_log::quest_complete_at(lua, &model, q.quest_id);
                             [trivial, complete, false]
                         } else {
                             [trivial, q.daily, q.repeatable]
@@ -517,14 +517,13 @@ mod tests {
         s.set_gossip(Some(m));
         s.model_mut().player_req.level = 10;
         // Quest 60 is complete in the log, which `isComplete` reads (`0x58bcb0`).
-        s.set_quest_log(crate::script::QuestLogState {
+        s.seed_quest_log(crate::script::QuestLogState {
             entries: vec![crate::script::QuestLogEntryView {
                 quest_id: 60,
                 title: "Report Back".into(),
                 complete: 1,
                 ..Default::default()
             }],
-            num_quests: 1,
             ..Default::default()
         });
 

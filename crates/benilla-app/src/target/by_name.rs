@@ -673,6 +673,8 @@ pub(super) fn follow_requests(
     mut follow: ResMut<crate::player::FollowState>,
     mut approach: ResMut<crate::player::Approach>,
     mut stand: MessageWriter<crate::player::StandStateRequest>,
+    // Lends the token resolve the view, whose giver names `"questnpc"`.
+    _live: crate::ui_script::LendLive,
 ) {
     for request in requests.read() {
         let guid = match follow_subject(

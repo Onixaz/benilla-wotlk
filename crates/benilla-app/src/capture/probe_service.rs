@@ -2,7 +2,7 @@
 //! giver open their window rather than a gossip menu? The click walks `UNIT_NPC_FLAGS` first match
 //! wins ([`crate::target::click::service_arm`]), bit 0 (GOSSIP) first, so a trainer or questgiver
 //! that also carries GOSSIP opens a gossip menu. The probe hops to four real NPCs, calls the
-//! shipped `service_arm`/`service_action` on the wire's flags and [`QuestGiver::status`], and
+//! shipped `service_arm`/`service_action` on the wire's flags and [`QuestStatuses::status`], and
 //! reports the arm, the opcode and the window that opened:
 //!
 //! | NPC | `npc_flags` | arm | window |
@@ -36,7 +36,7 @@ use crate::ui_gossip::GossipState;
 use benilla_ui::script::UiScript;
 
 use crate::ui_merchant::MerchantOpen;
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::{QuestGiver, QuestStatuses};
 use crate::ui_session::InteractNpc;
 use crate::ui_trainer::TrainerOpen;
 
@@ -289,15 +289,15 @@ fn service_probe(
     time: ProbeClock,
     mut probe: ResMut<ServiceProbe>,
     mut gossip: ResMut<GossipState>,
-    mut giver: ResMut<QuestGiver>,
     mut trainer: ResMut<TrainerOpen>,
+    statuses: Res<QuestStatuses>,
     // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
     // window and only by one.
     interact: Res<InteractNpc>,
     // The vendor fork: the merchant window, the VM the held-cursor leg picks up in, and what
     // turns a (bag, slot) into the item guid.
     mut merchant: ResMut<MerchantOpen>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     objects: crate::net::Objects,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     self_player: Query<(), With<SelfPlayer>>,
@@ -337,7 +337,7 @@ fn service_probe(
                         flags & f::QUESTGIVER != 0
                             && flags & f::GOSSIP == 0
                             && crate::target::cursor_mode::questgiver_has_quest(
-                                giver.status(guid.0),
+                                statuses.status(guid.0),
                             )
                     }
                 }
@@ -384,7 +384,7 @@ fn service_probe(
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
             let entry = store.0.object_entry().unwrap_or(0);
-            let status = giver.status(guid);
+            let status = statuses.status(guid);
 
             // The shipped ladder, on the shipped inputs.
             let arm = service_arm(flags, status);
@@ -426,7 +426,7 @@ fn service_probe(
             // A stale window from the previous leg would answer this one's question. The
             // reference's own close sends no packet, so a local clear is the whole of it.
             gossip.clear();
-            giver.clear();
+            live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
 
             // The first click must get through: nothing is open, and the reference arms only from
@@ -489,7 +489,15 @@ fn service_probe(
         }
         Phase::Await { i, since, guid } => {
             let leg = &LEGS[i];
-            match open_window(guid, &gossip, &giver, &trainer) {
+            let Some((window, quest_view)) = live.with_giver(|giver| {
+                giver.map(|g| {
+                    let window = open_window(guid, &gossip, g, &trainer);
+                    (window, g.view.as_ref().map(discr))
+                })
+            }) else {
+                return;
+            };
+            match window {
                 Some(open) if open == leg.want_window => {
                     info!(
                         "PROBE_SERVICE: PASS ({}) — {:?} window open on {guid:#x}{}",
@@ -502,7 +510,7 @@ fn service_probe(
                                 gossip.quests.len(),
                                 gossip.greeting.as_deref().unwrap_or("")
                             ),
-                            Window::Quest => format!(" ({:?})", giver.view.as_ref().map(discr)),
+                            Window::Quest => format!(" ({quest_view:?})"),
                             Window::Trainer => format!(
                                 " ({} service(s), type {})",
                                 trainer.services.len(),
@@ -601,7 +609,7 @@ fn service_probe(
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
             gossip.clear();
-            giver.clear();
+            live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
             merchant.clear();
 
