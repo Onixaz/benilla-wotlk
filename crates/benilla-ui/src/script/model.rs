@@ -570,6 +570,8 @@ pub(crate) struct Model {
     /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
     /// (the reference's error display), each a literal from its table (stride `0x14`).
     pub(crate) ui_errors: Vec<&'static str>,
+    /// Catalog keys of lines a verb displayed inline, whose sound the app plays.
+    pub(crate) message_sounds: Vec<&'static str>,
 
     pub(crate) spellbook: spellbook::SpellBookState,
     /// The book's highest-rank view, rebuilt with every [`Self::spellbook`] push.
@@ -1564,6 +1566,7 @@ impl Model {
             action_bar_page: 0,
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
+            message_sounds: Vec::new(),
             spellbook: spellbook::SpellBookState::default(),
             known_spells: spellbook::KnownSpells::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),

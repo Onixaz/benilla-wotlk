@@ -21,7 +21,7 @@ fn bank_bag_slots() -> u8 {
         .unwrap_or(0)
 }
 
-/// `CloseBankFrame` (`0x57b9c0`), `SetBanker(0)` (`0x57b8d0`): `BANKFRAME_CLOSED` with the banker
+/// `CloseBankFrame` (`0x57b9c0`), the banker setter with no banker (`0x57b8d0`): `BANKFRAME_CLOSED` with the banker
 /// still set, then, with the interact target the banker, the interaction close's bank leg fires it
 /// again (`0x57b8f1` -> `0x518d50` -> `0x512fa7`), then the banker clears.
 fn close_bank_frame(lua: &Lua) {
@@ -71,7 +71,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PurchaseSlot",
         lua.create_function(|lua, ()| {
             if let Some(key) = super::read_live(|l| l.purchase_bank_slot()).flatten() {
-                crate::script::model_mut_of(lua).ui_errors.push(key);
+                super::ui_errors::show_now(lua, key);
             }
             Ok(())
         })?,

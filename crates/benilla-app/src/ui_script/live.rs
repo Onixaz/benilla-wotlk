@@ -621,10 +621,11 @@ impl LiveState for LiveNow<'_, '_> {
             .unwrap_or(0)
     }
 
-    /// The active player, control, a banker and fewer than seven slots gate silently; short of the price shows `ERR_BANKSLOT_INSUFFICIENT_FUNDS`; else `CMSG_BUY_BANK_SLOT` names the interact target, the banker (`0x57bc54`).
+    /// The active player, control, a banker and fewer than seven slots gate silently (`0x57bbe5`-`0x57bc10`); short of the price shows `ERR_BANKSLOT_INSUFFICIENT_FUNDS` (`0x57bc2a`); else `CMSG_BUY_BANK_SLOT` names the interact target (`0x57bc54`).
     fn purchase_bank_slot(&self) -> Option<&'static str> {
         let me = self.unit(self.active_player()?)?;
-        let banker = self.banker().filter(|_| self.has_control())?;
+        let bank = self.lent.bank.get()?;
+        bank.banker.filter(|_| self.has_control())?;
         let slots = me.player_bank_bag_slots_purchased().unwrap_or(0);
         if slots >= 7 {
             return None;
@@ -632,13 +633,14 @@ impl LiveState for LiveNow<'_, '_> {
         if me.player_money().unwrap_or(0) < self.bank_slot_cost(u32::from(slots) + 1) {
             return Some("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
         }
-        debug!("bank: purchase next bag slot at {banker:#x}");
+        let guid = bank.interact_target().unwrap_or(0);
+        debug!("bank: purchase next bag slot at {guid:#x}");
         let _ = self
             .view
             .net
             .as_deref()?
             .0
-            .send(crate::net::ClientCommand::BuyBankSlot { guid: banker });
+            .send(crate::net::ClientCommand::BuyBankSlot { guid });
         None
     }
 

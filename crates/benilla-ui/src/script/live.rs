@@ -382,7 +382,7 @@ pub trait LiveState {
         false
     }
 
-    /// The banker cleared, `SetBanker(0)`'s tail (`0x57b8f9`).
+    /// The banker cleared, the banker setter's tail with no banker (`0x57b8f9`).
     fn clear_banker(&mut self) {}
 }
 

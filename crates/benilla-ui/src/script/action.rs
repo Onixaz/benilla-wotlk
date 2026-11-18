@@ -156,6 +156,11 @@ impl super::UiScript {
     pub fn take_ui_errors(&mut self) -> Vec<&'static str> {
         drain_field!(self, ui_errors)
     }
+
+    /// Drain the catalog keys of lines verbs displayed inline, for the app to sound.
+    pub fn take_message_sounds(&mut self) -> Vec<&'static str> {
+        drain_field!(self, message_sounds)
+    }
 }
 
 /// `UseAction`'s flag test: `nil`, `false` and `0` are false, unlike Lua, where `0` is true.

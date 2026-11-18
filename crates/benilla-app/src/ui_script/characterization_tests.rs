@@ -3456,6 +3456,156 @@ fn close_bank_frame_closes_inside_its_call() {
         .is_open());
 }
 
+/// `PurchaseSlot` (`0x57bbc0`): no banker, no control or seven slots send nothing and show nothing (`0x57bbeb`-`0x57bc10`); a coinage below the next row's price shows `ERR_BANKSLOT_INSUFFICIENT_FUNDS` inside the call (`0x57bc2a` -> `0x57bc2c`); a coinage at the price sends `CMSG_BUY_BANK_SLOT` naming the interact target, the banker (`0x57bc54`).
+#[test]
+fn purchase_slot_gates_refuses_and_sends_at_its_call() {
+    use benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                crate::net::ClientCommand::BuyBankSlot { guid } => Some(guid),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // The refusal lines the call logged before it returned, then the marker.
+    let call = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<String>(
+                "local before = #(CHARZ_LOG or {}) PurchaseSlot() local t = {} \
+                 for i = before + 1, #(CHARZ_LOG or {}) do \
+                   if CHARZ_LOG[i]:find('UI_ERROR_MESSAGE', 1, true) then \
+                     t[#t + 1] = CHARZ_LOG[i]:match('\t([^\t]*)\t') end end \
+                 t[#t + 1] = 'returned' return table.concat(t, '|')",
+            )
+        })
+        .expect("a VM")
+        .expect("the chunk runs")
+    };
+    let coinage = |c: u32| self_values(&[(FIELD_PLAYER_FIELD_COINAGE, c)]);
+    rig.packets(vec![bank_slots(1), coinage(1_000_000_000)], 2);
+    assert_eq!(call(&mut rig), "returned", "no banker");
+    assert!(sends(&rx).is_empty());
+
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let cost = rig_price(&rig, 1);
+    assert!(cost > 0, "the price row after one slot");
+    rig.packets(vec![coinage(cost - 1)], 2);
+    assert_eq!(
+        call(&mut rig),
+        "You can't afford that.|returned",
+        "one copper short: the line inside the call"
+    );
+    assert!(sends(&rx).is_empty());
+    rig.packets(vec![coinage(cost)], 2);
+    assert_eq!(call(&mut rig), "returned", "exactly the price");
+    assert_eq!(sends(&rx), [BANKER]);
+
+    // The stock `UIParent` closes every window on `PLAYER_CONTROL_LOST`, so the bank opens again with control lost.
+    rig.packets(
+        vec![control(false), SessionEvent::ShowBank { banker: BANKER }],
+        2,
+    );
+    assert_eq!(call(&mut rig), "returned", "no control, at the price");
+    assert!(sends(&rx).is_empty());
+    rig.packets(vec![control(true), bank_slots(7), coinage(0)], 2);
+    assert_eq!(call(&mut rig), "returned", "seven slots, even when short");
+    assert!(sends(&rx).is_empty());
+    rig.packets(vec![bank_slots(6), coinage(rig_price(&rig, 6))], 2);
+    assert_eq!(call(&mut rig), "returned", "the sixth row's price");
+    assert_eq!(sends(&rx), [BANKER]);
+}
+
+/// The next slot's price after `n` purchased, as the client's table holds it.
+fn rig_price(rig: &Rig, n: u8) -> u32 {
+    rig.app
+        .world()
+        .get_resource::<crate::ui_bank::BankPrices>()
+        .and_then(|p| p.0.next_slot_price(n))
+        .expect("BankBagSlotPrices.dbc")
+}
+
+/// Another window's open takes the interact target from the banker: the setter's interaction close fires `BANKFRAME_CLOSED` and clears the banker ahead of that window (`0x51fce0` -> `0x51fd1c` -> `0x512fa7`); a vendor's empty refusal opens nothing and leaves the bank open (`0x6d9ad2`-`0x6d9af8`).
+#[test]
+fn another_window_taking_the_interact_target_closes_the_bank() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let refusal = SessionEvent::VendorInventory {
+        vendor: BANKER + 1,
+        items: Vec::new(),
+        error: Some(2),
+    };
+    let seen = rig.packets(vec![refusal], 2);
+    assert!(fired(&seen, BANK_EVENTS).is_empty(), "nothing opened");
+    let seen = rig.packets(
+        vec![SessionEvent::VendorInventory {
+            vendor: BANKER + 1,
+            items: Vec::new(),
+            error: Some(0),
+        }],
+        2,
+    );
+    let order: Vec<String> = seen
+        .iter()
+        .filter(|s| ["BANKFRAME_CLOSED", "MERCHANT_SHOW"].contains(&s.event.as_str()))
+        .map(|s| s.event.clone())
+        .collect();
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("BANKFRAME_CLOSED"),
+        "the bank closes ahead of the vendor: {order:?}"
+    );
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
+    let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+    assert_eq!(
+        fired(&seen, &["BANKFRAME_OPENED", "BANKFRAME_CLOSED"]),
+        ["BANKFRAME_OPENED"],
+        "the next open finds no bank to close"
+    );
+    // A dialog that fires in its own handler: the setter runs at the start of its open, so the bank closes first (`0x58c5a0`).
+    let seen = rig.packets(
+        vec![SessionEvent::QuestDetail(
+            benilla_protocol::messages::QuestDetails {
+                npc: BANKER + 2,
+                quest_id: QUEST,
+                title: "Charz".into(),
+                ..Default::default()
+            },
+        )],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["BANKFRAME_CLOSED", "QUEST_DETAIL"])
+            .first()
+            .map(String::as_str),
+        Some("BANKFRAME_CLOSED")
+    );
+    assert_eq!(fired(&seen, &["QUEST_DETAIL"]).len(), 1);
+}
+
 /// The banker flag lost on the open bank's banker closes it from the NPC-flag watch (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED` with the banker set, again from the interaction close, then the banker clears.
 #[test]
 fn the_banker_flag_lost_closes_the_bank_from_the_flag_watch() {

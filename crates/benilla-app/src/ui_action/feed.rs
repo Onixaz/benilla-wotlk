@@ -342,6 +342,13 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", resolved);
 
+    // The sound half of the lines verbs displayed inline, their events already fired in the call.
+    for key in script.take_message_sounds() {
+        if let Some(record) = benilla_ui::messages::by_key(key) {
+            sink.sounds.push(record);
+        }
+    }
+
     // The engine's own by-key refusals (`ERR_PASSIVE_ABILITY`): `benilla_ui` cannot reach
     // [`UiErrorKeys`], so it queues keys that show here, one frame late.
     let engine_keys = script.take_ui_errors();

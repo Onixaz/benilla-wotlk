@@ -826,11 +826,9 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), duel (`0x528d23`) and battlefield (`0x528d46`) parts.
+/// The world leave's inspect (`0x528cd3`), duel (`0x528d23`), battlefield (`0x528d46`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
-    // The world leave's interaction close (`0x528dce`), its bank leg.
-    crate::ui_bank::close_by_interaction(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
         duel.leave_world();
     }
@@ -840,6 +838,8 @@ pub(crate) fn leave_world(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.write(UiScript::leave_battlefield_world);
     }
+    // The interaction close's bank leg, after the battlefield part.
+    crate::ui_bank::close_by_interaction(world);
     crate::ui_script::live::fire_handler_events(world);
 }
 

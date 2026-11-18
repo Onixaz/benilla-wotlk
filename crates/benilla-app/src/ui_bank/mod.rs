@@ -27,12 +27,17 @@ impl BankOpen {
         self.banker.is_some()
     }
 
+    /// The interact target while the banker holds it (`0xbd07a8`).
+    pub(crate) fn interact_target(&self) -> Option<u64> {
+        self.banker.filter(|_| self.interacting)
+    }
+
     /// The interaction close's bank leg with the interact target the banker (`0x518d50`), whether it was.
     pub(crate) fn close_interaction(&mut self) -> bool {
         std::mem::take(&mut self.interacting) && self.banker.is_some()
     }
 
-    /// `SetBanker(0)`'s tail (`0x57b8f9`).
+    /// The banker setter's clear with no banker (`0x57b8f9`).
     pub(crate) fn clear(&mut self) {
         self.banker = None;
         self.interacting = false;
@@ -66,7 +71,7 @@ fn bank_slot_error_key(result: u32) -> Option<&'static str> {
     })
 }
 
-/// `SMSG_SHOW_BANK`'s `SetBanker(banker)` (`0x57b908`): the interact target's change closes an open bank through the interaction close's bank leg first (`0x51fce0` -> `0x512fa7`), then the banker is set and `BANKFRAME_OPENED` fires (`0x57b926`).
+/// `SMSG_SHOW_BANK`'s banker setter call (`0x57b908`): the interact target's change closes an open bank through the interaction close's bank leg first (`0x51fce0` -> `0x512fa7`), then the banker is set and `BANKFRAME_OPENED` fires (`0x57b926`).
 pub(crate) fn open_bank(world: &mut World, banker: u64) {
     if world
         .get_non_send_resource::<BankOpen>()
@@ -90,12 +95,12 @@ pub(crate) fn open_bank(world: &mut World, banker: u64) {
     });
 }
 
-/// The interaction close's bank leg (`0x512fa7`): the interact target already zeroed, `BANKFRAME_CLOSED` fires with the banker still set (`0x57b8e6`), then the banker clears (`0x57b8f9`). Queued on [`UiEvents`] for the caller's flush.
+/// The interaction close's bank leg (`0x512fa7`), taken only while the interact target is the banker (`0x512f8a`): the target zeroed, `BANKFRAME_CLOSED` fires with the banker still set (`0x57b8e6`), then the banker clears (`0x57b8f9`). Queued on [`UiEvents`] for the caller's flush.
 pub(crate) fn close_by_interaction(world: &mut World) {
     let Some(mut bank) = world.get_non_send_resource_mut::<BankOpen>() else {
         return;
     };
-    if !bank.is_open() {
+    if !bank.interacting || !bank.is_open() {
         return;
     }
     bank.interacting = false;
@@ -107,7 +112,7 @@ pub(crate) fn close_by_interaction(world: &mut World) {
     ui.world(clear_banker);
 }
 
-/// `SetBanker(0)` from the NPC-flag watch's bank leg (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED`, then with the interact target the banker the interaction close fires it again (`0x57b8f1` -> `0x512fa7`), then the banker clears.
+/// The banker setter with no banker from the NPC-flag watch's bank leg (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED`, then with the interact target the banker the interaction close fires it again (`0x57b8f1` -> `0x512fa7`), then the banker clears.
 pub(crate) fn set_banker_none(world: &mut World) {
     let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
         return;
