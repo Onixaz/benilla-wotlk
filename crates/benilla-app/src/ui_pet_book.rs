@@ -41,20 +41,19 @@ pub(crate) fn book_live(
         }),
         slots: Vec::new(),
     };
-    if bar.has_bar() {
-        for &entry in &bar.spells.spells {
-            // The reference's first gate: no `Spell.dbc` record, no book slot.
-            let Some(d) = spells.catalog.get(entry.action()) else {
-                continue;
-            };
-            if d.in_pet_book() {
-                book.slots
-                    .push(slot_view(entry, d, bar, pet_auras, now, anchor, ui_now));
-            }
+    // The book verbs never look at the pet list (`0x53dd34` reads the count alone): the words stand until the next `SMSG_PET_SPELLS` clears or refills them (`0x5d6c96`, `0x5d6d88`, `0x5d6cc0`).
+    for &entry in &bar.spells.spells {
+        // The reference's first gate: no `Spell.dbc` record, no book slot.
+        let Some(d) = spells.catalog.get(entry.action()) else {
+            continue;
+        };
+        if d.in_pet_book() {
+            book.slots
+                .push(slot_view(entry, d, bar, pet_auras, now, anchor, ui_now));
         }
-        book.slots
-            .sort_by_key(|s| crate::ui_spellbook::spell_sort_key_of(&s.name, s.rank.as_deref()));
     }
+    book.slots
+        .sort_by_key(|s| crate::ui_spellbook::spell_sort_key_of(&s.name, s.rank.as_deref()));
     book
 }
 

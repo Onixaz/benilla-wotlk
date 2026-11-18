@@ -68,6 +68,7 @@ local VERBS = {
     { "petfollow", function() return (select(5, GetPetActionInfo(2))) end },
     { "petcd", function() return (GetPetActionCooldown(4)) > 0 end },
     { "petbar", function() return PetHasActionBar() end },
+    { "petbook", function() return (HasPetSpells()) end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
     { "button2", button2 },
@@ -3805,6 +3806,46 @@ fn the_pet_number_handler_signals_its_tokens_and_updates_the_pet_ui() {
     assert_eq!(rig.now().line(&["petname"]), "NOW | petname=Fang");
 }
 
+/// An empty `SMSG_PET_GUIDS` (`0x5d6550`) empties the list and leaves the book: `HasPetSpells` reads the count the last `SMSG_PET_SPELLS` left (`0x53dd34`), until a zero-guid one clears it (`0x5d6d88`).
+#[test]
+fn the_pet_book_outlives_an_empty_pet_list() {
+    use benilla_protocol::messages::{PetActionEntry, PetSpells};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let mut spells = PetSpells {
+        pet_guid: PET,
+        ..Default::default()
+    };
+    // Growl, a book spell, as its packed word.
+    spells.spells = vec![PetActionEntry::from(0xC100_0000 | 2649)];
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(spells)),
+        ],
+        3,
+    );
+    assert_eq!(
+        rig.live_now().line(&["petbar", "petbook"]),
+        "NOW | petbar=1 petbook=1"
+    );
+    rig.packets(vec![SessionEvent::PetGuids(Vec::new())], 3);
+    assert_eq!(
+        rig.live_now().line(&["petbar", "petbook"]),
+        "NOW | petbar=nil petbook=1"
+    );
+    rig.packets(vec![SessionEvent::PetSpells(Box::default())], 3);
+    assert_eq!(
+        rig.live_now().line(&["petbar", "petbook"]),
+        "NOW | petbar=nil petbook=nil"
+    );
+}
+
 /// The pet's packets fire their events from their handlers in wire order, each after its change: `SMSG_PET_MODE`'s `PET_BAR_UPDATE` (`0x5d3689`), a pet-addressed `SMSG_SPELL_COOLDOWN`'s flush (`0x80702e`, `0x807039`), and `SMSG_PET_SPELLS`' temporary bar `PET_BAR_UPDATE` then `SPELLS_CHANGED` (`0x5d6ad2`, `0x5d6d70`); both orders of the first two.
 #[test]
 fn the_pet_packets_fire_their_events_in_wire_order() {
@@ -4149,18 +4190,19 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     );
 }
 
-/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat our create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
+/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat our create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`; the pet book keeps the packet's count throughout (`0x53dd34`).
 #[test]
 fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
-    let Some((_rig, seen)) = ported(
-        vec![SessionEvent::PetSpells(Box::new(
-            benilla_protocol::messages::PetSpells {
-                pet_guid: PET,
-                ..Default::default()
-            },
-        ))],
-        Vec::new(),
-    ) else {
+    let mut spells = benilla_protocol::messages::PetSpells {
+        pet_guid: PET,
+        ..Default::default()
+    };
+    // Growl, a book spell, as its packed word.
+    spells.spells = vec![benilla_protocol::messages::PetActionEntry::from(
+        0xC100_0000 | 2649,
+    )];
+    let Some((_rig, seen)) = ported(vec![SessionEvent::PetSpells(Box::new(spells))], Vec::new())
+    else {
         return;
     };
     let entry: Vec<String> = pin(
@@ -4171,7 +4213,7 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
             "PET_BAR_UPDATE",
             "UPDATE_FACTION",
         ],
-        &["petbar"],
+        &["petbar", "petbook"],
     )
     .into_iter()
     .skip_while(|l| !l.starts_with("PLAYER_ENTERING_WORLD"))
@@ -4179,10 +4221,10 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
     assert_eq!(
         entry,
         vec![
-            "PLAYER_ENTERING_WORLD | petbar=1",
-            "UNIT_PET player | petbar=nil",
-            "PET_BAR_UPDATE | petbar=nil",
-            "UPDATE_FACTION | petbar=nil",
+            "PLAYER_ENTERING_WORLD | petbar=1 petbook=1",
+            "UNIT_PET player | petbar=nil petbook=1",
+            "PET_BAR_UPDATE | petbar=nil petbook=1",
+            "UPDATE_FACTION | petbar=nil petbook=1",
         ]
     );
 }
