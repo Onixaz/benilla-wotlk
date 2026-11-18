@@ -153,17 +153,8 @@ impl super::UiScript {
     /// its item without unlocking it; the app keeps the returned item locked until its update.
     pub fn clear_petition_button(&mut self) -> Option<PetitionButtonItem> {
         let held = self.model_ref().petition_button?;
-        let mut model = self.model_mut();
-        model.petition_button = None;
-        // The slot reads locked until the app's next push carries the pending lock.
-        if let Some(s) = model
-            .containers
-            .get_mut(&held.bag)
-            .and_then(|c| c.slots.get_mut(&held.slot))
-            .filter(|s| s.guid == held.item)
-        {
-            s.locked = true;
-        }
+        // The app keeps the slot's lock at once, read by the bag verbs at the call.
+        self.model_mut().petition_button = None;
         Some(held)
     }
 
@@ -1079,8 +1070,8 @@ mod tests {
         assert_eq!(held_slot(&s), Some(1));
     }
 
-    /// The list's show forgets the button's item but leaves it locked, with no lock event
-    /// (`0x5a22cb`); an empty button forgets nothing.
+    /// The list's show forgets the button's item with no lock event (`0x5a22cb`), the app keeping
+    /// its lock; an empty button forgets nothing.
     #[test]
     fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
         let mut s = vendor_with_charters();
@@ -1104,6 +1095,15 @@ mod tests {
                 .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
             "no unlock"
         );
+        // The app keeps the slot's send lock (`keep_locked`), which the bag verbs read at the call.
+        if let Some(slot) = s
+            .model_mut()
+            .containers
+            .get_mut(&0)
+            .and_then(|c| c.slots.get_mut(&1))
+        {
+            slot.locked = true;
+        }
         assert!(locked(&s, 1), "the forgotten charter stays locked");
         s.run("PickupContainerItem(0, 1)").unwrap();
         assert_eq!(held_slot(&s), None, "a locked charter does not pick up");

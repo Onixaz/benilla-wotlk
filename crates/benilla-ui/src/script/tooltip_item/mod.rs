@@ -344,7 +344,7 @@ pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
         }
     }
     for bag in 0..=4 {
-        let Some(c) = model.containers.get(&bag) else {
+        let Some(c) = crate::script::container::live_bag(&model, bag) else {
             continue;
         };
         for slot in 1..=c.num_slots {
@@ -1090,10 +1090,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (item_id, count, has_cd, inst, repair_cost) = {
                 let model = crate::script::model_mut_of(lua);
                 let cost = model.repair_costs.bags.get(&(bag, slot)).copied();
-                match model
-                    .containers
-                    .get(&bag)
-                    .and_then(|c| c.slots.get(&slot))
+                match crate::script::container::live_slot(&model, bag, slot)
                     .filter(|s| s.item_id != 0)
                 {
                     // The reference takes the p6=1 leg iff the cooldown query reports enable, start
@@ -1109,7 +1106,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             has_cd,
                             // p6 = 0 iff no cooldown runs; mid-cooldown the reference shows
                             // ITEM_COOLDOWN_TIME instead, which is not built.
-                            slot_instance(s, !has_cd),
+                            slot_instance(&s, !has_cd),
                             cost.unwrap_or(0),
                         )
                     }
