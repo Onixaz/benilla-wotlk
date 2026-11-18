@@ -81,8 +81,11 @@ impl FailNameTables<'_> {
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_actions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut actions: ResMut<PlayerActions>,
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsActions>,
+    ),
+    mut action_store: crate::ui_script::OwnedMut<PlayerActions>,
     mut cast_errors: ResMut<CastErrors>,
     mut mount_errors: ResMut<MountErrors>,
     mut pet_tame_failures: ResMut<PetTameFailures>,
@@ -117,7 +120,7 @@ pub(super) fn feed_actions(
     let (sub_classes, temp_bar, pet_bar) = bars;
     let temp_flags = temp_bar.map_or(0, |t| t.flags);
     // Cold Weather Flying, what `flyable` needs in Northrend (`0x7261b0`).
-    script.set_knows_cold_weather_flying(actions.spells.contains(&54197));
+    script.set_knows_cold_weather_flying(action_store.read().spells.contains(&54197));
     let memory = memory.get(&script);
 
     // Cast failures become error lines through [`cast_fail`], all resolved before any event fires.
@@ -419,9 +422,11 @@ pub(super) fn feed_actions(
     let template_epoch = items.template_epoch();
     let macro_generation = script.macros_generation();
     let macros_moved = macro_generation != memory.macro_generation;
-    if !memory.resolved || actions.dirty || template_epoch != memory.template_epoch || macros_moved
-    {
-        actions.dirty = false;
+    let dirty = action_store.read().dirty;
+    if !memory.resolved || dirty || template_epoch != memory.template_epoch || macros_moved {
+        action_store.write().dirty = false;
+        // Read until the slots are resolved; no verb runs meanwhile.
+        let actions = action_store.read();
         memory.resolved = true;
         memory.template_epoch = template_epoch;
         memory.macro_generation = macro_generation;
@@ -535,6 +540,7 @@ pub(super) fn feed_actions(
                 },
             );
         }
+        drop(actions);
         // A macro rename changes the name line (`GetActionText`) but not the slot value, so a
         // macro edit re-fires every macro slot.
         let changed: Vec<u32> = fresh

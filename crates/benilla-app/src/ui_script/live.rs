@@ -62,6 +62,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
     pub(crate) selection: Slot<'w, crate::target::Selection>,
     pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
+    /// The action bar's store: the spell book, the bar's slots and the equipment sets.
+    pub(crate) actions: Slot<'w, crate::ui_action::PlayerActions>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
     walk: Option<crate::ui_pet::PetSlotWalk<'w, 's>>,
     /// The bar's pet, our seat and the pet's auras, for the bar's usability and active reads.
@@ -277,6 +279,7 @@ pub(crate) trait Owns: 'static {
     const COOLDOWNS: bool = false;
     const SELECTION: bool = false;
     const PLACE: bool = false;
+    const ACTIONS: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
     const LENT: u8 = 0;
 }
@@ -288,6 +291,7 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const COOLDOWNS: bool = A::COOLDOWNS || B::COOLDOWNS;
     const SELECTION: bool = A::SELECTION || B::SELECTION;
     const PLACE: bool = A::PLACE || B::PLACE;
+    const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
     const LENT: u8 = A::LENT | B::LENT;
 }
 
@@ -301,6 +305,12 @@ impl Owns for OwnsPlace {
 pub(crate) struct OwnsSelection;
 impl Owns for OwnsSelection {
     const SELECTION: bool = true;
+}
+
+/// The system writes [`crate::ui_action::PlayerActions`].
+pub(crate) struct OwnsActions;
+impl Owns for OwnsActions {
+    const ACTIONS: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -1276,8 +1286,8 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 /// A lendable resource's id, then the loan's and the owner's marks.
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// The lendable resources' ids: the history, the pet's words, the selection and the player's place.
-type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds);
+/// The lendable resources' ids: the history, the pet's words, the selection, the player's place and the action store.
+type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds, SlotIds);
 
 /// Register `X` and its pair's marks.
 fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
@@ -1401,6 +1411,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 slot_ids::<crate::ui_pet::PetBar>(world),
                 slot_ids::<crate::target::Selection>(world),
                 slot_ids::<crate::area::PlayerPlace>(world),
+                slot_ids::<crate::ui_action::PlayerActions>(world),
             ),
             lent_ids(world),
         )
@@ -1423,6 +1434,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
         slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
         slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
+        slot_access::<crate::ui_action::PlayerActions>(O::ACTIONS, state.1 .4, system_meta, set);
         let [signals, asks, marks, expiries, giver, bank] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
@@ -1479,6 +1491,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             view.selection
                 .set(slot_fetch(world, state.1 .2 .0), O::SELECTION);
             view.place.set(slot_fetch(world, state.1 .3 .0), O::PLACE);
+            view.actions
+                .set(slot_fetch(world, state.1 .4 .0), O::ACTIONS);
         }
         let [signals, asks, marks, expiries, giver, bank] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
@@ -1900,6 +1914,38 @@ mod tests {
             assert_eq!(benilla_ui::script::read_live(|_| ()), Some(()));
             assert_eq!(benilla_ui::script::write_live(|_| ()), Some(()));
         }));
+    }
+
+    /// The action store is lent like the history: a plain write beside a loan is refused (B0002),
+    /// the owner's handle is admitted, and its write is the next read of the view in the same run.
+    #[test]
+    fn the_action_store_is_written_by_its_owner_and_read_through_the_view() {
+        use crate::ui_action::PlayerActions;
+        let refused = refusal(|_w: ResMut<PlayerActions>, _l: LendLive| {});
+        assert!(
+            refused.contains("B0002") && refused.contains("PlayerActions"),
+            "{refused}"
+        );
+        assert_eq!(
+            refusal(|_l: LendLive<OwnsActions>, _w: OwnedMut<PlayerActions>| {}),
+            ""
+        );
+        let mut world = World::new();
+        world.init_resource::<PlayerActions>();
+        let seen = world
+            .run_system_once(
+                |live: LendLive<OwnsActions>, mut a: OwnedMut<PlayerActions>| {
+                    let read = |live: &LendLive<OwnsActions>| {
+                        live.view().actions.get().map(|a| a.spells.contains(&54197))
+                    };
+                    let before = read(&live);
+                    a.write().spells.insert(54197);
+                    (before, read(&live))
+                },
+            )
+            .unwrap();
+        assert_eq!(seen, (Some(false), Some(true)));
+        assert!(world.resource_ref::<PlayerActions>().is_changed());
     }
 
     /// The owner's write is the next read of its view, inside the same run, and the view lent

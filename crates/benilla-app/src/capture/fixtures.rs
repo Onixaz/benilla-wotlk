@@ -89,12 +89,15 @@ pub(super) fn seed_ui_fixture(
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsSelection,
+            crate::ui_script::OwnsActions,
+        )>,
     ),
     mut selection: crate::ui_script::OwnedMut<crate::target::Selection>,
     // A nested tuple, one param under Bevy's 16-param cap.
     (mut actions, mut exit, mut loading): (
-        ResMut<crate::ui_action::PlayerActions>,
+        crate::ui_script::OwnedMut<crate::ui_action::PlayerActions>,
         MessageWriter<AppExit>,
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
@@ -1250,7 +1253,7 @@ pub(super) fn seed_ui_fixture(
             let Some(script) = script.as_mut() else {
                 return;
             };
-            actions.spells.extend([
+            actions.write().spells.extend([
                 // The auto-attack shows the equipped sword's icon, not the placeholder of spell 6603,
                 // in General (no skill line).
                 6603, // Attack

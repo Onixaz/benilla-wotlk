@@ -697,7 +697,7 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
-    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`): every VM holder reaches it
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`): every VM holder reaches it
     ///   through its lent view and runs on the main thread, so two VM holders fighting over it
     ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
@@ -729,6 +729,10 @@ pub(crate) mod schedule_tests {
             ("StableOpen", TypeId::of::<crate::ui_stable::StableOpen>),
             ("Cooldowns", TypeId::of::<crate::spell::Cooldowns>),
             ("PetBar", TypeId::of::<crate::ui_pet::PetBar>),
+            (
+                "PlayerActions",
+                TypeId::of::<crate::ui_action::PlayerActions>,
+            ),
         ];
         const CACHES: &[ClassRow] = &[
             ("NameCache", TypeId::of::<crate::names::NameCache>),
@@ -1047,7 +1051,8 @@ pub(crate) mod schedule_tests {
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
     // The quest rows read at the call (#1276) put `ItemDisplays`, a pure display cache, in every VM system's view; classed with `Creatures`.
-    const UPDATE_ACTIONABLE_CEILING: usize = 2_826;
+    // The action store lent to every VM holder (#1278) runs its rank pass and override bar ahead of the press phase, 2788.
+    const UPDATE_ACTIONABLE_CEILING: usize = 2_788;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
