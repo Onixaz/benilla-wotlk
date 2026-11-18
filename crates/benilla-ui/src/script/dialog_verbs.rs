@@ -1,72 +1,43 @@
-//! The verbs the stock `StaticPopup.lua` dialogs call: the instance-boot and area spirit healer
-//! clocks and the pet untrain pair; the battlefield port answer is
-//! `battlefield_queue`'s.
+//! The verbs the stock `StaticPopup.lua` dialogs call for the instance-boot and area spirit healer clocks, each read live at the call; the battlefield port answer is `battlefield_queue`'s.
 
 use mlua::Lua;
-
-use super::binding_abi::flag;
 
 /// The area spirit healer's aura (`0xA18`), the only cancel-aura spell that also fires
 /// `AREA_SPIRIT_HEALER_OUT_OF_RANGE`.
 pub const AREA_SPIRIT_HEALER_SPELL: u32 = 2584;
 
-impl super::UiScript {
-    /// `ConfirmPetUnlearn()` calls since the last drain.
-    pub fn take_pet_unlearn_confirms(&mut self) -> u32 {
-        drain_field!(self, pet_unlearn_confirms)
-    }
-
-    /// What `CheckPetUntrainerDist()` answers: a pending question whose trainer is in reach.
-    pub fn set_pet_untrainer_pending(&mut self, pending: bool) {
-        set_field!(self, pet_untrainer_pending, pending);
-    }
-
-    /// `GetInstanceBootTimeRemaining()`'s answer, whole seconds (0 idle).
-    pub fn set_instance_boot_secs(&mut self, secs: u32) {
-        set_field!(self, instance_boot_secs, secs);
-    }
-
-    /// The area spirit healer: whether one is cached, and the seconds to its next wave.
-    pub fn set_area_spirit_healer(&mut self, cached: bool, secs: u32) {
-        {
-            let m = self.model_ref();
-            if m.area_spirit_healer_cached == cached && m.area_spirit_secs == secs {
-                return;
-            }
-        }
-        let mut model = self.model_mut();
-        model.area_spirit_healer_cached = cached;
-        model.area_spirit_secs = secs;
-    }
-
-    /// `AcceptAreaSpiritHeal()` calls since the last drain, each a `0x2E3` to send.
-    pub fn take_area_spirit_accepts(&mut self) -> u32 {
-        drain_field!(self, area_spirit_accepts)
-    }
+/// What the healer poll (`0x524010`) did through its healer set (`0x523eb0`): a pending wave cancelled, a new healer asked for.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SpiritPoll {
+    /// The wave's aura cancel (`0x523eea`), which fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` ahead of its send.
+    pub cancel_aura: bool,
+    /// `CMSG_AREA_SPIRIT_HEALER_QUERY` for the healer newly held.
+    pub query: Option<u64>,
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `max(deadline - now, 0) / 1000`, truncated.
     g.set(
         "GetInstanceBootTimeRemaining",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.instance_boot_secs))
+        lua.create_function(|_, ()| {
+            Ok(i64::from(
+                super::read_live(|l| l.instance_boot_secs()).unwrap_or(0),
+            ))
         })?,
     )?;
 
-    // Silent with no healer cached, else `0x2E3` with the cached guid.
+    // The poll first, its cancel's event inside the call, then the queue send naming the healer it left (`0x524b60`).
     g.set(
         "AcceptAreaSpiritHeal",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.area_spirit_healer_cached {
-                model.area_spirit_accepts += 1;
+            let Some(poll) = super::write_live(|l| l.area_spirit_poll()).flatten() else {
+                return Ok(());
+            };
+            if poll.cancel_aura {
+                super::tick::fire_event_into(lua, "AREA_SPIRIT_HEALER_OUT_OF_RANGE", Vec::new());
             }
+            super::read_live(|l| l.accept_area_spirit_heal(poll));
             Ok(())
         })?,
     )?;
@@ -85,34 +56,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // Whole seconds: `max(0, - now) / 1000`.
     g.set(
         "GetAreaSpiritHealerTime",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.area_spirit_secs))
-        })?,
-    )?;
-
-    // `1` or nil, never `0`; the app tests the range to the latched trainer.
-    g.set(
-        "CheckPetUntrainerDist",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.pet_untrainer_pending))
-        })?,
-    )?;
-    // The app holds the latch and the money gate, and sends `0x2F0`.
-    g.set(
-        "ConfirmPetUnlearn",
-        lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.pet_unlearn_confirms += 1;
-            Ok(())
+        lua.create_function(|_, ()| {
+            Ok(i64::from(
+                super::read_live(|l| l.area_spirit_healer_secs()).unwrap_or(0),
+            ))
         })?,
     )?;
 
@@ -124,8 +73,8 @@ mod tests {
     use crate::script::UiScript;
 
     #[test]
-    fn the_clocks_read_what_the_app_feeds() {
-        let mut s = UiScript::new().unwrap();
+    fn the_clocks_read_zero_with_no_view_lent() {
+        let s = UiScript::new().unwrap();
         assert_eq!(
             s.eval::<i64>("return GetInstanceBootTimeRemaining()")
                 .unwrap(),
@@ -135,32 +84,7 @@ mod tests {
             s.eval::<i64>("return GetAreaSpiritHealerTime()").unwrap(),
             0
         );
-        s.set_instance_boot_secs(42);
-        s.set_area_spirit_healer(true, 17);
-        assert_eq!(
-            s.eval::<i64>("return GetInstanceBootTimeRemaining()")
-                .unwrap(),
-            42
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetAreaSpiritHealerTime()").unwrap(),
-            17
-        );
-    }
-
-    #[test]
-    fn accept_area_spirit_heal_is_silent_without_a_cached_healer() {
-        let mut s = UiScript::new().unwrap();
         s.run("AcceptAreaSpiritHeal()").unwrap();
-        assert_eq!(
-            s.take_area_spirit_accepts(),
-            0,
-            "no healer cached: nothing sent"
-        );
-        s.set_area_spirit_healer(true, 5);
-        s.run("AcceptAreaSpiritHeal() AcceptAreaSpiritHeal()")
-            .unwrap();
-        assert_eq!(s.take_area_spirit_accepts(), 2);
     }
 
     #[test]
@@ -180,18 +104,5 @@ mod tests {
             s.take_cancel_aura_requests(),
             vec![super::AREA_SPIRIT_HEALER_SPELL]
         );
-    }
-
-    #[test]
-    fn the_pet_pair_counts_and_answers_one_or_nil() {
-        let mut s = UiScript::new().unwrap();
-        assert!(s
-            .eval::<bool>("return CheckPetUntrainerDist() == nil")
-            .unwrap());
-        s.set_pet_untrainer_pending(true);
-        assert_eq!(s.eval::<i64>("return CheckPetUntrainerDist()").unwrap(), 1);
-        s.run("ConfirmPetUnlearn() ConfirmPetUnlearn()").unwrap();
-        assert_eq!(s.take_pet_unlearn_confirms(), 2);
-        assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 }

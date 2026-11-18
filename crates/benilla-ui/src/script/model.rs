@@ -633,22 +633,7 @@ pub(crate) struct Model {
     pub(crate) inspect_talent_preview: Vec<Vec<Vec<i32>>>,
     /// `LearnPreviewTalents(true)` sends queued.
     pub(crate) pet_talent_preview_learns: Vec<Vec<(u32, u32)>>,
-    /// `ConfirmTalentWipe()` calls, one `MSG_TALENT_WIPE_CONFIRM` each; the app holds the trainer.
-    pub(crate) talent_wipe_confirms: u32,
-    /// `CheckTalentMasterDist()`: the respec question is live and in range; false hides its dialog.
-    pub(crate) talent_master_pending: bool,
     // ── The dialog engine's verbs ──
-    /// `ConfirmPetUnlearn()` calls; the app holds the trainer and the money gate.
-    pub(crate) pet_unlearn_confirms: u32,
-    /// `CheckPetUntrainerDist()`: the pet trainer's question is pending and in reach.
-    pub(crate) pet_untrainer_pending: bool,
-    /// `GetInstanceBootTimeRemaining()` in whole seconds, from the `SMSG_RAID_GROUP_ONLY` deadline.
-    pub(crate) instance_boot_secs: u32,
-    /// A cached area spirit healer and seconds to its wave.
-    pub(crate) area_spirit_healer_cached: bool,
-    pub(crate) area_spirit_secs: u32,
-    /// `AcceptAreaSpiritHeal()` calls, one `CMSG_AREA_SPIRIT_HEALER_QUEUE` each.
-    pub(crate) area_spirit_accepts: u32,
     /// The battleground scoreboard: pushed rows, faction filter, sort order.
     pub(crate) battlefield_board: super::battlefield_score::ScoreBoard,
     /// `RequestBattlefieldScoreData()` calls.
@@ -1176,10 +1161,6 @@ pub(crate) struct Model {
     pub(crate) stuck_casts: u32,
     /// The GM survey's tables and the answers given since the last submit.
     pub(crate) gm_survey: super::gm_ticket::SurveyState,
-    /// `ConfirmBinder()` calls, one `CMSG_BINDER_ACTIVATE` each; the app holds the innkeeper.
-    pub(crate) binder_confirms: u32,
-    /// `CheckBinderDist()`: the innkeeper's question is live and in range; false hides its dialog.
-    pub(crate) binder_pending: bool,
     /// `ConfirmSummon()` (true) and `CancelSummon()` (false) calls in order, one
     /// `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
     pub(crate) summon_answers: Vec<bool>,
@@ -1575,14 +1556,6 @@ impl Model {
             inspect_talents: Default::default(),
             inspect_talent_preview: Vec::new(),
             pet_talent_preview_learns: Vec::new(),
-            talent_wipe_confirms: 0,
-            talent_master_pending: false,
-            pet_unlearn_confirms: 0,
-            pet_untrainer_pending: false,
-            instance_boot_secs: 0,
-            area_spirit_healer_cached: false,
-            area_spirit_secs: 0,
-            area_spirit_accepts: 0,
             battlefield_board: Default::default(),
             battlefield_score_requests: 0,
             battlefield: Default::default(),
@@ -1794,8 +1767,6 @@ impl Model {
             gm_ticket_intents: Vec::new(),
             stuck_casts: 0,
             gm_survey: Default::default(),
-            binder_confirms: 0,
-            binder_pending: false,
             summon_answers: Vec::new(),
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),

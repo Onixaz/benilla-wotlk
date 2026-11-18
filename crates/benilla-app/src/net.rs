@@ -1681,10 +1681,6 @@ pub(crate) enum ClientCommand {
     },
     /// The world-enter status request: `CMSG_BATTLEFIELD_STATUS`.
     BattlefieldStatusRequest,
-    /// `ConfirmPetUnlearn()`: `CMSG_PET_UNLEARN` with the latched trainer.
-    PetUnlearn {
-        trainer: u64,
-    },
     /// `CMSG_BANKER_ACTIVATE`: a pure banker's direct opener (bit 8 the lowest service bit); a
     /// gossip banker goes through the menu. Answered by `SMSG_SHOW_BANK`.
     BankerActivate {

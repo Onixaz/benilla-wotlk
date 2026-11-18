@@ -15,8 +15,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "__framescript_meta",
     "AssistByName",
     "ChannelModerate",
-    "CheckPetUntrainerDist",
-    "ConfirmPetUnlearn",
     "FollowByName",
     "PlayerHasSpells",
     "TargetByName",

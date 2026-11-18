@@ -153,6 +153,7 @@ mod glue_select;
 mod glue_system;
 mod mirror_timer;
 pub use client::ClientOs;
+pub use dialog_verbs::SpiritPoll;
 pub use glue::{VmKind, GLUE_EVENTS};
 pub use glue_addons::GlueAddonList;
 pub use glue_core::{

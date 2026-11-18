@@ -27,7 +27,6 @@ use crate::net::{ChatKind, ClientCommand, Guid, HomeBind, NetCommands, NetEntity
 use crate::player::Player;
 use crate::ui_binder::BinderState;
 use crate::ui_gossip::GossipState;
-use crate::ui_session::NpcSession;
 
 /// Innkeeper Keldamyr's spawn (vmangos `creature` guid 46343), the `.go xyz` target.
 const INNKEEPER_AT: [f32; 3] = [9802.21, 982.608, 1313.98];

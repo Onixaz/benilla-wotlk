@@ -131,6 +131,10 @@ local VERBS = {
     { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
     { "slots1", function() return GetContainerNumSlots(1) end },
     { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
+    { "binderdist", function() return CheckBinderDist() end },
+    { "talentdist", function() return CheckTalentMasterDist() end },
+    { "boot", function() return GetInstanceBootTimeRemaining() end },
+    { "spirittime", function() return GetAreaSpiritHealerTime() end },
 }
 local function answers()
     local verbs = {}
@@ -714,16 +718,17 @@ fn a_reload_zeroes_the_countdowns() {
         pin(&armed, &["CONFIRM_SUMMON"], &["reclaim", "summon"]),
         vec!["CONFIRM_SUMMON | reclaim=30 summon=120"]
     );
-    let clocks = |rig: &Rig| {
-        rig.app
-            .world()
-            .non_send_resource::<benilla_ui::script::UiScript>()
-            .eval::<String>(
+    // Read with the `World` lent, as a script call reads the boot deadline (`0x5162e0`).
+    let clocks = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<String>(
                 "return GetInstanceBootTimeRemaining() .. ',' .. GetInstanceLockTimeRemaining()",
             )
-            .unwrap()
+        })
+        .expect("a VM")
+        .unwrap()
     };
-    assert_eq!(clocks(&rig), "59,89", "the boot and lock clocks run");
+    assert_eq!(clocks(&mut rig), "59,89", "the boot and lock clocks run");
     rig.app
         .world()
         .non_send_resource::<benilla_ui::script::UiScript>()
@@ -735,7 +740,7 @@ fn a_reload_zeroes_the_countdowns() {
         pin(&seen, &["PLAYER_ENTERING_WORLD"], &["reclaim", "summon"]),
         vec!["PLAYER_ENTERING_WORLD | reclaim=0 summon=0"]
     );
-    assert_eq!(clocks(&rig), "0,0");
+    assert_eq!(clocks(&mut rig), "0,0");
 }
 
 /// The summon offer and its withdrawal in one frame and apart: `CONFIRM_SUMMON` fires from the
@@ -3387,7 +3392,7 @@ fn banker_create(npc_flags: u32) -> SessionEvent {
 }
 
 /// A creature as a stream create sends it, with `npc_flags`.
-fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
+pub(super) fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
     let pairs = vec![
         (2, 0x9),
         (FIELD_UNIT_HEALTH, 500),

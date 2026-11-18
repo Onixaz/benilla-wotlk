@@ -619,6 +619,42 @@ pub trait LiveState {
 
     /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
     fn ask_refund_record(&mut self, _item: u64) {}
+
+    /// `CheckBinderDist` (`0x6d2290`): the latched innkeeper held as a unit within its combat reach plus 4 yd of us.
+    fn binder_in_reach(&self) -> bool {
+        false
+    }
+
+    /// `ConfirmBinder`'s talk with no guid (`0x6d2120`): the latched innkeeper in reach, `CMSG_BINDER_ACTIVATE` goes out (`0x6d2257`).
+    fn confirm_binder(&self) {}
+
+    /// `CheckTalentMasterDist` (`0x6d2070`): the latched trainer held as a unit within its combat reach plus 4 yd of us.
+    fn talent_master_in_reach(&self) -> bool {
+        false
+    }
+
+    /// `ConfirmTalentWipe`'s talk with no guid (`0x6db1c0`): the latched trainer in reach, the wipe goes out when our money covers the latched cost, else the refusal line's key (`0x6db2ae`).
+    fn confirm_talent_wipe(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// `GetInstanceBootTimeRemaining` (`0x5162e0`): whole seconds to the boot deadline, 0 with none or past.
+    fn instance_boot_secs(&self) -> u32 {
+        0
+    }
+
+    /// `GetAreaSpiritHealerTime` (`0x516b90`): whole seconds to the held healer's wave, 0 with none or past.
+    fn area_spirit_healer_secs(&self) -> u32 {
+        0
+    }
+
+    /// `AcceptAreaSpiritHeal`'s healer poll at the call (`0x524b60` -> `0x524010`), its state written; `None` where no view lends it.
+    fn area_spirit_poll(&mut self) -> Option<super::SpiritPoll> {
+        None
+    }
+
+    /// The poll's sends, then `CMSG_AREA_SPIRIT_HEALER_QUEUE` naming the healer it left held (`0x524b60`).
+    fn accept_area_spirit_heal(&self, _poll: super::SpiritPoll) {}
 }
 
 /// A lent view's address, its lifetime erased.

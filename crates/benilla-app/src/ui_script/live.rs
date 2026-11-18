@@ -88,6 +88,10 @@ pub(crate) struct LiveView<'w, 's> {
     currency: crate::ui_currency::CurrencyLive<'w>,
     /// The bags' objects, item cache and catalogs, read at the call.
     containers: Option<crate::ui_items::ContainerLive<'w, 's>>,
+    /// The innkeeper and talent master latches and their reach.
+    talk: crate::ui_binder::TalkView<'w, 's>,
+    /// The instance boot deadline and the healer poll's inputs.
+    dialogs: crate::ui_dialog_verbs::DialogView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -101,6 +105,7 @@ pub(crate) struct Lent<'w> {
     pub(crate) giver: LentSlot<'w, QuestGiver>,
     pub(crate) bank: LentSlot<'w, BankOpen>,
     pub(crate) refunds: LentSlot<'w, crate::ui_socket::RefundRecords>,
+    pub(crate) spirit: LentSlot<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
@@ -112,6 +117,7 @@ pub(crate) mod lent {
     pub(crate) const GIVER: u8 = 16;
     pub(crate) const BANK: u8 = 32;
     pub(crate) const REFUNDS: u8 = 64;
+    pub(crate) const SPIRIT: u8 = 128;
 }
 
 /// One kind of [`Lent`] state.
@@ -139,6 +145,11 @@ lendable!(QuestExpiries, expiries, lent::EXPIRIES);
 lendable!(QuestGiver, giver, lent::GIVER);
 lendable!(BankOpen, bank, lent::BANK);
 lendable!(crate::ui_socket::RefundRecords, refunds, lent::REFUNDS);
+lendable!(
+    crate::ui_dialog_verbs::AreaSpiritHealer,
+    spirit,
+    lent::SPIRIT
+);
 
 /// One piece of [`Lent`] state: the borrow [`LendLive`] took, or the one its owner lends for the call in progress.
 pub(crate) struct LentSlot<'w, T: 'static> {
@@ -364,6 +375,12 @@ impl Owns for OwnsCooldowns {
 pub(crate) struct OwnsSignals;
 impl Owns for OwnsSignals {
     const LENT: u8 = lent::SIGNALS;
+}
+
+/// The system lends the area spirit healer from its own borrow.
+pub(crate) struct OwnsSpirit;
+impl Owns for OwnsSpirit {
+    const LENT: u8 = lent::SPIRIT;
 }
 
 /// The system lends the quest timers' [`QuestExpiries`] from its own borrow.
@@ -1445,6 +1462,42 @@ impl LiveState for LiveView<'_, '_> {
             records.ask(item, commands);
         }
     }
+
+    fn binder_in_reach(&self) -> bool {
+        self.talk.binder_in_reach()
+    }
+
+    fn confirm_binder(&self) {
+        self.talk.confirm_binder();
+    }
+
+    fn talent_master_in_reach(&self) -> bool {
+        self.talk.talent_master_in_reach()
+    }
+
+    fn confirm_talent_wipe(&self) -> Option<&'static str> {
+        self.talk.confirm_talent_wipe()
+    }
+
+    fn instance_boot_secs(&self) -> u32 {
+        self.dialogs.instance_boot_secs()
+    }
+
+    fn area_spirit_healer_secs(&self) -> u32 {
+        self.lent
+            .spirit
+            .get()
+            .map_or(0, |s| s.secs(std::time::Instant::now()))
+    }
+
+    fn area_spirit_poll(&mut self) -> Option<benilla_ui::script::SpiritPoll> {
+        let spirit = self.lent.spirit.get_mut()?;
+        Some(crate::ui_dialog_verbs::poll(spirit, &self.dialogs.spirit))
+    }
+
+    fn accept_area_spirit_heal(&self, poll: benilla_ui::script::SpiritPoll) {
+        self.dialogs.accept(poll, self.lent.spirit.get());
+    }
 }
 
 impl Lent<'_> {
@@ -1581,7 +1634,7 @@ unsafe fn slot_fetch<X: Resource>(
 }
 
 /// The [`Lent`] state's ids, in [`lent`] bit order.
-type LentIds = [ComponentId; 7];
+type LentIds = [ComponentId; 8];
 
 /// Register the [`Lent`] state's ids.
 fn lent_ids(world: &mut World) -> LentIds {
@@ -1594,6 +1647,7 @@ fn lent_ids(world: &mut World) -> LentIds {
         reg.register_non_send::<QuestGiver>(),
         reg.register_non_send::<BankOpen>(),
         reg.register_non_send::<crate::ui_socket::RefundRecords>(),
+        reg.register_non_send::<crate::ui_dialog_verbs::AreaSpiritHealer>(),
     ]
 }
 
@@ -1688,7 +1742,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
         type Petitions = crate::ui_petition::PetitionState;
         slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
-        let [signals, asks, marks, expiries, giver, bank, refunds] = &state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds, spirit] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
         lent_access::<QuestAsks>(own, lent::ASKS, asks, meta, set, world);
@@ -1698,6 +1752,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         lent_access::<BankOpen>(own, lent::BANK, bank, meta, set, world);
         type Refunds = crate::ui_socket::RefundRecords;
         lent_access::<Refunds>(own, lent::REFUNDS, refunds, meta, set, world);
+        type Spirit = crate::ui_dialog_verbs::AreaSpiritHealer;
+        lent_access::<Spirit>(own, lent::SPIRIT, spirit, meta, set, world);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -1764,7 +1820,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             view.petitions
                 .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
         }
-        let [signals, asks, marks, expiries, giver, bank, refunds] = state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds, spirit] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
         // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
         view.lent = unsafe {
@@ -1776,6 +1832,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 giver: lent_fetch(own, lent::GIVER, giver, meta, world, tick),
                 bank: lent_fetch(own, lent::BANK, bank, meta, world, tick),
                 refunds: lent_fetch(own, lent::REFUNDS, refunds, meta, world, tick),
+                spirit: lent_fetch(own, lent::SPIRIT, spirit, meta, world, tick),
             }
         };
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,

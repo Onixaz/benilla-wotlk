@@ -143,22 +143,23 @@ pub(crate) fn select_on_click(
 pub(crate) struct ServiceArms<'w, 's> {
     /// The last `SMSG_QUESTGIVER_STATUS` per guid (`[unit+0xcb8]`), read by bit 1's.
     pub(crate) quest: Res<'w, crate::ui_quest::QuestStatuses>,
-    /// Bit 7: the reference fires `CONFIRM_BINDER`; `CMSG_BINDER_ACTIVATE` is the dialog's Accept.
-    pub(crate) binder: ResMut<'w, crate::ui_binder::BinderState>,
     /// Bit 5's talk runs as a command, its `CONFIRM_XP_LOSS` fired in turn (`0x6db010`).
     pub(crate) talk: Commands<'w, 's>,
     /// Bit 6 sends through the cache the proximity poll writes, so the two agree on the healer.
-    pub(crate) spirit: ResMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
+    pub(crate) spirit: NonSendMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
     /// The NPC whose window is open, checked before the ladder.
     pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
-    _live: crate::ui_script::LendLive<
+    live: crate::ui_script::LendLive<
         'w,
         's,
         (
-            crate::ui_script::OwnsCooldowns,
-            crate::ui_script::OwnsSelection,
+            (
+                crate::ui_script::OwnsCooldowns,
+                crate::ui_script::OwnsSelection,
+            ),
+            crate::ui_script::OwnsSpirit,
         ),
     >,
     /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
@@ -974,7 +975,7 @@ impl Dispatch<'_, '_> {
             }
             ServiceAction::AskBinder => {
                 debug!("right-click interact: {guid:#x} (innkeeper — CONFIRM_BINDER, no packet)");
-                self.service.binder.ask(guid);
+                crate::ui_binder::queue_binder_talk(&mut self.service.talk, guid);
             }
             ServiceAction::AskSpiritHealer => {
                 debug!(
@@ -986,20 +987,20 @@ impl Dispatch<'_, '_> {
                 debug!("right-click interact: {guid:#x} (spirit guide — adopting, 0x2E2)");
                 let outcome = self.service.spirit.click_guide(guid);
                 if outcome.cancel_aura {
-                    if let Some(script) = self.service.script.as_deref_mut() {
-                        script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+                    let service = &mut self.service;
+                    if let Some(script) = service.script.as_deref_mut() {
+                        service.live.lending(&mut *service.spirit, || {
+                            script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+                        });
                     }
-                    let _ = self.seam.net.0.send(ClientCommand::CancelAura {
-                        spell_id: crate::ui_dialog_verbs::AREA_SPIRIT_HEALER_AURA,
-                    });
                 }
-                if let Some(healer) = outcome.query {
-                    let _ = self
-                        .seam
-                        .net
-                        .0
-                        .send(ClientCommand::AreaSpiritHealerQuery { healer });
-                }
+                crate::ui_dialog_verbs::poll_sends(
+                    benilla_ui::script::SpiritPoll {
+                        cancel_aura: outcome.cancel_aura,
+                        query: outcome.query,
+                    },
+                    &self.seam.net,
+                );
             }
             ServiceAction::OpenMailbox => {
                 debug!("right-click interact: {guid:#x} (mailbox NPC — mail window, no packet)");
@@ -2511,7 +2512,7 @@ mod tests {
         world.init_resource::<crate::ui_quest::QuestStatuses>();
         world.init_resource::<crate::ui_binder::BinderState>();
         world.init_resource::<crate::death::DeathNet>();
-        world.init_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();
+        world.init_non_send_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();
         world.init_resource::<crate::ui_session::InteractNpc>();
         world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.init_resource::<crate::ui_action::CastErrors>();

@@ -1226,9 +1226,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::TalentWipeConfirm { trainer, cost } => {
             vec![SessionEvent::TalentWipeConfirm { trainer, cost }]
         }
-        ServerPacket::PetUnlearnConfirm { trainer, cost } => {
-            vec![SessionEvent::PetUnlearnConfirm { trainer, cost }]
-        }
+        // 12340 registers no handler for 0x2F1: the packet is dropped.
+        ServerPacket::PetUnlearnConfirm { .. } => Vec::new(),
         ServerPacket::RaidGroupOnly { delay_ms, reason } => {
             vec![SessionEvent::RaidGroupOnly { delay_ms, reason }]
         }

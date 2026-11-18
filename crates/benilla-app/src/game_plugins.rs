@@ -1224,7 +1224,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 708, 700),
+        ("Update", 691, 683),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1639,8 +1639,6 @@ pub(crate) mod schedule_tests {
          "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
         ("ui_battlefield.rs", "drain_battlefield", Because::PlayerRoundTrip,
          "`closed` ends a battlemaster session, which only a list packet answering a click on a battlemaster opens"),
-        ("ui_binder.rs", "feed_binder", Because::PlayerRoundTrip,
-         "`SMSG_BINDER_CONFIRM` only answers the innkeeper's gossip line"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
@@ -1687,8 +1685,6 @@ pub(crate) mod schedule_tests {
          "the intents are Lua's; the event answers a Save intent"),
         ("ui_tabard.rs", "feed_tabard", Because::PlayerRoundTrip,
          "every latch follows a tabard-vendor click, and `reset_on_world_enter` zeroes the resource on entry"),
-        ("ui_talent_wipe.rs", "feed_talent_wipe", Because::PlayerRoundTrip,
-         "`MSG_TALENT_WIPE_CONFIRM` answers the trainer's gossip option"),
         ("ui_taxi/mod.rs", "feed_taxi", Because::PlayerRoundTrip,
          "both packets follow talking to a flight master"),
         ("ui_trainer/mod.rs", "feed_trainer", Because::PlayerRoundTrip,
