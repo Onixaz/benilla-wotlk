@@ -1035,7 +1035,10 @@ pub(crate) mod schedule_tests {
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
     // The quest rows read at the call (#1276) put `ItemDisplays`, a pure display cache, in every VM system's view; classed with `Creatures`, 3108 with the place legs (#1313).
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_108;
+    // That count is Windows'. On macOS the cursor's `macos::drive` runs after the present stage
+    // instead of in `UiDrain`, unordered against the booths, the tip and the area update, and the
+    // Mac counts 3129; the ceiling is the higher platform's until the order is declared (#1333).
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_129;
 
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
