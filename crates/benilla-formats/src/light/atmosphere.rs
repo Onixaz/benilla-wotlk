@@ -62,6 +62,9 @@ pub struct Atmosphere {
     /// Fog start as a fraction of the pushed end, FloatBand sub 1, unclamped, so a storm's negative
     /// value puts fog at the eye; lerped raw.
     pub fog_start_frac: f32,
+    /// The fog curve's exponent, `factor = linear^rate`: 1 as sampled, the rate law's 1.5 to 7 on
+    /// the maps that take it ([`crate::light::FogLaw`]); lerped raw.
+    pub fog_rate: f32,
     pub fog_color: [f32; 3],
     /// Global diffuse, the sun's direct tint.
     pub sun_diffuse: [f32; 3],
@@ -96,6 +99,7 @@ impl Atmosphere {
     pub const DEFAULT: Atmosphere = Atmosphere {
         fog_end: 1000.0,
         fog_start_frac: 0.4,
+        fog_rate: 1.0,
         fog_color: [0.55, 0.72, 0.92],
         sun_diffuse: [1.0, 0.96, 0.86],
         sun_color: [1.0, 1.0, 0.9],
@@ -125,6 +129,7 @@ impl Atmosphere {
         Atmosphere {
             fog_end: f(self.fog_end, other.fog_end),
             fog_start_frac: f(self.fog_start_frac, other.fog_start_frac),
+            fog_rate: f(self.fog_rate, other.fog_rate),
             fog_color: c(self.fog_color, other.fog_color),
             sun_diffuse: c(self.sun_diffuse, other.sun_diffuse),
             sun_color: c(self.sun_color, other.sun_color),
