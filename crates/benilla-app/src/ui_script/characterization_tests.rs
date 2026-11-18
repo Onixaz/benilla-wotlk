@@ -4542,6 +4542,89 @@ fn the_pet_packets_fire_their_events_in_wire_order() {
     );
 }
 
+/// A refused pet order or cast refunds the start cooldown on the pet history (`0x804780`, `0x806d41`): the spellbook's flush when a record of the spell matched (`0x80476d`), then `PET_BAR_UPDATE_COOLDOWN` always (`0x804792`, `0x806d46`); the order's line shows first (`0x5d4e3c`).
+#[test]
+fn a_refused_pet_order_or_cast_flushes_the_cooldowns_from_its_handler() {
+    use benilla_protocol::messages::{PetActionEntry, PetSpells};
+    const GROWL: u32 = 2649;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let mut spells = PetSpells {
+        pet_guid: PET,
+        state: 0x0001,
+        ..Default::default()
+    };
+    spells.bar[3] = PetActionEntry::from(0xC100_0000 | GROWL);
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(spells)),
+            SessionEvent::SpellCooldowns {
+                caster: PET,
+                flags: 0,
+                cooldowns: vec![(GROWL, 30_000)],
+            },
+        ],
+        3,
+    );
+    let events = &[
+        "UI_ERROR_MESSAGE",
+        "ACTIONBAR_UPDATE_COOLDOWN",
+        "SPELL_UPDATE_COOLDOWN",
+        "PET_BAR_UPDATE_COOLDOWN",
+    ];
+    let verbs = &["petcd"];
+    let feedback = |reason, spell| SessionEvent::PetActionFeedback { reason, spell };
+    // Growl holds a record: the line, the spellbook's flush, the pet bar's.
+    let seen = rig.packets(vec![feedback(2, GROWL)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "UI_ERROR_MESSAGE There is nothing to attack. | petcd=true",
+            "ACTIONBAR_UPDATE_COOLDOWN | petcd=true",
+            "SPELL_UPDATE_COOLDOWN | petcd=true",
+            "PET_BAR_UPDATE_COOLDOWN | petcd=true",
+        ]
+    );
+    // A spell with no record: the pet bar's flush alone; reason 1 refunds nothing.
+    let seen = rig.packets(vec![feedback(3, 1), feedback(1, 0)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "UI_ERROR_MESSAGE You cannot attack that target. | petcd=true",
+            "PET_BAR_UPDATE_COOLDOWN | petcd=true",
+            "UI_ERROR_MESSAGE Your pet is dead. | petcd=true",
+        ]
+    );
+    // The cast refusal's refund flushes before its failure line.
+    let failed = |spell_id| SessionEvent::PetCastFailed {
+        cast_count: 1,
+        spell_id,
+        reason: 0x0c,
+        arg: None,
+        wire_reason: 0x0c,
+    };
+    let seen = rig.packets(vec![failed(GROWL), failed(1)], 2);
+    let flushes: Vec<_> = pin(&seen, events, verbs)
+        .into_iter()
+        .filter(|l| !l.starts_with("UI_ERROR_MESSAGE"))
+        .collect();
+    assert_eq!(
+        flushes,
+        vec![
+            "ACTIONBAR_UPDATE_COOLDOWN | petcd=true",
+            "SPELL_UPDATE_COOLDOWN | petcd=true",
+            "PET_BAR_UPDATE_COOLDOWN | petcd=true",
+            "PET_BAR_UPDATE_COOLDOWN | petcd=true",
+        ]
+    );
+}
+
 /// A pet created already fighting fires no `PET_ATTACK_START`: a new object's create runs no field handler (`0x4d64a4`, only a re-enabled one reaches `0x4d64be`), and the setter takes the pet's combat test into the attacking global instead (`0x5d6a80`).
 #[test]
 fn a_pet_created_in_combat_fires_no_attack_start_and_reads_attacking() {
