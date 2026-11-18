@@ -92,6 +92,8 @@ pub(crate) struct LiveView<'w, 's> {
     talk: crate::ui_binder::TalkView<'w, 's>,
     /// The instance boot deadline and the healer poll's inputs.
     dialogs: crate::ui_dialog_verbs::DialogView<'w, 's>,
+    /// `ItemSet.dbc`, the name cache and the bonuses' token inputs, read at the call.
+    item_sets: Option<crate::ui_items::ItemSetLive<'w, 's>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1335,6 +1337,26 @@ impl LiveState for LiveView<'_, '_> {
 
     fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {
         self.item_tables.as_deref().map(|t| &t.tables)
+    }
+
+    fn item_set(
+        &self,
+        set_id: u32,
+        global: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::ItemSetView> {
+        let me = self.self_guid.as_ref().and_then(|s| s.0).and_then(|g| {
+            let &entity = self.index.as_ref()?.0.get(&g)?;
+            self.stores.get(entity).ok()
+        });
+        let known = self.actions.get().map(|a| &a.spells);
+        static NONE: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        self.item_sets.as_ref()?.view(
+            set_id,
+            me,
+            self.spells.as_deref(),
+            known.unwrap_or(&NONE),
+            global,
+        )
     }
 
     fn player_fields(&self) -> Option<benilla_ui::script::PlayerFields> {

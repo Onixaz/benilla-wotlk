@@ -40,7 +40,8 @@ use drain::{
 };
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
-use feed::{build_item_tables, feed_item_sets, feed_item_stats};
+pub(crate) use feed::ItemSetLive;
+use feed::{build_item_tables, feed_item_stats};
 pub(crate) use feed::{can_dual_wield, player_fields, player_rep_rank, player_skill};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
@@ -1083,9 +1084,6 @@ impl Plugin for UiItemsPlugin {
                     feed::take_fresh_templates
                         .in_set(benilla_world::schedule::WorldStage::Net)
                         .after(crate::net::apply_net_updates),
-                    feed_item_sets
-                        .in_set(UnitFeed)
-                        .after(crate::ui_action::SlotIdentityFeed),
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
                     // plain `UseContainerItem` is a script call.

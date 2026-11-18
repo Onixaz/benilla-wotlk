@@ -32,7 +32,7 @@ pub(super) use render::bind_key;
 pub(super) use render::Sell;
 use render::{render_view, BuilderFlags, Requester};
 use wait::{note_item_miss, retrieving};
-pub(crate) use wait::{note_set_miss, wrap_setters, ItemRender, ItemWait};
+pub(crate) use wait::{note_name_miss, wrap_setters, ItemRender, ItemWait};
 
 /// The body both compare bindings run: walk the slots the reference's mask table gives the
 /// `InventoryType`, skipping empty ones uncounted and ones whose worn item's class differs, until

@@ -104,24 +104,44 @@ fn a_tooltip_set_to_another_item_is_not_repainted_with_the_old() {
     assert!(!shown(&mut s), "a hidden tooltip stays hidden");
 }
 
-/// A secondary record the render read, an item set, repaints when it lands.
+/// A set member's name the render asked for repaints the tooltip when it lands (`0x62ba29`); another name does not.
 #[test]
-fn an_item_set_landing_repaints() {
+fn a_set_members_name_landing_repaints() {
     let mut s = retrieving_script();
     let mut vest = axe();
     vest.item_set = 161;
     s.set_item_template(6303, vest);
-    s.run("TT:SetHyperlink('item:6303:0:0:0')").unwrap();
-    let before = lines_of(&mut s).len();
+    let member = |name: Option<&str>| ItemSetMember {
+        id: 6304,
+        name: name.map(Into::into),
+        inventory_type: 5,
+    };
     s.set_item_set(
         161,
         ItemSetView {
             name: "Defias Leather".into(),
-            members: vec![ItemSetMember::new(6303, "Defias Mark", 5)],
+            members: vec![member(None)],
+            pending: vec![6304],
             ..Default::default()
         },
     );
+    s.run("TT:SetHyperlink('item:6303:0:0:0')").unwrap();
+    let before = lines_of(&mut s);
+    assert!(!before.iter().any(|(t, _)| t.contains("Defias Mark")));
+    s.set_item_set(
+        161,
+        ItemSetView {
+            name: "Defias Leather".into(),
+            members: vec![member(Some("Defias Mark"))],
+            ..Default::default()
+        },
+    );
+    s.item_name_landed(6305);
+    assert_eq!(lines_of(&mut s), before, "another name repaints nothing");
+    s.item_name_landed(6304);
     let after = lines_of(&mut s);
-    assert!(after.len() > before, "{before} lines, then {after:?}");
-    assert!(after.iter().any(|(t, _)| t.contains("Defias Leather")));
+    assert!(
+        after.iter().any(|(t, _)| t.contains("Defias Mark")),
+        "{before:?}, then {after:?}"
+    );
 }

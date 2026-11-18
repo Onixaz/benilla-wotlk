@@ -980,9 +980,9 @@ pub(crate) struct Model {
     pub(crate) item_templates: HashMap<u32, ItemTemplateView>,
     /// Item ids asked for and missing, for the app to answer.
     pub(crate) item_stat_asks: HashSet<u32>,
-    /// Set id to its tooltip set block, and the misses asked for.
+    /// A test's or a capture fixture's set blocks, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_sets: HashMap<u32, super::ItemSetView>,
-    pub(crate) item_set_asks: HashSet<u32>,
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
     pub(crate) quest_tooltip_waits: HashMap<FrameHandle, Vec<super::QuestRecord>>,
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
@@ -1730,8 +1730,8 @@ impl Model {
             quests_completed_queries: 0,
             quests_completed: Vec::new(),
             item_templates: HashMap::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             item_sets: HashMap::new(),
-            item_set_asks: HashSet::new(),
             hovered_link: None,
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,

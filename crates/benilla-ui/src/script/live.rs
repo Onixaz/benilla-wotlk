@@ -680,6 +680,15 @@ pub trait LiveState {
 
     /// `CancelAreaSpiritHeal`'s `CMSG_CANCEL_AURA` for 2584, after its event (`0x522fa0` -> `0x51f710`).
     fn cancel_area_spirit_heal(&self) {}
+
+    /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
+    fn item_set(
+        &self,
+        _set_id: u32,
+        _global: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::ItemSetView> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.

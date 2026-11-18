@@ -17,16 +17,16 @@ use crate::widget::FrameHandle;
 /// [1..n] = arguments}`, `this` first.
 const REG_ITEM_CALLS: &str = "__benilla_item_tooltip_calls";
 
-/// The item templates and item sets one setter call read and the stores lacked.
+/// The item templates and set members' names one setter call read and the caches lacked.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ItemMisses {
     pub(crate) items: HashSet<u32>,
-    pub(crate) sets: HashSet<u32>,
+    pub(crate) names: HashSet<u32>,
 }
 
 impl ItemMisses {
     fn is_empty(&self) -> bool {
-        self.items.is_empty() && self.sets.is_empty()
+        self.items.is_empty() && self.names.is_empty()
     }
 }
 
@@ -59,10 +59,10 @@ pub(crate) fn note_item_miss(model: &mut crate::script::Model, item_id: u32) {
     }
 }
 
-/// Record an item set the running setter call lacked.
-pub(crate) fn note_set_miss(model: &mut crate::script::Model, set_id: u32) {
+/// Record a set member's name the running setter call lacked.
+pub(crate) fn note_name_miss(model: &mut crate::script::Model, item_id: u32) {
     if let Some(r) = model.item_render.as_mut() {
-        r.misses.sets.insert(set_id);
+        r.misses.names.insert(item_id);
     }
 }
 

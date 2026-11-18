@@ -382,17 +382,13 @@ fn render_lines(
         };
         // The player's PvP team and sex, which name a required honor rank (`0x6d6f00`).
         let player = model.unit("player").map(|u| (u.pvp_team, u.sex == 3));
-        // The set view (a miss records the ask) and the equipped ids the set block counts.
+        // The set view read at the call, its members' pending names waited on, and the equipped ids the set block counts.
         let set_view = (v.item_set != 0)
-            .then(|| {
-                let view = model.item_sets.get(&v.item_set).cloned();
-                if view.is_none() {
-                    model.item_set_asks.insert(v.item_set);
-                    super::note_set_miss(&mut model, v.item_set);
-                }
-                view
-            })
+            .then(|| crate::script::item_stats::item_set(lua, &model, v.item_set))
             .flatten();
+        for &id in set_view.iter().flat_map(|s| &s.pending) {
+            super::note_name_miss(&mut model, id);
+        }
         // The worn items' templates (slots 0..=18), which the set block counts by their own set id;
         // one still in flight is asked for and counts once it lands.
         let worn: Vec<WornPiece> = match &set_view {
