@@ -45,6 +45,8 @@ pub struct SpellStatEffects {
     pub attributes: u32,
     pub effects: [SpellStatEffect; 3],
     pub has_reagents: bool,
+    /// `Reagent[8]` with `ReagentCount[8]`, which the reagent-uses count (`0x801770`) divides by.
+    pub reagents: [(u32, u32); 8],
     /// The first effect's created item, a recipe's product (`0x598830`).
     pub item_type: u32,
     /// The helpful-or-harmful test's two answers (`0x7fe1b0`).
@@ -59,6 +61,18 @@ pub trait SpellInfoSource {
     /// The current-spell test (`0x806030`) for `spell_id`, the player's cast state as the call is
     /// made.
     fn is_current_spell(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// The auto-repeat tests `IsAutoRepeatSpell` makes (`0x5415d0`): the player's auto-repeating
+    /// spell (`0x7fe130`) or its auto-ranged-combat spell (`0x7fe180`) is `spell_id`.
+    fn is_auto_repeat_spell(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// The current-item test (`0x805fc0`): a pending cast of the player's was started by an item of
+    /// entry `item_id`.
+    fn is_current_item(&self, _item_id: u32) -> bool {
         false
     }
 
@@ -154,6 +168,18 @@ pub(super) fn spell_of(
         None => name,
     };
     Ok(resolve_spell_by_name(&model.spellbook, &query).map(|s| (s.spell_id, false)))
+}
+
+/// [`spell_of`] as the bindings index with it: the book's array is read past its spells too, so a
+/// slot the book does not fill reads spell 0, and only a failed parse (a name the book lacks)
+/// answers `None`, which the bindings return nothing for.
+pub(super) fn spell_or_zero(
+    lua: &Lua,
+    args: &MultiValue,
+    verb: &str,
+) -> mlua::Result<Option<(u32, bool)>> {
+    let slot = lua.coerce_number(args.front().cloned().unwrap_or(Value::Nil))?;
+    Ok(spell_of(lua, args, verb)?.or(slot.map(|_| (0, false))))
 }
 
 /// The argument the slot parser (`0x540670`) leaves the unit at, 1-based: 3 after a book slot or a
