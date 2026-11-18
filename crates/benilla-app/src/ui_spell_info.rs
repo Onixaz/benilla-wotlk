@@ -53,6 +53,11 @@ struct Snapshot {
 struct CastNow {
     /// The pending or running cast, or the queued strike (`0x805f30`).
     pending: Option<u32>,
+    /// The item entry that started the pending cast (`0x805fc0`).
+    item: Option<u32>,
+    /// The auto-repeating spell (`0x7fe130`); benilla keeps the auto-ranged-combat spell
+    /// (`0x7fe180`), Auto Shot, in the same record.
+    auto_repeat: Option<u32>,
     /// Auto-attacking (`[player+0xa20]`).
     attacking: bool,
     /// The open trade-skill line (`[0xc235a4]`); a linked book is never open here.
@@ -160,10 +165,27 @@ impl SpellInfoSource for Source {
                 base_points: d.effect_base_points[i],
             }),
             has_reagents: d.reagents.iter().any(|&(id, n)| id != 0 && n > 0),
+            reagents: d.reagents,
             item_type: d.effect_item_type[0],
             helpful: d.is_helpful(),
             harmful: d.is_harmful(),
         })
+    }
+
+    fn is_auto_repeat_spell(&self, spell_id: u32) -> bool {
+        let snap = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        snap.cast.auto_repeat == Some(spell_id)
+    }
+
+    fn is_current_item(&self, item_id: u32) -> bool {
+        let snap = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        snap.cast.item == Some(item_id)
     }
 
     fn talent_rank_spell(&self, talent_id: u32, rank: i32) -> Option<(u32, u32)> {
@@ -491,6 +513,7 @@ type SelfCastState = (
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct CastNowInputs<'w, 's> {
     pending: Res<'w, crate::spell::PendingCast>,
+    auto_repeat: Option<Res<'w, crate::spell::AutoRepeatActive>>,
     queued_melee: Res<'w, crate::spell::QueuedMeleeSpell>,
     trade_skill: Option<Res<'w, crate::ui_tradeskill::TradeSkillOpen>>,
     summons: Res<'w, crate::spell::SummonSlots>,
@@ -512,6 +535,8 @@ impl CastNowInputs<'_, '_> {
             std::time::Instant::now(),
         )
         .map(|i| i.spell_id());
+        cast.item = self.pending.current_item(std::time::Instant::now());
+        cast.auto_repeat = self.auto_repeat.as_ref().and_then(|a| a.0);
         cast.attacking = engaged;
         cast.trade_line = self.trade_skill.as_ref().and_then(|t| t.line);
         cast.race_class = crate::spell::race_class(store);

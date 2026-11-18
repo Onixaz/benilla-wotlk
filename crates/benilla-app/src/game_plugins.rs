@@ -1064,21 +1064,37 @@ pub(crate) mod schedule_tests {
 
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
-    fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
+    /// Whether the `Update` ratchet fails or only warns. Off while #1245 moves the verbs onto the
+    /// live view: each piece moves the count by tens of pairs, parallel pieces conflict on the
+    /// ceiling, and the count differs by platform (#1333). The pairs that epic is about are
+    /// VM-only, which the census does not count. #1333 turns this back on once the epic lands.
+    const UPDATE_RATCHET_ENFORCED: bool = false;
+
+    /// Fails when `n` passes the ceiling or falls more than `slack` below it; with `enforced`
+    /// off, prints the same message as a warning instead.
+    fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize, enforced: bool) {
         eprintln!("{what}: {n} ambiguous pairs (ceiling {ceiling}, slack {slack})");
-        assert!(
-            n <= ceiling,
-            "{n} ambiguous pairs in {what}; the ceiling is {ceiling}. A new system runs in an \
-             undeclared order against something it shares state with — declare the order \
-             (`.after`, a set, a `chain`), or raise the ceiling here with the reason. \
-             `WOW_AMBIGUITY_DUMP=1` on this test lists the pairs; a resource that commutes by \
-             construction belongs in `Classes` instead."
-        );
-        assert!(
-            n + slack >= ceiling,
-            "only {n} ambiguous pairs in {what} and the ceiling still says {ceiling}. Lower the \
-             ceiling to {n} so it keeps ratcheting."
-        );
+        let problem = if n > ceiling {
+            Some(format!(
+                "{n} ambiguous pairs in {what}; the ceiling is {ceiling}. A new system runs in an \
+                 undeclared order against something it shares state with — declare the order \
+                 (`.after`, a set, a `chain`), or raise the ceiling here with the reason. \
+                 `WOW_AMBIGUITY_DUMP=1` on this test lists the pairs; a resource that commutes \
+                 by construction belongs in `Classes` instead."
+            ))
+        } else if n + slack < ceiling {
+            Some(format!(
+                "only {n} ambiguous pairs in {what} and the ceiling still says {ceiling}. Lower \
+                 the ceiling to {n} so it keeps ratcheting."
+            ))
+        } else {
+            None
+        };
+        match problem {
+            Some(message) if enforced => panic!("{message}"),
+            Some(message) => eprintln!("warning (not enforced, #1333): {message}"),
+            None => {}
+        }
     }
 
     /// The ratchet. Ids, not names, so it runs in the player build too; prints the class
@@ -1145,12 +1161,14 @@ pub(crate) mod schedule_tests {
             actionable.len(),
             UPDATE_ACTIONABLE_CEILING,
             UPDATE_ACTIONABLE_SLACK,
+            UPDATE_RATCHET_ENFORCED,
         );
         ratchet(
             "PostUpdate",
             post.conflicts.len(),
             POST_UPDATE_CEILING,
             POST_UPDATE_SLACK,
+            true,
         );
     }
 

@@ -120,6 +120,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // IsCurrentItem(item) (`0x5110d0`): 1 when a pending cast of the player's was started by an
+    // item of that entry (`0x805fc0`), else nil; id 0 is never current.
+    g.set(
+        "IsCurrentItem",
+        lua.create_function(|lua, item: Value| {
+            let (id, source) = {
+                let model = lua.app_data_ref::<ModelCell>().expect("model app_data");
+                (item_arg(lua, &model, &item)?, model.spell_info.clone())
+            };
+            Ok(flag(
+                id != 0 && source.is_some_and(|s| s.is_current_item(id)),
+            ))
+        })?,
+    )?;
+
     // GetItemIcon(item) (`0x517020`): the icon path. Not built: the `Item.dbc` read, so an uncached
     // id answers nothing and asks.
     g.set(

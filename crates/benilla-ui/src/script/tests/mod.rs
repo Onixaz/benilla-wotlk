@@ -47,6 +47,7 @@ mod setparent;
 mod simplehtml;
 mod size_changed;
 mod slider;
+mod spell_predicates;
 mod statusbar;
 mod stdlib;
 mod structure_queries;
