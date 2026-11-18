@@ -343,6 +343,14 @@ pub(crate) fn ingame_ui_up(
     pending.is_none() && state.is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld)
 }
 
+/// [`ingame_ui_up`] read off the `World`, for a handler's step.
+pub(crate) fn ingame_ui_up_in(world: &World) -> bool {
+    world.get_resource::<PendingEntryUiLoad>().is_none()
+        && world
+            .get_resource::<State<crate::char_select::ClientState>>()
+            .is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld)
+}
+
 /// `PreUpdate`, after [`run_pending_reload`] so a reload never interleaves an armed entry load:
 /// run the armed entry load once the cover has presented, at once when there is no cover (a
 /// capture booting straight `InWorld`). Leaving the world first drops the latch unrun, and
@@ -387,6 +395,15 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
     world.remove_resource::<PendingEntryUiLoad>();
     let start = std::time::Instant::now();
     load_ingame_ui_on_world_entry(world);
+    // The UI init's world entry with our player seated (`0x52ae7b`-`0x52ae84`): the drain waits for its step.
+    if world
+        .query_filtered::<(), With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .is_some()
+    {
+        crate::net::hold_for_entry(world);
+    }
     // Every entry logs the load's cost, whether the cover hid it, and the session every
     // `VmMemo` keys on.
     info!(
@@ -918,6 +935,7 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     if seated {
         world.write_message(crate::net::WorldEnterCascadeMessage);
         world.get_resource_or_init::<ReloadEntry>().0 = true;
+        crate::net::hold_for_entry(world);
     }
 }
 

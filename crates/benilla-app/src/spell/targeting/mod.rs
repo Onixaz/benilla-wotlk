@@ -774,16 +774,23 @@ mod tests {
             ]))
         };
         let seat = |world: &mut World, ally: Entity| {
-            // We and our pet target the ally; the ally targets nobody.
+            // We and our pet target the ally; the ally targets nobody. Our summon names the pet (`0x60acc3`-`0x60acd3`).
             let me = world
                 .query_filtered::<Entity, With<SelfPlayer>>()
                 .single(world)
                 .unwrap();
-            world.entity_mut(me).insert(unit(0x19, ALLY));
+            use benilla_protocol::field::{
+                FIELD_OBJECT_TYPE, FIELD_UNIT_SUMMON, FIELD_UNIT_TARGET,
+            };
+            let ours = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_TYPE, 0x19),
+                (FIELD_UNIT_TARGET, ALLY as u32),
+                (FIELD_UNIT_TARGET + 1, (ALLY >> 32) as u32),
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]));
+            world.entity_mut(me).insert(ours);
             let pet = world.spawn((Guid(PET), unit(0x09, ALLY))).id();
-            let mut bar = crate::ui_pet::PetBar::default();
-            bar.spells.pet_guid = PET;
-            world.insert_resource(bar);
             let mut index = world.resource_mut::<crate::net::GuidIndex>();
             index.0.insert(ME, me);
             index.0.insert(ALLY, ally);

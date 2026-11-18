@@ -4446,7 +4446,7 @@ fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
     );
 }
 
-/// A world entry with our charm set asks for the pet and looks up the possess spell after `PLAYER_ENTERING_WORLD` and before the reputation's `UPDATE_FACTION` (`0x5281a6`, `0x5281fe` -> `0x5d6ede`, `0x528208`), so the bonus bar's handler runs after the UI's world entry.
+/// A `/reload` with our charm and its aura held looks the possess spell up after `PLAYER_ENTERING_WORLD` and before the reputation's `UPDATE_FACTION` (`0x52ae84` -> `0x5281a6`, `0x5281fe` -> `0x5d6ede`, `0x528208`), so the bonus bar's handler runs after the UI's world entry; at the login create the aura had not landed, so that entry's lookup found nothing.
 #[test]
 fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     use benilla_protocol::field::FIELD_UNIT_CHARM;
@@ -4463,6 +4463,13 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     ) else {
         return;
     };
+    rig.take();
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
     let seen = rig.take();
     assert_eq!(
         pin(
@@ -4486,21 +4493,20 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
     );
 }
 
-/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat the create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
+/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` -> `0x5d6e6d`), ahead of the ask's gate: a bar that beat our create still reads at the entry's event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
 #[test]
 fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
-    let Some(mut rig) = Rig::login_after(
+    let Some((_rig, seen)) = ported(
         vec![SessionEvent::PetSpells(Box::new(
             benilla_protocol::messages::PetSpells {
                 pet_guid: PET,
                 ..Default::default()
             },
         ))],
-        &[OBJECT_TYPE_PLAYER],
+        Vec::new(),
     ) else {
         return;
     };
-    let seen = rig.take();
     let entry: Vec<String> = pin(
         &seen,
         &[
@@ -4525,12 +4531,32 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
     );
 }
 
-/// A bar the server sets after our create stands through the entry: 12340 clears at the create (`0x5281fe` -> `0x5d6e6d`), ahead of every packet behind it, so the later `SMSG_PET_SPELLS` (a pet re-added after a worldport) is never wiped.
+/// Logged in, ported to another map and our create sent again in one frame with `before` ahead of it and `after` behind it: the in-game UI is up at the create, as 12340's always is; what the observer saw from that frame on.
+fn ported(before: Vec<SessionEvent>, after: Vec<SessionEvent>) -> Option<(Rig, Vec<Seen>)> {
+    let mut rig = Rig::login(&[OBJECT_TYPE_PLAYER])?;
+    rig.packets(
+        vec![SessionEvent::Worldport {
+            map_id: 0,
+            position: [-8949.95, -132.493, 83.5312],
+            orientation: 0.0,
+            needs_ack: true,
+        }],
+        3,
+    );
+    let frame = before
+        .into_iter()
+        .chain([self_create(&[OBJECT_TYPE_PLAYER])])
+        .chain(after)
+        .collect();
+    let seen = rig.packets(frame, 4);
+    Some((rig, seen))
+}
+
+/// A worldport's create with the UI up runs the UI's entry before the packet behind it, as 12340's create calls it inside (`0x6e8186` -> `0x528010`): `PLAYER_ENTERING_WORLD`, the setter's clear and its `PET_BAR_UPDATE` (`0x5d6e6d`), `UPDATE_FACTION` (`0x528208`), then that `SMSG_PET_SPELLS`'s `UNIT_PET` (`0x5d6aca`).
 #[test]
-fn a_pet_bar_set_after_the_create_stands_through_the_entry() {
-    let Some(mut rig) = Rig::login_around(
+fn a_pet_bar_set_behind_our_create_lands_after_the_entry() {
+    let Some((_rig, seen)) = ported(
         Vec::new(),
-        &[OBJECT_TYPE_PLAYER],
         vec![SessionEvent::PetSpells(Box::new(
             benilla_protocol::messages::PetSpells {
                 pet_guid: PET,
@@ -4540,10 +4566,14 @@ fn a_pet_bar_set_after_the_create_stands_through_the_entry() {
     ) else {
         return;
     };
-    let seen = rig.take();
     let entry: Vec<String> = pin(
         &seen,
-        &["PLAYER_ENTERING_WORLD", "UNIT_PET", "UPDATE_FACTION"],
+        &[
+            "PLAYER_ENTERING_WORLD",
+            "UNIT_PET",
+            "PET_BAR_UPDATE",
+            "UPDATE_FACTION",
+        ],
         &["petbar"],
     )
     .into_iter()
@@ -4552,8 +4582,11 @@ fn a_pet_bar_set_after_the_create_stands_through_the_entry() {
     assert_eq!(
         entry,
         vec![
-            "PLAYER_ENTERING_WORLD | petbar=1",
-            "UPDATE_FACTION | petbar=1",
+            "PLAYER_ENTERING_WORLD | petbar=nil",
+            "PET_BAR_UPDATE | petbar=nil",
+            "UPDATE_FACTION | petbar=nil",
+            "UNIT_PET player | petbar=1",
+            "PET_BAR_UPDATE | petbar=1",
         ]
     );
 }
@@ -4561,10 +4594,9 @@ fn a_pet_bar_set_after_the_create_stands_through_the_entry() {
 /// With no pet at all the setter's tail still runs at the entry: no `UNIT_PET`, the temporary bar's `PET_BAR_UPDATE` (`0x5d6a34` -> `0x5d6ad2` -> `0x5d4c1b`).
 #[test]
 fn the_world_entry_signals_the_pet_bar_with_no_pet() {
-    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+    let Some((_rig, seen)) = ported(Vec::new(), Vec::new()) else {
         return;
     };
-    let seen = rig.take();
     let entry: Vec<String> = pin(
         &seen,
         &[

@@ -52,6 +52,8 @@ mod usable_tests;
 pub(crate) struct PetBar {
     /// The last `SMSG_PET_SPELLS`, with `SMSG_PET_MODE` and local presses folded in.
     pub(crate) spells: PetSpells,
+    /// The setter's cached guid `[0xc234d0]`, read only by its change test (`0x5d6903`) and never written by `SMSG_PET_GUIDS` (`0x5d6550`).
+    pub(crate) cached: u64,
     /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's GCD. Each mutation but the seed fires the flush where it lands ([`pet_cooldown_flush`]).
     pub(crate) cooldowns: Cooldowns,
     /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test (`0x5d6a80`).
@@ -86,21 +88,45 @@ pub(crate) struct PetRenameable(pub(crate) u32);
 #[derive(Resource, Default)]
 pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 
-/// The cascade owes the world entry's pet step (`0x5d6e60`), run whole after `PLAYER_ENTERING_WORLD` ([`possess::world_entry_step`]): the clear, then the ask, so the ask's answer always lands on the cleared bar.
+/// The cascade's pet step (`0x5d6e60`): its ask sent here in the cascade's send order (`0x5281fe` between `0x5281db` and `0x52822b`), on the gate read inside our create when the step ran there, else while the drain waits for the entry, so no answer lands before the step's clear; the rest owed for after `PLAYER_ENTERING_WORLD`.
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    hold: Option<Res<crate::net::EntryHold>>,
+    player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
+    commands: Res<crate::net::NetCommands>,
     step: Option<ResMut<possess::WorldEntryPetStep>>,
 ) {
     if cascades.read().next().is_none() {
         return;
     }
-    if let Some(mut step) = step {
-        step.owed = true;
+    let Some(mut step) = step else {
+        return;
+    };
+    let (owed, asked) = match step.at_create {
+        Some(gated) => (false, gated),
+        None => {
+            let held = hold.is_some_and(|h| h.0);
+            let gated = player
+                .iter()
+                .next()
+                .and_then(|s| s.0.unit_pet_guid())
+                .is_some();
+            (true, held && gated)
+        }
+    };
+    if asked {
+        debug!("ui_pet: world entry with a pet out, asking its bar");
+        let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
     }
+    *step = possess::WorldEntryPetStep {
+        owed,
+        asked,
+        at_create: None,
+    };
 }
 
 impl PetBar {
-    /// `PetHasActionBar()`: a nonzero cached guid, with no alive or control check.
+    /// A nonzero list head, which `spells.pet_guid` mirrors (`0x5d3723`-`0x5d3737`), with no alive or control check.
     pub(crate) fn has_bar(&self) -> bool {
         self.spells.pet_guid != 0
     }

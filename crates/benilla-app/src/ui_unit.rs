@@ -710,7 +710,6 @@ pub(crate) fn player_token_guid(
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
     index: Option<Res<'w, crate::net::GuidIndex>>,
-    pet: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
@@ -786,10 +785,10 @@ impl UnitTokens<'_, '_> {
                 .hovered
                 .as_ref()?
                 .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default()),
-            // Off the pet bar's cached guid, as the `"pet"` snapshot reads it.
+            // Our charm, else our summon (`0x60acc3`-`0x60acd3`), as the `"pet"` snapshot reads it.
             UnitBase::Pet => {
-                let guid = self.pet.get()?.spells.pet_guid;
-                (guid != 0).then(|| self.held(guid)).flatten()
+                let guid = self.stores.get(self.me()?.0).ok()?.0.unit_pet_guid()?;
+                self.held(guid)
             }
             UnitBase::PartyPet(row) => self
                 .party_member(row)
@@ -1526,9 +1525,10 @@ fn feed_units(
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
     // The commands carry the world-enter cascade's death part.
-    (entered_world, mut deferred): (
+    (entered_world, mut deferred, mut hold): (
         Option<MessageReader<crate::net::EnteredWorldMessage>>,
         Commands,
+        Option<ResMut<crate::net::EntryHold>>,
     ),
 ) {
     let Some(mut script) = script else {
@@ -1578,6 +1578,8 @@ fn feed_units(
     let reps_changed = reputations.is_changed();
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
+    // The drain waits on this pass's world entry, so it runs whatever else moved.
+    let entry_owed = hold.as_ref().is_some_and(|h| h.0);
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
         || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
@@ -1597,6 +1599,7 @@ fn feed_units(
             ("reputations", reps_changed),
             ("factions", factions_changed),
             ("interact", interact_changed),
+            ("entry", entry_owed),
         ],
     );
     let gate = gate::Gate::new(
@@ -1610,7 +1613,8 @@ fn feed_units(
             || group_changed
             || reps_changed
             || factions_changed
-            || interact_changed,
+            || interact_changed
+            || entry_owed,
     );
     stores.removed.clear();
     if gate.skip() {
@@ -1914,6 +1918,10 @@ fn feed_units(
         // Edge-only pushes: a stale memo would skip a new character whose values match it.
         memo.worn_hidden = None;
         memo.action_bar_toggles = None;
+    }
+    // The entry's steps are queued for this frame, ahead of the next drain: the packets behind it may run.
+    if let Some(hold) = hold.as_mut() {
+        hold.0 = false;
     }
 
     // `"bossN"`: each encounter slot's unit while the object manager holds it, read as `"focus"`
