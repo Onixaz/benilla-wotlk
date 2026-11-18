@@ -45,7 +45,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_gossip::feed_gossip",
     "benilla_app::ui_guild::event_log::feed_guild_event_log",
     "benilla_app::ui_guild::feed::feed_guild",
-    "benilla_app::ui_guild_bank::feed_guild_bank",
     "benilla_app::ui_inspect::feed_inspect",
     "benilla_app::ui_instance::feed_instance",
     "benilla_app::ui_item_text::feed_item_text",

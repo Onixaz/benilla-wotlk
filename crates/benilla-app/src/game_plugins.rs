@@ -919,14 +919,10 @@ pub(crate) mod schedule_tests {
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
     ///
-    /// The guild bank (#203) adds 25, each a class this list already argues:
-    /// `close_npc_session_out_of_range::<GuildBankState>` against the motion and booth writers of
-    /// `Transform`, as the petition vendor's above; `ui_guild_bank::drain_guild_bank`, an
-    /// `.after(UiInput)` drain of the VM's own sends, against the click's dispatchers (which only
-    /// start a banker hello), the sound and nameplate readers and `finish_colliders`, as the
-    /// other such drains pair; and `ui_guild_bank::feed_guild_bank` against
-    /// `ui_items::feed_item_stats`, `feed_spell_tooltips`, `feed_units`, `feed_dressup` and
-    /// `evict_display_caches` over `Items`, the icon catalog and the VM: it only reads templates.
+    /// The guild bank (#203): `ui_guild_bank::close_guild_bank_out_of_range` against the motion
+    /// and booth writers of `Transform`, as the bank's watchdog; `ui_guild_bank::drain_guild_bank`,
+    /// an `.after(UiInput)` drain of the VM's own sends, against the sound and nameplate readers
+    /// and `finish_colliders`, as the other such drains pair.
     /// - `vplates::read_plate_cvars` against the `Cvars` writers `persist_last_character`,
     ///   `drive_game_tip` and `drain_view_requests`: it reads only the two plate rows, which none of
     ///   them writes, and only when the registry moved.
@@ -1636,8 +1632,8 @@ pub(crate) mod schedule_tests {
          "filled only by a world right-click on a GameObject; the drain sends casts to the wire"),
         ("ui_auction/mod.rs", "drain_auction", Because::FilledByVm,
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
-        ("ui_guild_bank/mod.rs", "feed_guild_bank", Because::PlayerRoundTrip,
-         "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
+        ("ui_guild_bank/mod.rs", "drain_guild_bank", Because::FilledByVm,
+         "the requests are the VM's own guild bank verbs, and the auto-store's event answers one"),
         ("ui_battlefield.rs", "drain_battlefield", Because::PlayerRoundTrip,
          "`closed` ends a battlemaster session, which only a list packet answering a click on a battlemaster opens"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,

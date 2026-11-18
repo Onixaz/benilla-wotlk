@@ -1259,14 +1259,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             else {
                 return Err(mlua::Error::runtime(BAD));
             };
-            let s = {
-                let model = crate::script::model_mut_of(lua);
-                let (tab, slot) = ((tab - 1.0) as i64, (slot - 1.0) as i64);
-                usize::try_from(tab)
-                    .ok()
-                    .zip(usize::try_from(slot).ok())
-                    .and_then(|(t, s)| model.guild_bank.slots.get(t)?.get(s)?.clone())
-            };
+            // The slot read at the call (`0x5a4c10`).
+            let (tab, slot) = ((tab - 1.0) as i64, (slot - 1.0) as i64);
+            let s = u8::try_from(tab)
+                .ok()
+                .zip(u8::try_from(slot).ok())
+                .and_then(|(t, s)| crate::script::read_live(|l| l.guild_bank_slot(t, s)).flatten());
             let Some(s) = s else {
                 return Ok(());
             };

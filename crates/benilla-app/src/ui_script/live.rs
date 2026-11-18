@@ -94,6 +94,8 @@ pub(crate) struct LiveView<'w, 's> {
     dialogs: crate::ui_dialog_verbs::DialogView<'w, 's>,
     /// `ItemSet.dbc`, the name cache and the bonuses' token inputs, read at the call.
     item_sets: Option<crate::ui_items::ItemSetLive<'w, 's>>,
+    /// The caches a guild bank slot and log row resolve through at the call.
+    guild_bank: Option<crate::ui_guild_bank::BankCatalogs<'w>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -107,25 +109,27 @@ pub(crate) struct Lent<'w> {
     pub(crate) giver: LentSlot<'w, QuestGiver>,
     pub(crate) bank: LentSlot<'w, BankOpen>,
     pub(crate) refunds: LentSlot<'w, crate::ui_socket::RefundRecords>,
+    pub(crate) guild_bank: LentSlot<'w, crate::ui_guild_bank::GuildBankState>,
     pub(crate) spirit: LentSlot<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
 pub(crate) mod lent {
-    pub(crate) const SIGNALS: u8 = 1;
-    pub(crate) const ASKS: u8 = 2;
-    pub(crate) const MARKS: u8 = 4;
-    pub(crate) const EXPIRIES: u8 = 8;
-    pub(crate) const GIVER: u8 = 16;
-    pub(crate) const BANK: u8 = 32;
-    pub(crate) const REFUNDS: u8 = 64;
-    pub(crate) const SPIRIT: u8 = 128;
+    pub(crate) const SIGNALS: u16 = 1;
+    pub(crate) const ASKS: u16 = 2;
+    pub(crate) const MARKS: u16 = 4;
+    pub(crate) const EXPIRIES: u16 = 8;
+    pub(crate) const GIVER: u16 = 16;
+    pub(crate) const BANK: u16 = 32;
+    pub(crate) const REFUNDS: u16 = 64;
+    pub(crate) const GUILD_BANK: u16 = 128;
+    pub(crate) const SPIRIT: u16 = 256;
 }
 
 /// One kind of [`Lent`] state.
 pub(crate) trait Lendable: Sized + 'static {
     /// Its bit in [`lent`].
-    const BIT: u8;
+    const BIT: u16;
     /// Its slot.
     fn slot<'a, 'w>(lent: &'a mut Lent<'w>) -> &'a mut LentSlot<'w, Self>;
 }
@@ -133,7 +137,7 @@ pub(crate) trait Lendable: Sized + 'static {
 macro_rules! lendable {
     ($ty:ty, $field:ident, $bit:path) => {
         impl Lendable for $ty {
-            const BIT: u8 = $bit;
+            const BIT: u16 = $bit;
             fn slot<'a, 'w>(lent: &'a mut Lent<'w>) -> &'a mut LentSlot<'w, Self> {
                 &mut lent.$field
             }
@@ -147,6 +151,11 @@ lendable!(QuestExpiries, expiries, lent::EXPIRIES);
 lendable!(QuestGiver, giver, lent::GIVER);
 lendable!(BankOpen, bank, lent::BANK);
 lendable!(crate::ui_socket::RefundRecords, refunds, lent::REFUNDS);
+lendable!(
+    crate::ui_guild_bank::GuildBankState,
+    guild_bank,
+    lent::GUILD_BANK
+);
 lendable!(
     crate::ui_dialog_verbs::AreaSpiritHealer,
     spirit,
@@ -322,7 +331,7 @@ pub(crate) trait Owns: 'static {
     const PENDING: bool = false;
     const PETITIONS: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
-    const LENT: u8 = 0;
+    const LENT: u16 = 0;
 }
 
 impl Owns for () {}
@@ -335,7 +344,7 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
     const PENDING: bool = A::PENDING || B::PENDING;
     const PETITIONS: bool = A::PETITIONS || B::PETITIONS;
-    const LENT: u8 = A::LENT | B::LENT;
+    const LENT: u16 = A::LENT | B::LENT;
 }
 
 /// The system writes [`crate::area::PlayerPlace`].
@@ -377,19 +386,19 @@ impl Owns for OwnsCooldowns {
 /// The system lends the frame's [`UniqueSignals`] from its own borrow.
 pub(crate) struct OwnsSignals;
 impl Owns for OwnsSignals {
-    const LENT: u8 = lent::SIGNALS;
+    const LENT: u16 = lent::SIGNALS;
 }
 
 /// The system lends the area spirit healer from its own borrow.
 pub(crate) struct OwnsSpirit;
 impl Owns for OwnsSpirit {
-    const LENT: u8 = lent::SPIRIT;
+    const LENT: u16 = lent::SPIRIT;
 }
 
 /// The system lends the quest timers' [`QuestExpiries`] from its own borrow.
 pub(crate) struct OwnsExpiries;
 impl Owns for OwnsExpiries {
-    const LENT: u8 = lent::EXPIRIES;
+    const LENT: u16 = lent::EXPIRIES;
 }
 
 /// An exclusive lender owns what the verbs write: the cooldowns (and the pet's words every loan owns).
@@ -1359,6 +1368,100 @@ impl LiveState for LiveView<'_, '_> {
         )
     }
 
+    fn guild_bank_open(&self) -> bool {
+        self.lent.guild_bank.get().is_some_and(|b| b.is_open())
+    }
+
+    fn guild_bank_current_tab(&self) -> u8 {
+        self.lent.guild_bank.get().map_or(0, |b| b.current_tab())
+    }
+
+    fn set_guild_bank_current_tab(&mut self, tab: u8) {
+        if let Some(bank) = self.lent.guild_bank.get_mut() {
+            bank.set_current_tab(tab);
+        }
+    }
+
+    fn guild_bank_num_tabs(&self) -> u8 {
+        self.lent.guild_bank.get().map_or(0, |b| b.num_tabs())
+    }
+
+    fn guild_bank_tab(&self, tab: u8) -> Option<benilla_ui::script::GuildBankTabView> {
+        self.lent.guild_bank.get()?.tab_view(tab)
+    }
+
+    fn guild_bank_item(&self, tab: u8, slot: u8) -> Option<(u32, u32)> {
+        let s = self.lent.guild_bank.get()?.slot(tab, slot)?;
+        Some((s.item_id, s.count))
+    }
+
+    fn guild_bank_slot(&self, tab: u8, slot: u8) -> Option<benilla_ui::script::GuildBankSlotView> {
+        let s = self.lent.guild_bank.get()?.slot(tab, slot)?;
+        self.guild_bank
+            .as_ref()?
+            .slot_view(s, self.commands.as_deref()?)
+    }
+
+    fn guild_bank_texture(&self, tab: u8, slot: u8) -> Option<String> {
+        let s = self.lent.guild_bank.get()?.slot(tab, slot)?;
+        self.guild_bank.as_ref()?.texture(s.item_id)
+    }
+
+    fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
+        self.lent
+            .guild_bank
+            .get()
+            .is_some_and(|b| b.is_locked(tab, slot, item_id))
+    }
+
+    fn set_guild_bank_lock(&mut self, tab: u8, slot: u8, item_id: u32, locked: bool) {
+        if let Some(bank) = self.lent.guild_bank.get_mut() {
+            bank.set_lock(tab, slot, item_id, locked);
+        }
+    }
+
+    fn guild_bank_withdrawals(&self) -> i32 {
+        self.lent
+            .guild_bank
+            .get()
+            .map_or(0, |b| b.withdrawals_remaining())
+    }
+
+    fn guild_bank_money(&self) -> u64 {
+        self.lent.guild_bank.get().map_or(0, |b| b.money())
+    }
+
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        self.lent.guild_bank.get().map_or(0, |b| b.withdraw_money())
+    }
+
+    fn guild_bank_log_len(&self, tab: u8) -> usize {
+        self.lent.guild_bank.get().map_or(0, |b| b.log_len(tab))
+    }
+
+    fn guild_bank_log(&self, tab: u8, index: u8) -> Option<benilla_ui::script::GuildBankLogView> {
+        let row = self.lent.guild_bank.get()?.log_row(tab, index)?;
+        Some(
+            self.guild_bank
+                .as_ref()?
+                .log_view(row, self.commands.as_deref()?),
+        )
+    }
+
+    fn clear_guild_banker(&mut self) {
+        if let Some(bank) = self.lent.guild_bank.get_mut() {
+            bank.clear_banker();
+        }
+    }
+
+    fn guild_bank_query_text(&mut self, tab: u8) -> bool {
+        let commands = self.commands.as_deref();
+        match (self.lent.guild_bank.get_mut(), commands) {
+            (Some(bank), Some(net)) => bank.query_text(tab, net),
+            _ => true,
+        }
+    }
+
     fn player_fields(&self) -> Option<benilla_ui::script::PlayerFields> {
         let me = self.unit(self.active_player()?)?;
         Some(crate::ui_items::player_fields(me, self.classes.as_deref()))
@@ -1629,6 +1732,22 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
     }
 
+    /// `f` over the guild bank this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
+    pub(crate) fn with_guild_bank<R>(
+        &self,
+        f: impl FnOnce(Option<&crate::ui_guild_bank::GuildBankState>) -> R,
+    ) -> R {
+        self.loan.with_view(|v| f(v.lent.guild_bank.get()))
+    }
+
+    /// `f` over the guild bank this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
+    pub(crate) fn with_guild_bank_mut<R>(
+        &mut self,
+        f: impl FnOnce(Option<&mut crate::ui_guild_bank::GuildBankState>) -> R,
+    ) -> R {
+        self.loan.with_view_mut(|v| f(v.lent.guild_bank.get_mut()))
+    }
+
     /// The overlay of `T`, set only inside [`Self::lending`].
     #[cfg(test)]
     pub(crate) fn overlay<T: Lendable>(&mut self) -> bool {
@@ -1707,7 +1826,7 @@ unsafe fn slot_fetch<X: Resource>(
 }
 
 /// The [`Lent`] state's ids, in [`lent`] bit order.
-type LentIds = [ComponentId; 8];
+type LentIds = [ComponentId; 9];
 
 /// Register the [`Lent`] state's ids.
 fn lent_ids(world: &mut World) -> LentIds {
@@ -1720,14 +1839,15 @@ fn lent_ids(world: &mut World) -> LentIds {
         reg.register_non_send::<QuestGiver>(),
         reg.register_non_send::<BankOpen>(),
         reg.register_non_send::<crate::ui_socket::RefundRecords>(),
+        reg.register_non_send::<crate::ui_guild_bank::GuildBankState>(),
         reg.register_non_send::<crate::ui_dialog_verbs::AreaSpiritHealer>(),
     ]
 }
 
 /// Declare `T`'s borrow unless the system owns it.
 fn lent_access<T: 'static>(
-    own: u8,
-    bit: u8,
+    own: u16,
+    bit: u16,
     id: &ComponentId,
     system_meta: &mut SystemMeta,
     component_access_set: &mut FilteredAccessSet,
@@ -1748,8 +1868,8 @@ fn lent_access<T: 'static>(
 /// # Safety
 /// As [`SystemParam::get_param`], with `T`'s access declared by [`lent_access`].
 unsafe fn lent_fetch<'w, T: 'static>(
-    own: u8,
-    bit: u8,
+    own: u16,
+    bit: u16,
     mut id: ComponentId,
     system_meta: &SystemMeta,
     world: UnsafeWorldCell<'w>,
@@ -1815,7 +1935,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
         type Petitions = crate::ui_petition::PetitionState;
         slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
-        let [signals, asks, marks, expiries, giver, bank, refunds, spirit] = &state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank, spirit] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
         lent_access::<QuestAsks>(own, lent::ASKS, asks, meta, set, world);
@@ -1825,6 +1945,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         lent_access::<BankOpen>(own, lent::BANK, bank, meta, set, world);
         type Refunds = crate::ui_socket::RefundRecords;
         lent_access::<Refunds>(own, lent::REFUNDS, refunds, meta, set, world);
+        type GuildBank = crate::ui_guild_bank::GuildBankState;
+        lent_access::<GuildBank>(own, lent::GUILD_BANK, guild_bank, meta, set, world);
         type Spirit = crate::ui_dialog_verbs::AreaSpiritHealer;
         lent_access::<Spirit>(own, lent::SPIRIT, spirit, meta, set, world);
     }
@@ -1893,7 +2015,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             view.petitions
                 .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
         }
-        let [signals, asks, marks, expiries, giver, bank, refunds, spirit] = state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank, spirit] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
         // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
         view.lent = unsafe {
@@ -1905,6 +2027,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 giver: lent_fetch(own, lent::GIVER, giver, meta, world, tick),
                 bank: lent_fetch(own, lent::BANK, bank, meta, world, tick),
                 refunds: lent_fetch(own, lent::REFUNDS, refunds, meta, world, tick),
+                guild_bank: lent_fetch(own, lent::GUILD_BANK, guild_bank, meta, world, tick),
                 spirit: lent_fetch(own, lent::SPIRIT, spirit, meta, world, tick),
             }
         };

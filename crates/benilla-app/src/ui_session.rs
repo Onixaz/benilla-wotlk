@@ -571,11 +571,6 @@ mod tests {
         const EXCLUDED: &[(&str, &str)] = &[
             // Its icon is art, not a unit bake, and must not take a portrait window's token.
             ("MailOpen", "its window icon is art, not a unit bake"),
-            // The guild bank's window shows the guild's tabard (`GetGuildTabardFileNames`).
-            (
-                "GuildBankState",
-                "its window shows the guild tabard, not a unit bake",
-            ),
         ];
 
         // The chain's own source says what is wired.
