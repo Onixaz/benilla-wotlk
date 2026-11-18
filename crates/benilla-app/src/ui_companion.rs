@@ -1,25 +1,4 @@
-//! The companion lists behind `GetNumCompanions` (`0x53c2a0`), `GetCompanionInfo` (`0x53e2c0`),
-//! `GetCompanionCooldown` (`0x53e490`), `CallCompanion` (`0x53e5e0`), `DismissCompanion`
-//! (`0x53e6b0`) and `SummonRandomCritter` (`0x53e7e0`): the stock pet paper doll's Companions and
-//! Mounts tabs.
-//!
-//! A known spell past the registrar's `0x80`/`0x20` exits that summons into a slot-5
-//! `SummonProperties` row or applies `MOUNTED` first joins a list (`0x5426a5`, [`CompanionKind`])
-//! instead of the book, as the spell handlers add it. The lists hold spell ids alone; the verbs
-//! read each companion's creature name, icon and active flag when called. Each list sorts by its
-//! creature's cached name once no record is pending (`0x53cec0`, a case-insensitive UTF-8 sort).
-//!
-//! Events, each from the handler that causes it:
-//! - `COMPANION_UPDATE` (no type) whenever the lists re-sort (`0x53cec0`): the login once every
-//!   record is cached, each learn and unlearn;
-//! - `ERR_LEARN_COMPANION_S` with the creature's name, then `COMPANION_LEARNED`, on a live learn
-//!   once its record is cached (`0x5427be`, `0x53ebc0`); `COMPANION_UNLEARNED` on an unlearn
-//!   (`0x53fad0`);
-//! - `COMPANION_UPDATE "CRITTER"` on our `UNIT_FIELD_CRITTER` change (`0x6cf6c0`), `"MOUNT"` on a
-//!   `MOUNTED` aura's arrival or removal on us (`0x724a6b`, `0x71e9b2`).
-//!
-//! Each add triggers its list's tutorial (`0x542751`, `0x54275a`). Not modelled: the vehicle arm of
-//! the active test (`0x802cf3`).
+//! The companion lists behind `GetNumCompanions` (`0x53c2a0`), `GetCompanionInfo` (`0x53e2c0`), `GetCompanionCooldown` (`0x53e490`), `CallCompanion` (`0x53e5e0`), `DismissCompanion` (`0x53e6b0`) and `SummonRandomCritter` (`0x53e7e0`), filled by the spell handlers' known-spell add (`0x5426a5`) with spell ids the verbs resolve when called and sorted by creature name once no record is pending (`0x53cec0`); each event fires from the handler that causes it, and the active test's own-vehicle arm (`0x802cf3`) is #1070's.
 
 use bevy::prelude::*;
 

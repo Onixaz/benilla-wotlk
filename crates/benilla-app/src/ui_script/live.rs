@@ -1231,8 +1231,7 @@ pub(crate) struct LendLive<'w, 's, O: Owns = ()> {
 }
 
 impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
-    /// The lent view, read by the system between its calls into Lua; a verb that writes the view, or the system's own owned write, panics while it lives.
-    // Never hold it across a call into Lua: a verb that writes the view would panic at the call.
+    /// The lent view, read by the system between its calls into Lua and never held across one: a verb that writes the view, or the system's own owned write, panics while it lives.
     pub(crate) fn view(&self) -> benilla_ui::script::ViewRef<'_, LiveView<'w, 's>> {
         self.loan.view()
     }
@@ -1324,11 +1323,7 @@ fn slot_access<X: Resource>(
     set.add_unfiltered_resource_read(id);
 }
 
-/// The lendable resource `id` as its storage pointer, made without a reference, so the owner's
-/// writes through its own pointer leave it valid.
-///
-/// # Safety
-/// The calling system's access to `id` is registered.
+/// The lendable resource `id` as its storage pointer, made without a reference so the owner's writes through its own pointer leave it valid; sound while the calling system's access to `id` is registered.
 unsafe fn slot_fetch<X: Resource>(
     world: UnsafeWorldCell<'_>,
     id: ComponentId,

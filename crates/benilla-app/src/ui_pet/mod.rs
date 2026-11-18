@@ -170,7 +170,7 @@ impl Plugin for UiPetPlugin {
             .add_systems(
                 Update,
                 (
-                    // Feeds ride the unit feed, before the VM ticks; the bar's drain runs in the press pass so a click is sent, and shown, that frame (a press is a script call, `PetPress`). The old-target clear precedes the bar feed so Attack goes dark the frame the selection moves. Between the press and the feed: it writes the bar every lent view reads.
+                    // The old-target clear after the press pass whose selects move the target, and before the feeds, as it writes the bar every lent view reads.
                     pet_stop_on_old_target_clear
                         .after(crate::ui_script::UiPress)
                         .before(crate::ui_script::UiFeed)
@@ -182,8 +182,7 @@ impl Plugin for UiPetPlugin {
                         .before(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(UnitFeed)
                         .before(crate::ui_script::UiPress),
-                    // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
-                    // the stable it reads before the stable's own verbs move it.
+                    // The menu verbs a queued script call held back, once the interface is up.
                     drain_pet_menu
                         .in_set(UiDrain)
                         .run_if(crate::ui_script::ingame_ui_up),

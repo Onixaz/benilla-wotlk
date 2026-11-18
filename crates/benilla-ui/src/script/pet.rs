@@ -46,7 +46,7 @@ pub enum PetMenuOutcome {
     DismissStart,
     /// The pet is the controlled vehicle our seat may dismiss: its dismiss (`0x5d47fe`).
     VehicleExit,
-    /// A refusal's message key, shown as the message display shows it (`0x5216f0`, `0x5218c0`).
+    /// A refusal's message key, shown as the message display shows it (`0x5d56c8`, `0x5d575f`).
     Refused(&'static str),
 }
 

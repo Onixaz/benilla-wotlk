@@ -1,11 +1,4 @@
-//! The hunter pet's paper-doll stat block (`GetPetHappiness`, `GetPetExperience`, `HasPetUI`,
-//! `GetPetIcon`, `GetPetTalentTree`, `GetPetFoodTypes`), read through the live view when called
-//! for the pet list's head (`0x5d3a24`), and `UnitCreatureFamily` for any unit.
-//!
-//! The gated bindings share one test, the pet can gain experience (`0x71b630`): it has a
-//! `UNIT_FIELD_PETNUMBER` and its `UNIT_FIELD_CREATEDBY` is a held player whose class byte is
-//! Hunter, so a warlock's imp answers nothing. `UnitCreatureFamily` has no class test, so the imp
-//! still shows "Imp".
+//! The hunter pet's paper-doll stat block (`GetPetHappiness`, `GetPetExperience`, `HasPetUI`, `GetPetIcon`, `GetPetTalentTree`, `GetPetFoodTypes`) read live for the pet list's head (`0x5d3a24`), each gated on the pet gaining experience (`0x71b630`: a pet number and a held Hunter creator), and `UnitCreatureFamily` for any unit, ungated.
 
 use bevy::prelude::*;
 
