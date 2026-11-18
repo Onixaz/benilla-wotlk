@@ -1,7 +1,7 @@
 //! The pet's packet handlers: `SMSG_PET_SPELLS` and `SMSG_PET_MODE` write [`PetBar`]; the refusals
-//! show in the handler's turn, the tame failure and the pet's sounds go to their queues. The pet's refusals share the player's
-//! red line but not its message tables: the reference maps them in their own handlers to say "your
-//! pet" where the player's say "you".
+//! show in the handler's turn, the tame failure and the pet's sounds go to their queues. The pet's
+//! refusals share the player's red line but not its message tables: the reference maps them in
+//! their own handlers to say "your pet" where the player's say "you".
 
 use std::time::Instant;
 
@@ -147,7 +147,7 @@ pub(crate) fn player_dead(store: &crate::net::ObjectStore) -> bool {
     store.0.unit_health().is_some_and(|h| h as i32 <= 0)
 }
 
-/// The pet setter's tail (`0x5d6a2f`-`0x5d6b80`): on a new guid the latches drop, a held head's tests run, an empty head zeroes the pet's combo points (`0x5d6ab0`), then `UNIT_PET`; every call updates the temporary bar (`0x5d6ad2`); a new guid while we are `dead` fires `RAISED_AS_GHOUL` for a head (`0x5d6b80`), else refreshes the active player (`0x5d6b6f`).
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6b80`): on a new guid the latches drop, a held head's tests run, an empty head zeroes the pet's combo points (`0x5d6ab0`), then `UNIT_PET`; every call updates the temporary bar (`0x5d6ad2`); a new guid while we are `dead` fires `RAISED_AS_GHOUL` for a head (`0x5d6b80`), else refreshes the active player (`0x5d6b6f`); the modal-cast cancel (`0x5d6afb`-`0x5d6b24`) is #1337.
 pub(crate) fn set_pet_tail(
     changed: bool,
     bar: &mut PetBar,

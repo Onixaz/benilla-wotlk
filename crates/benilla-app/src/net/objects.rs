@@ -1616,7 +1616,7 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
     }
 }
 
-/// The pet number's field handler (`0x72cff0`): a held unit's name re-read, asking on a miss (`0x72d01c`), its scale restamped off the moved store (`0x72d025`) and its nameplate released (`0x72d02c`); then `UNIT_CLASSIFICATION_CHANGED` to every token naming the guid (`0x72d034` -> `0x60bf10`), and `PET_UI_UPDATE` when it is the pet list's head (`0x72d041`, `0x72d05f`).
+/// The pet number's field handler (`0x72cff0`): a held unit's name re-read, asking on a miss (`0x72d01c`), its scale restamped by `entities::model_scale`'s store watch (`0x72d025`) and its nameplate released (`0x72d02c`); then `UNIT_CLASSIFICATION_CHANGED` to every token naming the guid (`0x72d034` -> `0x60bf10`), and `PET_UI_UPDATE` when it is the pet list's head (`0x72d041`, `0x72d05f`).
 fn pet_number_watch(sc: &mut Scene, guid: u64) {
     if let Some(store) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) {
         let _ = sc.names.resolve_unit(guid, Some(store), &sc.net);
