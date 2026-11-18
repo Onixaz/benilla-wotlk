@@ -28,6 +28,8 @@
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
+use crate::console::ConsoleCommandApp;
+
 use benilla_formats::{AreaGroupCatalog, AreaTableCatalog};
 use benilla_ui::script::UiScript;
 
@@ -416,12 +418,102 @@ impl Plugin for AreaPlugin {
                     .after(crate::char_select::RealmEntrySet)
                     .after(crate::ui_script::UiInput)
                     .after(benilla_world::terrain_stream::AreaAuthoritySet),
+            )
+            .add_systems(
+                Update,
+                follow_character_ambient.after(benilla_world::terrain_stream::AreaAuthoritySet),
+            )
+            .console_command(
+                "characterAmbient",
+                "Multiply the ambient on characters, 0.0 - 1.0 (0 hands it back to the area).",
+                character_ambient_command,
             );
+    }
+}
+
+/// The world frame's character-ambient step (`0x7831a0`): with a player in the world, the
+/// `AmbientMultiplier` of its area's lighting row eases the factor in. No area row, no change.
+fn follow_character_ambient(
+    time: Res<Time>,
+    current: Option<Res<benilla_world::terrain_stream::CurrentArea>>,
+    areas: Option<Res<AreaTableRes>>,
+    ambient: Option<ResMut<benilla_world::lighting::CharacterAmbient>>,
+) {
+    let (Some(current), Some(areas), Some(mut ambient)) = (current, areas, ambient) else {
+        return;
+    };
+    let Some(row) = current.0.and_then(|id| areas.0.character_ambient_row(id)) else {
+        return;
+    };
+    // Written only on a change: the light packer and the interior refold watch it.
+    let mut next = *ambient;
+    next.follow_area(row.ambient_multiplier, time.delta_secs());
+    if next != *ambient {
+        *ambient = next;
+    }
+}
+
+/// `characterAmbient <v>` (`0x77f750`). Deviation: an argument that does not parse prints the range
+/// line, where the reference's `sscanf` leaves the value undefined.
+fn character_ambient_command(world: &mut World, args: &str) -> Vec<String> {
+    let range = "Ambient multiply range 0.0 - 1.0.".to_string();
+    let Ok(v) = args.trim().parse::<f32>() else {
+        return vec![range];
+    };
+    let Some(mut ambient) = world.get_resource_mut::<benilla_world::lighting::CharacterAmbient>()
+    else {
+        return Vec::new();
+    };
+    match ambient.pin(v) {
+        Ok(()) => Vec::new(),
+        Err(line) => vec![line.to_string()],
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// The player's area drives the factor through its lighting row, and the console pins it.
+    #[test]
+    fn the_character_ambient_follows_the_area_and_the_console() {
+        use super::*;
+        use benilla_formats::AreaTableRow;
+        use benilla_world::lighting::CharacterAmbient;
+        use benilla_world::terrain_stream::CurrentArea;
+        let row = |zone_id, m| AreaTableRow {
+            map_id: 530,
+            zone_id,
+            explore_flag: 0,
+            flags: 0,
+            faction_group_mask: 0,
+            exploration_level: 0,
+            name: String::new(),
+            ambient_multiplier: m,
+        };
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<CharacterAmbient>()
+            .insert_resource(CurrentArea(Some(3538)))
+            .insert_resource(super::AreaTableRes(AreaTableCatalog::from_rows(vec![
+                (3483, row(0, 0.6)),
+                (3538, row(3483, 0.0)),
+            ])))
+            .add_systems(Update, super::follow_character_ambient)
+            .add_plugins(crate::console::ConsolePlugin)
+            .console_command("characterAmbient", "", super::character_ambient_command);
+        let factor = |app: &App| app.world().resource::<CharacterAmbient>().factor;
+        // A long frame lands at once on Hellfire's 1 + 2 × 0.6, read through Honor Hold's parent.
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(2));
+        app.update();
+        assert!((factor(&app) - 2.2).abs() < 1e-6, "{}", factor(&app));
+        let out = crate::console::execute(app.world_mut(), "characterAmbient 2");
+        assert_eq!(out, vec!["Ambient multiply range 0.0 - 1.0.".to_string()]);
+        assert!(crate::console::execute(app.world_mut(), "characterAmbient 0.25").is_empty());
+        app.update();
+        assert_eq!(factor(&app), 1.5, "pinned over the area");
+    }
+
     #[test]
     fn the_area_leg_names_a_lone_area_and_passes_a_listed_one_or_its_parent() {
         use benilla_formats::{AreaGroup, AreaTableRow};
@@ -433,6 +525,7 @@ mod tests {
             faction_group_mask: 0,
             exploration_level: 0,
             name: String::new(),
+            ambient_multiplier: 0.0,
         };
         let areas = AreaTableCatalog::from_rows(vec![(50, area(0)), (51, area(50)), (60, area(0))]);
         let group = |id, listed: &[u32]| {

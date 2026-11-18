@@ -1111,15 +1111,17 @@ fn the_wdl_window_contains_the_cameras_own_tile() {
     assert_eq!(own, (39, 42), "the reported tile for Weazel's Crater");
     assert!(wdl.is_present(own.0, own.1), "the own tile is authored");
 
-    let window = wdl.tiles_in_ring(x, y, 5);
+    // The minimum view distance at the default scale: 4 × 550/3 × 0.03 = 22 chunks.
+    let window = wdl.tiles_in_walk(x, y, 22);
     assert!(
         window.contains(&own),
         "the camera's own WDL tile must be in the window — without it the near horizon is a hole"
     );
-    // A full (2r+1)² window, not a ring: every present tile within the radius.
-    let expected = (-5i32..=5)
-        .flat_map(|dy| (-5i32..=5).map(move |dx| (own.0 as i32 + dx, own.1 as i32 + dy)))
-        .filter(|&(tx, ty)| (0..64).contains(&tx) && (0..64).contains(&ty))
+    // A full box, not a ring: every present tile in the walk's ranges.
+    let walk = benilla_formats::horizon_walk(x, y, 22);
+    let expected = walk
+        .rows
+        .flat_map(|ty| walk.cols.clone().map(move |tx| (tx, ty)))
         .filter(|&(tx, ty)| wdl.is_present(tx as u32, ty as u32))
         .count();
     assert_eq!(window.len(), expected, "every present tile in the window");

@@ -17,7 +17,8 @@
 //! - Exterior payload (the default): bits 6..=13 are the ground-shade byte (`0` lit, `255` fully
 //!   MCSH-shadowed), mixing the batch's lit sun level toward the shaded one (`wow_model.wgsl`).
 //!   Entities ramp it ([`crate::entity_shade`]); statics leave it `0` and shade per material
-//!   (`sun_scale.x`). Bits 14..=18 are reserved.
+//!   (`sun_scale.x`). Bit 14 marks a unit's part, whose ambient takes the character ambient
+//!   ([`UNIT_LIGHT_BIT`]). Bits 15..=18 are reserved.
 //! - Interior probe slot (an interior M2 prop or entity: interior material, `model_flags.z` set,
 //!   not a WMO): bits 6..=18 are the SH-probe table slot ([`crate::lighting::PropProbes`]).
 //!   [`probe_bits`] always carries a non-zero alpha, so slot 0 is valid.
@@ -38,9 +39,9 @@
 //! 4. `player::apply_self_model_fade`, the first-person feather, runs after 1-3 and owns the self
 //!    body's alpha while it feathers; on the frame it ends it restores the alpha itself (2 carries
 //!    alpha through) and hands the material back to the law.
-//! 5. `entity_shade::update_ground_shade` owns the shade byte of entity parts and runs after 2 to
-//!    re-assert it over 2's exterior reset. The byte shares bits 6..=13 with the probe slot, so it
-//!    writes only through an [`ExteriorPayload`].
+//! 5. `entity_shade::update_ground_shade` owns the shade byte and the unit bit of entity parts and
+//!    runs after 2 to re-assert them over 2's exterior reset. Both share bits 6..=18 with the probe
+//!    slot, so it writes only through an [`ExteriorPayload`].
 //!
 //! A new payload writer claims reserved bits through a typed accessor here, never a whole-payload
 //! convention of its own. Bit 31's one writer, `target::highlight::apply_highlight`, runs in
@@ -71,6 +72,9 @@ const ALPHA_MAX: f32 = 63.0;
 /// Bits 6..=13 of the exterior payload: the ground-shade byte.
 const SHADE_MASK: u32 = 0x0000_3fc0;
 const SHADE_SHIFT: u32 = 6;
+/// Bit 14 of the exterior payload: a unit's part, its ambient times the character ambient
+/// (`crate::lighting::CharacterAmbient`, row 0 `.w`), as the light selection treats a unit body.
+const UNIT_LIGHT_BIT: u32 = 0x0000_4000;
 /// Bits 6..=18 of the interior payload: the SH-probe table slot (13 bits, 8192 slots).
 const PROBE_MASK: u32 = 0x0007_ffc0;
 const PROBE_SHIFT: u32 = 6;
@@ -184,6 +188,22 @@ pub fn alpha_of(tag: u32) -> f32 {
     (tag & ALPHA_MASK) as f32 / ALPHA_MAX
 }
 
+/// Writes the unit bit of an exterior-payload tag ([`UNIT_LIGHT_BIT`]), turning an untagged `0`
+/// opaque first, as [`with_shade`] does.
+pub(crate) fn with_unit_light(tag: u32, unit: bool, _: ExteriorPayload) -> u32 {
+    let tag = (tag & !ALPHA_MASK) | carried_alpha(tag);
+    if unit {
+        tag | UNIT_LIGHT_BIT
+    } else {
+        tag & !UNIT_LIGHT_BIT
+    }
+}
+
+/// Reads the unit bit of an exterior-payload tag (the shade writer's change gate).
+pub(crate) fn unit_light_of(tag: u32, _: ExteriorPayload) -> bool {
+    tag & UNIT_LIGHT_BIT != 0
+}
+
 /// Reads the shade byte of an exterior-payload tag (the shade writer's change gate).
 pub(crate) fn shade_of(tag: u32, _: ExteriorPayload) -> u8 {
     ((tag & SHADE_MASK) >> SHADE_SHIFT) as u8
@@ -243,6 +263,27 @@ mod tests {
         assert!(describe(t).contains("rig 1234"), "{}", describe(t));
         assert!(describe(HIGHLIGHT_BIT | alpha_bits(0.5)).contains("hi"));
         assert!(describe(HIGHLIGHT_BIT | INTERIOR_FOG_BIT | 1).contains("hi+fog"));
+    }
+
+    /// The unit bit sits between the shade byte and the rig field: the shade, the alpha and the
+    /// rig survive it both ways, and the exterior reset clears it for the shade writer to restore.
+    #[test]
+    fn the_unit_bit_is_its_own_field() {
+        let t = with_shade(rig_bits(77) | alpha_bits(0.5), 200, ext());
+        let u = with_unit_light(t, true, ext());
+        assert!(unit_light_of(u, ext()));
+        assert_eq!(
+            (shade_of(u, ext()), rig_of(u), alpha_of(u)),
+            (200, 77, alpha_of(t))
+        );
+        assert_eq!(with_unit_light(u, false, ext()), t);
+        assert!(
+            unit_light_of(with_shade(u, 9, ext()), ext()),
+            "a shade write keeps it"
+        );
+        assert!(!unit_light_of(with_exterior_reset(u), ext()));
+        // An untagged part turns opaque, never alpha 0.
+        assert_eq!(alpha_of(with_unit_light(0, true, ext())), 1.0);
     }
 
     #[test]
