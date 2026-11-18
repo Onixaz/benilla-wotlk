@@ -262,6 +262,7 @@ pub(crate) mod slider;
 mod social;
 mod sound;
 mod spell_info;
+mod spell_predicates;
 mod spellbook;
 mod stable;
 pub(crate) mod statusbar;
@@ -1236,6 +1237,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     worldstate::install(lua)?;
     net_stats::install(lua)?;
     debug_verbs::install(lua)?;
+    spell_predicates::install(lua)?;
     Ok(())
 }
 

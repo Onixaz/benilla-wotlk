@@ -43,6 +43,8 @@ struct PendingCastState {
     /// discriminates at the gate instead; a ranged shot is recorded here without guarding, so the
     /// `modalNextSpell` test still matches it.
     guards: bool,
+    /// The entry of the item that started it, which the current-item test (`0x805fc0`) reads.
+    item: Option<u32>,
 }
 
 impl PendingCast {
@@ -70,22 +72,32 @@ impl PendingCast {
             .map(|p| p.spell_id)
     }
 
+    /// The guarding cast's item entry when an item started it.
+    pub(crate) fn current_item(&self, now: Instant) -> Option<u32> {
+        self.0
+            .as_ref()
+            .filter(|p| p.guards && now < p.deadline)
+            .and_then(|p| p.item)
+    }
+
     /// Arm at send, the client's write; a ranged shot passes `guards = false`.
     pub(crate) fn arm(&mut self, spell_id: u32, now: Instant, guards: bool) {
         self.0 = Some(PendingCastState {
             spell_id,
             deadline: now + SEND_PROVISIONAL,
             guards,
+            item: None,
         });
     }
 
     /// Arm on an item use: the client's item use goes through the cast attempt, so it writes the
     /// same inflight id and meets the same gate. Only the deadline differs.
-    pub(crate) fn arm_item(&mut self, spell_id: u32, now: Instant) {
+    pub(crate) fn arm_item(&mut self, spell_id: u32, entry: u32, now: Instant) {
         self.0 = Some(PendingCastState {
             spell_id,
             deadline: now + ITEM_SEND_PROVISIONAL,
             guards: true,
+            item: Some(entry),
         });
     }
 
@@ -450,6 +462,23 @@ mod tests {
             !g.in_flight(t0),
             "our cast resolved — casting allowed again"
         );
+    }
+
+    /// The current-item test reads the item use's entry until the cast resolves or lapses; a spell
+    /// cast has none.
+    #[test]
+    fn the_current_item_is_the_item_uses_entry_while_it_is_pending() {
+        const HEARTH_SPELL: u32 = 8690;
+        const HEARTHSTONE: u32 = 6948;
+        let t0 = Instant::now();
+        let mut g = PendingCast::default();
+        g.arm_item(HEARTH_SPELL, HEARTHSTONE, t0);
+        assert_eq!(g.current_item(t0), Some(HEARTHSTONE));
+        assert_eq!(g.current_item(t0 + ITEM_SEND_PROVISIONAL), None);
+        g.clear_if(HEARTH_SPELL);
+        assert_eq!(g.current_item(t0), None);
+        g.arm(FIREBALL, t0, true);
+        assert_eq!(g.current_item(t0), None);
     }
 
     #[test]
