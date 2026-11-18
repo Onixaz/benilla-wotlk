@@ -144,16 +144,6 @@ impl super::UiScript {
         })
     }
 
-    /// Drain the 1-based slot indices `TogglePetAutocast` queued.
-    pub fn take_pet_autocast_toggles(&mut self) -> Vec<u32> {
-        drain_field!(self, pet_autocast_toggles)
-    }
-
-    /// Drain the count of `PetStopAttack()` calls.
-    pub fn take_pet_stop_attacks(&mut self) -> u32 {
-        drain_field!(self, pet_stop_attacks)
-    }
-
     /// Take the one-shot orders (`PetAttack` and the rest) out of the call stream, each a packed
     /// slot word.
     pub fn take_pet_orders(&mut self) -> Vec<u32> {
@@ -161,13 +151,6 @@ impl super::UiScript {
             super::ScriptCall::PetOrder(packed) => Some(*packed),
             _ => None,
         })
-    }
-
-    /// Drain the drag's bar writes, already applied here: one `Vec` per `CMSG_PET_SET_ACTION` of
-    /// one or two `(0-based position, packed word)` pairs. Send each whole: the server tells the
-    /// two forms apart by body size.
-    pub fn take_pet_set_actions(&mut self) -> Vec<Vec<(u32, u32)>> {
-        drain_field!(self, pet_set_actions)
     }
 
     /// Drain the `PetAbandon()` and `PetDismiss()` call counts, as `(abandons, dismisses)`.
@@ -407,15 +390,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // TogglePetAutocast(index) (`0x5d66f0`): every slot of the ten reaches the toggle (`0x5d6794`),
-    // whose usability gate, bit-31 test and `PET_BAR_UPDATE` the app runs (`0x5d5d20`).
+    // TogglePetAutocast(index) (`0x5d66f0`): `index - 1` in 0..=10 (`0x5d6745`), the cursor
+    // cleared or its pet action dropped (`0x5d676d`), else the toggle runs inside the call and
+    // signals the bar after its send (`0x5d6794`, `0x5d5e01`).
     g.set(
         "TogglePetAutocast",
-        lua.create_function(|lua, i: u32| {
-            if (1..=10).contains(&i) {
-                crate::script::model_mut_of(lua)
-                    .pet_autocast_toggles
-                    .push(i);
+        lua.create_function(|lua, i: Value| {
+            let i = super::binding_abi::number_arg(lua, i, "Usage: TogglePetAutocast(index)")?;
+            let index = (i as u32).wrapping_sub(1);
+            if index > 10 {
+                return Err(mlua::Error::runtime("Invalid slot in TogglePetAutocast"));
+            }
+            if crate::script::cursor::toggle_cursor_fork(lua, i as u32) {
+                return Ok(());
+            }
+            if crate::script::live::write_live(|l| l.pet_toggle_autocast(index)) == Some(true) {
+                crate::script::tick::fire_event_into(lua, "PET_BAR_UPDATE", Vec::new());
             }
             Ok(())
         })?,
@@ -549,11 +539,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
+    // PetStopAttack() (`0x5d5640`): the clear runs inside the call (`0x5d4650`).
     g.set(
         "PetStopAttack",
-        lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.pet_stop_attacks += 1;
+        lua.create_function(|_, ()| {
+            crate::script::live::write_live(|l| l.pet_stop_attack());
             Ok(())
         })?,
     )?;
@@ -856,7 +846,7 @@ mod tests {
     #[test]
     fn intents_queue_and_the_meaningless_ones_are_dropped() {
         let mut s = UiScript::new().unwrap();
-        let _pets = crate::script::live::lend_pets(true, true, true, slots());
+        let pets = crate::script::live::lend_pets(true, true, true, slots());
 
         s.run("CastPetAction(1) CastPetAction(3) CastPetAction(9)")
             .unwrap();
@@ -867,18 +857,62 @@ mod tests {
         );
         assert!(s.take_pet_actions().is_empty(), "drain empties");
 
-        s.run("TogglePetAutocast(1) TogglePetAutocast(2) TogglePetAutocast(11)")
+        s.run("PetStopAttack() PetStopAttack()").unwrap();
+        assert_eq!(
+            pets.view().pet_stops.get(),
+            2,
+            "each reaches the clear inside its call"
+        );
+    }
+
+    /// `TogglePetAutocast` toggles inside the call (`0x5d6794`): the bar's handler and next verb
+    /// read the flipped slot, a token signals unflipped, and slot 11 passes the gate (`0x5d6745`).
+    #[test]
+    fn the_autocast_toggle_flips_and_signals_inside_the_call() {
+        let s = UiScript::new().unwrap();
+        let pets = crate::script::live::lend_pets(true, true, true, slots());
+        s.run(
+            "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE')              f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = select(7, GetPetActionInfo(2)) or 0 end)",
+        )
+        .unwrap();
+        let after = s
+            .eval::<(i64, Option<i64>)>(
+                "TogglePetAutocast(2) return #SEEN, select(7, GetPetActionInfo(2))",
+            )
             .unwrap();
         assert_eq!(
-            s.take_pet_autocast_toggles(),
-            vec![1, 2],
-            "every slot of the ten reaches the toggle (`0x5d6794`)"
+            after,
+            (1, None),
+            "one signal inside the call, the next verb reads it off"
         );
-
-        assert_eq!(s.take_pet_stop_attacks(), 0);
-        s.run("PetStopAttack() PetStopAttack()").unwrap();
-        assert_eq!(s.take_pet_stop_attacks(), 2);
-        assert_eq!(s.take_pet_stop_attacks(), 0, "drain empties");
+        assert_eq!(
+            s.eval::<i64>("return SEEN[1]").unwrap(),
+            0,
+            "the handler read it off"
+        );
+        s.run("TogglePetAutocast(1) TogglePetAutocast(11)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return #SEEN").unwrap(),
+            3,
+            "a token and slot 11 signal too"
+        );
+        assert_eq!(*pets.view().pet_toggles.borrow(), vec![1, 0, 10]);
+        for (call, err) in [
+            ("TogglePetAutocast(0)", "Invalid slot in TogglePetAutocast"),
+            ("TogglePetAutocast(12)", "Invalid slot in TogglePetAutocast"),
+            ("TogglePetAutocast('x')", "Usage: TogglePetAutocast(index)"),
+        ] {
+            let e = s.run(call).unwrap_err().to_string();
+            assert!(e.contains(err), "{call}: {e}");
+        }
+        drop(pets);
+        let _unusable = crate::script::live::lend_pets(true, false, true, slots());
+        s.run("TogglePetAutocast(2)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return #SEEN").unwrap(),
+            3,
+            "an unusable pet signals nothing"
+        );
     }
 
     /// `IsPetAttackActive` answers the pet-attacking global whatever its argument (`0x5d3160`).

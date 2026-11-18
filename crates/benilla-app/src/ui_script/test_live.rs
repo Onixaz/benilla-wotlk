@@ -50,6 +50,21 @@ struct PetAnswers {
     pet_slots: Vec<PetActionView>,
     /// The pet's book.
     pet_book: Option<PetBookState>,
+    /// The verbs' writes inside their calls, in order.
+    pet_writes: PetWrites,
+}
+
+/// What the pet verbs wrote inside their calls, as the live view sends it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct PetWrites {
+    /// The drag's packets, one or two `(0-based slot, word)` pairs each.
+    pub placed: Vec<Vec<(u32, u32)>>,
+    /// The 0-based slots the bar toggle reached past its gate.
+    pub toggled: Vec<u32>,
+    /// The book's sets that flipped, `(spell, state)`.
+    pub spell_autocasts: Vec<(u32, bool)>,
+    /// `PetStopAttack` calls.
+    pub stops: u32,
 }
 
 thread_local! {
@@ -78,6 +93,8 @@ pub(crate) trait PetAnswersExt {
     fn set_possess_spell(&mut self, possess: Option<PossessView>);
     fn set_stable(&mut self, list: StableList, families: Vec<(u32, StableFamily)>);
     fn set_pet_book(&mut self, book: PetBookState);
+    /// What the pet verbs wrote inside their calls since the last take.
+    fn take_pet_writes(&mut self) -> PetWrites;
 }
 
 /// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no
@@ -120,6 +137,10 @@ impl PetAnswersExt for UiScript {
     fn set_pet_book(&mut self, book: PetBookState) {
         sticky(self);
         PET.with(|p| p.borrow_mut().pet_book = Some(book));
+    }
+
+    fn take_pet_writes(&mut self) -> PetWrites {
+        PET.with(|p| std::mem::take(&mut p.borrow_mut().pet_writes))
     }
 
     fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats) {
@@ -288,6 +309,7 @@ impl LiveState for View {
     fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
         PET.with(|p| {
             let mut p = p.borrow_mut();
+            p.pet_writes.placed.push(entries.to_vec());
             for &(i, word) in entries {
                 if let Some(s) = p.pet_slots.get_mut(i as usize) {
                     s.packed = word;
@@ -295,6 +317,46 @@ impl LiveState for View {
             }
         });
         true
+    }
+
+    fn pet_stop_attack(&mut self) {
+        PET.with(|p| p.borrow_mut().pet_writes.stops += 1);
+    }
+
+    fn pet_toggle_autocast(&mut self, index: u32) -> bool {
+        PET.with(|p| {
+            let mut p = p.borrow_mut();
+            if !p.pet_bar.as_ref().is_some_and(|b| b.actions_usable) {
+                return false;
+            }
+            p.pet_writes.toggled.push(index);
+            if let Some(s) = p.pet_slots.get_mut(index as usize) {
+                if s.autocast_allowed {
+                    s.autocast_enabled = !s.autocast_enabled;
+                }
+            }
+            true
+        })
+    }
+
+    fn pet_set_spell_autocast(&mut self, spell_id: u32, state: Option<bool>) -> bool {
+        PET.with(|p| {
+            let mut p = p.borrow_mut();
+            let Some(slot) = p
+                .pet_book
+                .as_mut()
+                .and_then(|b| b.slots.iter_mut().rev().find(|s| s.spell_id == spell_id))
+            else {
+                return false;
+            };
+            let Some((true, on)) = slot.autocast else {
+                return false;
+            };
+            let on = state.unwrap_or(!on);
+            slot.autocast = Some((true, on));
+            p.pet_writes.spell_autocasts.push((spell_id, on));
+            true
+        })
     }
 
     fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<PetBookState> {

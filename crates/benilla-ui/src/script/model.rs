@@ -594,10 +594,6 @@ pub(crate) struct Model {
     pub(crate) macro_item_icons: Vec<String>,
     /// Builds [`Self::macro_item_icons`] on first use, then is spent.
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
-    /// `ToggleSpellAutocast` ids for `CMSG_PET_SPELL_AUTOCAST` (`0x2F3`), which names a spell.
-    pub(crate) pet_spell_autocasts: Vec<u32>,
-    /// `EnableSpellAutocast` and `DisableSpellAutocast` calls queued.
-    pub(crate) pet_spell_autocast_sets: Vec<(u32, bool)>,
     /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
     /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
     pub(crate) casting: bool,
@@ -725,13 +721,6 @@ pub(crate) struct Model {
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
-    /// 1-based slot indices `TogglePetAutocast` queued.
-    pub(crate) pet_autocast_toggles: Vec<u32>,
-    /// `PetStopAttack()` calls.
-    pub(crate) pet_stop_attacks: u32,
-    /// One `CMSG_PET_SET_ACTION` per entry, its one or two `(position, packed word)` pairs: the
-    /// server tells the forms apart by body size, so a move's two pairs must not be flattened.
-    pub(crate) pet_set_actions: Vec<Vec<(u32, u32)>>,
     /// `PetAbandon()` and `PetDismiss()` calls, counted apart though both end at one opcode.
     pub(crate) pet_abandons: u32,
     pub(crate) pet_dismisses: u32,
@@ -1587,8 +1576,6 @@ impl Model {
             macro_icon_source: None,
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
-            pet_spell_autocasts: Vec::new(),
-            pet_spell_autocast_sets: Vec::new(),
             casting: false,
             spell_targeting: false,
             spell_targetable_units: HashSet::new(),
@@ -1649,9 +1636,6 @@ impl Model {
             totem_destroys: Vec::new(),
             multicast: Default::default(),
             ui_errors_s: Vec::new(),
-            pet_autocast_toggles: Vec::new(),
-            pet_stop_attacks: 0,
-            pet_set_actions: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,
             pet_renames: Vec::new(),

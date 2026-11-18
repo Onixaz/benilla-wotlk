@@ -24,10 +24,9 @@ mod unit;
 mod usable;
 
 pub(crate) use bar::{action_live, bar_live, PetSlotWalk, WalkLent};
-use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
-pub(crate) use drain::{PetCast, PetPress};
+pub(crate) use drain::{stop_pet_attack, toggle_slot_autocast, PetCast, PetPress};
 use menu::drain_pet_menu;
 #[cfg(test)]
 pub(crate) use menu::PET_FLAG_ABANDON;
@@ -212,12 +211,6 @@ impl Plugin for UiPetPlugin {
                         .before(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(UnitFeed)
                         .before(crate::ui_script::UiPress),
-                    // After this frame's presses, as the one drain before it ran them ahead of the
-                    // toggles, stops and writes; in the press pass, so the bar's feed shows them.
-                    drain_pet_actions
-                        .in_set(crate::ui_script::UiPress)
-                        .after(crate::script_calls::apply_script_calls)
-                        .after(crate::ui_action::drop_item::drop_item_on_unit),
                     // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
                     // the stable it reads before the stable's own verbs move it.
                     drain_pet_menu

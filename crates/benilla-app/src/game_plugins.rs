@@ -70,7 +70,6 @@ use crate::ui_net::UiNetPlugin;
 use crate::ui_party::UiPartyPlugin;
 use crate::ui_pass::PlayerUiPlugin;
 use crate::ui_pet::UiPetPlugin;
-use crate::ui_pet_book::UiPetBookPlugin;
 use crate::ui_pet_doll::UiPetDollPlugin;
 use crate::ui_petition::UiPetitionPlugin;
 use crate::ui_quest::UiQuestPlugin;
@@ -250,7 +249,6 @@ impl PluginGroup for GamePlugins {
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.
             .add(UiPetPlugin)
             .add(ChrClassesPlugin)
-            .add(UiPetBookPlugin)
             .add(UiPetDollPlugin)
             .add(UiNetPlugin)
             .add(UiCastPlugin)
@@ -1655,10 +1653,6 @@ pub(crate) mod schedule_tests {
          "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
         ("ui_merchant/mod.rs", "feed_merchant", Because::PlayerRoundTrip,
          "a buy/sell refusal answers a click on an open merchant; show/update ride `VmMemo`s"),
-        ("ui_pet/drain.rs", "drain_pet_actions", Because::FilledByVm,
-         "the intents are the VM's own pet bar calls; each fires its `PET_BAR_UPDATE` into the VM that made it"),
-        ("ui_pet_book.rs", "drain_pet_book", Because::FilledByVm,
-         "the autocast toggles are the VM's own pet book calls; each fires its `PET_BAR_UPDATE` into the VM that made it"),
         ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
          "every line answers a charter action of ours; the window edges ride the `fed` memo"),
         ("ui_quest_share.rs", "feed_quest_share", Because::PlayerRoundTrip,

@@ -46,6 +46,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
     pub(crate) selection: Slot<'w, crate::target::Selection>,
     pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
+    /// The wire, for the sends a verb makes inside its call.
+    commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
     walk: Option<crate::ui_pet::PetSlotWalk<'w, 's>>,
     /// The bar's pet, our seat and the pet's auras, for the bar's usability and active reads.
@@ -782,7 +784,7 @@ impl LiveState for LiveView<'_, '_> {
         )
     }
 
-    /// The drag's write into the pet's words (`0x5d5c3e`), when the lending system owns the bar.
+    /// The drag's write into the pet's words (`0x5d5c3e`), then its one packet (`0x5d5cda`).
     fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
         let Some(bar) = self.pet_bar.get_mut() else {
             return false;
@@ -791,6 +793,65 @@ impl LiveState for LiveView<'_, '_> {
             if let Some(e) = bar.spells.bar.get_mut(position as usize) {
                 *e = benilla_protocol::messages::PetActionEntry::from(packed);
             }
+        }
+        if let Some(c) = &self.commands {
+            let _ = c.0.send(crate::net::ClientCommand::PetSetAction {
+                pet_guid: bar.spells.pet_guid,
+                entries: entries.to_vec(),
+            });
+        }
+        true
+    }
+
+    /// `PetStopAttack`'s clear on the lent bar (`0x5d4650`).
+    fn pet_stop_attack(&mut self) {
+        if let (Some(bar), Some(c)) = (self.pet_bar.get_mut(), &self.commands) {
+            crate::ui_pet::stop_pet_attack(bar, c);
+        }
+    }
+
+    /// The bar toggle (`0x5d5d20`) on the lent words: gate, flip, send, in 12340's order.
+    fn pet_toggle_autocast(&mut self, index: u32) -> bool {
+        let usable = self.pet_bar.get().is_some_and(|bar| {
+            self.pet_unit
+                .as_ref()
+                .is_some_and(|p| p.actions_usable(bar))
+        });
+        let Some(bar) = self.pet_bar.get_mut().filter(|_| usable) else {
+            return false;
+        };
+        let pet_guid = bar.spells.pet_guid;
+        if let Some(flipped) = crate::ui_pet::toggle_slot_autocast(bar, index + 1) {
+            if let Some(c) = &self.commands {
+                let _ = c.0.send(crate::net::ClientCommand::PetSetAction {
+                    pet_guid,
+                    entries: vec![(index, flipped.packed)],
+                });
+            }
+        }
+        true
+    }
+
+    /// The book's set (`0x5d5e10`) on the lent words: gate, flip, send, in 12340's order.
+    fn pet_set_spell_autocast(&mut self, spell_id: u32, state: Option<bool>) -> bool {
+        let usable = self.pet_bar.get().is_some_and(|bar| {
+            self.pet_unit
+                .as_ref()
+                .is_some_and(|p| p.actions_usable(bar))
+        });
+        let Some(bar) = self.pet_bar.get_mut().filter(|_| usable) else {
+            return false;
+        };
+        let Some(enabled) = crate::ui_pet_book::set_autocast(&mut bar.spells, spell_id, state)
+        else {
+            return false;
+        };
+        if let Some(c) = &self.commands {
+            let _ = c.0.send(crate::net::ClientCommand::PetSpellAutocast {
+                pet_guid: bar.spells.pet_guid,
+                spell_id,
+                enabled,
+            });
         }
         true
     }
