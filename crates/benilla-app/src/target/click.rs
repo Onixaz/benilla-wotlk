@@ -153,7 +153,14 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
-    _live: crate::ui_script::LendLive<'w, 's, crate::ui_script::OwnsCooldowns>,
+    _live: crate::ui_script::LendLive<
+        'w,
+        's,
+        (
+            crate::ui_script::OwnsCooldowns,
+            crate::ui_script::OwnsSelection,
+        ),
+    >,
     /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
     pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     /// The trainer arm's ask, which its list must answer.
@@ -1020,7 +1027,7 @@ pub(super) fn act_on_right_click(
     mut clicks: MessageReader<WorldRightClick>,
     // The press pick: the reference picks once, on the down edge.
     press: Res<PressPick>,
-    mut selection: ResMut<Selection>,
+    mut selection: crate::ui_script::OwnedMut<Selection>,
     mut dispatch: Dispatch,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
 ) {
@@ -1048,8 +1055,8 @@ pub(super) fn act_on_right_click(
 /// leg follows; a crate's [`Interact`] runs the dispatcher alone, and only its attack leg selects,
 /// through StartAttack's selection set.
 enum Select<'a, 'w> {
-    First(&'a mut ResMut<'w, Selection>),
-    OnAttack(&'a mut ResMut<'w, Selection>),
+    First(&'a mut crate::ui_script::OwnedMut<'w, Selection>),
+    OnAttack(&'a mut crate::ui_script::OwnedMut<'w, Selection>),
 }
 
 /// Act on a pick by the cursor's classification of it: a GameObject, a corpse, an attack, loot,
@@ -1194,9 +1201,9 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     // fork, as the re-swing also needs the player's own legs. Deref'd only where it commits: a leg
     // that does not select leaves the change tick alone.
     let commit = |seam: &mut crate::creature_anim::AttackSeam,
-                  selection: &mut ResMut<Selection>| {
+                  selection: &mut crate::ui_script::OwnedMut<Selection>| {
         scan::commit(
-            selection,
+            &mut selection.write(),
             seam,
             entity,
             guid,
@@ -1293,7 +1300,7 @@ pub struct Interact(pub Entity);
 /// Each [`Interact`], its object classified as a press over it would be.
 pub(super) fn act_on_interact(
     mut requests: MessageReader<Interact>,
-    mut selection: ResMut<Selection>,
+    mut selection: crate::ui_script::OwnedMut<Selection>,
     kinds: Query<(&Guid, &crate::net::NetEntity)>,
     mut set: ParamSet<(cursor_mode::CursorInputs, Dispatch)>,
 ) {

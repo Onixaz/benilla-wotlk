@@ -523,8 +523,6 @@ fn with_stock_ui(rig: &mut Rig) {
         &guid_pair(benilla_protocol::field::FIELD_UNIT_SUMMON, PET),
     );
     rig.feed.add_systems(super::unit::feed_pet_unit);
-    // `GetPetActionSlotUsable`, which the stock repaint greys each icon by, rides its push.
-    rig.feed.add_systems(super::bar::feed_pet_slot_usable);
     // The bar arrives by its packet, whose setter fires `UNIT_PET` and `PET_BAR_UPDATE`.
     let spells = std::mem::take(&mut rig.app.world_mut().resource_mut::<PetBar>().spells);
     crate::net::handlers::dispatch(

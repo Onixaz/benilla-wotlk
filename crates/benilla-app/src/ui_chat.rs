@@ -173,7 +173,9 @@ impl Plugin for UiChatPlugin {
                     recruitment::guild_recruitment_cascade.in_set(crate::char_select::InWorldGated),
                 )
                     .chain()
-                    .after(benilla_world::terrain_stream::AreaAuthoritySet),
+                    .after(benilla_world::terrain_stream::AreaAuthoritySet)
+                    // The selection and the pet's words its lent view reads are the clicks'.
+                    .after(crate::target::TargetUpdate),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),

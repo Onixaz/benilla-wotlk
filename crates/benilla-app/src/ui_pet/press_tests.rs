@@ -239,7 +239,7 @@ impl Rig {
             .run_system_once(
                 move |(script, _live): (
                     Option<NonSendMut<benilla_ui::script::UiScript>>,
-                    crate::ui_script::LendLive<crate::ui_script::OwnsPetBar>,
+                    crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
                 ),
                       mut press: PetPress| {
                     let mut script = script.expect("the rig's VM");

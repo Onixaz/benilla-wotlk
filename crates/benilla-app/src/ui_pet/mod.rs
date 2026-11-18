@@ -23,7 +23,7 @@ mod temp_bar;
 mod unit;
 mod usable;
 
-pub(crate) use bar::{action_live, bar_live};
+pub(crate) use bar::{action_live, bar_live, PetSlotWalk, WalkLent};
 use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
@@ -205,7 +205,6 @@ impl Plugin for UiPetPlugin {
                         .before(crate::ui_script::UiFeed)
                         .before(crate::ui_action::SlotIdentityFeed),
                     feed_pet_unit.in_set(UnitFeed),
-                    bar::feed_pet_slot_usable.in_set(UnitFeed),
                     // The UI's world entry asks after the time and before the mail (`0x528010`);
                     // its bar drop lands before the press and the feeds read the bar.
                     request_pet_info_on_world_enter

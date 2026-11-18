@@ -104,7 +104,6 @@ impl PetAnswersExt for UiScript {
         slots: Vec<PetActionView>,
     ) {
         sticky(self);
-        self.set_pet_slot_usable(slots.iter().map(|s| s.slot_usable).collect());
         PET.with(|p| {
             let mut p = p.borrow_mut();
             p.pet_bar = Some(PetBarLive {

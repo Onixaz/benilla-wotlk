@@ -38,7 +38,7 @@ pub(crate) fn drop_item_on_unit(
     self_q: Query<(&crate::net::Guid, &crate::net::ObjectStore), With<crate::net::SelfPlayer>>,
     stores: Query<&crate::net::ObjectStore>,
     index: Res<crate::net::GuidIndex>,
-    pet_bar: Res<crate::ui_pet::PetBar>,
+    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     learned: Res<super::LearnedAbilities>,
     press: Res<crate::target::PressPick>,
     mut clicks: MessageReader<benilla_world::interact::WorldClick>,
@@ -49,12 +49,11 @@ pub(crate) fn drop_item_on_unit(
         return;
     };
     let hovered = press.hovered;
+    let pet_guid = pet_bar.get().map_or(0, |b| b.spells.pet_guid);
     let mut tokens = script.take_drop_item_on_unit();
     // The world entry: a click whose press-time pick is the pet. That is the pick the click
     // selects from; the live hover can differ after a drag.
-    let clicked_pet = clicks.read().count() > 0
-        && pet_bar.spells.pet_guid != 0
-        && hovered.guid == Some(pet_bar.spells.pet_guid);
+    let clicked_pet = clicks.read().count() > 0 && pet_guid != 0 && hovered.guid == Some(pet_guid);
     if clicked_pet {
         tokens.push("pet".to_string());
     }
@@ -70,8 +69,8 @@ pub(crate) fn drop_item_on_unit(
             debug!("DropItemOnUnit({token}) — only the pet leg is modelled; refused, payload kept");
             continue;
         }
-        let Some(pet_fields) = (pet_bar.spells.pet_guid != 0)
-            .then(|| index.0.get(&pet_bar.spells.pet_guid))
+        let Some(pet_fields) = (pet_guid != 0)
+            .then(|| index.0.get(&pet_guid))
             .flatten()
             .and_then(|&e| stores.get(e).ok())
         else {

@@ -612,7 +612,7 @@ pub(super) fn assist_named(
                 Match::PrefixOk,
             )
             .map(|(e, _, _)| e),
-        None => commit.selection.target,
+        None => commit.selection.read().target,
     };
     let Some(basis) = basis else {
         info!("assist ({how}): no basis unit; nothing to assist");
@@ -732,7 +732,7 @@ pub(super) fn follow_requests(
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)] // one bundled param, the app's convention for big query sets
 pub(crate) struct SelectCommit<'w, 's> {
-    pub(super) selection: ResMut<'w, Selection>,
+    pub(super) selection: crate::ui_script::OwnedMut<'w, Selection>,
     pub(crate) seam: crate::creature_anim::AttackSeam<'w, 's>,
     // Our own body: the guid, the store `can_attack` reads, and whether we are mid-swing.
     me: Query<
@@ -810,7 +810,7 @@ impl SelectCommit<'_, '_> {
     /// Deselect, a no-op with nothing selected; see [`super::click::clear`].
     pub(super) fn clear(&mut self) {
         let engaged = self.engaged();
-        super::click::deselect(&mut self.selection, &mut self.seam, engaged);
+        super::click::deselect(&mut self.selection.write(), &mut self.seam, engaged);
     }
 
     /// The reference's select on a looted object, which tests `TYPEMASK_UNIT` first.
@@ -845,7 +845,7 @@ impl SelectCommit<'_, '_> {
             return false;
         }
         scan::commit_at(
-            &mut self.selection,
+            &mut self.selection.write(),
             &mut self.seam,
             None,
             guid,
@@ -870,7 +870,7 @@ impl SelectCommit<'_, '_> {
             me.and_then(|(_, store, _)| store),
         );
         scan::commit(
-            &mut self.selection,
+            &mut self.selection.write(),
             &mut self.seam,
             entity,
             guid,

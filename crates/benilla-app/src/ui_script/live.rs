@@ -44,6 +44,10 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) stable: crate::ui_stable::StableView<'w, 's>,
     pub(crate) cooldowns: Slot<'w, crate::spell::Cooldowns>,
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
+    pub(crate) selection: Slot<'w, crate::target::Selection>,
+    pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
+    /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
+    walk: Option<crate::ui_pet::PetSlotWalk<'w, 's>>,
     /// The bar's pet, our seat and the pet's auras, for the bar's usability and active reads.
     pet_unit: Option<crate::ui_pet::PetUnit<'w, 's>>,
     /// The spell records, the cooldown query's category and global-cooldown legs.
@@ -145,12 +149,33 @@ unsafe impl<X: Resource> SystemParam for Slot<'_, X> {
 unsafe impl<X: Resource> ReadOnlySystemParam for Slot<'_, X> {}
 
 /// Which lendable resources the system taking [`LendLive`] writes itself, through [`OwnedMut`].
+/// The pet's words are every loan's: any call into Lua may toggle or drag them (`0x5d5d88`).
 pub(crate) trait Owns: 'static {
     const COOLDOWNS: bool = false;
-    const PET_BAR: bool = false;
+    const SELECTION: bool = false;
+    const PLACE: bool = false;
 }
 
 impl Owns for () {}
+
+/// Both sets' resources.
+impl<A: Owns, B: Owns> Owns for (A, B) {
+    const COOLDOWNS: bool = A::COOLDOWNS || B::COOLDOWNS;
+    const SELECTION: bool = A::SELECTION || B::SELECTION;
+    const PLACE: bool = A::PLACE || B::PLACE;
+}
+
+/// The system writes [`crate::area::PlayerPlace`].
+pub(crate) struct OwnsPlace;
+impl Owns for OwnsPlace {
+    const PLACE: bool = true;
+}
+
+/// The system writes [`crate::target::Selection`].
+pub(crate) struct OwnsSelection;
+impl Owns for OwnsSelection {
+    const SELECTION: bool = true;
+}
 
 /// The system writes [`crate::spell::Cooldowns`].
 pub(crate) struct OwnsCooldowns;
@@ -158,24 +183,10 @@ impl Owns for OwnsCooldowns {
     const COOLDOWNS: bool = true;
 }
 
-/// The system writes [`crate::ui_pet::PetBar`].
-pub(crate) struct OwnsPetBar;
-impl Owns for OwnsPetBar {
-    const PET_BAR: bool = true;
-}
-
-/// The system writes both.
-pub(crate) struct OwnsCooldownsAndPetBar;
-impl Owns for OwnsCooldownsAndPetBar {
-    const COOLDOWNS: bool = true;
-    const PET_BAR: bool = true;
-}
-
-/// An exclusive lender holds the whole `World`, so every verb may write every lendable resource.
+/// An exclusive lender holds the whole `World`, so every verb may write what a verb writes.
 pub(crate) struct OwnsAll;
 impl Owns for OwnsAll {
     const COOLDOWNS: bool = true;
-    const PET_BAR: bool = true;
 }
 
 /// A VM holder's write handle on a resource its lent view reads: the owner's borrow, held as the
@@ -239,10 +250,17 @@ impl<X> std::ops::DerefMut for OwnedWrite<'_, X> {
 /// resource, no read.
 pub(crate) struct LentRef<'w, X: Resource> {
     ptr: Option<NonNull<X>>,
+    /// Written since the system last ran, as `Res::is_changed` answers.
+    changed: bool,
     _life: PhantomData<&'w X>,
 }
 
 impl<X: Resource> LentRef<'_, X> {
+    /// Whether the resource was written since the system last ran.
+    pub(crate) fn is_changed(&self) -> bool {
+        self.changed
+    }
+
     /// The resource, for as long as the returned borrow lives.
     pub(crate) fn get(&self) -> Option<LentRead<'_, X>> {
         let ptr = self.ptr?;
@@ -300,13 +318,20 @@ unsafe impl<X: Resource> SystemParam for LentRef<'_, X> {
 
     unsafe fn get_param<'w, 's>(
         &mut (id, ..): &'s mut Self::State,
-        _: &SystemMeta,
+        system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
-        _: Tick,
+        change_tick: Tick,
     ) -> Self::Item<'w, 's> {
+        // SAFETY: registered in `init_access`, or written by the system's own pair, which has
+        // not run yet; the reference ends with this statement.
+        let changed = unsafe { world.get_resource_ref::<X>() }.is_some_and(|mut r| {
+            r.set_ticks(system_meta.get_last_run(), change_tick);
+            r.is_changed()
+        });
         LentRef {
             // SAFETY: registered in `init_access`, or written by the system's own pair.
             ptr: unsafe { slot_fetch(world, id) },
+            changed,
             _life: PhantomData,
         }
     }
@@ -338,7 +363,7 @@ fn owned_access(
     assert!(
         !access.has_resource_read(id) || access.has_resource_read(partner),
         "error[B0002]: {name} is borrowed beside its owner's lent view: read it through the view \
-         and write it through `OwnedMut`"
+         or a `LentRef` taken after the loan, and write it through `OwnedMut`"
     );
     set.add_unfiltered_resource_write(id);
     set.add_unfiltered_resource_read(mine);
@@ -356,13 +381,13 @@ unsafe impl<X: Resource> SystemParam for OwnedMut<'_, X> {
 
     fn init_access(
         &(id, mine, partner): &Self::State,
-        _: &mut SystemMeta,
+        system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         _: &mut World,
     ) {
         // Beside its loan's access alone: the view reads through the same pointer, between writes.
         owned_access(
-            std::any::type_name::<X>(),
+            &format!("{} in {}", std::any::type_name::<X>(), system_meta.name()),
             id,
             mine,
             partner,
@@ -736,19 +761,23 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     /// The slot word at the call (`0x5d4ec0`), its cooldown asked of the pet's history
-    /// (`0x5d5345`); its usability is `feed_pet_slot_usable`'s push.
+    /// (`0x5d5345`) and its usability walked at the call (`0x5d5400`).
     fn pet_action(
         &self,
         index: usize,
         anchor: std::time::Instant,
         ui_now: f64,
     ) -> Option<benilla_ui::script::PetActionView> {
+        let lent = crate::ui_pet::WalkLent {
+            selection: self.selection.get(),
+            place: self.place.get(),
+        };
         crate::ui_pet::action_live(
             self.pet_bar.get()?,
             index,
             self.spells.as_deref(),
             self.pet_unit.as_ref(),
-            None,
+            self.walk.as_ref().map(|w| (w, lent)),
             (anchor, ui_now),
         )
     }
@@ -820,8 +849,8 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 /// A lendable resource's id, then the loan's and the owner's marks.
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// The lendable resources' ids.
-type SlotState = (SlotIds, SlotIds);
+/// The lendable resources' ids: the history, the pet's words, the selection and the player's place.
+type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds);
 
 /// Register `X` and its pair's marks.
 fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
@@ -835,8 +864,13 @@ fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
 
 /// Register the view's access to lendable `X`. Unowned, a read, refused beside a write (B0002);
 /// owned, the write its [`OwnedMut`] pairs with, refused beside any other access.
-fn slot_access<X: Resource>(owned: bool, (id, loan, owner): SlotIds, set: &mut FilteredAccessSet) {
-    let name = std::any::type_name::<X>();
+fn slot_access<X: Resource>(
+    owned: bool,
+    (id, loan, owner): SlotIds,
+    system: &SystemMeta,
+    set: &mut FilteredAccessSet,
+) {
+    let name = &format!("{} in {}", std::any::type_name::<X>(), system.name());
     if owned {
         owned_access(name, id, loan, owner, set);
         return;
@@ -874,6 +908,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             (
                 slot_ids::<crate::spell::Cooldowns>(world),
                 slot_ids::<crate::ui_pet::PetBar>(world),
+                slot_ids::<crate::target::Selection>(world),
+                slot_ids::<crate::area::PlayerPlace>(world),
             ),
         )
     }
@@ -890,8 +926,11 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             component_access_set,
             world,
         );
-        slot_access::<crate::spell::Cooldowns>(O::COOLDOWNS, state.1 .0, component_access_set);
-        slot_access::<crate::ui_pet::PetBar>(O::PET_BAR, state.1 .1, component_access_set);
+        let set = component_access_set;
+        slot_access::<crate::spell::Cooldowns>(O::COOLDOWNS, state.1 .0, system_meta, set);
+        slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
+        slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
+        slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -936,8 +975,10 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         unsafe {
             view.cooldowns
                 .set(slot_fetch(world, state.1 .0 .0), O::COOLDOWNS);
-            view.pet_bar
-                .set(slot_fetch(world, state.1 .1 .0), O::PET_BAR);
+            view.pet_bar.set(slot_fetch(world, state.1 .1 .0), true);
+            view.selection
+                .set(slot_fetch(world, state.1 .2 .0), O::SELECTION);
+            view.place.set(slot_fetch(world, state.1 .3 .0), O::PLACE);
         }
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
         // after any loan made inside it, and never leaks one.

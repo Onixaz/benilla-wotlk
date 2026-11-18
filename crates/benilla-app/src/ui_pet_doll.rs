@@ -13,7 +13,7 @@ use benilla_ui::script::{UiScript, UnitCombatStats};
 
 use crate::portrait::PetDollBooth;
 use crate::ui_char::{fire_stat_transitions, unit_combat_stats};
-use crate::ui_pet::{PetBar, PetUnit};
+use crate::ui_pet::PetUnit;
 use crate::ui_unit::UnitFeed;
 
 pub(crate) struct UiPetDollPlugin;
@@ -29,7 +29,6 @@ impl Plugin for UiPetDollPlugin {
 /// facing, which the rotate buttons write (`0x9606e0`), and the pet's model.
 fn sync_pet_booth(
     (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
-    bar: Res<PetBar>,
     pet: PetUnit,
     mut booth: ResMut<PetDollBooth>,
 ) {
@@ -38,7 +37,8 @@ fn sync_pet_booth(
     };
     // Written every frame, pet or not, so a new pet does not snap to a stale yaw.
     booth.yaw = script.model_pane_facing("PetModelFrame");
-    let pet_guid = bar.spells.pet_guid;
+    // The "pet" token's unit, our charm else our summon (`0x60acc3`-`0x60acd3`).
+    let pet_guid = pet.token_guid().unwrap_or(0);
     // A guid whose object never streamed is no pet: `None` empties the booth.
     booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
 }
@@ -46,7 +46,6 @@ fn sync_pet_booth(
 /// The pet page's stats pushed under `"pet"` and their `UNIT_*` fan-out, the units' (#1289).
 fn feed_pet_doll(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    bar: Res<PetBar>,
     pet: PetUnit,
     mut last: Local<crate::ui_script::VmMemo<Option<UnitCombatStats>>>,
     tables: Option<Res<crate::ui_char::SheetTables>>,
@@ -57,7 +56,8 @@ fn feed_pet_doll(
         return;
     };
     let last = last.get(&script);
-    let pet_guid = bar.spells.pet_guid;
+    // The "pet" token's unit, our charm else our summon (`0x60acc3`-`0x60acd3`).
+    let pet_guid = pet.token_guid().unwrap_or(0);
     let store = (pet_guid != 0).then(|| pet.store(pet_guid)).flatten();
 
     let owner_class = self_q

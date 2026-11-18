@@ -135,11 +135,6 @@ pub struct PossessView {
 }
 
 impl super::UiScript {
-    /// Push the ten `GetPetActionSlotUsable` answers, the usability walk's per slot.
-    pub fn set_pet_slot_usable(&mut self, usable: Vec<bool>) {
-        set_field!(self, pet_slot_usable, usable);
-    }
-
     /// Take the `CastPetAction` calls out of the call stream, as 1-based slots; the app decides
     /// what each one sends.
     pub fn take_pet_actions(&mut self) -> Vec<u32> {
@@ -367,18 +362,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(move |lua, i: Value| {
             let i =
                 super::binding_abi::number_arg(lua, i, "Usage: GetPetActionSlotsUsable(index)")?;
-            // The slot word is read at the call; the usability walk's answer is the slot push's.
+            // The slot word and the usability walk, both at the call.
             let usable = u32::try_from(i)
                 .ok()
-                .filter(|&i| live_slot(lua, i).is_some())
-                .and_then(|i| {
-                    lua.app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data")
-                        .pet_slot_usable
-                        .get(i as usize - 1)
-                        .copied()
-                })
-                .unwrap_or(true);
+                .and_then(|i| live_slot(lua, i))
+                .is_none_or(|s| s.slot_usable);
             Ok(flag(usable))
         })?,
     )?;
@@ -936,10 +924,11 @@ mod tests {
         assert!(err.contains("Usage: IsPetAttackAction(index)"), "{err}");
     }
 
-    /// `GetPetActionSlotUsable` answers the pushed slot's state, and 1 with no slot (`0x5d5400`).
+    /// `GetPetActionSlotUsable` answers the lent slot's walk at the call, and 1 with no slot
+    /// (`0x5d5400`).
     #[test]
-    fn slot_usable_reads_the_pushed_state_and_no_slot_is_usable() {
-        let mut s = UiScript::new().unwrap();
+    fn slot_usable_reads_the_lent_walk_and_no_slot_is_usable() {
+        let s = UiScript::new().unwrap();
         assert_eq!(
             s.eval::<i64>("return GetPetActionSlotUsable(1)").unwrap(),
             1,
@@ -947,7 +936,6 @@ mod tests {
         );
         let mut bar = slots();
         bar[0].slot_usable = true;
-        s.set_pet_slot_usable(bar.iter().map(|v| v.slot_usable).collect());
         let _pets = crate::script::live::lend_pets(true, true, true, bar);
         assert_eq!(
             s.eval::<i64>("return GetPetActionSlotUsable(1)").unwrap(),

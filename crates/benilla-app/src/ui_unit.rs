@@ -705,7 +705,7 @@ pub(crate) fn player_token_guid(
 
 /// The one unit-token resolver, the reference's: case-insensitive compares, then the object
 /// manager; a caller wanting a type tests the resolved unit. [`Selection`] is a parameter because
-/// [`crate::target::SelectCommit`] holds it as `ResMut`.
+/// [`crate::target::SelectCommit`] writes it through its own borrow.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
@@ -2089,7 +2089,7 @@ fn feed_combo_points(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     combo: Option<Res<crate::spell::ComboPoints>>,
     self_guid: Option<Res<crate::net::SelfGuid>>,
-    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
+    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     mut memo: Local<crate::ui_script::VmMemo<Option<(u64, u64)>>>,
 ) {
     let (Some(mut script), Some(combo)) = (script, combo) else {
@@ -2113,7 +2113,8 @@ fn feed_combo_points(
         }
     }
     if pet_moved {
-        if let Some(pet) = pet_bar.as_deref().map(|b| b.spells.pet_guid) {
+        let pet = pet_bar.get().map(|b| b.spells.pet_guid);
+        if let Some(pet) = pet {
             script.fire_unit_event(pet, "UNIT_COMBO_POINTS", vec![]);
         }
         script.fire_event("PET_BAR_UPDATE_USABLE", vec![]);

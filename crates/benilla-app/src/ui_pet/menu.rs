@@ -50,7 +50,7 @@ pub(crate) fn summon_bars_dismiss(
 /// answers by removing the pet or moving its name timestamp.
 pub(super) fn drain_pet_menu(
     (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    bar: Res<PetBar>,
+    bar: crate::ui_script::LentRef<PetBar>,
     commands: Res<NetCommands>,
     mut ui_errors: ResMut<UiErrorKeys>,
     pet: PetUnit,
@@ -78,7 +78,7 @@ pub(super) fn drain_pet_menu(
     if abandons == 0 && dismisses == 0 && renames.is_empty() {
         return;
     }
-    let pet_guid = bar.spells.pet_guid;
+    let pet_guid = bar.get().map_or(0, |b| b.spells.pet_guid);
     if pet_guid == 0 {
         // `PetRename 0x5d5670`'s first check; the other verbs drop silently.
         for _ in &renames {
@@ -106,7 +106,8 @@ pub(super) fn drain_pet_menu(
     // otherwise the Dismiss order at target 0, then `PET_DISMISS_START`.
     let dismiss_word = PET_COMMAND_DISMISS | (u32::from(PET_ACT_COMMAND) << 24);
     for _ in 0..dismisses {
-        let Some(store) = pet.usable_pet(&bar) else {
+        let usable = bar.get().and_then(|b| pet.usable_pet(&b));
+        let Some(store) = usable else {
             debug!("ui_pet: dismiss refused, the pet's actions are not usable — no packet");
             continue;
         };

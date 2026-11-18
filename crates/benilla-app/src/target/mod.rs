@@ -101,7 +101,7 @@ pub use click::Interact;
 /// Our target, set the instant we click, as the 1.12 client does without waiting for the server,
 /// and cleared on deselect or when it streams out. `CMSG_SET_SELECTION` carries the guid, which the
 /// server records in our `UNIT_FIELD_TARGET`.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct Selection {
     pub(crate) target: Option<Entity>,
     pub(crate) guid: Option<u64>,

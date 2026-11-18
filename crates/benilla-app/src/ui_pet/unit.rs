@@ -34,7 +34,7 @@ fn pet_snapshot(
     commands: &NetCommands,
     spells: Option<&crate::ui_action::Spells>,
 ) -> Option<UnitState> {
-    let pet_guid = pet.player_store()?.0.unit_pet_guid()?;
+    let pet_guid = pet.token_guid()?;
     let store = pet.store(pet_guid)?;
     let name = names
         .resolve_unit(pet_guid, Some(store), commands)

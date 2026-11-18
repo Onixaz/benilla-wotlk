@@ -77,7 +77,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_party::difficulty::feed_menu_gates",
     "benilla_app::ui_party::feed::feed_marks",
     "benilla_app::ui_party::feed::feed_party",
-    "benilla_app::ui_pet::bar::feed_pet_slot_usable",
     // The `"pet"` token's per-field fan-out, the units' (#1289).
     "benilla_app::ui_pet::unit::feed_pet_unit",
     // The pet page's stat fan-out under `"pet"`, the units' (#1289).

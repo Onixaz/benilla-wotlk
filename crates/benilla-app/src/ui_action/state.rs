@@ -183,7 +183,7 @@ pub(crate) fn feed_action_state(
         Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
         usable::UsableAuras,
         // The pet bar a pet-action slot reads.
-        Option<Res<crate::ui_pet::PetBar>>,
+        crate::ui_script::LentRef<crate::ui_pet::PetBar>,
         // Where the player stands, for the walk's place legs.
         usable::UsablePlaceFeed,
     ),
@@ -206,6 +206,7 @@ pub(crate) fn feed_action_state(
     cooldowns.write().prune(now);
     // Read until the pushes below, which call into Lua, so no verb's write meets it.
     let cd = cooldowns.read();
+    let pet_read = pet_bar.get();
     let gen_changed = memory.last_generation != Some(cd.generation);
     memory.last_generation = Some(cd.generation);
     // The cooldown-clock trace (`WOW_MOVE_TRACE` sink, tag "cd"): once per second.
@@ -309,7 +310,7 @@ pub(crate) fn feed_action_state(
             }
         };
         let (kind, id) = if kind == super::ACTION_KIND_PET {
-            match pet_slot(pet_bar.as_deref(), id, spells.as_deref()) {
+            match pet_slot(pet_read.as_deref(), id, spells.as_deref()) {
                 PetSlot::Empty => {
                     fresh.insert(action, st);
                     continue;
@@ -322,7 +323,7 @@ pub(crate) fn feed_action_state(
                 }
                 PetSlot::PlayerSpell(spell) => (ACTION_KIND_SPELL, spell),
                 PetSlot::PetSpell(spell, d) => {
-                    let bar = pet_bar.as_deref().expect("a pet spell reads the bar");
+                    let bar = pet_read.as_deref().expect("a pet spell reads the bar");
                     let pet = objects
                         .entity(bar.spells.pet_guid)
                         .and_then(|e| units.get(e).ok())
@@ -527,7 +528,7 @@ pub(crate) fn feed_action_state(
         // a re-arm, even within one frame gap, restarts the sweep.
         fresh.insert(action, st);
     }
-    drop(cd);
+    drop((cd, pet_read));
 
     let mut usable_changed = false;
     let mut state_changed = false;
@@ -619,7 +620,6 @@ pub(crate) fn feed_action_state(
             }
             *was_ready = ready;
         }
-        drop(ctx);
         drop(cd);
         for name in active {
             script.fire_event(

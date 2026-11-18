@@ -21,7 +21,6 @@ use super::{PetBar, PetUnit};
 /// pet; with any of it absent the walk is skipped and the slot reads usable.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetSlotWalk<'w, 's> {
-    selection: Option<Res<'w, crate::target::Selection>>,
     objects: crate::net::Objects<'w, 's>,
     factions: Option<Res<'w, crate::target::Factions>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
@@ -31,14 +30,24 @@ pub(crate) struct PetSlotWalk<'w, 's> {
     commands: Option<Res<'w, crate::net::NetCommands>>,
     combo: Option<Res<'w, crate::spell::ComboPoints>>,
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    /// The map, for the walk's place legs.
+    map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
+}
+
+/// The walk's inputs a VM holder writes, read through the lent view at the call.
+#[derive(Clone, Copy)]
+pub(crate) struct WalkLent<'a> {
+    pub(crate) selection: Option<&'a crate::target::Selection>,
     /// Where the player stands, for the walk's place legs.
-    place: crate::spell::usable::UsablePlaceFeed<'w>,
+    pub(crate) place: Option<&'a crate::area::PlayerPlace>,
 }
 
 impl PetSlotWalk<'_, '_> {
     /// The usable walk with the pet as caster: no bags, its own cooldowns, the current target.
+    #[allow(clippy::too_many_arguments)] // the walk's inputs, each read at the call
     fn usable(
         &self,
+        lent: WalkLent,
         spell_id: u32,
         d: &benilla_formats::SpellDisplay,
         spells: Option<&Spells>,
@@ -55,11 +64,8 @@ impl PetSlotWalk<'_, '_> {
         ) else {
             return true;
         };
-        let target_store = self
-            .selection
-            .as_ref()
-            .and_then(|s| s.guid)
-            .and_then(|guid| pet_unit.store(guid));
+        let target = lent.selection.and_then(|s| s.guid);
+        let target_store = target.and_then(|guid| pet_unit.store(guid));
         let ctx = crate::spell::usable::UsableCtx {
             self_auras: None,
             target_auras: None,
@@ -73,13 +79,17 @@ impl PetSlotWalk<'_, '_> {
             carried: &std::collections::HashMap::new(),
             // The pet is not the active player: no rune spell is usable on it (`0x80182d`).
             runes: None,
-            combo_points: self.combo.as_ref().map_or(0, |c| {
-                c.pet
-                    .on(0, self.selection.as_ref().and_then(|s| s.guid).unwrap_or(0))
-            }),
+            combo_points: self
+                .combo
+                .as_ref()
+                .map_or(0, |c| c.pet.on(0, target.unwrap_or(0))),
             // The auto-unshift check asks for the active player (`0x71b130`).
             auto_unshift: false,
-            place: self.place.pet(),
+            place: crate::spell::usable::UsablePlace::of(
+                lent.place,
+                self.map.as_deref().map(|m| m.0),
+                None,
+            ),
         };
         crate::spell::usable::spell_usable(
             spell_id,
@@ -271,7 +281,7 @@ pub(crate) fn action_live(
     index: usize,
     spells: Option<&Spells>,
     pet: Option<&PetUnit>,
-    walk: Option<&PetSlotWalk>,
+    walk: Option<(&PetSlotWalk, WalkLent)>,
     (anchor, ui_now): (Instant, f64),
 ) -> Option<PetActionView> {
     if !bar.has_bar() {
@@ -302,43 +312,12 @@ pub(crate) fn action_live(
     view.slot_usable =
         super::usable::slot_usable(entry, display, usable, uncontrolled, |d, store| {
             match (walk, pet) {
-                (Some(walk), Some(pet)) => {
-                    walk.usable(entry.action(), d, spells, store, pet, &bar.cooldowns)
+                (Some((walk, lent)), Some(pet)) => {
+                    walk.usable(lent, entry.action(), d, spells, store, pet, &bar.cooldowns)
                 }
                 // Without the walk's inputs the walk is skipped and the slot reads usable.
                 _ => true,
             }
         });
     Some(view)
-}
-
-/// Push the ten `GetPetActionSlotUsable` answers, with no event; the walk's selection and bags are
-/// written by press appliers that hold the VM, which do not yet lend their own borrow of them.
-pub(crate) fn feed_pet_slot_usable(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    bar: Res<PetBar>,
-    spells: Option<Res<Spells>>,
-    pet: PetUnit,
-    walk: PetSlotWalk,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let usable: Vec<bool> = (0..bar.spells.bar.len())
-        .map_while(|i| {
-            action_live(
-                &bar,
-                i,
-                spells.as_deref(),
-                Some(&pet),
-                Some(&walk),
-                (Instant::now(), 0.0),
-            )
-        })
-        .map(|v| v.slot_usable)
-        .collect();
-    script.set_pet_slot_usable(usable);
 }

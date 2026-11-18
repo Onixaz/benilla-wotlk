@@ -725,8 +725,6 @@ pub(crate) struct Model {
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
-    /// `GetPetActionSlotUsable`'s answers by 0-based slot, pushed by the app's slot feed.
-    pub(crate) pet_slot_usable: Vec<bool>,
     /// 1-based slot indices `TogglePetAutocast` queued.
     pub(crate) pet_autocast_toggles: Vec<u32>,
     /// `PetStopAttack()` calls.
@@ -1651,7 +1649,6 @@ impl Model {
             totem_destroys: Vec::new(),
             multicast: Default::default(),
             ui_errors_s: Vec::new(),
-            pet_slot_usable: Vec::new(),
             pet_autocast_toggles: Vec::new(),
             pet_stop_attacks: 0,
             pet_set_actions: Vec::new(),

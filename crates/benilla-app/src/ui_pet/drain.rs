@@ -24,7 +24,7 @@ use super::{PetBar, PetUnit};
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetPress<'w, 's> {
     pub(crate) bar: crate::ui_script::OwnedMut<'w, PetBar>,
-    pub(crate) selection: ResMut<'w, Selection>,
+    pub(crate) selection: crate::ui_script::OwnedMut<'w, Selection>,
     pub(crate) commands: Res<'w, NetCommands>,
     pub(crate) pet: PetUnit<'w, 's>,
     pub(crate) spells: Option<Res<'w, Spells>>,
@@ -162,7 +162,8 @@ impl PetPress<'_, '_> {
             None
         };
         // The passed target, else the selection (`0x5d4240`).
-        let mut target_guid = passed.filter(|&g| g != 0).or(selection.guid).unwrap_or(0);
+        let selected = selection.read().guid;
+        let mut target_guid = passed.filter(|&g| g != 0).or(selected).unwrap_or(0);
         // `AttributesEx4 & 0x20` (`0x5d4407`) or a possessed pet casts as the pet (`0x5d445a`).
         if let Some(spell) = spell {
             if pet_cannot_cast(pet_store.0.unit_flags(), spell) {
@@ -193,7 +194,7 @@ impl PetPress<'_, '_> {
                 crate::spell::validator::MountedGate::creature(pet_store, names.as_deref()),
                 ui_errors,
                 // No range leg: a mounted pet that got this far fights mounted (`0x72bdb0`).
-            ) || match pick.target(None, selection, seam, ui_errors, false) {
+            ) || match pick.target(None, &mut selection.write(), seam, ui_errors, false) {
                 Some(guid) => {
                     target_guid = guid;
                     false
@@ -257,10 +258,7 @@ pub(super) fn arm_pet_gcd(
 /// nothing and sends nothing. The stops do not; the drag's writes were gated where the VM applied
 /// them, on the answer the bar last pushed.
 pub(super) fn drain_pet_actions(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPetBar>,
-    ),
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut bar: crate::ui_script::OwnedMut<PetBar>,
     commands: Res<NetCommands>,
     pet: PetUnit,

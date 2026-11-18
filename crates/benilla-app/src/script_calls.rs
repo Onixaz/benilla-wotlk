@@ -24,7 +24,10 @@ const MAX_NESTING: u8 = 8;
 pub(crate) fn apply_script_calls(
     (script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsCooldownsAndPetBar>,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsCooldowns,
+            crate::ui_script::OwnsSelection,
+        )>,
     ),
     mut appliers: ParamSet<(
         crate::target::ScriptSelect,

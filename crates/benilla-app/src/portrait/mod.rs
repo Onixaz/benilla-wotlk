@@ -696,7 +696,6 @@ pub(crate) struct PartyBooths<'w, 's> {
     roster: Res<'w, crate::ui_party::GroupState>,
     index: Res<'w, crate::net::GuidIndex>,
     palettes: ResMut<'w, benilla_world::rig_palette::RigPalettes>,
-    pet_bar: Res<'w, crate::ui_pet::PetBar>,
     names: Res<'w, crate::names::NameCache>,
     /// What the UI drew last frame, read by `"targettarget"` and the loot source.
     panes: Res<'w, BoothPanes>,
@@ -1375,7 +1374,13 @@ fn sync_portraits(
                 })
                 .flatten(),
             "pet" => {
-                let guid = party.pet_bar.spells.pet_guid;
+                // The token's unit: our charm, else our summon (`0x60acc3`-`0x60acd3`).
+                let guid = self_q
+                    .iter()
+                    .next()
+                    .and_then(|e| stores_q.get(e).ok())
+                    .and_then(|s| s.0.unit_pet_guid())
+                    .unwrap_or(0);
                 let entity = (guid != 0)
                     .then(|| party.index.0.get(&guid))
                     .flatten()

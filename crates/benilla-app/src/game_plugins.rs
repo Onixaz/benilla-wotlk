@@ -1056,7 +1056,7 @@ pub(crate) mod schedule_tests {
     // paint): the transport chain before the press, the tick's drains (`UiDrain`) before the
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_164;
+    const UPDATE_ACTIONABLE_CEILING: usize = 2_859;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
