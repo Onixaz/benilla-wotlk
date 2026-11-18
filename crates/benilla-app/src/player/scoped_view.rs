@@ -6,8 +6,8 @@
 //! return early), with `[camera+0x40] = n × π/180`; removal restores `π/2` and unlocks. The Ornate
 //! Spyglass (item 5507, spell 12883) passes 15, a 6× zoom.
 //!
-//! The ratio is applied, not the degrees: `[camera+0x40]` defaults to 90°, while our [`CAM_FOVY`]
-//! is the effective vertical field of view, 45° against the reference's measured 44.1°.
+//! The projection takes 0.6 of `[camera+0x40]` as its vertical angle (`0x607cb0`), so the scope's
+//! share of the unzoomed 90° is its share of [`CAM_FOVY`]: the spyglass's 15 is 9° vertical.
 
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
@@ -19,8 +19,8 @@ use benilla_world::view::{WorldCamera, CAM_FOVY};
 /// `0x4c`, the aura name the reference's effect walk matches.
 const SPELL_AURA_FAR_SIGHT: u32 = 76;
 
-/// The reference's unzoomed `[camera+0x40]` in degrees (`π/2`), used only as a denominator.
-const REFERENCE_DEFAULT_DEGREES: f32 = 90.0;
+/// The reference's unzoomed `[camera+0x40]`, π/2 (`0x606b30`), used only as a denominator.
+const REFERENCE_CAMERA_FOV: f32 = std::f32::consts::FRAC_PI_2;
 
 /// The held scope as a fraction of the normal field of view. `None` is no override;
 /// `Some(1.0)` would still lock first person.
@@ -61,7 +61,7 @@ pub(super) fn apply_scoped_view(
         })
         // A zero misc value is the reference's own "restore" argument, not a zero-width view.
         .filter(|&deg| deg > 0.0)
-        .map(|deg| deg / REFERENCE_DEFAULT_DEGREES);
+        .map(|deg| deg.to_radians() / REFERENCE_CAMERA_FOV);
 
     let Ok(mut projection) = projections.single_mut() else {
         return;
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn the_spyglass_narrows_our_own_field_of_view_six_fold() {
         let scoped = ScopedView {
-            zoom: Some(15.0 / REFERENCE_DEFAULT_DEGREES),
+            zoom: Some(15.0_f32.to_radians() / REFERENCE_CAMERA_FOV),
         };
         let fov = CAM_FOVY * scoped.zoom.unwrap();
         assert!(
@@ -94,8 +94,8 @@ mod tests {
             "the spyglass is a 6x zoom off whatever our normal FOV is, not a literal 15 degrees"
         );
         assert!(
-            (fov.to_degrees() - 7.5).abs() < 1e-4,
-            "…which lands at 7.5 degrees vertical for our 45 degree default, not 15"
+            (fov.to_degrees() - 9.0).abs() < 1e-4,
+            "…which lands at the reference's 0.6 x 15 = 9 degrees vertical, not 15"
         );
         assert!(scoped.active());
 
