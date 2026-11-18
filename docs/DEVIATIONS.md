@@ -201,6 +201,10 @@ means and records the difference here.
   `GetCurrentMapZone()` 0). benilla runs the test in single precision, where it passes, and opens
   the zone the lookup is written to find: Hellfire Peninsula and Zangarmarsh. An instance whose
   `Map.dbc` entrance is zero (Tempest Keep) opens the cosmic map in both.
+  The Mac build of 12340 opens the zone as benilla does: its copy of the lookup (`0x6286d0`, i386)
+  works each coordinate out in SSE single precision (`0x628f38`–`0x628f65`) and compares the
+  clamped value with it as floats (`0x629485` for x, `0x6295ff` for y), so the cell read at
+  `0x62960e` is reached.
 
 ## The Mac build
 
