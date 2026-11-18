@@ -714,7 +714,6 @@ pub(crate) struct UnitTokens<'w, 's> {
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
-    quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
@@ -802,7 +801,8 @@ impl UnitTokens<'_, '_> {
             UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
             // The interaction NPC's guid.
             UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
-            UnitBase::QuestNpc => self.held(self.quest.as_ref()?.quest_npc()?),
+            // The quest window's source (`0x6081b0`), read through the view lent to the call.
+            UnitBase::QuestNpc => self.held(crate::ui_script::live::quest_npc()?),
             // The encounter's slot (`0x5ed710`).
             UnitBase::Boss(row) => {
                 let guid = self.encounter.as_ref()?.boss(usize::try_from(row).ok()?);
@@ -1104,6 +1104,7 @@ pub(crate) fn snapshot(
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
         // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
         is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
+        pvp_sanctuary: store.0.unit_byte2_flags() & 0x8 != 0,
         // No honor rank streams: 3.3.5a's `PLAYER_BYTES_3` bytes 2 and 3 are the PvP title and the
         // arena faction.
         pvp_rank: 0,
@@ -1371,7 +1372,8 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_QUEST_LOG_CHANGED`: one watch over every player's whole quest-log window (`0x60c280`,
     // registered per player unit at byte `0x28`, `0x1f4` long), so any slot field fires it once.
-    if edges.moved_in(cur.guid, quest_log_window()) {
+    // `"player"` fires from the values handler (`own_flags_watch`); the other tokens wait on #1266.
+    if token != "player" && edges.moved_in(cur.guid, quest_log_window()) {
         script.fire_event("UNIT_QUEST_LOG_CHANGED", vec![tok()]);
     }
     // The power events are named per resource (`UNIT_MANA`, `UNIT_MAXRAGE`, `UNIT_RUNIC_POWER`,
@@ -1495,7 +1497,6 @@ pub(crate) fn push_arena_units(
 #[derive(bevy::ecs::system::SystemParam)]
 struct Interactions<'w> {
     npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
-    quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     /// The active battlefield's arena test, which drops the selection colour's PvP flag.
@@ -1503,7 +1504,7 @@ struct Interactions<'w> {
 }
 
 fn feed_units(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
 
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -1578,7 +1579,7 @@ fn feed_units(
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
-        || interact.quest.as_ref().is_some_and(|r| r.is_changed())
+        || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
         || interact.arena.as_ref().is_some_and(|r| r.is_changed())
         || interact.instance.is_changed();
@@ -1763,10 +1764,8 @@ fn feed_units(
 
     // `"questnpc"`: the questgiver window's source (`0x6081b0`), which `QuestFrame_SetPortrait`
     // titles the window with. A GameObject or item source is held like a unit.
-    let quest_npc = interact
-        .quest
-        .as_deref()
-        .and_then(crate::ui_quest::QuestGiver::quest_npc)
+    let quest_npc = live
+        .with_giver(|g| g.and_then(crate::ui_quest::QuestGiver::quest_npc))
         .and_then(|guid| {
             let entity = *index.as_deref()?.0.get(&guid)?;
             Some(held.state(stores.all.get(entity).ok()?, guid))
@@ -1890,10 +1889,11 @@ fn feed_units(
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             crate::ui_script::fire_armed_player_login(&mut script);
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-            // The cascade's pet step (`0x5281fe`), then its reputation world entry (`0x5d2bc0`),
-            // which re-sorts and fires `UPDATE_FACTION` (`0x5d1bfa`) with the player seated,
-            // re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0
-            // maximum.
+            // The quest log's entry (`0x5281db`), the pet step (`0x5281fe`), then the reputation
+            // world entry (`0x528208`), which re-sorts and fires `UPDATE_FACTION` (`0x5d1bfa`) with
+            // the player seated, re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS`
+            // fire hid at a 0 maximum.
+            crate::ui_quest_log::rows::queue_enter_world(&mut deferred);
             deferred.queue(|world: &mut World| {
                 crate::ui_pet::possess::world_entry_step(world);
                 if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
@@ -2252,6 +2252,49 @@ impl EquippedFeed<'_, '_> {
     }
 }
 
+/// The vehicle the player sits in, whose flying bit `IsFlying` reads in place of the player's.
+#[derive(bevy::ecs::system::SystemParam)]
+struct SeatedVehicle<'w, 's> {
+    me: Query<'w, 's, &'static crate::vehicle::Passenger, With<SelfPlayer>>,
+    index: Option<Res<'w, crate::net::GuidIndex>>,
+    units: Query<
+        'w,
+        's,
+        (
+            Has<crate::net::ActiveMover>,
+            Option<&'static crate::net::RemoteMotion>,
+            Option<&'static crate::net::UnitMoveModes>,
+        ),
+    >,
+}
+
+impl SeatedVehicle<'_, '_> {
+    /// `Some` while the player is seated (passenger state 3): whether the vehicle's movement word
+    /// holds `FLYING` (`0x612500`), false for a vehicle not held. The vehicle we drive is our
+    /// mover, whose word is [`crate::player::Player`]'s; another's is its relayed pose's word with
+    /// its granted modes.
+    fn flying(&self, player: Option<&crate::player::Player>) -> Option<bool> {
+        let seat = self
+            .me
+            .iter()
+            .next()
+            .filter(|p| p.state == crate::vehicle::SEATED)?;
+        let unit = self
+            .index
+            .as_ref()
+            .and_then(|i| i.0.get(&seat.vehicle))
+            .and_then(|&e| self.units.get(e).ok());
+        Some(unit.is_some_and(|(driven, remote, modes)| {
+            if driven {
+                player.is_some_and(|p| p.flying)
+            } else {
+                let word = remote.map_or(0, |r| r.flags) | modes.map_or(0, |m| m.0);
+                word & crate::creature_anim::move_flags::FLYING != 0
+            }
+        }))
+    }
+}
+
 /// The player state `SecureCmdOptionParse`'s conditions read, pushed each frame.
 fn feed_option_state(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -2260,6 +2303,7 @@ fn feed_option_state(
     place: Option<Res<crate::area::PlayerPlace>>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,
     mut equipped: EquippedFeed,
+    vehicle: SeatedVehicle,
 ) {
     let Some(mut script) = script else {
         return;
@@ -2271,6 +2315,7 @@ fn feed_option_state(
         flyable: place.as_deref().is_some_and(|p| p.flyable_area),
         northrend: map.is_some_and(|m| m.0 == NORTHREND),
         flying: player.as_deref().is_some_and(|p| p.flying),
+        seated_vehicle_flying: vehicle.flying(player.as_deref()),
         indoors: place.as_deref().is_some_and(|p| p.indoors),
         stealthed: self_q
             .iter()
@@ -2290,6 +2335,46 @@ fn feed_option_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Seated (state 3), `IsFlying` reads the vehicle: a creature's granted word, the player's
+    /// own mover when we drive it, false for a vehicle not held; standing, or still boarding, no
+    /// vehicle answer at all.
+    #[test]
+    fn the_seated_vehicle_answers_for_flying() {
+        use crate::creature_anim::move_flags::FLYING;
+        use crate::vehicle::{Passenger, SEATED};
+        use bevy::ecs::system::SystemState;
+
+        let ask = |state: u8, vehicle: Option<(bool, u32)>, player_flying: bool| {
+            let mut world = World::new();
+            let mut index = crate::net::GuidIndex(Default::default());
+            if let Some((driven, word)) = vehicle {
+                let mut e = world.spawn(crate::net::UnitMoveModes(word));
+                if driven {
+                    e.insert(crate::net::ActiveMover);
+                }
+                index.0.insert(77, e.id());
+            }
+            world.insert_resource(index);
+            world.spawn((
+                SelfPlayer,
+                Passenger {
+                    vehicle: 77,
+                    seat: 0,
+                    state,
+                },
+            ));
+            let mut player = crate::player::Player::default();
+            player.flying = player_flying;
+            let mut sys: SystemState<SeatedVehicle> = SystemState::new(&mut world);
+            sys.get(&world).flying(Some(&player))
+        };
+        assert_eq!(ask(SEATED, Some((false, FLYING)), false), Some(true));
+        assert_eq!(ask(SEATED, Some((false, 0)), true), Some(false));
+        assert_eq!(ask(SEATED, Some((true, 0)), true), Some(true));
+        assert_eq!(ask(SEATED, None, true), Some(false));
+        assert_eq!(ask(1, Some((false, FLYING)), false), None);
+    }
 
     /// `UnitIsPVP` and `UnitIsPVPFreeForAll` read `UNIT_FIELD_BYTES_2` byte 1 (`0x60ceae`,
     /// `0x60d03c`): `0x1` and `0x4`, not the `UNIT_FIELD_FLAGS` or `PLAYER_FLAGS` bits.

@@ -20,6 +20,10 @@ use bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 
+use crate::ui_quest::QuestGiver;
+use crate::ui_quest_log::rows::{QuestAsks, RebuildMarks};
+use crate::ui_quest_log::QuestExpiries;
+
 /// What the verbs read live, a system parameter so a VM system lends it with its own access. The
 /// index is optional, so an app without the net plugin still lends a view that holds nobody.
 #[derive(SystemParam)]
@@ -38,6 +42,15 @@ pub(crate) struct LiveView<'w, 's> {
     arena_teams: crate::ui_arena_team::ArenaTeamView<'w>,
     positions: crate::ui_battlefield_positions::PositionsView<'w, 's>,
     inspect: crate::ui_inspect::InspectLive<'w>,
+    quest: crate::ui_quest_watch::QuestView<'w, 's>,
+    clock: Option<Res<'w, crate::net::ServerWallClock>>,
+    world_state_ui: crate::world_state_ui::WorldStateUiLive<'w>,
+    item_range: crate::ui_quest_watch::ItemRangeLive<'w, 's>,
+    quest_tooltip: crate::ui_quest_log::tooltip::QuestTooltipLive<'w, 's>,
+    quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
+    net: Option<Res<'w, crate::net::NetCommands>>,
+    /// The main-thread state a verb writes inside its call, filled by [`LendLive`].
+    pub(crate) lent: Lent<'w>,
     companions: crate::ui_companion::CompanionLive<'w, 's>,
     pets: crate::ui_pet_stats::PetView<'w>,
     possess: crate::ui_pet::possess::PossessLive<'w>,
@@ -58,6 +71,110 @@ pub(crate) struct LiveView<'w, 's> {
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
+
+/// The main-thread state a verb writes inside its call, as 12340's verbs write the game's globals: each lent mutably beside the [`LiveView`], by [`LendLive`] or by the system that owns the borrow ([`LendLive::lending`]).
+#[derive(Default)]
+pub(crate) struct Lent<'w> {
+    pub(crate) signals: LentSlot<'w, UniqueSignals>,
+    pub(crate) asks: LentSlot<'w, QuestAsks>,
+    pub(crate) marks: LentSlot<'w, RebuildMarks>,
+    pub(crate) expiries: LentSlot<'w, QuestExpiries>,
+    pub(crate) giver: LentSlot<'w, QuestGiver>,
+}
+
+/// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
+pub(crate) mod lent {
+    pub(crate) const SIGNALS: u8 = 1;
+    pub(crate) const ASKS: u8 = 2;
+    pub(crate) const MARKS: u8 = 4;
+    pub(crate) const EXPIRIES: u8 = 8;
+    pub(crate) const GIVER: u8 = 16;
+}
+
+/// One kind of [`Lent`] state.
+pub(crate) trait Lendable: Sized + 'static {
+    /// Its bit in [`lent`].
+    const BIT: u8;
+    /// Its slot.
+    fn slot<'a, 'w>(lent: &'a mut Lent<'w>) -> &'a mut LentSlot<'w, Self>;
+}
+
+macro_rules! lendable {
+    ($ty:ty, $field:ident, $bit:path) => {
+        impl Lendable for $ty {
+            const BIT: u8 = $bit;
+            fn slot<'a, 'w>(lent: &'a mut Lent<'w>) -> &'a mut LentSlot<'w, Self> {
+                &mut lent.$field
+            }
+        }
+    };
+}
+lendable!(UniqueSignals, signals, lent::SIGNALS);
+lendable!(QuestAsks, asks, lent::ASKS);
+lendable!(RebuildMarks, marks, lent::MARKS);
+lendable!(QuestExpiries, expiries, lent::EXPIRIES);
+lendable!(QuestGiver, giver, lent::GIVER);
+
+/// One piece of [`Lent`] state: the borrow [`LendLive`] took, or the one its owner lends for the call in progress.
+pub(crate) struct LentSlot<'w, T: 'static> {
+    fetched: Option<NonSendMut<'w, T>>,
+    /// Set only inside [`LendLive::lending`], from a `&mut` that outlives it.
+    overlay: Option<NonNull<T>>,
+}
+
+impl<T: 'static> Default for LentSlot<'_, T> {
+    fn default() -> Self {
+        Self {
+            fetched: None,
+            overlay: None,
+        }
+    }
+}
+
+impl<T: 'static> LentSlot<'_, T> {
+    pub(crate) fn get(&self) -> Option<&T> {
+        match self.overlay {
+            // SAFETY: an overlay is a live `&mut` lent for the length of the call in progress.
+            Some(p) => Some(unsafe { p.as_ref() }),
+            None => self.fetched.as_deref(),
+        }
+    }
+
+    pub(crate) fn get_mut(&mut self) -> Option<&mut T> {
+        match self.overlay {
+            // SAFETY: as `get`; `&mut self` keeps this the only reference made through it.
+            Some(mut p) => Some(unsafe { p.as_mut() }),
+            None => self.fetched.as_deref_mut(),
+        }
+    }
+
+    /// Whether the borrow was written since the system last ran; an owner's loan counts as written.
+    fn changed(&self) -> bool {
+        self.overlay.is_some() || self.fetched.as_ref().is_some_and(|f| f.is_changed())
+    }
+}
+
+// SAFETY: it registers no access and fetches nothing; `LendLive` fills it under its own access.
+unsafe impl SystemParam for Lent<'_> {
+    type State = ();
+    type Item<'w, 's> = Lent<'w>;
+
+    fn init_state(_: &mut World) -> Self::State {}
+
+    fn init_access(_: &(), _: &mut SystemMeta, _: &mut FilteredAccessSet, _: &mut World) {}
+
+    unsafe fn get_param<'w, 's>(
+        _: &'s mut (),
+        _: &SystemMeta,
+        _: UnsafeWorldCell<'w>,
+        _: Tick,
+    ) -> Self::Item<'w, 's> {
+        Lent::default()
+    }
+}
+
+// SAFETY: it accesses nothing.
+unsafe impl ReadOnlySystemParam for Lent<'_> {}
 
 impl LiveView<'_, '_> {
     /// A held unit's fields: the verbs' unit lookup (`0x60c1f0`) asks for type mask 8 (`0x60c21e`).
@@ -156,6 +273,8 @@ pub(crate) trait Owns: 'static {
     const COOLDOWNS: bool = false;
     const SELECTION: bool = false;
     const PLACE: bool = false;
+    /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
+    const LENT: u8 = 0;
 }
 
 impl Owns for () {}
@@ -165,6 +284,7 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const COOLDOWNS: bool = A::COOLDOWNS || B::COOLDOWNS;
     const SELECTION: bool = A::SELECTION || B::SELECTION;
     const PLACE: bool = A::PLACE || B::PLACE;
+    const LENT: u8 = A::LENT | B::LENT;
 }
 
 /// The system writes [`crate::area::PlayerPlace`].
@@ -183,6 +303,18 @@ impl Owns for OwnsSelection {
 pub(crate) struct OwnsCooldowns;
 impl Owns for OwnsCooldowns {
     const COOLDOWNS: bool = true;
+}
+
+/// The system lends the frame's [`UniqueSignals`] from its own borrow.
+pub(crate) struct OwnsSignals;
+impl Owns for OwnsSignals {
+    const LENT: u8 = lent::SIGNALS;
+}
+
+/// The system lends the quest timers' [`QuestExpiries`] from its own borrow.
+pub(crate) struct OwnsExpiries;
+impl Owns for OwnsExpiries {
+    const LENT: u8 = lent::EXPIRIES;
 }
 
 /// An exclusive lender holds the whole `World`, so every verb may write what a verb writes.
@@ -507,6 +639,10 @@ impl LiveState for LiveView<'_, '_> {
         self.death.res_sickness_minutes()
     }
 
+    fn resurrect_offerer(&self) -> Option<String> {
+        self.death.resurrect_offerer()
+    }
+
     fn self_res_label(&self) -> Option<String> {
         self.death.self_res_label()
     }
@@ -533,6 +669,172 @@ impl LiveState for LiveView<'_, '_> {
 
     fn summon_time_left_ms(&self) -> u32 {
         self.summon.time_left_ms()
+    }
+
+    fn item_spell_in_range(&self, spell_id: u32, target: u64) -> Option<Option<bool>> {
+        Some(self.item_range.in_range(spell_id, target))
+    }
+
+    fn unique_signal(&mut self, event: &'static str) -> bool {
+        self.lent
+            .signals
+            .get_mut()
+            .map(|s| s.unique_signal(event))
+            .is_some()
+    }
+
+    fn world_state_ui_count(&self) -> Option<usize> {
+        self.world_state_ui.count()
+    }
+
+    fn world_state_ui_info(
+        &self,
+        index: usize,
+    ) -> Option<Option<benilla_ui::script::WorldStateUiView>> {
+        self.world_state_ui.info(index)
+    }
+
+    fn world_state(&self, key: u32) -> Option<i32> {
+        self.world_state_ui.value(key)
+    }
+
+    fn quest_tooltip(
+        &mut self,
+        quest_id: u32,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::QuestTooltipRead> {
+        self.quest_tooltip.read(quest_id, get)
+    }
+
+    fn quest_poi_lines(
+        &self,
+        quest_id: u32,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<benilla_ui::script::QuestPoiLines>> {
+        Some(self.quest.quest_poi_lines(quest_id, get))
+    }
+
+    fn quest_special_item(
+        &self,
+        quest_id: u32,
+    ) -> Option<benilla_ui::script::QuestSpecialItemView> {
+        self.quest.quest_special_item(quest_id)
+    }
+
+    fn quest_log_row(
+        &mut self,
+        quest_id: u32,
+        slot: u8,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<benilla_ui::script::QuestLogEntryView>> {
+        let Self {
+            quest_rows, lent, ..
+        } = self;
+        let Lent { asks, expiries, .. } = lent;
+        quest_rows.row(quest_id, slot, get, expiries.get(), asks.get_mut())
+    }
+
+    fn quest_log_detail(
+        &mut self,
+        quest_id: u32,
+        slot: u8,
+    ) -> Option<Option<benilla_ui::script::QuestLogDetail>> {
+        let Self {
+            quest_rows, lent, ..
+        } = self;
+        quest_rows.detail(quest_id, slot, lent.asks.get_mut())
+    }
+
+    fn daily_quests_completed(&self) -> Option<u32> {
+        self.quest_rows.daily_completed()
+    }
+
+    fn expire_quest(&mut self, quest_id: u32) -> Option<Option<String>> {
+        let Self { quest, lent, .. } = self;
+        quest.expire_quest(quest_id, lent.expiries.get_mut()?)
+    }
+
+    /// The last time response advanced on our monotonic clock, where the reference adds the local clock to its offset (`0x5dff40`). Deviation: a local clock step mid-session (an NTP correction) moves the reference's countdowns and not ours, as the step changes no time the server counts.
+    fn server_unix_time(&self) -> Option<f64> {
+        self.clock.as_ref()?.now_unix()
+    }
+
+    fn quest_reset_unix(&self) -> Option<f64> {
+        self.clock.as_ref()?.quest_reset_unix()
+    }
+
+    fn send_quest_log_tail(&mut self, pois: &[u32], query_time: bool) {
+        let Some(net) = self.net.as_deref() else {
+            return;
+        };
+        if !pois.is_empty() {
+            debug!("ui_quest_log: asking POI for {pois:?}");
+            let _ = net.0.send(crate::net::ClientCommand::QuestPoiQuery {
+                quests: pois.to_vec(),
+            });
+        }
+        if query_time {
+            let _ = net.0.send(crate::net::ClientCommand::QueryTime);
+        }
+    }
+
+    fn rebuild_quest_log_if_reask_due(&mut self) -> Option<benilla_ui::script::QuestLogPlan> {
+        let Self {
+            quest_rows, lent, ..
+        } = self;
+        quest_rows.rebuild_if_reask_due(lent.row_writes()?)
+    }
+
+    fn quest_item_record(
+        &self,
+        item_id: u32,
+    ) -> Option<Option<benilla_ui::script::QuestItemRecord>> {
+        self.quest.quest_item_record(item_id)
+    }
+
+    fn quest_action(
+        &mut self,
+        action: benilla_ui::script::QuestAction,
+    ) -> Option<benilla_ui::script::QuestActOutcome> {
+        let Self {
+            index,
+            stores,
+            net,
+            lent,
+            ..
+        } = self;
+        let giver = lent.giver.get_mut()?;
+        let npc_flags = giver
+            .npc
+            .and_then(|npc| index.as_ref()?.0.get(&npc).copied())
+            .and_then(|e| stores.get(e).ok())
+            .map(|s| s.0.unit_npc_flags());
+        Some(crate::ui_quest::act(
+            giver,
+            action,
+            net.as_deref()?,
+            npc_flags,
+        ))
+    }
+
+    fn quest_npc(&self) -> Option<u64> {
+        self.lent.giver.get()?.quest_npc()
+    }
+
+    fn quest_select(
+        &mut self,
+        select: benilla_ui::script::QuestSelect,
+    ) -> Option<benilla_ui::script::QuestActOutcome> {
+        let Self { net, lent, .. } = self;
+        Some(crate::ui_quest::select(
+            lent.giver.get_mut()?,
+            select,
+            net.as_deref()?,
+        ))
+    }
+
+    fn carried_quest_item(&self, item_id: u32) -> Option<u32> {
+        self.quest_rows.carried(item_id)
     }
 
     fn battlefield_slot(&self, index: usize) -> Option<benilla_ui::script::BattlefieldQueueSlot> {
@@ -887,6 +1189,23 @@ impl LiveState for LiveView<'_, '_> {
     }
 }
 
+impl Lent<'_> {
+    /// The rebuild's writes, `None` while any is missing.
+    fn row_writes(&mut self) -> Option<crate::ui_quest_log::rows::RowWrites<'_>> {
+        let Self {
+            signals,
+            marks,
+            expiries,
+            ..
+        } = self;
+        Some(crate::ui_quest_log::rows::RowWrites {
+            marks: marks.get_mut()?,
+            expiries: expiries.get_mut()?,
+            signals: signals.get_mut()?,
+        })
+    }
+}
+
 /// [`LiveView`] lent to every verb for the run of the system that takes it: the parameter each
 /// system holding the VM takes beside it, so every call into Lua it makes reads the `World`. `O`
 /// names the lendable resources the system writes itself, through [`OwnedMut`].
@@ -901,6 +1220,53 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     // Never hold it across a call into Lua: a verb that writes the view would panic at the call.
     pub(crate) fn view(&self) -> benilla_ui::script::ViewRef<'_, LiveView<'w, 's>> {
         self.loan.view()
+    }
+
+    /// Run `f`, a call into Lua, with `state`, a borrow this system owns, lent to its verbs until `f` returns or unwinds.
+    pub(crate) fn lending<T: Lendable, R>(&mut self, state: &mut T, f: impl FnOnce() -> R) -> R {
+        assert!(
+            O::LENT & T::BIT != 0,
+            "a system lends only the state it leaves out of `LendLive`"
+        );
+        self.loan
+            .with_view_mut(|v| T::slot(&mut v.lent).overlay = Some(NonNull::from(state)));
+        let _clear = ClearOverlay::<'_, 'w, 's, T>(&mut self.loan, std::marker::PhantomData);
+        f()
+    }
+
+    /// `f` over the quest giver this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
+    pub(crate) fn with_giver<R>(&self, f: impl FnOnce(Option<&QuestGiver>) -> R) -> R {
+        self.loan.with_view(|v| f(v.lent.giver.get()))
+    }
+
+    /// Whether the quest giver changed since this parameter's system last ran.
+    pub(crate) fn giver_changed(&self) -> bool {
+        self.loan.with_view(|v| v.lent.giver.changed())
+    }
+
+    /// `f` over the quest giver this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
+    pub(crate) fn with_giver_mut<R>(&mut self, f: impl FnOnce(Option<&mut QuestGiver>) -> R) -> R {
+        self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
+    }
+
+    /// The overlay of `T`, set only inside [`Self::lending`].
+    #[cfg(test)]
+    pub(crate) fn overlay<T: Lendable>(&mut self) -> bool {
+        self.loan
+            .with_view_mut(|v| T::slot(&mut v.lent).overlay.is_some())
+    }
+}
+
+/// Ends a [`LendLive::lending`] loan, on return and on unwind.
+struct ClearOverlay<'a, 'w, 's, T: Lendable>(
+    &'a mut LiveLoan<LiveView<'w, 's>>,
+    std::marker::PhantomData<T>,
+);
+
+impl<T: Lendable> Drop for ClearOverlay<'_, '_, '_, T> {
+    fn drop(&mut self) {
+        self.0
+            .with_view_mut(|v| T::slot(&mut v.lent).overlay = None);
     }
 }
 
@@ -957,10 +1323,73 @@ unsafe fn slot_fetch<X: Resource>(
     unsafe { world.get_resource_by_id(id) }.and_then(|p| NonNull::new(p.as_ptr().cast::<X>()))
 }
 
+/// The [`Lent`] state's ids, in [`lent`] bit order.
+type LentIds = [ComponentId; 5];
+
+/// Register the [`Lent`] state's ids.
+fn lent_ids(world: &mut World) -> LentIds {
+    let mut reg = world.components_registrator();
+    [
+        reg.register_non_send::<UniqueSignals>(),
+        reg.register_non_send::<QuestAsks>(),
+        reg.register_non_send::<RebuildMarks>(),
+        reg.register_non_send::<QuestExpiries>(),
+        reg.register_non_send::<QuestGiver>(),
+    ]
+}
+
+/// Declare `T`'s borrow unless the system owns it.
+fn lent_access<T: 'static>(
+    own: u8,
+    bit: u8,
+    id: &ComponentId,
+    system_meta: &mut SystemMeta,
+    component_access_set: &mut FilteredAccessSet,
+    world: &mut World,
+) {
+    if own & bit == 0 {
+        <Option<NonSendMut<'static, T>> as SystemParam>::init_access(
+            id,
+            system_meta,
+            component_access_set,
+            world,
+        );
+    }
+}
+
+/// `T`'s borrow, unless the system owns it.
+///
+/// # Safety
+/// As [`SystemParam::get_param`], with `T`'s access declared by [`lent_access`].
+unsafe fn lent_fetch<'w, T: 'static>(
+    own: u8,
+    bit: u8,
+    mut id: ComponentId,
+    system_meta: &SystemMeta,
+    world: UnsafeWorldCell<'w>,
+    change_tick: Tick,
+) -> LentSlot<'w, T> {
+    if own & bit != 0 {
+        return LentSlot::default();
+    }
+    LentSlot {
+        // SAFETY: the caller's guarantees; the access was declared in `lent_access`.
+        fetched: unsafe {
+            <Option<NonSendMut<'static, T>> as SystemParam>::get_param(
+                &mut id,
+                system_meta,
+                world,
+                change_tick,
+            )
+        },
+        overlay: None,
+    }
+}
+
 // SAFETY: every access is `LiveView`'s or a lendable resource's, registered in `init_access`; an
 // owned resource is only read through its pointer between the owner's writes.
 unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
-    type State = (ViewState, SlotState);
+    type State = (ViewState, SlotState, LentIds);
     type Item<'w, 's> = LendLive<'w, 's, O>;
 
     fn init_state(world: &mut World) -> Self::State {
@@ -972,6 +1401,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 slot_ids::<crate::target::Selection>(world),
                 slot_ids::<crate::area::PlayerPlace>(world),
             ),
+            lent_ids(world),
         )
     }
 
@@ -992,6 +1422,13 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
         slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
         slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
+        let [signals, asks, marks, expiries, giver] = &state.2;
+        let (meta, own) = (system_meta, O::LENT);
+        lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
+        lent_access::<QuestAsks>(own, lent::ASKS, asks, meta, set, world);
+        lent_access::<RebuildMarks>(own, lent::MARKS, marks, meta, set, world);
+        lent_access::<QuestExpiries>(own, lent::EXPIRIES, expiries, meta, set, world);
+        lent_access::<QuestGiver>(own, lent::GIVER, giver, meta, set, world);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -1041,6 +1478,18 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, state.1 .2 .0), O::SELECTION);
             view.place.set(slot_fetch(world, state.1 .3 .0), O::PLACE);
         }
+        let [signals, asks, marks, expiries, giver] = state.2;
+        let (meta, tick, own) = (system_meta, change_tick, O::LENT);
+        // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
+        view.lent = unsafe {
+            Lent {
+                signals: lent_fetch(own, lent::SIGNALS, signals, meta, world, tick),
+                asks: lent_fetch(own, lent::ASKS, asks, meta, world, tick),
+                marks: lent_fetch(own, lent::MARKS, marks, meta, world, tick),
+                expiries: lent_fetch(own, lent::EXPIRIES, expiries, meta, world, tick),
+                giver: lent_fetch(own, lent::GIVER, giver, meta, world, tick),
+            }
+        };
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
         // after any loan made inside it, and never leaks one.
         LendLive {
@@ -1048,6 +1497,11 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             _owns: PhantomData,
         }
     }
+}
+
+/// The `"questnpc"` unit's guid through the view lent to the running system (`0x6081b0`), `None` outside a lending system.
+pub(crate) fn quest_npc() -> Option<u64> {
+    benilla_ui::script::read_live(|l| l.quest_npc()).flatten()
 }
 
 /// A handler's write to state the VM owns, run in turn with the events around it.
@@ -1263,6 +1717,58 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
             }
         }
     });
+}
+
+/// The unique signals queued this frame: each event once, however often it is queued (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` -> `0x614760`). Main-thread state the handlers fill and a verb's call queues into ([`Lent`]).
+#[derive(Default)]
+pub(crate) struct UniqueSignals(Vec<&'static str>);
+
+impl UniqueSignals {
+    /// Queue `event` for the frame's flush unless it already waits (`0x615020`).
+    pub(crate) fn unique_signal(&mut self, event: &'static str) {
+        if !self.0.contains(&event) {
+            self.0.push(event);
+        }
+    }
+
+    /// The game UI's shutdown empties the queue (`0x52902f`), so nothing waits for the next login.
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// The queued event names, in order.
+    #[cfg(test)]
+    pub(crate) fn names(&self) -> Vec<&'static str> {
+        self.0.clone()
+    }
+}
+
+/// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique signals fire in queue order without arguments (`0x52b247` -> `0x614760`), after the feeds that queue them; with no VM they are dropped.
+pub(crate) fn flush_unique_signals(
+    (script, mut live): (Option<NonSendMut<UiScript>>, LendLive<'_, '_, OwnsSignals>),
+    mut signals: NonSendMut<UniqueSignals>,
+) {
+    let Some(mut script) = script else {
+        signals.clear();
+        return;
+    };
+    live.lending(&mut *signals, || script.update_quest_watch_timers());
+    // The count taken at entry, its entries still queued while they fire, so a re-queue matches one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers queued (`0x6147a3`).
+    let events = signals.0.clone();
+    live.lending(&mut *signals, || {
+        for event in events {
+            script.fire_event(event, Vec::new());
+        }
+    });
+    signals.clear();
+}
+
+/// The disconnect runs the game UI's shutdown, which empties the unique signals (`0x52902f`).
+pub(crate) fn clear_unique_signals(
+    In(_): In<benilla_protocol::SessionEvent>,
+    mut signals: NonSendMut<UniqueSignals>,
+) {
+    signals.clear();
 }
 
 #[cfg(test)]

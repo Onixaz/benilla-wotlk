@@ -8,6 +8,7 @@ use benilla_world::weather::WeatherMessage;
 use bevy::prelude::*;
 
 use super::NetHandlerApp;
+use crate::ui_script::live::UiEvents;
 use crate::world_state::WorldStates;
 
 /// `Weather.dbc`, which names what an `SMSG_WEATHER` id means.
@@ -57,20 +58,31 @@ fn on_weather(
     }
 }
 
-fn on_world_states(In(ev): In<SessionEvent>, mut states: ResMut<WorldStates>) {
+fn on_world_states(
+    In(ev): In<SessionEvent>,
+    mut states: ResMut<WorldStates>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::WorldStates {
         scope,
         states: pairs,
     } = ev
     {
-        world_states(scope, pairs, &mut states);
+        world_states(scope, pairs, &mut states, &mut ui);
     }
 }
 
-fn on_phase_shift(In(ev): In<SessionEvent>, mut states: ResMut<WorldStates>) {
+fn on_phase_shift(
+    In(ev): In<SessionEvent>,
+    mut states: ResMut<WorldStates>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::PhaseShift { mask } = ev {
         debug!("phase mask {mask:#x}");
-        states.set_phase_mask(mask);
+        if states.set_phase_mask(mask) {
+            // `0x51397f`, after the mask and the UI list moved.
+            ui.fire("UPDATE_WORLD_STATES", Vec::new());
+        }
     }
 }
 
@@ -100,12 +112,12 @@ fn weather(
 
 /// `SMSG_INIT_WORLD_STATES` and `SMSG_UPDATE_WORLD_STATE` share one setter, as in the reference.
 /// An init first records `(map, zone, area)` as the UI's display filter, then writes its pairs
-/// (`0x526530`). An update owes `UPDATE_WORLD_STATES` whatever it wrote (`0x526a17`); an init
-/// only when its filter or any pair moved (`0x5269bd`).
+/// (`0x526530`). The setter fires `ARENA_SEASON_WORLD_STATE` as the season moves (`0x5494db`); then an update refreshes the map and fires `UPDATE_WORLD_STATES` whatever it wrote (`0x526a17`), an init only when its filter or any pair moved (`0x5269bd`, `0x5269d1`).
 fn world_states(
     scope: Option<(u32, u32, u32)>,
     states: Vec<(u32, u32)>,
     world_states: &mut WorldStates,
+    ui: &mut UiEvents,
 ) {
     let mut moved = scope.is_none();
     if let Some((map, zone, area)) = scope {
@@ -115,40 +127,59 @@ fn world_states(
         );
         moved |= world_states.init_scope(map, zone, area);
     }
-    moved |= world_states.write(&states);
-    if moved {
-        world_states.owe_update();
+    let written = world_states.write(&states);
+    for _ in 0..written.seasons {
+        ui.fire("ARENA_SEASON_WORLD_STATE", Vec::new());
+    }
+    if moved || written.moved {
+        // The map refresh rebuilds its landmarks and signals first (`0x5269c5`, `0x526a0b`).
+        ui.write(|script| script.refresh_world_map());
+        ui.fire("UPDATE_WORLD_STATES", Vec::new());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world_state::WorldStateEvent::{ArenaSeason, Update};
 
-    /// `0x526530`: an update owes `UPDATE_WORLD_STATES` every time, an init only when its filter or
+    /// `0x526530`: an update fires `UPDATE_WORLD_STATES` every time, an init only when its filter or
     /// a value moved, and a moved arena season fires its own event from the setter first.
     #[test]
     fn updates_always_fire_and_inits_fire_on_a_move() {
         let mut t = WorldStates::default();
-        world_states(Some((489, 3277, 3277)), vec![(1581, 0)], &mut t);
-        assert_eq!(t.take_owed(), [Update], "a first init moves the filter");
-        world_states(Some((489, 3277, 3277)), vec![(1581, 0)], &mut t);
-        assert_eq!(t.take_owed(), [], "the same init again moves nothing");
-        world_states(Some((489, 3277, 3277)), vec![(1581, 2)], &mut t);
-        assert_eq!(t.take_owed(), [Update], "a moved value");
-        world_states(None, vec![(1581, 2)], &mut t);
-        world_states(None, vec![(1581, 2)], &mut t);
+        let mut run = |scope, pairs: Vec<(u32, u32)>| {
+            let mut ui = UiEvents::default();
+            world_states(scope, pairs, &mut t, &mut ui);
+            ui.names()
+        };
+        const U: &str = "UPDATE_WORLD_STATES";
+        const S: &str = "ARENA_SEASON_WORLD_STATE";
+        // The map refresh runs ahead of each `UPDATE_WORLD_STATES`.
+        const M: &str = "<write>";
+        let init = Some((489, 3277, 3277));
         assert_eq!(
-            t.take_owed(),
-            [Update, Update],
-            "one per update, moved or not"
+            run(init, vec![(1581, 0)]),
+            [M, U],
+            "a first init moves the filter"
         );
-        world_states(None, vec![(0xc77, 8)], &mut t);
-        world_states(None, vec![(0xc77, 8)], &mut t);
+        assert!(
+            run(init, vec![(1581, 0)]).is_empty(),
+            "the same init again moves nothing"
+        );
+        assert_eq!(run(init, vec![(1581, 2)]), [M, U], "a moved value");
         assert_eq!(
-            t.take_owed(),
-            [ArenaSeason, Update, Update],
+            run(None, vec![(1581, 2)]),
+            [M, U],
+            "an update, moved or not"
+        );
+        assert_eq!(
+            run(None, vec![(0xc77, 8)]),
+            [S, M, U],
+            "the setter's season first"
+        );
+        assert_eq!(
+            run(None, vec![(0xc77, 8)]),
+            [M, U],
             "the season fires only when it moves"
         );
     }

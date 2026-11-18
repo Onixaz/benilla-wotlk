@@ -73,14 +73,13 @@ fn the_stock_gossip_window_paints_both_quest_lists_and_the_options() {
         force_gossip: false,
     }));
     // Quest 60 is complete in the log, which `isComplete` reads (`0x58bcb0`).
-    s.set_quest_log(benilla_ui::script::QuestLogState {
+    s.seed_quest_log(benilla_ui::script::QuestLogState {
         entries: vec![benilla_ui::script::QuestLogEntryView {
             quest_id: 60,
             title: "Report Back".into(),
             complete: 1,
             ..Default::default()
         }],
-        num_quests: 1,
         ..Default::default()
     });
     s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());

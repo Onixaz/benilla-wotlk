@@ -1,5 +1,4 @@
-//! The questgiver packet handlers: each fills the [`QuestGiver`] the feed reads, and each panel
-//! packet replaces the open view.
+//! The questgiver packet handlers: each writes the [`QuestGiver`] the quest verbs read at their call, and each panel packet replaces the open view.
 
 use benilla_protocol::messages::{
     QuestComplete, QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg,
@@ -7,11 +6,12 @@ use benilla_protocol::messages::{
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{QuestGiver, QuestLine, QuestLines};
+use super::{QuestGiver, QuestStatuses};
 use crate::creature_anim::QueueNpcEmotes;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
-use crate::ui_action::UiError;
+use crate::ui_action::{show_in_turn, UiError};
 use crate::ui_quest_log::QuestLog;
+use crate::ui_script::live::UiEvents;
 
 /// One handler per kind, plus the session-end and world-enter listeners.
 pub(super) fn register(app: &mut App) {
@@ -29,6 +29,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::QuestLogFull, on_log_full)
         .net_handler(K::QuestGiverInvalid, on_giver_invalid)
         .net_handler(K::QuestGiverFailed, on_giver_failed)
+        .net_handler(K::ItemTemplate, on_item)
         .net_handler(K::Disconnected, on_session_end)
         .net_handler(K::Connected, on_login)
         .net_handler(K::Worldport, on_worldport);
@@ -36,14 +37,14 @@ pub(super) fn register(app: &mut App) {
 
 /// The reference's world-enter reset, run by the enter-world cascade on a login and on every
 /// worldport, is the latch's only clear.
-fn on_login(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_login(In(ev): In<SessionEvent>, mut quest: NonSendMut<QuestGiver>) {
     if let SessionEvent::Connected { .. } = ev {
         world_enter_reset(&mut quest);
     }
 }
 
 /// The same reset on a worldport.
-fn on_worldport(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_worldport(In(ev): In<SessionEvent>, mut quest: NonSendMut<QuestGiver>) {
     if let SessionEvent::Worldport { .. } = ev {
         world_enter_reset(&mut quest);
     }
@@ -55,9 +56,9 @@ fn world_enter_reset(quest: &mut QuestGiver) {
     quest.chosen_reward = 0;
 }
 
-fn on_giver_status(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_giver_status(In(ev): In<SessionEvent>, mut statuses: ResMut<QuestStatuses>) {
     if let SessionEvent::QuestGiverStatus { npc, status } = ev {
-        quest_giver_status(npc, status, &mut quest);
+        quest_giver_status(npc, status, &mut statuses);
     }
 }
 
@@ -86,83 +87,137 @@ fn queue_panel_emotes(ev: &SessionEvent, out: &mut EmoteOut) {
     }
 }
 
-fn on_greeting(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+/// Whether a panel for `npc` replaces another giver's open window.
+fn switches(quest: &QuestGiver, npc: u64) -> bool {
+    quest.is_open() && quest.npc.is_some_and(|open| open != npc)
+}
+
+/// A panel packet's write and publish in the handler's turn ([`super::publish_panel`]). A different giver's open window closes first, before the new giver is stored (`0x58c6cc` -> `0x518d50`, then `0x58c6dd`), so its `QUEST_FINISHED` and the `CloseQuest` its hide calls find the old giver or none.
+fn open_panel(
+    quest: &mut QuestGiver,
+    ui: &mut UiEvents,
+    npc: u64,
+    write: impl FnOnce(&mut QuestGiver) -> bool + Send + Sync + 'static,
+) {
+    if !switches(quest, npc) {
+        if write(quest) {
+            ui.world(super::publish_panel);
+        }
+        return;
+    }
+    ui.world(move |world| {
+        super::close_interaction(world);
+        let wrote = world
+            .get_non_send_resource_mut::<QuestGiver>()
+            .is_some_and(|mut q| write(&mut q));
+        if wrote {
+            super::publish_panel(world);
+        }
+    });
+}
+
+fn on_greeting(
+    In(ev): In<SessionEvent>,
+    mut quest: NonSendMut<QuestGiver>,
+    mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
+) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestGreeting(list) = ev {
-        quest_greeting(list, &mut quest);
+        let npc = list.npc;
+        open_panel(&mut quest, &mut ui, npc, move |q| {
+            quest_greeting(list, q);
+            true
+        });
     }
 }
 
 fn on_detail(
     In(ev): In<SessionEvent>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: NonSendMut<QuestGiver>,
     commands: Res<NetCommands>,
     mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
 ) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestDetail(d) = ev {
-        quest_detail(d, &mut quest, &commands);
+        // A share onto an open window is refused before any close (`BUSY`).
+        if benilla_protocol::guid::is_player(d.npc) && quest.is_open() {
+            quest_detail(d, &mut quest, &commands);
+            return;
+        }
+        let (npc, commands) = (d.npc, NetCommands(commands.0.clone()));
+        open_panel(&mut quest, &mut ui, npc, move |q| {
+            quest_detail(d, q, &commands)
+        });
     }
 }
 
-fn on_progress(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+fn on_progress(
+    In(ev): In<SessionEvent>,
+    mut quest: NonSendMut<QuestGiver>,
+    mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
+) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestProgress(p) = ev {
-        quest_progress(p, &mut quest);
+        let npc = p.npc;
+        open_panel(&mut quest, &mut ui, npc, move |q| {
+            quest_progress(p, q);
+            true
+        });
     }
 }
 
-fn on_offer(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+fn on_offer(
+    In(ev): In<SessionEvent>,
+    mut quest: NonSendMut<QuestGiver>,
+    mut emotes: EmoteOut,
+    mut ui: ResMut<UiEvents>,
+) {
     queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestOffer(o) = ev {
-        quest_offer(o, &mut quest);
+        let npc = o.npc;
+        open_panel(&mut quest, &mut ui, npc, move |q| {
+            quest_offer(o, q);
+            true
+        });
+    }
+}
+
+/// An item answer for a row of the open panel runs its callback (`0x58b8f0`); an unknown item fires nothing (`0x58b8f6`).
+fn on_item(In(ev): In<SessionEvent>, quest: NonSend<QuestGiver>, mut ui: ResMut<UiEvents>) {
+    let SessionEvent::ItemTemplate {
+        entry,
+        info: Some(_),
+    } = ev
+    else {
+        return;
+    };
+    if quest.view_lists_item(entry) {
+        ui.world(super::item_landed);
     }
 }
 
 fn on_complete(
     In(ev): In<SessionEvent>,
-    mut quest: ResMut<QuestGiver>,
-    mut lines: ResMut<QuestLines>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
-    mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
+    mut statuses: ResMut<QuestStatuses>,
+    mut turn_ins: ResMut<super::lines::TurnIns>,
     (quest_log, commands): (Res<QuestLog>, Res<NetCommands>),
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::QuestComplete(c) = ev {
-        turn_in_awards(&c, &mut chat, &mut center);
-        // A quest with a next in its chain keeps the window up for that quest's panel.
-        let chained = quest_log
-            .template(c.quest_id, &commands)
-            .is_some_and(|t| t.next_quest_in_chain != 0);
-        quest_complete(c, chained, &mut quest, &mut lines);
+        quest_complete(c, &mut statuses);
+        // The turn-in runs now with its template cached, else from the template's answer (`0x6d1192`-`0x6d11a6`).
+        if quest_log.template(c.quest_id, &commands).is_some() {
+            ui.world(move |world| super::lines::turn_in(world, c));
+        } else {
+            turn_ins.wait_for_template(c);
+        }
     }
 }
 
-/// The turn-in's honor and arena awards (`0x6d0ed0`-`0x6d0fd0`): the honor, a tenth of the
-/// wire's, prints `COMBATLOG_HONORAWARD` and sends `HONOR_GAINED`; the arena points send
-/// `ARENA_POINTS_GAINED`.
-fn turn_in_awards(
-    c: &QuestComplete,
-    chat: &mut crate::ui_chat::ChatLog,
-    center: &mut MessageWriter<crate::ui_unit::CombatTextEvent>,
-) {
-    use benilla_ui::script::ScriptValue;
-    let honor = c.honor / 10;
-    if c.honor as i32 > 0 {
-        chat.push_pvp_credit(honor as i32, 0, 0);
-        center.write(crate::ui_unit::CombatTextEvent {
-            message_type: "HONOR_GAINED",
-            args: vec![ScriptValue::Int(i64::from(honor))],
-        });
-    }
-    if c.arena_points as i32 > 0 {
-        center.write(crate::ui_unit::CombatTextEvent {
-            message_type: "ARENA_POINTS_GAINED",
-            args: vec![ScriptValue::Int(i64::from(c.arena_points))],
-        });
-    }
-}
-
-fn on_objective_kill(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_objective_kill(In(ev): In<SessionEvent>, mut statuses: ResMut<QuestStatuses>) {
     if let SessionEvent::QuestObjectiveKill {
         quest_id: _,
         entry,
@@ -170,54 +225,88 @@ fn on_objective_kill(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
         required,
     } = ev
     {
-        quest_objective_kill(entry, count, required, &mut quest);
+        quest_objective_kill(entry, count, required, &mut statuses);
     }
 }
 
-fn on_objective_item(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_objective_item(In(ev): In<SessionEvent>, mut statuses: ResMut<QuestStatuses>) {
     if let SessionEvent::QuestObjectiveItem { item_id, count } = ev {
-        quest_objective_item(item_id, count, &mut quest);
+        quest_objective_item(item_id, count, &mut statuses);
     }
 }
 
-fn on_objectives_complete(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_objectives_complete(In(ev): In<SessionEvent>, mut statuses: ResMut<QuestStatuses>) {
     if let SessionEvent::QuestObjectivesComplete { quest_id } = ev {
-        quest_objectives_complete(quest_id, &mut quest);
+        quest_objectives_complete(quest_id, &mut statuses);
     }
 }
 
-fn on_failed(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_failed(In(ev): In<SessionEvent>, mut statuses: ResMut<QuestStatuses>) {
     if let SessionEvent::QuestFailed { quest_id, timed } = ev {
-        quest_failed(quest_id, timed, &mut quest);
+        quest_failed(quest_id, timed, &mut statuses);
     }
 }
 
-fn on_log_full(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+/// A refusal's lines in the handler's turn.
+fn show_lines(quest: &mut QuestGiver, ui: &mut UiEvents) {
+    for line in quest.take_messages() {
+        show_in_turn(ui, "ui_quest", line);
+    }
+}
+
+fn on_log_full(
+    In(ev): In<SessionEvent>,
+    mut quest: NonSendMut<QuestGiver>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::QuestLogFull = ev {
         quest_log_full(&mut quest);
+        show_lines(&mut quest, &mut ui);
     }
 }
 
-fn on_giver_invalid(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+/// Its line, then the close with nothing owed (`0x6cd852`).
+fn on_giver_invalid(
+    In(ev): In<SessionEvent>,
+    mut quest: NonSendMut<QuestGiver>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::QuestGiverInvalid { reason } = ev {
         quest_giver_invalid(reason, &mut quest);
+        show_lines(&mut quest, &mut ui);
+        ui.world(|world| super::giver_finished(world, false, 0, false));
     }
 }
 
 fn on_giver_failed(
     In(ev): In<SessionEvent>,
-    mut quest: ResMut<QuestGiver>,
-    mut quest_log: ResMut<QuestLog>,
+    mut quest: NonSendMut<QuestGiver>,
+    (quest_log, marks): (Res<QuestLog>, NonSend<crate::ui_quest_log::QuestExpiries>),
     commands: Res<NetCommands>,
+    mut ui: ResMut<UiEvents>,
 ) {
     if let SessionEvent::QuestGiverFailed { quest_id, reason } = ev {
-        quest_giver_failed(quest_id, reason, &mut quest, &mut quest_log, &commands);
+        quest_giver_failed(
+            quest_id,
+            reason,
+            &mut quest,
+            (&quest_log, &marks),
+            &commands,
+        );
+        show_lines(&mut quest, &mut ui);
+        // The close names the quest, nothing owed (`0x6cdb2b`).
+        ui.world(move |world| super::giver_finished(world, false, quest_id, false));
     }
 }
 
 /// An open questgiver panel dies with the socket.
-fn on_session_end(In(_): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_session_end(
+    In(_): In<SessionEvent>,
+    mut quest: NonSendMut<QuestGiver>,
+    mut statuses: ResMut<QuestStatuses>,
+) {
     quest.clear_session();
+    statuses.clear_session();
 }
 
 /// `SMSG_QUESTGIVER_STATUS`: one guid's `dialog_status`, for the markers and the minimap dot. A
@@ -225,7 +314,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
 /// exits; vmangos answers GameObjects (`QuestHandler.cpp:40`). The guid's shape gives the same
 /// partition. The reference's second test, `UNIT_NPC_FLAGS & 0x2` on the unit, is not built; the
 /// marker query's teardown covers a giver whose flag clears.
-fn quest_giver_status(npc: u64, status: u32, quest: &mut QuestGiver) {
+fn quest_giver_status(npc: u64, status: u32, quest: &mut QuestStatuses) {
     use benilla_protocol::guid;
     if !(guid::is_player(npc) || guid::is_creature_or_pet(npc)) {
         debug!("net: dropping a non-unit questgiver status ({npc:#x} → {status}) — typemask 8");
@@ -245,8 +334,8 @@ fn quest_greeting(list: QuestGiverList, quest: &mut QuestGiver) {
     quest.open(list.npc, crate::ui_quest::QuestView::Greeting(list));
 }
 
-/// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel.
-fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands) {
+/// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel; whether it opened.
+fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands) -> bool {
     debug!("net: quest detail — quest {} on {:#x}", d.quest_id, d.npc);
     // A share landing on an open window is refused by the client with `BUSY`, and the open panel
     // stays; the server's own busy test only knows about other shares.
@@ -261,11 +350,12 @@ fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands)
             quest: d.quest_id,
             msg: QuestShareMsg::BUSY,
         });
-        return;
+        return false;
     }
     // The auto-launched byte is the decline latch, not part of the view (`0x58de4f`).
     quest.close_on_cancel = u32::from(d.auto_launched);
     quest.open(d.npc, crate::ui_quest::QuestView::Detail(d));
+    true
 }
 
 /// `SMSG_QUESTGIVER_REQUEST_ITEMS`: the progress panel.
@@ -290,59 +380,31 @@ fn quest_offer(o: QuestOfferReward, quest: &mut QuestGiver) {
     quest.open(o.npc, crate::ui_quest::QuestView::Reward(o));
 }
 
-/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): the turn-in's chat lines, then the window
-/// closes unless the quest is `chained` (`0x6d10ca`: `nextQuestInChain != 0` keeps it open, with
-/// no `QUEST_FINISHED`). The XP, money and items themselves arrive by `UPDATE_OBJECT` and
-/// `ITEM_PUSH_RESULT`; 3.3.5a's body has no item list: the fixed rewards print from the template
-/// (`0x6d1018`). Deviation: the reference prints and closes from the template's callback, so with
-/// the template uncached its window waits; this closes at once.
-fn quest_complete(c: QuestComplete, chained: bool, quest: &mut QuestGiver, lines: &mut QuestLines) {
-    // The reference plays the `QUESTCOMPLETED` fanfare on this packet.
-    quest.completed_fanfare = true;
+/// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): the XP, money and items arrive by `UPDATE_OBJECT` and `ITEM_PUSH_RESULT`; the turn-in's lines and close are [`super::lines::turn_in`].
+fn quest_complete(c: QuestComplete, quest: &mut QuestStatuses) {
     debug!(
         "net: quest {} complete — +{} XP, +{} copper",
         c.quest_id, c.xp, c.money
     );
-    lines.push(QuestLine::Completed(c.quest_id));
-    if c.xp != 0 {
-        lines.push(QuestLine::Experience(c.xp));
-    }
-    // A signed test.
-    if (c.money as i32) > 0 {
-        lines.push(QuestLine::Money(c.money));
-    }
-    // Signed tests, after the honor line.
-    if c.talents as i32 > 0 {
-        lines.push(QuestLine::Talents(c.talents));
-    }
-    // Deviation: the arena award's `COMBATLOG_ARENAPOINTSAWARD` line goes out as chat type `0x32`
-    // (`0x6d0ff4`), which has no `ChatTypeInfo` row in the stock UI, so it is not raised.
-    lines.push(QuestLine::RewardItems(c.quest_id));
-    if quest.chosen_reward != 0 {
-        lines.push(QuestLine::Item(std::mem::take(&mut quest.chosen_reward)));
-    }
-    if !chained {
-        quest.clear();
-    }
     // A turn-in can move every giver's marker, so the reference re-asks from here.
     quest.bump_reask();
 }
 
 /// `SMSG_QUESTUPDATE_ADD_KILL`: its line is the quest log's (`crate::ui_quest_log`).
-fn quest_objective_kill(entry: u32, count: u32, required: u32, quest: &mut QuestGiver) {
+fn quest_objective_kill(entry: u32, count: u32, required: u32, quest: &mut QuestStatuses) {
     debug!("net: quest kill/use objective {entry:#x} at {count}/{required}");
     quest.bump_reask();
 }
 
 /// `SMSG_QUESTUPDATE_ADD_ITEM`, which 12340 registers no handler for; its line comes from the
 /// item push.
-fn quest_objective_item(item_id: u32, count: u32, quest: &mut QuestGiver) {
+fn quest_objective_item(item_id: u32, count: u32, quest: &mut QuestStatuses) {
     debug!("net: quest item objective {item_id} +{count}");
     quest.bump_reask();
 }
 
 /// `SMSG_QUESTUPDATE_COMPLETE` (0x198): its line is the quest log's (`crate::ui_quest_log`).
-fn quest_objectives_complete(quest_id: u32, quest: &mut QuestGiver) {
+fn quest_objectives_complete(quest_id: u32, quest: &mut QuestStatuses) {
     debug!("net: quest {quest_id} objectives complete");
     // The turn-in `?` can turn gold with no quest-log change, so the reference re-asks here.
     quest.bump_reask();
@@ -350,7 +412,7 @@ fn quest_objectives_complete(quest_id: u32, quest: &mut QuestGiver) {
 
 /// `SMSG_QUESTUPDATE_FAILED` (`0x196`) or `_FAILEDTIMER` (`0x197`): its line is the quest log's
 /// (`crate::ui_quest_log`).
-fn quest_failed(quest_id: u32, timed: bool, quest: &mut QuestGiver) {
+fn quest_failed(quest_id: u32, timed: bool, quest: &mut QuestStatuses) {
     debug!("net: quest {quest_id} failed (timed: {timed})");
     // A failure moves what the givers offer, so the reference re-asks here too.
     quest.bump_reask();
@@ -371,7 +433,6 @@ fn quest_giver_invalid(reason: u32, quest: &mut QuestGiver) {
     quest.push_message(with_daily_cap(crate::ui_quest::questgiver_invalid_key(
         reason,
     )));
-    quest.clear();
 }
 
 /// A reason key as its message: the daily cap's line takes the cap, the rest no fill.
@@ -395,7 +456,7 @@ fn quest_giver_failed(
     quest_id: u32,
     reason: u32,
     quest: &mut QuestGiver,
-    quest_log: &mut QuestLog,
+    (quest_log, marks): (&QuestLog, &crate::ui_quest_log::QuestExpiries),
     net_commands: &NetCommands,
 ) {
     debug!("net: quest {quest_id} accept failed (reason {reason})");
@@ -410,13 +471,12 @@ fn quest_giver_failed(
     let key = crate::ui_quest::questgiver_failed_key(reason);
     match key {
         "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I" => quest.push_message(with_daily_cap(key)),
-        "ERR_QUEST_FAILED_S" if quest_log.is_expired(quest_id) => {}
+        "ERR_QUEST_FAILED_S" if marks.is_expired(quest_id) => {}
         _ => quest.push_message(UiError::s(key, title)),
     }
     if key == "ERR_QUEST_FAILED_BAG_FULL_S" {
         quest.push_message(UiError::key("ERR_INV_FULL"));
     }
-    quest.clear();
 }
 
 #[cfg(test)]
@@ -435,7 +495,7 @@ mod tests {
         const CREATURE: u64 = 0xf130_0000_0060_0abc;
         const PLAYER: u64 = 0x0000_0000_0000_0007;
 
-        let mut quest = QuestGiver::default();
+        let mut quest = QuestStatuses::default();
         for (guid, status) in [
             (POSTER, dialog_status::AVAILABLE),
             (ELEVATOR, dialog_status::AVAILABLE),
@@ -460,122 +520,6 @@ mod tests {
             Some(dialog_status::REWARD2),
             "and a player passes the same typemask, as it does in the reference"
         );
-    }
-
-    /// The turn-in's awards (`0x6d0ed0`-`0x6d0fd0`): a tenth of the wire's honor to
-    /// `HONOR_GAINED`, the arena points to `ARENA_POINTS_GAINED`, and nothing without either.
-    #[test]
-    fn a_turn_in_sends_its_honor_and_arena_awards_to_the_combat_text() {
-        use benilla_ui::script::ScriptValue;
-        use bevy::ecs::system::RunSystemOnce;
-        let sent = |c: QuestComplete| {
-            let mut app = App::new();
-            app.init_resource::<crate::ui_chat::ChatLog>()
-                .add_message::<crate::ui_unit::CombatTextEvent>();
-            app.world_mut()
-                .run_system_once(
-                    move |mut chat: ResMut<crate::ui_chat::ChatLog>,
-                          mut center: MessageWriter<crate::ui_unit::CombatTextEvent>| {
-                        turn_in_awards(&c, &mut chat, &mut center)
-                    },
-                )
-                .unwrap();
-            app.world_mut()
-                .resource_mut::<Messages<crate::ui_unit::CombatTextEvent>>()
-                .drain()
-                .map(|e| (e.message_type, e.args))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            sent(QuestComplete {
-                quest_id: 7,
-                honor: 1_250,
-                arena_points: 15,
-                ..Default::default()
-            }),
-            [
-                ("HONOR_GAINED", vec![ScriptValue::Int(125)]),
-                ("ARENA_POINTS_GAINED", vec![ScriptValue::Int(15)]),
-            ]
-        );
-        assert!(sent(QuestComplete {
-            quest_id: 7,
-            ..Default::default()
-        })
-        .is_empty());
-    }
-
-    /// `0x6d0e10`'s order: the completion, the XP, the money, the template's reward items, then
-    /// the chosen reward, which the turn-in spends.
-    #[test]
-    fn a_turn_in_raises_its_lines_in_the_reference_order() {
-        let mut giver = QuestGiver {
-            chosen_reward: 2_047,
-            ..Default::default()
-        };
-        let mut lines = QuestLines::default();
-        quest_complete(
-            QuestComplete {
-                quest_id: 7,
-                xp: 450,
-                money: 1_025,
-                talents: 1,
-                arena_points: 15,
-                ..Default::default()
-            },
-            false,
-            &mut giver,
-            &mut lines,
-        );
-        assert_eq!(
-            lines.queued(),
-            [
-                QuestLine::Completed(7),
-                QuestLine::Experience(450),
-                QuestLine::Money(1_025),
-                QuestLine::Talents(1),
-                QuestLine::RewardItems(7),
-                QuestLine::Item(2_047),
-            ]
-        );
-        assert_eq!(giver.chosen_reward, 0, "the turn-in zeroes the latch");
-
-        // No XP (a capped level) and no money: the completion and the template's items.
-        let mut lines = QuestLines::default();
-        quest_complete(
-            QuestComplete {
-                quest_id: 7,
-                ..Default::default()
-            },
-            false,
-            &mut giver,
-            &mut lines,
-        );
-        assert_eq!(
-            lines.queued(),
-            [QuestLine::Completed(7), QuestLine::RewardItems(7)]
-        );
-    }
-
-    /// `0x6d10ca`: a chained turn-in leaves the window to the next quest's panel.
-    #[test]
-    fn a_chained_turn_in_keeps_the_window_and_a_last_one_closes_it() {
-        let turn_in = |chained| {
-            let mut giver = open_detail(7);
-            let mut lines = QuestLines::default();
-            quest_complete(
-                QuestComplete {
-                    quest_id: 7,
-                    ..Default::default()
-                },
-                chained,
-                &mut giver,
-                &mut lines,
-            );
-            giver.is_open()
-        };
-        assert!(turn_in(true));
-        assert!(!turn_in(false));
     }
 
     fn open_detail(quest_id: u32) -> QuestGiver {
@@ -609,16 +553,16 @@ mod tests {
             benilla_ui::messages::MsgKind::Chat
         );
         assert_eq!(msgs[0], UiError::key("ERR_QUEST_ALREADY_ON"));
-        assert!(!giver.is_open(), "the ref closes the window on a refusal");
     }
 
     #[test]
     fn a_full_bag_refusal_names_the_quest_and_adds_the_inventory_line() {
         let mut giver = open_detail(373);
-        let mut log = QuestLog::default();
+        let log = QuestLog::default();
+        let marks = crate::ui_quest_log::QuestExpiries::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        quest_giver_failed(373, 4, &mut giver, &mut log, &commands);
+        quest_giver_failed(373, 4, &mut giver, (&log, &marks), &commands);
         let msgs = giver.take_messages();
         assert_eq!(msgs.len(), 2);
         assert_eq!(
@@ -634,7 +578,6 @@ mod tests {
             benilla_ui::messages::MsgKind::Error
         );
         assert_eq!(msgs[1], UiError::key("ERR_INV_FULL"));
-        assert!(!giver.is_open());
     }
 
     #[test]
@@ -657,10 +600,11 @@ mod tests {
     #[test]
     fn a_refusal_for_another_quest_does_not_borrow_the_open_title() {
         let mut giver = open_detail(373);
-        let mut log = QuestLog::default();
+        let log = QuestLog::default();
+        let marks = crate::ui_quest_log::QuestExpiries::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        quest_giver_failed(999, 17, &mut giver, &mut log, &commands);
+        quest_giver_failed(999, 17, &mut giver, (&log, &marks), &commands);
         let msgs = giver.take_messages();
         assert_eq!(msgs[0].key, "ERR_QUEST_FAILED_MAX_COUNT_S");
         assert_eq!(msgs[0].arg_s(), Some(""));

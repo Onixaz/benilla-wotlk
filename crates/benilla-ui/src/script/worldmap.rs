@@ -636,13 +636,8 @@ impl WorldMapState {
                 WorldMapExploreGate::Free => has_player,
                 WorldMapExploreGate::Bit(b) => has_player && explored_bit(&self.explored, b),
             };
-            let state = poi.world_state_id == 0
-                || self
-                    .world_states
-                    .get(&poi.world_state_id)
-                    .copied()
-                    .unwrap_or(0)
-                    != 0;
+            // The builder reads the value as it runs (`0x5464ff`).
+            let state = poi.world_state_id == 0 || self.world_state(poi.world_state_id) != 0;
             if explored && state {
                 landmarks.push(Landmark::Poi(i, uv));
             }
@@ -1021,7 +1016,13 @@ impl super::UiScript {
         }
     }
 
-    /// Pushes the world-state values the POI gates and icons read; a change refreshes the map.
+    /// The world-state handler's map refresh (`0x5269c5`, `0x526a0b`): the setter over the current cells rebuilds the landmarks against the live values and signals `WORLD_MAP_UPDATE` before it returns (`0x50f490`, `0x546310`).
+    pub fn refresh_world_map(&mut self) {
+        self.model_mut().worldmap.refresh();
+        self.fire_event("WORLD_MAP_UPDATE", Vec::new());
+    }
+
+    /// Sets the world-state values the POI gates and icons read where no live view lends them; a change refreshes the map.
     pub fn set_world_map_world_states(&mut self, states: HashMap<u32, i32>) {
         let mut model = self.model_mut();
         if model.worldmap.world_states != states {
@@ -1118,10 +1119,11 @@ pub(super) fn set_map_now(lua: &Lua, c: i32, z: i32, d: i32) {
 }
 
 impl WorldMapState {
-    /// A world state's value as last pushed, 0 for one never seen, as the reference's world-state
-    /// read answers.
+    /// A world state's value at the call, 0 for one never seen (`0x548d10`); the set values stand in where no live view lends the table.
     pub(crate) fn world_state(&self, id: u32) -> i32 {
-        self.world_states.get(&id).copied().unwrap_or(0)
+        super::read_live(|l| l.world_state(id))
+            .flatten()
+            .unwrap_or_else(|| self.world_states.get(&id).copied().unwrap_or(0))
     }
 
     /// `QuestMapUpdateAllQuests`' gate (`0x5e63d0`): a zone, the direct sheet or a dungeon floor
@@ -1807,7 +1809,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     let state = match poi.world_state_id {
                         0 => 0,
                         id => {
-                            let v = wm.world_states.get(&id).copied().unwrap_or(0) - 1;
+                            let v = wm.world_state(id) - 1;
                             usize::try_from(v).ok().filter(|&v| v <= 8).unwrap_or(0)
                         }
                     };
@@ -1888,7 +1890,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetWintergraspWaitTime",
         lua.create_function(|lua, ()| {
             let (active, end) = with_map(lua, |wm| {
-                let ws = |id| wm.world_states.get(&id).copied().unwrap_or(0);
+                let ws = |id| wm.world_state(id);
                 (ws(3801) != 0, ws(4354))
             });
             let offset = lua

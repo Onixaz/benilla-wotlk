@@ -1144,17 +1144,6 @@ fn the_mouseover_token_clears_when_no_unit_is_hovered() {
     }
 }
 
-/// A quest panel that opens this frame is hoverable in its tick.
-#[test]
-fn the_spell_feed_runs_after_the_quest_feed() {
-    let mut app = crate::game_plugins::schedule_tests::headless_client();
-    assert!(crate::test_support::runs_before(
-        &mut app,
-        crate::ui_quest::feed_quest,
-        feed_spell_tooltips
-    ));
-}
-
 /// The pet bar, recipe and target-of-target hovers are whole on the first hover.
 #[test]
 fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {

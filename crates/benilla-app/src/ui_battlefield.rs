@@ -826,8 +826,7 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield
-/// (`0x528d46`) and stable (`0x528d5a`) parts.
+/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`) and stable (`0x528d5a`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
     crate::ui_pet::possess::leave_world(world);

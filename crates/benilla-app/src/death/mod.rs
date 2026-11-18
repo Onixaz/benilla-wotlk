@@ -51,6 +51,9 @@ pub(crate) struct ResurrectOffer {
     pub(crate) has_timer: bool,
     /// An unnamed caster whose name query is still out (`0x6dbc60` answers it).
     pub(crate) awaiting_name: bool,
+    /// The caster's name in the player name cache, which `ResurrectGetOfferer` answers
+    /// (`0x515950`, by guid, whatever the packet's name); `None` until the cache answers.
+    pub(crate) offerer: Option<String>,
 }
 
 /// The death state the descriptor does not carry, filled from the wire and cleared at session
@@ -127,8 +130,11 @@ impl DeathGlobals {
 
 /// Milliseconds from `now` to `at`, 0 when unset or passed.
 fn left_ms(at: Option<f64>, now: f64) -> u32 {
+    // Whole milliseconds, as 12340 keeps the deadline and subtracts the clock (`0x513a8b`, `0x516298`): the float error never shaves one off.
     at.map_or(0.0, |at| {
-        ((at - now) * 1000.0).clamp(0.0, f64::from(u32::MAX))
+        ((at - now) * 1000.0)
+            .round()
+            .clamp(0.0, f64::from(u32::MAX))
     }) as u32
 }
 
@@ -192,6 +198,11 @@ impl DeathView<'_, '_> {
     /// Outside an arena alone (`0x515a00`, the battlefield word `[0xbea570] == 4`).
     pub(crate) fn resurrect_has_timer(&self) -> bool {
         !self.arena.active() && self.offer().is_some_and(|o| o.has_timer)
+    }
+
+    /// `ResurrectGetOfferer` (`0x515950`): the offer's caster as the name cache holds it.
+    pub(crate) fn resurrect_offerer(&self) -> Option<String> {
+        self.offer()?.offerer.clone()
     }
 
     fn offer(&self) -> Option<&ResurrectOffer> {
@@ -1075,6 +1086,18 @@ mod tests {
     /// 360 s unless out of bounds, anything else sets the no-timer flag; a UI load zeroes both,
     /// and the reclaim deadline with them.
     #[test]
+    fn a_deadline_read_in_its_own_frame_answers_its_whole_delay() {
+        // `R + 30 - R` lands a hair under 30 for many clock readings; the answer is still 30 s.
+        for i in 0..2_000 {
+            let now = 0.137 + f64::from(i) * 1.618_033;
+            assert_eq!(left_ms(Some(now + 30.0), now), 30_000, "at {now}");
+            assert_eq!(left_ms(Some(now + 30.0), now) / 1000, 30);
+        }
+        assert_eq!(left_ms(Some(1.0), 2.0), 0, "a past deadline reads 0");
+        assert_eq!(left_ms(None, 2.0), 0);
+    }
+
+    #[test]
     fn the_release_timer_derives_from_the_window_bits_and_the_bounds_flag() {
         // `PLAYER_FIELD_BYTES` and `PLAYER_FLAGS`.
         let player = |bytes: u32, flags: u32| {
@@ -1232,6 +1255,7 @@ mod tests {
                 sickness: true,
                 has_timer: true,
                 awaiting_name: false,
+                offerer: None,
             }),
             ..Default::default()
         });

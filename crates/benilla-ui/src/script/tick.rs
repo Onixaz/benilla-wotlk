@@ -52,10 +52,17 @@ impl UiScript {
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
 pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
     let model_mut = || crate::script::model_mut_of(lua);
-    let vm = lua
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data set")
-        .vm;
+    let vm = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data set");
+        if model.vm.fires(event) {
+            model
+                .event_signals
+                .set(model.event_signals.get().wrapping_add(1));
+        }
+        model.vm
+    };
     if !vm.fires(event) {
         return;
     }
@@ -117,7 +124,6 @@ impl super::UiScript {
         for (event, args) in pending {
             self.fire_event(&event, args);
         }
-        self.expire_quest_watches();
         self.resolve();
         let tracing = super::epoch_trace::enabled();
         if tracing {

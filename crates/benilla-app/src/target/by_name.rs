@@ -662,6 +662,8 @@ fn follow_subject(
 #[allow(clippy::too_many_arguments)] // one system, the arm's whole read set
 pub(super) fn follow_requests(
     mut requests: MessageReader<crate::player::FollowRequest>,
+    // Lends the token resolve the view, whose giver names `"questnpc"`; ahead of the tokens' pet read.
+    _live: crate::ui_script::LendLive,
     scan_params: ByNameScan,
     tokens: crate::ui_unit::UnitTokens,
     selection: Res<Selection>,

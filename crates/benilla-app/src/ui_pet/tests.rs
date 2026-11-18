@@ -974,3 +974,94 @@ fn the_time_remaining_is_the_expiry_less_now_as_a_dword() {
     let past = super::bar_live(&bar, None).time_remaining_ms.unwrap();
     assert!(past > u32::MAX - 2_000, "{past}");
 }
+
+/// The name watch's rename evicts the pet's cached name in the handler's world step, as no system holding the VM writes the name cache, and the next resolve asks it again (#1304).
+#[test]
+fn a_renamed_pets_name_is_asked_again() {
+    use benilla_protocol::field::{FIELD_UNIT_PETNUMBER, FIELD_UNIT_PET_NAME_TIMESTAMP};
+    use bevy::prelude::*;
+    const PET: u64 = 0xF140_0000_2A00_0001;
+    const NUMBER: u32 = 42;
+
+    let mut names = crate::names::NameCache::default();
+    names.insert_pet(NUMBER, "Rex".into());
+    let mut app = App::new();
+    app.add_message::<crate::net::FieldChanged>()
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<crate::net::SelfGuid>()
+        .insert_resource(names)
+        .insert_resource(PetBar {
+            spells: PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .add_systems(Update, feed_pet_unit);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    app.insert_resource(NetCommands(tx));
+    let store = |stamp: u32| {
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (FIELD_UNIT_PETNUMBER, NUMBER),
+            (FIELD_UNIT_PET_NAME_TIMESTAMP, stamp),
+        ]))
+    };
+    let pet = app
+        .world_mut()
+        .spawn((crate::net::Guid(PET), store(100)))
+        .id();
+    // Our summon field names the pet, as the `"pet"` token reads it.
+    const ME: u64 = 0x7;
+    let summon = benilla_protocol::field::FIELD_UNIT_SUMMON;
+    let me = app
+        .world_mut()
+        .spawn((
+            crate::net::Guid(ME),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x19),
+                (summon, PET as u32),
+                (summon + 1, (PET >> 32) as u32),
+            ])),
+        ))
+        .id();
+    app.world_mut().resource_mut::<crate::net::SelfGuid>().0 = Some(ME);
+    let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
+    index.0.insert(PET, pet);
+    index.0.insert(ME, me);
+    app.insert_non_send_resource(benilla_ui::script::UiScript::new().unwrap());
+    let name = |app: &mut App| {
+        app.world_mut()
+            .non_send_resource_mut::<benilla_ui::script::UiScript>()
+            .eval::<Option<String>>("return (UnitName('pet'))")
+            .unwrap()
+    };
+
+    app.update();
+    assert_eq!(name(&mut app).as_deref(), Some("Rex"));
+    assert!(rx.try_iter().next().is_none(), "a cached name asks nothing");
+
+    app.world_mut().entity_mut(pet).insert(store(200));
+    app.init_resource::<crate::ui_script::live::UiEvents>();
+    crate::ui_pet::pet_renamed(
+        PET,
+        true,
+        &mut app
+            .world_mut()
+            .resource_mut::<crate::ui_script::live::UiEvents>(),
+    );
+    crate::ui_script::live::fire_handler_events(app.world_mut());
+    app.update();
+    let asked: Vec<_> = rx
+        .try_iter()
+        .filter(|c| {
+            matches!(
+                c,
+                ClientCommand::PetNameQuery {
+                    pet_number: NUMBER,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(asked.len(), 1, "the evicted name is asked once: {asked:?}");
+}

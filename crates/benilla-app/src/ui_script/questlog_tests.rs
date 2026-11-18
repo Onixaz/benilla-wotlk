@@ -58,7 +58,6 @@ fn entries(n: u32) -> QuestLogState {
         })
         .collect();
     QuestLogState {
-        num_quests: n,
         entries,
         daily_completed: 0,
     }
@@ -76,7 +75,7 @@ const HAMMER_LINK: &str = "|cffffffff|Hitem:2024:0:0:0:0:0:0:0:0|h[Militia Hamme
 /// `ToggleFrame(QuestLogFrame)` (`Bindings.xml:659-661`).
 fn open_log(log: QuestLogState) -> UiScript {
     let mut s = stock_ui(1024.0, 768.0);
-    s.set_quest_log(log);
+    s.seed_quest_log(log);
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     s.resolve();
@@ -134,7 +133,7 @@ fn shipped_questlog_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
     // More quests than the 22 rows, so the list scrolls.
-    s.set_quest_log(entries(25));
+    s.seed_quest_log(entries(25));
     s.take_sounds();
     assert!(!s.eval::<bool>("return QuestLogFrame:IsVisible()").unwrap());
 
@@ -326,7 +325,7 @@ fn watch_guards_no_op_without_erroring() {
 fn progress_auto_watches_for_five_minutes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
-    s.set_quest_log(eight_entries());
+    s.seed_quest_log(eight_entries());
     // The Objectives panel fills its uvars at world entry (`OptionsPanelTemplates.lua:312`).
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     assert_eq!(
@@ -349,23 +348,28 @@ fn progress_auto_watches_for_five_minutes() {
     assert!(s.eval::<bool>("return IsQuestWatched(1)").unwrap());
     assert!(s.eval::<bool>("return WatchFrameHeader:IsShown()").unwrap());
 
-    s.tick(299.0);
+    // Each frame's game UI idle runs the watch timers after the tick (`0x52b229`).
+    let frame = |s: &mut benilla_ui::script::UiScript, secs: f32| {
+        s.tick(secs);
+        s.update_quest_watch_timers();
+    };
+    frame(&mut s, 299.0);
     assert!(s.eval::<bool>("return IsQuestWatched(1)").unwrap());
     s.fire_event(
         "QUEST_WATCH_UPDATE",
         vec![benilla_ui::script::ScriptValue::Int(1)],
     );
-    s.tick(299.0);
+    frame(&mut s, 299.0);
     assert!(
         s.eval::<bool>("return IsQuestWatched(1)").unwrap(),
         "re-armed by fresh progress"
     );
-    s.tick(2.0);
+    frame(&mut s, 2.0);
     assert!(
         !s.eval::<bool>("return IsQuestWatched(1)").unwrap(),
         "expired after 300 s without progress"
     );
-    s.tick(0.1);
+    frame(&mut s, 0.1);
     assert!(!s.eval::<bool>("return WatchFrameHeader:IsShown()").unwrap());
     let errors = super::test_ui::errors_but_unported(&s);
     assert!(errors.is_empty(), "expiry errors: {errors:?}");
@@ -377,7 +381,7 @@ fn progress_auto_watches_for_five_minutes() {
 fn the_auto_watch_flag_is_the_references_uvar_and_gates_the_watch() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
-    s.set_quest_log(eight_entries());
+    s.seed_quest_log(eight_entries());
     assert_eq!(s.eval::<String>("return AUTO_QUEST_WATCH").unwrap(), "1");
 
     s.run(r#"AUTO_QUEST_WATCH = "0""#).unwrap();
@@ -583,7 +587,6 @@ fn overflowing_entry() -> QuestLogState {
         })
         .collect();
     QuestLogState {
-        num_quests: 1,
         daily_completed: 0,
         entries: vec![QuestLogEntryView {
             quest_id: 1,
@@ -677,7 +680,7 @@ fn wheel_over_the_detail_pane_changes_vertical_scroll() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    s.set_quest_log(overflowing_entry());
+    s.seed_quest_log(overflowing_entry());
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     // The scroll range spans the measured content, so answer the measures as the app does.
@@ -712,7 +715,7 @@ fn selection_change_resets_detail_scroll_but_a_quest_log_update_refresh_does_not
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    s.set_quest_log(overflowing_entry());
+    s.seed_quest_log(overflowing_entry());
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     s.resolve();
@@ -974,7 +977,7 @@ fn entries_sharable(ids: &[u32]) -> QuestLogState {
 fn share_quest_needs_both_a_sharable_selection_and_a_party() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
-    s.set_quest_log(entries_sharable(&[1]));
+    s.seed_quest_log(entries_sharable(&[1]));
     s.set_party(PartyState::default());
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -1019,7 +1022,7 @@ fn share_quest_needs_both_a_sharable_selection_and_a_party() {
 fn share_quest_is_dark_on_an_empty_log_even_in_a_party() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
-    s.set_quest_log(QuestLogState::default());
+    s.seed_quest_log(QuestLogState::default());
     s.set_party(party(4));
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
     assert!(!s
@@ -1033,7 +1036,7 @@ fn share_quest_is_dark_on_an_empty_log_even_in_a_party() {
 fn share_quest_click_queues_the_selected_quests_id() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
-    s.set_quest_log(entries_sharable(&[1, 5]));
+    s.seed_quest_log(entries_sharable(&[1, 5]));
     s.set_party(party(1));
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
 
@@ -1059,7 +1062,7 @@ fn the_stock_title_width_cap_bites_and_resets_each_update() {
     let mut state = eight_entries();
     state.entries[0].title = LONG.into();
     state.entries[0].tag = Some("Dungeon".into());
-    s.set_quest_log(state.clone());
+    s.seed_quest_log(state.clone());
     s.run("ToggleFrame(QuestLogFrame)").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
@@ -1085,7 +1088,7 @@ fn the_stock_title_width_cap_bites_and_resets_each_update() {
     // Untagged, the same row takes back its natural width: the resize starts from `SetWidth(0)`.
     state.entries[0].title = "Quest 1".into();
     state.entries[0].tag = None;
-    s.set_quest_log(state);
+    s.seed_quest_log(state);
     s.run("QuestLog_Update()").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(

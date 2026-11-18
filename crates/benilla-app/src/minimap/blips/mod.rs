@@ -170,7 +170,7 @@ pub(crate) enum HoverName {
 
 /// The blip layer's system inputs, tupled to keep `emit_minimap` under Bevy's 16-parameter cap.
 pub(super) type BlipInputs<'w, 's> = (
-    Res<'w, crate::ui_quest::QuestGiver>,
+    Res<'w, crate::ui_quest::QuestStatuses>,
     Res<'w, GuidIndex>,
     Query<'w, 's, &'static GlobalTransform, With<NetEntity>>,
     Query<'w, 's, &'static Window, With<PrimaryWindow>>,

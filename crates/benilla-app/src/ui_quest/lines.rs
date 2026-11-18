@@ -1,170 +1,248 @@
 //! The quest chat lines the reference raises from its packet and field handlers: the accept line
-//! from the quest-slot watcher, and the turn-in's completion, experience, money and item lines
-//! (12340's `0x6d0e10`). A line whose quest or item record is not cached waits for it, as the
-//! reference's cache callbacks print on the record's arrival.
+//! from the quest-slot watch ([`accept_line`]), and the turn-in's lines ([`turn_in`], `0x6d0e10`), run by the complete handler with its template cached or by the template's answer.
 
+use benilla_protocol::messages::QuestComplete;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use benilla_ui::script::UiScript;
+use benilla_ui::script::{ScriptValue, UiScript};
 
+use super::QuestGiver;
 use crate::items::Items;
 use crate::net::{NetCommands, NetHandlerApp};
-use crate::ui_action::{show_messages, ui_error_text, FillArg, MessageSink, Shown, UiError};
+use crate::ui_action::{
+    show_in_turn, show_messages, ui_error_text, FillArg, MessageSink, Shown, UiError,
+};
 use crate::ui_quest_log::QuestLog;
+use crate::ui_script::live::UiEvents;
 
-/// One quest chat line, raised in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QuestLine {
-    /// `ERR_QUEST_ACCEPTED_S` (`0x92`) with the quest's title.
-    Accepted(u32),
-    /// `ERR_QUEST_COMPLETE_S` with the title, for every turn-in; the next quest in the chain only
-    /// decides whether the window stays (`0x6d10ca`).
-    Completed(u32),
-    /// `ERR_QUEST_REWARD_EXP_I` (`0x95`).
-    Experience(u32),
-    /// `ERR_QUEST_REWARD_MONEY_S` (`0x97`) with the coin string.
-    Money(u32),
-    /// `ERR_QUEST_REWARD_ITEM_S` with the item's link.
-    Item(u32),
-    /// The quest template's fixed reward items, one [`Self::Item`] each once the template is here
-    /// (`0x6d1018`).
-    RewardItems(u32),
-    /// `LEVEL_UP_CHAR_POINTS` as a `CHAT_MSG_MONEY` line (`0x6d0f5d`-`0x6d0fa6`).
-    Talents(u32),
+/// The turn-ins waiting on their quest's template (`0x6d1192`) and the reward item lines waiting on their item, each with its count (`0x6d103b`, `0x6d107c`).
+#[derive(Resource, Default)]
+pub(crate) struct TurnIns {
+    quests: Vec<QuestComplete>,
+    items: Vec<(u32, u32)>,
 }
 
-/// The lines raised and not yet shown.
-#[derive(Resource, Default)]
-pub(crate) struct QuestLines(Vec<QuestLine>);
-
-impl QuestLines {
-    pub(crate) fn push(&mut self, line: QuestLine) {
-        self.0.push(line);
+impl TurnIns {
+    /// A turn-in whose template the complete handler asked for.
+    pub(crate) fn wait_for_template(&mut self, c: QuestComplete) {
+        self.quests.push(c);
     }
 
     #[cfg(test)]
-    pub(crate) fn queued(&self) -> &[QuestLine] {
-        &self.0
+    pub(crate) fn waiting(&self) -> (usize, &[(u32, u32)]) {
+        (self.quests.len(), &self.items)
     }
 }
 
-/// What a line resolves to this frame.
-enum Resolved {
-    Show(UiError),
-    /// A chat line of its own type, no catalog row.
-    Chat(crate::ui_chat::ChatEventKind, UiError),
-    /// Its record is still in flight.
-    Wait,
-    /// The server does not know the quest or item, or the line has nothing to say.
-    Drop,
-}
-
 pub(super) fn register(app: &mut App) {
-    app.init_resource::<QuestLines>()
-        .net_handler(SessionEventKind::Disconnected, on_session_end)
-        .add_systems(
-            Update,
-            // After the special items' push, which `QUEST_ACCEPTED`'s tracker redraw reads.
-            feed_quest_lines
-                .in_set(crate::ui_unit::UnitFeed)
-                .after(crate::ui_quest_log::feed_quest_log)
-                .after(crate::ui_quest_watch::feed_special_items),
-        );
+    app.init_resource::<TurnIns>()
+        .net_handler(SessionEventKind::ItemTemplate, on_item)
+        .net_handler(SessionEventKind::Disconnected, on_session_end);
 }
 
-/// The waiting lines die with the socket, as the record caches do.
-fn on_session_end(In(_): In<SessionEvent>, mut lines: ResMut<QuestLines>) {
-    lines.0.clear();
+/// The waiting turn-ins and lines die with the socket, as the record caches do.
+fn on_session_end(In(_): In<SessionEvent>, mut turn_ins: ResMut<TurnIns>) {
+    *turn_ins = TurnIns::default();
 }
 
-/// Show every line whose record is here, in the order raised; the rest wait.
-fn feed_quest_lines(
+/// An item answer runs its waiting reward lines (`0x6cd8c0`); an unknown item prints nothing (`0x6cd8c6`).
+fn on_item(In(ev): In<SessionEvent>, mut turn_ins: ResMut<TurnIns>, mut ui: ResMut<UiEvents>) {
+    let SessionEvent::ItemTemplate { entry, info } = ev else {
+        return;
+    };
+    if !turn_ins.items.iter().any(|&(item, _)| item == entry) {
+        return;
+    }
+    let mut counts = Vec::new();
+    turn_ins.items.retain(|&(item, count)| {
+        if item == entry {
+            counts.push(count);
+        }
+        item != entry
+    });
+    let Some(info) = info else {
+        return;
+    };
+    let link = crate::ui_items::item_link(entry, &info.name, info.quality);
+    for count in counts {
+        show_in_turn(&mut ui, "ui_quest", reward_item_line(&link, count));
+    }
+}
+
+/// A reward item's line (`0x6cd90d`): `ERR_QUEST_REWARD_ITEM_MULT_IS` past one, else `ERR_QUEST_REWARD_ITEM_S`.
+fn reward_item_line(link: &str, count: u32) -> UiError {
+    if count > 1 {
+        UiError::args(
+            "ERR_QUEST_REWARD_ITEM_MULT_IS",
+            vec![FillArg::D(i64::from(count)), FillArg::S(link.to_string())],
+        )
+    } else {
+        UiError::s("ERR_QUEST_REWARD_ITEM_S", link)
+    }
+}
+
+/// The template answer runs every turn-in that waited on it (`0x6d1175`).
+pub(crate) fn quest_landed(world: &mut World, quest_id: u32) {
+    let Some(mut turn_ins) = world.get_resource_mut::<TurnIns>() else {
+        return;
+    };
+    let mut ready = Vec::new();
+    turn_ins.quests.retain(|c| {
+        if c.quest_id == quest_id {
+            ready.push(*c);
+        }
+        c.quest_id != quest_id
+    });
+    for c in ready {
+        turn_in(world, c);
+    }
+}
+
+/// The turn-in (`0x6d0e10`): its lines, the chosen reward's latch read and zeroed (`0x6d1061`, `0x6d10bc`), then the window closes unless the quest chains on (`0x6d10ca`, `0x6d10d4`).
+pub(crate) fn turn_in(world: &mut World, c: QuestComplete) {
+    let chosen = world
+        .get_non_send_resource_mut::<QuestGiver>()
+        .map_or(0, |mut g| std::mem::take(&mut g.chosen_reward));
+    match world.run_system_cached_with(turn_in_lines, (c, chosen)) {
+        Ok(Some(chained)) => super::giver_finished(world, chained, c.quest_id, false),
+        Ok(None) => {}
+        Err(e) => warn!("ui_quest: the turn-in did not run: {e}"),
+    }
+}
+
+/// Show one line through the VM's own strings.
+fn say(script: &mut UiScript, sink: &mut MessageSink, msg: UiError) {
+    let get = |key: &str| benilla_ui::strings::global(script.lua(), key);
+    let shown = ui_error_text(&msg, &get).map(|text| Shown::keyed(msg.key, text));
+    show_messages(script, sink, "ui_quest", shown);
+}
+
+/// The turn-in's lines in 12340's order (`0x6d0e66`-`0x6d10b4`); whether the quest chains on, `None` with no template.
+fn turn_in_lines(
+    In((c, chosen)): In<(QuestComplete, u32)>,
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut lines: ResMut<QuestLines>,
+    (quest_log, items, commands): (Res<QuestLog>, Res<Items>, Res<NetCommands>),
+    mut turn_ins: ResMut<TurnIns>,
+    mut sink: MessageSink,
+    mut center: Option<MessageWriter<crate::ui_unit::CombatTextEvent>>,
+) -> Option<bool> {
+    let t = quest_log.template(c.quest_id, &commands)?;
+    let chained = t.next_quest_in_chain != 0;
+    let Some(mut script) = script else {
+        return Some(chained);
+    };
+    say(
+        &mut script,
+        &mut sink,
+        UiError::s("ERR_QUEST_COMPLETE_S", t.title.clone()),
+    );
+    script.queue_sound_kit("igQuestListComplete");
+    if c.xp != 0 {
+        say(
+            &mut script,
+            &mut sink,
+            UiError::args("ERR_QUEST_REWARD_EXP_I", vec![FillArg::D(i64::from(c.xp))]),
+        );
+    }
+    // Signed tests from here on (`0x6d0ea3`, `0x6d0ed5`, `0x6d0f60`, `0x6d0fb1`).
+    if c.money as i32 > 0 {
+        let coins = {
+            let get = |k: &str| benilla_ui::strings::global(script.lua(), k).unwrap_or_default();
+            coin_text(c.money, &get)
+        };
+        say(
+            &mut script,
+            &mut sink,
+            UiError::s("ERR_QUEST_REWARD_MONEY_S", coins),
+        );
+    }
+    let mut text = |message_type: &'static str, n: u32| {
+        if let Some(center) = center.as_mut() {
+            center.write(crate::ui_unit::CombatTextEvent {
+                message_type,
+                args: vec![ScriptValue::Int(i64::from(n))],
+            });
+        }
+    };
+    // The honor, a tenth of the wire's: `COMBATLOG_HONORAWARD` and `HONOR_GAINED` (`0x6d0edb`-`0x6d0f55`).
+    if c.honor as i32 > 0 {
+        let honor = c.honor / 10;
+        sink.chat.push_pvp_credit(honor as i32, 0, 0);
+        text("HONOR_GAINED", honor);
+    }
+    // `LEVEL_UP_CHAR_POINTS` as a `CHAT_MSG_MONEY` line (`0x6d0f5d`-`0x6d0fa6`).
+    if c.talents as i32 > 0 {
+        let msg = UiError::args(
+            "LEVEL_UP_CHAR_POINTS",
+            vec![FillArg::D(i64::from(c.talents))],
+        );
+        let get = |key: &str| benilla_ui::strings::global(script.lua(), key);
+        if let Some(line) = ui_error_text(&msg, &get) {
+            sink.chat.push_event(crate::ui_chat::ChatEvent::text_only(
+                crate::ui_chat::ChatEventKind::Money,
+                line,
+            ));
+        }
+    }
+    // Deviation: the arena award's chat line goes out as type `0x32` (`0x6d0ff4`), which has no `ChatTypeInfo` row in the stock UI, so only its text is raised (`0x6d1005`).
+    if c.arena_points as i32 > 0 {
+        text("ARENA_POINTS_GAINED", c.arena_points);
+    }
+    // The template's fixed rewards, then the chosen one with no count (`0x6d1018`-`0x6d10b4`).
+    let rewards: Vec<(u32, u32)> = t
+        .rewards
+        .iter()
+        .filter(|&&(item, _)| item as i32 > 0)
+        .copied()
+        .chain((chosen != 0).then_some((chosen, 0)))
+        .collect();
+    for (item, count) in rewards {
+        match items.template(item, 0, &commands) {
+            Some(it) => {
+                let link = crate::ui_items::item_link(item, &it.name, it.quality);
+                say(&mut script, &mut sink, reward_item_line(&link, count));
+            }
+            None if items.template_answered_unknown(item) => {}
+            None => turn_ins.items.push((item, count)),
+        }
+    }
+    Some(chained)
+}
+
+/// The accept's line and tutorials, its template cached (`0x6df440`-`0x6df481`, the answer's `0x6df2f9`-`0x6df343`).
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+pub(crate) fn accept_line(
+    In(quest_id): In<u32>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     quest_log: Res<QuestLog>,
-    items: Res<Items>,
     commands: Res<NetCommands>,
     mut sink: MessageSink,
     tutorial_bank: Option<Res<crate::tutorial::Tutorials>>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
-    // The accept callback's process-wide count (`0xc9eb08`).
+    // The accept callback's process-wide count (`0x6df46d`).
     mut accepts: Local<u32>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    if lines.0.is_empty() {
+    let Some(t) = quest_log.template(quest_id, &commands) else {
         return;
-    }
+    };
     let get = |key: &str| benilla_ui::strings::global(script.lua(), key);
-    // A template's reward items expand in place once its record is here.
-    let mut expanded = Vec::with_capacity(lines.0.len());
-    for line in lines.0.drain(..) {
-        match line {
-            QuestLine::RewardItems(id) => match quest(id, &quest_log, &commands) {
-                Ok(t) => expanded.extend(
-                    t.rewards
-                        .iter()
-                        .filter(|&&(item, _)| item != 0)
-                        .map(|&(item, _)| QuestLine::Item(item)),
-                ),
-                Err(Resolved::Wait) => expanded.push(line),
-                Err(_) => {}
-            },
-            other => expanded.push(other),
-        }
-    }
-    lines.0 = expanded;
-    let mut shown = Vec::new();
-    let mut chat_lines = Vec::new();
-    let mut accepted = Vec::new();
-    lines.0.retain(
-        |&line| match resolve(line, &quest_log, &items, &commands, &get) {
-            Resolved::Show(msg) => {
-                if let Some(text) = ui_error_text(&msg, &get) {
-                    shown.push(Shown::keyed(msg.key, text));
-                }
-                if let QuestLine::Accepted(id) = line {
-                    accepted.push(id);
-                }
-                false
-            }
-            Resolved::Chat(kind, msg) => {
-                if let Some(text) = ui_error_text(&msg, &get) {
-                    chat_lines.push((kind, text));
-                }
-                false
-            }
-            Resolved::Wait => true,
-            Resolved::Drop => false,
-        },
-    );
+    let msg = UiError::s("ERR_QUEST_ACCEPTED_S", t.title.clone());
+    let shown: Vec<Shown> = ui_error_text(&msg, &get)
+        .map(|text| Shown::keyed(msg.key, text))
+        .into_iter()
+        .collect();
     show_messages(&mut script, &mut sink, "ui_quest", shown);
-    for (kind, text) in chat_lines {
-        sink.chat
-            .push_event(crate::ui_chat::ChatEvent::text_only(kind, text));
-    }
-    // `QUEST_ACCEPTED` with the quest's log row follows the accept line and its tutorials, all
-    // raised once the template is cached (the accept callback `0x6df2b0`, then the log update
-    // `0x6df370`).
-    for id in accepted {
-        let quest_type = quest_log
-            .template(id, &commands)
-            .map_or(0, |t| t.quest_type);
-        let flagged = tutorial_bank
-            .as_deref()
-            .is_some_and(|t| t.is_flagged(crate::tutorial::id::QUEST_LOG));
-        for tutorial in accept_tutorials(quest_type, flagged, &mut accepts) {
-            if let Some(t) = tutorials.as_mut() {
-                t.write(crate::tutorial::TutorialEvent::trigger(tutorial));
-            }
+    let flagged = tutorial_bank
+        .as_deref()
+        .is_some_and(|t| t.is_flagged(crate::tutorial::id::QUEST_LOG));
+    for tutorial in accept_tutorials(t.quest_type, flagged, &mut accepts) {
+        if let Some(t) = tutorials.as_mut() {
+            t.write(crate::tutorial::TutorialEvent::trigger(tutorial));
         }
-        let index = script.quest_log_index(id) as i64;
-        script.fire_event(
-            "QUEST_ACCEPTED",
-            vec![benilla_ui::script::ScriptValue::Int(index)],
-        );
     }
 }
 
@@ -184,60 +262,6 @@ fn accept_tutorials(quest_type: u32, quest_log_flagged: bool, accepts: &mut u32)
         }
     }
     out
-}
-
-fn resolve(
-    line: QuestLine,
-    quest_log: &QuestLog,
-    items: &Items,
-    commands: &NetCommands,
-    get: &dyn Fn(&str) -> Option<String>,
-) -> Resolved {
-    match line {
-        QuestLine::Accepted(id) => match quest(id, quest_log, commands) {
-            Ok(t) => Resolved::Show(UiError::s("ERR_QUEST_ACCEPTED_S", t.title.clone())),
-            Err(r) => r,
-        },
-        QuestLine::Completed(id) => match quest(id, quest_log, commands) {
-            Ok(t) => Resolved::Show(UiError::s("ERR_QUEST_COMPLETE_S", t.title.clone())),
-            Err(r) => r,
-        },
-        QuestLine::Experience(xp) => Resolved::Show(UiError::args(
-            "ERR_QUEST_REWARD_EXP_I",
-            vec![FillArg::D(i64::from(xp))],
-        )),
-        QuestLine::Money(copper) => Resolved::Show(UiError::s(
-            "ERR_QUEST_REWARD_MONEY_S",
-            coin_text(copper, &|k| get(k).unwrap_or_default()),
-        )),
-        QuestLine::Talents(n) => Resolved::Chat(
-            crate::ui_chat::ChatEventKind::Money,
-            UiError::args("LEVEL_UP_CHAR_POINTS", vec![FillArg::D(i64::from(n))]),
-        ),
-        // Expanded before resolving; one still here waits on its template.
-        QuestLine::RewardItems(_) => Resolved::Wait,
-        QuestLine::Item(entry) => match items.template(entry, 0, commands) {
-            Some(t) => Resolved::Show(UiError::s(
-                "ERR_QUEST_REWARD_ITEM_S",
-                crate::ui_items::item_link(entry, &t.name, t.quality),
-            )),
-            None if items.template_answered_unknown(entry) => Resolved::Drop,
-            None => Resolved::Wait,
-        },
-    }
-}
-
-/// The quest's record, or what its line does without one.
-fn quest<'a>(
-    id: u32,
-    quest_log: &'a QuestLog,
-    commands: &NetCommands,
-) -> Result<&'a benilla_protocol::messages::QuestTemplate, Resolved> {
-    match quest_log.template(id, commands) {
-        Some(t) => Ok(t),
-        None if quest_log.template_answered_unknown(id) => Err(Resolved::Drop),
-        None => Err(Resolved::Wait),
-    }
 }
 
 /// The turn-in's coin string, 12340's `0x7e7d80`: each paid denomination through its
@@ -276,17 +300,21 @@ mod tests {
         }
     }
 
-    /// The feed alone, over a VM holding the stock enUS templates.
+    /// The turn-in's world, over a VM holding the stock enUS templates.
     fn app() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.insert_resource(NetCommands(tx))
-            .init_resource::<QuestLines>()
+            .init_resource::<TurnIns>()
+            .init_non_send_resource::<QuestGiver>()
             .init_resource::<QuestLog>()
+            .init_resource::<crate::ui_quest_log::QuestLogMarks>()
+            .init_non_send_resource::<crate::ui_quest_log::QuestExpiries>()
             .init_resource::<Items>()
+            .init_resource::<UiEvents>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .add_systems(Update, feed_quest_lines);
+            .add_message::<crate::ui_unit::CombatTextEvent>();
         let script = UiScript::new().unwrap();
         script
             .run(
@@ -296,6 +324,8 @@ mod tests {
                 ERR_QUEST_REWARD_EXP_I = "Experience gained: %d."
                 ERR_QUEST_REWARD_MONEY_S = "Received %s."
                 ERR_QUEST_REWARD_ITEM_S = "Received item: %s."
+                ERR_QUEST_REWARD_ITEM_MULT_IS = "Received %d of item: %s."
+                LEVEL_UP_CHAR_POINTS = "You have gained %d talent points."
                 GOLD_AMOUNT = "%d Gold"; SILVER_AMOUNT = "%d Silver"; COPPER_AMOUNT = "%d Copper"
                 "#,
             )
@@ -310,131 +340,149 @@ mod tests {
             .pending_lines()
     }
 
+    fn complete(quest_id: u32) -> QuestComplete {
+        QuestComplete {
+            quest_id,
+            ..Default::default()
+        }
+    }
+
+    /// An item answer through its handler, with the lines it shows in turn.
+    fn item_answer(app: &mut App, entry: u32, name: Option<&str>) {
+        let info = name.map(|n| Box::new(crate::items::test_template(n)));
+        let world = app.world_mut();
+        world
+            .run_system_cached_with(on_item, SessionEvent::ItemTemplate { entry, info })
+            .unwrap();
+        crate::ui_script::live::fire_handler_events(world);
+    }
+
+    /// `0x6d0e10`'s order: the completion, the fanfare, the XP, the money, the talents, the template's rewards (a count past one says so, `0x6cd90d`), then the chosen reward, which the turn-in spends; an uncached item's line waits for its answer.
     #[test]
-    fn each_line_shows_as_its_record_lands_and_the_rest_keep_their_order() {
+    fn a_turn_in_prints_in_order_and_an_uncached_item_waits_for_its_answer() {
         let (mut app, rx) = app();
         {
             let world = app.world_mut();
-            world
-                .resource_mut::<QuestLog>()
-                .insert_template(template(783, "A Threat Within", 0));
+            let mut t = template(7, "Kobold Camp Cleanup", 0);
+            t.rewards[0] = (2_580, 1);
+            t.rewards[1] = (6_529, 3);
+            world.resource_mut::<QuestLog>().insert_template(t);
             world
                 .resource_mut::<Items>()
                 .insert_template(2_580, Some(crate::items::test_template("Linen Cloth")));
-            let mut lines = world.resource_mut::<QuestLines>();
-            for line in [
-                QuestLine::Accepted(783),
-                QuestLine::Completed(7),
-                QuestLine::Experience(450),
-                QuestLine::Money(1_025),
-                QuestLine::Item(2_580),
-                QuestLine::Item(6_529),
-            ] {
-                lines.push(line);
-            }
+            world.resource_mut::<Items>().insert_template(
+                2_047,
+                Some(crate::items::test_template("Anvilmar Hand Axe")),
+            );
+            world.non_send_resource_mut::<QuestGiver>().chosen_reward = 2_047;
+            turn_in(
+                world,
+                QuestComplete {
+                    quest_id: 7,
+                    xp: 450,
+                    money: 1_025,
+                    talents: 1,
+                    ..Default::default()
+                },
+            );
         }
-        app.update();
         assert_eq!(
             chat(&app),
-            [
-                "Quest accepted: A Threat Within",
-                "Experience gained: 450.",
-                "Received 10 Silver, 25 Copper.",
-                "Received item: |cffffffff|Hitem:2580:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r.",
-            ]
-        );
-        assert_eq!(
-            app.world().resource::<QuestLines>().queued(),
-            [QuestLine::Completed(7), QuestLine::Item(6_529)],
-            "the uncached quest and item wait"
-        );
-        let sent: Vec<_> = rx.try_iter().collect();
-        assert!(
-            sent.iter()
-                .any(|c| matches!(c, ClientCommand::QuestQuery { quest: 7 })),
-            "the waiting quest's record is asked: {sent:?}"
-        );
-        assert!(
-            app.world()
-                .resource::<crate::sound::MessageSounds>()
-                .queued()
-                .iter()
-                .any(|r| r.key == "ERR_QUEST_ACCEPTED_S"),
-            "the accept line's row carries its sound"
-        );
-
-        {
-            let world = app.world_mut();
-            world
-                .resource_mut::<QuestLog>()
-                .insert_template(template(7, "Kobold Camp Cleanup", 0));
-            world
-                .resource_mut::<Items>()
-                .insert_template(6_529, Some(crate::items::test_template("Shiny Bauble")));
-        }
-        app.update();
-        assert_eq!(
-            chat(&app)[4..],
             [
                 "Kobold Camp Cleanup completed.",
-                "Received item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r.",
+                "Experience gained: 450.",
+                "Received 10 Silver, 25 Copper.",
+                "You have gained 1 talent points.",
+                "Received item: |cffffffff|Hitem:2580:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r.",
+                "Received item: |cffffffff|Hitem:2047:0:0:0:0:0:0:0:0|h[Anvilmar Hand Axe]|h|r.",
             ]
         );
-        assert!(app.world().resource::<QuestLines>().queued().is_empty());
-    }
-
-    /// 12340 names every turn-in, a chained quest too (`0x6d0e10`); an unknown item says nothing.
-    #[test]
-    fn a_chained_quest_still_completes_aloud_and_an_unknown_item_shows_nothing() {
-        let (mut app, _rx) = app();
-        {
-            let world = app.world_mut();
-            world
-                .resource_mut::<QuestLog>()
-                .insert_template(template(783, "A Threat Within", 7));
-            world.resource_mut::<Items>().insert_template(9_999, None);
-            let mut lines = world.resource_mut::<QuestLines>();
-            lines.push(QuestLine::Completed(783));
-            lines.push(QuestLine::Item(9_999));
-        }
-        app.update();
-        assert_eq!(chat(&app), ["A Threat Within completed."]);
-        assert!(app.world().resource::<QuestLines>().queued().is_empty());
-    }
-
-    /// The fixed rewards print from the template once it lands, one item line each (`0x6d1018`).
-    #[test]
-    fn a_templates_reward_items_expand_when_the_template_lands() {
-        let (mut app, _rx) = app();
-        {
-            let world = app.world_mut();
-            world
-                .resource_mut::<Items>()
-                .insert_template(6_529, Some(crate::items::test_template("Shiny Bauble")));
-            world
-                .resource_mut::<QuestLines>()
-                .push(QuestLine::RewardItems(7));
-        }
-        app.update();
-        assert!(chat(&app).is_empty());
         assert_eq!(
-            app.world().resource::<QuestLines>().queued(),
-            [QuestLine::RewardItems(7)],
-            "the template is still in flight"
-        );
-        {
-            let mut t = template(7, "Kobold Camp Cleanup", 0);
-            t.rewards[1] = (6_529, 1);
             app.world_mut()
-                .resource_mut::<QuestLog>()
-                .insert_template(t);
-        }
-        app.update();
-        assert_eq!(
-            chat(&app),
-            ["Received item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r."]
+                .non_send_resource_mut::<UiScript>()
+                .take_sounds(),
+            [benilla_ui::script::SoundRequest::KitName(
+                "igQuestListComplete".into()
+            )]
         );
-        assert!(app.world().resource::<QuestLines>().queued().is_empty());
+        assert_eq!(
+            app.world().non_send_resource::<QuestGiver>().chosen_reward,
+            0
+        );
+        assert_eq!(
+            app.world().resource::<TurnIns>().waiting(),
+            (0, &[(6_529, 3)][..])
+        );
+        assert!(rx
+            .try_iter()
+            .any(|c| matches!(c, ClientCommand::ItemQuery { entry: 6_529, .. })));
+        item_answer(&mut app, 6_529, Some("Shiny Bauble"));
+        assert_eq!(
+            chat(&app)[6..],
+            ["Received 3 of item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r."]
+        );
+        assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
+    }
+
+    /// An unknown item's answer prints nothing (`0x6cd8c6`).
+    #[test]
+    fn an_unknown_items_answer_drops_its_line() {
+        let (mut app, _rx) = app();
+        {
+            let world = app.world_mut();
+            let mut t = template(7, "Kobold Camp Cleanup", 0);
+            t.rewards[0] = (9_999, 1);
+            world.resource_mut::<QuestLog>().insert_template(t);
+            turn_in(world, complete(7));
+        }
+        item_answer(&mut app, 9_999, None);
+        assert_eq!(chat(&app), ["Kobold Camp Cleanup completed."]);
+        assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
+    }
+
+    /// With the template uncached the whole turn-in waits for its answer, the window too (`0x6d1192`); the answer runs it (`0x6d1175`).
+    #[test]
+    fn a_turn_in_waits_for_its_template_and_the_answer_runs_it() {
+        let (mut app, _rx) = app();
+        app.world_mut().non_send_resource_mut::<QuestGiver>().open(
+            0xF130_0000_0000_0007,
+            crate::ui_quest::QuestView::Greeting(Default::default()),
+        );
+        app.world_mut()
+            .resource_mut::<TurnIns>()
+            .wait_for_template(complete(7));
+        assert!(chat(&app).is_empty());
+        assert!(app.world().non_send_resource::<QuestGiver>().is_open());
+        let world = app.world_mut();
+        world
+            .resource_mut::<QuestLog>()
+            .insert_template(template(7, "Kobold Camp Cleanup", 0));
+        quest_landed(world, 7);
+        assert_eq!(chat(&app), ["Kobold Camp Cleanup completed."]);
+        assert!(!app.world().non_send_resource::<QuestGiver>().is_open());
+        assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
+    }
+
+    /// `0x6d10ca`: a chained turn-in leaves the window to the next quest's panel and still prints.
+    #[test]
+    fn a_chained_turn_in_keeps_the_window_and_a_last_one_closes_it() {
+        for (next, open) in [(8, true), (0, false)] {
+            let (mut app, _rx) = app();
+            let world = app.world_mut();
+            world.non_send_resource_mut::<QuestGiver>().open(
+                0xF130_0000_0000_0007,
+                crate::ui_quest::QuestView::Greeting(Default::default()),
+            );
+            world
+                .resource_mut::<QuestLog>()
+                .insert_template(template(7, "A Threat Within", next));
+            turn_in(world, complete(7));
+            assert_eq!(chat(&app), ["A Threat Within completed."]);
+            assert_eq!(
+                app.world().non_send_resource::<QuestGiver>().is_open(),
+                open
+            );
+        }
     }
 
     fn triggered(app: &mut App) -> Vec<u32> {
@@ -468,8 +516,8 @@ mod tests {
         let mut seen = Vec::new();
         for q in [1, 2, 3, 9] {
             app.world_mut()
-                .resource_mut::<QuestLines>()
-                .push(QuestLine::Accepted(q));
+                .run_system_cached_with(accept_line, q)
+                .unwrap();
             app.update();
             seen.push(triggered(&mut app));
         }
