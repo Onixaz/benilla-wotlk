@@ -1564,6 +1564,10 @@ impl LiveState for LiveView<'_, '_> {
         }
     }
 
+    fn spirit_cancel_has_body(&self) -> bool {
+        self.dialogs.has_body()
+    }
+
     fn cancel_area_spirit_heal(&self) {
         self.dialogs.cancel_area_spirit_heal();
     }

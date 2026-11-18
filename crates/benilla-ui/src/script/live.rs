@@ -678,6 +678,11 @@ pub trait LiveState {
     /// The rest of the poll after that event, then `CMSG_AREA_SPIRIT_HEALER_QUEUE` naming the healer it left held (`0x524b60`).
     fn accept_area_spirit_heal(&mut self, _cancelled: bool) {}
 
+    /// Whether our body is held, without which the 2584 aura cancel neither fires nor sends (`0x51f72d`, `0x51f75c`).
+    fn spirit_cancel_has_body(&self) -> bool {
+        false
+    }
+
     /// `CancelAreaSpiritHeal`'s `CMSG_CANCEL_AURA` for 2584, after its event (`0x522fa0` -> `0x51f710`).
     fn cancel_area_spirit_heal(&self) {}
 
@@ -1088,6 +1093,10 @@ impl LiveState for TestView {
 
     fn active_player(&self) -> Option<u64> {
         self.player
+    }
+
+    fn spirit_cancel_has_body(&self) -> bool {
+        self.player.is_some()
     }
 
     fn has_control(&self) -> bool {

@@ -108,7 +108,7 @@ pub(crate) fn talk_to_binder(
     me: Query<&Transform, With<SelfPlayer>>,
     index: Option<Res<GuidIndex>>,
     units: Query<(&ObjectStore, &Transform)>,
-    area: Option<Res<benilla_world::terrain_stream::CurrentArea>>,
+    ids: Option<Res<crate::area::ZoneIds>>,
     areas: Option<Res<AreaTableRes>>,
     mut ui: ResMut<UiEvents>,
 ) {
@@ -117,7 +117,10 @@ pub(crate) fn talk_to_binder(
         return;
     }
     binder.npc = Some(npc);
-    let name = area_row_name(area.and_then(|a| a.0), areas.as_deref());
+    let name = area_row_name(
+        ids.as_deref().copied().unwrap_or_default(),
+        areas.as_deref(),
+    );
     ui.write(move |script| {
         let name = name.unwrap_or_else(|| home_inn(script));
         script.fire_event("CONFIRM_BINDER", vec![ScriptValue::Str(name)]);
@@ -143,19 +146,14 @@ fn home_inn(script: &UiScript) -> String {
         .unwrap_or_default()
 }
 
-/// The current subzone's row, else its zone's (`0x519ca0`), by name; `None` for neither.
-fn area_row_name(leaf: Option<u32>, areas: Option<&AreaTableRes>) -> Option<String> {
+/// The client's area row, else its zone's row when the area has none (`0x519ca0`), by name, an empty one included (`0x6d21e0`); `None` for neither.
+fn area_row_name(ids: crate::area::ZoneIds, areas: Option<&AreaTableRes>) -> Option<String> {
     let areas = areas?;
-    let row = areas.0.get(leaf?)?;
-    // The zone is the leaf's `zone_id`; 0 means the leaf is itself a zone.
-    Some(row.name.clone())
-        .filter(|n| !n.is_empty())
-        .or_else(|| {
-            (row.zone_id != 0)
-                .then(|| areas.0.get(row.zone_id))
-                .flatten()
-                .map(|z| z.name.clone())
-        })
+    areas
+        .0
+        .get(ids.area)
+        .or_else(|| areas.0.get(ids.zone))
+        .map(|row| row.name.clone())
 }
 
 /// `SoundEntries.dbc` 1141, played on `SMSG_PLAYERBOUND` before the area is resolved, so an area
@@ -239,22 +237,49 @@ impl Plugin for UiBinderPlugin {
 mod tests {
     use super::*;
 
-    /// Area 186 is Dolanaar, a leaf area with an innkeeper.
+    /// `0x519ca0` falls back to the zone id's row only when the area id has none (`0x519cc9`), and
+    /// `0x6d21e0` passes the row's name as it is. Area 186 is Dolanaar in Teldrassil (141).
     #[test]
-    fn the_dialogs_name_is_the_subzone_then_the_zone() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let areas = AreaTableRes(
-            benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable.dbc"),
-        );
+    fn the_dialogs_name_is_the_area_row_else_the_zone_row() {
+        use crate::area::ZoneIds;
+        let row = |id, zone_id, name: &str| {
+            (
+                id,
+                benilla_formats::AreaTableRow {
+                    map_id: 1,
+                    zone_id,
+                    explore_flag: 0,
+                    flags: 0,
+                    faction_group_mask: 0,
+                    exploration_level: 0,
+                    name: name.to_string(),
+                },
+            )
+        };
+        let areas = AreaTableRes(benilla_formats::AreaTableCatalog::from_rows(vec![
+            row(141, 0, "Teldrassil"),
+            row(186, 141, "Dolanaar"),
+            row(187, 141, ""),
+        ]));
+        let ids = |zone, area| ZoneIds { zone, area };
         assert_eq!(
-            area_row_name(Some(186), Some(&areas)).as_deref(),
+            area_row_name(ids(141, 186), Some(&areas)).as_deref(),
             Some("Dolanaar")
         );
-        // No row, no catalog, no id: the caller takes `HOME_INN`.
-        assert_eq!(area_row_name(Some(0xffff), Some(&areas)), None);
-        assert_eq!(area_row_name(Some(186), None), None);
-        assert_eq!(area_row_name(None, Some(&areas)), None);
+        assert_eq!(
+            area_row_name(ids(141, 0xffff), Some(&areas)).as_deref(),
+            Some("Teldrassil"),
+            "an area id with no row takes the zone's row"
+        );
+        assert_eq!(
+            area_row_name(ids(141, 187), Some(&areas)).as_deref(),
+            Some(""),
+            "a row with an empty name is still the area's row"
+        );
+        // No row for either, no catalog, no ids: the caller takes `HOME_INN`.
+        assert_eq!(area_row_name(ids(0xfffe, 0xffff), Some(&areas)), None);
+        assert_eq!(area_row_name(ids(141, 186), None), None);
+        assert_eq!(area_row_name(ZoneIds::default(), Some(&areas)), None);
     }
 
     /// Resolved against the install's table: a mistyped key would silence the line, not garble it.

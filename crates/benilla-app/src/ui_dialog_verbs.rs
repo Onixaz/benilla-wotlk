@@ -87,15 +87,19 @@ impl AreaSpiritHealer {
         arms
     }
 
-    /// The healer set up to its cancel (`0x523eb0`): an unchanged guid returns `None` before anything else, so the poll calls it every frame; a change stores the new healer first (`0x523edd`) and says whether a wave is pending, its cancel's event owed while the deadline still reads (`0x523eea` before `0x523efa`).
-    pub(crate) fn store_healer(&mut self, new: Option<u64>) -> Option<bool> {
+    /// The healer set up to its cancel (`0x523eb0`): an unchanged guid returns `None` before anything else, so the poll calls it every frame; a change stores the new healer first (`0x523edd`) and says whether a wave's cancel is owed, its event fired while the deadline still reads (`0x523eea` before `0x523efa`). Without our body (`player` false) the cancel neither fires nor sends (`0x51f75c`), so the wave is zeroed here.
+    pub(crate) fn store_healer(&mut self, new: Option<u64>, player: bool) -> Option<bool> {
         // The reference's zero guid is our `None`.
         let new = new.filter(|&g| g != 0);
         if self.healer == new {
             return None;
         }
         self.healer = new;
-        Some(self.deadline.is_some())
+        let owed = self.deadline.is_some() && player;
+        if !owed {
+            self.deadline = None;
+        }
+        Some(owed)
     }
 
     /// The healer set past its cancel's event: `CMSG_CANCEL_AURA` for the wave cancelled, the deadline zeroed (`0x523efa`), then the query for a non-zero healer (`0x523f02`).
@@ -116,14 +120,14 @@ impl AreaSpiritHealer {
         }
     }
 
-    /// The whole healer set (`0x523eb0`), `fire` running the cancel's event with this state at hand; whether it cancelled a wave.
+    /// The whole healer set (`0x523eb0`) from a caller holding our body (the guide click), `fire` running the cancel's event with this state at hand; whether it cancelled a wave.
     pub(crate) fn set_healer(
         &mut self,
         new: Option<u64>,
         net: Option<&NetCommands>,
         fire: &mut impl FnMut(&mut Self),
     ) -> bool {
-        let Some(cancelled) = self.store_healer(new) else {
+        let Some(cancelled) = self.store_healer(new, true) else {
             return false;
         };
         if cancelled {
@@ -182,9 +186,10 @@ pub(crate) struct SpiritPollInputs<'w, 's> {
     names: Option<Res<'w, crate::names::NameCache>>,
 }
 
-/// The healer poll's first half (`0x524010`): with no body, no ghost (`PLAYER_FLAGS` `0x10`), or the held healer gone or past 22 yd, the healer set to 0 up to its cancel (`0x5240ca`, `0x52409e`); whether that owes the cancel's event.
+/// The healer poll's first half (`0x524010`): with no body, no ghost (`PLAYER_FLAGS` `0x10`), or the held healer gone or past 22 yd, the healer set to 0 up to its cancel (`0x5240ca`, `0x52409e`); whether that owes the cancel's event, never with no body (`0x51f75c`).
 pub(crate) fn poll_drop(spirit: &mut AreaSpiritHealer, inputs: &SpiritPollInputs) -> bool {
-    let drop = match inputs.me.single() {
+    let body = inputs.me.single();
+    let drop = match body {
         Err(_) => true,
         Ok((store, _)) if !store.0.player_is_ghost() => true,
         Ok((_, tf)) => spirit.healer().is_some_and(|cached| {
@@ -197,7 +202,7 @@ pub(crate) fn poll_drop(spirit: &mut AreaSpiritHealer, inputs: &SpiritPollInputs
             })
         }),
     };
-    drop && spirit.store_healer(None) == Some(true)
+    drop && spirit.store_healer(None, body.is_ok()) == Some(true)
 }
 
 /// The poll's second half, after the drop's event: the drop's set finished, then, a ghost holding no
@@ -245,7 +250,7 @@ pub(crate) fn poll_finish(
         ) {
             continue;
         }
-        if let Some(cancelled) = spirit.store_healer(Some(guid.0)) {
+        if let Some(cancelled) = spirit.store_healer(Some(guid.0), true) {
             // Only `on_time` arms a deadline, for the held healer, and none is held here.
             debug_assert!(
                 !cancelled,
@@ -292,6 +297,11 @@ impl DialogView<'_, '_> {
         if let (Some(net), Some(healer)) = (net, spirit.healer()) {
             let _ = net.0.send(ClientCommand::AreaSpiritHealerQueue { healer });
         }
+    }
+
+    /// Whether our body is held, without which the 2584 aura cancel neither fires nor sends (`0x51f72d`, `0x51f75c`).
+    pub(crate) fn has_body(&self) -> bool {
+        self.spirit.me.single().is_ok()
     }
 
     /// `CancelAreaSpiritHeal`'s send after its event (`0x522fa0` -> `0x51f710`): `CMSG_CANCEL_AURA` for 2584, the deadline left as it is.
@@ -745,6 +755,50 @@ mod tests {
             queries(&rx).is_empty(),
             "the held guide is retained, so no walk runs"
         );
+    }
+
+    /// With no body the poll still sets the healer to 0 (`0x524036` -> `0x5240ca`), but its cancel
+    /// finds no player object and skips the aura cancel (`0x51f75c`): no event, no send, and the
+    /// wave zeroed (`0x523efa`).
+    #[test]
+    fn with_no_body_the_drop_zeroes_the_wave_without_the_cancel() {
+        let (mut world, rx) = poll_world(true, true, 5.0, None);
+        let now = Instant::now();
+        {
+            let net = NetCommands(world.resource::<NetCommands>().0.clone());
+            let mut spirit = world.non_send_resource_mut::<AreaSpiritHealer>();
+            spirit.set_healer(Some(GUIDE), Some(&net), &mut |_| {});
+            spirit.on_time(GUIDE, 30_500, now);
+        }
+        let _ = sends(&rx);
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .iter(&world)
+            .next()
+            .expect("the body");
+        world.despawn(me);
+
+        use bevy::ecs::system::RunSystemOnce;
+        let fired = world
+            .run_system_once(
+                |mut spirit: NonSendMut<AreaSpiritHealer>,
+                 inputs: SpiritPollInputs,
+                 net: Res<NetCommands>| {
+                    let mut fired = 0;
+                    let cancelled = run_poll(&mut spirit, &inputs, Some(&net), |_| fired += 1);
+                    (fired, cancelled)
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            fired,
+            (0, false),
+            "no player object: the cancel's event never fires"
+        );
+        assert!(sends(&rx).is_empty(), "and no CMSG_CANCEL_AURA goes out");
+        let spirit = world.non_send_resource::<AreaSpiritHealer>();
+        assert_eq!(spirit.healer(), None, "the healer is still set to 0");
+        assert_eq!(spirit.secs(now), 0, "and the wave is zeroed");
     }
 
     #[test]

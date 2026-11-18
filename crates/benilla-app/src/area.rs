@@ -160,6 +160,14 @@ pub(crate) struct PlayerPlace {
     pub(crate) flyable_area: bool,
 }
 
+/// The client's zone and area ids (`0xbd080c`, `0xbd0810`), 0 for none: written as the zone update
+/// resolves (`0x5204e4`, `0x5204ea`) and zeroed for each session (`0x52928a`).
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ZoneIds {
+    pub(crate) zone: u32,
+    pub(crate) area: u32,
+}
+
 /// The client's zone-text cache: the compare targets, the minimap line's cache and the indoor dedup
 /// pair. It lives per VM, so every login starts zeroed and its first resolve is a NEW_AREA.
 #[derive(Default)]
@@ -218,11 +226,15 @@ fn feed_zone_events(
     roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
     mut place: crate::ui_script::OwnedMut<PlayerPlace>,
+    mut ids: ResMut<ZoneIds>,
 ) {
     let (Some(mut script), Some(areas)) = (script, areas) else {
         return;
     };
-    let cache = cache.get(&script);
+    let (cache, fresh_vm) = cache.get_reset(&script);
+    if fresh_vm {
+        *ids = ZoneIds::default();
+    }
     let Some(leaf) = world.area() else { return };
     let Some(leaf_row) = areas.0.get(leaf) else {
         // An unknown id keeps the last state, as the resolver does for areaId 0.
@@ -233,6 +245,10 @@ fn feed_zone_events(
     } else {
         leaf_row.zone_id
     };
+    let now = ZoneIds { zone, area: leaf };
+    if *ids != now {
+        *ids = now;
+    }
     let real_zone_text = areas.0.name(zone).unwrap_or_default().to_string();
     let indoor = world.area_interior().is_some();
     let fresh = PlayerPlace {
@@ -402,6 +418,7 @@ pub(crate) struct AreaPlugin;
 impl Plugin for AreaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerPlace>()
+            .init_resource::<ZoneIds>()
             .add_systems(
                 Startup,
                 (load_area_table, load_area_groups).after(AssetSet::Open),
