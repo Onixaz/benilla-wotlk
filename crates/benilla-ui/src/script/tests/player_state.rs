@@ -55,6 +55,31 @@ fn the_player_state_predicates_read_the_condition_state() {
     assert!(flag(&s, "IsFlyableArea()"));
 }
 
+/// Seated in a vehicle, `IsFlying` answers for the vehicle; the `flying` macro condition still
+/// reads the player's own word.
+#[test]
+fn is_flying_follows_the_seated_vehicle_and_the_condition_does_not() {
+    let mut s = UiScript::new().unwrap();
+    let condition = |s: &UiScript| {
+        s.eval::<Option<String>>("return (SecureCmdOptionParse('[flying] yes; no'))")
+            .unwrap()
+    };
+    s.set_option_state(OptionState {
+        flying: false,
+        seated_vehicle_flying: Some(true),
+        ..Default::default()
+    });
+    assert!(flag(&s, "IsFlying()"));
+    assert_eq!(condition(&s).as_deref(), Some("no"));
+    s.set_option_state(OptionState {
+        flying: true,
+        seated_vehicle_flying: Some(false),
+        ..Default::default()
+    });
+    assert!(!flag(&s, "IsFlying()"));
+    assert_eq!(condition(&s).as_deref(), Some("yes"));
+}
+
 /// Each side is its own bit, and the side-blind verbs read either.
 #[test]
 fn each_modifier_side_reads_its_own_key() {
