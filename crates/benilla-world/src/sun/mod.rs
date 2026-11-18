@@ -85,12 +85,13 @@ impl Plugin for SunPlugin {
     }
 }
 
-/// Hide the sky pass's elements while a WMO skybox owns the sky or the eye is submerged. The sky
+/// Hide the sky pass's elements while a skybox owns the sky or the eye is submerged. The sky
 /// render gates stars, sun disc, white moon, moon02, gradient and cloud dome on one boolean: the
 /// reference sets it, a skybox slot whose weight exceeds 0.99 clears it, and the sky render then
 /// skips all six; through the 4 s crossfade they draw under the skybox. A submerged eye skips the
 /// sky render whole, or the discs would draw black under the murk. The glares draw on their own
-/// path, which neither gate reaches, and fade underwater themselves; the gradient and cloud domes
+/// path, which neither gate reaches, and fade by the sky weight and underwater themselves
+/// (`sun::follow`); the gradient and cloud domes
 /// ([`crate::sky`], [`crate::clouds`]) gate themselves.
 #[allow(clippy::type_complexity)]
 fn apply_celestial_visibility(

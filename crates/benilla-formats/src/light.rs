@@ -11,7 +11,10 @@ use crate::dbc::{f32_at, parse, str_at, u32_at};
 use crate::Chain;
 
 mod atmosphere;
+mod skybox;
 mod tables;
+mod zone_paths;
+mod zones;
 
 pub use atmosphere::Atmosphere;
 use atmosphere::{
@@ -21,6 +24,8 @@ use atmosphere::{
     LP_OCEAN_SHALLOW_ALPHA, LP_SKYBOX, LP_WATER_DEEP_ALPHA, LP_WATER_SHALLOW_ALPHA,
 };
 pub use atmosphere::{ZERO_KEY_COLOR, ZERO_KEY_SCALAR};
+use skybox::{compact_pairs, merge_pair, seed_pairs, SkyboxPairs};
+pub use skybox::{SkyboxDraw, SKYBOX_FLAG_COMBINE, SKYBOX_FLAG_SYNC_TIME};
 use tables::{band_schema, load_bands, load_float_bands, sample_color, sample_float, Band, DAY};
 
 const LIGHT: &str = "DBFilesClient\\Light.dbc";
@@ -170,10 +175,10 @@ pub struct LightCatalog {
     light_params_water_alpha: HashMap<u32, [f32; 4]>,
     /// `LightParams` id → `lightSkyboxID` ([`LP_SKYBOX`]), for its non-zero rows only.
     light_params_skybox: HashMap<u32, u32>,
-    /// `LightSkybox.dbc` id → model chain path, spelled as a WMO MOSB skybox is so one model never
-    /// builds twice. Only the ghost path reads it here; 12340's 158 skybox params are mostly zone
-    /// skies (`StormPeaks_SkyC_Ulduar.mdx`), which no path draws yet.
-    skyboxes: HashMap<u32, String>,
+    /// `LightSkybox.dbc` id → (model chain path, `Flags`), the path spelled as a WMO MOSB skybox is
+    /// so one model never builds twice. The zone skies ([`Self::skybox_blend`]) and the ghost sky
+    /// ([`Self::ghost_skybox`]) both resolve through it.
+    skyboxes: HashMap<u32, (String, u32)>,
 }
 
 pub(crate) fn light_int_band_schema() -> Schema {
@@ -347,7 +352,14 @@ impl LightCatalog {
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
                 if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 1)) {
-                    m.insert(id, crate::models::model_path(&path));
+                    // An unnamed record is a null sky that still holds its list place (`0x7f30c0`).
+                    let flags = u32_at(r, 2).unwrap_or(0);
+                    let path = if path.is_empty() {
+                        String::new()
+                    } else {
+                        crate::models::model_path(&path)
+                    };
+                    m.insert(id, (path, flags));
                 }
             }
             m
@@ -455,7 +467,133 @@ impl LightCatalog {
     pub fn ghost_skybox(&self, map: u32, pos: [f32; 3]) -> Option<&str> {
         let light = self.pick_light(map, pos)?;
         let id = self.light_params_skybox.get(&light.params[SLOT_DEATH])?;
-        self.skyboxes.get(id).map(String::as_str)
+        self.skyboxes
+            .get(id)
+            .map(|(path, _)| path.as_str())
+            .filter(|p| !p.is_empty())
+    }
+
+    /// The ghost sky's `LightSkybox` flags, for its time-of-day sync (`0x7ecf20`).
+    pub fn ghost_skybox_flags(&self, map: u32, pos: [f32; 3]) -> u32 {
+        self.pick_light(map, pos)
+            .and_then(|l| self.light_params_skybox.get(&l.params[SLOT_DEATH]))
+            .and_then(|id| self.skyboxes.get(id))
+            .map_or(0, |(_, flags)| *flags)
+    }
+
+    /// A `Light.dbc` row by id, on any map.
+    fn light_by_id(&self, id: u32) -> Option<&Light> {
+        self.lights.iter().find(|l| l.id == id)
+    }
+
+    /// The zone lights at `pos` with their blend weights, in table order (`0x77eed0`, `0x7ee6b0`).
+    fn zone_lights(&self, map: u32, pos: [f32; 3]) -> Vec<(&Light, f32)> {
+        if !zones::USE_ZONE_LIGHTS {
+            return Vec::new();
+        }
+        zones::zone_lights(map, pos, |id| self.light_by_id(id).is_some())
+            .into_iter()
+            .filter_map(|(id, dist)| {
+                Some((self.light_by_id(id)?, zones::zone_weight(dist).min(1.0)))
+            })
+            .filter(|(_, w)| *w > 0.0)
+            .collect()
+    }
+
+    /// A zone light's own row (falloff end under 3 yards), which `0x7f1360` skips as a sphere.
+    fn zone_marker(l: &Light) -> bool {
+        zones::USE_ZONE_LIGHTS && l.falloff_end < 3.0
+    }
+
+    /// The zone skies this frame, at most three in draw order: the global light's sky seeded at 1.0
+    /// (`0x7ebff0`), then the zone lights, the area spheres farthest first and the server overrides
+    /// folded in at their weights (`0x7f1360`, `0x7ed4c0`), compacted (`0x7f3230`). Magma and slime
+    /// take their fixed row alone; storm leaves the skies alone (`0x7ec220`); the ghost sky is the
+    /// override ([`Self::ghost_skybox`]).
+    pub fn skybox_blend(
+        &self,
+        map: u32,
+        pos: [f32; 3],
+        submersion: Submersion,
+        overrides: &[LightOverride],
+    ) -> Vec<SkyboxDraw> {
+        let sky_of = |param: u32| self.light_params_skybox.get(&param).copied().unwrap_or(0);
+        let record = |id: u32| self.skyboxes.get(&id).cloned();
+        if let Some(p) = submersion.fixed_param() {
+            if self.has_param(p) {
+                return compact_pairs(&seed_pairs(sky_of(p)), record);
+            }
+        }
+        let slot = weather_slot(false, false, submersion.is_water());
+        // The row's params for the slot, the clear slot standing in for an unset one (`0x7eb180`).
+        let param_of = |l: &Light| -> Option<u32> {
+            let p = match l.params[slot] {
+                0 => l.params[SLOT_CLEAR],
+                p => p,
+            };
+            (p >= 1).then_some(p)
+        };
+        // The base, as the atmosphere's: the global, else the zero-match record for a rowless map.
+        // The seven maps with rows but no global start from the constructor's empty pairs.
+        let map_has_no_light = !self.lights.iter().any(|l| l.map == map);
+        let base = self
+            .lights
+            .iter()
+            .find(|l| l.map == map && l.global)
+            .or_else(|| {
+                map_has_no_light
+                    .then(|| self.light_by_id(FALLBACK_LIGHT_ID))
+                    .flatten()
+            })
+            .and_then(param_of);
+        let mut pairs = base.map_or_else(SkyboxPairs::default, |p| seed_pairs(sky_of(p)));
+
+        let dist = |l: &Light| {
+            (0..3)
+                .map(|i| (l.pos[i] - pos[i]).powi(2))
+                .sum::<f32>()
+                .sqrt()
+        };
+        for (light, weight) in self.zone_lights(map, pos) {
+            if let Some(p) = param_of(light) {
+                merge_pair(&mut pairs, sky_of(p), weight);
+            }
+        }
+        let mut locals: Vec<(f32, &Light)> = self
+            .lights
+            .iter()
+            .filter(|l| l.map == map && !l.global && !Self::zone_marker(l))
+            .filter_map(|l| {
+                let d = dist(l);
+                (d <= l.falloff_end).then_some((d, l))
+            })
+            .collect();
+        locals.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (d, l) in locals {
+            if let Some(p) = param_of(l) {
+                merge_pair(
+                    &mut pairs,
+                    sky_of(p),
+                    blend_alpha(d, l.falloff_start, l.falloff_end),
+                );
+            }
+        }
+        for o in overrides.iter().filter(|o| o.fade > 0.0) {
+            let (Some(base), Some(with)) =
+                (self.light_by_id(o.light), self.light_by_id(o.override_id))
+            else {
+                continue;
+            };
+            let d = dist(base);
+            if d >= base.falloff_end {
+                continue;
+            }
+            if let Some(p) = param_of(with) {
+                let weight = blend_alpha(d, base.falloff_start, base.falloff_end).min(o.fade);
+                merge_pair(&mut pairs, sky_of(p), weight);
+            }
+        }
+        compact_pairs(&pairs, record)
     }
 
     /// The reference's area-light blend: from the map's global light, lerp toward each local
@@ -519,12 +657,19 @@ impl LightCatalog {
             .and_then(atmo_of)
             .unwrap_or(Atmosphere::DEFAULT);
 
+        // The zone lights first, in table order (`0x7f1360`, `0x7ee6b0`).
+        for (light, weight) in self.zone_lights(map, pos) {
+            if let Some(atmo) = atmo_of(light) {
+                acc = acc.lerp(&atmo, weight);
+            }
+        }
+
         // Farthest first, so the nearest lands last: the reference drains a max-heap keyed on
         // distance, not weight, blending `(dst, row, w)` for every entry, a lone one too.
         let mut locals: Vec<(f32, &Light)> = self
             .lights
             .iter()
-            .filter(|l| l.map == map && !l.global)
+            .filter(|l| l.map == map && !l.global && !Self::zone_marker(l))
             .filter_map(|l| {
                 let d = (0..3)
                     .map(|i| (l.pos[i] - pos[i]).powi(2))
@@ -541,8 +686,9 @@ impl LightCatalog {
             }
         }
         for o in overrides.iter().filter(|o| o.fade > 0.0) {
-            let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
-            let (Some(base), Some(with)) = (by_id(o.light), by_id(o.override_id)) else {
+            let (Some(base), Some(with)) =
+                (self.light_by_id(o.light), self.light_by_id(o.override_id))
+            else {
                 continue;
             };
             let d = (0..3)

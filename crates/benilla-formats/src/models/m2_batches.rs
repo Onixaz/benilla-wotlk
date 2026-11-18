@@ -160,13 +160,15 @@ pub fn load_m2_mesh_skinned(
         .with_context(|| format!("parsing M2 {path}"))
 }
 
-/// [`crate::m2_bone_spins`] for a model read from the chain.
-pub fn load_m2_bone_spins(
+/// A sky model's render batches and its [`crate::SkyRig`], read once from the chain (`0x7f30c0`).
+pub fn load_sky_model(
     chain: &mut Chain,
     raw_path: &str,
-) -> Result<std::collections::HashMap<u16, crate::BoneSpin>> {
-    let (_, model) = read_model(chain, raw_path)?;
-    Ok(crate::m2_bone_spins(&model))
+) -> Result<(Vec<RenderSubmesh>, crate::SkyRig)> {
+    let (path, model) = read_model(chain, raw_path)?;
+    let subs = parse_m2_render_submeshes(&model, parent_dir(&path), &[])
+        .with_context(|| format!("parsing M2 {path}"))?;
+    Ok((subs, crate::SkyRig::new(&model)))
 }
 
 /// The billboard bones the card split declines as not rigidly separable.

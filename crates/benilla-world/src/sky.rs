@@ -223,10 +223,10 @@ fn follow_camera(
     *gt = GlobalTransform::from(*tf);
 }
 
-/// Hide the dome for the debug toggle, under a WMO skybox (its MOSB model replaces the gradient)
-/// and while submerged: the reference's submerged test skips the sky render whole. The skybox gate
-/// is its weight: below 0.99 the dome still draws under the crossfading skybox
-/// ([`crate::skybox::SkyboxWeight`]).
+/// Hide the dome for the debug toggle, under a full-weight skybox (a zone, WMO or ghost sky model
+/// replaces the gradient) and while submerged: the reference's submerged test skips the sky render
+/// whole. The skybox gate is its weight: below 0.99, or for a sky that combines (the auroras), the
+/// dome still draws under it ([`crate::skybox::SkyboxWeight`]).
 fn apply_sky_visibility(
     debug: Res<DebugState>,
     skybox: Res<crate::skybox::SkyboxWeight>,
