@@ -593,7 +593,7 @@ pub(crate) fn cast_spell(
     }
     debug!(
         "ui_spellbook: cast {spell_id} at {at:?} (selection {:?})",
-        targeting.selection.guid
+        targeting.selected().1
     );
     let aim = targeting.aim(tokens, &at);
     ladder.send_spell(spell_id, &targeting.context_at(aim), aim.passed());

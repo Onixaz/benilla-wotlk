@@ -1,5 +1,6 @@
 //! The feed re-pushing only the views a change reaches, through [`feed_spell_tooltips`] itself.
 
+use crate::ui_script::test_live::PetAnswersExt;
 use benilla_protocol::ObjectFields;
 use benilla_ui::script::UiScript;
 

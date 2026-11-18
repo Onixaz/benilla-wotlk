@@ -22,7 +22,13 @@ const MAX_NESTING: u8 = 8;
 /// made them and before the frame's feed, which publishes the cooldowns they arm.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 pub(crate) fn apply_script_calls(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsCooldowns,
+            crate::ui_script::OwnsSelection,
+        )>,
+    ),
     mut appliers: ParamSet<(
         crate::target::ScriptSelect,
         crate::spell::ScriptCursor,
@@ -93,7 +99,8 @@ pub(crate) fn apply_script_calls(
                     // A pet-action slot sends the pet bar's action, at no unit (`0x5ac000` →
                     // `0x5d4210`).
                     crate::ui_action::UseOutcome::PetAction(index) => {
-                        let out = appliers.p6().press_slot(index + 1);
+                        let out =
+                            pet_press(&mut appliers.p6(), script, |p| p.press_slot(index + 1));
                         cast_as_pet(&mut appliers.p3(), out);
                     }
                 }
@@ -113,15 +120,17 @@ pub(crate) fn apply_script_calls(
                 appliers.p5().equip_item(script, bag, slot, dst);
             }
             ScriptCall::CastPetSpell { spell_id, on_self } => {
-                let out = crate::ui_pet_book::cast_pet_spell(&mut appliers.p6(), spell_id, on_self);
+                let out = pet_press(&mut appliers.p6(), script, |p| {
+                    crate::ui_pet_book::cast_pet_spell(p, spell_id, on_self)
+                });
                 cast_as_pet(&mut appliers.p3(), out);
             }
             ScriptCall::PetAction(slot) => {
-                let out = appliers.p6().press_slot(slot);
+                let out = pet_press(&mut appliers.p6(), script, |p| p.press_slot(slot));
                 cast_as_pet(&mut appliers.p3(), out);
             }
             ScriptCall::PetOrder(packed) => {
-                let out = appliers.p6().order(packed);
+                let out = pet_press(&mut appliers.p6(), script, |p| p.order(packed));
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
@@ -136,6 +145,26 @@ pub(crate) fn apply_script_calls(
             cast.ladder.resume_after_pick(held, &ctx);
         }
     });
+}
+
+/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and the flush its cooldown start made (`0x805ec3`, `0x805eda`), fired as the press returns.
+pub(crate) fn pet_press(
+    press: &mut crate::ui_pet::PetPress,
+    script: &mut UiScript,
+    f: impl FnOnce(&mut crate::ui_pet::PetPress) -> crate::ui_pet::PetCast,
+) -> crate::ui_pet::PetCast {
+    let at = |press: &crate::ui_pet::PetPress| {
+        let bar = press.bar.read();
+        (bar.bar_signals, bar.cooldowns.generation)
+    };
+    let (signals, generation) = at(press);
+    let out = f(press);
+    let (now_signals, now_generation) = at(press);
+    if now_generation != generation {
+        crate::ui_pet::pet_cooldown_flush_now(script);
+    }
+    crate::ui_pet::fire_bar_signals(script, signals, now_signals);
+    out
 }
 
 /// A pet press that forked to the cast ladder (`0x5d445a`): run it with the pet as caster.
@@ -199,7 +228,7 @@ mod tests {
     use benilla_protocol::messages::{
         ActionButton, GroupMemberEntry, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
     };
-    use benilla_ui::script::{PetBookState, SpellBookState, SpellSlotView, SpellTabView};
+    use benilla_ui::script::{SpellBookState, SpellSlotView, SpellTabView};
     use bevy::ecs::system::RunSystemOnce;
     use crossbeam_channel::Receiver;
 
@@ -312,11 +341,10 @@ mod tests {
 
     /// Run `lua` in the VM, then this frame's one application of what it queued.
     fn run(f: &mut Frame, lua: &str) {
-        f.app
-            .world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .run(lua)
-            .expect("the script runs");
+        crate::ui_script::live::with_live_world(f.app.world_mut(), |s| {
+            s.run(lua).expect("the script runs")
+        })
+        .expect("the frame's VM");
         f.app
             .world_mut()
             .run_system_once(apply_script_calls)
@@ -570,11 +598,15 @@ mod tests {
             (r#"CastSpell(1, "pet", "0")"#, OLD),
         ] {
             let mut f = frame(true);
-            f.app
-                .world_mut()
-                .resource_mut::<crate::ui_pet::PetBar>()
-                .spells
-                .pet_guid = PET;
+            {
+                let world = f.app.world_mut();
+                let mut bar = world.resource_mut::<crate::ui_pet::PetBar>();
+                bar.spells.pet_guid = PET;
+                // The book's one word, the array the verbs read at the call.
+                bar.spells.spells = vec![benilla_protocol::messages::PetActionEntry::from(
+                    GROWL | (u32::from(benilla_protocol::messages::PET_ACT_ENABLED) << 24),
+                )];
+            }
             // Our own pet, `SUMMONEDBY` us, so the usability gate passes (`0x5d4285`).
             let pet = f
                 .app
@@ -599,17 +631,6 @@ mod tests {
                 ),
                 ..crate::ui_action::Spells::empty_for_tests()
             });
-            f.app
-                .world_mut()
-                .non_send_resource_mut::<UiScript>()
-                .set_pet_book(PetBookState {
-                    token: Some("PET".into()),
-                    slots: vec![SpellSlotView {
-                        spell_id: GROWL,
-                        name: "Growl".into(),
-                        ..Default::default()
-                    }],
-                });
             run(&mut f, lua);
             assert_eq!(
                 pet_actions(&f),

@@ -2004,7 +2004,6 @@ mod tests {
             ("PET_SPELL_POWER_UPDATE", R_1),
             ("PLAYER_ENTERING_BATTLEGROUND", R_1),
             ("PLAYER_ROLES_ASSIGNED", R_1),
-            ("RAISED_AS_GHOUL", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
             ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
             ("UPDATE_SHAPESHIFT_FORM", R_1),
@@ -2093,7 +2092,6 @@ mod tests {
                  hide path only",
             ),
             ("DISPLAY_SIZE_CHANGED", "the four paperdoll files"),
-            ("PET_UI_CLOSE", "PetPaperDollFrame.lua"),
             (
                 "SHOW_COMPARE_TOOLTIP",
                 "PaperDollFrame.lua — the second `TRADE_REQUEST`: event 377 is \

@@ -422,7 +422,7 @@ fn feed_spell_info(
     mods: Res<crate::spell::SpellModifiers>,
     icons: Res<WeaponActionIcons>,
     self_q: Query<(Entity, Ref<ObjectStore>), With<SelfPlayer>>,
-    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
+    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     index: Res<crate::net::GuidIndex>,
     stores: Query<Ref<ObjectStore>>,
     range_units: crate::spell::RangeUnits,
@@ -483,7 +483,7 @@ fn feed_spell_info(
         caster(entity, &store, snap.player.take(), level)
     });
     let pet = pet_bar
-        .as_ref()
+        .get()
         .map(|b| b.spells.pet_guid)
         .filter(|&g| g != 0)
         .and_then(|g| index.0.get(&g).copied())

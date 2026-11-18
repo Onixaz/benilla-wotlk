@@ -59,7 +59,7 @@ pub(crate) fn attack_nearest_probe(
     mut probe: MessageReader<crate::target::AttackNearestRequest>,
     mut press: AttackPress,
 ) {
-    if probe.read().last().is_some() && press.selection.guid.is_none() {
+    if probe.read().last().is_some() && press.selection.read().guid.is_none() {
         press.attack_target();
     }
 }
@@ -69,7 +69,7 @@ pub(crate) fn attack_nearest_probe(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackPress<'w, 's> {
     pick: crate::target::AttackPick<'w, 's>,
-    selection: ResMut<'w, crate::target::Selection>,
+    selection: crate::ui_script::OwnedMut<'w, crate::target::Selection>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
     ui_errors: ResMut<'w, UiErrorKeys>,
     player: Option<Res<'w, crate::player::Player>>,
@@ -144,7 +144,8 @@ impl AttackPress<'_, '_> {
             ui_errors,
             ..
         } = self;
-        let Some(guid) = pick.gated(selection, ui_errors, true) else {
+        let gated = pick.gated(&selection.read(), ui_errors, true);
+        let Some(guid) = gated else {
             return;
         };
         let Ok(e) = seam.me.single() else {
@@ -218,7 +219,7 @@ impl AttackPress<'_, '_> {
         if attack_actor_refusal(me, my_guid, mounted, ui_errors) {
             return None;
         }
-        pick.target(passed, selection, seam, ui_errors, check_range)
+        pick.target(passed, &mut selection.write(), seam, ui_errors, check_range)
     }
 }
 
@@ -227,7 +228,10 @@ impl AttackPress<'_, '_> {
 /// mid-cast is the ladder's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
     // Not a `CastLadder` field: Bevy panics on a resource reachable twice from one system.
@@ -311,7 +315,7 @@ pub(crate) fn use_action(
         gate,
         tokens,
     } = p;
-    let selection = &targeting.selection;
+    let selection = targeting.selection();
     let action = press.action;
     let slot = match u8::try_from(action.saturating_sub(1)) {
         Ok(s) => s,

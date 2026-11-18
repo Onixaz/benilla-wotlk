@@ -1091,14 +1091,14 @@ fn the_death_verbs_read_the_held_unit_live() {
             .unwrap()
     };
     // A corpse, a feigning stranger, a feigning party member and a ghost.
-    let live = crate::script::live::TestView {
+    let mut live = crate::script::live::TestView {
         player: Some(1),
         units: [(1, (0, 1)), (2, (0, 50)), (3, (0, 50))].into(),
         dynamic_flags: [(2, 0x20), (3, 0x20)].into(),
         player_flags: [(1, 0x10), (3, 0)].into(),
         ..Default::default()
     };
-    s.with_live(&live, |s| {
+    s.with_live(&mut live, |s| {
         assert_eq!(
             ask(s, r#"UnitIsDead("player")"#),
             "nil",
@@ -1120,13 +1120,13 @@ fn the_death_verbs_read_the_held_unit_live() {
         );
         assert_eq!(ask(s, r#"UnitIsDeadOrGhost("party1")"#), "nil");
     });
-    let dead = crate::script::live::TestView {
+    let mut dead = crate::script::live::TestView {
         player: Some(1),
         units: [(1, (0, 0))].into(),
         player_flags: [(1, 0)].into(),
         ..Default::default()
     };
-    s.with_live(&dead, |s| {
+    s.with_live(&mut dead, |s| {
         assert_eq!(ask(s, r#"UnitIsDead("player")"#), "1");
         assert_eq!(ask(s, r#"UnitIsGhost("player")"#), "nil");
         assert_eq!(ask(s, r#"UnitIsDeadOrGhost("player")"#), "1");
@@ -1154,11 +1154,11 @@ fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
             .unwrap(),
         "no view lent reads nobody"
     );
-    let live = crate::script::live::TestView {
+    let mut live = crate::script::live::TestView {
         units: [(1, (1 << 19, 72)), (2, (1 << 20, 1))].into(),
         ..Default::default()
     };
-    s.with_live(&live, |s| {
+    s.with_live(&mut live, |s| {
         assert_eq!(
             s.eval::<String>(r#"return type(UnitAffectingCombat("player"))"#)
                 .unwrap(),
@@ -2171,11 +2171,11 @@ fn unit_on_taxi_is_one_or_nil_and_raises_the_reference_usage() {
     assert!(s
         .eval::<bool>(r#"return UnitOnTaxi("player") == nil"#)
         .unwrap());
-    let riding = crate::script::live::TestView {
+    let mut riding = crate::script::live::TestView {
         units: [(1, (1 << 20, 72)), (2, (0, 1))].into(),
         ..Default::default()
     };
-    s.with_live(&riding, |s| {
+    s.with_live(&mut riding, |s| {
         assert_eq!(
             s.eval::<String>(r#"return type(UnitOnTaxi("player"))"#)
                 .unwrap(),

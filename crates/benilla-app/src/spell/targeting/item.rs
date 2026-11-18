@@ -132,7 +132,7 @@ pub(crate) fn item_bind_verdict(
 pub(crate) fn commit_item_cast_on_pick(
     (script, _live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
     self_q: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
     enchants: Option<Res<crate::items::Enchants>>,

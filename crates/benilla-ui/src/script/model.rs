@@ -580,10 +580,6 @@ pub(crate) struct Model {
     pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
     /// The full known-spell set, a superset of [`Self::spellbook`], and the rank table the item tests walk.
     pub(crate) known_spells: spellbook::KnownSpells,
-    /// The pet's spellbook, a second array as in the reference.
-    pub(crate) pet_book: spellbook::PetBookState,
-    /// The critter and mount lists (`0xbe8df4`).
-    pub(crate) companions: super::companion::CompanionState,
     /// `DismissCompanion` and `SummonRandomCritter` asks, in call order, for the app.
     pub(crate) companion_intents: Vec<super::companion::CompanionIntent>,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
@@ -602,10 +598,6 @@ pub(crate) struct Model {
     pub(crate) macro_item_icons: Vec<String>,
     /// Builds [`Self::macro_item_icons`] on first use, then is spent.
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
-    /// `ToggleSpellAutocast` ids for `CMSG_PET_SPELL_AUTOCAST` (`0x2F3`), which names a spell.
-    pub(crate) pet_spell_autocasts: Vec<u32>,
-    /// `EnableSpellAutocast` and `DisableSpellAutocast` calls queued.
-    pub(crate) pet_spell_autocast_sets: Vec<(u32, bool)>,
     /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
     /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
     pub(crate) casting: bool,
@@ -733,15 +725,6 @@ pub(crate) struct Model {
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
-    /// The pet bar's ten slots and two bar-wide bits, replaced whole by every `SMSG_PET_SPELLS`.
-    pub(crate) pet_bar: super::pet::PetBarState,
-    /// 1-based slot indices `TogglePetAutocast` queued.
-    pub(crate) pet_autocast_toggles: Vec<u32>,
-    /// `PetStopAttack()` calls.
-    pub(crate) pet_stop_attacks: u32,
-    /// One `CMSG_PET_SET_ACTION` per entry, its one or two `(position, packed word)` pairs: the
-    /// server tells the forms apart by body size, so a move's two pairs must not be flattened.
-    pub(crate) pet_set_actions: Vec<Vec<(u32, u32)>>,
     /// `PetAbandon()` and `PetDismiss()` calls, counted apart though both end at one opcode.
     pub(crate) pet_abandons: u32,
     pub(crate) pet_dismisses: u32,
@@ -842,7 +825,7 @@ pub(crate) struct Model {
     pub(crate) repair_all: Option<bool>,
     pub(crate) repair_mode: bool,
 
-    /// The stable window: snapshot, selection, drag and queued calls, reset together on close.
+    /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
     /// The open bank's slot-purchase row and calls; its contents are bags -1 and 5..=11.
@@ -1581,8 +1564,6 @@ impl Model {
             spellbook: spellbook::SpellBookState::default(),
             known_spells: spellbook::KnownSpells::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),
-            pet_book: spellbook::PetBookState::default(),
-            companions: super::companion::CompanionState::default(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
             macros_dirty: false,
@@ -1592,8 +1573,6 @@ impl Model {
             macro_icon_source: None,
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
-            pet_spell_autocasts: Vec::new(),
-            pet_spell_autocast_sets: Vec::new(),
             casting: false,
             spell_targeting: false,
             spell_targetable_units: HashSet::new(),
@@ -1654,10 +1633,6 @@ impl Model {
             totem_destroys: Vec::new(),
             multicast: Default::default(),
             ui_errors_s: Vec::new(),
-            pet_bar: super::pet::PetBarState::default(),
-            pet_autocast_toggles: Vec::new(),
-            pet_stop_attacks: 0,
-            pet_set_actions: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,
             pet_renames: Vec::new(),

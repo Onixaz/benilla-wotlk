@@ -437,7 +437,7 @@ fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
 /// The owner of a piece of [`super::live::Lent`] state lends its own borrow for one call: a verb inside it writes the owner's state, the loan is gone once the call returns or unwinds, and Bevy saw the write through the owner's `NonSendMut`.
 #[test]
 fn an_owners_loan_lasts_one_call_and_bevy_sees_the_write() {
-    use super::live::{lent, UniqueSignals};
+    use super::live::UniqueSignals;
     use super::LendLive;
     use benilla_ui::script::write_live;
 
@@ -447,7 +447,7 @@ fn an_owners_loan_lasts_one_call_and_bevy_sees_the_write() {
     fn owner(
         (script, mut live): (
             Option<NonSendMut<UiScript>>,
-            LendLive<'_, '_, { lent::SIGNALS }>,
+            LendLive<'_, '_, super::live::OwnsSignals>,
         ),
         mut signals: NonSendMut<UniqueSignals>,
         mut seen: ResMut<Seen>,
@@ -544,7 +544,7 @@ fn a_held_quest_window_shuts_the_verbs_out() {
     );
 }
 
-/// A system that writes none of the [`super::live::Lent`] state lends `LendLive`'s own borrow: a verb's write lands in the world's state and shows as a change, and a read-only loan writes nothing.
+/// A system that writes none of the [`super::live::Lent`] state lends `LendLive`'s own borrow: a verb's write lands in the world's state and shows as a change, and a view lending no queue takes nothing.
 #[test]
 fn a_verbs_write_through_lend_live_lands_and_shows_as_a_change() {
     use super::live::UniqueSignals;
@@ -595,7 +595,7 @@ fn a_verbs_write_through_lend_live_lands_and_shows_as_a_change() {
     }
     let mut s = UiScript::new().unwrap();
     assert_eq!(
-        s.with_live(&Bare, |_| write_live(|l| l.unique_signal("X"))),
-        None
+        s.with_live(&mut Bare, |_| write_live(|l| l.unique_signal("X"))),
+        Some(false)
     );
 }

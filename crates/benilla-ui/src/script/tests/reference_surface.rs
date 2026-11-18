@@ -18,8 +18,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "CheckPetUntrainerDist",
     "ConfirmPetUnlearn",
     "FollowByName",
-    "GetPetLoyalty",
-    "GetPetTrainingPoints",
     "PlayerHasSpells",
     "TargetByName",
     "ToggleMouseMove",

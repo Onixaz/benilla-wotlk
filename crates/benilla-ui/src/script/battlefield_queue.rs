@@ -970,14 +970,15 @@ mod tests {
     #[test]
     fn the_type_list_sorts_random_first_then_level_and_resorts_on_holiday() {
         let mut s = vm();
-        let view = with_rows(rows());
+        let mut view = with_rows(rows());
         assert_eq!(
-            s.with_live(&view, |s| s.eval::<i64>("return GetNumBattlegroundTypes()"))
+            s.with_live(&mut view, |s| s
+                .eval::<i64>("return GetNumBattlegroundTypes()"))
                 .unwrap(),
             4,
             "arena rows are not battleground types"
         );
-        let names = |s: &mut UiScript, view: &View| {
+        let names = |s: &mut UiScript, view: &mut View| {
             s.with_live(view, |s| {
                 s.eval::<String>(
                     "local t = {} for i = 1, GetNumBattlegroundTypes() do \
@@ -987,31 +988,31 @@ mod tests {
             .unwrap()
         };
         assert_eq!(
-            names(&mut s, &view),
+            names(&mut s, &mut view),
             "Random Battleground,Warsong Gulch,Arathi Basin,Alterac Valley"
         );
         let mut r = rows();
         r[0].holiday = true;
-        let holiday = with_rows(r);
+        let mut holiday = with_rows(r);
         assert_eq!(
-            names(&mut s, &holiday),
+            names(&mut s, &mut holiday),
             "Random Battleground,Warsong Gulch,Arathi Basin,Alterac Valley",
             "a new holiday waits for SortBGList"
         );
         assert!(s
-            .with_live(&holiday, |s| s.eval::<bool>("return SortBGList()"))
+            .with_live(&mut holiday, |s| s.eval::<bool>("return SortBGList()"))
             .unwrap());
         assert_eq!(
-            names(&mut s, &holiday),
+            names(&mut s, &mut holiday),
             "Random Battleground,Alterac Valley,Warsong Gulch,Arathi Basin"
         );
         assert_eq!(
-            names(&mut s, &view),
+            names(&mut s, &mut view),
             "Random Battleground,Alterac Valley,Warsong Gulch,Arathi Basin",
             "the last sort holds until the next"
         );
         let got = s
-            .with_live(&holiday, |s| {
+            .with_live(&mut holiday, |s| {
                 s.eval::<String>(
                     "local n, c, h, r, id = GetBattlegroundInfo(1) \
                      return n .. tostring(c) .. tostring(h) .. tostring(r) .. id",
@@ -1030,12 +1031,12 @@ mod tests {
     #[test]
     fn requesting_a_type_switches_it_at_once() {
         let mut s = vm();
-        let view = with_rows(rows());
-        s.with_live(&view, |s| s.run("RequestBattlegroundInstanceInfo(2)"))
+        let mut view = with_rows(rows());
+        s.with_live(&mut view, |s| s.run("RequestBattlegroundInstanceInfo(2)"))
             .unwrap();
         assert_eq!(s.take_battlefield_list_requests(), vec![2]);
         let got = s
-            .with_live(&view, |s| {
+            .with_live(&mut view, |s| {
                 s.eval::<String>(
                     "local n, d, g = GetBattlefieldInfo() return n .. '|' .. d .. '|' .. g",
                 )
@@ -1043,11 +1044,11 @@ mod tests {
             .unwrap();
         assert_eq!(got, "Warsong Gulch|Warsong Gulch text|5");
         assert_eq!(
-            s.with_live(&view, |s| s.arity("GetBattlefieldInfo()"))
+            s.with_live(&mut view, |s| s.arity("GetBattlefieldInfo()"))
                 .unwrap(),
             6
         );
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             s.run("RequestBattlegroundInstanceInfo(0) RequestBattlegroundInstanceInfo(9)")
         })
         .unwrap();
@@ -1096,18 +1097,18 @@ mod tests {
     #[test]
     fn an_arena_join_takes_the_index_as_its_slot() {
         let mut s = vm();
-        let view = with_rows(rows());
+        let mut view = with_rows(rows());
         s.apply_battlefield_list(BattlefieldListPush {
             battlemaster: 0x77,
             bg_type: 6,
             ..Default::default()
         });
         assert_eq!(
-            s.with_live(&view, |s| s.eval::<i64>("return IsBattlefieldArena()"))
+            s.with_live(&mut view, |s| s.eval::<i64>("return IsBattlefieldArena()"))
                 .unwrap(),
             1
         );
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             s.run("JoinBattlefield(1, 1, 1) JoinBattlefield(3)")
         })
         .unwrap();
@@ -1144,12 +1145,12 @@ mod tests {
             port_expiration_ms: 79_900,
             ..Default::default()
         };
-        let view = View {
+        let mut view = View {
             frame: frame.clone(),
             ..Default::default()
         };
         let got = s
-            .with_live(&view, |s| {
+            .with_live(&mut view, |s| {
                 s.eval::<String>(
                     "local st, n, id, lo, hi, size, rated = GetBattlefieldStatus(1) \
                      return st .. n .. id .. lo .. hi .. size .. tostring(rated)",
@@ -1158,23 +1159,24 @@ mod tests {
             .unwrap();
         assert_eq!(got, "confirmWarsong Gulch410190nil");
         assert_eq!(
-            s.with_live(&view, |s| s.arity("GetBattlefieldStatus(3)"))
+            s.with_live(&mut view, |s| s.arity("GetBattlefieldStatus(3)"))
                 .unwrap(),
             7
         );
         assert_eq!(
-            s.with_live(&view, |s| s
+            s.with_live(&mut view, |s| s
                 .eval::<i64>("return GetBattlefieldPortExpiration(1)"))
                 .unwrap(),
             79,
             "whole seconds"
         );
         frame.port_refusal = Some("ERR_NOT_IN_COMBAT");
-        let refused = View {
+        let mut refused = View {
             frame,
             ..Default::default()
         };
-        let ask = |s: &mut UiScript, lua: &str| s.with_live(&refused, |s| s.eval::<bool>(lua));
+        let mut ask =
+            |s: &mut UiScript, lua: &str| s.with_live(&mut refused, |s| s.eval::<bool>(lua));
         assert!(ask(&mut s, "return AcceptBattlefieldPort(1, 1) == nil").unwrap());
         assert!(s.take_battlefield_port_requests().is_empty());
         assert!(ask(&mut s, "return AcceptBattlefieldPort(1, 0) == 1").unwrap());
@@ -1191,7 +1193,7 @@ mod tests {
             ..Default::default()
         };
         frame.slots[1].rated = true;
-        let view = View {
+        let mut view = View {
             frame,
             ..Default::default()
         };
@@ -1201,7 +1203,7 @@ mod tests {
             )
             .unwrap()
         };
-        assert_eq!(s.with_live(&view, ask), "11");
+        assert_eq!(s.with_live(&mut view, ask), "11");
         assert_eq!(ask(&mut s), "nilnil", "no view: no arena");
     }
 }

@@ -1,96 +1,322 @@
-//! The companion feed and drain behind `GetNumCompanions` (`0x53c2a0`), `GetCompanionInfo`
-//! (`0x53e2c0`), `GetCompanionCooldown` (`0x53e490`), `CallCompanion` (`0x53e5e0`),
-//! `DismissCompanion` (`0x53e6b0`) and `SummonRandomCritter` (`0x53e7e0`): the stock pet paper
-//! doll's Companions and Mounts tabs.
-//!
-//! A known spell past the registrar's `0x80`/`0x20` exits that summons into a slot-5
-//! `SummonProperties` row or applies `MOUNTED` first joins a list (`0x5426a5`, [`CompanionKind`])
-//! instead of the book. Each list sorts by its creature's cached name once no record is pending
-//! (`0x53cec0`, a case-insensitive UTF-8 sort); until then it keeps spell order.
-//!
-//! Events, in the reference's order:
-//! - `COMPANION_UPDATE` (no type) whenever the lists re-sort (`0x53cec0`): the login once every
-//!   record is cached, each learn and unlearn;
-//! - `ERR_LEARN_COMPANION_S` with the creature's name, then `COMPANION_LEARNED`, on a live learn
-//!   once its record is cached (`0x5427be`, `0x53ebc0`); `COMPANION_UNLEARNED` on an unlearn
-//!   (`0x53fad0`);
-//! - `COMPANION_UPDATE "CRITTER"` on a `UNIT_FIELD_CRITTER` change, `"MOUNT"` on a `MOUNTED` aura's
-//!   arrival or removal (`0x724820`, `0x71e930`).
-//!
-//! Not modelled: the vehicle arm of the active test (`0x802cf3`), and the learn's tutorials
-//! (`0x33`, `0x34`).
-
-use std::collections::BTreeSet;
+//! The companion lists behind `GetNumCompanions` (`0x53c2a0`), `GetCompanionInfo` (`0x53e2c0`), `GetCompanionCooldown` (`0x53e490`), `CallCompanion` (`0x53e5e0`), `DismissCompanion` (`0x53e6b0`) and `SummonRandomCritter` (`0x53e7e0`), filled by the spell handlers' known-spell add (`0x5426a5`) with spell ids the verbs resolve when called and sorted by creature name once no record is pending (`0x53cec0`); each event fires from the handler that causes it, and the active test's own-vehicle arm (`0x802cf3`) is #1070's.
 
 use bevy::prelude::*;
 
 use benilla_formats::{CompanionKind, SpellCatalog, SummonPropertiesCatalog, SPELL_AURA_MOUNTED};
-use benilla_ui::script::{CompanionIntent, CompanionState, CompanionView, ScriptValue, UiScript};
+use benilla_protocol::ObjectFields;
+use benilla_ui::script::{CompanionIntent, CompanionType, CompanionView, ScriptValue, UiScript};
 
 use crate::names::{NameCache, NameKey};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
-use crate::spell::{CompanionEdges, Cooldowns, SummonSlots};
-use crate::ui_action::{PlayerActions, Spells, UiError, UiErrorKeys};
-use crate::ui_script::{gate, UiDrain};
-use crate::ui_unit::UnitFeed;
+use crate::spell::SummonSlots;
+use crate::ui_action::{Spells, UiError};
+use crate::ui_script::live::UiEvents;
+use crate::ui_script::UiDrain;
 use crate::unit_auras::UnitAuras;
 
 /// `SkillLine.dbc` "Companion Pets": `SummonRandomCritter`'s pool (`0x6e7bc4`).
-const SKILL_LINE_COMPANIONS: u32 = 778;
+pub(crate) const SKILL_LINE_COMPANIONS: u32 = 778;
 
 pub(crate) struct UiCompanionPlugin;
 
 impl Plugin for UiCompanionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                // Before the cooldown events, whose `SPELL_UPDATE_COOLDOWN` makes the page re-read
-                // `GetCompanionCooldown`, and after the book, which the learn line follows. Before
-                // the pet feeds: their `UNIT_PET` and `PET_BAR_UPDATE` re-test the Pets tab off
-                // `GetNumCompanions`, whose lists 12340 fills with the known spells (`0x5426a5`).
-                feed_companions
-                    .in_set(UnitFeed)
-                    .after(crate::ui_spellbook::BookFeed)
-                    .after(crate::ui_action::SlotIdentityFeed)
-                    .before(crate::ui_pet_stats::PetSnapshot)
-                    .before(crate::ui_action::CooldownEvents),
-                drain_companions.in_set(UiDrain),
-                // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
-                // Before the display build that loads its model and the booth that draws it.
-                feed_companion_booth
-                    .in_set(UiDrain)
-                    .in_set(crate::portrait::CreatureBoothFeed)
-                    .before(crate::entities::DisplayBuildSet),
-            ),
+        app.init_resource::<CompanionLists>()
+            .init_resource::<KnownSpellBuffer>()
+            .add_systems(
+                Update,
+                (
+                    drain_companions.in_set(UiDrain),
+                    // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it. Before the display build that loads its model and the booth that draws it.
+                    feed_companion_booth
+                        .in_set(UiDrain)
+                        .in_set(crate::portrait::CreatureBoothFeed)
+                        .before(crate::entities::DisplayBuildSet),
+                ),
+            );
+        net::register(app);
+    }
+}
+
+/// The companion lists (`0xbe8df4`), their pending records and the random pool (`0x6e7bc4`).
+#[derive(Resource, Default)]
+pub(crate) struct CompanionLists {
+    /// Critters, then mounts: spell ids in add order until sorted.
+    lists: [Vec<u32>; 2],
+    /// One `(creature, notify)` per add whose record was asked: the callback's count and argument (`0x53ebc0`).
+    pending: Vec<(u32, bool)>,
+    /// The known spells of skill line 778, in add order.
+    random_pool: Vec<u32>,
+}
+
+/// A list's slot in [`CompanionLists`], the type parse's order (`0x53b600`).
+fn slot_of(kind: CompanionKind) -> usize {
+    match kind {
+        CompanionKind::Critter => 0,
+        CompanionKind::Mount => 1,
+    }
+}
+
+fn type_slot(ty: CompanionType) -> usize {
+    match ty {
+        CompanionType::Critter => 0,
+        CompanionType::Mount => 1,
+    }
+}
+
+impl CompanionLists {
+    /// List `ty`'s spells in order.
+    pub(crate) fn list(&self, ty: CompanionType) -> &[u32] {
+        &self.lists[type_slot(ty)]
+    }
+
+    /// The random-critter pool.
+    pub(crate) fn random_pool(&self) -> &[u32] {
+        &self.random_pool
+    }
+
+    /// The pool's add for a known spell of skill line 778 (`0x6e7bc4`).
+    fn pool(&mut self, spell_id: u32, line: Option<u32>) {
+        if line == Some(SKILL_LINE_COMPANIONS) && !self.random_pool.contains(&spell_id) {
+            self.random_pool.push(spell_id);
+        }
+    }
+
+    /// The companion list update (`0x53cec0`): with no record pending each non-empty list sorts by its creature's name (`0x53c7c0`); whether one sorted, which fires `COMPANION_UPDATE`.
+    fn update(&mut self, name_of: &dyn Fn(u32) -> String) -> bool {
+        if !self.pending.is_empty() {
+            return false;
+        }
+        let mut sorted = false;
+        for list in &mut self.lists {
+            if list.is_empty() {
+                continue;
+            }
+            list.sort_by_cached_key(|&spell_id| (name_of(spell_id).to_lowercase(), spell_id));
+            sorted = true;
+        }
+        sorted
+    }
+}
+
+/// What one add, unlearn or answer reads: the catalogs, the creature cache and the queue the calling handler fires into.
+pub(crate) struct CompanionCx<'a> {
+    pub(crate) catalog: &'a SpellCatalog,
+    pub(crate) summons: &'a SummonPropertiesCatalog,
+    pub(crate) names: &'a NameCache,
+    pub(crate) commands: &'a NetCommands,
+    pub(crate) ui: &'a mut UiEvents,
+}
+
+impl CompanionCx<'_> {
+    /// A listed spell's creature name for the sort, `answered` standing in for the record the calling handler carries.
+    fn sort_name(&self, spell_id: u32, answered: Option<(u32, &str)>) -> String {
+        let creature = self
+            .catalog
+            .get(spell_id)
+            .map_or(0, |d| d.companion_creature());
+        match answered {
+            Some((entry, name)) if entry == creature => name.to_string(),
+            _ => self
+                .names
+                .creature_record(creature)
+                .map(|r| r.name.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The update and its `COMPANION_UPDATE`.
+    fn update(&mut self, lists: &mut CompanionLists, answered: Option<(u32, &str)>) {
+        let sorted = {
+            let names = |spell_id| self.sort_name(spell_id, answered);
+            lists.update(&names)
+        };
+        if sorted {
+            self.ui.fire("COMPANION_UPDATE", Vec::new());
+        }
+    }
+
+    /// The learn line, shown in turn (`0x5427be`).
+    fn learn_line(&mut self, name: &str) {
+        crate::ui_action::show_in_turn(
+            self.ui,
+            "ui_companion",
+            UiError::s("ERR_LEARN_COMPANION_S", name.to_string()),
         );
     }
 }
 
-/// What the feed last pushed and saw.
-#[derive(Default)]
-pub(crate) struct CompanionMemory {
-    pushed: CompanionState,
-    /// The critter guid and the `MOUNTED` auras' spells, for the typed updates.
-    critter: Option<u64>,
-    mount_auras: Vec<u32>,
-    /// The gate's watches, and whether the last build waits on a name not yet answered.
-    cooldown_epoch: gate::Watch,
-    self_present: gate::Watch,
-    names: gate::Watch,
-    pending: bool,
+/// The known-spell add's companion arm (`0x5426a5`): the spell joins its list and its creature's record is asked; a live learn (`notify`) with the record cached shows the learn line, updates and fires `COMPANION_LEARNED` (`0x5427be`), and a miss waits on the answer.
+pub(crate) fn add_known(
+    lists: &mut CompanionLists,
+    spell_id: u32,
+    notify: bool,
+    line: Option<u32>,
+    cx: &mut CompanionCx,
+) -> Option<u32> {
+    lists.pool(spell_id, line);
+    let d = cx.catalog.get(spell_id).filter(|d| d.in_name_cache())?;
+    let kind = d.companion_kind(cx.summons)?;
+    lists.lists[slot_of(kind)].push(spell_id);
+    let creature = d.companion_creature();
+    match cx.names.answer(NameKey::Creature(creature), 0, cx.commands) {
+        None => lists.pending.push((creature, notify)),
+        Some(name) if notify => {
+            let name = name.unwrap_or_default().to_string();
+            cx.learn_line(&name);
+            cx.update(lists, None);
+            cx.ui.fire("COMPANION_LEARNED", Vec::new());
+        }
+        Some(_) => {}
+    }
+    Some(tutorial_of(kind))
+}
+
+/// The tutorial an add to `kind`'s list triggers, before its record is asked (`0x542751`, `0x54275a`).
+fn tutorial_of(kind: CompanionKind) -> u32 {
+    match kind {
+        CompanionKind::Critter => crate::tutorial::id::COMPANION_CRITTER,
+        CompanionKind::Mount => crate::tutorial::id::COMPANION_MOUNT,
+    }
+}
+
+/// The known-spell buffer the active player's init replays (`0xc9eb3c`): `SMSG_INITIAL_SPELLS` sets it (`0x6df0c0`), a learn, removal or supersede before our object exists edits it (`0x6e7de0`, `0x6e7888`, `0x6e7ef4`), and leaving the world empties it (`0x4065c3`).
+#[derive(Resource, Default)]
+pub(crate) struct KnownSpellBuffer(pub(crate) Vec<u32>);
+
+/// What the active player's init reads to replay the buffer into the lists.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CompanionInit<'w> {
+    buffer: Res<'w, KnownSpellBuffer>,
+    lists: ResMut<'w, CompanionLists>,
+    spells: Option<Res<'w, Spells>>,
+    summons: Option<Res<'w, SummonSlots>>,
+    names: Option<Res<'w, NameCache>>,
+    commands: Option<Res<'w, NetCommands>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    ui: ResMut<'w, UiEvents>,
+    tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
+}
+
+/// The active player's init (`0x6e7f50`), run as our object is created with its race and class: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, then one update (`0x6e7fe3`).
+pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: CompanionInit) {
+    let CompanionInit {
+        buffer,
+        mut lists,
+        spells,
+        summons,
+        names,
+        commands,
+        skill_lines,
+        mut ui,
+        mut tutorials,
+    } = init;
+    let (Some(spells), Some(summons), Some(names), Some(commands)) = (
+        spells.as_deref(),
+        summons.as_deref(),
+        names.as_deref(),
+        commands.as_deref(),
+    ) else {
+        *lists = CompanionLists::default();
+        return;
+    };
+    let line_of = |id: u32| {
+        skill_lines
+            .as_deref()
+            .and_then(|s| s.catalog.spell_to_line(id, race, class))
+    };
+    let known: Vec<_> = buffer.0.iter().map(|&id| (id, line_of(id))).collect();
+    let mut cx = CompanionCx {
+        catalog: &spells.catalog,
+        summons: &summons.0,
+        names,
+        commands,
+        ui: &mut ui,
+    };
+    for id in add_initial(&mut lists, known, &mut cx) {
+        if let Some(t) = tutorials.as_mut() {
+            t.write(crate::tutorial::TutorialEvent::trigger(id));
+        }
+    }
+}
+
+/// The init's adds: the lists cleared (`0x6e7f9d`), each known spell added without a line, then one update.
+pub(crate) fn add_initial(
+    lists: &mut CompanionLists,
+    known: impl IntoIterator<Item = (u32, Option<u32>)>,
+    cx: &mut CompanionCx,
+) -> Vec<u32> {
+    *lists = CompanionLists::default();
+    let tutorials = known
+        .into_iter()
+        .filter_map(|(spell_id, line)| add_known(lists, spell_id, false, line, cx))
+        .collect();
+    cx.update(lists, None);
+    tutorials
+}
+
+/// The known-spell removal's companion arm (`0x53fad0`): a listed spell leaves its list, then the update and `COMPANION_UNLEARNED`.
+pub(crate) fn remove_known(lists: &mut CompanionLists, spell_id: u32, cx: &mut CompanionCx) {
+    lists.random_pool.retain(|&s| s != spell_id);
+    let Some(kind) = cx
+        .catalog
+        .get(spell_id)
+        .and_then(|d| d.companion_kind(cx.summons))
+    else {
+        return;
+    };
+    let list = &mut lists.lists[slot_of(kind)];
+    let Some(at) = list.iter().position(|&s| s == spell_id) else {
+        return;
+    };
+    list.remove(at);
+    cx.update(lists, None);
+    cx.ui.fire("COMPANION_UNLEARNED", Vec::new());
+}
+
+/// The creature-record callback (`0x53ebc0`), once per add that waited on `entry`: a live learn's answered record shows the learn line, updates and fires `COMPANION_LEARNED`; otherwise the last answer updates.
+pub(crate) fn record_answered(
+    lists: &mut CompanionLists,
+    entry: u32,
+    name: Option<&str>,
+    cx: &mut CompanionCx,
+) {
+    while let Some(at) = lists.pending.iter().position(|&(c, _)| c == entry) {
+        let (_, notify) = lists.pending.remove(at);
+        let answered = name.map(|n| (entry, n));
+        match name {
+            Some(name) if notify => {
+                cx.learn_line(name);
+                cx.update(lists, answered);
+                cx.ui.fire("COMPANION_LEARNED", Vec::new());
+            }
+            _ if lists.pending.is_empty() => cx.update(lists, answered),
+            _ => {}
+        }
+    }
+}
+
+/// One `COMPANION_UPDATE "MOUNT"` per `MOUNTED` effect of `spell_id` as an aura of it comes or goes on us (`0x724a6b`, `0x71e9b2`).
+pub(crate) fn mount_updates(spell_id: u32, catalog: &SpellCatalog, ui: &mut UiEvents) {
+    let effects = catalog.get(spell_id).map_or(0, |d| {
+        d.effect_apply_aura
+            .iter()
+            .filter(|&&a| a == SPELL_AURA_MOUNTED)
+            .count()
+    });
+    for _ in 0..effects {
+        ui.fire("COMPANION_UPDATE", vec![ScriptValue::Str("MOUNT".into())]);
+    }
+}
+
+/// `COMPANION_UPDATE "CRITTER"`, from our `UNIT_FIELD_CRITTER` watch (`0x6cf722`).
+pub(crate) fn critter_update(ui: &mut UiEvents) {
+    ui.fire("COMPANION_UPDATE", vec![ScriptValue::Str("CRITTER".into())]);
 }
 
 /// A critter guid's entry bits, as `0x802dd8` takes them: bits 24..51, whatever the high word.
 pub(crate) fn critter_entry(guid: u64) -> u32 {
     ((guid >> 24) & 0x0fff_ffff) as u32
-}
-
-/// The self player's companion facts: the critter out and the live auras.
-#[derive(Clone, Copy, Default)]
-struct SelfFacts<'a> {
-    critter: Option<u64>,
-    auras: Option<&'a UnitAuras>,
 }
 
 /// The active-spell test (`0x802cb0`) for a companion: a slot-5 summon is active while the critter
@@ -101,11 +327,12 @@ fn companion_active(
     d: &benilla_formats::SpellDisplay,
     kind: CompanionKind,
     catalog: &SpellCatalog,
-    facts: SelfFacts,
+    critter: Option<u64>,
+    auras: Option<&UnitAuras>,
 ) -> bool {
     match kind {
-        CompanionKind::Critter => facts.critter.map(critter_entry) == Some(d.companion_creature()),
-        CompanionKind::Mount => facts.auras.is_some_and(|auras| {
+        CompanionKind::Critter => critter.map(critter_entry) == Some(d.companion_creature()),
+        CompanionKind::Mount => auras.is_some_and(|auras| {
             auras.iter().any(|a| {
                 a.spell_id == spell_id
                     || catalog.get(a.spell_id).is_some_and(|m| {
@@ -117,246 +344,132 @@ fn companion_active(
     }
 }
 
-/// The two lists from the known spells (module doc), with `pending` set while any creature record
-/// is still asked.
-#[allow(clippy::too_many_arguments)] // the feed's inputs, kept apart for the tests
-fn build_lists(
-    known: &BTreeSet<u32>,
+/// One companion as `GetCompanionInfo` reads it when called: the creature's cached name, the active icon while active (`0x53e3d3`), and the active test against our own fields and auras.
+pub(crate) fn companion_view(
+    spell_id: u32,
     catalog: &SpellCatalog,
     summons: &SummonPropertiesCatalog,
-    name_of: &dyn Fn(u32) -> Option<Option<String>>,
-    facts: SelfFacts,
-    cooldown_of: &dyn Fn(u32) -> Option<(i64, u32, bool)>,
-) -> (CompanionState, bool) {
-    let mut state = CompanionState::default();
-    let mut pending = false;
-    for &spell_id in known {
-        let Some(d) = catalog.get(spell_id).filter(|d| d.in_name_cache()) else {
-            continue;
-        };
-        let Some(kind) = d.companion_kind(summons) else {
-            continue;
-        };
-        let creature_id = d.companion_creature();
-        let name = match name_of(creature_id) {
-            Some(answer) => answer,
-            None => {
-                pending = true;
-                None
-            }
-        };
-        let active = companion_active(spell_id, d, kind, catalog, facts);
-        // `GetCompanionInfo`'s icon: the active one while active, when the row has one.
-        let icon = if active {
-            d.active_icon.clone().or_else(|| d.icon.clone())
-        } else {
-            d.icon.clone()
-        };
-        let view = CompanionView {
-            creature_id,
-            name,
-            spell_id,
-            icon,
-            active,
-            cooldown: cooldown_of(spell_id),
-        };
-        match kind {
-            CompanionKind::Critter => state.critters.push(view),
-            CompanionKind::Mount => state.mounts.push(view),
-        }
-    }
-    if !pending {
-        // The companion sort (`0x53c7c0`): the names case-insensitively, as its UTF-8 compare does.
-        for list in [&mut state.critters, &mut state.mounts] {
-            list.sort_by_cached_key(|c| {
-                (
-                    c.name.as_deref().unwrap_or_default().to_lowercase(),
-                    c.spell_id,
-                )
-            });
-        }
-    }
-    (state, pending)
-}
-
-/// The lists' identity, the part a re-sort changes: spells, creatures and names in order.
-fn identity(state: &CompanionState) -> Vec<(u32, u32, Option<&str>)> {
-    state
-        .critters
-        .iter()
-        .chain(&state.mounts)
-        .map(|c| (c.spell_id, c.creature_id, c.name.as_deref()))
-        .collect()
-}
-
-#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
-fn feed_companions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    actions: Res<PlayerActions>,
-    spells: Option<Res<Spells>>,
-    summons: Res<SummonSlots>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    cooldowns: Res<Cooldowns>,
-    clock: Res<crate::ui_script::UiClock>,
-    skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
-    self_q: Query<(Ref<ObjectStore>, Option<Ref<UnitAuras>>), With<SelfPlayer>>,
-    mut edges: ResMut<CompanionEdges>,
-    mut errors: ResMut<UiErrorKeys>,
-    mut memory: Local<crate::ui_script::VmMemo<CompanionMemory>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let (memory, vm_reset) = memory.get_reset(&script);
-    let Some(spells) = spells else {
-        return;
-    };
-    let me_ref = self_q.iter().next();
-    // The lists depend on these alone; `UiClock` is not one, as `ui_triple` is frame-stable per
-    // arm and an expiry moves the store's `feed_epoch`.
-    let cooldowns_moved = memory.cooldown_epoch.moved(cooldowns.feed_epoch());
-    let presence_moved = memory.self_present.moved(u64::from(me_ref.is_some()));
-    // The generation, not the change mark: an ask through `ResMut` marks the cache every frame.
-    let names_moved = memory.names.moved(names.generation());
-    // The frame a timer crosses zero, before the prune moves the epoch.
-    let sweep = cooldowns.sweep_pending(clock.anchor);
-    let self_changed = me_ref.as_ref().is_some_and(|(store, auras)| {
-        store.is_changed() || auras.as_ref().is_some_and(|a| a.is_changed())
-    });
-    let inputs = [
-        ("vm_reset", vm_reset),
-        ("cooldowns", cooldowns_moved),
-        ("presence", presence_moved),
-        ("sweep", sweep),
-        ("self", self_changed),
-        ("actions", actions.is_changed()),
-        ("spells", spells.is_changed()),
-        ("summons", summons.is_changed()),
-        ("names", names_moved),
-        (
-            "skill_lines",
-            skill_lines.as_ref().is_some_and(|s| s.is_changed()),
-        ),
-        // A name still unanswered, and a learn or unlearn not yet spoken.
-        ("pending", memory.pending),
-        (
-            "edges",
-            !edges.learned.is_empty() || !edges.unlearned.is_empty(),
-        ),
-    ];
-    gate::trace("feed_companions", &inputs);
-    let gate = gate::Gate::new(inputs.iter().any(|&(_, open)| open));
-    if gate.skip() {
-        return;
-    }
-    let spells = &*spells;
-    let me = me_ref.as_ref().map(|(s, a)| (&**s, a.as_deref()));
-    let facts = SelfFacts {
-        critter: me.and_then(|(s, _)| s.0.unit_critter()),
-        auras: me.and_then(|(_, a)| a),
-    };
-    let name_of = |entry: u32| {
-        names
-            .answer(NameKey::Creature(entry), 0, &commands)
-            .map(|n| n.map(str::to_string))
-    };
-    let (anchor, ui_now) = (clock.anchor, clock.ui_now);
-    let cooldown_of = |spell_id: u32| {
-        cooldowns
-            .info(spell_id, 0, spells.catalog.get(spell_id), anchor)
-            .ui_triple(anchor, ui_now)
-    };
-    let (mut fresh, pending) = build_lists(
-        &actions.spells,
-        &spells.catalog,
-        &summons.0,
-        &name_of,
-        facts,
-        &cooldown_of,
+    name_of: &dyn Fn(u32) -> Option<String>,
+    me: Option<(&ObjectFields, Option<&UnitAuras>)>,
+) -> Option<CompanionView> {
+    let d = catalog.get(spell_id)?;
+    let kind = d.companion_kind(summons)?;
+    let creature_id = d.companion_creature();
+    let active = companion_active(
+        spell_id,
+        d,
+        kind,
+        catalog,
+        me.and_then(|(f, _)| f.unit_critter()),
+        me.and_then(|(_, a)| a),
     );
-    // `SummonRandomCritter`'s pool: the known spells of skill line 778, whatever their effect.
-    let (race, class) = crate::spell::race_class(me.map(|(s, _)| s));
-    fresh.random_pool = actions
-        .spells
-        .iter()
-        .copied()
-        .filter(|&id| {
-            skill_lines
-                .as_deref()
-                .and_then(|s| s.catalog.spell_to_line(id, race, class))
-                == Some(SKILL_LINE_COMPANIONS)
-        })
-        .collect();
+    let icon = if active {
+        d.active_icon.clone().or_else(|| d.icon.clone())
+    } else {
+        d.icon.clone()
+    };
+    Some(CompanionView {
+        creature_id,
+        name: name_of(creature_id),
+        spell_id,
+        icon,
+        active,
+    })
+}
 
-    memory.pending = pending;
-    // A live learn speaks once its record lands; a refused query drops it (`0x53ebc0`).
-    let mut learned = 0;
-    edges.learned.retain(|&spell_id| {
-        let Some(d) = spells.catalog.get(spell_id) else {
-            return false;
+/// What the companion verbs read at call time, part of the VM's live view.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CompanionLive<'w, 's> {
+    lists: Option<Res<'w, CompanionLists>>,
+    spells: Option<Res<'w, Spells>>,
+    summons: Option<Res<'w, SummonSlots>>,
+    names: Option<Res<'w, NameCache>>,
+    commands: Option<Res<'w, NetCommands>>,
+    me: Query<'w, 's, (&'static ObjectStore, Option<&'static UnitAuras>), With<SelfPlayer>>,
+}
+
+impl CompanionLive<'_, '_> {
+    pub(crate) fn spells(&self, ty: CompanionType) -> Vec<u32> {
+        self.lists
+            .as_ref()
+            .map_or_else(Vec::new, |l| l.list(ty).to_vec())
+    }
+
+    pub(crate) fn random_pool(&self) -> Vec<u32> {
+        self.lists
+            .as_ref()
+            .map_or_else(Vec::new, |l| l.random_pool().to_vec())
+    }
+
+    /// List `ty`'s companion at `index`, its name asked on a miss (`0x53e2c0`).
+    pub(crate) fn info(&self, ty: CompanionType, index: usize) -> Option<CompanionView> {
+        let spell_id = *self.lists.as_ref()?.list(ty).get(index)?;
+        let (spells, summons) = (self.spells.as_deref()?, self.summons.as_deref()?);
+        let name_of = |entry: u32| {
+            let (names, commands) = (self.names.as_deref()?, self.commands.as_deref()?);
+            names
+                .answer(NameKey::Creature(entry), 0, commands)
+                .flatten()
+                .map(str::to_string)
         };
-        match name_of(d.companion_creature()) {
-            None => true,
-            Some(None) => false,
-            Some(Some(name)) => {
-                errors.0.push(UiError::s("ERR_LEARN_COMPANION_S", name));
-                learned += 1;
-                false
-            }
+        let me = self.me.iter().next().map(|(s, a)| (&s.0, a));
+        companion_view(spell_id, &spells.catalog, &summons.0, &name_of, me)
+    }
+}
+
+/// The companion handlers: the creature answers the lists wait on.
+pub(crate) mod net {
+    use benilla_protocol::{SessionEvent, SessionEventKind};
+    use bevy::prelude::*;
+
+    use super::{CompanionCx, CompanionLists};
+    use crate::names::NameCache;
+    use crate::net::{NetCommands, NetHandlerApp};
+    use crate::ui_script::live::UiEvents;
+
+    pub(super) fn register(app: &mut App) {
+        app.net_handler(SessionEventKind::CreatureName, on_creature_answer)
+            .net_handler(SessionEventKind::LoggedOut, on_game_end)
+            .net_handler(SessionEventKind::Disconnected, on_game_end);
+    }
+
+    /// Leaving the world empties the known-spell buffer (`0x4065c3` -> `0x6e47d1`).
+    fn on_game_end(In(ev): In<SessionEvent>, mut buffer: ResMut<super::KnownSpellBuffer>) {
+        if matches!(
+            ev,
+            SessionEvent::LoggedOut | SessionEvent::Disconnected { .. }
+        ) {
+            buffer.0.clear();
         }
-    });
-    let unlearned = std::mem::take(&mut edges.unlearned).len();
-
-    let resorted = !pending
-        && (!fresh.critters.is_empty() || !fresh.mounts.is_empty())
-        && identity(&fresh) != identity(&memory.pushed);
-    if fresh != memory.pushed {
-        gate.audit("feed_companions", "the lists");
-        script.set_companions(fresh.clone());
-        memory.pushed = fresh;
-    }
-    if resorted || learned > 0 || unlearned > 0 {
-        debug!(
-            "ui_companion: {} critter(s), {} mount(s) (learned {learned}, unlearned {unlearned})",
-            memory.pushed.critters.len(),
-            memory.pushed.mounts.len()
-        );
-    }
-    if resorted {
-        script.fire_event("COMPANION_UPDATE", vec![]);
-    }
-    for _ in 0..learned {
-        script.fire_event("COMPANION_LEARNED", vec![]);
-    }
-    for _ in 0..unlearned {
-        script.fire_event("COMPANION_UNLEARNED", vec![]);
     }
 
-    if memory.critter != facts.critter {
-        gate.audit("feed_companions", "the critter update");
-        memory.critter = facts.critter;
-        script.fire_event("COMPANION_UPDATE", vec![ScriptValue::Str("CRITTER".into())]);
-    }
-    let mount_auras: Vec<u32> = facts
-        .auras
-        .map(|auras| {
-            auras
-                .iter()
-                .filter(|a| {
-                    spells
-                        .catalog
-                        .get(a.spell_id)
-                        .is_some_and(|d| d.effect_apply_aura.contains(&SPELL_AURA_MOUNTED))
-                })
-                .map(|a| a.spell_id)
-                .collect()
-        })
-        .unwrap_or_default();
-    if memory.mount_auras != mount_auras {
-        gate.audit("feed_companions", "the mount update");
-        memory.mount_auras = mount_auras;
-        script.fire_event("COMPANION_UPDATE", vec![ScriptValue::Str("MOUNT".into())]);
+    /// `SMSG_CREATURE_QUERY_RESPONSE` for a record the lists wait on (`0x53ebc0`).
+    fn on_creature_answer(
+        In(ev): In<SessionEvent>,
+        mut lists: ResMut<CompanionLists>,
+        spells: Option<Res<crate::ui_action::Spells>>,
+        summons: Res<crate::spell::SummonSlots>,
+        names: Res<NameCache>,
+        commands: Res<NetCommands>,
+        mut ui: ResMut<UiEvents>,
+    ) {
+        let SessionEvent::CreatureName { entry, name, .. } = ev else {
+            return;
+        };
+        let Some(spells) = spells.as_deref() else {
+            return;
+        };
+        if !lists.pending.iter().any(|&(c, _)| c == entry) {
+            return;
+        }
+        let mut cx = CompanionCx {
+            catalog: &spells.catalog,
+            summons: &summons.0,
+            names: &names,
+            commands: &commands,
+            ui: &mut ui,
+        };
+        super::record_answered(&mut lists, entry, name.as_deref(), &mut cx);
     }
 }
 

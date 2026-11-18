@@ -136,6 +136,7 @@ impl Plugin for NetPlugin {
             .add_message::<CharacterLoginFailedMessage>()
             .add_message::<EnteredWorldMessage>()
             .add_message::<WorldEnterCascadeMessage>()
+            .init_resource::<EntryHold>()
             .add_message::<CinematicTriggeredMessage>()
             .add_message::<ServerSaidMessage>()
             .add_message::<LoggedOutMessage>()
@@ -412,6 +413,32 @@ pub(crate) struct ActiveMover;
 /// The inbound event channel, drained each frame by [`apply_net_updates`].
 #[derive(Resource)]
 pub(crate) struct NetEvents(pub(crate) Receiver<SessionEvent>);
+
+/// The UI's world entry (`0x528010`) is owed: run inside our create (`0x6e8186`) or at the UI init's end (`0x52ae84`) in 12340, ahead of every later packet, so the drain waits until `PLAYER_ENTERING_WORLD`'s step has run.
+#[derive(Resource, Default)]
+pub(crate) struct EntryHold(pub(crate) bool);
+
+/// Hold the drain for the UI's world entry, with the in-game UI up to run it.
+pub(crate) fn hold_for_entry(world: &mut World) {
+    if crate::ui_script::ingame_ui_up_in(world) {
+        world.get_resource_or_init::<EntryHold>().0 = true;
+    }
+}
+
+/// The UI's world entry inside our create (`0x6e8186`): with the in-game UI up the packets behind it wait for its step; with none up yet (12340's UI init always comes first) its pet step runs here.
+pub(crate) fn enter_world_at_create(world: &mut World, guid: u64) {
+    if crate::ui_script::ingame_ui_up_in(world) {
+        world.get_resource_or_init::<EntryHold>().0 = true;
+        return;
+    }
+    let me = world
+        .get_resource::<GuidIndex>()
+        .and_then(|i| i.0.get(&guid).copied());
+    let stepped = world.contains_resource::<crate::ui_pet::possess::WorldEntryPetStep>();
+    if let Some(me) = me.filter(|_| stepped) {
+        crate::ui_pet::possess::world_entry_at_create(world, me);
+    }
+}
 
 /// The outbound command channel.
 #[derive(Resource)]

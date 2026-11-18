@@ -212,7 +212,6 @@ impl Plugin for VehiclePlugin {
                     override_bar::update_override_bar
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(crate::ui_action::ActionRanks)
-                        .after(crate::ui_pet::PetTempBar)
                         .before(crate::ui_action::SlotIdentityFeed),
                     // With the entity visuals, after the rigs are built and any mount re-seat.
                     (

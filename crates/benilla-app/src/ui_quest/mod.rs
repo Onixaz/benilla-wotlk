@@ -574,7 +574,7 @@ pub(crate) fn close_quest_out_of_range(
     mut commands: Commands,
 ) {
     let out = giver.npc().is_some_and(|npc| {
-        crate::ui_session::session_out_of_range(npc, &index, &self_q, &transforms)
+        crate::ui_session::npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true)
     });
     if out {
         commands.queue(close_interaction);

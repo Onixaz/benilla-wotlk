@@ -103,7 +103,7 @@ pub(super) fn feed_actions(
     bars: (
         Option<Res<crate::ui_items::ItemSubClasses>>,
         Option<Res<super::TempActionBar>>,
-        Option<Res<crate::ui_pet::PetBar>>,
+        crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     ),
     name_tables: FailNameTables,
     commands: Res<NetCommands>,
@@ -495,9 +495,9 @@ pub(super) fn feed_actions(
                 // The pet bar's action at the slot's index (`0x5a97f0`): a spell's icon, or a mode
                 // or order's `PET_%s_TEXTURE` global.
                 super::ACTION_KIND_PET => (
-                    pet_bar.as_deref().and_then(|bar| {
+                    pet_bar.get().and_then(|bar| {
                         crate::ui_pet::temp_slot_texture(
-                            bar,
+                            &bar,
                             button.action,
                             spells.as_ref().map(|s| &s.catalog),
                             &|key| script.lua().globals().get::<String>(key).ok(),
@@ -521,8 +521,7 @@ pub(super) fn feed_actions(
                     // `0x5a80e0`: the pet bar's spell at the slot's index.
                     pet_spell: (button.kind == super::ACTION_KIND_PET)
                         .then(|| {
-                            let entry =
-                                *pet_bar.as_deref()?.spells.bar.get(button.action as usize)?;
+                            let entry = *pet_bar.get()?.spells.bar.get(button.action as usize)?;
                             (entry.is_spell() && !entry.is_empty()).then(|| entry.action())
                         })
                         .flatten(),

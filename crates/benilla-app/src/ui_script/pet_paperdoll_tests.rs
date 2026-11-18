@@ -2,6 +2,7 @@
 //! behind sub-tabs, Pet, Companions and Mounts, each shown only with something to show
 //! (`PetPaperDollFrame_UpdateTabs`), and the character window's Pets tab hidden when none is.
 
+use super::test_live::PetAnswersExt;
 use benilla_ui::script::{
     CastAt, CompanionIntent, CompanionState, CompanionView, PetStats, ScriptCall, ScriptValue,
     UiScript, UnitCombatStats, UnitState,
@@ -39,7 +40,6 @@ fn critter(spell_id: u32, creature_id: u32, name: &str) -> CompanionView {
         spell_id,
         icon: Some(format!("Interface\\Icons\\Critter{spell_id}")),
         active: false,
-        cooldown: None,
     }
 }
 

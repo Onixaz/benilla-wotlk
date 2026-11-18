@@ -146,8 +146,6 @@ enum Step {
     /// The spellbook's feed: `GetSpellCooldown`.
     SpellBook,
     /// The pet bar's feed and its cooldown flush: `GetPetActionCooldown`.
-    PetBar,
-    PetFlush,
     /// The VM's tick: the `OnUpdate` scripts and the cooldown widgets' update.
     Tick,
 }
@@ -162,8 +160,6 @@ impl Step {
             Step::WorldSelect => "::click::select_on_click",
             Step::ActionState => "::state::feed_action_state",
             Step::SpellBook => "::ui_spellbook::feed_spellbook",
-            Step::PetBar => "::bar::feed_pet_bar",
-            Step::PetFlush => "::bar::fire_pet_cooldown_events",
             Step::Tick => "::extract::tick_script",
         }
     }
@@ -184,10 +180,6 @@ impl Step {
             }
             Step::SpellBook => {
                 schedule.add_systems(crate::ui_spellbook::feed_spellbook.in_set(self))
-            }
-            Step::PetBar => schedule.add_systems(crate::ui_pet::feed_pet_bar.in_set(self)),
-            Step::PetFlush => {
-                schedule.add_systems(crate::ui_pet::fire_pet_cooldown_events.in_set(self))
             }
             Step::Tick => schedule.add_systems(crate::ui_script::extract::tick_script.in_set(self)),
         };
@@ -654,14 +646,11 @@ fn a_press_is_applied_in_the_frame_it_is_made() {
     }
 }
 
-/// What reads the script calls' work still follows them: the pet bar's and the pet book's drains,
-/// the two item legs, and the rest of the target chain behind them.
+/// What reads the script calls' work still follows them: the two item legs and the target chain.
 #[test]
 fn what_follows_the_script_calls_still_follows_them() {
     let g = graph_or_skip!();
     for after in [
-        "::drain_pet_actions",
-        "::drain_pet_book",
         "::drop_item_on_unit",
         "::drop_on_world_click",
         "::target_by_name_requests",
@@ -941,8 +930,6 @@ fn a_pet_bar_press_reaches_the_pet_and_its_bar() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::PetBar,
-        Step::PetFlush,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() CastPetAction(1) end");
@@ -1013,8 +1000,8 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
 
 /// Every feed that publishes cooldowns runs after the press and before the tick, so a GCD a press
 /// arms reaches the frame's `OnUpdate` and its cooldown widgets: the action bar's, the spellbook's,
-/// the bags', the pet bar's and book's, the runes', the forms' and the companions', and the pet's
-/// flush.
+/// the bags', the pet book's, the runes' and the forms'; the pet bar's flush fires inside the
+/// press, and the companions' cooldowns ride the spellbook's.
 #[test]
 fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
     let g = graph_or_skip!();
@@ -1022,12 +1009,8 @@ fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
         Step::ActionState.suffix(),
         Step::SpellBook.suffix(),
         "::feed_containers",
-        Step::PetBar.suffix(),
-        "::feed_pet_book",
         "::feed_runes",
         "::feed_shapeshift_bar",
-        "::feed_companions",
-        Step::PetFlush.suffix(),
     ] {
         for press in [Step::UiInput, Step::BindingDispatch, Step::ScriptCalls] {
             assert!(
@@ -1104,8 +1087,6 @@ fn a_pet_bar_press_shows_the_pets_gcd_in_the_frame_of_the_press() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::PetBar,
-        Step::PetFlush,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() CastPetAction(1) end");

@@ -1151,7 +1151,7 @@ mod tests {
     /// The questgiver calls `chunk` makes through a lent view, in order.
     fn calls(s: &mut UiScript, chunk: &str) -> Vec<Result<QuestAction, QuestSelect>> {
         let mut view = crate::script::live::TestView::default();
-        s.with_live_mut(&mut view, |s| s.run(chunk).unwrap());
+        s.with_live(&mut view, |s| s.run(chunk).unwrap());
         view.quest_calls
     }
 
@@ -1207,7 +1207,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let seen = s.with_live_mut(&mut view, |s| {
+        let seen = s.with_live(&mut view, |s| {
             s.eval::<String>(
                 "CloseQuest() return table.concat(SEEN, ' ') .. '|' .. tostring(UnitName('questnpc'))",
             )

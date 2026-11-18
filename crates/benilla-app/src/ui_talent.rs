@@ -265,7 +265,7 @@ struct FeedMemory {
 #[derive(bevy::ecs::system::SystemParam)]
 struct PetTalentInputs<'w, 's> {
     held: ResMut<'w, PetTalentGroup>,
-    bar: Option<Res<'w, crate::ui_pet::PetBar>>,
+    bar: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
     pet: crate::ui_pet::PetUnit<'w, 's>,
     names: Option<Res<'w, crate::names::NameCache>>,
     families: Option<Res<'w, crate::ui_pet_stats::PetFamilyTables>>,
@@ -274,7 +274,7 @@ struct PetTalentInputs<'w, 's> {
 impl PetTalentInputs<'_, '_> {
     fn changed(&self) -> bool {
         self.held.is_changed()
-            || self.bar.as_ref().is_some_and(|r| r.is_changed())
+            || self.bar.is_changed()
             || self.names.as_ref().is_some_and(|r| r.is_changed())
             || self.families.as_ref().is_some_and(|r| r.is_changed())
     }
@@ -372,7 +372,7 @@ fn feed_talents(
     // The pet's tree, after the player's: the family `SMSG_PET_SPELLS` named picks it.
     let (pet_guid, family) = pet_inputs
         .bar
-        .as_ref()
+        .get()
         .map_or((0, 0), |b| (b.spells.pet_guid, u32::from(b.spells.family)));
     if family == 0 && !pet_inputs.held.ranks.is_empty() {
         pet_inputs.held.bypass_change_detection().ranks.clear();
@@ -662,14 +662,14 @@ fn tab_pages(
 fn drain_talent_learns(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
-    bar: Option<Res<crate::ui_pet::PetBar>>,
+    bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     pet: crate::ui_pet::PetUnit,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let pet_guid = bar
-        .as_ref()
+        .get()
         .map(|b| b.spells.pet_guid)
         .filter(|&guid| guid != 0 && pet.store(guid).is_some());
     for (talent_id, rank) in script.take_pet_talent_learns() {

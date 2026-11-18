@@ -119,13 +119,14 @@ impl super::UiScript {
     /// whose setters pass the builder's unit selector. The app pushes their views ahead of a hover.
     pub fn pet_spell_tooltip_subjects(&self) -> Vec<u32> {
         let model = self.model_ref();
-        let pet_bar = model
-            .pet_bar
+        let pet_bar = super::pet::live_slots()
+            .into_iter()
+            .filter(|s| !s.is_token)
+            .filter_map(|s| s.spell_id);
+        let pet_book = super::spellbook::live_pet_book(&model)
             .slots
-            .iter()
-            .filter(|s| !s.view.is_token)
-            .filter_map(|s| s.view.spell_id);
-        let pet_book = model.pet_book.slots.iter().map(|s| s.spell_id);
+            .into_iter()
+            .map(|s| s.spell_id);
         pet_bar.chain(pet_book).filter(|&id| id != 0).collect()
     }
 
@@ -707,8 +708,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 if !super::multicast::has_spell(&model, spell_id, is_pet) {
                     return Ok(());
                 }
+                let pet_book;
                 let book = if is_pet {
-                    &model.pet_book.slots
+                    pet_book = super::spellbook::live_pet_book(&model);
+                    &pet_book.slots
                 } else {
                     &model.spellbook.slots
                 };
@@ -749,20 +752,16 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetPetAction",
         lua.create_function(|lua, (this, index): (Table, usize)| {
-            let (spell_id, name) = {
-                let model = crate::script::model_mut_of(lua);
-                match model
-                    .pet_bar
-                    .slots
-                    .get(index.saturating_sub(1))
-                    .filter(|s| !s.view.is_token)
-                {
-                    Some(s) => match s.view.spell_id {
-                        Some(id) => (id, s.view.name.clone()),
-                        None => return Ok(()),
-                    },
+            let slot = u32::try_from(index)
+                .ok()
+                .and_then(|i| super::pet::live_slot(lua, i))
+                .filter(|s| !s.is_token);
+            let (spell_id, name) = match slot {
+                Some(s) => match s.spell_id {
+                    Some(id) => (id, s.name),
                     None => return Ok(()),
-                }
+                },
+                None => return Ok(()),
             };
             let opts = SpellRenderOpts {
                 alt_caster: true,
@@ -792,14 +791,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     "Usage: {who}:SetPossession(slot)"
                 )));
             };
-            let held = {
-                let model = crate::script::model_mut_of(lua);
-                model
-                    .pet_bar
-                    .possess
-                    .as_ref()
-                    .map(|p| (p.spell_id, p.name.clone()))
-            };
+            let held = super::pet::held_possess().map(|p| (p.spell_id, p.name));
             match held {
                 Some((spell_id, name)) if slot.round() == 1.0 => {
                     let opts = SpellRenderOpts {
@@ -1010,14 +1002,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 // index, built against the pet; a mode or order its `PET_MODE_*`/`PET_ACTION_*`
                 // text alone.
                 0x10 => {
-                    let view = {
-                        let model = crate::script::model_mut_of(lua);
-                        model
-                            .pet_bar
-                            .slots
-                            .get(a.action as usize)
-                            .map(|s| (s.view.is_token, s.view.name.clone(), s.view.spell_id))
-                    };
+                    let view = super::pet::live_slot(lua, a.action + 1)
+                        .map(|s| (s.is_token, s.name, s.spell_id));
                     match view {
                         Some((false, name, Some(spell_id))) => {
                             let opts = SpellRenderOpts {

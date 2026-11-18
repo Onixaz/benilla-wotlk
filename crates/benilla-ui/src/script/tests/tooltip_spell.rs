@@ -87,7 +87,7 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
         }],
         ..Default::default()
     });
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![SpellSlotView {
             spell_id: 3110,
@@ -899,7 +899,7 @@ fn firebolt() -> SpellTooltipView {
 #[test]
 fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
     let mut s = script();
-    s.set_pet_actions(
+    let _pets = crate::script::live::lend_pets(
         true,
         true,
         true,
@@ -912,7 +912,7 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
             firebolt_slot(),
         ],
     );
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![SpellSlotView {
             spell_id: 6307,
@@ -981,7 +981,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
     };
     s.set_spell_tooltip(7812, view("absorb 305 damage"));
     s.set_pet_spell_tooltip(7812, view("absorb 318 damage"));
-    s.set_pet_actions(
+    let _pets = crate::script::live::lend_pets(
         true,
         true,
         true,
@@ -1003,7 +1003,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
         name: "Sacrifice".into(),
         ..Default::default()
     };
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![slot.clone()],
     });
@@ -1089,7 +1089,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
 fn a_pet_view_miss_waits_on_the_pet_store() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
+    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1123,7 +1123,7 @@ fn a_pet_view_miss_waits_on_the_pet_store() {
 fn a_missed_view_re_renders_the_tooltip_when_the_app_answers() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
+    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1223,7 +1223,7 @@ fn a_hidden_miss_shows_and_an_enchant_link_fills_when_answered() {
 fn new_content_or_an_added_line_ends_the_wait() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
+    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1266,7 +1266,7 @@ fn new_content_or_an_added_line_ends_the_wait() {
 fn a_line_rewritten_in_place_ends_the_wait() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
+    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)

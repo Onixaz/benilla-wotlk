@@ -69,7 +69,7 @@ fn slot(spell_id: u32, name: &str) -> SpellSlotView {
 
 /// Attack, Shoot, Frost Nova, Renew and Portal in the player's book, a second Renew last; Bite in
 /// the pet's.
-fn script() -> UiScript {
+fn script() -> (UiScript, crate::script::live::TestPetBook) {
     let mut s = UiScript::new().unwrap();
     s.set_spell_info_source(Rc::new(Rows));
     s.set_spellbook(SpellBookState {
@@ -83,11 +83,11 @@ fn script() -> UiScript {
         ],
         ..Default::default()
     });
-    s.set_pet_book(PetBookState {
+    let book = s.set_pet_book(PetBookState {
         token: Some("PET".into()),
         slots: vec![slot(BITE, "Bite")],
     });
-    s
+    (s, book)
 }
 
 fn flag(s: &UiScript, chunk: &str) -> bool {
@@ -103,7 +103,7 @@ fn count(s: &UiScript, chunk: &str) -> i64 {
 
 #[test]
 fn each_predicate_reads_its_slots_row() {
-    let s = script();
+    let (s, _book) = script();
     let cases: [(&str, usize); 5] = [
         ("IsAttackSpell", 1),
         ("IsAutoRepeatSpell", 2),
@@ -138,7 +138,7 @@ fn each_predicate_reads_its_slots_row() {
 /// a slot outside the array raises.
 #[test]
 fn the_slot_parser_decides_nil_nothing_or_an_error() {
-    let s = script();
+    let (s, _book) = script();
     for verb in [
         "IsAttackSpell",
         "IsAutoRepeatSpell",
@@ -165,8 +165,8 @@ fn the_slot_parser_decides_nil_nothing_or_an_error() {
 /// The pet's slot is never the auto-repeat, even holding the same spell.
 #[test]
 fn auto_repeat_is_the_players_book_alone() {
-    let mut s = script();
-    s.set_pet_book(PetBookState {
+    let (mut s, _book) = script();
+    let _book = s.set_pet_book(PetBookState {
         token: Some("PET".into()),
         slots: vec![slot(SHOOT, "Shoot")],
     });
@@ -177,7 +177,7 @@ fn auto_repeat_is_the_players_book_alone() {
 /// The scarcer reagent sets the count, by whole casts; no reagent is 0.
 #[test]
 fn spell_count_is_the_casts_the_reagents_pay_for() {
-    let mut s = script();
+    let (mut s, _book) = script();
     let stack = |item_id: u32, count: u32| ContainerSlot {
         item_id,
         count,
@@ -219,7 +219,7 @@ fn spell_count_is_the_casts_the_reagents_pay_for() {
 /// The 0-based index of the last slot holding the id, the pet's array on a true flag.
 #[test]
 fn find_spell_book_slot_by_id_is_the_last_match_zero_based() {
-    let s = script();
+    let (s, _book) = script();
     let find = |chunk: &str| {
         s.eval::<Option<i64>>(&format!("return FindSpellBookSlotByID({chunk})"))
             .unwrap()
@@ -244,7 +244,7 @@ fn find_spell_book_slot_by_id_is_the_last_match_zero_based() {
 
 #[test]
 fn the_current_item_is_the_pending_casts_item_by_id_or_link() {
-    let s = script();
+    let (s, _book) = script();
     assert!(flag(&s, &format!("IsCurrentItem({HEARTHSTONE})")));
     assert!(flag(
         &s,

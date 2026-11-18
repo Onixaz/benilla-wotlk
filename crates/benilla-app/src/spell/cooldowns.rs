@@ -454,13 +454,12 @@ impl Cooldowns {
         );
     }
 
-    /// Clear the GCD of a spell's records on a failed cast, then collect the history (`0x804720`,
-    /// `0x804768`).
-    pub(crate) fn clear_gcd(&mut self, spell_id: u32, now: Instant) {
+    /// Clear the GCD of a spell's records on a failed cast and, when one matched, collect the history and answer true for the spellbook's flush (`0x804748`-`0x80476d`).
+    pub(crate) fn clear_gcd(&mut self, spell_id: u32, now: Instant) -> bool {
         let mut touched = false;
         for r in &mut self.records {
-            if r.spell_id == spell_id && !r.gcd.duration.is_zero() {
-                // The reference zeroes both the category and the time.
+            // Any record of the spell matches, its start cooldown armed or not (`0x804748`, `0x804756`).
+            if r.spell_id == spell_id {
                 r.gcd_category = 0;
                 r.gcd = Timer::none(now);
                 touched = true;
@@ -476,6 +475,7 @@ impl Cooldowns {
             self.collect(now);
             self.bump();
         }
+        touched
     }
 
     /// `SMSG_COOLDOWN_EVENT` (force 0): an on-hold record's timers start now.

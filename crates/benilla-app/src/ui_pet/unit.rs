@@ -1,9 +1,8 @@
-//! The `"pet"` unit token and the pet frame's events, keyed on [`PetBar`]'s pet guid: the client's
-//! cached pet guid, whose writer, the pet setter, fires `UNIT_PET` (`0x5d6aca`).
+//! The `"pet"` unit token: our `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON` (`0x60acc3`), pushed ahead of each `UNIT_PET` ([`push_pet_token`]). Its per-field `UNIT_*` fan-out is the units' (#1289).
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{ScriptValue, UiScript, UnitState};
+use benilla_ui::script::{UiScript, UnitState};
 
 use crate::creature_type::CreatureTypeSources;
 use crate::names::NameCache;
@@ -11,20 +10,13 @@ use crate::net::{NetCommands, ObjectStore};
 use crate::ui_script::gate;
 use crate::ui_unit::{fire_transitions, snapshot};
 
-use super::{PetBar, PetUnit};
+use super::PetUnit;
 
 /// What the `"pet"` feed last pushed, for its edges.
 #[derive(Default)]
 pub(crate) struct PetUnitMemory {
     /// The last snapshot pushed under `"pet"`, for [`fire_transitions`]' per-field diff.
     pushed: Option<UnitState>,
-    /// `UNIT_PET`'s trigger; `None` until the first feed, so a pet out at login announces once.
-    guid: Option<u64>,
-    /// The pet's last in-combat flag, `PET_ATTACK_*`'s trigger; `None` until a pet resolves, so a
-    /// pet already fighting at login announces once.
-    in_combat: Option<bool>,
-    /// The last `(pet guid, UNIT_FIELD_PET_NAME_TIMESTAMP)`: the rename signal.
-    name_stamp: Option<(u64, Option<u32>)>,
     /// The name cache's counter, which catches a `resolve` answer landing frames later.
     names_generation: gate::Watch,
 }
@@ -33,12 +25,47 @@ pub(crate) struct PetUnitMemory {
 /// `PET_ATTACK_START`/`PET_ATTACK_STOP`.
 pub(super) const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
 
-/// Feed the `"pet"` token and the pet frame's events. The token follows the bar's guid, as
-/// `UNIT_PET` does (the pet setter, `0x5d6900`), not our `UNIT_FIELD_SUMMON`, so a charmed unit has
-/// a frame. The reaction is 0: the pet frame reads none.
+/// The `"pet"` token's snapshot: our charm, else our summon (`0x60acc3`-`0x60acd3`), `None` while neither is set or streamed. The reaction is 0: the pet frame reads none.
+fn pet_snapshot(
+    pet: &PetUnit,
+    names: &NameCache,
+    commands: &NetCommands,
+    spells: Option<&crate::ui_action::Spells>,
+) -> Option<UnitState> {
+    let pet_guid = pet.token_guid()?;
+    let store = pet.store(pet_guid)?;
+    let name = names
+        .resolve_unit(pet_guid, Some(store), commands)
+        .map(str::to_string);
+    // No `ChrClasses.dbc`: the reference reads a class only for TYPEMASK_PLAYER.
+    let types = CreatureTypeSources::of_resources(names, spells);
+    Some(snapshot(store, pet_guid, name, 0, None, types))
+}
+
+/// Push the `"pet"` token ahead of `UNIT_PET`, whose handlers read it: the setter's step (`0x5d6aca`) and our charm and summon watches' (event slots 0 and 2).
+pub(crate) fn push_pet_token(world: &mut World) {
+    if let Err(e) = world.run_system_cached(push_pet_token_system) {
+        warn!("ui_pet: the pet token was not pushed: {e}");
+    }
+}
+
+fn push_pet_token_system(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    pet: PetUnit,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let fresh = pet_snapshot(&pet, &names, &commands, spells.as_deref());
+    script.set_unit("pet", fresh);
+}
+
+/// Feed the `"pet"` token's per-field `UNIT_*` events, the units' fan-out (#1289).
 pub(crate) fn feed_pet_unit(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    bar: Res<PetBar>,
     pet: PetUnit,
     // The per-field edges, for `fire_transitions`' watch-bridge arms.
     mut field_edges: MessageReader<crate::net::FieldChanged>,
@@ -46,7 +73,6 @@ pub(crate) fn feed_pet_unit(
     mut removed_stores: RemovedComponents<ObjectStore>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
-    mut evict: Commands,
     // The form table, the creature-type resolver's first stage.
     spells: Option<Res<crate::ui_action::Spells>>,
     mut memory: Local<crate::ui_script::VmMemo<PetUnitMemory>>,
@@ -57,7 +83,6 @@ pub(crate) fn feed_pet_unit(
     let (memory, vm_reset) = memory.get_reset(&script);
     let edges = crate::net::FieldEdges::collect(&mut field_edges);
     let names_moved = memory.names_generation.moved(names.generation());
-    let bar_changed = bar.is_changed();
     let stores_changed = !changed_stores.is_empty();
     let stores_removed = !removed_stores.is_empty();
     gate::trace(
@@ -65,33 +90,17 @@ pub(crate) fn feed_pet_unit(
         &[
             ("vm_reset", vm_reset),
             ("names", names_moved),
-            ("bar", bar_changed),
             ("stores", stores_changed),
             ("removed", stores_removed),
         ],
     );
-    let gate =
-        gate::Gate::new(vm_reset || names_moved || bar_changed || stores_changed || stores_removed);
+    let gate = gate::Gate::new(vm_reset || names_moved || stores_changed || stores_removed);
     removed_stores.clear();
     if gate.skip() {
         return;
     }
-    let pet_guid = bar.spells.pet_guid;
-    let renamed = watch_name_timestamp(pet_guid, &mut script, &pet, &mut evict, memory);
     // An unstreamed pet pushes nothing: `UnitExists("pet")` reads false and the frame hides.
-    let fresh = (pet_guid != 0)
-        .then(|| pet.store(pet_guid))
-        .flatten()
-        .map(|store| {
-            // An evicted name reads as unknown; the eviction's generation step re-asks it.
-            let name = (!renamed)
-                .then(|| names.resolve_unit(pet_guid, Some(store), &commands))
-                .flatten()
-                .map(str::to_string);
-            // No `ChrClasses.dbc`: the reference reads a class only for TYPEMASK_PLAYER.
-            let types = CreatureTypeSources::of_resources(&names, spells.as_deref());
-            snapshot(store, pet_guid, name, 0, None, types)
-        });
+    let fresh = pet_snapshot(&pet, &names, &commands, spells.as_deref());
 
     let dirty = match (&fresh, &memory.pushed) {
         (Some(cur), Some(prev)) => cur != prev,
@@ -120,97 +129,30 @@ pub(crate) fn feed_pet_unit(
         // Clearing the token fires no UNIT_* event; the frame repaints on UNIT_PET.
         None => memory.pushed = None,
     }
-
-    // UNIT_PET("player") on a pet guid change (`0x5d6aca`), not on a same-pet re-send, and on any
-    // move of our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON`, the unit watches behind event slots 0
-    // and 2 (registered through `0x614190`): a pet that leaves with no `SMSG_PET_SPELLS` still
-    // repaints the frame. Deviation: only the `"player"` token hears the watch, not another token
-    // naming us.
-    let summon_moved = pet.self_guid.0.is_some_and(|me| {
-        use benilla_protocol::field::{FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON};
-        [FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON]
-            .iter()
-            .any(|&f| edges.moved(me, f) || edges.moved(me, f + 1))
-    });
-    if memory.guid != Some(pet_guid) || summon_moved {
-        gate.audit("feed_pet_unit", "the UNIT_PET edge");
-        memory.guid = Some(pet_guid);
-        debug!("ui_pet: UNIT_PET — pet is now {pet_guid:#x} (summon field moved: {summon_moved})");
-        script.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
-    }
-
-    // PET_ATTACK_START/STOP (334/335), the pet frame's attack glow, fire on the pet's
-    // `UNIT_FIELD_FLAGS & 0x800` edge: a field callback, not the Attack button's latch.
-    let in_combat = fresh
-        .as_ref()
-        .and_then(|_| pet_combat_flag(pet.store(pet_guid)?, pet.self_guid.0));
-    if let Some(now) = in_combat {
-        if memory.in_combat != Some(now) {
-            gate.audit("feed_pet_unit", "the pet combat-flag edge");
-            memory.in_combat = Some(now);
-            debug!("ui_pet: pet in-combat flag → {now}");
-            script.fire_event(
-                if now {
-                    "PET_ATTACK_START"
-                } else {
-                    "PET_ATTACK_STOP"
-                },
-                vec![],
-            );
-        }
-    } else {
-        // No pet, or not ours: forget the edge; the reference's field callback is not called when a
-        // unit leaves.
-        memory.in_combat = None;
-    }
 }
 
-/// Drop our pet's cached name when its name timestamp moves, as the reference's name watcher does
-/// from the field callback on offset `0x218`, and fire `LOCALPLAYER_PET_RENAMED`, which stock 1.12
-/// registers (`UIParent.lua:95`) but never handles. The reference watches every unit; this watches
-/// only our pet, so another player's renamed pet keeps its old name.
-fn watch_name_timestamp(
+/// The name watcher's field callback on offset `0x218` (`UNIT_FIELD_PET_NAME_TIMESTAMP`): any unit's rename drops its cached pet name so the next read asks again, and our charm or summon's (`owner_is_us`) fires `LOCALPLAYER_PET_RENAMED`.
+pub(crate) fn pet_renamed(
     pet_guid: u64,
-    script: &mut UiScript,
-    pet: &PetUnit,
-    evict: &mut Commands,
-    memory: &mut PetUnitMemory,
-) -> bool {
-    let Some(store) = (pet_guid != 0).then(|| pet.store(pet_guid)).flatten() else {
-        memory.name_stamp = None;
-        return false;
-    };
-    let now = store.0.unit_pet_name_timestamp();
-    let previous = memory.name_stamp.replace((pet_guid, now));
-    if !was_renamed(previous, (pet_guid, now)) {
-        return false;
-    }
+    owner_is_us: bool,
+    ui: &mut crate::ui_script::live::UiEvents,
+) {
     if let Some(pet_number) = benilla_protocol::guid::pet_number(pet_guid) {
-        debug!("ui_pet: pet {pet_guid:#x} was renamed (stamp → {now:?}) — re-asking its name");
-        evict.queue(move |world: &mut World| {
-            world.resource_mut::<NameCache>().forget_pet(pet_number);
+        debug!("ui_pet: pet {pet_guid:#x} was renamed — re-asking its name");
+        ui.world(move |world| {
+            if let Some(mut names) = world.get_resource_mut::<NameCache>() {
+                names.forget_pet(pet_number);
+            }
         });
     }
-    // The reference's name watcher evicts for any owner but fires the event only for our charm or
-    // summon.
-    if store
-        .0
-        .unit_owner(benilla_protocol::OwnerFallback::SummonedBy)
-        == pet.self_guid.0
-    {
-        script.fire_event("LOCALPLAYER_PET_RENAMED", vec![]);
+    if owner_is_us {
+        ui.fire("LOCALPLAYER_PET_RENAMED", Vec::new());
     }
-    true
-}
-
-/// Whether the same pet's name timestamp moved; a new guid is never a rename.
-pub(super) fn was_renamed(previous: Option<(u64, Option<u32>)>, now: (u64, Option<u32>)) -> bool {
-    previous.is_some_and(|(guid, stamp)| guid == now.0 && stamp != now.1)
 }
 
 /// The in-combat flag as the reference's field callback sees it: `None` unless the unit is ours by
 /// CHARMEDBY, else SUMMONEDBY (not the possessed-unit lookup's CREATEDBY fallback); then the flag.
-pub(super) fn pet_combat_flag(store: &ObjectStore, self_guid: Option<u64>) -> Option<bool> {
+pub(crate) fn pet_combat_flag(store: &ObjectStore, self_guid: Option<u64>) -> Option<bool> {
     (store
         .0
         .unit_owner(benilla_protocol::OwnerFallback::SummonedBy)

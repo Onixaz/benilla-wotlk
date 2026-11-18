@@ -214,8 +214,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 })
                 .unwrap_or((0, true));
             let autocast = match resolved {
-                (spell, true) => model
-                    .pet_book
+                (spell, true) => super::spellbook::live_pet_book(&model)
                     .slots
                     .iter()
                     .find(|s| s.spell_id & 0xffff == spell)
@@ -301,8 +300,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // pet book index, "pet", the id; nothing for an order or mode.
                 ACTION_KIND_PET => match a.pet_spell {
                     Some(spell) => {
-                        let index = model
-                            .pet_book
+                        let index = super::spellbook::live_pet_book(&model)
                             .slots
                             .iter()
                             .position(|s| s.spell_id == spell)
@@ -316,8 +314,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                     None => Vec::new(),
                 },
-                0x00 if model.companions.find(a.action).is_some() => {
-                    let (ty, at) = model.companions.find(a.action).expect("guarded");
+                0x00 if super::companion::find(a.action).is_some() => {
+                    let (ty, at) = super::companion::find(a.action).expect("guarded");
                     vec![
                         str("companion")?,
                         Value::Integer(at as i64 + 1),
@@ -579,7 +577,7 @@ mod tests {
     fn action_autocast_reads_a_pet_book_macro_only() {
         use crate::script::{MacroBinding, MacroState, MacroView, PetBookState, SpellSlotView};
         let mut s = UiScript::new().unwrap();
-        s.set_pet_book(PetBookState {
+        let _book = s.set_pet_book(PetBookState {
             token: Some("PET".into()),
             slots: vec![SpellSlotView {
                 spell_id: 3009, // Claw
@@ -639,7 +637,7 @@ mod tests {
         for n in [2, 3, 4, 5, 0, 121] {
             assert_eq!(ask(&s, n), (2, None, None), "slot {n}");
         }
-        s.set_pet_book(PetBookState {
+        let _book = s.set_pet_book(PetBookState {
             token: Some("PET".into()),
             slots: vec![SpellSlotView {
                 spell_id: 3009,
@@ -754,7 +752,7 @@ mod tests {
     #[test]
     fn the_pet_s_temporary_bar_hides_the_pet_bar_and_another_owner_does_not() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_actions(true, true, true, Vec::new());
+        let _pets = crate::script::live::lend_pets(true, true, true, Vec::new());
         s.run("ChangeActionBarPage(3)").unwrap();
         assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
 

@@ -39,7 +39,7 @@ impl benilla_ui::script::LiveState for Buttons {
 /// The questgiver calls `chunk` makes, in order.
 fn button_calls(s: &mut UiScript, chunk: &str) -> Vec<benilla_ui::script::QuestAction> {
     let mut view = Buttons::default();
-    s.with_live_mut(&mut view, |s| s.run(chunk).unwrap());
+    s.with_live(&mut view, |s| s.run(chunk).unwrap());
     view.0
 }
 

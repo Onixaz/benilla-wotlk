@@ -325,8 +325,9 @@ mod tests {
             250,
             "a numeric string"
         );
-        let lost = crate::script::live::TestView::default();
-        s.with_live(&lost, |s| s.run("DropCursorMoney()")).unwrap();
+        let mut lost = crate::script::live::TestView::default();
+        s.with_live(&mut lost, |s| s.run("DropCursorMoney()"))
+            .unwrap();
         assert_eq!(
             s.eval::<i64>("return GetCursorMoney()").unwrap(),
             250,

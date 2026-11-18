@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use benilla_formats::{SpellCatalog, SpellDisplay, SummonPropertiesCatalog};
 use benilla_protocol::ObjectFields;
@@ -62,69 +62,139 @@ fn catalog() -> SpellCatalog {
     SpellCatalog::from_displays(displays())
 }
 
-fn known() -> BTreeSet<u32> {
-    [10, 11, 20, 21, 30, 31, 133].into_iter().collect()
+fn known() -> Vec<u32> {
+    vec![10, 11, 20, 21, 30, 31, 133]
 }
 
-fn names(entry: u32) -> Option<Option<String>> {
-    let name = match entry {
-        700 => "Zebra Cat",
-        701 => "ant",
-        800 => "Yak",
-        801 => "Bear",
-        _ => return Some(None),
+/// The cached records: every companion creature but `pending`.
+fn names_with(pending: Option<u32>) -> NameCache {
+    let mut names = NameCache::default();
+    for (entry, name) in [
+        (700, "Zebra Cat"),
+        (701, "ant"),
+        (800, "Yak"),
+        (801, "Bear"),
+    ] {
+        if Some(entry) == pending {
+            continue;
+        }
+        names.insert_creature(
+            entry,
+            Some(crate::names::CreatureRecord {
+                name: name.into(),
+                ..Default::default()
+            }),
+        );
+    }
+    names
+}
+
+fn commands() -> NetCommands {
+    NetCommands(crossbeam_channel::unbounded().0)
+}
+
+/// The login's adds over `known()`, with `pending`'s record still asked; the events they fired.
+fn init(pending: Option<u32>) -> (CompanionLists, Vec<&'static str>) {
+    let (catalog, summons, names, commands) =
+        (catalog(), summons(), names_with(pending), commands());
+    let mut ui = UiEvents::default();
+    let mut lists = CompanionLists::default();
+    let mut cx = CompanionCx {
+        catalog: &catalog,
+        summons: &summons,
+        names: &names,
+        commands: &commands,
+        ui: &mut ui,
     };
-    Some(Some(name.into()))
+    add_initial(
+        &mut lists,
+        known().into_iter().map(|id| (id, None)),
+        &mut cx,
+    );
+    (lists, ui.names())
 }
 
-fn no_cooldown(_: u32) -> Option<(i64, u32, bool)> {
-    None
-}
-
-fn spell_ids(list: &[CompanionView]) -> Vec<u32> {
-    list.iter().map(|c| c.spell_id).collect()
-}
-
-/// `0x5426a5` files a summon into a slot-5 row as a critter and a `MOUNTED` spell as a mount;
-/// a guardian summon, a `0x80` spell and a plain spell join neither. With every record cached each
-/// list sorts by name, case-insensitively (`0x53c7c0`).
+/// `0x5426a5` files a summon into a slot-5 row as a critter and a `MOUNTED` spell as a mount; a guardian summon, a `0x80` spell and a plain spell join neither. With every record cached the login's update sorts each list by name, case-insensitively (`0x53c7c0`), and fires `COMPANION_UPDATE` once (`0x53cec0`).
 #[test]
 fn the_lists_take_companions_alone_and_sort_by_creature_name() {
-    let (state, pending) = build_lists(
-        &known(),
-        &catalog(),
-        &summons(),
-        &names,
-        SelfFacts::default(),
-        &no_cooldown,
-    );
-    assert!(!pending);
-    assert_eq!(spell_ids(&state.critters), [11, 10], "ant before Zebra Cat");
-    assert_eq!(spell_ids(&state.mounts), [21, 20], "Bear before Yak");
-    let ant = &state.critters[0];
+    let (lists, fired) = init(None);
     assert_eq!(
-        (ant.creature_id, ant.name.as_deref(), ant.icon.as_deref()),
-        (701, Some("ant"), Some("Icon_Ant"))
+        lists.list(CompanionType::Critter),
+        [11, 10],
+        "ant before Zebra Cat"
     );
+    assert_eq!(
+        lists.list(CompanionType::Mount),
+        [21, 20],
+        "Bear before Yak"
+    );
+    assert_eq!(fired, ["COMPANION_UPDATE"]);
 }
 
-/// The companion list update (`0x53cec0`) does not sort while a record is pending: the lists keep
-/// spell order and the name reads nil.
+/// The update does not sort while a record is pending: the lists keep add order and nothing fires; the answer's callback then sorts and fires `COMPANION_UPDATE` (`0x53ebc0`).
 #[test]
-fn a_pending_record_holds_the_sort() {
-    let pending_bear = |entry: u32| if entry == 801 { None } else { names(entry) };
-    let (state, pending) = build_lists(
-        &known(),
-        &catalog(),
-        &summons(),
-        &pending_bear,
-        SelfFacts::default(),
-        &no_cooldown,
+fn a_pending_record_holds_the_sort_until_its_answer() {
+    let (mut lists, fired) = init(Some(801));
+    assert_eq!(lists.list(CompanionType::Critter), [10, 11]);
+    assert_eq!(lists.list(CompanionType::Mount), [20, 21]);
+    assert!(fired.is_empty(), "{fired:?}");
+    let (catalog, summons, names, commands) =
+        (catalog(), summons(), names_with(Some(801)), commands());
+    let mut ui = UiEvents::default();
+    let mut cx = CompanionCx {
+        catalog: &catalog,
+        summons: &summons,
+        names: &names,
+        commands: &commands,
+        ui: &mut ui,
+    };
+    record_answered(&mut lists, 801, Some("Bear"), &mut cx);
+    assert_eq!(
+        lists.list(CompanionType::Mount),
+        [21, 20],
+        "the answer's name sorts"
     );
-    assert!(pending);
-    assert_eq!(spell_ids(&state.critters), [10, 11]);
-    assert_eq!(spell_ids(&state.mounts), [20, 21]);
-    assert_eq!(state.mounts[1].name, None);
+    assert_eq!(ui.names(), ["COMPANION_UPDATE"]);
+}
+
+/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`, then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs the same three (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+#[test]
+fn a_live_learn_and_unlearn_fire_from_their_handlers() {
+    let (catalog, summons, commands) = (catalog(), summons(), commands());
+    let names = names_with(Some(700));
+    let mut lists = CompanionLists::default();
+    let mut ui = UiEvents::default();
+    let mut cx = CompanionCx {
+        catalog: &catalog,
+        summons: &summons,
+        names: &names,
+        commands: &commands,
+        ui: &mut ui,
+    };
+    assert_eq!(
+        add_known(&mut lists, 11, true, None, &mut cx),
+        Some(crate::tutorial::id::COMPANION_CRITTER)
+    );
+    assert_eq!(
+        cx.ui.names(),
+        ["<world>", "COMPANION_UPDATE", "COMPANION_LEARNED"]
+    );
+    let mut ui = UiEvents::default();
+    cx.ui = &mut ui;
+    let _ = add_known(&mut lists, 10, true, None, &mut cx);
+    assert!(cx.ui.is_empty(), "the record is asked first");
+    record_answered(&mut lists, 700, Some("Zebra Cat"), &mut cx);
+    assert_eq!(
+        cx.ui.names(),
+        ["<world>", "COMPANION_UPDATE", "COMPANION_LEARNED"]
+    );
+    assert_eq!(lists.list(CompanionType::Critter), [11, 10]);
+    let mut ui = UiEvents::default();
+    cx.ui = &mut ui;
+    remove_known(&mut lists, 11, &mut cx);
+    remove_known(&mut lists, 133, &mut cx);
+    assert_eq!(cx.ui.names(), ["COMPANION_UPDATE", "COMPANION_UNLEARNED"]);
+    assert_eq!(lists.list(CompanionType::Critter), [10]);
 }
 
 fn critter_guid(entry: u32) -> u64 {
@@ -164,19 +234,28 @@ fn the_active_flag_reads_the_critter_guid_and_the_mount_auras() {
     displays.insert(22, mount("Yak (item)", 800));
     let catalog = SpellCatalog::from_displays(displays);
     let auras = UnitAuras::of(1, &[(0, 22, 0)]);
-    let facts = SelfFacts {
-        critter: store.0.unit_critter(),
-        auras: Some(&auras),
+    let name_of = |_: u32| None;
+    let active = |spell_id: u32| {
+        companion_view(
+            spell_id,
+            &catalog,
+            &summons(),
+            &name_of,
+            Some((&store.0, Some(&auras))),
+        )
+        .is_some_and(|c| c.active)
     };
-    let (state, _) = build_lists(&known(), &catalog, &summons(), &names, facts, &no_cooldown);
-    let active = |list: &[CompanionView]| -> Vec<u32> {
-        list.iter()
-            .filter(|c| c.active)
-            .map(|c| c.spell_id)
-            .collect()
-    };
-    assert_eq!(active(&state.critters), [10]);
-    assert_eq!(active(&state.mounts), [20]);
+    assert_eq!([10, 11, 20, 21].map(active), [true, false, true, false]);
+    let view = companion_view(10, &catalog, &summons(), &name_of, None).unwrap();
+    assert_eq!(
+        (
+            view.creature_id,
+            view.name,
+            view.icon.as_deref(),
+            view.active
+        ),
+        (700, None, Some("Icon_Zebra Cat"), false)
+    );
 }
 
 /// The aura cancel (`0x802f80`): the critter out goes home by `CMSG_DISMISS_CRITTER` with its guid,
@@ -229,29 +308,4 @@ fn a_mount_ridden_through_another_spell_cancels_that_one() {
         ),
         "{sends:?}"
     );
-}
-
-/// The lists land before the pet feeds' `UNIT_PET` and `PET_BAR_UPDATE`, whose handlers re-test
-/// the Pets tab off `GetNumCompanions`, so a mage's mounts show the tab from the login frame; and
-/// the pet unit before the bar, whose handler reads `UnitIsVisible("pet")`.
-#[test]
-fn the_pet_events_follow_the_state_they_read() {
-    use crate::test_support::runs_before;
-    let mut app = crate::game_plugins::schedule_tests::headless_client();
-    assert!(runs_before(
-        &mut app,
-        feed_companions,
-        crate::ui_pet::feed_pet_bar
-    ));
-    assert!(runs_before(
-        &mut app,
-        feed_companions,
-        crate::ui_pet::feed_pet_unit
-    ));
-    // `PET_BAR_UPDATE`'s handler reads `UnitIsVisible("pet")`, which the pet unit feed pushes.
-    assert!(runs_before(
-        &mut app,
-        crate::ui_pet::feed_pet_unit,
-        crate::ui_pet::feed_pet_bar
-    ));
 }

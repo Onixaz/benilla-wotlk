@@ -705,12 +705,11 @@ pub(crate) fn player_token_guid(
 
 /// The one unit-token resolver, the reference's: case-insensitive compares, then the object
 /// manager; a caller wanting a type tests the resolved unit. [`Selection`] is a parameter because
-/// [`crate::target::SelectCommit`] holds it as `ResMut`.
+/// [`crate::target::SelectCommit`] writes it through its own borrow.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
     index: Option<Res<'w, crate::net::GuidIndex>>,
-    pet: Option<Res<'w, crate::ui_pet::PetBar>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
@@ -786,10 +785,10 @@ impl UnitTokens<'_, '_> {
                 .hovered
                 .as_ref()?
                 .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default()),
-            // Off the pet bar's cached guid, as the `"pet"` snapshot reads it.
+            // Our charm, else our summon (`0x60acc3`-`0x60acd3`), as the `"pet"` snapshot reads it.
             UnitBase::Pet => {
-                let guid = self.pet.as_ref()?.spells.pet_guid;
-                (guid != 0).then(|| self.held(guid)).flatten()
+                let guid = self.stores.get(self.me()?.0).ok()?.0.unit_pet_guid()?;
+                self.held(guid)
             }
             UnitBase::PartyPet(row) => self
                 .party_member(row)
@@ -1395,7 +1394,10 @@ pub(crate) fn fire_transitions(
     }
     // `UNIT_CLASSIFICATION_CHANGED`, the target frame's border repaint, on a change of the gated
     // rank, which is the classification: the creature query landing, a mob enslaved or released.
-    if prev.is_none_or(|p| p.rank != cur.rank) {
+    // A moved pet number signals it from its own field handler (`0x72d034`).
+    let by_number =
+        prev.is_some() && edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_PETNUMBER);
+    if !by_number && prev.is_none_or(|p| p.rank != cur.rank) {
         script.fire_event("UNIT_CLASSIFICATION_CHANGED", vec![tok()]);
     }
     // `UNIT_FACTION`, the PvP-icon repaint, on the fields the icon reads, on the tapped bit (the
@@ -1526,9 +1528,10 @@ fn feed_units(
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
     // The commands carry the world-enter cascade's death part.
-    (entered_world, mut deferred): (
+    (entered_world, mut deferred, mut hold): (
         Option<MessageReader<crate::net::EnteredWorldMessage>>,
         Commands,
+        Option<ResMut<crate::net::EntryHold>>,
     ),
 ) {
     let Some(mut script) = script else {
@@ -1578,6 +1581,8 @@ fn feed_units(
     let reps_changed = reputations.is_changed();
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
+    // The drain waits on this pass's world entry, so it runs whatever else moved.
+    let entry_owed = hold.as_ref().is_some_and(|h| h.0);
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
         || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
@@ -1597,6 +1602,7 @@ fn feed_units(
             ("reputations", reps_changed),
             ("factions", factions_changed),
             ("interact", interact_changed),
+            ("entry", entry_owed),
         ],
     );
     let gate = gate::Gate::new(
@@ -1610,7 +1616,8 @@ fn feed_units(
             || group_changed
             || reps_changed
             || factions_changed
-            || interact_changed,
+            || interact_changed
+            || entry_owed,
     );
     stores.removed.clear();
     if gate.skip() {
@@ -1889,12 +1896,16 @@ fn feed_units(
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             crate::ui_script::fire_armed_player_login(&mut script);
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-            // The cascade's reputation world entry (`0x5d2bc0`) re-sorts and fires `UPDATE_FACTION`
-            // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
-            // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
-            script.fire_event("UPDATE_FACTION", vec![]);
-            // The quest log's entry (`0x5281db`), the battlefield's (`0x528230`), then the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
+            // The quest log's entry (`0x5281db`), the pet step (`0x5281fe`), then the reputation world entry (`0x528208`), which re-sorts and fires `UPDATE_FACTION` (`0x5d1bfa`) with the player seated, re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             crate::ui_quest_log::rows::queue_enter_world(&mut deferred);
+            deferred.queue(|world: &mut World| {
+                crate::ui_pet::possess::world_entry_step(world);
+                if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+                    ui.fire("UPDATE_FACTION", Vec::new());
+                }
+                crate::ui_script::live::fire_handler_events(world);
+            });
+            // The battlefield entry (`0x528230`), ahead of the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
             crate::ui_battlefield::queue_enter_world(&mut deferred);
             crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;
@@ -1910,6 +1921,10 @@ fn feed_units(
         // Edge-only pushes: a stale memo would skip a new character whose values match it.
         memo.worn_hidden = None;
         memo.action_bar_toggles = None;
+    }
+    // The entry's steps are queued for this frame, ahead of the next drain: the packets behind it may run.
+    if let Some(hold) = hold.as_mut() {
+        hold.0 = false;
     }
 
     // `"bossN"`: each encounter slot's unit while the object manager holds it, read as `"focus"`
@@ -2082,7 +2097,7 @@ fn feed_combo_points(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     combo: Option<Res<crate::spell::ComboPoints>>,
     self_guid: Option<Res<crate::net::SelfGuid>>,
-    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
+    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     mut memo: Local<crate::ui_script::VmMemo<Option<(u64, u64)>>>,
 ) {
     let (Some(mut script), Some(combo)) = (script, combo) else {
@@ -2106,7 +2121,8 @@ fn feed_combo_points(
         }
     }
     if pet_moved {
-        if let Some(pet) = pet_bar.as_deref().map(|b| b.spells.pet_guid) {
+        let pet = pet_bar.get().map(|b| b.spells.pet_guid);
+        if let Some(pet) = pet {
             script.fire_unit_event(pet, "UNIT_COMBO_POINTS", vec![]);
         }
         script.fire_event("PET_BAR_UPDATE_USABLE", vec![]);

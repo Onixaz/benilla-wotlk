@@ -59,7 +59,8 @@ impl ScriptSelect<'_, '_> {
     pub(crate) fn select(&mut self, request: SelectionRequest, script: &mut UiScript) {
         match request {
             SelectionRequest::Unit(token) => {
-                if let Some(guid) = self.tokens.guid_of(&token, &self.commit.selection) {
+                let guid = self.tokens.guid_of(&token, &self.commit.selection.read());
+                if let Some(guid) = guid {
                     self.target_if_valid(guid, script);
                 }
             }
@@ -67,7 +68,8 @@ impl ScriptSelect<'_, '_> {
             // shows `ERR_UNIT_NOT_FOUND` (`0x525f87`), or `ERR_GENERIC_NO_TARGET` for an empty or
             // `"target"` token (`0x525f9c`).
             SelectionRequest::Assist(token) => {
-                match self.tokens.resolve(&token, &self.commit.selection) {
+                let basis = self.tokens.resolve(&token, &self.commit.selection.read());
+                match basis {
                     Some((basis, _)) => {
                         if self.commit.assist(basis, "AssistUnit") {
                             script.queue_sound_kit("igCharacterSelect");
@@ -124,9 +126,8 @@ impl ScriptSelect<'_, '_> {
     /// `StartAttack`'s named unit (`0x523090`): a token, else the closest attackable name, as a
     /// unit to commit once the actor checks pass.
     pub(crate) fn attack_unit(&self, unit: &str, exact: bool) -> Option<(Entity, u64)> {
-        self.tokens
-            .resolve(unit, &self.commit.selection)
-            .or_else(|| self.by_name.attackable(unit, exact))
+        let named = self.tokens.resolve(unit, &self.commit.selection.read());
+        named.or_else(|| self.by_name.attackable(unit, exact))
     }
 
     /// Commit the unit [`Self::attack_unit`] named.
@@ -144,7 +145,7 @@ impl ScriptSelect<'_, '_> {
             self.time.elapsed_secs_f64(),
             &self.scan,
             &mut self.history,
-            &mut self.commit.selection,
+            &mut self.commit.selection.write(),
             &mut self.commit.seam,
             engaged,
         );
@@ -154,7 +155,8 @@ impl ScriptSelect<'_, '_> {
     /// unit or a group member is committed (which stamps the outgoing target, swapping the two)
     /// and anything else is a no-op; an empty pair deselects.
     pub(crate) fn target_last_target(&mut self, script: &mut UiScript) {
-        match self.commit.selection.last {
+        let last = self.commit.selection.read().last;
+        match last {
             Some(guid) => self.target_if_valid(guid, script),
             None => self.commit.clear(),
         }
@@ -172,7 +174,10 @@ pub(super) fn target_by_name_requests(
     mut requests: MessageReader<by_name::TargetByNameRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (mut script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+    ),
 ) {
     for request in requests.read() {
         if by_name::target_named(&scan_params, &mut commit, &request.name, false) {
@@ -186,7 +191,10 @@ pub(super) fn assist_requests(
     mut requests: MessageReader<by_name::AssistRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (mut script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+    ),
 ) {
     for request in requests.read() {
         if by_name::assist_named(

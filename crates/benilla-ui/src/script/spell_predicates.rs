@@ -58,8 +58,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
+            // The pet's book is read at the call, as every pet book verb reads it.
+            let pet_book;
             let slots = if pet {
-                &model.pet_book.slots
+                pet_book = super::spellbook::live_pet_book(&model);
+                &pet_book.slots
             } else {
                 &model.spellbook.slots
             };

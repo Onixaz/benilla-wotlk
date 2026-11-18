@@ -83,6 +83,11 @@ impl super::super::UiScript {
         self.model_mut().vehicle_indicators = indicators;
     }
 
+    /// Queue a request a verb the app ran made, behind the verbs' own.
+    pub fn push_vehicle_request(&mut self, request: VehicleRequest) {
+        self.model_mut().vehicle_requests.push(request);
+    }
+
     /// Drain the verbs' requests.
     pub fn take_vehicle_requests(&mut self) -> Vec<VehicleRequest> {
         drain_field!(self, vehicle_requests)

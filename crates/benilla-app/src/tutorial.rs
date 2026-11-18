@@ -65,6 +65,10 @@ pub(crate) mod id {
     pub(crate) const KEYRINGS: u32 = 0x31;
     /// The player joins a threat list, warning on, at level 14 or more (`0x52b370`).
     pub(crate) const THREAT: u32 = 0x35;
+    /// A critter joins its companion list (`0x542751`).
+    pub(crate) const COMPANION_CRITTER: u32 = 0x33;
+    /// A mount joins its companion list (`0x54275a`).
+    pub(crate) const COMPANION_MOUNT: u32 = 0x34;
     /// The bag-full line is displayed (`0x52170c`).
     pub(crate) const BAG_FULL: u32 = 0x39;
 }

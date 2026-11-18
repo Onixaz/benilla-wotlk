@@ -1,5 +1,6 @@
 //! The pet action bar, stock `PetActionBarFrame.xml`, from a pushed slot list to its quads.
 
+use crate::ui_script::test_live::PetAnswersExt;
 use benilla_ui::script::{PetActionView, QuadContent, UiScript};
 
 /// The whole production interface, the pet bar and the chat window over it among it, with a pet
@@ -232,7 +233,7 @@ fn clicks_cast_and_flip_autocast() {
         vec![1],
         "an active Attack casts again"
     );
-    assert_eq!(s.take_pet_stop_attacks(), 0, "and is never called off");
+    assert_eq!(s.take_pet_writes().stops, 0, "and is never called off");
 
     let mut slots = hunter_slots();
     slots[0].active = false;
@@ -242,16 +243,13 @@ fn clicks_cast_and_flip_autocast() {
     s.resolve();
     click(&mut s, 87.0, 71.0, "LeftButton");
     assert_eq!(s.take_pet_actions(), vec![1]);
-    assert_eq!(s.take_pet_stop_attacks(), 0);
+    assert_eq!(s.take_pet_writes().stops, 0);
 
-    // A right-click flips a spell's autocast; a token is not autocastable.
+    // A right-click toggles inside the click, a token's too, unflipped (`0x5d5e01`).
     click(&mut s, 201.0, 71.0, "RightButton");
-    assert_eq!(s.take_pet_autocast_toggles(), vec![4]);
+    assert_eq!(s.take_pet_writes().toggled, vec![3]);
     click(&mut s, 87.0, 71.0, "RightButton");
-    assert!(
-        s.take_pet_autocast_toggles().is_empty(),
-        "a command token cannot autocast"
-    );
+    assert_eq!(s.take_pet_writes().toggled, vec![0], "a token's toggle");
     assert!(
         super::test_ui::errors_but_unported(&s).is_empty(),
         "script errors: {:?}",
@@ -259,10 +257,7 @@ fn clicks_cast_and_flip_autocast() {
     );
 }
 
-/// Every click starts with `this:SetChecked(0)` (PetActionBarFrame.lua:253); the repaint restores
-/// the ring from `isActive`, never by diffing views. The reference signals it from state writes,
-/// not from a refused `TogglePetAutocast`, so a right-click on a token leaves the ring off until
-/// something else repaints.
+/// A click toggles the CheckButton off; the right-click's toggle signals the bar inside the click (`0x5d5e01`), whose repaint re-lights the ring, and a left-click waits for the next repaint.
 #[test]
 fn a_click_drops_the_ring_and_the_repaint_restores_it() {
     benilla_formats::wow_data_or_skip!();
@@ -276,8 +271,8 @@ fn a_click_drops_the_ring_and_the_repaint_restores_it() {
             .unwrap()
     };
 
-    // Attack's centre. Either button: the CheckButton toggles, then `SetChecked(0)` lands it at 0.
-    for button in ["RightButton", "LeftButton"] {
+    // Attack's centre.
+    for (button, relit_in_click) in [("RightButton", true), ("LeftButton", false)] {
         s.set_pet_actions(true, true, true, hunter_slots());
         s.fire_event("PET_BAR_UPDATE", vec![]);
         s.resolve();
@@ -285,9 +280,10 @@ fn a_click_drops_the_ring_and_the_repaint_restores_it() {
 
         s.mouse_button(87.0, 71.0, button, true);
         s.mouse_button(87.0, 71.0, button, false);
-        assert!(
-            !checked(&s),
-            "{button}: the ref's own SetChecked(0), reproduced"
+        assert_eq!(
+            checked(&s),
+            relit_in_click,
+            "{button}: lit after the click only when the click signalled the bar"
         );
 
         s.fire_event("PET_BAR_UPDATE", vec![]);
@@ -297,8 +293,7 @@ fn a_click_drops_the_ring_and_the_repaint_restores_it() {
         );
     }
     let _ = s.take_pet_actions();
-    let _ = s.take_pet_stop_attacks();
-    let _ = s.take_pet_autocast_toggles();
+    let _ = s.take_pet_writes();
     assert!(
         super::test_ui::errors_but_unported(&s).is_empty(),
         "script errors: {:?}",
@@ -349,6 +344,8 @@ fn a_disabled_bar_greys_rather_than_hides() {
 /// The pet bar with the bottom-left multibar up or not: shelf strips drawn, top of Attack's icon.
 fn pet_bar_row(with_multibar: bool) -> (usize, f32) {
     let mut s = UiScript::new().unwrap();
+    // No bar yet: the thread's test view outlives the previous VM.
+    s.set_pet_actions(false, false, false, Vec::new());
     s.set_screen_size(1024.0, 768.0);
     load_pet_bar(&mut s);
     if with_multibar {
@@ -426,7 +423,7 @@ fn dragging_a_pet_spell_between_slots_moves_it_through_the_shipped_handlers() {
         super::test_ui::errors_but_unported(&s)
     );
     assert_eq!(
-        s.take_pet_set_actions(),
+        s.take_pet_writes().placed,
         vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]],
         "the pickup blanks the slot it came from and tells the server"
     );
@@ -449,7 +446,7 @@ fn dragging_a_pet_spell_between_slots_moves_it_through_the_shipped_handlers() {
         super::test_ui::errors_but_unported(&s)
     );
     assert_eq!(
-        s.take_pet_set_actions(),
+        s.take_pet_writes().placed,
         vec![vec![(4, CLAW_WORD)]],
         "and the drop writes the word verbatim into slot 5 (0-based 4)"
     );
@@ -480,7 +477,7 @@ fn the_lock_stops_the_pet_bar_drag_but_not_its_shift_click() {
     s.run("PetActionButton_OnDragStart(PetActionButton4)")
         .unwrap();
     assert!(
-        s.take_pet_set_actions().is_empty(),
+        s.take_pet_writes().placed.is_empty(),
         "a locked bar sends nothing — the slot was never picked up"
     );
     assert!(s.cursor_payload().is_none());
@@ -489,14 +486,14 @@ fn the_lock_stops_the_pet_bar_drag_but_not_its_shift_click() {
     s.run("PetActionButton4:Click(\"LeftButton\")").unwrap();
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.take_pet_set_actions(),
+        s.take_pet_writes().placed,
         vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]],
         "shift-click picked it up despite the lock"
     );
     s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
         .unwrap();
     assert!(
-        s.take_pet_set_actions().is_empty(),
+        s.take_pet_writes().placed.is_empty(),
         "…and a locked slot will not take the drop"
     );
 
@@ -504,7 +501,7 @@ fn the_lock_stops_the_pet_bar_drag_but_not_its_shift_click() {
     s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
         .unwrap();
     assert_eq!(
-        s.take_pet_set_actions(),
+        s.take_pet_writes().placed,
         vec![vec![(4, CLAW_WORD)]],
         "unlocked, the same drop lands"
     );
@@ -536,19 +533,15 @@ fn shift_clicking_a_pet_button_picks_it_up_rather_than_casting() {
         "script errors: {:?}",
         super::test_ui::errors_but_unported(&s)
     );
+    let writes = s.take_pet_writes();
     assert!(
-        s.take_pet_actions().is_empty() && s.take_pet_autocast_toggles().is_empty(),
+        s.take_pet_actions().is_empty() && writes.toggled.is_empty(),
         "shift outranks both click arms — no cast, no autocast flip"
     );
-    assert_eq!(
-        s.take_pet_set_actions(),
-        vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]]
-    );
+    assert_eq!(writes.placed, vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]]);
 }
 
-/// A bound `BONUSACTIONBUTTONn` runs `PetActionButtonDown/Up` (PetActionBarFrame.lua:218-231), a
-/// bare `CastPetAction` on release. The live Attack is a possess bar's: the pet bar raises the
-/// attack latch only for a possessed unit, so on a hunter's bar key and click agree.
+/// A bound `BONUSACTIONBUTTONn` runs `PetActionButtonDown/Up` (PetActionBarFrame.lua:218-231), a bare `CastPetAction` on release that never reaches `OnClick`'s `IsPetAttackActive` fork.
 #[test]
 fn the_keybind_pair_pushes_and_casts_without_the_clicks_forks() {
     benilla_formats::wow_data_or_skip!();
@@ -577,7 +570,7 @@ fn the_keybind_pair_pushes_and_casts_without_the_clicks_forks() {
     assert_eq!(state(&s), "NORMAL");
     assert_eq!(s.take_pet_actions(), vec![1]);
     assert_eq!(
-        s.take_pet_stop_attacks(),
+        s.take_pet_writes().stops,
         0,
         "IsPetAttackActive lives in OnClick, which a key press never reaches"
     );

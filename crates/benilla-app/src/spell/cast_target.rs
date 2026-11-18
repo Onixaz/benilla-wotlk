@@ -246,7 +246,8 @@ impl Default for RangeInputs {
 /// Everything a cast-sending system needs to build a [`CastContext`].
 #[derive(SystemParam)]
 pub(crate) struct CastTargeting<'w, 's> {
-    pub(crate) selection: Res<'w, Selection>,
+    /// Read beside the press appliers' own write of it, at each call.
+    selection: crate::ui_script::LentRef<'w, Selection>,
     pub(crate) self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     pub(crate) self_auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
     /// Any caster's auras, for a cast as the pet.
@@ -278,13 +279,26 @@ pub(crate) struct CastTargeting<'w, 's> {
 }
 
 impl CastTargeting<'_, '_> {
+    /// The selection as it stands now: `(entity, guid)`.
+    pub(crate) fn selected(&self) -> (Option<Entity>, Option<u64>) {
+        self.selection
+            .get()
+            .map_or((None, None), |s| (s.target, s.guid))
+    }
+
+    /// The selection as it stands now, for a token's resolve.
+    pub(crate) fn selection(&self) -> Selection {
+        self.selection.get().map(|s| s.clone()).unwrap_or_default()
+    }
+
     /// This frame's [`CastContext`].
     pub(crate) fn context(&self) -> CastContext<'_> {
-        let target_store = self.selection.target.and_then(|e| self.stores.get(e).ok());
+        let (selected, selection_guid) = self.selected();
+        let target_store = selected.and_then(|e| self.stores.get(e).ok());
         let owner_store = |store| owner_store(store, self.index.as_deref(), &self.stores);
         let self_store = self.self_store.iter().next();
         CastContext {
-            selection_guid: self.selection.guid,
+            selection_guid,
             self_guid: self.self_guid.0,
             auto_self_cast: self.auto_self_cast.0,
             rel: TargetRelations {
@@ -299,20 +313,18 @@ impl CastTargeting<'_, '_> {
                 },
                 group: GroupInputs {
                     self_guid: self.self_guid.0,
-                    target_guid: self.selection.guid,
+                    target_guid: selection_guid,
                     self_owner_store: owner_store(self_store),
                     roster: self.roster.as_deref(),
                 },
             },
             range: RangeInputs {
                 self_pos: self.self_transform.iter().next().map(|t| t.translation),
-                target_pos: self
-                    .selection
-                    .target
+                target_pos: selected
                     .and_then(|e| self.transforms.get(e).ok())
                     .map(|t| t.translation),
                 caster: self.range_units.caster(),
-                target: self.selection.target.and_then(|e| self.range_units.unit(e)),
+                target: selected.and_then(|e| self.range_units.unit(e)),
             },
             main_hand_item: self
                 .self_store
@@ -337,10 +349,7 @@ impl CastTargeting<'_, '_> {
                 self.auto.unshift(s, row.map_or(0, |f| f.flags))
             }),
             self_auras: self.self_auras.iter().next(),
-            target_auras: self
-                .selection
-                .target
-                .and_then(|e| self.unit_auras.get(e).ok()),
+            target_auras: selected.and_then(|e| self.unit_auras.get(e).ok()),
             combo_points: self.combo_on(false, 0),
         }
     }
@@ -350,7 +359,7 @@ impl CastTargeting<'_, '_> {
     fn combo_on(&self, pet: bool, target: u64) -> u8 {
         self.combo.as_deref().map_or(0, |c| {
             let bank = if pet { c.pet } else { c.player };
-            bank.on(target, self.selection.guid.unwrap_or(0))
+            bank.on(target, self.selected().1.unwrap_or(0))
         })
     }
 
@@ -441,7 +450,7 @@ impl CastTargeting<'_, '_> {
         match at {
             CastAt::Selection => Aim::Selection,
             CastAt::Player => Aim::Unit(self.self_guid.0),
-            CastAt::Unit(token) => Aim::Unit(tokens.resolve(token, &self.selection).map(|u| u.1)),
+            CastAt::Unit(token) => Aim::Unit(tokens.resolve(token, &self.selection()).map(|u| u.1)),
         }
     }
 }

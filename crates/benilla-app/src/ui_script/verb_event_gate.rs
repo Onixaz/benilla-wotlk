@@ -87,11 +87,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "GUILD_REGISTRAR_CLOSED",
         "benilla-app/src/ui_petition/feed.rs",
     ),
-    (
-        "ClosePetStables",
-        "PET_STABLE_CLOSED",
-        "benilla-app/src/ui_stable/mod.rs",
-    ),
     // `pickup_item` puts the item on the cursor and queues the cursor's transition event.
     (
         "PickupItem",

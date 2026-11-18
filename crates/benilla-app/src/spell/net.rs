@@ -71,7 +71,15 @@ pub(crate) struct Lifecycle<'w> {
     actions: ResMut<'w, PlayerActions>,
     learned_in_tab: ResMut<'w, LearnedInTab>,
     summons: Res<'w, super::SummonSlots>,
-    companions: ResMut<'w, super::CompanionEdges>,
+    /// The companion lists the known-spell adds file into (`0x5426a5`).
+    companions: ResMut<'w, crate::ui_companion::CompanionLists>,
+    /// The known-spell buffer our object's init replays (`0xc9eb3c`).
+    known_buffer: ResMut<'w, crate::ui_companion::KnownSpellBuffer>,
+    names: Res<'w, crate::names::NameCache>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
+    /// The companion adds' tutorials (`0x542751`).
+    tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
     multicast: ResMut<'w, super::multicast::MultiCastLists>,
     cast_bar: ResMut<'w, CastBarFeed>,
     pending: ResMut<'w, PendingCast>,
@@ -119,6 +127,8 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             .and_then(|&e| sc.stores.get(e).ok())
             .and_then(|s| s.0.unit_ranged_attack_time())
             .unwrap_or(0);
+        // The buffer our object's init replays into the companion lists (`0x6df0c0`).
+        l.known_buffer.0.clone_from(&spell_ids);
         spell_book(
             spell_ids,
             cooldowns,
@@ -178,11 +188,12 @@ fn on_spell_learned(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    stores: Query<&ObjectStore>,
 ) {
     if let SessionEvent::SpellLearned { spell_id } = ev {
         // `0x4d4db0` on the active player (`0x10`): our own player, once its object has streamed.
-        let learner = self_q.iter().next().map(|store| Learner {
+        let me = our_store(&l, &stores);
+        let learner = me.map(|store| Learner {
             level: store.0.unit_level().unwrap_or(0),
             class: store.0.unit_class().unwrap_or(0),
             form: store.0.unit_shapeshift_form(),
@@ -202,34 +213,103 @@ fn on_spell_learned(
             .spells
             .as_deref()
             .and_then(|s| Some((s, s.catalog.get(spell_id)?)));
-        // A live companion learn's line and `COMPANION_LEARNED` wait on its creature (`0x54278e`).
-        if learner.is_some()
-            && display.is_some_and(|(_, d)| d.in_name_cache() && d.is_companion(&l.summons.0))
-        {
-            l.companions.learned.push(spell_id);
-        }
         if let Some((spells, d)) = display.filter(|(_, d)| d.in_spellbook(&l.summons.0)) {
             let changed = l.multicast.learn(d, &spells.catalog);
             if learner.is_some() && (changed || super::multicast::CALL_SPELLS.contains(&spell_id)) {
                 l.multicast.refill_due = true;
             }
         }
+        // The add's companion arm, its line and `COMPANION_LEARNED` (`0x5426a5`); before our object exists the spell waits in the buffer its init replays (`0x6e7de0`).
+        match me.map(|me| race_class_of(&me.0)) {
+            Some(me) => companion_add(&mut l, me, spell_id),
+            None => l.known_buffer.0.push(spell_id),
+        }
     }
 }
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // The known-spell removal drops a companion from its list (`0x53fad0`).
-        let companion = l
-            .spells
-            .as_deref()
-            .and_then(|s| s.catalog.get(spell_id))
-            .is_some_and(|d| d.is_companion(&l.summons.0));
-        if companion {
-            l.companions.unlearned.push(spell_id);
+        // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
+        if !our_object_exists(&l) {
+            l.known_buffer.0.retain(|&s| s != spell_id);
+        } else {
+            companion_remove(&mut l, spell_id);
         }
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
+    }
+}
+
+/// The companion arm of a known-spell removal (`0x53fad0`); the lists are borrowed only for a spell they hold, so another removal leaves them unchanged.
+fn companion_remove(l: &mut Lifecycle, spell_id: u32) {
+    let Some(spells) = l.spells.as_deref() else {
+        return;
+    };
+    let companion = spells
+        .catalog
+        .get(spell_id)
+        .and_then(|d| d.companion_kind(&l.summons.0))
+        .is_some();
+    if !companion && !l.companions.random_pool().contains(&spell_id) {
+        return;
+    }
+    let mut cx = crate::ui_companion::CompanionCx {
+        catalog: &spells.catalog,
+        summons: &l.summons.0,
+        names: &l.names,
+        commands: &l.net,
+        ui: &mut l.ui,
+    };
+    crate::ui_companion::remove_known(&mut l.companions, spell_id, &mut cx);
+}
+
+/// Whether the object manager holds our object, from its create on (`0x6e7840`), not from the frame's tag.
+fn our_object_exists(l: &Lifecycle) -> bool {
+    l.self_guid.0.is_some_and(|g| l.index.0.contains_key(&g))
+}
+
+/// Our object's fields, held from its create on (`0x6e7d60`).
+fn our_store<'a>(l: &Lifecycle, stores: &'a Query<&ObjectStore>) -> Option<&'a ObjectStore> {
+    let e = l.self_guid.0.and_then(|g| l.index.0.get(&g))?;
+    stores.get(*e).ok()
+}
+
+/// Our race and class off our fields.
+fn race_class_of(f: &benilla_protocol::ObjectFields) -> (u8, u8) {
+    (f.unit_race().unwrap_or(0), f.unit_class().unwrap_or(0))
+}
+
+/// The companion arm of a live known-spell add (`0x5426a5`); `(race, class)` are ours, which the pool's skill line lookup reads (`0x6e7b00`).
+fn companion_add(l: &mut Lifecycle, (race, class): (u8, u8), spell_id: u32) {
+    let Some(spells) = l.spells.as_deref() else {
+        return;
+    };
+    let line = l
+        .skill_lines
+        .as_deref()
+        .and_then(|s| s.catalog.spell_to_line(spell_id, race, class));
+    // Borrowed only for a companion or a pool spell, so another learn leaves the lists unchanged.
+    let companion = spells
+        .catalog
+        .get(spell_id)
+        .and_then(|d| d.companion_kind(&l.summons.0))
+        .is_some();
+    if !companion && line != Some(crate::ui_companion::SKILL_LINE_COMPANIONS) {
+        return;
+    }
+    let mut cx = crate::ui_companion::CompanionCx {
+        catalog: &spells.catalog,
+        summons: &l.summons.0,
+        names: &l.names,
+        commands: &l.net,
+        ui: &mut l.ui,
+    };
+    if let Some(id) =
+        crate::ui_companion::add_known(&mut l.companions, spell_id, true, line, &mut cx)
+    {
+        if let Some(t) = l.tutorials.as_mut() {
+            t.write(crate::tutorial::TutorialEvent::trigger(id));
+        }
     }
 }
 
@@ -244,12 +324,27 @@ fn on_spell_superceded(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
     mut errors: ResMut<UiErrorKeys>,
+    stores: Query<&ObjectStore>,
 ) {
     if let SessionEvent::SpellSuperceded {
         old_spell_id,
         new_spell_id,
     } = ev
     {
+        // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`).
+        match our_store(&l, &stores).map(|me| race_class_of(&me.0)) {
+            Some(me) => {
+                companion_remove(&mut l, old_spell_id);
+                companion_add(&mut l, me, new_spell_id);
+            }
+            None => {
+                let buffer = &mut l.known_buffer.0;
+                match buffer.iter_mut().find(|s| **s == old_spell_id) {
+                    Some(s) => *s = new_spell_id,
+                    None => buffer.push(new_spell_id),
+                }
+            }
+        }
         superceded_spell(
             old_spell_id,
             new_spell_id,
@@ -327,7 +422,7 @@ fn on_cast_result(
             &mut r.cast_events,
             &mut ladder.pending,
             &mut ladder.queued_melee,
-            &mut ladder.cooldowns,
+            &mut ladder.cooldowns.write(),
             &mut ladder.auto_repeat,
             ladder.spells.as_deref(),
             &ladder.commands,
@@ -372,7 +467,7 @@ fn on_own_spell_go(
         &mut r.cast_events,
         &mut ladder.pending,
         &mut ladder.queued_melee,
-        &mut ladder.cooldowns,
+        &mut ladder.cooldowns.write(),
         &mut ladder.auto_repeat,
         ladder.spells.as_deref(),
         &ladder.commands,
@@ -427,6 +522,18 @@ struct SpellGoLoot<'w> {
 }
 
 fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut arm: SpellGoLoot) {
+    if !matches!(ev, SessionEvent::SpellGo { .. }) {
+        return;
+    }
+    let pet_generation = l.pet_bar.cooldowns.generation;
+    on_spell_go_inner(ev, &mut l, &mut sc, &mut arm);
+    // The pet leg's insert flushes in the go (`0x80fe3b`, `0x80fe4b`).
+    if l.pet_bar.cooldowns.generation != pet_generation {
+        crate::ui_pet::pet_cooldown_flush(&mut l.ui);
+    }
+}
+
+fn on_spell_go_inner(ev: SessionEvent, l: &mut Lifecycle, sc: &mut Scene, arm: &mut SpellGoLoot) {
     if let SessionEvent::SpellGo {
         caster,
         cast_count,
@@ -635,6 +742,28 @@ fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
 /// `SMSG_COOLDOWN_CHEAT` through [`addressed_store`], the other three through
 /// [`pet_or_player_store`].
 fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
+    let pet = |caster: u64| l.pet_bar.has_bar() && l.pet_bar.spells.pet_guid == caster;
+    // A packet addressed to the pet flushes its bar once, whatever it changed (`0x807039`, `0x802bd6`, `0x802c1e`, `0x804179`); the player is tested first (`0x806e0e`, `0x804122`).
+    let flush = match ev {
+        SessionEvent::SpellCooldowns { caster, .. } | SessionEvent::CooldownCheat { caster } => {
+            l.self_guid.0 != Some(caster) && pet(caster)
+        }
+        SessionEvent::CooldownEvent { caster, .. } | SessionEvent::ClearCooldown { caster, .. } => {
+            pet(caster)
+        }
+        // Spell 0 is skipped before the delay (`0x8040e4`).
+        SessionEvent::ModifyCooldown {
+            spell_id, caster, ..
+        } => spell_id != 0 && pet(caster),
+        _ => false,
+    };
+    cooldown_packet(ev, &mut l);
+    if flush {
+        crate::ui_pet::pet_cooldown_flush(&mut l.ui);
+    }
+}
+
+fn cooldown_packet(ev: SessionEvent, l: &mut Lifecycle) {
     let Lifecycle {
         self_guid,
         spells,
@@ -642,7 +771,7 @@ fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
         pet_bar,
         spell_mods,
         ..
-    } = &mut l;
+    } = l;
     match ev {
         SessionEvent::SpellCooldowns {
             caster,
