@@ -206,17 +206,6 @@ impl super::UiScript {
         })
     }
 
-    /// Drain the spell ids `ToggleSpellAutocast` queued: `CMSG_PET_SPELL_AUTOCAST` (0x2F3) names a
-    /// spell id, where the pet bar's toggle sends `CMSG_PET_SET_ACTION`.
-    pub fn take_pet_spell_autocast_sets(&mut self) -> Vec<(u32, bool)> {
-        drain_field!(self, pet_spell_autocast_sets)
-    }
-
-    /// Drain the pet book's autocast toggles since the last call.
-    pub fn take_pet_spell_autocasts(&mut self) -> Vec<u32> {
-        drain_field!(self, pet_spell_autocasts)
-    }
-
     /// The pushed book, for resolving a macro's spell by the rule `CastSpellByName` uses, so the
     /// bar and the cast agree on which rank a bare `/cast` means.
     pub fn spellbook(&self) -> SpellBookState {
@@ -806,41 +795,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ToggleSpellAutocast(id, bookType), the pet book's right click: queued only for an
-    // autocast-allowed word, the gate the autocast send applies. The app sends
-    // `CMSG_PET_SPELL_AUTOCAST` and flips bit 30 on the book and the bar at the drain.
-    g.set(
-        "ToggleSpellAutocast",
-        lua.create_function(|lua, (id, book_type): (Value, Value)| {
-            let (id, book_type) = spell_slot_args(id, book_type, "ToggleSpellAutocast")?;
-            let mut model = crate::script::model_mut_of(lua);
-            let spell_id = book_slot(&model, id, &book_type)
-                .filter(|_| is_pet_book(&book_type))
-                .filter(|s| s.autocast.is_some_and(|(allowed, _)| allowed))
-                .map(|s| s.spell_id);
-            if let Some(spell_id) = spell_id {
-                model.pet_spell_autocasts.push(spell_id);
-            }
-            Ok(())
-        })?,
-    )?;
-
-    // EnableSpellAutocast(id, "pet") (`0x541140`) and DisableSpellAutocast (`0x5411a0`): the toggle
-    // with the state given.
-    for (verb, on) in [
-        ("EnableSpellAutocast", true),
-        ("DisableSpellAutocast", false),
+    // The pet book's autocast verbs (`0x5410e0`, `0x541140`, `0x5411a0`) set in the call.
+    for (verb, state) in [
+        ("ToggleSpellAutocast", None),
+        ("EnableSpellAutocast", Some(true)),
+        ("DisableSpellAutocast", Some(false)),
     ] {
         g.set(
             verb,
             lua.create_function(move |lua, (id, book_type): (Value, Value)| {
                 let (id, book_type) = spell_slot_args(id, book_type, verb)?;
-                let mut model = crate::script::model_mut_of(lua);
-                let spell_id = book_slot(&model, id, &book_type)
-                    .filter(|_| is_pet_book(&book_type))
-                    .map(|s| s.spell_id);
-                if let Some(spell_id) = spell_id {
-                    model.pet_spell_autocast_sets.push((spell_id, on));
+                let spell_id = {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    book_slot(&model, id, &book_type)
+                        .filter(|_| is_pet_book(&book_type))
+                        .map(|s| s.spell_id)
+                        .filter(|&s| s != 0)
+                };
+                let Some(spell_id) = spell_id else {
+                    return Ok(());
+                };
+                if crate::script::live::write_live(|l| l.pet_set_spell_autocast(spell_id, state))
+                    == Some(true)
+                {
+                    crate::script::tick::fire_event_into(lua, "PET_BAR_UPDATE", Vec::new());
                 }
                 Ok(())
             })?,
@@ -1714,8 +1694,10 @@ mod tests {
         );
     }
 
+    /// The book's set runs inside the call (`0x5d5e10`): only an autocast-allowed pet word flips,
+    /// the bar's signal comes after it (`0x5d5fe8`).
     #[test]
-    fn only_an_autocastable_pet_slot_queues_a_toggle() {
+    fn only_an_autocastable_pet_slot_sets_its_autocast() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
         s.set_pet_book(pet_book());
@@ -1727,8 +1709,23 @@ mod tests {
                ToggleSpellAutocast(1, BOOKTYPE_SPELL)"#,
         )
         .unwrap();
-        assert_eq!(s.take_pet_spell_autocasts(), vec![2649]);
-        assert!(s.take_pet_spell_autocasts().is_empty(), "drain empties");
+        assert_eq!(
+            crate::script::live::take_test_spell_autocasts(),
+            vec![(2649, false)]
+        );
+        assert!(
+            s.eval::<bool>(
+                "local a, e = GetSpellAutocast(1, BOOKTYPE_PET) return a == 1 and e == nil"
+            )
+            .unwrap(),
+            "the next verb reads it off"
+        );
+        s.run("EnableSpellAutocast(1, BOOKTYPE_PET) EnableSpellAutocast(1, BOOKTYPE_PET)")
+            .unwrap();
+        assert_eq!(
+            crate::script::live::take_test_spell_autocasts(),
+            vec![(2649, true), (2649, true)]
+        );
         assert!(s.take_spell_casts().is_empty());
     }
 

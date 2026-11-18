@@ -286,7 +286,7 @@ fn each_exit_alone_stops_a_press_and_every_order() {
     }
 }
 
-/// `0x5d66f0`: the bar's `TogglePetAutocast` flips the word and sends only for a usable pet.
+/// `0x5d66f0`: the bar toggle flips and sends inside the call, only for a usable pet.
 #[test]
 fn each_exit_alone_stops_the_bars_autocast_toggle() {
     for Case {
@@ -302,10 +302,6 @@ fn each_exit_alone_stops_the_bars_autocast_toggle() {
         let word = rig.app.world().resource::<PetBar>().spells.bar[0];
 
         ui(&mut rig, |s| s.run("TogglePetAutocast(1)").unwrap());
-        rig.app
-            .world_mut()
-            .run_system_once(super::drain::drain_pet_actions)
-            .expect("the drain runs");
 
         let sent = rig.sent();
         let flipped = rig.app.world().resource::<PetBar>().spells.bar[0] != word;
@@ -320,8 +316,7 @@ fn each_exit_alone_stops_the_bars_autocast_toggle() {
     }
 }
 
-/// `0x5d5e10`: the pet book's `ToggleSpellAutocast` flips the word, repaints and sends only for a
-/// usable pet.
+/// `0x5d5e10`: the book toggle flips, sends and repaints inside the call, only for a usable pet.
 #[test]
 fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
     for Case {
@@ -339,10 +334,6 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
         ui(&mut rig, |s| {
             s.run("ToggleSpellAutocast(1, BOOKTYPE_PET)").unwrap()
         });
-        rig.app
-            .world_mut()
-            .run_system_once(crate::ui_pet_book::drain_pet_book)
-            .expect("the drain runs");
 
         let sent = rig.sent();
         let repainted = rig.frame().iter().any(|e| e == "PET_BAR_UPDATE");
@@ -362,6 +353,57 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
                 .count(),
             usize::from(usable),
             "{name}: the toggle is sent only when usable"
+        );
+    }
+}
+
+/// Both toggles send, then signal inside the call (`0x5d5deb` then `0x5d5e01`, `0x5d5fdc` then
+/// `0x5d5fe8`): the next verb reads the new bit, and a handler's own send follows on the wire.
+#[test]
+fn both_toggles_send_then_signal_inside_the_call() {
+    for (toggle, read, nested, first) in [
+        (
+            "ToggleSpellAutocast(1, BOOKTYPE_PET)",
+            "select(2, GetSpellAutocast(1, BOOKTYPE_PET))",
+            "TogglePetAutocast(1)",
+            "book",
+        ),
+        (
+            "TogglePetAutocast(1)",
+            "select(7, GetPetActionInfo(1))",
+            "ToggleSpellAutocast(1, BOOKTYPE_PET)",
+            "bar",
+        ),
+    ] {
+        let mut rig = scene();
+        rig.frame();
+        let _ = rig.sent();
+        let (before, in_handler) = ui(&mut rig, |s| {
+            s.run(&format!(
+                "NESTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE')                  f:SetScript('OnEvent', function() if NESTED == nil then NESTED = {read} or 0 {nested} end end)"
+            ))
+            .unwrap();
+            s.eval::<(i64, i64)>(&format!("local b = {read} or 0 {toggle} return b, NESTED"))
+                .unwrap()
+        });
+        assert_ne!(
+            before, in_handler,
+            "{first}: the handler inside the call reads the new bit"
+        );
+        let kinds: Vec<&str> = rig
+            .sent()
+            .iter()
+            .filter_map(|c| match c {
+                ClientCommand::PetSpellAutocast { .. } => Some("book"),
+                ClientCommand::PetSetAction { .. } => Some("bar"),
+                _ => None,
+            })
+            .collect();
+        let second = if first == "book" { "bar" } else { "book" };
+        assert_eq!(
+            kinds,
+            vec![first, second],
+            "the toggle's packet leads its handler's"
         );
     }
 }
@@ -416,10 +458,6 @@ fn each_exit_alone_stops_the_drags_writes() {
         ui(&mut rig, |s| {
             s.run("PickupPetAction(1) PickupPetAction(2)").unwrap();
         });
-        rig.app
-            .world_mut()
-            .run_system_once(super::drain::drain_pet_actions)
-            .expect("the drain runs");
 
         let sent = rig.sent();
         let bar = rig.app.world().resource::<PetBar>().spells.bar;
@@ -481,17 +519,9 @@ fn a_held_action_stays_held_while_the_pet_is_out_of_view() {
         .0
         .remove(&PET);
     rig.frame();
-    rig.app
-        .world_mut()
-        .run_system_once(super::drain::drain_pet_actions)
-        .expect("the drain runs");
     let _ = rig.sent();
 
     ui(&mut rig, |s| s.run("PickupPetAction(2)").unwrap());
-    rig.app
-        .world_mut()
-        .run_system_once(super::drain::drain_pet_actions)
-        .expect("the drain runs");
 
     assert!(
         matches!(

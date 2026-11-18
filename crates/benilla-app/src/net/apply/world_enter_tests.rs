@@ -34,6 +34,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
         .init_resource::<crate::ui_battlefield::BattlefieldQueue>()
         .init_resource::<crate::ui_lfg::LfgFeed>()
         .init_resource::<crate::ui_pet::PetBar>()
+        .init_resource::<crate::ui_pet::possess::WorldEntryPetStep>()
         .add_message::<EnteredWorldMessage>()
         .add_message::<WorldEnterCascadeMessage>()
         .add_systems(
@@ -145,8 +146,8 @@ fn a_worldport_create_sends_them_again() {
     assert_eq!(sent(&rx), the_sends());
 }
 
-/// With our summon field set the pet ask follows the time query (`0x5d6e60`, from `0x528010`),
-/// and the cascade drops the old bar first: the answer rebuilds it.
+/// With our summon field set the pet ask follows the time query (`0x5d6e60`, from `0x528010`);
+/// the setter's clear waits for the UI's entry after `PLAYER_ENTERING_WORLD`, owed here.
 #[test]
 fn a_create_with_a_pet_out_asks_its_bar() {
     use benilla_protocol::field::FIELD_UNIT_SUMMON;
@@ -167,23 +168,34 @@ fn a_create_with_a_pet_out_asks_its_bar() {
     let mut want = the_sends();
     want.insert(3, "RequestPetInfo".into());
     assert_eq!(sent(&rx), want);
-    assert!(!app.world().resource::<crate::ui_pet::PetBar>().has_bar());
+    assert!(app.world().resource::<crate::ui_pet::PetBar>().has_bar());
+    assert_eq!(
+        *app.world()
+            .resource::<crate::ui_pet::possess::WorldEntryPetStep>(),
+        crate::ui_pet::possess::WorldEntryPetStep {
+            owed: true,
+            asked: true
+        }
+    );
 }
 
-/// A login's `SMSG_PET_SPELLS` can beat our create while the summon field comes later: with no
-/// field set, nothing is asked and that bar stays.
+/// With no charm or summon nothing is asked (`0x5d6ea6`), but the setter's clear ahead of that
+/// gate (`0x5d6e6d`) is owed all the same.
 #[test]
-fn a_create_with_no_pet_field_keeps_a_bar_that_beat_it() {
+fn a_create_with_no_pet_field_owes_the_clear_but_asks_nothing() {
     let (mut app, rx) = app();
-    app.world_mut()
-        .resource_mut::<crate::ui_pet::PetBar>()
-        .spells
-        .pet_guid = 0x2A;
     log_in(&mut app);
     self_create(&mut app);
     app.update();
     assert_eq!(sent(&rx), the_sends());
-    assert!(app.world().resource::<crate::ui_pet::PetBar>().has_bar());
+    assert_eq!(
+        *app.world()
+            .resource::<crate::ui_pet::possess::WorldEntryPetStep>(),
+        crate::ui_pet::possess::WorldEntryPetStep {
+            owed: true,
+            asked: false
+        }
+    );
 }
 
 /// The production schedule: the self-create edge, then the time, pet, mail, battlefield, dungeon

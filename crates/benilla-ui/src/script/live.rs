@@ -459,9 +459,23 @@ pub trait LiveState {
         None
     }
 
-    /// The drag's write into the pet's words, `(0-based slot, word)` pairs (`0x5d5c3e`); whether
-    /// it landed.
+    /// The drag's write into the pet's words and its send, `(0-based slot, word)` pairs in one
+    /// packet (`0x5d5c3e`, `0x5d5cda`); whether it landed.
     fn pet_place_action(&mut self, _entries: &[(u32, u32)]) -> bool {
+        false
+    }
+
+    /// `PetStopAttack`'s clear (`0x5d4650`): with the attacking global up, send the stop, lower it.
+    fn pet_stop_attack(&mut self) {}
+
+    /// The bar toggle on 0-based slot `index` (`0x5d5d20`): past the usability gate (`0x5d5d3c`) a
+    /// slot with bit 31 flips (`0x5d5d88`) and is sent (`0x5d5deb`); whether the gate passed.
+    fn pet_toggle_autocast(&mut self, _index: u32) -> bool {
+        false
+    }
+
+    /// The book's set (`0x5d5e10`), `None` flipping: whether it flipped and sent (`0x5d5fdc`).
+    fn pet_set_spell_autocast(&mut self, _spell_id: u32, _state: Option<bool>) -> bool {
         false
     }
 
@@ -841,6 +855,10 @@ pub(crate) struct TestView {
     pub pet_bar: Option<super::PetBarLive>,
     /// The pet bar's slots, which the drag writes.
     pub pet_slots: std::cell::RefCell<Vec<super::PetActionView>>,
+    /// `PetStopAttack` calls.
+    pub pet_stops: Cell<u32>,
+    /// The 0-based slots the bar toggle reached past its gate, in order.
+    pub pet_toggles: std::cell::RefCell<Vec<u32>>,
 }
 
 #[cfg(test)]
@@ -1099,6 +1117,7 @@ impl LiveState for TestView {
     }
 
     fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
+        TEST_PET_WRITES.with(|w| w.borrow_mut().push(entries.to_vec()));
         let mut slots = self.pet_slots.borrow_mut();
         for &(i, word) in entries {
             if let Some(s) = slots.get_mut(i as usize) {
@@ -1108,9 +1127,57 @@ impl LiveState for TestView {
         true
     }
 
+    fn pet_stop_attack(&mut self) {
+        self.pet_stops.set(self.pet_stops.get() + 1);
+    }
+
+    fn pet_toggle_autocast(&mut self, index: u32) -> bool {
+        if !self.pet_bar.as_ref().is_some_and(|b| b.actions_usable) {
+            return false;
+        }
+        self.pet_toggles.borrow_mut().push(index);
+        if let Some(s) = self.pet_slots.borrow_mut().get_mut(index as usize) {
+            if s.autocast_allowed {
+                s.autocast_enabled = !s.autocast_enabled;
+            }
+        }
+        true
+    }
+
+    fn pet_set_spell_autocast(&mut self, spell_id: u32, state: Option<bool>) -> bool {
+        TEST_PET_BOOK.with(|b| {
+            let mut book = b.borrow_mut();
+            let Some(slot) = book
+                .as_mut()
+                .and_then(|book| book.slots.iter_mut().rev().find(|s| s.spell_id == spell_id))
+            else {
+                return false;
+            };
+            let Some((true, on)) = slot.autocast else {
+                return false;
+            };
+            let on = state.unwrap_or(!on);
+            slot.autocast = Some((true, on));
+            TEST_SPELL_AUTOCASTS.with(|a| a.borrow_mut().push((spell_id, on)));
+            true
+        })
+    }
+
     fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<super::PetBookState> {
         TEST_PET_BOOK.with(|b| b.borrow().clone())
     }
+}
+
+/// The drag's writes through a test view since the last take, one packet each.
+#[cfg(test)]
+pub(crate) fn take_test_pet_writes() -> Vec<Vec<(u32, u32)>> {
+    TEST_PET_WRITES.with(|w| std::mem::take(&mut *w.borrow_mut()))
+}
+
+/// The `(spell, state)` writes the pet book's set made through a test view since the last take.
+#[cfg(test)]
+pub(crate) fn take_test_spell_autocasts() -> Vec<(u32, bool)> {
+    TEST_SPELL_AUTOCASTS.with(|a| std::mem::take(&mut *a.borrow_mut()))
 }
 
 #[cfg(test)]
@@ -1118,6 +1185,12 @@ thread_local! {
     /// The pet book every test view answers, set by `UiScript::set_pet_book`.
     static TEST_PET_BOOK: std::cell::RefCell<Option<super::PetBookState>> =
         const { std::cell::RefCell::new(None) };
+    /// The drag's writes through a test view, in order.
+    static TEST_PET_WRITES: std::cell::RefCell<Vec<Vec<(u32, u32)>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// The pet book's set writes through a test view, in order.
+    static TEST_SPELL_AUTOCASTS: std::cell::RefCell<Vec<(u32, bool)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The view lent for the rest of the thread once a test sets a pet book.
     static TEST_STICKY: std::cell::RefCell<Option<LiveLoan<TestView>>> =
         const { std::cell::RefCell::new(None) };

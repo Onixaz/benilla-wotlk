@@ -79,24 +79,50 @@ pub(crate) fn find_possessed(
     }
 }
 
-/// The world entry's lookup owed by the pet ask that went out (`0x5d6ede`, behind the send at
-/// `0x5d6ed6`), run after `PLAYER_ENTERING_WORLD` (`0x5281a6` before `0x5281fe`).
-#[derive(Resource, Default)]
-pub(crate) struct PossessLookupOwed(pub(crate) bool);
+/// The world entry's pet step the cascade owes, run after `PLAYER_ENTERING_WORLD` (`0x5281a6`
+/// before `0x5281fe`); `asked` when the pet ask went out, owing the possess lookup (`0x5d6ede`).
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WorldEntryPetStep {
+    pub(crate) owed: bool,
+    pub(crate) asked: bool,
+}
 
-/// The world entry's pet step after `PLAYER_ENTERING_WORLD` (`0x5281fe`): the owed lookup, its
-/// event fired in turn, ahead of the reputation's entry (`0x528208`).
+/// The world entry's pet step (`0x5d6e60`): the setter's clear and its tail, then the owed lookup,
+/// each event fired in turn ahead of the reputation's entry (`0x528208`).
 pub(crate) fn world_entry_step(world: &mut World) {
-    let owed = world
-        .get_resource_mut::<PossessLookupOwed>()
-        .is_some_and(|mut o| std::mem::take(&mut o.0));
-    if !owed {
+    let step = world
+        .get_resource_mut::<WorldEntryPetStep>()
+        .map(|mut s| std::mem::take(&mut *s))
+        .unwrap_or_default();
+    if !step.owed {
         return;
     }
-    if let Err(e) = world.run_system_cached(world_entry_lookup) {
-        warn!("ui_pet: the world entry's possess lookup did not run: {e}");
+    if let Err(e) = world.run_system_cached(world_entry_clear) {
+        warn!("ui_pet: the world entry's pet setter did not run: {e}");
+    }
+    // The setter's events fire before the ask's lookup runs (`0x5d6e6d` before `0x5d6ede`).
+    crate::ui_script::live::fire_handler_events(world);
+    if step.asked {
+        if let Err(e) = world.run_system_cached(world_entry_lookup) {
+            warn!("ui_pet: the world entry's possess lookup did not run: {e}");
+        }
     }
     crate::ui_script::live::fire_handler_events(world);
+}
+
+/// The setter with no pet (`0x5d6e6d`), ahead of the ask's gate; its tail runs on the old guid.
+fn world_entry_clear(
+    mut bar: ResMut<super::PetBar>,
+    list: Option<ResMut<super::PetList>>,
+    mut held: ResMut<PossessSpell>,
+    mut ui: ResMut<UiEvents>,
+) {
+    let changed = bar.spells.pet_guid != 0;
+    bar.clear();
+    if let Some(mut list) = list {
+        list.0.clear();
+    }
+    super::set_pet_tail(changed, &mut bar, &mut held, None, &mut ui);
 }
 
 /// Our fields, auras and transport seat, as the lookup reads them.

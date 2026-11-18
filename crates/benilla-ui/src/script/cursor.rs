@@ -18,6 +18,7 @@ pub(crate) use bar::use_action_places;
 pub(crate) use drag::{
     abandon_drag, arm_drag, maybe_start_drag, take_drag, DragGesture, DragRelease,
 };
+pub(crate) use pet::toggle_cursor_fork;
 
 /// Sentinel bag id for the player's equipped slots, whose `slot` is a 1-based inventory slot id
 /// (`GetInventorySlotInfo`'s, HeadSlot = 1). Never a Lua value, and disjoint from every real bag

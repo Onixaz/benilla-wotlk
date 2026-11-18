@@ -10,7 +10,6 @@ use bevy::prelude::*;
 use benilla_protocol::messages::{
     PetActionEntry, PET_COMMAND_ATTACK, PET_COMMAND_FOLLOW, PET_COMMAND_STAY,
 };
-use benilla_ui::script::UiScript;
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore};
 use crate::target::{is_possessed_by, Selection};
@@ -253,78 +252,10 @@ pub(super) fn arm_pet_gcd(
     }
 }
 
-/// Send the bar's other intents under [`PetBar`]'s pet guid: the autocast toggles, the stops and
-/// the drag writes. A toggle asks the usability predicate first, so on an unusable pet it flips
-/// nothing and sends nothing. The stops do not; the drag's writes were gated where the VM applied
-/// them, on the answer the bar last pushed.
-pub(super) fn drain_pet_actions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut bar: crate::ui_script::OwnedMut<PetBar>,
-    commands: Res<NetCommands>,
-    pet: PetUnit,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let toggles = script.take_pet_autocast_toggles();
-    let stops = script.take_pet_stop_attacks();
-    let writes = script.take_pet_set_actions();
-    if toggles.is_empty() && stops == 0 && writes.is_empty() {
-        return;
-    }
-    let pet_guid = bar.read().spells.pet_guid;
-    if pet_guid == 0 {
-        debug!("ui_pet: dropping queued pet intents — the bar is gone");
-        return;
-    }
-    // The toggle (`0x5d5d20`): past the usability gate every slot signals the bar, a token's
-    // right-click too (`0x5d5e01`); only a slot with bit 31 flips and sends.
-    for slot in toggles {
-        if !pet.actions_usable(&bar.read()) {
-            debug!(
-                "ui_pet: autocast toggle on slot {slot} refused, the pet's actions are not usable"
-            );
-            continue;
-        }
-        if let Some(flipped) = toggle_slot_autocast(&mut bar.write(), slot) {
-            debug!(
-                "ui_pet: autocast {} for spell {} (slot {slot})",
-                flipped.autocast_on(),
-                flipped.action()
-            );
-            let _ = commands.0.send(ClientCommand::PetSetAction {
-                pet_guid,
-                // Lua slots are 1-based, the wire's 0-based; `slot_entry` already refused 0.
-                entries: vec![(slot - 1, flipped.packed)],
-            });
-        }
-        script.fire_event("PET_BAR_UPDATE", Vec::new());
-    }
-    for _ in 0..stops {
-        if stop_pet_attack(&mut bar.write(), &commands) {
-            debug!("ui_pet: stop attack");
-        }
-    }
-    // The drag's `(0-based position, word)` pairs: mirrored here and sent as one batch, since the
-    // server tells one pair from two by body size.
-    for entries in writes {
-        let mut written = bar.write();
-        for &(position, packed) in &entries {
-            if let Some(e) = written.spells.bar.get_mut(position as usize) {
-                *e = PetActionEntry::from(packed);
-            }
-        }
-        debug!("ui_pet: bar write {entries:?}");
-        let _ = commands
-            .0
-            .send(ClientCommand::PetSetAction { pet_guid, entries });
-    }
-}
-
 /// `TogglePetAutocast`'s local half: flip bit 30 in place and return the whole word to send, or
 /// `None` for a slot out of range or without bit 31. The reference then runs a spellbook sync,
 /// which copies a spell slot's word over the last spellbook entry equal to it under `& 0x3FFFFFFF`.
-pub(super) fn toggle_slot_autocast(bar: &mut PetBar, slot: u32) -> Option<PetActionEntry> {
+pub(crate) fn toggle_slot_autocast(bar: &mut PetBar, slot: u32) -> Option<PetActionEntry> {
     let entry = slot_entry(bar, slot).filter(|e| e.autocast_allowed())?;
     let flipped = entry.with_autocast(!entry.autocast_on());
     *slot_entry_mut(bar, slot)? = flipped;
@@ -345,7 +276,7 @@ pub(super) fn toggle_slot_autocast(bar: &mut PetBar, slot: u32) -> Option<PetAct
 
 /// `PetStopAttack`'s core: send `CMSG_PET_STOP_ATTACK` and lower the latch, or do nothing when it
 /// is already down. Returns whether it sent.
-pub(super) fn stop_pet_attack(bar: &mut PetBar, commands: &NetCommands) -> bool {
+pub(crate) fn stop_pet_attack(bar: &mut PetBar, commands: &NetCommands) -> bool {
     let pet_guid = bar.spells.pet_guid;
     if !bar.attacking || pet_guid == 0 {
         return false;

@@ -2093,7 +2093,6 @@ mod tests {
                  hide path only",
             ),
             ("DISPLAY_SIZE_CHANGED", "the four paperdoll files"),
-            ("PET_UI_CLOSE", "PetPaperDollFrame.lua"),
             (
                 "SHOW_COMPARE_TOOLTIP",
                 "PaperDollFrame.lua — the second `TRADE_REQUEST`: event 377 is \

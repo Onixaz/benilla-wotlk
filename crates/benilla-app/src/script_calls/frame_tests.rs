@@ -646,14 +646,11 @@ fn a_press_is_applied_in_the_frame_it_is_made() {
     }
 }
 
-/// What reads the script calls' work still follows them: the pet bar's and the pet book's drains,
-/// the two item legs, and the rest of the target chain behind them.
+/// What reads the script calls' work still follows them: the two item legs and the target chain.
 #[test]
 fn what_follows_the_script_calls_still_follows_them() {
     let g = graph_or_skip!();
     for after in [
-        "::drain_pet_actions",
-        "::drain_pet_book",
         "::drop_item_on_unit",
         "::drop_on_world_click",
         "::target_by_name_requests",
