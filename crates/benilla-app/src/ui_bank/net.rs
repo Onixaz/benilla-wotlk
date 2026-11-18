@@ -92,8 +92,8 @@ fn on_interact_target_taken(
             });
             return;
         }
+        // The trainer list takes it from its own handler, for a new trainer only.
         SessionEvent::GossipMenu(_)
-        | SessionEvent::TrainerList { .. }
         | SessionEvent::TabardVendorActivate(_)
         | SessionEvent::PetitionShowList(_)
         | SessionEvent::ListStabledPets { .. }
