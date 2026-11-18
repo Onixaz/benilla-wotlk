@@ -192,9 +192,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some((id, count)) = cost else {
                     return Ok(MultiValue::new());
                 };
-                let view = model.item_templates.get(&id).cloned();
+                let view = crate::script::item_stats::item_record(&model, id);
                 if view.is_none() {
-                    model.item_stat_asks.insert(id);
+                    crate::script::item_stats::ask_item_record(&mut model, id);
                 }
                 drop(model);
                 Ok(MultiValue::from_vec(vec![

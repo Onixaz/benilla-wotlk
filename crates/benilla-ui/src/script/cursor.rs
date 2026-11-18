@@ -540,19 +540,21 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
             None => Vec::new(),
         },
         Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
-            super::action::ACTION_KIND_ITEM => match model.item_templates.get(&a.action) {
-                Some(t) => vec![
-                    str("item")?,
-                    int(a.action),
-                    str(&super::item_stats::item_link(
-                        a.action,
-                        &t.name,
-                        t.quality,
-                        crate::script::item_stats::player_level(),
-                    ))?,
-                ],
-                None => Vec::new(),
-            },
+            super::action::ACTION_KIND_ITEM => {
+                match super::item_stats::item_record(model, a.action) {
+                    Some(t) => vec![
+                        str("item")?,
+                        int(a.action),
+                        str(&super::item_stats::item_link(
+                            a.action,
+                            &t.name,
+                            t.quality,
+                            crate::script::item_stats::player_level(),
+                        ))?,
+                    ],
+                    None => Vec::new(),
+                }
+            }
             super::action::ACTION_KIND_MACRO => vec![str("macro")?, int(a.action)],
             super::action::ACTION_KIND_SPELL => spell(a.action, None)?,
             _ => Vec::new(),

@@ -1572,51 +1572,6 @@ mod tests {
         );
     }
 
-    /// Idle feeds leave the caches others are gated on unmarked.
-    #[test]
-    fn idle_feeds_leave_the_shared_caches_unwritten() {
-        use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1;
-
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        let mut app = App::new();
-        app.insert_resource(NetCommands(tx));
-        app.init_resource::<crate::net::GuidIndex>()
-            .init_resource::<NameCache>()
-            .init_resource::<Items>()
-            .init_resource::<crate::ui_items::feed::FreshTemplates>()
-            .init_resource::<crate::world_state::WorldStates>()
-            .init_resource::<crate::ui_chat::ChatLog>()
-            .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_quest::lines::TurnIns>()
-            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>()
-            .init_resource::<QuestLog>()
-            .init_resource::<QuestLogMarks>()
-            .init_non_send_resource::<rows::RebuildMarks>()
-            .init_non_send_resource::<QuestExpiries>();
-        app.world_mut().spawn((
-            ObjectStore(ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, 7)])),
-            Guid(0x2A),
-            SelfPlayer,
-        ));
-        app.insert_non_send_resource(UiScript::new().unwrap());
-        app.init_resource::<crate::spell::SpellModifiers>()
-            .init_non_send_resource::<crate::ui_quest::QuestGiver>()
-            .init_resource::<crate::go_templates::GameObjectTemplates>();
-        // The item-stats and quest feeds share caches others are gated on: idle, they must not
-        // mark them.
-        app.add_systems(Update, crate::ui_items::feed::feed_item_stats);
-        app.update();
-        app.update();
-        let items_marked = app.world().resource_ref::<Items>().last_changed();
-        app.update();
-        app.update();
-        assert_eq!(
-            app.world().resource_ref::<Items>().last_changed(),
-            items_marked,
-            "an idle item feed leaves the cache unmarked"
-        );
-    }
-
     // ── The completion test (`0x5e0ea0`) ───────────────────────────────────────────────────────
 
     fn slot(counters: [u16; 4], state: u8) -> QuestLogSlot {

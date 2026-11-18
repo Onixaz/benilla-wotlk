@@ -272,7 +272,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::new());
             };
             let item = (r.creates_item && r.product_item != 0)
-                .then(|| model.item_templates.get(&r.product_item))
+                .then(|| crate::script::item_stats::item_record(&model, r.product_item))
                 .flatten();
             let link = match item {
                 Some(t) => item_link(
@@ -400,7 +400,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                         .and_then(|i| r.reagents.get(i))
                 })
                 .and_then(|re| {
-                    model.item_templates.get(&re.item).map(|t| {
+                    crate::script::item_stats::item_record(&model, re.item).map(|t| {
                         item_link(
                             re.item,
                             &t.name,

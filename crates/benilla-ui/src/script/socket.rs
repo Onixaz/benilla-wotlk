@@ -134,7 +134,7 @@ pub(super) fn holds_slot(model: &Model, bag: i64, slot: u32) -> bool {
 
 /// `GetNumSockets` (`0x7094e0`): the template's coloured sockets plus a prismatic enchant's.
 pub(super) fn num_sockets(model: &Model, held: &Held<'_>) -> u32 {
-    let colored = model.item_templates.get(&held.item_id()).map_or(0, |t| {
+    let colored = super::item_stats::item_record(model, held.item_id()).map_or(0, |t| {
         t.socket_colors.iter().filter(|&&c| c != 0).count() as u32
     });
     let prismatic = held
@@ -175,7 +175,7 @@ pub(super) fn set_item(model: &mut Model, guid: u64) {
     info.gems = [0; MAX_SOCKETS];
     info.awaiting.clear();
     info.item = guid;
-    let stats = new.filter(|(_, id, _)| model.item_templates.contains_key(id));
+    let stats = new.filter(|&(_, id, _)| super::item_stats::item_record_cached(model, id));
     match stats {
         Some(((bag, slot), _, enchants)) => {
             model.socket_info.seen = enchants;
@@ -198,7 +198,8 @@ fn queue(model: &mut Model, event: &str) {
 /// its meta bit matches the socket's, else the reference's error shows. Returns whether it took.
 fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
     let item = model.socket_info.item;
-    let Some(socket_stats) = find(model, item).and_then(|h| model.item_templates.get(&h.item_id()))
+    let Some(socket_stats) =
+        find(model, item).and_then(|h| super::item_stats::item_record(model, h.item_id()))
     else {
         return false;
     };
@@ -210,7 +211,9 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
         queue(model, "SOCKET_INFO_UPDATE");
         return true;
     }
-    let Some(stats) = find(model, gem).and_then(|h| model.item_templates.get(&h.item_id())) else {
+    let Some(stats) =
+        find(model, gem).and_then(|h| super::item_stats::item_record(model, h.item_id()))
+    else {
         return false;
     };
     if stats.gem_properties == 0 {
@@ -340,11 +343,11 @@ fn gem_template(model: &mut Model, i: usize, existing: bool) -> Option<(u32, Ite
         let gem = *model.socket_info.gems.get(i)?;
         find(model, gem)?.item_id()
     };
-    match model.item_templates.get(&id).cloned() {
+    match super::item_stats::item_record(model, id) {
         Some(t) => Some((id, t)),
         None => {
             if existing {
-                model.item_stat_asks.insert(id);
+                super::item_stats::ask_item_record(model, id);
                 if !model.socket_info.awaiting.contains(&id) {
                     model.socket_info.awaiting.push(id);
                 }
@@ -357,7 +360,7 @@ fn gem_template(model: &mut Model, i: usize, existing: bool) -> Option<(u32, Ite
 /// The socket item's template, which the socket fit reads.
 fn socket_stats(model: &Model) -> Option<ItemTemplateView> {
     find(model, model.socket_info.item)
-        .and_then(|h| model.item_templates.get(&h.item_id()).cloned())
+        .and_then(|h| super::item_stats::item_record(model, h.item_id()))
 }
 
 /// The three values of `GetExistingSocketInfo` and `GetNewSocketInfo`: name, texture, matches.
@@ -485,7 +488,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let held = find(&model, model.socket_info.item);
                 let view = held
                     .as_ref()
-                    .and_then(|h| model.item_templates.get(&h.item_id()).cloned());
+                    .and_then(|h| super::item_stats::item_record(&model, h.item_id()));
                 (held.and_then(|h| h.name()), view)
             };
             let Some(v) = view else {

@@ -13,6 +13,7 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::item_link::{item_hyperlink, reference_atoi, ItemLinkFields};
+use super::item_stats::{ask_item_record, item_record, item_tooltip_record};
 use super::item_summary::StatSummary;
 use super::object::frame_handle_of;
 use super::tooltip::{
@@ -58,10 +59,8 @@ fn compare_against_worn(
             else {
                 continue; // an empty slot is not counted
             };
-            let same_class = model
-                .item_templates
-                .get(&worn.item_id)
-                .is_some_and(|w| w.class == offered.class);
+            let same_class =
+                item_record(&model, worn.item_id).is_some_and(|w| w.class == offered.class);
             if !same_class {
                 continue;
             }
@@ -96,9 +95,9 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
             t.item_id = item_id;
         }
     }
-    let v = model.item_templates.get(&item_id).cloned();
+    let v = item_tooltip_record(lua, &model, item_id);
     if v.is_none() && item_id != 0 {
-        model.item_stat_asks.insert(item_id);
+        ask_item_record(&mut model, item_id);
         note_item_miss(&mut model, item_id);
     }
     v
@@ -325,10 +324,7 @@ pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let equippable = model
-        .item_templates
-        .get(&item_id)
-        .is_some_and(|t| t.inventory_type != 0);
+    let equippable = item_record(&model, item_id).is_some_and(|t| t.inventory_type != 0);
     if equippable {
         for slot in 1..=19 {
             if let Some(s) = model
@@ -470,12 +466,7 @@ fn compare_slot(
     // An off-hand item against an empty off hand meets a worn two-hander.
     worn(OFF_HAND).map(|_| OFF_HAND).or_else(|| {
         worn(MAIN_HAND)
-            .filter(|id| {
-                model
-                    .item_templates
-                    .get(id)
-                    .is_some_and(|t| t.inventory_type == 17)
-            })
+            .filter(|&id| item_record(model, id).is_some_and(|t| t.inventory_type == 17))
             .map(|_| MAIN_HAND)
     })
 }
@@ -667,13 +658,10 @@ fn add_compare_delta(
         let Ok((b_id, b_fields, b_level)) = tip_mut(&mut model, h).map(|t| shown(t)) else {
             return Ok(());
         };
-        match (
-            model.item_templates.get(&a_id),
-            model.item_templates.get(&b_id),
-        ) {
+        match (item_record(&model, a_id), item_record(&model, b_id)) {
             (Some(a), Some(b)) => Some(StatSummary::delta(
-                &StatSummary::of_at(&model, a, &a_fields, a_level),
-                &StatSummary::of_at(&model, b, &b_fields, b_level),
+                &StatSummary::of_at(&model, &a, &a_fields, a_level),
+                &StatSummary::of_at(&model, &b, &b_fields, b_level),
             )),
             _ => None,
         }
@@ -711,8 +699,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let (id, fields) = tip_mut(&mut model, h)
                     .map_or((0, ItemLinkFields::default()), |t| (t.item_id, t.item_link));
                 (id != 0).then(|| {
-                    let view = model.item_templates.get(&id);
-                    let name = view.map_or_else(String::new, |v| {
+                    let view = item_record(&model, id);
+                    let name = view.as_ref().map_or_else(String::new, |v| {
                         rolled_name(lua, &v.name, fields.random_property)
                     });
                     let quality = view.map_or(1, |v| v.quality);

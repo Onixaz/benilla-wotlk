@@ -90,6 +90,8 @@ pub(crate) struct LiveView<'w, 's> {
     containers: Option<crate::ui_items::ContainerLive<'w, 's>>,
     /// `ItemSet.dbc`, the name cache and the bonuses' token inputs, read at the call.
     item_sets: Option<crate::ui_items::ItemSetLive<'w, 's>>,
+    /// The item cache and the catalogs a record's names resolve through, read at the call.
+    item_records: Option<crate::ui_items::ItemRecordLive<'w, 's>>,
     /// The caches a guild bank slot and log row resolve through at the call.
     guild_bank: Option<crate::ui_guild_bank::BankCatalogs<'w>>,
     _mark: Option<Res<'w, LendsLive>>,
@@ -1349,6 +1351,34 @@ impl LiveState for LiveView<'_, '_> {
             known.unwrap_or(&NONE),
             global,
         )
+    }
+
+    fn item_record(
+        &self,
+        id: u32,
+        tooltip: Option<benilla_ui::script::GlobalStrings<'_>>,
+    ) -> Option<Option<benilla_ui::script::ItemTemplateView>> {
+        let records = self.item_records.as_ref()?;
+        let me = self.self_guid.as_ref().and_then(|s| s.0).and_then(|g| {
+            let &entity = self.index.as_ref()?.0.get(&g)?;
+            self.stores.get(entity).ok()
+        });
+        let known = self.actions.get().map(|a| &a.spells);
+        static NONE: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        Some(records.view(
+            id,
+            me,
+            self.spells.as_deref(),
+            known.unwrap_or(&NONE),
+            tooltip,
+        ))
+    }
+
+    fn bind_location(&self) -> Option<String> {
+        self.item_records
+            .as_ref()?
+            .bind_location()
+            .map(str::to_string)
     }
 
     fn guild_bank_open(&self) -> bool {

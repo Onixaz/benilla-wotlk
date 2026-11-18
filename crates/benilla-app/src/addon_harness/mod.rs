@@ -1051,7 +1051,8 @@ fn seat_a_session(script: &mut UiScript) {
     // What this run's device offers, as the app seeds it at each VM's load.
     script.set_video_caps(crate::video::video_caps());
     script.set_realm_name("Harness");
-    // The bind point: the server sends `SMSG_BINDPOINTUPDATE` at login, before any addon runs.
+    // The bind point: the server sends `SMSG_BINDPOINTUPDATE` at login, before any addon runs; outside the tests, no area row reads the `HOME_INN` text.
+    #[cfg(test)]
     script.set_bind_location("Stormwind City");
     script.set_unit(
         "player",

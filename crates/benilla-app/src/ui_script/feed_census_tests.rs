@@ -50,7 +50,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_inspect::feed_inspect",
     "benilla_app::ui_instance::feed_instance",
     "benilla_app::ui_item_text::feed_item_text",
-    "benilla_app::ui_items::feed::feed_item_stats",
     "benilla_app::ui_layout::load_layout",
     "benilla_app::ui_lfg::feed_lfg",
     "benilla_app::ui_logout::feed_logout",

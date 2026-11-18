@@ -219,10 +219,10 @@ fn player_aura_end(model: &Model, spell: u32) -> MultiValue {
 /// `LFG_UPDATE_RANDOM_INFO` (`0x552950`).
 fn reward_name(lua: &Lua, item: u32) -> String {
     let mut model = crate::script::model_mut_of(lua);
-    if let Some(t) = model.item_templates.get(&item) {
-        return t.name.clone();
+    if let Some(t) = crate::script::item_stats::item_record(&model, item) {
+        return t.name;
     }
-    model.item_stat_asks.insert(item);
+    crate::script::item_stats::ask_item_record(&mut model, item);
     model.lfg.reward_item_waits.insert(item);
     String::new()
 }
@@ -1408,12 +1408,12 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let link = {
                 let mut model = crate::script::model_mut_of(lua);
                 let level = crate::script::item_stats::player_level();
-                match model.item_templates.get(&item.item) {
+                match crate::script::item_stats::item_record(&model, item.item) {
                     Some(t) => Some(crate::script::item_stats::item_link(
                         item.item, &t.name, t.quality, level,
                     )),
                     None => {
-                        model.item_stat_asks.insert(item.item);
+                        crate::script::item_stats::ask_item_record(&mut model, item.item);
                         None
                     }
                 }

@@ -57,19 +57,6 @@ impl Operands {
         self.0[v.index()]
     }
 
-    /// The spell cost runs, which [`Operands::diff`] leaves out.
-    pub(crate) fn cost_runs(&self) -> &[u32; 14] {
-        &self.1
-    }
-
-    /// No player's operands but `v`.
-    #[cfg(test)]
-    pub(crate) fn with(v: PlayerValue, value: f32) -> Self {
-        let mut operands = Self::ZERO;
-        operands.0[v.index()] = value;
-        operands
-    }
-
     /// The operands that differ from `prev`, a bit per [`PlayerValue::index`].
     pub(crate) fn diff(&self, prev: &Self) -> u64 {
         self.0
@@ -253,13 +240,7 @@ pub(crate) struct CasterSources<'w, 's> {
     >,
 }
 
-static NO_SPELLS: BTreeSet<u32> = BTreeSet::new();
-
 impl CasterSources<'_, '_> {
-    pub(crate) fn known(&self) -> &BTreeSet<u32> {
-        self.actions.as_deref().map_or(&NO_SPELLS, |a| &a.spells)
-    }
-
     pub(crate) fn auras(&self) -> Option<&UnitAuras> {
         self.auras.single().ok().map(|a| a.into_inner())
     }

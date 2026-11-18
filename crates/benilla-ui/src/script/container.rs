@@ -803,8 +803,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let info = index_slot(&model, bag, slot);
                 let template = info
                     .as_ref()
-                    .and_then(|s| model.item_templates.get(&s.item_id));
-                let lootable = template.is_some_and(|t| t.flags & 0x4 != 0);
+                    .and_then(|s| super::item_stats::item_record(&model, s.item_id));
+                let lootable = template.as_ref().is_some_and(|t| t.flags & 0x4 != 0);
                 let quality = template
                     .filter(|t| t.inventory_type != 0)
                     .map_or(-1, |t| i64::from(t.quality));

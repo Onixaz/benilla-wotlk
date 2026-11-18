@@ -10,6 +10,9 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
+/// The VM's own strings by key, which a read building display text formats through.
+pub type GlobalStrings<'a> = &'a dyn Fn(&str) -> Option<String>;
+
 /// What the verbs read live, implemented by the app over its state; the `&mut self` methods, reached through [`write_live`], write what a verb changes in its call, as `ClosePetStables` clears the master inside its call.
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
@@ -580,6 +583,20 @@ pub trait LiveState {
     /// Ask for item `id`'s record when the cache holds none, as a cache read with a landing callback does (`0x5b01ef`).
     fn ask_item_record(&self, _id: u32) {}
 
+    /// Item `id`'s record read from the item cache at the call (`0x67ca30`), its catalog names resolved now; `tooltip`, the VM's strings, adds the lines only the tooltip prints, the trigger spells' `$`-text and the reputation requirement. `Some(None)` for a record not cached, `None` where no view lends the cache.
+    fn item_record(
+        &self,
+        _id: u32,
+        _tooltip: Option<GlobalStrings<'_>>,
+    ) -> Option<Option<super::ItemTemplateView>> {
+        None
+    }
+
+    /// The bind point's area name at the call, through the catalog the `$z` token reads; `None` where no view lends it.
+    fn bind_location(&self) -> Option<String> {
+        None
+    }
+
     /// Container `bag` of the active player at the call (`0x5d7380`): `Some(None)` for an empty bag slot or an id past the eleven bags, `None` with no active player. Cooldowns on the `GetTime` clock that `ui_now` seconds names at `anchor`.
     fn container(
         &self,
@@ -1059,6 +1076,11 @@ pub(crate) struct TestView {
     /// The tabs whose text is stale, and the text asks sent, in order.
     pub guild_bank_text_stale: Vec<u8>,
     pub guild_bank_text_sent: Vec<u8>,
+    /// The item cache's records, and each read made, `(id, tooltip)`, in order.
+    pub item_records: std::cell::RefCell<std::collections::HashMap<u32, super::ItemTemplateView>>,
+    pub item_record_reads: std::cell::RefCell<Vec<(u32, bool)>>,
+    /// The bind point's area name.
+    pub bind_location: std::cell::RefCell<Option<String>>,
 }
 
 #[cfg(test)]
@@ -1194,10 +1216,26 @@ impl LiveState for TestView {
             .currency_holdings
             .as_ref()
             .and_then(|h| h.items.get(&id))
-            .is_some_and(|(name, _)| name.is_some());
+            .is_some_and(|(name, _)| name.is_some())
+            || self.item_records.borrow().contains_key(&id);
         if !cached {
             self.item_asks.borrow_mut().push(id);
         }
+    }
+
+    fn item_record(
+        &self,
+        id: u32,
+        tooltip: Option<GlobalStrings<'_>>,
+    ) -> Option<Option<super::ItemTemplateView>> {
+        self.item_record_reads
+            .borrow_mut()
+            .push((id, tooltip.is_some()));
+        Some(self.item_records.borrow().get(&id).cloned())
+    }
+
+    fn bind_location(&self) -> Option<String> {
+        self.bind_location.borrow().clone()
     }
 
     fn unit_flags(&self, guid: u64) -> Option<u32> {

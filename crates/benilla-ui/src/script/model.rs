@@ -11,8 +11,7 @@ use super::{
     loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
     quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
     taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
-    ItemTemplateView, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
-    UnitTokenParse,
+    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -985,9 +984,11 @@ pub(crate) struct Model {
     pub(crate) quests_completed_queries: u32,
     /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`'s ids, which `GetQuestsCompleted` keys.
     pub(crate) quests_completed: Vec<u32>,
-    /// Item id to its tooltip view.
-    pub(crate) item_templates: HashMap<u32, ItemTemplateView>,
-    /// Item ids asked for and missing, for the app to answer.
+    /// A test's or a capture fixture's item records, read where the cache misses one.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) item_templates: HashMap<u32, super::ItemTemplateView>,
+    /// A test's record asks, made where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_stat_asks: HashSet<u32>,
     /// A test's or a capture fixture's set blocks, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
@@ -1160,7 +1161,8 @@ pub(crate) struct Model {
     /// pushes that carry it: corrected, never blanked. A per-login rebuild is unseen, as its verbs
     /// exist only in game, not at the glue screen.
     pub(crate) player_record: super::PlayerRecord,
-    /// `GetBindLocation()`, the bind point's area name: `""` before it lands, never nil.
+    /// A test's or a capture fixture's bind point name, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) bind_location: String,
     /// `GMTicketCategory.dbc` `(id, name)` rows in file order; the ids are wire values.
     pub(crate) gm_ticket_categories: Vec<(u32, String)>,
@@ -1747,12 +1749,14 @@ impl Model {
             quest_poi: Default::default(),
             quests_completed_queries: 0,
             quests_completed: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             item_templates: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             item_sets: HashMap::new(),
             hovered_link: None,
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
+            #[cfg(any(test, feature = "fixtures"))]
             item_stat_asks: HashSet::new(),
             spell_tooltips: HashMap::new(),
             spell_tooltip_asks: HashSet::new(),
@@ -1780,6 +1784,7 @@ impl Model {
             screenshot_asks: 0,
             realm_name: String::new(),
             player_record: super::PlayerRecord::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             bind_location: String::new(),
             gm_ticket_categories: Vec::new(),
             gm_ticket_intents: Vec::new(),

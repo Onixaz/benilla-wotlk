@@ -145,3 +145,74 @@ fn a_set_members_name_landing_repaints() {
         "{before:?}, then {after:?}"
     );
 }
+
+/// The record is read from the lent cache at each call: a miss asks the cache, not the VM; the landing callback repaints the waiting tooltip from the cache; `GetItemInfo` reads the light record and the tooltip the one with its trigger text, each at its call.
+#[test]
+fn the_record_is_read_from_the_lent_cache_at_each_call() {
+    let loan = crate::script::live::lend_test(crate::script::live::TestView::default());
+    let mut s = retrieving_script();
+    s.run("TT:SetHyperlink('item:19019:0:0:0')").unwrap();
+    assert_eq!(lines_of(&mut s).len(), 1, "the retrieving line");
+    assert_eq!(
+        *loan.view().item_asks.borrow(),
+        [19019],
+        "the miss asked the cache"
+    );
+    assert!(
+        s.take_item_stat_asks().is_empty(),
+        "nothing asked of the VM"
+    );
+    loan.view().item_records.borrow_mut().insert(19019, axe());
+    loan.view().item_record_reads.borrow_mut().clear();
+    s.item_record_landed(19019);
+    let lines = lines_of(&mut s);
+    assert_eq!(
+        lines[0].0, "Ravager",
+        "the landing repainted from the cache"
+    );
+    assert!(
+        loan.view()
+            .item_record_reads
+            .borrow()
+            .contains(&(19019, true)),
+        "the tooltip reads its lines"
+    );
+    loan.view().item_record_reads.borrow_mut().clear();
+    assert_eq!(
+        s.eval::<String>("return (GetItemInfo(19019))").unwrap(),
+        "Ravager"
+    );
+    assert_eq!(
+        *loan.view().item_record_reads.borrow(),
+        [(19019, false)],
+        "GetItemInfo reads the light record"
+    );
+    loan.view()
+        .item_records
+        .borrow_mut()
+        .get_mut(&19019)
+        .unwrap()
+        .name = "Ravager Reforged".into();
+    assert_eq!(
+        s.eval::<String>("return (GetItemInfo(19019))").unwrap(),
+        "Ravager Reforged",
+        "the next call reads the cache as it is now"
+    );
+}
+
+/// `GetBindLocation` reads the bind point at the call (`0x516b23`), the `HOME_INN` text with no area row (`0x516b64`).
+#[test]
+fn the_bind_location_is_read_at_the_call() {
+    let loan = crate::script::live::lend_test(crate::script::live::TestView::default());
+    let s = script();
+    s.run(r#"HOME_INN = "Home Inn""#).unwrap();
+    assert_eq!(
+        s.eval::<String>("return GetBindLocation()").unwrap(),
+        "Home Inn"
+    );
+    *loan.view().bind_location.borrow_mut() = Some("Dalaran".into());
+    assert_eq!(
+        s.eval::<String>("return GetBindLocation()").unwrap(),
+        "Dalaran"
+    );
+}
