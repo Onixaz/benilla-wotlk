@@ -5747,6 +5747,62 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
     );
 }
 
+/// An item set's tooltip block reads its row and the members' names at the call (`0x62ba3e`): an unanswered name is asked and the tooltip waits on it, and the name's answer renders the tooltip again from the handler (`0x62ba29`).
+#[test]
+fn an_item_sets_block_reads_its_row_and_names_at_the_call() {
+    const SET: u32 = 161;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (set_name, members) = {
+        let sets = rig.app.world().resource::<crate::ui_items::ItemSets>();
+        let row = sets.0.set(SET).expect("ItemSet.dbc's row 161");
+        (row.name.clone(), row.items.clone())
+    };
+    let piece = members[0];
+    let mut info = crate::items::test_template("Set Piece");
+    info.item_set = SET;
+    rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: piece,
+            info: Some(Box::new(info)),
+        }],
+        2,
+    );
+    let read = |rig: &mut Rig| -> String {
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval(
+                "local t = {} for i = 1, GameTooltip:NumLines() do                  t[#t + 1] = _G['GameTooltipTextLeft' .. i]:GetText() or '' end                  return table.concat(t, '|')",
+            )
+            .expect("the tooltip's lines")
+    };
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(&format!(
+            "GameTooltip:SetOwner(UIParent, 'ANCHOR_NONE') GameTooltip:SetHyperlink('item:{piece}')"
+        ))
+    })
+    .expect("a VM")
+    .expect("the hover runs");
+    let before = read(&mut rig);
+    assert!(before.contains(&set_name), "the set's row read: {before}");
+    assert!(!before.contains("Second Piece"), "{before}");
+    let seen = rig.packets(
+        vec![SessionEvent::ItemName {
+            entry: members[1],
+            name: Some(("Second Piece".into(), 5)),
+        }],
+        2,
+    );
+    let _ = seen;
+    let after = read(&mut rig);
+    assert!(
+        after.contains("Second Piece"),
+        "the name's answer renders the block again: {after}"
+    );
+}
+
 /// The inventory watch runs on the worn slots too (`0x6e51c5`-`0x6e51fb`): an equipped item unlocks at its new slot (`0x6dee39`) before the slot's `PLAYER_EQUIPMENT_CHANGED` (`0x6deea2`), an emptied slot fires it with the slot alone (`0x6dee81`); an owned item's entry change drops the old record (`0x7079bb`) and fires its container's `BAG_UPDATE` from the record callback, at once when cached (`0x707a07` -> `0x707949`), else when the record lands.
 #[test]
 fn a_worn_slot_and_an_entry_change_run_their_watches() {

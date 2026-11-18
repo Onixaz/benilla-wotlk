@@ -464,6 +464,20 @@ pub struct ItemSetView {
     pub required_skill: u32,
     pub required_skill_rank: u32,
     pub required_skill_name: Option<String>,
+    /// The members whose name is still asked, which the tooltip's item callback waits on (`0x62ba29`).
+    pub pending: Vec<u32>,
+}
+
+/// The set block for `set_id` read at the call through the lent view; with none lent, a test's or a capture fixture's.
+pub(crate) fn item_set(lua: &mlua::Lua, model: &super::Model, set_id: u32) -> Option<ItemSetView> {
+    let global = |key: &str| crate::strings::global(lua, key);
+    let live = super::read_live(|l| l.item_set(set_id, &global));
+    #[cfg(any(test, feature = "fixtures"))]
+    if live.is_none() {
+        return model.item_sets.get(&set_id).cloned();
+    }
+    let _ = model;
+    live.flatten()
 }
 
 /// One `ItemSet.dbc` member: its id, and its name and slot type once its template is cached.
@@ -515,19 +529,15 @@ impl super::UiScript {
         drain_set!(self, item_stat_asks)
     }
 
-    /// Stores or replaces a set's view, re-pushed as member names resolve.
+    /// A test's or a capture fixture's set block, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_item_set(&mut self, set_id: u32, view: ItemSetView) {
-        {
-            let mut model = self.model_mut();
-            model.item_set_asks.remove(&set_id);
-            model.item_sets.insert(set_id, view);
-        }
-        self.answer_item_waits(|m| m.sets.contains(&set_id));
+        self.model_mut().item_sets.insert(set_id, view);
     }
 
-    /// Drains the set ids the renderer asked for that the store did not hold.
-    pub fn take_item_set_asks(&mut self) -> Vec<u32> {
-        drain_set!(self, item_set_asks)
+    /// An item name landed in the name cache (`SMSG_ITEM_NAME_QUERY_RESPONSE`): every tooltip whose set block waited on it renders again, as the set block's cache callback does (`0x62ba29`).
+    pub fn item_name_landed(&mut self, item_id: u32) {
+        self.answer_item_waits(|m| m.names.contains(&item_id));
     }
 
     /// The requirement state a call reads while the live view holds no active player: a test's or a capture fixture's player.

@@ -641,6 +641,15 @@ pub trait LiveState {
 
     /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
     fn ask_refund_record(&mut self, _item: u64) {}
+
+    /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
+    fn item_set(
+        &self,
+        _set_id: u32,
+        _global: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::ItemSetView> {
+        None
+    }
 }
 
 /// A lent view's address, its lifetime erased.

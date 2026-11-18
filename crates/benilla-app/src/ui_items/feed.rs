@@ -117,15 +117,6 @@ fn item_has_mod_tokens(t: &ItemInfo, spells: Option<&crate::ui_action::Spells>) 
         .any(|slot| slot.spell_id != 0 && spell_has_mod_tokens(spells, slot.spell_id))
 }
 
-fn bonuses_have_mod_tokens(
-    bonuses: &[(u32, u32)],
-    spells: Option<&crate::ui_action::Spells>,
-) -> bool {
-    bonuses
-        .iter()
-        .any(|&(_, spell)| spell_has_mod_tokens(spells, spell))
-}
-
 /// The tooltip's "N Charges" count, 0 for no line. The builder reads a template 0 as `-1`, prints
 /// nothing for `-1` and otherwise the absolute value: food's `-1` shows no line, a `-5` pool "5
 /// Charges". It prints per spell slot; one line here, as no vmangos `item_template` row has two
@@ -361,93 +352,61 @@ pub(crate) fn taught_spell(
     Some((taught, pet))
 }
 
-/// Answers the engine's set-id asks from `ItemSet.dbc`: member names from the item-name cache, each
-/// miss queried as the reference queries set members, and bonus text from the `$`-engine. A set
-/// stays pending, re-pushing, until every member resolves.
-pub(super) fn feed_item_sets(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    sets: Option<Res<super::ItemSets>>,
-    items: Res<Items>,
-    // The pieces' names and slot types, the set block's own cache (`0x62ba33`).
-    names: Res<crate::item_names::ItemNames>,
-    commands: Res<NetCommands>,
-    spells: Option<Res<crate::ui_action::Spells>>,
-    spell_mods: Res<crate::spell::SpellModifiers>,
-    skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    caster_sources: crate::spell::text_caster::CasterSources,
-    mut pending: Local<
-        crate::ui_script::VmMemo<std::collections::HashMap<u32, benilla_ui::script::ItemSetView>>,
-    >,
-    mut mod_sensitive: Local<crate::ui_script::VmMemo<HashSet<u32>>>,
-    mut last_reads: Local<crate::ui_script::VmMemo<Option<TokenReads>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let pending = pending.get(&script);
-    let mod_sensitive = mod_sensitive.get(&script);
-    let me = self_q.single().ok();
-    for id in script.take_item_set_asks() {
-        pending.entry(id).or_default();
-    }
-    // The `$`-tokens follow the player's skills and gender.
-    let reads = token_reads(me, &items);
-    let gender = reads.1;
-    let reads_changed = last_reads.get(&script).as_ref() != Some(&reads);
-    let operands = reads.2.clone();
-    *last_reads.get(&script) = Some(reads);
-    if spell_mods.is_changed() || reads_changed || caster_sources.changed() {
-        for &id in mod_sensitive.iter() {
-            pending.entry(id).or_default();
-        }
-    }
-    if pending.is_empty() {
-        return;
-    }
-    let Some(sets) = sets.as_deref() else {
-        return; // no catalog without client data: the asks stay parked
-    };
-    let spell_res = spells.as_deref();
-    let skill_catalog = skill_lines.as_deref().map(|s| &*s.catalog);
-    let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
-    let cost = |d: &benilla_formats::SpellDisplay| {
-        me.map_or(d.mana_cost, |s| {
-            crate::spell::usable::power_cost(d, s, &spell_mods)
-        }) as i32
-    };
-    let text_caster = me.map(|store| {
-        crate::spell::text_caster::untracked(
-            store,
-            (caster_sources.known(), caster_sources.auras()),
-            &operands,
-            &spell_mods,
-            &skill,
-            &cost,
-        )
-    });
-    let caster = text_caster
-        .as_ref()
-        .map(|c| c as &dyn benilla_formats::Caster);
-    let mut done: Vec<u32> = Vec::new();
-    let mut push: Vec<(u32, benilla_ui::script::ItemSetView)> = Vec::new();
-    // Its borrow of the VM ends before the push, which needs the VM mutably.
-    let global = |key: &str| benilla_ui::strings::global(script.lua(), key);
-    for (&set_id, last) in pending.iter_mut() {
-        let Some(row) = sets.0.set(set_id) else {
-            done.push(set_id); // no such row: drop the ask
-            continue;
+/// What an item set's tooltip block reads at the call: `ItemSet.dbc`, the pieces' names and slot types from the set block's own cache (`0x62ba33`), and the bonuses' `$`-token inputs.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ItemSetLive<'w, 's> {
+    sets: Res<'w, super::ItemSets>,
+    names: Res<'w, crate::item_names::ItemNames>,
+    commands: Res<'w, NetCommands>,
+    items: Res<'w, Items>,
+    spell_mods: Res<'w, crate::spell::SpellModifiers>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras, With<SelfPlayer>>,
+}
+
+impl ItemSetLive<'_, '_> {
+    /// The set block for `set_id` from its row, each unanswered member's name asked (`0x62ba3e`) and listed as pending; `None` for no row.
+    pub(crate) fn view(
+        &self,
+        set_id: u32,
+        me: Option<&ObjectStore>,
+        spells: Option<&crate::ui_action::Spells>,
+        known: &std::collections::BTreeSet<u32>,
+        global: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::ItemSetView> {
+        let row = self.sets.0.set(set_id)?;
+        let (_, gender, operands) = token_reads(me, &self.items);
+        let skill_catalog = self.skill_lines.as_deref().map(|s| &*s.catalog);
+        let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
+        let mods = &*self.spell_mods;
+        let cost = |d: &benilla_formats::SpellDisplay| {
+            me.map_or(d.mana_cost, |s| {
+                crate::spell::usable::power_cost(d, s, mods)
+            }) as i32
         };
-        if bonuses_have_mod_tokens(&row.bonuses, spell_res) {
-            mod_sensitive.insert(set_id);
-        } else {
-            mod_sensitive.remove(&set_id);
-        }
-        let members: Vec<benilla_ui::script::ItemSetMember> = row
+        let auras = self.auras.single().ok();
+        let text_caster = me.map(|store| {
+            crate::spell::text_caster::untracked(
+                store,
+                (known, auras),
+                &operands,
+                mods,
+                &skill,
+                &cost,
+            )
+        });
+        let caster = text_caster
+            .as_ref()
+            .map(|c| c as &dyn benilla_formats::Caster);
+        let mut pending = Vec::new();
+        let members = row
             .items
             .iter()
             .map(|&id| {
-                let n = names.get_or_ask(id, &commands);
+                let n = self.names.get_or_ask(id, &self.commands);
+                if !self.names.answered(id) {
+                    pending.push(id);
+                }
                 benilla_ui::script::ItemSetMember {
                     id,
                     name: n.map(|n| n.name.clone()),
@@ -455,20 +414,20 @@ pub(super) fn feed_item_sets(
                 }
             })
             .collect();
-        let view = benilla_ui::script::ItemSetView {
+        Some(benilla_ui::script::ItemSetView {
             name: row.name.clone(),
             bonuses: row
                 .bonuses
                 .iter()
                 .filter_map(|&(n, spell)| {
                     spell_desc_text(
-                        spell_res,
+                        spells,
                         spell,
                         &skill,
                         None,
                         &|| gender,
-                        Some(&spell_mods),
-                        &global,
+                        Some(mods),
+                        global,
                         caster,
                     )
                     .map(|desc| (n, desc))
@@ -484,21 +443,8 @@ pub(super) fn feed_item_sets(
                 })
                 .flatten(),
             members,
-        };
-        // Done once every piece is answered; one the server does not know keeps no name.
-        if row.items.iter().all(|&id| names.answered(id)) {
-            done.push(set_id);
-        }
-        if *last != view {
-            *last = view.clone();
-            push.push((set_id, view));
-        }
-    }
-    for (id, view) in push {
-        script.set_item_set(id, view);
-    }
-    for id in done {
-        pending.remove(&id);
+            pending,
+        })
     }
 }
 
@@ -1050,11 +996,6 @@ mod tests {
         assert!(!super::item_has_mod_tokens(&item, Some(&spells)));
         item.spells.push(slot(2, 0));
         assert!(super::item_has_mod_tokens(&item, Some(&spells)));
-        assert!(!super::bonuses_have_mod_tokens(&[(2, 1)], Some(&spells)));
-        assert!(super::bonuses_have_mod_tokens(
-            &[(2, 1), (4, 2)],
-            Some(&spells)
-        ));
     }
 
     /// The builder's charge gate.
