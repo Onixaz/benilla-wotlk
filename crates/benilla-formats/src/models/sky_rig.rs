@@ -310,7 +310,7 @@ pub fn sync_sky_anim(
     }
     let jumped = minutes.abs_diff(*last_minutes) >= 2;
     *last_minutes = minutes;
-    (jumped && flags & crate::SKYBOX_FLAG_SYNC_TIME != 0).then(|| SkySync {
+    (jumped && flags & crate::SKYBOX_FLAG_SYNC_TIME != 0).then_some(SkySync {
         // `(uint32_t)(length * (minutes * 0.00069444446f))`.
         seek_ms: (length_ms as f32 * (minutes as f32 * 0.000_694_444_46)) as u32,
         speed: 0.000_000_011_574_074 * length_ms as f32,

@@ -861,6 +861,7 @@ fn write_animated_attributes(
 /// as the reference places it (`s_skyScene->Animate(C3Vector(0, 0, 0))` with the view's translation
 /// removed): `StratholmeSkybox` is authored off-centre, so recentring it would be wrong. The bones
 /// are already in the mesh, so every batch shares this one translation.
+#[allow(clippy::type_complexity)]
 fn follow_camera(
     cam: Query<&GlobalTransform, With<WorldCamera>>,
     mut parts: Query<
