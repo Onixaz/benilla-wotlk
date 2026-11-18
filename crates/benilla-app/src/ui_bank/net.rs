@@ -23,7 +23,6 @@ pub(super) fn register(app: &mut App) {
         .net_handler_first(K::QuestOffer, on_interact_target_taken)
         .net_handler_first(K::VendorInventory, on_interact_target_taken)
         .net_handler_first(K::TaxiNodesShown, on_interact_target_taken)
-        .net_handler_first(K::TrainerList, on_interact_target_taken)
         .net_handler_first(K::TabardVendorActivate, on_interact_target_taken)
         .net_handler_first(K::PetitionShowList, on_interact_target_taken)
         .net_handler_first(K::AuctionHello, on_interact_target_taken)
