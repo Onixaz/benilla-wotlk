@@ -200,7 +200,7 @@ fn button_name(n: i64) -> String {
 fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
     let unit = model.unit(token);
     // The token resolves off the pushed unit guids until the unit tokens read live (#1289).
-    let guid = model.unit_guids.guid_of(token);
+    let guid = model.token_guid(token);
     let args = &c.args[..];
     let in_party = |g: u64| g == model.unit_guids.player || model.unit_guids.party.contains(&g);
     let in_raid = |g: u64| model.unit_guids.raid.contains(&g);
@@ -250,8 +250,7 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
                 Some(p) => args.iter().any(|a| {
                     let a = a.to_lowercase();
                     let family = model
-                        .unit_guids
-                        .guid_of("pet")
+                        .token_guid("pet")
                         .and_then(|g| super::read_live(|l| l.creature_family(g)).flatten());
                     let matched = [p.name.as_deref(), family.as_deref()]
                         .into_iter()

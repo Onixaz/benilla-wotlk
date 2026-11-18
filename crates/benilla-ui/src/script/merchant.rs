@@ -665,7 +665,7 @@ fn merchant_cursor_mode(model: &super::Model, index: usize) -> Option<UiCursorMo
     if model.money < u64::from(row.price) {
         return Some(UiCursorMode::UnableBuy);
     }
-    let Some(t) = model.item_templates.get(&row.item_id) else {
+    let Some(t) = crate::script::item_stats::item_record(model, row.item_id) else {
         return Some(UiCursorMode::Buy);
     };
     // The standing test (`0x585798`), as ranks, as the usable gate reads it.

@@ -11,8 +11,7 @@ use super::{
     loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
     quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
     taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
-    ItemTemplateView, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
-    UnitTokenParse,
+    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -970,9 +969,11 @@ pub(crate) struct Model {
     pub(crate) quests_completed_queries: u32,
     /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`'s ids, which `GetQuestsCompleted` keys.
     pub(crate) quests_completed: Vec<u32>,
-    /// Item id to its tooltip view.
-    pub(crate) item_templates: HashMap<u32, ItemTemplateView>,
-    /// Item ids asked for and missing, for the app to answer.
+    /// A test's or a capture fixture's item records, read where the cache misses one.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) item_templates: HashMap<u32, super::ItemTemplateView>,
+    /// A test's record asks, made where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_stat_asks: HashSet<u32>,
     /// A test's or a capture fixture's set blocks, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
@@ -1143,7 +1144,8 @@ pub(crate) struct Model {
     /// pushes that carry it: corrected, never blanked. A per-login rebuild is unseen, as its verbs
     /// exist only in game, not at the glue screen.
     pub(crate) player_record: super::PlayerRecord,
-    /// `GetBindLocation()`, the bind point's area name: `""` before it lands, never nil.
+    /// A test's or a capture fixture's bind point name, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) bind_location: String,
     /// `GMTicketCategory.dbc` `(id, name)` rows in file order; the ids are wire values.
     pub(crate) gm_ticket_categories: Vec<(u32, String)>,
@@ -1282,17 +1284,93 @@ impl Model {
         }
     }
 
-    /// The unit a token with a `target` hop and no push of its own names: the resolver's guid
-    /// (which the getters call before their own object lookup), then that guid's snapshot. A token
-    /// without a hop is the app's to push, base by base, and reads nothing here.
+    /// The unit a token with a hop, or a name, and no push of its own names: the resolver's guid
+    /// (which the getters call before their own object lookup), then that guid's snapshot. A base
+    /// token alone is the app's to push, base by base, and reads nothing here.
     fn chained_unit(&self, token: &str) -> Option<&UnitState> {
         match parse_unit_token(token) {
-            UnitTokenParse::Unit { base, hops } if hops > 0 => {
-                let guid = self.unit_guids.resolve_unit(base, hops)?;
-                self.units_by_guid.get(&guid)
-            }
-            _ => None,
+            UnitTokenParse::Unit { hops, .. } if !hops.is_empty() => {}
+            UnitTokenParse::Name => {}
+            _ => return None,
         }
+        let guid = self.resolve_token(token).ok().flatten()?;
+        self.units_by_guid.get(&guid).or_else(|| {
+            self.units_by_lower
+                .values()
+                .find(|u| u.exists && u.guid == guid)
+        })
+    }
+
+    /// The guid `token` names (`0x60abf0`, with no target default), the name lookup reading the
+    /// names the units' snapshots go by: `None` for nobody, `Err` where the reference answers
+    /// false.
+    pub(crate) fn resolve_token(&self, token: &str) -> Result<Option<u64>, ()> {
+        self.unit_guids
+            .resolve_named(token, |unit, with_realm| self.token_name(unit, with_realm))
+    }
+
+    /// Whether the resolver refuses `token` whatever units the host holds now: the empty token, or
+    /// one no base reads and no group member's or pet's name matches. A base token the host
+    /// resolves where its call takes effect, after the calls before it moved the target, so its
+    /// refusal is the host's.
+    pub(crate) fn token_unknown(&self, token: &str) -> bool {
+        match parse_unit_token(token) {
+            UnitTokenParse::Empty => true,
+            UnitTokenParse::Name => self
+                .unit_guids
+                .by_name(token, |unit, with_realm| self.token_name(unit, with_realm))
+                .is_none(),
+            UnitTokenParse::Nobody | UnitTokenParse::Unit { .. } => false,
+        }
+    }
+
+    /// [`Self::resolve_token`], a token the reference refuses naming nobody.
+    pub(crate) fn token_guid(&self, token: &str) -> Option<u64> {
+        self.resolve_token(token).unwrap_or(None)
+    }
+
+    /// The name a base token's unit goes by (`0x60a360`): ours from the local name buffer, any
+    /// other unit's from its snapshot, else, for a unit out of view, the name cache's record or the
+    /// roster's; with the realm asked for, a player of another realm's as `Name-Realm`.
+    pub(crate) fn token_name(&self, token: &str, with_realm: bool) -> Option<String> {
+        let guid = self
+            .unit_guids
+            .resolve_named(token, |_, _| None)
+            .ok()
+            .flatten()?;
+        let record = self.name_records.get(&guid);
+        let snapshot = || {
+            self.pushed_unit(token)
+                .filter(|u| u.guid == guid)
+                .and_then(|u| u.name.as_deref())
+        };
+        let roster = || {
+            self.party
+                .raid
+                .iter()
+                .find(|m| m.guid == guid)
+                .map(|m| m.name.as_str())
+                .or_else(|| {
+                    let m = self.party.members.iter().find(|m| m.guid == guid)?;
+                    Some(m.name.as_str())
+                })
+                .filter(|n| !n.is_empty())
+        };
+        let name = if guid == self.unit_guids.player && !self.player_record.name.is_empty() {
+            self.player_record.name.as_str()
+        } else {
+            snapshot()
+                .or_else(|| record.map(|r| r.name.as_str()).filter(|n| !n.is_empty()))
+                .or_else(roster)?
+        };
+        let realm = record
+            .filter(|_| with_realm)
+            .map(|r| r.realm.as_str())
+            .filter(|r| !r.is_empty());
+        Some(match realm {
+            Some(realm) => format!("{name}-{realm}"),
+            None => name.to_string(),
+        })
     }
 
     pub(crate) fn new() -> Model {
@@ -1718,12 +1796,14 @@ impl Model {
             quest_poi: Default::default(),
             quests_completed_queries: 0,
             quests_completed: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             item_templates: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             item_sets: HashMap::new(),
             hovered_link: None,
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
+            #[cfg(any(test, feature = "fixtures"))]
             item_stat_asks: HashSet::new(),
             spell_tooltips: HashMap::new(),
             spell_tooltip_asks: HashSet::new(),
@@ -1751,6 +1831,7 @@ impl Model {
             screenshot_asks: 0,
             realm_name: String::new(),
             player_record: super::PlayerRecord::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             bind_location: String::new(),
             gm_ticket_categories: Vec::new(),
             gm_ticket_intents: Vec::new(),

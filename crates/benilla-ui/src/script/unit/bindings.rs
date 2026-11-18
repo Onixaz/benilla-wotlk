@@ -554,8 +554,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let guid = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
-                .unit_guids
-                .guid_of(&token);
+                .token_guid(&token);
             let hot = crate::script::read_live(|live| {
                 guid.and_then(|g| live.unit_flags(g))
                     .is_some_and(|f| f & UNIT_FLAG_IN_COMBAT != 0)
@@ -688,8 +687,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 parse_unit_token(&t),
                 UnitTokenParse::Unit {
                     base: UnitBase::Party(_),
-                    hops: 0
-                }
+                    hops
+                } if hops.is_empty()
             );
             let hit = party_slot
                 || t.eq_ignore_ascii_case("player")
@@ -1151,7 +1150,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let resolve = |v: &Value| -> mlua::Result<Option<u64>> {
                 crate::script::binding_abi::optional_string(lua, v)
-                    .and_then(|t| model.unit_guids.resolve(&t).ok())
+                    .and_then(|t| model.resolve_token(&t).ok())
                     .ok_or_else(|| mlua::Error::runtime(USAGE))
             };
             let Some(guid) = resolve(&unit)? else {
@@ -1186,7 +1185,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut guids = [0u64; 2];
             for (slot, v) in guids.iter_mut().zip([&unit, &mob]) {
                 *slot = crate::script::binding_abi::optional_string(lua, v)
-                    .and_then(|t| model.unit_guids.resolve(&t).ok())
+                    .and_then(|t| model.resolve_token(&t).ok())
                     .ok_or_else(|| mlua::Error::runtime(USAGE))?
                     .unwrap_or(0);
             }
@@ -1318,7 +1317,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let guid_of = |token: &str| model.unit_guids.guid_of(token).unwrap_or(0);
+            let guid_of = |token: &str| model.token_guid(token).unwrap_or(0);
             let unit = guid_of(&unit);
             let target = match target.as_deref().map(guid_of).unwrap_or(0) {
                 0 => model.unit("target").map_or(0, |u| u.guid),
@@ -1440,16 +1439,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;
 
-    // TargetUnit(unit or name [, exact]) (`0x525a30`): a token queues for the app to resolve and
-    // select, and one naming no unit is a no-op; anything else is the closest name match
-    // (`0x520190`), which `/target <name>` reaches.
+    // TargetUnit(unit or name [, exact]) (`0x525a30`): a token, or the name of a group
+    // member or pet, queues for the app to resolve and select, and one naming no unit is
+    // a no-op; anything else is the closest name match (`0x520190`), which `/target <name>`
+    // reaches.
     g.set(
         "TargetUnit",
         lua.create_function(|lua, (token, exact): (Option<String>, Option<Value>)| {
             if let Some(token) = token {
-                let call = if super::resolve::parse_unit_token(&token)
-                    == super::resolve::UnitTokenParse::Unknown
-                {
+                let unknown = crate::script::model_mut_of(lua).token_unknown(&token);
+                let call = if unknown {
                     ScriptCall::TargetByName {
                         name: token,
                         exact: bool_or_default(exact.as_ref(), false),
@@ -1634,7 +1633,7 @@ fn unit_reads_dead(lua: &Lua, token: &str, ask: DeathAsk) -> bool {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let guid = model.unit_guids.guid_of(token);
+    let guid = model.token_guid(token);
     let live = crate::script::read_live(|live| {
         let guid = guid?;
         let health = live.unit_health(guid)?;

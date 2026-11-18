@@ -485,8 +485,13 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
         SessionEvent::ItemTemplate { entry, info } => {
             let info = info.map(|b| *b);
             debug!("net: item template {entry} → {info:?}");
+            let landed = info.is_some();
             sc.items.insert_template(entry, info);
             crate::ui_currency::record_landed(&mut sc.ui, entry);
+            // The UI's callbacks on the record: the socket window's, the waiting tooltips' and the random dungeon rewards'.
+            if landed {
+                sc.ui.write(move |script| script.item_record_landed(entry));
+            }
             sc.ui
                 .world(move |world| crate::ui_guild_bank::item_landed(world, entry));
             // The callbacks that asked for this record, in ask order; each needs its item held and the record found (`0x70aeb6`, `0x70aebc`; `0x7078e7`).
@@ -1645,9 +1650,11 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if let Some(old) = merged.item_entry {
         item_entry_watch(sc, guid, old);
     }
+    // The count watch's quest log and currency legs sit in its own handler, past its container and character page legs (`0x707820`, `0x70782c`).
     if merged.item_stack {
         sc.ui
             .world(move |world| crate::ui_items::watch::stack_changed(world, guid));
+        item_quest_watch(sc, guid);
     }
     if merged.item_enchants {
         sc.ui
@@ -1657,9 +1664,6 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     for j in merged.bag_slots.clone() {
         sc.ui
             .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j));
-    }
-    if merged.item_stack {
-        item_quest_watch(sc, guid);
     }
     // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`), the bank's leg.
     if merged.died {

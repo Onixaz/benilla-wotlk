@@ -402,19 +402,21 @@ fn render_lines(
                     .filter(|&id| id != 0)
                     .collect();
                 ids.into_iter()
-                    .filter_map(|id| match model.item_templates.get(&id) {
-                        Some(t) => Some(WornPiece {
-                            id,
-                            name: t.name.clone(),
-                            item_set: t.item_set,
-                            inventory_type: t.inventory_type,
-                        }),
-                        None => {
-                            model.item_stat_asks.insert(id);
-                            super::note_item_miss(&mut model, id);
-                            None
-                        }
-                    })
+                    .filter_map(
+                        |id| match crate::script::item_stats::item_record(&model, id) {
+                            Some(t) => Some(WornPiece {
+                                id,
+                                name: t.name,
+                                item_set: t.item_set,
+                                inventory_type: t.inventory_type,
+                            }),
+                            None => {
+                                crate::script::item_stats::ask_item_record(&mut model, id);
+                                super::note_item_miss(&mut model, id);
+                                None
+                            }
+                        },
+                    )
                     .collect()
             }
             None => Vec::new(),

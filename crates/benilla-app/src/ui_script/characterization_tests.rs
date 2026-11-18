@@ -5568,6 +5568,53 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
         pin(&seen, events, verbs),
         ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex7"]
     );
+    // One update moving a packed token's count and enchants: the count handler's currency leg fires before the enchant handler runs (`0x707832`, `0x708bd0`), each handler's `BAG_UPDATE`s, our backpack, keyring and tokens (`0x5d7098`-`0x5d70ba`), in its turn (`0x707805`, `0x707fe4`).
+    const PACKED: u64 = 0x4000_0000_0000_0302;
+    let slot2 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 2;
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: PACKED,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (benilla_protocol::field::FIELD_ITEM_CONTAINED, ME as u32),
+                    (
+                        benilla_protocol::field::FIELD_ITEM_CONTAINED + 1,
+                        (ME >> 32) as u32,
+                    ),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(slot2, PACKED as u32), (slot2 + 1, (PACKED >> 32) as u32)]),
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: PACKED,
+            fields: ObjectFields::from_pairs(&[
+                (FIELD_ITEM_STACK_COUNT, 2),
+                (benilla_protocol::field::FIELD_ITEM_ENCHANTMENT_1_1, 1),
+            ]),
+        }],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE"
+        ]
+    );
     // A pack slot's leg reads the old item's class inside the field handler, before the same frame's destroy of it (`0x5d97fd`).
     const LOOSE: u64 = 0x4000_0000_0000_0301;
     let pack = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
@@ -6603,5 +6650,59 @@ fn the_walk_away_watchdog_closes_both_banks_with_their_events() {
             "GUILDBANKFRAME_CLOSED | gbtabs=1",
             "GUILDBANKFRAME_CLOSED | gbtabs=1",
         ]
+    );
+}
+
+/// An item record is read from the item cache at each call (`0x67ca30`): a miss asks the cache once (`CMSG_ITEM_QUERY_SINGLE`) and answers nothing; the answer's handler stores it and runs the UI's callbacks on it, so a tooltip waiting on it repaints in the packet's frame, and the next `GetItemInfo` and `GetItemStats` read it with no feed between.
+#[test]
+fn an_item_record_reads_at_the_call_and_its_answer_repaints_from_the_handler() {
+    use crate::net::ClientCommand;
+    const CLOTH: u32 = 2589;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let eval = |rig: &mut Rig, chunk: &str| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(chunk))
+            .expect("a VM")
+            .expect("the chunk runs")
+    };
+    let info = r#"return tostring((GetItemInfo(2589)))"#;
+    assert_eq!(eval(&mut rig, info), "nil", "a miss answers nothing");
+    eval(
+        &mut rig,
+        r#"GameTooltip:SetOwner(UIParent, "ANCHOR_NONE") GameTooltip:SetHyperlink("item:2589") return tostring(GameTooltipTextLeft1:GetText())"#,
+    );
+    let asks: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::ItemQuery { entry, .. } => Some(entry),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asks, [CLOTH], "the misses ask once");
+    let mut cloth = crate::items::test_template("Linen Cloth");
+    cloth.stats = vec![(7, 10)];
+    rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: CLOTH,
+            info: Some(Box::new(cloth)),
+        }],
+        1,
+    );
+    assert_eq!(
+        eval(&mut rig, "return tostring(GameTooltipTextLeft1:GetText())"),
+        "Linen Cloth",
+        "the handler's callback repainted the waiting tooltip"
+    );
+    assert_eq!(eval(&mut rig, info), "Linen Cloth");
+    assert_eq!(
+        eval(
+            &mut rig,
+            r#"return tostring(GetItemStats("item:2589")["ITEM_MOD_STAMINA_SHORT"])"#
+        ),
+        "10",
+        "the stat lines read the record at the call"
     );
 }

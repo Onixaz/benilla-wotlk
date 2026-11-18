@@ -264,7 +264,7 @@ fn attach_refusal(model: &Model, item: &CursorItem) -> Option<&'static str> {
     if model.mail_lock_send_items {
         return Some("ERR_CLIENT_LOCKED_OUT");
     }
-    let Some(t) = model.item_templates.get(&item.item_id) else {
+    let Some(t) = crate::script::item_stats::item_record(model, item.item_id) else {
         return Some("ERR_ITEM_NOT_FOUND");
     };
     let s = super::container::live_slot(model, item.bag, item.slot);
@@ -1129,9 +1129,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .expect("model app_data");
                 slot.and_then(|s| send_item(&model, s)).cloned().map(|it| {
                     let count = cursor::held_count(&model, &it);
-                    let inv_type = model
-                        .item_templates
-                        .get(&it.item_id)
+                    let inv_type = crate::script::item_stats::item_record(&model, it.item_id)
                         .map(|t| t.inventory_type);
                     (it, count, inv_type)
                 })

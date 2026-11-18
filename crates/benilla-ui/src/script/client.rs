@@ -260,16 +260,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `GetBindLocation()`: the hearthstone's bind location name, which the instance-boot dialog
-    // formats into its text (`StaticPopup.lua:1742`). `""` until `SMSG_BINDPOINTUPDATE` lands, as
-    // the reference's empty buffer, never nil, since addons concatenate it.
+    // `GetBindLocation()` (`0x516b20`): the bind point's `AreaTable.dbc` name read at the call (`0x516b23`, `0x516b49`), else the `HOME_INN` text (`0x516b64`); the instance-boot dialog formats it (`StaticPopup.lua:1742`).
     g.set(
         "GetBindLocation",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            lua.create_string(&model.bind_location)
+            let live = super::read_live(|l| l.bind_location()).flatten();
+            #[cfg(any(test, feature = "fixtures"))]
+            let live = live.or_else(|| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                Some(model.bind_location.clone()).filter(|n| !n.is_empty())
+            });
+            let name = live
+                .or_else(|| crate::strings::global(lua, "HOME_INN"))
+                .unwrap_or_default();
+            lua.create_string(&name)
         })?,
     )?;
 
@@ -320,13 +326,10 @@ impl super::UiScript {
         drain_field!(self, game_movie_finished_calls)
     }
 
-    /// Push the bind location's name, resolved from `SMSG_BINDPOINTUPDATE`'s AreaTable id through
-    /// the catalog the hearthstone's `$z` uses, so the two agree; empty until the packet lands.
+    /// A test's or a capture fixture's bind point name, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_bind_location(&mut self, area_name: &str) {
-        let mut model = self.model_mut();
-        if model.bind_location != area_name {
-            model.bind_location = area_name.to_string();
-        }
+        self.model_mut().bind_location = area_name.to_string();
     }
 
     /// Seed the local player record ([`super::PlayerRecord`]) from the char-enum row at Enter

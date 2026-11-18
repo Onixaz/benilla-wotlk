@@ -900,8 +900,6 @@ pub(crate) mod schedule_tests {
     /// - `spell::multicast::run_refill` against the character and realm screens' `Cvars` writers
     ///   (`apply_roster_policy`, `persist_last_character`, `apply_realm_policy`): the refill acts
     ///   only on an in-world learn, they only before world entry;
-    /// - `ui_totem::feed_totems` against `ui_items::feed_item_stats` over `Items` and the VM: it
-    ///   only reads templates for the tool check;
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
@@ -991,14 +989,15 @@ pub(crate) mod schedule_tests {
     /// - Socketing and refunds (#202, #206) add 1: `ui_socket::drain_item_sends`, an
     ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
     ///   such drains pair; the refund feed's pairs left when its verbs began reading the records at the call (#1278).
-    /// - The small notices (#641) add 3: `ui_notices::drain_level_grant`, an `.after(UiInput)`
+    /// - The small notices (#641) add 2: `ui_notices::drain_level_grant`, an `.after(UiInput)`
     ///   drain, against `finish_colliders`, as the other such drains pair; and
-    ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over
-    ///   `Items`: it only reads templates.
+    ///   `ui_notices::feed_notices` against `feed_spell_tooltips` over `Items`: it only reads
+    ///   templates; its pair against the item-tooltip feed left when the item verbs began reading
+    ///   the cache at the call (#1278).
     /// - The quest progress lines (#638) added 1, which left when the lines moved into their packets' handlers (#1276).
     /// - The quest panels and the world map's quest lines add 11: the NPC emote queue's
     ///   `set_emote_queues` and `drive_emote_queues` against `finish_colliders`, as the other
-    ///   animation drivers pair; the turn-in lines' pairs left when the complete handler and the template's answer began showing them (#1276); the POI lines' pair against `feed_item_stats` left when the POI verbs began building them at the call (#1276).
+    ///   animation drivers pair; the turn-in lines' pairs left when the complete handler and the template's answer began showing them (#1276); the POI lines' pair against the item-tooltip feed left when the POI verbs began building them at the call (#1276).
     /// - The update-object deck passengers (#902) add 25: `transport::compose_deck_passengers`
     ///   against the same 24 `Transform` readers `compose_riders` pairs with (the range, reach,
     ///   threat and NPC-session feeds, the art scope, the WDL stream and the booth billboards),

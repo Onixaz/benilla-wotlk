@@ -722,7 +722,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let target = if token.is_empty() {
                 Some(model.unit_guids.target).filter(|&g| g != 0)
             } else {
-                model.unit_guids.guid_of(&token)
+                model.token_guid(&token)
             };
             // The item's spell through the range check at the call (`0x5e55b6`).
             let spell = special_item(&model, index).map(|i| i.spell_id);

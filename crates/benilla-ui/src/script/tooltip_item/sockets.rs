@@ -152,10 +152,10 @@ fn requirement_line(
 /// The gem template's icon; a miss asks for it and records the running setter's wait.
 fn gem_icon(lua: &Lua, gem_item: u32) -> Option<String> {
     let mut model = crate::script::model_mut_of(lua);
-    match model.item_templates.get(&gem_item) {
-        Some(t) => t.icon.clone(),
+    match crate::script::item_stats::item_record(&model, gem_item) {
+        Some(t) => t.icon,
         None => {
-            model.item_stat_asks.insert(gem_item);
+            crate::script::item_stats::ask_item_record(&mut model, gem_item);
             super::note_item_miss(&mut model, gem_item);
             None
         }

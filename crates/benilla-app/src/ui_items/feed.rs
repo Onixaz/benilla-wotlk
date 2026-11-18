@@ -1,18 +1,15 @@
 //! The per-frame feeds into the VM: the container snapshots built from the player's descriptor,
 //! and the item-tooltip views every window reads.
 
-use std::collections::{HashMap, HashSet};
-
 use bevy::prelude::*;
 
 use benilla_protocol::ItemInfo;
-use benilla_ui::script::{ContainerSlot, UiScript};
+use benilla_ui::script::ContainerSlot;
 
 use crate::entities::{ItemDisplays, FALLBACK_ITEM_ICON};
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects, SelfPlayer};
 
-use super::view_reads::{Inputs, Moved, Seen, ViewReads};
 use super::{find_equip_slot, BAGS, BAG_SLOT_FIRST, BANK_BAGS, BANK_BAG_SLOT_FIRST};
 
 /// A spell's `$`-substituted description, for item trigger and set-bonus lines. An empty one yields
@@ -62,7 +59,7 @@ fn spell_desc_text(
 /// What the `$`-tokens read of the player beside the modifiers, the known set and the auras: the
 /// skills the per-level terms scale by, the gender byte `$g`/`$G` branch on, and the expression
 /// operands off its fields.
-pub(super) type TokenReads = (
+type TokenReads = (
     crate::spell::SkillSnapshot,
     u8,
     crate::spell::text_caster::Operands,
@@ -75,46 +72,6 @@ fn token_reads(me: Option<&ObjectStore>, items: &Items) -> TokenReads {
         gender,
         crate::spell::text_caster::Operands::of(me, items),
     )
-}
-
-/// The held item views a change of the player can move.
-#[derive(Default)]
-pub(crate) struct ModSensitive {
-    /// Every view with a `$` in a trigger text: due when the modifiers, the skills or the gender
-    /// move.
-    all: HashSet<u32>,
-    /// Of those, the ones whose tokens read the player through the caster, and what each read.
-    reads: HashMap<u32, ViewReads>,
-}
-
-impl ModSensitive {
-    /// File the view just built for `id`: whether a trigger text has a `$`, and what it read.
-    fn hold(&mut self, id: u32, has_tokens: bool, reads: ViewReads) {
-        if has_tokens {
-            self.all.insert(id);
-        } else {
-            self.all.remove(&id);
-        }
-        if has_tokens && !reads.is_empty() {
-            self.reads.insert(id, reads);
-        } else {
-            self.reads.remove(&id);
-        }
-    }
-}
-
-/// Only descriptions with substitution tokens can change when the caster's spell mods change.
-fn spell_has_mod_tokens(spells: Option<&crate::ui_action::Spells>, id: u32) -> bool {
-    spells
-        .and_then(|s| s.catalog.get(id))
-        .and_then(|d| d.description.as_deref())
-        .is_some_and(|desc| desc.contains('$'))
-}
-
-fn item_has_mod_tokens(t: &ItemInfo, spells: Option<&crate::ui_action::Spells>) -> bool {
-    t.spells
-        .iter()
-        .any(|slot| slot.spell_id != 0 && spell_has_mod_tokens(spells, slot.spell_id))
 }
 
 /// The tooltip's "N Charges" count, 0 for no line. The builder reads a template 0 as `-1`, prints
@@ -135,6 +92,12 @@ fn standing_label(rank: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<Str
     get(&format!("FACTION_STANDING_LABEL{}", rank.min(7) + 1))
 }
 
+/// The VM's strings and the caster the tooltip's lines read.
+type TooltipStrings<'a> = (
+    benilla_ui::script::GlobalStrings<'a>,
+    Option<&'a dyn benilla_formats::Caster>,
+);
+
 /// An item template's tooltip view: the wire fields plus the strings only the app resolves, the
 /// trigger-spell text and the skill, spell and reputation requirements.
 fn template_view(
@@ -150,10 +113,9 @@ fn template_view(
     sub_classes: Option<&benilla_formats::ItemSubClassCatalog>,
     classes: Option<&benilla_formats::ItemClassCatalog>,
     icons: Option<&ItemDisplays>,
-    // The VM's own `GlobalStrings.lua`, for the reputation-requirement line and the `$`-engine's
-    // keyed tokens.
-    get: &dyn Fn(&str) -> Option<String>,
-    caster: Option<&dyn benilla_formats::Caster>,
+    // The tooltip's lines, read only for it: the VM's own `GlobalStrings.lua`, for the
+    // reputation-requirement line and the `$`-engine's keyed tokens, and the caster they read.
+    tooltip: Option<TooltipStrings<'_>>,
     // The socket bonus's name.
     enchants: Option<&crate::items::Enchants>,
     // `GetItemUniqueness`'s quantity.
@@ -164,8 +126,9 @@ fn template_view(
             .and_then(|s| s.catalog.get(id))
             .map(|sd| sd.name.clone())
     };
-    let spell_text =
-        |id: u32| spell_desc_text(spells, id, skill, home_area, gender, mods, get, caster);
+    let spell_text = |id: u32, (get, caster): TooltipStrings<'_>| {
+        spell_desc_text(spells, id, skill, home_area, gender, mods, get, caster)
+    };
     benilla_ui::script::ItemTemplateView {
         name: t.name.clone(),
         quality: t.quality,
@@ -231,8 +194,9 @@ fn template_view(
         required_city_rank: t.required_city_rank,
         // `ITEM_REQ_REPUTATION`, the reference's key for this line: faction, then standing; an
         // install missing a key shows no line.
-        required_rep_line: (t.required_rep_faction != 0)
-            .then(|| {
+        required_rep_line: tooltip
+            .filter(|_| t.required_rep_faction != 0)
+            .and_then(|(get, _)| {
                 let faction = factions.and_then(|c| c.faction_name(t.required_rep_faction))?;
                 let standing = standing_label(t.required_rep_rank, get)?;
                 Some(benilla_ui::strings::fill(
@@ -242,17 +206,17 @@ fn template_view(
                         benilla_ui::strings::Arg::S(&standing),
                     ],
                 ))
-            })
-            .flatten(),
+            }),
         required_rep_faction: t.required_rep_faction,
         required_rep_rank: t.required_rep_rank,
         lock_id: t.lock_id,
-        spell_triggers: t
-            .spells
-            .iter()
-            .filter(|s| s.spell_id != 0)
-            .filter_map(|s| spell_text(s.spell_id).map(|n| (s.trigger, s.spell_id, n)))
-            .collect(),
+        spell_triggers: tooltip.map_or_else(Vec::new, |strings| {
+            t.spells
+                .iter()
+                .filter(|s| s.spell_id != 0)
+                .filter_map(|s| spell_text(s.spell_id, strings).map(|n| (s.trigger, s.spell_id, n)))
+                .collect()
+        }),
         charges: charges_count(&t.spells),
         description: t.description.clone(),
         page_text: t.page_text,
@@ -526,179 +490,84 @@ fn scaling_tables(tables: &super::ScalingStats) -> benilla_ui::script::ScalingTa
     }
 }
 
-/// The templates landed since [`feed_item_stats`] last pushed, moved out of the cache by
-/// [`take_fresh_templates`], so the feed lending the VM only reads the cache.
-#[derive(Resource, Default)]
-pub(crate) struct FreshTemplates(Vec<u32>);
-
-/// Move the landed templates to [`FreshTemplates`]; holds no VM.
-pub(crate) fn take_fresh_templates(mut items: ResMut<Items>, mut fresh: ResMut<FreshTemplates>) {
-    if items.has_fresh() {
-        fresh.0.extend(items.take_fresh());
-    }
+/// What an item record read at the call resolves through (`0x67ca30`): the item cache, the catalogs its names come from, and what its trigger spells' `$`-tokens read of us.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ItemRecordLive<'w, 's> {
+    items: Res<'w, Items>,
+    spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    // The `$z` token and `GetBindLocation`: the bind point's area as `0x6cef10` reads it, named through `AreaTable`.
+    home_bind: Option<Res<'w, crate::net::HomeBind>>,
+    area_names: Option<Res<'w, crate::ui_quest_log::QuestHeaderNamesRes>>,
+    factions: Option<Res<'w, crate::target::Factions>>,
+    sub_classes: Option<Res<'w, super::ItemSubClasses>>,
+    // `GetItemInfo`'s `itemType`.
+    classes: Option<Res<'w, super::ItemClasses>>,
+    // The icons, the socket bonus's name and the limit category's quantity.
+    icons: Option<Res<'w, ItemDisplays>>,
+    enchants: Option<Res<'w, crate::items::Enchants>>,
+    limits: Option<Res<'w, crate::ui_trade::ItemLimitCategories>>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras, With<SelfPlayer>>,
 }
 
-/// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
-/// misses, as the reference reads one item cache synchronously; a read of an unresolved id records
-/// a miss, which queries it here.
-#[allow(clippy::type_complexity)]
-pub(crate) fn feed_item_stats(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    (items, mut fresh): (Res<Items>, ResMut<FreshTemplates>),
-    commands: Res<NetCommands>,
-    spells: Option<Res<crate::ui_action::Spells>>,
-    // The caster the `$`-tokens read: its spell modifiers and its skills.
-    (spell_mods, self_q, caster_sources): (
-        Res<crate::spell::SpellModifiers>,
-        Query<&ObjectStore, With<SelfPlayer>>,
-        crate::spell::text_caster::CasterSources,
-    ),
-    skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
-    // The `$z` token: the bind point's area (`SMSG_BINDPOINTUPDATE`), named through `AreaTable`.
-    home_bind: Option<Res<crate::net::HomeBind>>,
-    area_names: Option<Res<crate::ui_quest_log::QuestHeaderNamesRes>>,
-    factions: Option<Res<crate::target::Factions>>,
-    sub_classes: Option<Res<super::ItemSubClasses>>,
-    // `GetItemInfo`'s `itemType` and `itemTexture`.
-    classes: Option<Res<super::ItemClasses>>,
-    // The bag icons, the socket bonus's name and the limit category's quantity.
-    (icons, enchants, limits): (
-        Option<Res<ItemDisplays>>,
-        Option<Res<crate::items::Enchants>>,
-        Option<Res<crate::ui_trade::ItemLimitCategories>>,
-    ),
-    mut pending: Local<crate::ui_script::VmMemo<std::collections::HashSet<u32>>>,
-    mut mod_sensitive: Local<crate::ui_script::VmMemo<ModSensitive>>,
-    mut last_home: Local<crate::ui_script::VmMemo<Option<String>>>,
-    mut last_seen: Local<crate::ui_script::VmMemo<Option<Seen>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let pending = pending.get(&script);
-    let mod_sensitive = mod_sensitive.get(&script);
-    let last_home = last_home.get(&script);
-    let me = self_q.single().ok();
-    // The `$`-tokens follow the player's skills, gender, fields, spell book and auras.
-    let inputs = Inputs {
-        player: me.is_some(),
-        reads: token_reads(me, &items),
-        cast_speed: me.and_then(|s| s.0.unit_mod_cast_speed()).unwrap_or(1.0),
-        known: caster_sources.known(),
-        known_written: caster_sources.known_changed(),
-        auras: caster_sources.auras(),
-        auras_written: caster_sources.auras_changed(),
-    };
-    // Every `$` view when an input no view records moved; else the views that read what moved.
-    let (all_due, moved, seen) = match last_seen.get(&script) {
-        Some(seen) => {
-            let (all_due, moved) = seen.advance(inputs);
-            (all_due || spell_mods.is_changed(), moved, &*seen)
-        }
-        none => (true, Moved::default(), &*none.insert(Seen::new(inputs))),
-    };
-    let (gender, operands) = (seen.gender(), seen.operands());
-    // `GetBindLocation()`'s push, here so it and the `$z` token share one name, and ahead of the
-    // pending gate below: the bind point can arrive while the feed idles.
-    let home_area: Option<&str> = home_bind
-        .as_deref()
-        .and_then(|b| b.0)
-        .and_then(|id| area_names.as_deref()?.0.resolve(id as i32));
-    // Pushed on change, per VM: a rebuilt VM is fed again the frame it appears.
-    if last_home.as_deref() != home_area {
-        script.set_bind_location(home_area.unwrap_or_default());
-        *last_home = home_area.map(str::to_string);
-        // Re-substitute every held view, or one pushed before the bind point carries a raw `$z`.
-        pending.extend(items.cached_template_ids());
+impl ItemRecordLive<'_, '_> {
+    /// The bind point's `AreaTable.dbc` name at the call (`0x6cef10`), `None` with no row.
+    pub(crate) fn bind_location(&self) -> Option<&str> {
+        let id = self.home_bind.as_deref()?.0?;
+        self.area_names.as_deref()?.0.resolve(id as i32)
     }
 
-    if !fresh.0.is_empty() {
-        pending.extend(fresh.0.drain(..));
-    }
-    pending.extend(script.take_item_stat_asks());
-    if all_due {
-        pending.extend(mod_sensitive.all.iter().copied());
-    } else if moved.any {
-        pending.extend(
-            mod_sensitive
-                .reads
-                .iter()
-                .filter(|(_, reads)| reads.hits(&moved))
-                .map(|(&id, _)| id),
-        );
-    }
-    if pending.is_empty() {
-        return;
-    }
-    let spell_res = spells.as_deref();
-    let skill_catalog = skill_lines.as_deref().map(|s| &*s.catalog);
-    let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
-    // What the view being built reads of the player, taken as each view is done.
-    let view_reads = std::cell::RefCell::new(ViewReads::default());
-    let cost = |d: &benilla_formats::SpellDisplay| {
-        view_reads.borrow_mut().power_cost();
-        me.map_or(d.mana_cost, |s| {
-            crate::spell::usable::power_cost(d, s, &spell_mods)
-        }) as i32
-    };
-    let record = |read| view_reads.borrow_mut().caster_read(read);
-    let text_caster = me.map(|store| crate::spell::text_caster::TextCaster {
-        store,
-        known: caster_sources.known(),
-        auras: caster_sources.auras(),
-        operands,
-        mods: &spell_mods,
-        skill: &skill,
-        power_cost: &cost,
-        on_read: &record,
-    });
-    let caster = text_caster
-        .as_ref()
-        .map(|c| c as &dyn benilla_formats::Caster);
-    let ready: Vec<u32> = pending
-        .iter()
-        .copied()
-        .filter(|&id| items.template(id, 0, &commands).is_some())
-        .collect();
-    // Built first, pushed after: the lookup borrows the VM that `set_item_template` needs mutably.
-    let views: Vec<(u32, benilla_ui::script::ItemTemplateView)> = {
-        let get = |key: &str| {
-            script
-                .lua()
-                .globals()
-                .get::<String>(key)
-                .ok()
-                .filter(|t| !t.is_empty())
+    /// Item `id`'s record from the cache, `None` for a miss; `tooltip`, the VM's strings, adds the trigger spells' `$`-text and the reputation line, which only the tooltip prints.
+    pub(crate) fn view(
+        &self,
+        id: u32,
+        me: Option<&ObjectStore>,
+        spells: Option<&crate::ui_action::Spells>,
+        known: &std::collections::BTreeSet<u32>,
+        tooltip: Option<benilla_ui::script::GlobalStrings<'_>>,
+    ) -> Option<benilla_ui::script::ItemTemplateView> {
+        let t = self.items.template_cached(id)?;
+        let skill_catalog = self.skill_lines.as_deref().map(|s| &*s.catalog);
+        let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
+        let mods = self.spell_mods.as_deref();
+        let home_area = self.bind_location();
+        let gender = me.and_then(|s| s.0.unit_gender()).unwrap_or(0);
+        let build = |caster: Option<&dyn benilla_formats::Caster>| {
+            template_view(
+                t,
+                spells,
+                mods,
+                &skill,
+                skill_catalog,
+                home_area,
+                &|| gender,
+                self.factions.as_deref().map(|f| f.catalog()),
+                self.sub_classes.as_deref().map(|s| &s.0),
+                self.classes.as_deref().map(|c| &c.0),
+                self.icons.as_deref(),
+                tooltip.map(|get| (get, caster)),
+                self.enchants.as_deref(),
+                self.limits.as_deref(),
+            )
         };
-        ready
-            .into_iter()
-            .filter_map(|id| {
-                pending.remove(&id);
-                let t = items.template(id, 0, &commands)?.clone();
-                let view = template_view(
-                    &t,
-                    spell_res,
-                    Some(&spell_mods),
-                    &skill,
-                    skill_catalog,
-                    home_area,
-                    &|| gender,
-                    factions.as_deref().map(|f| f.catalog()),
-                    sub_classes.as_deref().map(|s| &s.0),
-                    classes.as_deref().map(|c| &c.0),
-                    icons.as_deref(),
-                    &get,
-                    caster,
-                    enchants.as_deref(),
-                    limits.as_deref(),
-                );
-                mod_sensitive.hold(id, item_has_mod_tokens(&t, spell_res), view_reads.take());
-                Some((id, view))
-            })
-            .collect()
-    };
-    for (id, view) in views {
-        script.set_item_template(id, view);
+        let (Some(_), Some(store), Some(mods)) = (tooltip, me, mods) else {
+            return Some(build(None));
+        };
+        // The tooltip's `$`-tokens read our fields, known spells and auras now.
+        let operands = crate::spell::text_caster::Operands::of(me, &self.items);
+        let cost = |d: &benilla_formats::SpellDisplay| {
+            crate::spell::usable::power_cost(d, store, mods) as i32
+        };
+        let auras = self.auras.single().ok();
+        let caster = crate::spell::text_caster::untracked(
+            store,
+            (known, auras),
+            &operands,
+            mods,
+            &skill,
+            &cost,
+        );
+        Some(build(Some(&caster)))
     }
 }
 
@@ -962,42 +831,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn modifier_refresh_tracks_only_item_and_set_descriptions_with_tokens() {
-        let displays = std::collections::HashMap::from([
-            (
-                1,
-                benilla_formats::SpellDisplay {
-                    description: Some("Restores 5 health.".into()),
-                    ..Default::default()
-                },
-            ),
-            (
-                2,
-                benilla_formats::SpellDisplay {
-                    description: Some("Restores $s1 health.".into()),
-                    ..Default::default()
-                },
-            ),
-        ]);
-        let spells = crate::ui_action::Spells {
-            power_displays: Default::default(),
-            difficulties: Default::default(),
-            instance_difficulty: Default::default(),
-            catalog: benilla_formats::SpellCatalog::from_displays(displays),
-            forms: Default::default(),
-            ranges: Default::default(),
-            cast_times: Default::default(),
-            durations: Default::default(),
-            radii: Default::default(),
-        };
-        let mut item = crate::items::test_template("Token item");
-        item.spells = vec![slot(1, 0)];
-        assert!(!super::item_has_mod_tokens(&item, Some(&spells)));
-        item.spells.push(slot(2, 0));
-        assert!(super::item_has_mod_tokens(&item, Some(&spells)));
-    }
-
     /// The builder's charge gate.
     #[test]
     fn charge_gate_matches_the_real_builder() {
@@ -1088,8 +921,8 @@ mod tests {
         assert!(line(0).contains("the mage and his allies"), "{}", line(0));
     }
 
-    /// The item feeds re-substitute a held `$`-text when what the tokens read moves: the gender
-    /// byte `$g`/`$G` branch on, and no other byte of `UNIT_FIELD_BYTES_0`.
+    /// What the `$`-tokens read of us moves with the gender byte `$g`/`$G` branch on, and no other
+    /// byte of `UNIT_FIELD_BYTES_0`.
     #[test]
     fn the_token_reads_move_with_the_gender_byte_alone() {
         let store = |bytes: u32| {

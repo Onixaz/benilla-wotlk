@@ -360,8 +360,8 @@ pub(super) fn item_use_refusal_by_id(model: &super::Model, item_id: u32) -> Opti
     if item_id == 0 {
         return None;
     }
-    let v = model.item_templates.get(&item_id)?;
-    item_use_refusal(v, &player_req(), |id| {
+    let v = item_record(model, item_id)?;
+    item_use_refusal(&v, &player_req(), |id| {
         model.known_spells.known_or_higher(id)
     })
 }
@@ -375,7 +375,7 @@ pub(super) fn quest_item_quality_usable(
     quality: u32,
     usable: bool,
 ) -> (i64, bool) {
-    let quality = match model.item_templates.get(&item_id) {
+    let quality = match item_record(model, item_id) {
         Some(v) if v.inventory_type == 0 => -1,
         _ => i64::from(quality),
     };
@@ -500,31 +500,79 @@ impl ItemSetMember {
     }
 }
 
+/// Item `id`'s record read from the item cache at the call through the lent view (`0x67ca30`), without the tooltip's lines and without an ask; a record the cache misses is a test's or a capture fixture's.
+pub(crate) fn item_record(model: &super::Model, id: u32) -> Option<ItemTemplateView> {
+    read_record(model, id, None)
+}
+
+/// [`item_record`] with the lines only the tooltip prints, built with the VM's strings: the trigger spells' `$`-text and the reputation requirement.
+pub(crate) fn item_tooltip_record(
+    lua: &mlua::Lua,
+    model: &super::Model,
+    id: u32,
+) -> Option<ItemTemplateView> {
+    let global = |key: &str| crate::strings::global(lua, key);
+    read_record(model, id, Some(&global))
+}
+
+/// Whether item `id`'s record is cached at the call.
+pub(crate) fn item_record_cached(model: &super::Model, id: u32) -> bool {
+    item_record(model, id).is_some()
+}
+
+fn read_record(
+    model: &super::Model,
+    id: u32,
+    tooltip: Option<super::GlobalStrings<'_>>,
+) -> Option<ItemTemplateView> {
+    if id == 0 {
+        return None;
+    }
+    let live = super::read_live(|l| l.item_record(id, tooltip))
+        .flatten()
+        .flatten();
+    #[cfg(any(test, feature = "fixtures"))]
+    if live.is_none() {
+        return model.item_templates.get(&id).cloned();
+    }
+    let _ = model;
+    live
+}
+
+/// The cache read's query of a missed record (`0x67ca30`), through the lent view; with none lent, a test's ask list.
+pub(crate) fn ask_item_record(model: &mut super::Model, id: u32) {
+    if id == 0 {
+        return;
+    }
+    let lent = super::read_live(|l| l.ask_item_record(id)).is_some();
+    #[cfg(any(test, feature = "fixtures"))]
+    if !lent {
+        model.item_stat_asks.insert(id);
+    }
+    let _ = (model, lent);
+}
+
 impl super::UiScript {
-    /// Stores or replaces an item's template view, clearing its ask.
+    /// A test's or a capture fixture's item record, read where the cache misses it; then the record's landing callbacks.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_item_template(&mut self, item_id: u32, view: ItemTemplateView) {
         {
             let mut model = self.model_mut();
             model.item_stat_asks.remove(&item_id);
             model.item_templates.insert(item_id, view);
         }
+        self.item_record_landed(item_id);
+    }
+
+    /// Item `item_id`'s record landed in the cache (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`): the callbacks the UI left on it run, the socket window's, every tooltip waiting on it, then the random dungeon rewards'.
+    pub fn item_record_landed(&mut self, item_id: u32) {
         super::socket::template_arrived(&mut self.model_mut(), item_id);
         self.answer_item_waits(|m| m.items.contains(&item_id));
         self.lfg_item_arrived(item_id);
     }
 
-    /// Asks for the templates of `ids` the store lacks, for the trade-skill list,
-    /// whose link verbs never query: the reference has them cached before the list shows.
-    pub fn ask_item_templates(&mut self, ids: impl IntoIterator<Item = u32>) {
-        let mut model = self.model_mut();
-        for id in ids {
-            if id != 0 && !model.item_templates.contains_key(&id) {
-                model.item_stat_asks.insert(id);
-            }
-        }
-    }
-
-    /// Drains the ids read or asked for that the store did not hold.
+    /// Drains a test's record asks, made where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn take_item_stat_asks(&mut self) -> Vec<u32> {
         drain_set!(self, item_stat_asks)
     }
@@ -709,25 +757,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 _ => 0,
             };
-            let Some((wearable, product)) = model
-                .item_templates
-                .get(&id)
-                .map(|v| (v.inventory_type != 0, v.recipe_creates))
+            let Some((wearable, product)) =
+                item_record(&model, id).map(|v| (v.inventory_type != 0, v.recipe_creates))
             else {
-                if id != 0 {
-                    model.item_stat_asks.insert(id);
-                }
+                ask_item_record(&mut model, id);
                 return Ok(super::binding_abi::flag(false));
             };
             if wearable || product == 0 {
                 return Ok(super::binding_abi::flag(wearable));
             }
-            let makes = model
-                .item_templates
-                .get(&product)
-                .map(|v| v.inventory_type != 0);
+            let makes = item_record(&model, product).map(|v| v.inventory_type != 0);
             if makes.is_none() {
-                model.item_stat_asks.insert(product);
+                ask_item_record(&mut model, product);
             }
             Ok(super::binding_abi::flag(makes == Some(true)))
         })?,
@@ -779,9 +820,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let (view, suffix, level) = {
                 let mut model = crate::script::model_mut_of(lua);
-                let v = model.item_templates.get(&item_id).cloned();
-                if v.is_none() && item_id != 0 {
-                    model.item_stat_asks.insert(item_id);
+                let v = item_record(&model, item_id);
+                if v.is_none() {
+                    ask_item_record(&mut model, item_id);
                 }
                 // The name takes the link's random property (`0x706d70`): a positive id's
                 // non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.

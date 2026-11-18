@@ -547,6 +547,7 @@ pub(crate) fn cast_spell(
     spell_id: u32,
     at: benilla_ui::script::CastAt,
     via_book: bool,
+    vm: &benilla_ui::script::UiScript,
 ) {
     let crate::spell::ScriptCast {
         targeting,
@@ -595,7 +596,7 @@ pub(crate) fn cast_spell(
         "ui_spellbook: cast {spell_id} at {at:?} (selection {:?})",
         targeting.selected().1
     );
-    let aim = targeting.aim(tokens, &at);
+    let aim = targeting.aim(tokens, &at, crate::ui_unit::VmUnits::of(vm));
     ladder.send_spell(spell_id, &targeting.context_at(aim), aim.passed());
 }
 

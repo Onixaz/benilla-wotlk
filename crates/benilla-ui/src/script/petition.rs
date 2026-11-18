@@ -568,9 +568,7 @@ fn click_petition_button(model: &mut super::Model) {
             let Some(guid) = super::container::live_slot(model, item.bag, item.slot)
                 .filter(|s| s.guid != 0 && s.item_id == item.item_id)
                 .filter(|s| {
-                    model
-                        .item_templates
-                        .get(&s.item_id)
+                    crate::script::item_stats::item_record(model, s.item_id)
                         .is_some_and(|t| t.flags & ITEM_FLAG_PETITION != 0)
                 })
                 .map(|s| s.guid)

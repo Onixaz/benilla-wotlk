@@ -46,11 +46,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let token = super::binding_abi::optional_string(lua, &token).unwrap_or_default();
             let guid = {
                 let model = super::model_mut_of(lua);
-                let guids = &model.unit_guids;
                 if token.is_empty() {
-                    Some(guids.target)
+                    Some(model.unit_guids.target)
                 } else {
-                    guids.resolve(&token).ok().map(|g| g.unwrap_or(NOBODY))
+                    model
+                        .resolve_token(&token)
+                        .ok()
+                        .map(|g| g.unwrap_or(NOBODY))
                 }
             };
             if let Some(guid) = guid {

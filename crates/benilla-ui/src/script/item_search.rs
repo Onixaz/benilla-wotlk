@@ -216,21 +216,12 @@ pub(super) fn find_item(model: &Model, query: &ItemQuery, flags: u32) -> Option<
     walk(model, flags).into_iter().find(|h| query.matches(h))
 }
 
-/// An item id by a Lua number, link or name (`0x709de0`): a name a held item or a cached template
-/// carries.
+/// An item id by a Lua number, link or name (`0x709de0`): a name only a held item carries.
 fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
     Ok(match ItemQuery::of(lua, v, ItemQuery::Name)? {
         Some(ItemQuery::Id(id)) => id,
         Some(ItemQuery::Link(fields)) => fields[0] as u32,
-        Some(ItemQuery::Name(name)) => super::socket::item_id_by_name(model, &name)
-            .or_else(|| {
-                model
-                    .item_templates
-                    .iter()
-                    .find(|(_, t)| t.name.eq_ignore_ascii_case(&name))
-                    .map(|(&id, _)| id)
-            })
-            .unwrap_or(0),
+        Some(ItemQuery::Name(name)) => super::socket::item_id_by_name(model, &name).unwrap_or(0),
         _ => 0,
     })
 }
@@ -238,7 +229,7 @@ fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
 /// `PickupItem(item)` (`0x522fb0`): the cursor clears, then holds the id as an action-bar item, no
 /// bag slot behind it.
 fn pickup_item(model: &mut Model, id: u32) {
-    let texture = model.item_templates.get(&id).and_then(|t| t.icon.clone());
+    let texture = super::item_stats::item_record(model, id).and_then(|t| t.icon);
     super::cursor::clear_cursor(model);
     if id == 0 {
         return;
@@ -254,14 +245,13 @@ fn pickup_item(model: &mut Model, id: u32) {
     super::cursor::queue_cursor_update(model);
 }
 
-/// The first on-use spell a template names (`0x706b90`).
+/// The first on-use spell a template names (`0x706b90`): the first block with a spell and trigger 0, its text unread (`0x706bc8`-`0x706bd1`).
 fn use_spell(model: &Model, item_id: u32) -> Option<u32> {
-    let view = model.item_templates.get(&item_id)?;
-    let spells = view.spell_triggers.iter();
-    spells
-        .filter(|(t, _, _)| *t == 0)
-        .map(|(_, s, _)| *s)
-        .next()
+    let view = super::item_stats::item_record(model, item_id)?;
+    view.item_spells
+        .iter()
+        .find(|s| s.trigger == 0)
+        .map(|s| s.spell)
 }
 
 /// The item's use spell, as `GetItemSpell` picks it, and the VM's spell source.
@@ -457,10 +447,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let id = item_id_of(lua, &model, &item)?;
             Ok(flag(
-                model
-                    .item_templates
-                    .get(&id)
-                    .is_some_and(|t| t.inventory_type != 0),
+                super::item_stats::item_record(&model, id).is_some_and(|t| t.inventory_type != 0),
             ))
         })?,
     )?;

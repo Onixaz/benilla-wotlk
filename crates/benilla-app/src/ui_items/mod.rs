@@ -31,7 +31,6 @@ pub(crate) mod watch;
 pub(crate) use container_live::{BagRead, ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
-pub(crate) mod view_reads;
 
 pub(crate) use drain::send_auto_equip;
 use drain::{
@@ -40,8 +39,9 @@ use drain::{
 };
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
+use feed::build_item_tables;
+pub(crate) use feed::ItemRecordLive;
 pub(crate) use feed::ItemSetLive;
-use feed::{build_item_tables, feed_item_stats};
 pub(crate) use feed::{can_dual_wield, player_fields, player_rep_rank, player_skill};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
@@ -1059,7 +1059,6 @@ impl Plugin for UiItemsPlugin {
             // its one bind-on-use cell.
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
-            .init_resource::<feed::FreshTemplates>()
             // After the chain opens: unordered, it can run first and skip every item DBC.
             .add_systems(
                 Startup,
@@ -1074,16 +1073,6 @@ impl Plugin for UiItemsPlugin {
             .add_systems(
                 Update,
                 (
-                    // The item-tooltip store answers before the input pass, so a re-hover the
-                    // next frame sees the answer.
-                    // After the book feed, so a `$?s` reads this frame's learns.
-                    feed_item_stats
-                        .in_set(UnitFeed)
-                        .after(crate::ui_action::SlotIdentityFeed),
-                    // In the net drain, ahead of every system lending the VM.
-                    feed::take_fresh_templates
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::apply_net_updates),
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
                     // plain `UseContainerItem` is a script call.

@@ -1080,7 +1080,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let is_weapon = model.inventory_slots[17]
                 .as_ref()
                 .filter(|v| v.item_id != 0)
-                .and_then(|v| model.item_templates.get(&v.item_id))
+                .and_then(|v| super::item_stats::item_record(&model, v.item_id))
                 .is_some_and(|t| t.class == 2);
             Ok(is_weapon.then_some(1i64))
         })?,

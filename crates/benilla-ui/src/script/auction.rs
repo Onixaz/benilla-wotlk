@@ -524,7 +524,7 @@ fn trunc_i64(n: f64) -> i64 {
 /// The sell-item validity test (`0x59d0b0`): the refusal for putting the item at `(bag, slot)` up
 /// for sale.
 fn sell_refusal(model: &Model, bag: i64, slot: u32, item_id: u32) -> Option<&'static str> {
-    let Some(t) = model.item_templates.get(&item_id) else {
+    let Some(t) = super::item_stats::item_record(model, item_id) else {
         return Some("ERR_ITEM_NOT_FOUND");
     };
     let s = super::container::live_slot(model, bag, slot);
@@ -1296,7 +1296,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(it) = model.auction_sell_item.clone() else {
                 return Ok(());
             };
-            if !model.item_templates.contains_key(&it.item_id) {
+            if !super::item_stats::item_record_cached(&model, it.item_id) {
                 return Ok(());
             }
             let worn = super::container::live_slot(&model, it.bag, it.slot)
@@ -1428,7 +1428,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(0i64);
             };
-            let Some(t) = model.item_templates.get(&it.item_id) else {
+            let Some(t) = super::item_stats::item_record(&model, it.item_id) else {
                 return Ok(0);
             };
             let count =
@@ -1452,7 +1452,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 model.auction_sell_item.as_ref().and_then(|it| {
-                    let t = model.item_templates.get(&it.item_id)?;
+                    let t = super::item_stats::item_record(&model, it.item_id)?;
                     let count = sell_count(&model, it);
                     Some((
                         cursor::item_link_name(it.link.as_deref()),

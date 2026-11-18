@@ -20,7 +20,7 @@ fn catalog() -> Option<LightCatalog> {
 }
 
 fn blend(cat: &LightCatalog, pos: [f32; 3]) -> benilla_formats::Atmosphere {
-    cat.sample_blended(MAP_EK, pos, NOON, false, Submersion::Dry, false)
+    cat.sample_blended(MAP_EK, pos, NOON, false, Submersion::Dry, false, 777.0)
 }
 
 /// Two points 16 yd apart across the Tirisfal-Silverpine border. Light 4 (falloff 985-1437 yd,
