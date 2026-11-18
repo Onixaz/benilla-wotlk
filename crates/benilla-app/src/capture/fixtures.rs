@@ -556,9 +556,7 @@ pub(super) fn seed_ui_fixture(
             commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestLog => {
-            // The log reads the self player's PLAYER_QUEST_LOG slots, so a synthetic self player
-            // carries two and `feed_quest_log` runs the real chain. A slot is id, state, two words
-            // of `u16` counters, and timer.
+            // A synthetic self player carries two PLAYER_QUEST_LOG slots (id, state, two `u16` counter words, timer), so the slot watch (`0x6df370`) rebuilds the real rows.
             use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1 as LOG;
             use benilla_protocol::messages::{
                 ObjectFields, QuestObjective, QuestTemplate, QUEST_LOG_SLOT_FIELDS,
