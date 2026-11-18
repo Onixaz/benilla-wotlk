@@ -68,9 +68,8 @@ pub(crate) fn update_pet_temp_bar_step(world: &mut World) {
     }
 }
 
-/// The pet can gain experience (`0x71b630`): a pet number and a Hunter
-/// creator held as a player.
-fn can_gain_xp(pet: &ObjectStore, creator: Option<&ObjectStore>) -> bool {
+/// The pet can gain experience (`0x71b630`): a pet number and a Hunter creator held as a player.
+pub(super) fn can_gain_xp(pet: &ObjectStore, creator: Option<&ObjectStore>) -> bool {
     const CLASS_HUNTER: u8 = 3;
     pet.0.unit_is_pet_or_charm() && creator.and_then(|c| c.0.unit_class()) == Some(CLASS_HUNTER)
 }

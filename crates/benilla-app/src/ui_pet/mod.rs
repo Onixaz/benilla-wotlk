@@ -92,47 +92,30 @@ pub(crate) struct PetRenameable(pub(crate) u32);
 #[derive(Resource, Default)]
 pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 
-/// The world-enter cascade's pet step (`0x5d6e60`): the pet setter cleared, then the bodyless
-/// `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set; the `SMSG_PET_SPELLS` it
-/// answers rebuilds the bar. The reference's entry waits out the loading screen, so the summon
-/// field has landed; ours rides the self create, which a login's `SMSG_PET_SPELLS` can beat while
-/// the field comes a frame later, so the bar drops only when the ask goes out. The ask owes the
-/// possess lookup, which the UI's entry runs after `PLAYER_ENTERING_WORLD`
+/// The cascade's pet ask (`0x5d6e60`): the bodyless `CMSG_REQUEST_PET_INFO` while our charm, else
+/// our summon, is set (`0x5d6ea6`), in the cascade's send order; the setter's clear, its events
+/// and the possess lookup wait for the UI's entry after `PLAYER_ENTERING_WORLD`
 /// ([`possess::world_entry_step`]).
-#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    mut bar: ResMut<PetBar>,
-    list: Option<ResMut<PetList>>,
     player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
-    owed: Option<ResMut<possess::PossessLookupOwed>>,
-    (possess, ui): (
-        Option<ResMut<possess::PossessSpell>>,
-        Option<ResMut<crate::ui_script::live::UiEvents>>,
-    ),
-    mut flush: Commands,
+    step: Option<ResMut<possess::WorldEntryPetStep>>,
 ) {
     if cascades.read().next().is_none() {
         return;
     }
-    let Some(pet) = player.iter().next().and_then(|s| s.0.unit_pet_guid()) else {
-        return;
-    };
-    debug!("ui_pet: world entry with pet {pet:#x}, asking its bar");
-    // The setter cleared (`0x5d6e6d`), its tail run as any setter call's.
-    let changed = bar.spells.pet_guid != 0;
-    bar.clear();
-    if let (Some(mut possess), Some(mut ui)) = (possess, ui) {
-        set_pet_tail(changed, &mut bar, &mut possess, None, &mut ui);
-        flush.queue(crate::ui_script::live::fire_handler_events);
+    let asked = player
+        .iter()
+        .next()
+        .and_then(|s| s.0.unit_pet_guid())
+        .is_some();
+    if asked {
+        debug!("ui_pet: world entry with a pet out, asking its bar");
+        let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
     }
-    if let Some(mut list) = list {
-        list.0.clear();
-    }
-    let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
-    if let Some(mut owed) = owed {
-        owed.0 = true;
+    if let Some(mut step) = step {
+        *step = possess::WorldEntryPetStep { owed: true, asked };
     }
 }
 
@@ -187,7 +170,7 @@ impl Plugin for UiPetPlugin {
         app.init_resource::<PetBar>()
             .init_resource::<PetList>()
             .init_resource::<possess::PossessSpell>()
-            .init_resource::<possess::PossessLookupOwed>()
+            .init_resource::<possess::WorldEntryPetStep>()
             .init_resource::<PetRenameable>()
             .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
@@ -204,8 +187,7 @@ impl Plugin for UiPetPlugin {
                         .before(crate::ui_script::UiFeed)
                         .before(crate::ui_action::SlotIdentityFeed),
                     feed_pet_unit.in_set(UnitFeed),
-                    // The UI's world entry asks after the time and before the mail (`0x528010`);
-                    // its bar drop lands before the press and the feeds read the bar.
+                    // The entry ask: after the time, before the mail (`0x528010`), owed before PEW.
                     request_pet_info_on_world_enter
                         .after(crate::net::send_query_time)
                         .before(crate::ui_mail::send_query_next_mail_time_on_enter)

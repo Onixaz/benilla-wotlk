@@ -64,6 +64,7 @@ local VERBS = {
     { "mount1cd", function() return (select(2, GetCompanionCooldown("MOUNT", 1))) end },
     { "possess", function() return IsPossessBarVisible() end },
     { "petattack", function() return IsPetAttackActive() end },
+    { "petbar", function() return PetHasActionBar() end },
     { "possname", function() return (select(2, GetPossessInfo(1))) end },
     { "popup", popup },
     { "button2", button2 },
@@ -3100,6 +3101,8 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
             &seen,
             &[
                 "PLAYER_ENTERING_WORLD",
+                "UNIT_PET",
+                "PET_BAR_UPDATE",
                 "UPDATE_BONUS_ACTIONBAR",
                 "UPDATE_FACTION"
             ],
@@ -3108,9 +3111,176 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
         vec![
             "UPDATE_FACTION | possess=false possname=nil",
             "PLAYER_ENTERING_WORLD | possess=false possname=nil",
+            "PET_BAR_UPDATE | possess=false possname=nil",
             "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
             "UPDATE_FACTION | possess=true possname=Mind Control",
         ]
+    );
+}
+
+/// The UI's entry runs the pet setter with no pet after `PLAYER_ENTERING_WORLD` (`0x5281fe` ->
+/// `0x5d6e6d`), ahead of the ask's gate: a bar that beat the create still reads at the entry's
+/// event, then the setter's `UNIT_PET` and `PET_BAR_UPDATE` drop it, before `UPDATE_FACTION`.
+#[test]
+fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::PetSpells(Box::new(
+            benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            },
+        ))],
+        &[OBJECT_TYPE_PLAYER],
+    ) else {
+        return;
+    };
+    let seen = rig.take();
+    let entry: Vec<String> = pin(
+        &seen,
+        &[
+            "PLAYER_ENTERING_WORLD",
+            "UNIT_PET",
+            "PET_BAR_UPDATE",
+            "UPDATE_FACTION",
+        ],
+        &["petbar"],
+    )
+    .into_iter()
+    .skip_while(|l| !l.starts_with("PLAYER_ENTERING_WORLD"))
+    .collect();
+    assert_eq!(
+        entry,
+        vec![
+            "PLAYER_ENTERING_WORLD | petbar=1",
+            "UNIT_PET player | petbar=nil",
+            "PET_BAR_UPDATE | petbar=nil",
+            "UPDATE_FACTION | petbar=nil",
+        ]
+    );
+}
+
+/// With no pet at all the setter's tail still runs at the entry: no `UNIT_PET`, the temporary
+/// bar's `PET_BAR_UPDATE` (`0x5d6a34` -> `0x5d6ad2` -> `0x5d4c1b`).
+#[test]
+fn the_world_entry_signals_the_pet_bar_with_no_pet() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let seen = rig.take();
+    let entry: Vec<String> = pin(
+        &seen,
+        &[
+            "PLAYER_ENTERING_WORLD",
+            "UNIT_PET",
+            "PET_BAR_UPDATE",
+            "UPDATE_FACTION",
+        ],
+        &["petbar"],
+    )
+    .into_iter()
+    .skip_while(|l| !l.starts_with("PLAYER_ENTERING_WORLD"))
+    .collect();
+    assert_eq!(
+        entry,
+        vec![
+            "PLAYER_ENTERING_WORLD | petbar=nil",
+            "PET_BAR_UPDATE | petbar=nil",
+            "UPDATE_FACTION | petbar=nil",
+        ]
+    );
+}
+
+/// The setter closes the pet UI for a new pet that can gain experience (`0x5d6a85` -> `0x71b630`,
+/// `0x5d6a94`), before its `UNIT_PET`: never on a re-send, for a pet with no pet number, or for one
+/// whose creator is not held.
+#[test]
+fn the_pet_setter_closes_the_pet_ui_for_a_new_hunter_pet() {
+    use benilla_protocol::field::{FIELD_UNIT_BYTES_0, FIELD_UNIT_CREATEDBY, FIELD_UNIT_PETNUMBER};
+    const MINION: u64 = 0xF140_0000_0100_0002;
+    const STRAY: u64 = 0xF140_0000_0100_0003;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 3 << 8)]) else {
+        return;
+    };
+    let create = |guid: u64, pairs: &[(u16, u32)]| {
+        let mut fields = vec![
+            (2, 0x9),
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+        ];
+        fields.extend_from_slice(pairs);
+        SessionEvent::ObjectCreate {
+            guid,
+            kind: EntityKind::Unit,
+            display_id: None,
+            position: [-8949.0, -132.0, 83.5],
+            orientation: 0.0,
+            scale: 1.0,
+            speeds: None,
+            mover: None,
+            transport_progress: None,
+            transport: None,
+            spline: None,
+            vehicle: None,
+            attack_target: None,
+            spawned: true,
+            fields: ObjectFields::from_pairs(&fields).into_created(ObjectType::Unit),
+        }
+    };
+    let spells = |guid: u64| {
+        SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+            pet_guid: guid,
+            ..Default::default()
+        }))
+    };
+    let events = &["PET_UI_CLOSE", "UNIT_PET", "PET_BAR_UPDATE"];
+    let lines = |seen: &[Seen]| pin(seen, events, &[]);
+    let hunter = rig.packets(vec![hunter_pet(1_000_000, 0), spells(PET)], 3);
+    let again = rig.packets(vec![spells(PET)], 3);
+    let minion = rig.packets(
+        vec![
+            create(
+                MINION,
+                &[
+                    (FIELD_UNIT_CREATEDBY, ME as u32),
+                    (FIELD_UNIT_CREATEDBY + 1, 0),
+                ],
+            ),
+            spells(MINION),
+        ],
+        3,
+    );
+    let stray = rig.packets(
+        vec![
+            create(
+                STRAY,
+                &[
+                    (FIELD_UNIT_PETNUMBER, 7),
+                    (FIELD_UNIT_CREATEDBY, 0x99),
+                    (FIELD_UNIT_CREATEDBY + 1, 0),
+                ],
+            ),
+            spells(STRAY),
+        ],
+        3,
+    );
+    assert_eq!(
+        lines(&hunter),
+        vec!["PET_UI_CLOSE", "UNIT_PET player", "PET_BAR_UPDATE"]
+    );
+    assert_eq!(
+        lines(&again),
+        vec!["PET_BAR_UPDATE"],
+        "a re-send closes nothing"
+    );
+    assert_eq!(
+        lines(&minion),
+        vec!["UNIT_PET player", "PET_BAR_UPDATE"],
+        "no pet number"
+    );
+    assert_eq!(
+        lines(&stray),
+        vec!["UNIT_PET player", "PET_BAR_UPDATE"],
+        "an unheld creator"
     );
 }
 

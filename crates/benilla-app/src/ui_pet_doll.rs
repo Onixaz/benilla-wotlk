@@ -5,7 +5,8 @@
 //! (`PetPaperDollFrame.lua:73-81`). The stat events fire with `arg1 = "pet"` for the page's
 //! registrations (`PetPaperDollFrame.lua:12-20`) except `UNIT_DEFENSE`, which nothing fires.
 //! `UNIT_LEVEL` and the `UNIT_PET*` events come from [`crate::ui_pet`] and
-//! [`crate::ui_pet_stats`]; nothing fires `PET_UI_UPDATE` or `PET_UI_CLOSE`.
+//! [`crate::ui_pet_stats`]; `PET_UI_CLOSE` fires from [`crate::ui_pet::set_pet_tail`], and
+//! `PET_UI_UPDATE` waits on the pet number's field handler (#1331).
 
 use bevy::prelude::*;
 

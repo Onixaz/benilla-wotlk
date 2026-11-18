@@ -37,17 +37,17 @@ pub(super) fn register(app: &mut App) {
 }
 
 /// Leaving the world drops the possess spell as the world leave's pet part does (`0x5d3360`),
-/// and a world entry's lookup not yet run.
+/// and a world entry's pet step not yet run.
 fn on_left_world(
     In(ev): In<SessionEvent>,
     mut possess: ResMut<super::possess::PossessSpell>,
-    owed: Option<ResMut<super::possess::PossessLookupOwed>>,
+    owed: Option<ResMut<super::possess::WorldEntryPetStep>>,
     ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::LoggedOut = ev {
         drop_possess(&mut possess, ui);
         if let Some(mut owed) = owed {
-            owed.0 = false;
+            *owed = Default::default();
         }
     }
 }
@@ -58,14 +58,14 @@ fn on_session_end(
     mut bar: ResMut<PetBar>,
     mut list: ResMut<super::PetList>,
     mut possess: ResMut<super::possess::PossessSpell>,
-    owed: Option<ResMut<super::possess::PossessLookupOwed>>,
+    owed: Option<ResMut<super::possess::WorldEntryPetStep>>,
     ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     bar.clear();
     list.0.clear();
     drop_possess(&mut possess, ui);
     if let Some(mut owed) = owed {
-        owed.0 = false;
+        *owed = Default::default();
     }
 }
 
@@ -91,8 +91,8 @@ fn on_spells(
 ) {
     if let SessionEvent::PetSpells(spells) = ev {
         let changed = pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
-        let in_combat = combat.in_combat(bar.spells.pet_guid);
-        set_pet_tail(changed, &mut bar, &mut possess, in_combat, &mut ui);
+        let held = combat.held(bar.spells.pet_guid);
+        set_pet_tail(changed, &mut bar, &mut possess, held, &mut ui);
         // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`,
         // `0x53ceae`).
         ui.fire("SPELLS_CHANGED", Vec::new());
@@ -113,31 +113,56 @@ pub(crate) struct PetCombat<'w, 's> {
     >,
 }
 
+/// The held pet as the setter's tail tests it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HeldPet {
+    /// The combat test (`0x71afb0`).
+    pub(crate) in_combat: bool,
+    /// It can gain experience (`0x71b630`), a hunter's pet.
+    pub(crate) can_gain_xp: bool,
+}
+
 impl PetCombat<'_, '_> {
-    /// `None` when `guid` names no held unit (`0x5d6a6d`), else whether it is in combat.
-    pub(crate) fn in_combat(&self, guid: u64) -> Option<bool> {
-        let &e = self.index.as_ref()?.0.get(&guid)?;
+    /// `None` when `guid` names no held unit (`0x5d6a6d`), else its two tests.
+    pub(crate) fn held(&self, guid: u64) -> Option<HeldPet> {
+        let index = self.index.as_ref()?;
+        let &e = index.0.get(&guid)?;
         let (store, engaged) = self.units.get(e).ok()?;
-        store.0.is_unit().then(|| {
-            store.0.unit_flags() & super::unit::UNIT_FLAG_PET_IN_COMBAT != 0 || engaged.is_some()
+        let creator = store
+            .0
+            .unit_created_by()
+            .and_then(|g| index.0.get(&g))
+            .and_then(|&c| self.units.get(c).ok())
+            .map(|(s, _)| s);
+        store.0.is_unit().then(|| HeldPet {
+            in_combat: store.0.unit_flags() & super::unit::UNIT_FLAG_PET_IN_COMBAT != 0
+                || engaged.is_some(),
+            can_gain_xp: super::temp_bar::can_gain_xp(store, creator),
         })
     }
 }
 
-/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`). A new guid drops the possess bar latch and the
-/// attacking global (`0x5d6a3c`, `0x5d6a42`), the global then takes the held pet's combat test
-/// (`0x5d6a80`), and `UNIT_PET` fires with the token pushed ahead (`0x5d6aca`); every call then
-/// runs the temporary bar's update, which ends in `PET_BAR_UPDATE` (`0x5d6ad2` -> `0x5d4c1b`).
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`): on a new guid the latches drop, a held pet's
+/// tests run, then `UNIT_PET`; every call ends in the temporary bar's `PET_BAR_UPDATE`.
 pub(crate) fn set_pet_tail(
     changed: bool,
     bar: &mut PetBar,
     possess: &mut super::possess::PossessSpell,
-    in_combat: Option<bool>,
+    held: Option<HeldPet>,
     ui: &mut crate::ui_script::live::UiEvents,
 ) {
     if changed {
+        // The possess latch and the attacking global drop (`0x5d6a3c`, `0x5d6a42`).
         possess.1 = false;
-        bar.attacking = bar.spells.pet_guid != 0 && in_combat.unwrap_or(false);
+        bar.attacking = false;
+        if let Some(held) = held.filter(|_| bar.spells.pet_guid != 0) {
+            // The combat test (`0x5d6a80`), then a hunter's pet closes the pet UI (`0x5d6a94`).
+            bar.attacking = held.in_combat;
+            if held.can_gain_xp {
+                ui.fire("PET_UI_CLOSE", Vec::new());
+            }
+        }
+        // `UNIT_PET` with the token pushed ahead (`0x5d6aca`).
         ui.world(super::unit::push_pet_token);
         ui.fire(
             "UNIT_PET",
@@ -642,9 +667,13 @@ mod tests {
         let mut list = super::super::PetList::default();
         let mut possess = super::super::possess::PossessSpell::default();
         let mut ui = crate::ui_script::live::UiEvents::default();
-        let mut set = |bar: &mut PetBar, guid, in_combat| {
+        let mut set = |bar: &mut PetBar, guid, in_combat: Option<bool>| {
             let changed = pet_spells(a_bar(guid), None, bar, &mut list);
-            set_pet_tail(changed, bar, &mut possess, in_combat, &mut ui);
+            let held = in_combat.map(|in_combat| HeldPet {
+                in_combat,
+                can_gain_xp: false,
+            });
+            set_pet_tail(changed, bar, &mut possess, held, &mut ui);
         };
         set(&mut bar, 0x2A, None);
         bar.attacking = true;
