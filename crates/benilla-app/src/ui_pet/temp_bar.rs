@@ -158,7 +158,7 @@ fn update_pet_temp_bar(
             if active { "on" } else { "off" }
         );
         temp.flags = flags;
-        // The flag is set before the event (`0x5d4c0a`), whose stock handler asks `PetHasActionBar` whether the pet bar stays.
+        // The flag is set before the event (`0x5d4c0a`), whose stock handler asks `PetHasActionBar` whether the pet bar stays; the setter is idempotent, and the bonus page it moves (`0x5d4c0f`) is `feed_actions`' (#1281).
         ui.write(move |s| s.set_temp_action_bar(flags));
     }
     fire(&mut ui);

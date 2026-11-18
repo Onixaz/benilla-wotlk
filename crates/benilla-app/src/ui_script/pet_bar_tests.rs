@@ -541,9 +541,7 @@ fn shift_clicking_a_pet_button_picks_it_up_rather_than_casting() {
     assert_eq!(writes.placed, vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]]);
 }
 
-/// A bound `BONUSACTIONBUTTONn` runs `PetActionButtonDown/Up` (PetActionBarFrame.lua:218-231), a
-/// bare `CastPetAction` on release. The live Attack is a possess bar's: the pet bar raises the
-/// attack latch only for a possessed unit, so on a hunter's bar key and click agree.
+/// A bound `BONUSACTIONBUTTONn` runs `PetActionButtonDown/Up` (PetActionBarFrame.lua:218-231), a bare `CastPetAction` on release that never reaches `OnClick`'s `IsPetAttackActive` fork.
 #[test]
 fn the_keybind_pair_pushes_and_casts_without_the_clicks_forks() {
     benilla_formats::wow_data_or_skip!();

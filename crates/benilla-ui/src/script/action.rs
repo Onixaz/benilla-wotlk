@@ -582,7 +582,7 @@ mod tests {
     fn action_autocast_reads_a_pet_book_macro_only() {
         use crate::script::{MacroBinding, MacroState, MacroView, PetBookState, SpellSlotView};
         let mut s = UiScript::new().unwrap();
-        s.set_pet_book(PetBookState {
+        let _book = s.set_pet_book(PetBookState {
             token: Some("PET".into()),
             slots: vec![SpellSlotView {
                 spell_id: 3009, // Claw
@@ -642,7 +642,7 @@ mod tests {
         for n in [2, 3, 4, 5, 0, 121] {
             assert_eq!(ask(&s, n), (2, None, None), "slot {n}");
         }
-        s.set_pet_book(PetBookState {
+        let _book = s.set_pet_book(PetBookState {
             token: Some("PET".into()),
             slots: vec![SpellSlotView {
                 spell_id: 3009,

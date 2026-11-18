@@ -7,6 +7,8 @@
 
 use mlua::{Lua, MultiValue, Value};
 
+use super::ScriptValue;
+
 // The slot-word values the one-shot orders synthesize, restated from
 // `benilla_protocol::messages::pet` because this crate does not depend on the protocol.
 const PET_ACT_COMMAND: u8 = 0x07;
@@ -23,6 +25,52 @@ const TEMP_BAR_PET: u32 = 0x1;
 /// A slot word as the server packs it: the type in the top byte, the action in the low bits.
 const fn order(kind: u8, action: u32) -> u32 {
     (kind as u32) << 24 | action
+}
+
+/// `PET_DISMISS_START`'s argument, the dismiss cast in ms (`0x5d48c3`).
+const PET_DISMISS_MS: i64 = 10_000;
+
+/// A pet menu verb the app runs inside its call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PetMenuVerb<'a> {
+    Abandon,
+    Dismiss,
+    Rename(&'a str),
+}
+
+/// What a pet menu verb did inside its call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PetMenuOutcome {
+    Done,
+    /// The dismiss order went out: `PET_DISMISS_START` fires (`0x5d48c3`).
+    DismissStart,
+    /// The pet is the controlled vehicle our seat may dismiss: its dismiss (`0x5d47fe`).
+    VehicleExit,
+    /// A refusal's message key, shown as the message display shows it (`0x5d56c8`, `0x5d575f`).
+    Refused(&'static str),
+}
+
+/// A menu verb run inside the call when no earlier script call waits, as 12340's are done when they return; false leaves it to the queue behind that call.
+fn menu_in_call(lua: &Lua, verb: PetMenuVerb<'_>) -> bool {
+    if !crate::script::model_mut_of(lua).script_calls.is_empty() {
+        return false;
+    }
+    let Some(outcome) = super::live::write_live(|l| l.pet_menu_verb(verb)).flatten() else {
+        return false;
+    };
+    match outcome {
+        PetMenuOutcome::Done => {}
+        PetMenuOutcome::DismissStart => crate::script::tick::fire_event_into(
+            lua,
+            "PET_DISMISS_START",
+            vec![ScriptValue::Int(PET_DISMISS_MS)],
+        ),
+        PetMenuOutcome::VehicleExit => crate::script::model_mut_of(lua)
+            .vehicle_requests
+            .push(super::VehicleRequest::Exit),
+        PetMenuOutcome::Refused(key) => crate::script::model_mut_of(lua).ui_errors.push(key),
+    }
+    true
 }
 
 /// One pet bar slot, resolved by the app.
@@ -207,6 +255,22 @@ pub(crate) fn live_slots() -> Vec<PetActionView> {
         .collect()
 }
 
+/// A press run inside the verb (`0x5d4210`) when no earlier script call waits, so it reads the selection those calls would move; its `PET_BAR_UPDATE` fires before the verb returns (`0x5d4530`). False leaves it to the script call: a spell or Attack, or a press behind a queued call.
+fn press_in_call(lua: &Lua, slot: u32, order: Option<u32>) -> bool {
+    if !crate::script::model_mut_of(lua).script_calls.is_empty() {
+        return false;
+    }
+    match super::live::write_live(|l| l.pet_press(slot, order)).flatten() {
+        Some(signalled) => {
+            if signalled {
+                crate::script::tick::fire_event_into(lua, "PET_BAR_UPDATE", Vec::new());
+            }
+            true
+        }
+        None => false,
+    }
+}
+
 /// Register the pet-bar globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
@@ -372,7 +436,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CastPetAction",
         lua.create_function(|lua, i: u32| {
-            if live_slot(lua, i).is_some_and(|s| s.name.is_some()) {
+            if live_slot(lua, i).is_some_and(|s| s.name.is_some()) && !press_in_call(lua, i, None) {
                 crate::script::model_mut_of(lua)
                     .script_calls
                     .push(super::ScriptCall::PetAction(i));
@@ -514,7 +578,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                if live_bar().has_bar {
+                if live_bar().has_bar && !press_in_call(lua, 0, Some(packed)) {
                     crate::script::model_mut_of(lua)
                         .script_calls
                         .push(super::ScriptCall::PetOrder(packed));
@@ -555,8 +619,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetAbandon",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.pet_abandons += 1;
+            if !menu_in_call(lua, PetMenuVerb::Abandon) {
+                crate::script::model_mut_of(lua).pet_abandons += 1;
+            }
             Ok(())
         })?,
     )?;
@@ -565,8 +630,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "PetDismiss",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.pet_dismisses += 1;
+            if !menu_in_call(lua, PetMenuVerb::Dismiss) {
+                crate::script::model_mut_of(lua).pet_dismisses += 1;
+            }
             Ok(())
         })?,
     )?;
@@ -581,8 +647,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(name) => name.to_str()?.to_string(),
                 None => String::new(),
             };
-            let mut model = crate::script::model_mut_of(lua);
-            model.pet_renames.push(name);
+            if !menu_in_call(lua, PetMenuVerb::Rename(&name)) {
+                crate::script::model_mut_of(lua).pet_renames.push(name);
+            }
             Ok(())
         })?,
     )?;

@@ -70,6 +70,10 @@ pub(crate) struct LiveView<'w, 's> {
     pet_unit: Option<crate::ui_pet::PetUnit<'w, 's>>,
     /// The spell records, the cooldown query's category and global-cooldown legs.
     spells: Option<Res<'w, crate::ui_action::Spells>>,
+    /// `SummonProperties.dbc`, the dismiss's no-dismiss row (`0x5d484c`).
+    summons: Option<Res<'w, crate::spell::SummonSlots>>,
+    /// The active mover (`[0xca1238]`), the dismiss's controlled-vehicle test (`0x5d4744`).
+    mover: Query<'w, 's, &'static crate::net::Guid, With<crate::net::ActiveMover>>,
     /// `ChrClasses.dbc`, the pet book's token and the requirement state's class flags.
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
     /// The requirement state's proficiency masks, standings and faction table.
@@ -1137,11 +1141,47 @@ impl LiveState for LiveView<'_, '_> {
         true
     }
 
+    /// A pet menu verb on the lent bar inside its call ([`crate::ui_pet::run_menu_verb`]).
+    fn pet_menu_verb(
+        &mut self,
+        verb: benilla_ui::script::PetMenuVerb<'_>,
+    ) -> Option<benilla_ui::script::PetMenuOutcome> {
+        let stable_master = self
+            .stable
+            .open()
+            .and_then(crate::ui_session::NpcSession::npc);
+        let cx = crate::ui_pet::MenuCx {
+            bar: self.pet_bar.get()?,
+            pet: self.pet_unit.as_ref()?,
+            spells: self.spells.as_deref(),
+            summons: self.summons.as_deref(),
+            commands: self.commands.as_deref()?,
+            stable_master,
+            mover: self.mover.iter().next().map(|g| g.0),
+        };
+        Some(crate::ui_pet::run_menu_verb(&cx, verb))
+    }
+
     /// `PetStopAttack`'s clear on the lent bar (`0x5d4650`).
     fn pet_stop_attack(&mut self) {
         if let (Some(bar), Some(c)) = (self.pet_bar.get_mut(), &self.commands) {
             crate::ui_pet::stop_pet_attack(bar, c);
         }
+    }
+
+    /// A reaction or non-Attack command press on the lent words inside the call (`0x5d4210`): gate, latch and signal, then the send.
+    fn pet_press(&mut self, slot: u32, order: Option<u32>) -> Option<bool> {
+        let entry = crate::ui_pet::plain_press_word(self.pet_bar.get()?, slot, order)?;
+        let selected = self.selection.get().and_then(|s| s.guid);
+        let pet = self.pet_unit.as_ref()?;
+        let bar = self.pet_bar.get_mut()?;
+        Some(crate::ui_pet::press_plain(
+            bar,
+            pet,
+            entry,
+            selected,
+            self.commands.as_deref(),
+        ))
     }
 
     /// The bar toggle (`0x5d5d20`) on the lent words: gate, flip, send, in 12340's order.
@@ -1365,8 +1405,7 @@ pub(crate) struct LendLive<'w, 's, O: Owns = ()> {
 }
 
 impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
-    /// The lent view, read by the system between its calls into Lua; a verb that writes the view, or the system's own owned write, panics while it lives.
-    // Never hold it across a call into Lua: a verb that writes the view would panic at the call.
+    /// The lent view, read by the system between its calls into Lua and never held across one: a verb that writes the view, or the system's own owned write, panics while it lives.
     pub(crate) fn view(&self) -> benilla_ui::script::ViewRef<'_, LiveView<'w, 's>> {
         self.loan.view()
     }
@@ -1466,11 +1505,7 @@ fn slot_access<X: Resource>(
     set.add_unfiltered_resource_read(id);
 }
 
-/// The lendable resource `id` as its storage pointer, made without a reference, so the owner's
-/// writes through its own pointer leave it valid.
-///
-/// # Safety
-/// The calling system's access to `id` is registered.
+/// The lendable resource `id` as its storage pointer, made without a reference so the owner's writes through its own pointer leave it valid; sound while the calling system's access to `id` is registered.
 unsafe fn slot_fetch<X: Resource>(
     world: UnsafeWorldCell<'_>,
     id: ComponentId,

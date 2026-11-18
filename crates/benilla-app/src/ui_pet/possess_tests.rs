@@ -165,3 +165,41 @@ fn the_lookup_holds_a_find_and_fires_on_a_change() {
     assert_eq!(held.0, EYE);
     assert_eq!(ui.names(), vec!["UPDATE_BONUS_ACTIONBAR"; 2]);
 }
+
+/// The world entry's setter with no pet (`0x5d6e6d`) empties the cached guid, the list and the expiry, and drops the attacking global on that change (`0x5d6a42`); the bar's words and the pet's cooldowns stay until the next `SMSG_PET_SPELLS` zeroes them (`0x5d6ba0`).
+#[test]
+fn the_world_entry_clear_keeps_the_words() {
+    use benilla_protocol::messages::{PetActionEntry, PetSpells};
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::prelude::*;
+    let mut world = World::new();
+    let mut spells = PetSpells {
+        pet_guid: 0x2A,
+        state: 0x0101,
+        ..Default::default()
+    };
+    spells.bar[0] = PetActionEntry::from(0x0700_0002);
+    world.insert_resource(super::PetBar {
+        spells,
+        cached: 0x2A,
+        attacking: true,
+        expires: Some(std::time::Instant::now()),
+        ..Default::default()
+    });
+    world.insert_resource(super::PetList(vec![0x2A]));
+    world.init_resource::<PossessSpell>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
+    world
+        .run_system_once(super::possess::world_entry_clear)
+        .unwrap();
+    let bar = world.resource::<super::PetBar>();
+    assert_eq!((bar.cached, bar.spells.pet_guid), (0, 0));
+    assert!(!bar.has_bar() && !bar.attacking && bar.expires.is_none());
+    assert_eq!(bar.spells.bar[0].packed, 0x0700_0002, "the words stay");
+    assert_eq!(bar.spells.state, 0x0101);
+    assert!(world.resource::<super::PetList>().0.is_empty());
+    assert_eq!(
+        world.resource::<crate::ui_script::live::UiEvents>().names(),
+        ["<world>", "<world>", "UNIT_PET", "<world>"]
+    );
+}

@@ -279,7 +279,7 @@ fn a_press_latches_the_state_the_server_never_echoes() {
     };
     bar.spells.state |= PET_STATE_VEHICLE;
 
-    latch_press(&mut bar, packed(PET_COMMAND_STAY, PET_ACT_COMMAND), false);
+    latch_press(&mut bar, packed(PET_COMMAND_STAY, PET_ACT_COMMAND));
     assert_eq!(bar.spells.command_state() & 0xFF, PET_COMMAND_STAY);
     assert_eq!(bar.spells.react_state(), PET_REACT_DEFENSIVE, "untouched");
     assert!(
@@ -287,24 +287,16 @@ fn a_press_latches_the_state_the_server_never_echoes() {
         "the vehicle bit is the SERVER's — a command press must preserve it"
     );
 
-    latch_press(
-        &mut bar,
-        packed(PET_REACT_AGGRESSIVE, PET_ACT_REACTION),
-        false,
-    );
+    latch_press(&mut bar, packed(PET_REACT_AGGRESSIVE, PET_ACT_REACTION));
     assert_eq!(bar.spells.react_state(), PET_REACT_AGGRESSIVE);
     assert_eq!(bar.spells.command_state() & 0xFF, PET_COMMAND_STAY);
     assert!(bar.spells.vehicle());
 
-    latch_press(&mut bar, packed(3010, PET_ACT_DISABLED), false);
+    latch_press(&mut bar, packed(3010, PET_ACT_DISABLED));
     assert_eq!(bar.spells.command_state() & 0xFF, PET_COMMAND_STAY);
     assert_eq!(bar.spells.react_state(), PET_REACT_AGGRESSIVE);
 
-    latch_press(
-        &mut bar,
-        packed(PET_COMMAND_DISMISS, PET_ACT_COMMAND),
-        false,
-    );
+    latch_press(&mut bar, packed(PET_COMMAND_DISMISS, PET_ACT_COMMAND));
     assert_eq!(
         bar.spells.command_state() & 0xFF,
         PET_COMMAND_STAY,
@@ -312,8 +304,7 @@ fn a_press_latches_the_state_the_server_never_echoes() {
     );
 }
 
-/// `OnClick`'s `SetChecked(0)` unlights every press; relight it by signalling unconditionally, and
-/// a hunter's Attack skips the signal.
+/// `OnClick`'s `SetChecked(0)` unlights every press; the latch relights it by signalling unconditionally.
 #[test]
 fn every_press_the_reference_signals_forces_a_repaint() {
     let mut bar = PetBar {
@@ -324,42 +315,37 @@ fn every_press_the_reference_signals_forces_a_repaint() {
 
     // The mode the pet is already in: the state does not move, the signal still fires.
     let before = signals(&bar);
-    latch_press(&mut bar, packed(PET_COMMAND_FOLLOW, PET_ACT_COMMAND), false);
+    latch_press(&mut bar, packed(PET_COMMAND_FOLLOW, PET_ACT_COMMAND));
     assert_eq!(bar.spells.command_state(), PET_COMMAND_FOLLOW, "unmoved");
     assert_ne!(signals(&bar), before, "and it repaints anyway");
 
     let before = signals(&bar);
-    latch_press(
-        &mut bar,
-        packed(PET_REACT_DEFENSIVE, PET_ACT_REACTION),
-        false,
-    );
+    latch_press(&mut bar, packed(PET_REACT_DEFENSIVE, PET_ACT_REACTION));
     assert_eq!(bar.spells.react_state(), PET_REACT_DEFENSIVE, "unmoved");
     assert_ne!(signals(&bar), before, "same for the reaction side");
 
     // The presses the reference leaves silent.
     let before = signals(&bar);
-    latch_press(
-        &mut bar,
-        packed(PET_COMMAND_DISMISS, PET_ACT_COMMAND),
-        false,
-    );
-    latch_press(&mut bar, packed(3010, PET_ACT_ENABLED), false);
-    latch_press(&mut bar, packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND), false);
+    latch_press(&mut bar, packed(PET_COMMAND_DISMISS, PET_ACT_COMMAND));
+    latch_press(&mut bar, packed(3010, PET_ACT_ENABLED));
     assert_eq!(
         signals(&bar),
         before,
-        "Dismiss, a spell and a pet's Attack all reach without signalling"
+        "Dismiss and a spell reach without signalling"
     );
 
-    // A possessed unit's Attack signals.
-    latch_press(&mut bar, packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND), true);
+    // Attack's validator pass signals (`0x5d4530`).
+    assert!(commit_press(
+        &mut bar,
+        packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND),
+        false
+    ));
     assert_ne!(signals(&bar), before);
 }
 
-/// The latch's possession gate.
+/// Any pet's Attack raises the attacking global once its validator passes (`0x5d4509`); no other press does.
 #[test]
-fn only_a_possessed_units_attack_press_raises_the_latch() {
+fn a_pets_attack_press_raises_the_latch() {
     let mut bar = PetBar {
         spells: state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE),
         ..Default::default()
@@ -367,24 +353,25 @@ fn only_a_possessed_units_attack_press_raises_the_latch() {
     let attack = packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND);
     assert!(!bar.attacking);
 
-    latch_press(&mut bar, attack, false);
+    assert!(commit_press(&mut bar, attack, false));
     assert!(
-        !bar.attacking,
-        "an ordinary pet can never raise the latch, so its button can never light"
+        bar.attacking,
+        "a hunter's pet raises it as a possessed unit does"
     );
 
-    latch_press(&mut bar, attack, true);
-    assert!(bar.attacking, "a possessed unit can");
-
     bar.attacking = false;
-    latch_press(&mut bar, packed(PET_COMMAND_DISMISS, PET_ACT_COMMAND), true);
-    latch_press(&mut bar, packed(PET_REACT_PASSIVE, PET_ACT_REACTION), true);
+    commit_press(
+        &mut bar,
+        packed(PET_COMMAND_DISMISS, PET_ACT_COMMAND),
+        false,
+    );
+    commit_press(&mut bar, packed(PET_REACT_PASSIVE, PET_ACT_REACTION), false);
     assert!(!bar.attacking, "only ATTACK raises it");
 }
 
-/// The reference's possessed-unit lookup asks for the unit we possess, not the one we own.
+/// The spell arm's fork asks for the unit we possess, not the one we own.
 #[test]
-fn the_latch_gate_is_possession_not_ownership() {
+fn the_cast_fork_is_possession_not_ownership() {
     const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
     const CHARMEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CHARMEDBY;
     const CREATEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CREATEDBY;
@@ -423,8 +410,9 @@ fn the_latch_gate_is_possession_not_ownership() {
     assert!(!possessing(None, me));
 }
 
+/// The latch lights Attack, and the next press calls the pet off; the standing command keeps its own light.
 #[test]
-fn a_pets_attack_button_never_lights() {
+fn a_pets_attack_button_lights() {
     let mut bar = PetBar {
         spells: state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE),
         ..Default::default()
@@ -432,84 +420,107 @@ fn a_pets_attack_button_never_lights() {
     let attack = packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND);
     let follow = packed(PET_COMMAND_FOLLOW, PET_ACT_COMMAND);
 
-    for _ in 0..3 {
-        assert!(
-            commit_press(&mut bar, attack, false, false),
-            "the order goes"
-        );
-        let lit = view(attack, &bar.spells, None, None, bar.attacking);
-        assert!(!lit.active, "and the button does not light — ever");
-        assert!(
-            !lit.attack_active,
-            "so the next press orders again, never calls off"
-        );
-    }
+    assert!(commit_press(&mut bar, attack, false));
+    let lit = view(attack, &bar.spells, None, None, bar.attacking);
+    assert!(lit.active && lit.attack_active);
     assert_eq!(
         bar.spells.command_state(),
         PET_COMMAND_FOLLOW,
         "an attack order leaves the standing command alone"
     );
-    assert!(
-        view(follow, &bar.spells, None, None, bar.attacking).active,
-        "and Follow keeps the light that is actually a mode's"
-    );
-
-    latch_press(&mut bar, packed(PET_COMMAND_STAY, PET_ACT_COMMAND), false);
-    assert_eq!(bar.spells.command_state(), PET_COMMAND_STAY);
-}
-
-#[test]
-fn a_possessed_units_attack_button_does_light() {
-    let mut bar = PetBar {
-        spells: state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE),
-        ..Default::default()
-    };
-    let attack = packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND);
-    let follow = packed(PET_COMMAND_FOLLOW, PET_ACT_COMMAND);
-
-    assert!(commit_press(&mut bar, attack, false, true));
-    assert!(view(attack, &bar.spells, None, None, bar.attacking).active);
-    assert!(view(attack, &bar.spells, None, None, bar.attacking).attack_active);
-    assert!(
-        view(follow, &bar.spells, None, None, bar.attacking).active,
-        "the latch is not the command byte — Follow keeps its own light"
-    );
+    assert!(view(follow, &bar.spells, None, None, bar.attacking).active);
 
     // `PetStopAttack` lowers the latch, the only thing lighting Attack.
     bar.attacking = false;
     let called_off = view(attack, &bar.spells, None, None, bar.attacking);
-    assert!(!called_off.active);
-    assert!(!called_off.attack_active);
+    assert!(!called_off.active && !called_off.attack_active);
 }
 
-/// The veto jumps past the send.
+/// A refusal with the global down jumps past the send (`0x5d4524`); with it already up the press still signals and sends.
 #[test]
-fn a_refused_attack_neither_sends_nor_lights_the_button() {
+fn a_refused_attack_sends_only_while_the_latch_is_up() {
     let mut bar = PetBar {
         spells: state(PET_COMMAND_FOLLOW, PET_REACT_DEFENSIVE),
         ..Default::default()
     };
     let attack = packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND);
+    let before = bar.bar_signals;
 
-    assert!(
-        !commit_press(&mut bar, attack, true, true),
-        "a vetoed order never reaches the wire"
-    );
-    assert!(!bar.attacking, "and never raises the latch");
-    assert!(
-        !view(attack, &bar.spells, None, None, bar.attacking).active,
-        "so the button stays dark, even on the one bar where it could light"
-    );
-    assert_eq!(
-        bar.spells.command_state(),
-        PET_COMMAND_FOLLOW,
-        "a refusal cannot move the standing command either"
-    );
+    assert!(!commit_press(&mut bar, attack, true), "no packet");
+    assert!(!bar.attacking, "no latch");
+    assert_eq!(bar.bar_signals, before, "no repaint");
+    assert_eq!(bar.spells.command_state(), PET_COMMAND_FOLLOW);
 
-    // With the gate clear, the same press sends and latches.
-    assert!(commit_press(&mut bar, attack, false, true));
+    assert!(commit_press(&mut bar, attack, false));
+    let before = bar.bar_signals;
+    assert!(
+        commit_press(&mut bar, attack, true),
+        "the global is up, so it sends"
+    );
     assert!(bar.attacking);
-    assert!(view(attack, &bar.spells, None, None, bar.attacking).active);
+    assert_ne!(bar.bar_signals, before);
+}
+
+/// A selection move with our attacking pet out: `bar` attacking, `possessed` a moved unit we possess; the selection moves from 7 to 9 and then drops.
+fn target_moves_with(possessed: bool) -> (bool, Vec<ClientCommand>) {
+    use super::press_tests::{owned_pet_with, FLAGS, ME};
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut app = bevy::prelude::App::new();
+    app.insert_resource(NetCommands(tx))
+        .insert_resource(crate::net::SelfGuid(Some(ME)))
+        .insert_resource(crate::target::Selection {
+            guid: Some(7),
+            ..Default::default()
+        })
+        .insert_resource(PetBar {
+            spells: PetSpells {
+                pet_guid: 0xF14,
+                ..Default::default()
+            },
+            attacking: true,
+            ..Default::default()
+        })
+        .add_systems(bevy::prelude::Update, pet_stop_on_old_target_clear);
+    let flags = if possessed { UNIT_FLAG_POSSESSED } else { 0 };
+    app.world_mut().spawn((
+        owned_pet_with(&[(FLAGS, flags | 0x800)]),
+        crate::net::ActiveMover,
+    ));
+    app.update();
+    app.world_mut()
+        .resource_mut::<crate::target::Selection>()
+        .guid = Some(9);
+    app.update();
+    app.world_mut()
+        .resource_mut::<crate::target::Selection>()
+        .guid = None;
+    app.update();
+    (
+        app.world().resource::<PetBar>().attacking,
+        rx.try_iter().collect(),
+    )
+}
+
+/// A hunter's pet in combat keeps fighting when the player changes or drops the target: the clear runs only with a possessed unit (`0x5242c2`).
+#[test]
+fn a_target_change_leaves_an_ordinary_pet_fighting() {
+    let (attacking, sent) = target_moves_with(false);
+    assert!(attacking, "the pet's attack stays up");
+    assert!(sent.is_empty(), "no stop is sent: {sent:?}");
+}
+
+/// With a possessed unit, the first replace calls it off once (`0x5242c4`).
+#[test]
+fn a_target_change_calls_a_possessed_unit_off() {
+    let (attacking, sent) = target_moves_with(true);
+    assert!(!attacking);
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetStopAttack { pet_guid: 0xF14 }]
+        ),
+        "{sent:?}"
+    );
 }
 
 /// The old-target clear's `PetStopAttack`.

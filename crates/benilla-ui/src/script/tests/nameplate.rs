@@ -384,6 +384,37 @@ fn a_retired_plate_returns_as_the_same_lua_object() {
         .unwrap());
 }
 
+/// A released plate hides at once, fires its `OnHide`, and the next sync binds the unit a plate again (`0x725840`); another unit's plate is untouched.
+#[test]
+fn a_released_plate_hides_and_the_next_sync_rebinds_it() {
+    let mut s = vm();
+    let wolf = plate("Wolf", 30.0, 40.0);
+    let bear = plate("Bear", 10.0, 90.0);
+    drive(&mut s, &[wolf.clone(), bear.clone()]);
+    s.run(
+        r#"
+        Hides = 0
+        for _, p in ipairs({ WorldFrame:GetChildren() }) do
+            p:HookScript("OnHide", function() Hides = Hides + 1 end)
+        end
+    "#,
+    )
+    .unwrap();
+    s.release_nameplate(wolf.key);
+    s.release_nameplate(0xdead);
+    assert_eq!(s.eval::<i64>("return Hides").unwrap(), 1);
+    let shown = |s: &UiScript| {
+        s.eval::<i64>(
+            "local n = 0 for _, p in ipairs({ WorldFrame:GetChildren() }) do if p:IsShown() then n = n + 1 end end return n",
+        )
+        .unwrap()
+    };
+    assert_eq!(shown(&s), 1);
+    drive(&mut s, &[wolf, bear]);
+    assert_eq!(shown(&s), 2);
+    assert_eq!(s.eval::<i64>("return Hides").unwrap(), 1);
+}
+
 /// The pool is keyed by the unit's GUID, not by the driver's distance order, which changes when two
 /// units cross; addons cache per-unit state on the plate.
 #[test]
