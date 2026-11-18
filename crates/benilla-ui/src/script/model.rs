@@ -1218,6 +1218,10 @@ pub(crate) struct Model {
     pub(crate) framerate: std::cell::Cell<f64>,
     /// `(shift, ctrl, alt)` for `Is*KeyDown`, pushed before the frame's mouse events.
     pub(crate) modifiers: (bool, bool, bool),
+    /// The six modifier keys by side, for `IsLeft*KeyDown`/`IsRight*KeyDown`: the reference's key
+    /// word bits (`[0xbeadd8]+0x130`), left shift `0x1`, right shift `0x2`, left control `0x4`,
+    /// right control `0x8`, left alt `0x10`, right alt `0x20`.
+    pub(crate) modifier_keys: u8,
     /// The button of the click whose `PreClick`/`OnClick`/`PostClick` is running, which a
     /// button-qualified modified click compares (`[0xb499a8]+0x1234`).
     pub(crate) click_button: Option<String>,
@@ -1840,6 +1844,7 @@ impl Model {
             summon_answers: Vec::new(),
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
+            modifier_keys: 0,
             click_button: None,
             option_state: Default::default(),
             knows_cold_weather_flying: false,

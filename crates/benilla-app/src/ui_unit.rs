@@ -1104,6 +1104,7 @@ pub(crate) fn snapshot(
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
         // `UnitIsPVPFreeForAll`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x4` (`0x60d03c`).
         is_pvp_ffa: store.0.unit_byte2_flags() & 0x4 != 0,
+        pvp_sanctuary: store.0.unit_byte2_flags() & 0x8 != 0,
         // No honor rank streams: 3.3.5a's `PLAYER_BYTES_3` bytes 2 and 3 are the PvP title and the
         // arena faction.
         pvp_rank: 0,
@@ -2243,6 +2244,49 @@ impl EquippedFeed<'_, '_> {
     }
 }
 
+/// The vehicle the player sits in, whose flying bit `IsFlying` reads in place of the player's.
+#[derive(bevy::ecs::system::SystemParam)]
+struct SeatedVehicle<'w, 's> {
+    me: Query<'w, 's, &'static crate::vehicle::Passenger, With<SelfPlayer>>,
+    index: Option<Res<'w, crate::net::GuidIndex>>,
+    units: Query<
+        'w,
+        's,
+        (
+            Has<crate::net::ActiveMover>,
+            Option<&'static crate::net::RemoteMotion>,
+            Option<&'static crate::net::UnitMoveModes>,
+        ),
+    >,
+}
+
+impl SeatedVehicle<'_, '_> {
+    /// `Some` while the player is seated (passenger state 3): whether the vehicle's movement word
+    /// holds `FLYING` (`0x612500`), false for a vehicle not held. The vehicle we drive is our
+    /// mover, whose word is [`crate::player::Player`]'s; another's is its relayed pose's word with
+    /// its granted modes.
+    fn flying(&self, player: Option<&crate::player::Player>) -> Option<bool> {
+        let seat = self
+            .me
+            .iter()
+            .next()
+            .filter(|p| p.state == crate::vehicle::SEATED)?;
+        let unit = self
+            .index
+            .as_ref()
+            .and_then(|i| i.0.get(&seat.vehicle))
+            .and_then(|&e| self.units.get(e).ok());
+        Some(unit.is_some_and(|(driven, remote, modes)| {
+            if driven {
+                player.is_some_and(|p| p.flying)
+            } else {
+                let word = remote.map_or(0, |r| r.flags) | modes.map_or(0, |m| m.0);
+                word & crate::creature_anim::move_flags::FLYING != 0
+            }
+        }))
+    }
+}
+
 /// The player state `SecureCmdOptionParse`'s conditions read, pushed each frame.
 fn feed_option_state(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -2251,6 +2295,7 @@ fn feed_option_state(
     place: Option<Res<crate::area::PlayerPlace>>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,
     mut equipped: EquippedFeed,
+    vehicle: SeatedVehicle,
 ) {
     let Some(mut script) = script else {
         return;
@@ -2262,6 +2307,7 @@ fn feed_option_state(
         flyable: place.as_deref().is_some_and(|p| p.flyable_area),
         northrend: map.is_some_and(|m| m.0 == NORTHREND),
         flying: player.as_deref().is_some_and(|p| p.flying),
+        seated_vehicle_flying: vehicle.flying(player.as_deref()),
         indoors: place.as_deref().is_some_and(|p| p.indoors),
         stealthed: self_q
             .iter()
@@ -2281,6 +2327,46 @@ fn feed_option_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Seated (state 3), `IsFlying` reads the vehicle: a creature's granted word, the player's
+    /// own mover when we drive it, false for a vehicle not held; standing, or still boarding, no
+    /// vehicle answer at all.
+    #[test]
+    fn the_seated_vehicle_answers_for_flying() {
+        use crate::creature_anim::move_flags::FLYING;
+        use crate::vehicle::{Passenger, SEATED};
+        use bevy::ecs::system::SystemState;
+
+        let ask = |state: u8, vehicle: Option<(bool, u32)>, player_flying: bool| {
+            let mut world = World::new();
+            let mut index = crate::net::GuidIndex(Default::default());
+            if let Some((driven, word)) = vehicle {
+                let mut e = world.spawn(crate::net::UnitMoveModes(word));
+                if driven {
+                    e.insert(crate::net::ActiveMover);
+                }
+                index.0.insert(77, e.id());
+            }
+            world.insert_resource(index);
+            world.spawn((
+                SelfPlayer,
+                Passenger {
+                    vehicle: 77,
+                    seat: 0,
+                    state,
+                },
+            ));
+            let mut player = crate::player::Player::default();
+            player.flying = player_flying;
+            let mut sys: SystemState<SeatedVehicle> = SystemState::new(&mut world);
+            sys.get(&world).flying(Some(&player))
+        };
+        assert_eq!(ask(SEATED, Some((false, FLYING)), false), Some(true));
+        assert_eq!(ask(SEATED, Some((false, 0)), true), Some(false));
+        assert_eq!(ask(SEATED, Some((true, 0)), true), Some(true));
+        assert_eq!(ask(SEATED, None, true), Some(false));
+        assert_eq!(ask(1, Some((false, FLYING)), false), None);
+    }
 
     /// `UnitIsPVP` and `UnitIsPVPFreeForAll` read `UNIT_FIELD_BYTES_2` byte 1 (`0x60ceae`,
     /// `0x60d03c`): `0x1` and `0x4`, not the `UNIT_FIELD_FLAGS` or `PLAYER_FLAGS` bits.

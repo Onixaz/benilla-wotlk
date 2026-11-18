@@ -33,6 +33,9 @@ pub struct OptionState {
     pub northrend: bool,
     /// `flying`: the mover's `0x2000000` (`0x5efaa0`).
     pub flying: bool,
+    /// While the player is seated in a vehicle (passenger state 3), the vehicle's `0x2000000`,
+    /// which `IsFlying` reads instead of the player's (`0x612500`); the macro condition does not.
+    pub seated_vehicle_flying: Option<bool>,
     /// `indoors`, and `outdoors` its opposite: the object's WMO test (`0x71b7f0`).
     pub indoors: bool,
     /// `stealth`: `UNIT_FIELD_BYTES_1` byte 2 bit `0x2` (`0x5efb70`).
@@ -298,11 +301,7 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         // (`0x5ef470`).
         "vehicleui" => super::vehicle::has_vehicle_ui(model, "player"),
         "unithasvehicleui" => super::vehicle::has_vehicle_ui(model, token),
-        "flyable" => boolean(
-            model.option_state.flyable
-                && (!model.option_state.northrend || model.knows_cold_weather_flying),
-            args,
-        ),
+        "flyable" => boolean(flyable(model), args),
         "flying" => boolean(model.option_state.flying, args),
         "indoors" => boolean(model.option_state.indoors, args),
         "outdoors" => boolean(!model.option_state.indoors, args),
@@ -376,6 +375,11 @@ pub(crate) fn parse(model: &mut Model, options: &str) -> Option<(String, Option<
     }
 }
 
+/// The area's flying flag, and in Northrend the training too (`0x7261b0` with its flag set).
+fn flyable(model: &Model) -> bool {
+    model.option_state.flyable && (!model.option_state.northrend || model.knows_cold_weather_flying)
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `IsMounted()` (`0x6125a0`): the active player's mount, 1 or nil.
     lua.globals().set(
@@ -389,6 +393,36 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(super::binding_abi::flag(mounted))
         })?,
     )?;
+    // The player-state predicates, 1 or nil, each reading the state its macro condition reads:
+    // `IsSwimming` (`0x6124a0`, the mover's `0x200000`), `IsFlying` (`0x612500`, `0x2000000`),
+    // `IsStealthed` (`0x612610`, `UNIT_FIELD_BYTES_1` byte 2 bit `0x2`), `IsIndoors` and
+    // `IsOutdoors` (`0x612300`, `0x612360`, the WMO test), and `IsFlyableArea` (`0x612260`), the
+    // area's flag with Northrend's training, as `flyable` passes it (`0x7261b0` with 1). Seated in
+    // a vehicle, `IsFlying` asks the vehicle's word, where the `flying` condition asks ours.
+    type Pick = fn(&Model) -> bool;
+    let predicates: [(&str, Pick); 6] = [
+        ("IsSwimming", |m| m.option_state.swimming),
+        ("IsFlying", |m| {
+            m.option_state
+                .seated_vehicle_flying
+                .unwrap_or(m.option_state.flying)
+        }),
+        ("IsStealthed", |m| m.option_state.stealthed),
+        ("IsIndoors", |m| m.option_state.indoors),
+        ("IsOutdoors", |m| !m.option_state.indoors),
+        ("IsFlyableArea", flyable),
+    ];
+    for (name, pick) in predicates {
+        lua.globals().set(
+            name,
+            lua.create_function(move |lua, _: mlua::MultiValue| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                Ok(super::binding_abi::flag(pick(&model)))
+            })?,
+        )?;
+    }
     // SecureCmdOptionParse("options"): the option text and its target (nil when none), or nothing
     // when no option passes (`0x564b3f`). A non-string raises (`0x564b00`).
     lua.globals().set(

@@ -198,6 +198,8 @@ pub struct UnitState {
     /// `UnitIsPVPFreeForAll`: `PLAYER_FLAGS` bit `0x80`, or the roster status byte's `0x10`;
     /// independent of [`Self::pvp`].
     pub is_pvp_ffa: bool,
+    /// `UnitIsPVPSanctuary`: `UNIT_FIELD_BYTES_2` byte 1 bit `0x8` (`0x60cf20`).
+    pub pvp_sanctuary: bool,
     /// `UnitPVPRank`: the current rank on the internal `0..=18` scale (0 none), from the public
     /// `PLAYER_BYTES_3` byte 3. The private lifetime highest rides
     /// [`HonorState`](super::HonorState); [`super::pvp`] converts to the `-4..=14` visual scale.

@@ -387,6 +387,7 @@ fn left_clicking_the_player_frame_targets_self() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });
@@ -477,6 +478,7 @@ fn raid_mark_clicks_through_the_nested_level() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });
@@ -1199,6 +1201,7 @@ fn the_party_art_paints_over_the_bars() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });
@@ -1809,6 +1812,7 @@ fn the_player_frame_wears_the_leader_and_master_looter_icons() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     };

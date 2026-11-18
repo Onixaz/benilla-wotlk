@@ -280,6 +280,10 @@ impl LiveState for LiveNow<'_, '_> {
         self.death.res_sickness_minutes()
     }
 
+    fn resurrect_offerer(&self) -> Option<String> {
+        self.death.resurrect_offerer()
+    }
+
     fn self_res_label(&self) -> Option<String> {
         self.death.self_res_label()
     }

@@ -1371,12 +1371,23 @@ impl UiScript {
 
     /// Push the modifier state behind `IsShiftKeyDown`/`IsControlKeyDown`/`IsAltKeyDown`; the app
     /// calls it before the frame's mouse events, so a click handler reads the state of its click.
+    /// With no side known, a held modifier reads as its left key.
     pub fn set_modifiers(&mut self, shift: bool, ctrl: bool, alt: bool) {
-        if self.model_ref().modifiers == (shift, ctrl, alt) {
+        let keys = u8::from(shift) | u8::from(ctrl) << 2 | u8::from(alt) << 4;
+        self.set_modifier_keys(keys);
+    }
+
+    /// Push the six modifier keys by side, as [`Model::modifier_keys`] lays them out (left shift
+    /// `0x1`, right shift `0x2`, left control `0x4`, right control `0x8`, left alt `0x10`, right
+    /// alt `0x20`); `IsShiftKeyDown` and its siblings read either side.
+    pub fn set_modifier_keys(&mut self, keys: u8) {
+        let sides = (keys & 0x3 != 0, keys & 0xc != 0, keys & 0x30 != 0);
+        if self.model_ref().modifiers == sides && self.model_ref().modifier_keys == keys {
             return;
         }
         let mut model = self.model_mut();
-        model.modifiers = (shift, ctrl, alt);
+        model.modifiers = sides;
+        model.modifier_keys = keys;
     }
 
     /// Push the player's WMO-containment state onto every Minimap: it picks which persisted zoom

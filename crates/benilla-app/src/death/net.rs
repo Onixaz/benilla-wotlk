@@ -171,8 +171,10 @@ fn on_resurrect_request(
     {
         let dead_or_ghost = self_q.single().ok().map(|s| s.0.is_dead_or_ghost());
         let unnamed = name.is_empty();
+        // The cache by guid, asked once on a miss, whatever the packet names (`0x515950`).
+        let offerer = names.resolve(caster, &net).map(str::to_owned);
         let ask = if unnamed {
-            names.resolve(caster, &net).map(str::to_owned)
+            offerer.clone()
         } else {
             Some(name.clone())
         };
@@ -182,6 +184,7 @@ fn on_resurrect_request(
             sickness,
             has_timer,
             awaiting_name: unnamed && ask.is_none(),
+            offerer,
         });
         if let Some(name) = ask.filter(|n| !n.is_empty() && dead_or_ghost == Some(true)) {
             ui.fire("RESURRECT_REQUEST", vec![ScriptValue::Str(name)]);
@@ -208,6 +211,12 @@ fn on_resurrect_name(
         },
         _ => return,
     };
+    if let (Some(offer), Some(name)) = (
+        globals.resurrect.as_mut().filter(|o| o.caster == guid),
+        name.as_ref(),
+    ) {
+        offer.offerer = Some(name.clone());
+    }
     let Some(offer) = globals
         .resurrect
         .as_mut()

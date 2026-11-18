@@ -616,6 +616,14 @@ fn combat_stats(
                 f.unit_power_regen(0, true).unwrap_or(0.0),
             ]
         }),
+        power_regen: {
+            let power = f.unit_power_type();
+            let base = power_regen_base(power);
+            [
+                base[0] + f.unit_power_regen(power, false).unwrap_or(0.0),
+                base[1] + f.unit_power_regen(power, true).unwrap_or(0.0),
+            ]
+        },
         damage_bonus_stat: classes.and_then(|c| c.damage_bonus_stat(class)),
         form_agility_attack_power: tables.is_some_and(|t| {
             t.form_flags
@@ -623,6 +631,18 @@ fn combat_stats(
                 .is_some_and(|flags| flags & 0x20 != 0)
         }),
         ..unit_combat_stats(store, tables)
+    }
+}
+
+/// A power type's regen base, out of casting and while casting (`0x4f5300`'s table at
+/// `0xb6ba80`): rage and runic power decay 12.5 a second out of combat, focus regains 5 and energy
+/// 10; every other type, and a type past the table, 0.
+fn power_regen_base(power: u8) -> [f32; 2] {
+    match power {
+        1 | 6 => [-12.5, 0.0],
+        2 => [5.0, 5.0],
+        3 => [10.0, 10.0],
+        _ => [0.0, 0.0],
     }
 }
 

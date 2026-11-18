@@ -108,6 +108,7 @@ fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });

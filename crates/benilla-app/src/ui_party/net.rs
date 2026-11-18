@@ -251,6 +251,7 @@ fn on_list(
         group.own_roles = own_roles;
         group.apply_list_tail(difficulties, lfg_restricted);
         let rows = members.len();
+        let list_leader = leader;
         list(
             &mut group,
             &mut errors,
@@ -267,14 +268,19 @@ fn on_list(
             &commands,
         );
         if !battleground {
-            group.set_real_counts(group_type == GROUPTYPE_RAID, rows);
+            group.set_real_counts(group_type == GROUPTYPE_RAID, rows, list_leader);
         }
     }
 }
 
 fn on_real_group_update(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
-    if let SessionEvent::RealGroupUpdate { flags, count, .. } = ev {
-        group.apply_real_group_update(flags, count);
+    if let SessionEvent::RealGroupUpdate {
+        flags,
+        count,
+        leader,
+    } = ev
+    {
+        group.apply_real_group_update(flags, count, leader);
     }
 }
 
