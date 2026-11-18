@@ -16,6 +16,10 @@ const HELLFIRE: [f32; 3] = [-213.0, 3958.5, 29.0];
 const DALARAN: [f32; 3] = [5797.1, 666.3, 775.5];
 /// Light 1818's centre in the Storm Peaks (falloff 10-14 yd): `StormPeaks_SkyA.mdx`, flags 1.
 const STORM_PEAKS_A: [f32; 3] = [7708.7, -475.6, 848.5];
+/// K3, deep inside the Storm Peaks zone outline: zone light 1777, `StormPeaks_SkyC_Ulduar.mdx`.
+const K3: [f32; 3] = [6150.0, -1050.0, 410.0];
+/// Star's Rest, inside Dragonblight's outline: zone light 825, `AuroraYellowGreen.mdx`.
+const STARS_REST: [f32; 3] = [3500.0, 2000.0, 64.0];
 
 fn chain() -> Option<Chain> {
     let data = benilla_formats::wow_data_or_skip!(None);
@@ -65,6 +69,20 @@ fn the_old_continents_name_no_zone_sky_and_outland_and_northrend_do() {
         "StormPeaks_SkyA is pinned to the time of day"
     );
     assert!(peaks.len() <= 3, "at most three blend skies");
+
+    // The zone lights (`FindAndAddZoneLight`): no area sphere covers these spots.
+    let k3 = names(&cat, MAP_NORTHREND, K3);
+    assert!(
+        k3.iter()
+            .any(|(p, w, _)| p.contains("stormpeaks_skyc_ulduar") && *w > 0.99),
+        "the Storm Peaks zone sky at K3: {k3:?}"
+    );
+    let rest = names(&cat, MAP_NORTHREND, STARS_REST);
+    assert!(
+        rest.iter()
+            .any(|(p, w, f)| p.contains("aurorayellowgreen") && *w > 0.99 && f & 2 != 0),
+        "Dragonblight's aurora at Star's Rest: {rest:?}"
+    );
 }
 
 #[test]

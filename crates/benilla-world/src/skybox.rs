@@ -390,6 +390,7 @@ fn build_skyboxes(
             }
         };
         let moving = rig.moving_bones();
+        let ranks = sky_draw_ranks(&subs);
         let mut parts = Vec::with_capacity(subs.len());
         for (i, sub) in subs.into_iter().enumerate() {
             let sub = Arc::new(sub);
@@ -424,8 +425,8 @@ fn build_skyboxes(
                     SkyboxPart {
                         path: path.to_owned(),
                         sub,
-                        // `i + 1`, the authored batch order (0 is unordered).
-                        order: u16::try_from(i + 1).unwrap_or(u16::MAX),
+                        // The batch's place in the reference's transparent order, + 1.
+                        order: ranks[i],
                         mesh,
                         texture,
                         texture2,
@@ -451,6 +452,60 @@ fn build_skyboxes(
             }),
         );
     }
+}
+
+/// Each batch's draw order + 1 inside its sky: the reference's transparent sort (`0x81ef30`,
+/// [`crate::model_render::sort`]) with the eye at the model's origin, where a camera-anchored sky
+/// always has it. That makes the key the same in every view:
+///
+/// - Under global flag `0x10` (41 of the 48 shipped skies) every batch shares the model's sort
+///   depth, so the order is the priority plane, then the section centre farther first (its squared
+///   distance from the eye, here from the origin), then the material layer and the batch index.
+///   `NagrandSkyBox.m2` puts its stars (plane −7) over its night dome (plane −8, a later batch).
+/// - Without it a batch's sort depth is its section centre pushed by its radius along the eye ray
+///   (toward the eye for batch flag `0x1`, away for `0x2`), farther first, then the same keys.
+///   The reference measures that along the view axis; this takes the distance from the eye, which
+///   stays put as the view turns. Only the auroras, `Stars`, `DeathClouds`, `AzjolNerub_SkyA` and
+///   `StratholmeSkybox` sort this way.
+///
+/// The centre is the static section centre; the reference carries it by the section's centre bone.
+/// A batch with no key (none in a sky) keeps its file place after the keyed ones.
+fn sky_draw_ranks(subs: &[RenderSubmesh]) -> Vec<u16> {
+    let depth = |k: &benilla_formats::BatchSort| -> f32 {
+        let c = k.center;
+        let d = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+        if k.model_depth {
+            return 0.0;
+        }
+        match k.push {
+            1 => d - k.radius,
+            2 => d + k.radius,
+            _ => d,
+        }
+    };
+    let centre_sq = |k: &benilla_formats::BatchSort| -> f32 {
+        let c = k.center;
+        c[0] * c[0] + c[1] * c[1] + c[2] * c[2]
+    };
+    let mut order: Vec<usize> = (0..subs.len()).collect();
+    order.sort_by(
+        |&a, &b| match (subs[a].sort.as_ref(), subs[b].sort.as_ref()) {
+            (Some(ka), Some(kb)) => depth(kb)
+                .total_cmp(&depth(ka))
+                .then(ka.priority_plane.cmp(&kb.priority_plane))
+                .then(centre_sq(kb).total_cmp(&centre_sq(ka)))
+                .then(ka.material_layer.cmp(&kb.material_layer))
+                .then(ka.index.cmp(&kb.index)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(&b),
+        },
+    );
+    let mut ranks = vec![0u16; subs.len()];
+    for (rank, &i) in order.iter().enumerate() {
+        ranks[i] = u16::try_from(rank + 1).unwrap_or(u16::MAX);
+    }
+    ranks
 }
 
 /// A batch's mesh in the sky's one layout: position, normal, both UV sets and colour, so every sky
@@ -889,6 +944,53 @@ mod tests {
             None,
             "the gradient dome alone"
         );
+    }
+
+    #[test]
+    fn a_sky_draws_by_plane_then_farther_centre_then_layer_then_index() {
+        let key = |plane: i8, z: f32, layer: u16, index: u16| RenderSubmesh {
+            sort: Some(benilla_formats::BatchSort {
+                model_depth: true,
+                priority_plane: plane,
+                center: [0.0, 0.0, z],
+                radius: 1.0,
+                push: 0,
+                material_layer: layer,
+                index,
+                projected: false,
+            }),
+            ..RenderSubmesh::default()
+        };
+        // Nagrand's shape: stars first in the file on plane -7, the night dome later on plane -8.
+        let subs = [
+            key(-7, 80.0, 0, 0), // stars
+            key(3, 5.0, 1, 1),   // a cloud, day layer
+            key(3, 5.0, 0, 2),   // the same cloud, night layer
+            key(3, 40.0, 0, 3),  // a farther cloud on the same plane
+            key(-8, 36.0, 0, 4), // the night dome
+        ];
+        assert_eq!(sky_draw_ranks(&subs), [2, 5, 4, 3, 1]);
+    }
+
+    #[test]
+    fn without_model_depth_the_pushed_centre_farther_first_leads() {
+        let key = |z: f32, push: u8, plane: i8, index: u16| RenderSubmesh {
+            sort: Some(benilla_formats::BatchSort {
+                model_depth: false,
+                priority_plane: plane,
+                center: [0.0, 0.0, z],
+                radius: 10.0,
+                push,
+                material_layer: 0,
+                index,
+                projected: false,
+            }),
+            ..RenderSubmesh::default()
+        };
+        // 50 pushed toward the eye is 40, nearer than 45: it draws after it despite its lower plane;
+        // 20 pushed away is 30, nearest of all.
+        let subs = [key(50.0, 1, -5, 0), key(45.0, 0, 5, 1), key(20.0, 2, 0, 2)];
+        assert_eq!(sky_draw_ranks(&subs), [2, 1, 3]);
     }
 
     #[test]

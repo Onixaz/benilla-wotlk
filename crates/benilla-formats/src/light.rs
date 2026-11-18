@@ -13,6 +13,7 @@ use crate::Chain;
 mod atmosphere;
 mod skybox;
 mod tables;
+mod zones;
 
 pub use atmosphere::Atmosphere;
 use atmosphere::{
@@ -482,12 +483,35 @@ impl LightCatalog {
             .map_or(0, |(_, flags)| *flags)
     }
 
+    /// `FindAndAddZoneLight` (`0x77eed0`) and `BlendZoneLight`'s weight (`0x7ee6b0`): the zone
+    /// lights at `pos`, in table order, each with its blend weight. The light rows are looked up by
+    /// id on any map, as `g_lightDB.GetRecord` does.
+    fn zone_lights(&self, map: u32, pos: [f32; 3]) -> Vec<(&Light, f32)> {
+        if !zones::USE_ZONE_LIGHTS {
+            return Vec::new();
+        }
+        let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
+        zones::zone_lights(map, pos, |id| by_id(id).is_some())
+            .into_iter()
+            .filter_map(|(id, dist)| Some((by_id(id)?, zones::zone_weight(dist).min(1.0))))
+            .filter(|(_, w)| *w > 0.0)
+            .collect()
+    }
+
+    /// `DoAreaLights` skips an area light with a falloff end under 3 yards while zone lights run:
+    /// those rows are the zone lights' own records.
+    fn zone_marker(l: &Light) -> bool {
+        zones::USE_ZONE_LIGHTS && l.falloff_end < 3.0
+    }
+
     /// The zone skies this frame, in draw order, at most three: the reference's skybox pairs
     /// through the same area-light blend [`Self::sample_blended_with`] runs, then `SetColors`'
     /// compaction ([`compact_pairs`]).
     ///
     /// - The base is the map's global light (else the zero-match record), seeded by
     ///   `LoadLightingBands` (`0x7ebff0`): its skybox id at weight 1.0 ([`seed_pairs`]).
+    /// - Each zone light the camera is in or near folds its id in at its zone weight, in table
+    ///   order (`BlendZoneLight`, `0x7ee6b0`).
     /// - Each local sphere containing `pos`, farthest first, folds its id in at its blend weight
     ///   (`BlendAreaLight` `0x7ee5d0` → `BlendOutputs` `0x7ec9a0`, [`merge_pair`]); then each
     ///   server override at its weight capped by its fade (`DoAreaLights`, `0x7f1360`).
@@ -542,10 +566,15 @@ impl LightCatalog {
                 .sum::<f32>()
                 .sqrt()
         };
+        for (light, weight) in self.zone_lights(map, pos) {
+            if let Some(p) = param_of(light) {
+                merge_pair(&mut pairs, sky_of(p), weight);
+            }
+        }
         let mut locals: Vec<(f32, &Light)> = self
             .lights
             .iter()
-            .filter(|l| l.map == map && !l.global)
+            .filter(|l| l.map == map && !l.global && !Self::zone_marker(l))
             .filter_map(|l| {
                 let d = dist(l);
                 (d <= l.falloff_end).then_some((d, l))
@@ -639,12 +668,20 @@ impl LightCatalog {
             .and_then(atmo_of)
             .unwrap_or(Atmosphere::DEFAULT);
 
+        // The zone lights first, in table order (`DoAreaLights`' `m_nearLight` loop,
+        // `BlendZoneLight`): Northrend's zones are lit by these, not by area spheres.
+        for (light, weight) in self.zone_lights(map, pos) {
+            if let Some(atmo) = atmo_of(light) {
+                acc = acc.lerp(&atmo, weight);
+            }
+        }
+
         // Farthest first, so the nearest lands last: the reference drains a max-heap keyed on
         // distance, not weight, blending `(dst, row, w)` for every entry, a lone one too.
         let mut locals: Vec<(f32, &Light)> = self
             .lights
             .iter()
-            .filter(|l| l.map == map && !l.global)
+            .filter(|l| l.map == map && !l.global && !Self::zone_marker(l))
             .filter_map(|l| {
                 let d = (0..3)
                     .map(|i| (l.pos[i] - pos[i]).powi(2))
