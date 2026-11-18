@@ -89,8 +89,7 @@ fn tree_for(
     Some(talents?.catalog.tabs_for_pet(tree).first()?.name.clone())
 }
 
-/// The whole stat block for the pet's fields, `creator` its `UNIT_FIELD_CREATEDBY` held as a
-/// player, or [`PetStats::default`] with no pet.
+/// The whole stat block for the pet's fields, `creator` its `UNIT_FIELD_CREATEDBY` held as a player, or [`PetStats::default`] with no pet.
 fn stats_for(
     pet: Option<&ObjectFields>,
     creator: Option<&ObjectFields>,
@@ -101,8 +100,7 @@ fn stats_for(
     let Some(fields) = pet else {
         return (false, PetStats::default());
     };
-    // `HasPetUI`'s first return: no player, with a pet number (`0x5d3960`). A possessed creature
-    // has a bar and no pet number, so no paper doll.
+    // `HasPetUI`'s first return: no player, with a pet number (`0x5d3960`). A possessed creature has a bar and no pet number, so no paper doll.
     let has_ui = fields.object_type() != Some(benilla_protocol::messages::ObjectType::Player)
         && fields.unit_is_pet_or_charm();
     // The pet can gain experience: a pet number and a Hunter creator (`0x71b630`).
@@ -142,8 +140,7 @@ fn stats_for(
     )
 }
 
-/// What the pet verbs read at call time, part of the VM's live view: the pet list, the tables
-/// and the creature cache.
+/// What the pet verbs read at call time, part of the VM's live view: the pet list, the tables and the creature cache.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetView<'w> {
     list: Option<Res<'w, crate::ui_pet::PetList>>,
@@ -191,9 +188,7 @@ impl PetView<'_> {
         fresh
     }
 
-    /// `(PetCanBeAbandoned, PetCanBeRenamed, PetCanBeDismissed)` for the head's fields: the first
-    /// two need us as `UNIT_FIELD_SUMMONEDBY` (`0x5d37cb`), the refusal us as `UNIT_FIELD_CREATEDBY`
-    /// (`0x5d386b`); with no pet it answers `(nil, nil, 1)`.
+    /// `(PetCanBeAbandoned, PetCanBeRenamed, PetCanBeDismissed)` for the head's fields: the first two need us as `UNIT_FIELD_SUMMONEDBY` (`0x5d37cb`), the refusal us as `UNIT_FIELD_CREATEDBY` (`0x5d386b`); with no pet it answers `(nil, nil, 1)`.
     pub(crate) fn menu(&self, pet: Option<&ObjectFields>, me: Option<u64>) -> (bool, bool, bool) {
         let flags = pet
             .filter(|f| f.unit_summoned_by() == me)
@@ -208,8 +203,7 @@ impl PetView<'_> {
         (abandon, rename, dismiss)
     }
 
-    /// A unit's `CreatureFamily.dbc` name off its cached creature record (`0x7153e0`), asking a
-    /// record not yet cached.
+    /// A unit's `CreatureFamily.dbc` name off its cached creature record (`0x7153e0`), asking a record not yet cached.
     pub(crate) fn creature_family(&self, unit: &ObjectFields) -> Option<String> {
         let (Some(names), Some(commands)) = (self.names.as_deref(), self.commands.as_deref())
         else {
@@ -538,8 +532,7 @@ mod tests {
         assert!(s.food_types.is_empty());
     }
 
-    /// `UNIT_PET` must reach Lua with `HasPetUI()` already answering, as `PetTab_Update` reads it:
-    /// the verb reads the pet list's head live, so no feed order decides it.
+    /// `UNIT_PET` must reach Lua with `HasPetUI()` already answering, as `PetTab_Update` reads it: the verb reads the pet list's head live, so no feed order decides it.
     #[test]
     fn unit_pet_reaches_lua_with_has_pet_ui_already_true() {
         use crate::char_select::ClientState;

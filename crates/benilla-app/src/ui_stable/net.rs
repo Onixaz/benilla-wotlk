@@ -1,5 +1,4 @@
-//! The stable master's packet handlers: they write [`StableOpen`] and fire the window's events
-//! once their changes apply.
+//! The stable master's packet handlers: they write [`StableOpen`] and fire the window's events once their changes apply.
 
 use benilla_protocol::messages::StabledPet;
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -22,8 +21,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Disconnected, on_session_end);
 }
 
-/// The connection's end leaves the world (`0x528d5a`): a held master closes as the world leave
-/// closes it, then the globals and the record asks go with the session.
+/// The connection's end leaves the world (`0x528d5a`): a held master closes as the world leave closes it, then the globals and the record asks go with the session.
 fn on_session_end(
     In(_): In<SessionEvent>,
     mut stable_open: ResMut<StableOpen>,
@@ -39,8 +37,7 @@ fn on_session_end(
     stable_open.drop_asks();
 }
 
-/// A creature record's answer runs the stable verbs' callbacks queued on it, in order; an unknown
-/// entry fails them, which fires nothing (`0x5a0e80`, `0x5a0ea0`).
+/// A creature record's answer runs the stable verbs' callbacks queued on it, in order; an unknown entry fails them, which fires nothing (`0x5a0e80`, `0x5a0ea0`).
 fn on_creature_answer(
     In(ev): In<SessionEvent>,
     mut stable_open: ResMut<StableOpen>,
@@ -71,9 +68,7 @@ fn on_list(
         pets,
     } = ev
     {
-        // Another master's list moves the interact target, whose clear runs the interaction
-        // close's stable arm on the held one before the new master is stored (`0x5a11d9`,
-        // `0x51fd1c`, `0x513065`, `0x5a0f4c`): its event fires with none held.
+        // Another master's list moves the interact target, whose clear runs the interaction close's stable arm on the held one before the new master is stored (`0x5a11d9`, `0x51fd1c`, `0x513065`, `0x5a0f4c`): its event fires with none held.
         let switched = stable_open.npc().is_some_and(|held| held != npc) && stable_open.close();
         let Some(mut ui) = ui else {
             list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
@@ -161,11 +156,7 @@ fn list_stabled_pets(
     stable_open.open(npc, num_stable_slots, pets);
 }
 
-/// `SMSG_STABLE_RESULT`, handled as the reference's jump table does (`0x5a181a`): 1 shows
-/// `ERR_NOT_ENOUGH_MONEY`, 8 and 9 re-request the list, as no success carries one, 10 counts a
-/// bought slot and re-requests, 11 owes `PET_STABLE_UPDATE` (`0x5a1904`), 12 shows the exotic
-/// tame failure, and 2-7 show nothing. With no stable master held, the re-request goes out only
-/// under an open-stable aura, aimed at no master (`0x5a1879`). Whether the update is owed.
+/// `SMSG_STABLE_RESULT`, handled as the reference's jump table does (`0x5a181a`): 1 shows `ERR_NOT_ENOUGH_MONEY`, 8 and 9 re-request the list, as no success carries one, 10 counts a bought slot and re-requests, 11 owes `PET_STABLE_UPDATE` (`0x5a1904`), 12 shows the exotic tame failure, and 2-7 show nothing. With no stable master held, the re-request goes out only under an open-stable aura, aimed at no master (`0x5a1879`). Whether the update is owed.
 fn stable_result(
     result: u8,
     mut stable_open: impl std::ops::DerefMut<Target = StableOpen>,

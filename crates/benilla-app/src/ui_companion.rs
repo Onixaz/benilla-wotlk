@@ -48,8 +48,7 @@ impl Plugin for UiCompanionPlugin {
                 Update,
                 (
                     drain_companions.in_set(UiDrain),
-                    // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
-                    // Before the display build that loads its model and the booth that draws it.
+                    // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it. Before the display build that loads its model and the booth that draws it.
                     feed_companion_booth
                         .in_set(UiDrain)
                         .in_set(crate::portrait::CreatureBoothFeed)
@@ -65,8 +64,7 @@ impl Plugin for UiCompanionPlugin {
 pub(crate) struct CompanionLists {
     /// Critters, then mounts: spell ids in add order until sorted.
     lists: [Vec<u32>; 2],
-    /// One `(creature, notify)` per add whose record was asked: the callback's count and argument
-    /// (`0x53ebc0`).
+    /// One `(creature, notify)` per add whose record was asked: the callback's count and argument (`0x53ebc0`).
     pending: Vec<(u32, bool)>,
     /// The known spells of skill line 778, in add order.
     random_pool: Vec<u32>,
@@ -105,8 +103,7 @@ impl CompanionLists {
         }
     }
 
-    /// The companion list update (`0x53cec0`): with no record pending each non-empty list sorts by
-    /// its creature's name (`0x53c7c0`); whether one sorted, which fires `COMPANION_UPDATE`.
+    /// The companion list update (`0x53cec0`): with no record pending each non-empty list sorts by its creature's name (`0x53c7c0`); whether one sorted, which fires `COMPANION_UPDATE`.
     fn update(&mut self, name_of: &dyn Fn(u32) -> String) -> bool {
         if !self.pending.is_empty() {
             return false;
@@ -123,8 +120,7 @@ impl CompanionLists {
     }
 }
 
-/// What one add, unlearn or answer reads: the catalogs, the creature cache and the queue the
-/// calling handler fires into.
+/// What one add, unlearn or answer reads: the catalogs, the creature cache and the queue the calling handler fires into.
 pub(crate) struct CompanionCx<'a> {
     pub(crate) catalog: &'a SpellCatalog,
     pub(crate) summons: &'a SummonPropertiesCatalog,
@@ -134,8 +130,7 @@ pub(crate) struct CompanionCx<'a> {
 }
 
 impl CompanionCx<'_> {
-    /// A listed spell's creature name for the sort, `answered` standing in for the record the
-    /// calling handler carries.
+    /// A listed spell's creature name for the sort, `answered` standing in for the record the calling handler carries.
     fn sort_name(&self, spell_id: u32, answered: Option<(u32, &str)>) -> String {
         let creature = self
             .catalog
@@ -172,9 +167,7 @@ impl CompanionCx<'_> {
     }
 }
 
-/// The known-spell add's companion arm (`0x5426a5`): the spell joins its list and its creature's
-/// record is asked; a live learn (`notify`) with the record cached shows the learn line, updates
-/// and fires `COMPANION_LEARNED` (`0x5427be`), and a miss waits on the answer.
+/// The known-spell add's companion arm (`0x5426a5`): the spell joins its list and its creature's record is asked; a live learn (`notify`) with the record cached shows the learn line, updates and fires `COMPANION_LEARNED` (`0x5427be`), and a miss waits on the answer.
 pub(crate) fn add_known(
     lists: &mut CompanionLists,
     spell_id: u32,
@@ -200,8 +193,7 @@ pub(crate) fn add_known(
     Some(tutorial_of(kind))
 }
 
-/// The tutorial an add to `kind`'s list triggers, before its record is asked (`0x542751`,
-/// `0x54275a`).
+/// The tutorial an add to `kind`'s list triggers, before its record is asked (`0x542751`, `0x54275a`).
 fn tutorial_of(kind: CompanionKind) -> u32 {
     match kind {
         CompanionKind::Critter => crate::tutorial::id::COMPANION_CRITTER,
@@ -209,9 +201,7 @@ fn tutorial_of(kind: CompanionKind) -> u32 {
     }
 }
 
-/// The known-spell buffer the active player's init replays (`0xc9eb3c`): `SMSG_INITIAL_SPELLS`
-/// sets it (`0x6df0c0`), a learn, removal or supersede before our object exists edits it
-/// (`0x6e7de0`, `0x6e7888`, `0x6e7ef4`), and leaving the world empties it (`0x4065c3`).
+/// The known-spell buffer the active player's init replays (`0xc9eb3c`): `SMSG_INITIAL_SPELLS` sets it (`0x6df0c0`), a learn, removal or supersede before our object exists edits it (`0x6e7de0`, `0x6e7888`, `0x6e7ef4`), and leaving the world empties it (`0x4065c3`).
 #[derive(Resource, Default)]
 pub(crate) struct KnownSpellBuffer(pub(crate) Vec<u32>);
 
@@ -229,9 +219,7 @@ pub(crate) struct CompanionInit<'w> {
     tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
 }
 
-/// The active player's init (`0x6e7f50`), run as our object is created with its race and class:
-/// the lists cleared (`0x6e7f9d`), each buffered spell added without a line, then one update
-/// (`0x6e7fe3`).
+/// The active player's init (`0x6e7f50`), run as our object is created with its race and class: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, then one update (`0x6e7fe3`).
 pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: CompanionInit) {
     let CompanionInit {
         buffer,
@@ -273,8 +261,7 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
     }
 }
 
-/// The init's adds: the lists cleared (`0x6e7f9d`), each known spell added without a
-/// line, then one update.
+/// The init's adds: the lists cleared (`0x6e7f9d`), each known spell added without a line, then one update.
 pub(crate) fn add_initial(
     lists: &mut CompanionLists,
     known: impl IntoIterator<Item = (u32, Option<u32>)>,
@@ -289,8 +276,7 @@ pub(crate) fn add_initial(
     tutorials
 }
 
-/// The known-spell removal's companion arm (`0x53fad0`): a listed spell leaves its list, then the
-/// update and `COMPANION_UNLEARNED`.
+/// The known-spell removal's companion arm (`0x53fad0`): a listed spell leaves its list, then the update and `COMPANION_UNLEARNED`.
 pub(crate) fn remove_known(lists: &mut CompanionLists, spell_id: u32, cx: &mut CompanionCx) {
     lists.random_pool.retain(|&s| s != spell_id);
     let Some(kind) = cx
@@ -309,9 +295,7 @@ pub(crate) fn remove_known(lists: &mut CompanionLists, spell_id: u32, cx: &mut C
     cx.ui.fire("COMPANION_UNLEARNED", Vec::new());
 }
 
-/// The creature-record callback (`0x53ebc0`), once per add that waited on `entry`: a live learn's
-/// answered record shows the learn line, updates and fires `COMPANION_LEARNED`; otherwise the last
-/// answer updates.
+/// The creature-record callback (`0x53ebc0`), once per add that waited on `entry`: a live learn's answered record shows the learn line, updates and fires `COMPANION_LEARNED`; otherwise the last answer updates.
 pub(crate) fn record_answered(
     lists: &mut CompanionLists,
     entry: u32,
@@ -333,8 +317,7 @@ pub(crate) fn record_answered(
     }
 }
 
-/// One `COMPANION_UPDATE "MOUNT"` per `MOUNTED` effect of `spell_id` as an aura of it comes or goes
-/// on us (`0x724a6b`, `0x71e9b2`).
+/// One `COMPANION_UPDATE "MOUNT"` per `MOUNTED` effect of `spell_id` as an aura of it comes or goes on us (`0x724a6b`, `0x71e9b2`).
 pub(crate) fn mount_updates(spell_id: u32, catalog: &SpellCatalog, ui: &mut UiEvents) {
     let effects = catalog.get(spell_id).map_or(0, |d| {
         d.effect_apply_aura
@@ -382,8 +365,7 @@ fn companion_active(
     }
 }
 
-/// One companion as `GetCompanionInfo` reads it when called: the creature's cached name, the active
-/// icon while active (`0x53e3d3`), and the active test against our own fields and auras.
+/// One companion as `GetCompanionInfo` reads it when called: the creature's cached name, the active icon while active (`0x53e3d3`), and the active test against our own fields and auras.
 pub(crate) fn companion_view(
     spell_id: u32,
     catalog: &SpellCatalog,

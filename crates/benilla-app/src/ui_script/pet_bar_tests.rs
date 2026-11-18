@@ -257,8 +257,7 @@ fn clicks_cast_and_flip_autocast() {
     );
 }
 
-/// A click toggles the CheckButton off; the right-click's toggle signals the bar inside the click
-/// (`0x5d5e01`), whose repaint re-lights the ring, and a left-click waits for the next repaint.
+/// A click toggles the CheckButton off; the right-click's toggle signals the bar inside the click (`0x5d5e01`), whose repaint re-lights the ring, and a left-click waits for the next repaint.
 #[test]
 fn a_click_drops_the_ring_and_the_repaint_restores_it() {
     benilla_formats::wow_data_or_skip!();

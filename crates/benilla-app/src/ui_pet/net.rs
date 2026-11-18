@@ -36,8 +36,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::LoggedOut, on_left_world);
 }
 
-/// Leaving the world drops the possess spell as the world leave's pet part does (`0x5d3360`),
-/// and a world entry's pet step not yet run.
+/// Leaving the world drops the possess spell as the world leave's pet part does (`0x5d3360`), and a world entry's pet step not yet run.
 fn on_left_world(
     In(ev): In<SessionEvent>,
     mut possess: ResMut<super::possess::PossessSpell>,
@@ -93,8 +92,7 @@ fn on_spells(
         let changed = pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
         let held = combat.held(bar.spells.pet_guid);
         set_pet_tail(changed, &mut bar, &mut possess, held, &mut ui);
-        // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`,
-        // `0x53ceae`).
+        // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`, `0x53ceae`).
         ui.fire("SPELLS_CHANGED", Vec::new());
     }
 }
@@ -142,8 +140,7 @@ impl PetCombat<'_, '_> {
     }
 }
 
-/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`): on a new guid the latches drop, a held pet's
-/// tests run, then `UNIT_PET`; every call ends in the temporary bar's `PET_BAR_UPDATE`.
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`): on a new guid the latches drop, a held pet's tests run, then `UNIT_PET`; every call ends in the temporary bar's `PET_BAR_UPDATE`.
 pub(crate) fn set_pet_tail(
     changed: bool,
     bar: &mut PetBar,
@@ -221,8 +218,7 @@ fn on_cast_failed(
     } = ev
     {
         bar.pending_cast = None;
-        // The start cooldown the press armed clears, then the pet bar's flush alone (`0x806d41`,
-        // `0x806d46`).
+        // The start cooldown the press armed clears, then the pet bar's flush alone (`0x806d41`, `0x806d46`).
         bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
         ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
@@ -475,8 +471,7 @@ fn pet_spell_line(
     errors.0.push(UiError::s(key, display.ranked_name()));
 }
 
-/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names; whether it
-/// applied.
+/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names; whether it applied.
 fn pet_mode(mode: PetMode, bar: &mut PetBar) -> bool {
     if bar.spells.pet_guid == 0 || bar.spells.pet_guid != mode.pet_guid {
         return false;
@@ -659,8 +654,7 @@ mod tests {
         assert_eq!(bar.spells.bar[0].action(), PET_COMMAND_ATTACK);
     }
 
-    /// The setter's tail writes the attacking global only on a new guid (`0x5d6a42`), then from
-    /// the new pet's combat test (`0x5d6a80`); every packet runs the temporary bar's update.
+    /// The setter's tail writes the attacking global only on a new guid (`0x5d6a42`), then from the new pet's combat test (`0x5d6a80`); every packet runs the temporary bar's update.
     #[test]
     fn the_attack_latch_survives_a_resend_and_dies_on_a_new_pet() {
         let mut bar = PetBar::default();

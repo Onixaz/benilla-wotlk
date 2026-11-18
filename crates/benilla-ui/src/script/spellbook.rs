@@ -1694,8 +1694,7 @@ mod tests {
         );
     }
 
-    /// The book's set runs inside the call (`0x5d5e10`): only an autocast-allowed pet word flips,
-    /// the bar's signal comes after it (`0x5d5fe8`).
+    /// The book's set runs inside the call (`0x5d5e10`): only an autocast-allowed pet word flips, the bar's signal comes after it (`0x5d5fe8`).
     #[test]
     fn only_an_autocastable_pet_slot_sets_its_autocast() {
         let mut s = UiScript::new().unwrap();

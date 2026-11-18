@@ -959,8 +959,7 @@ fn summoning(app: &mut bevy::prelude::App, pet: u64) {
         .insert(ME, me);
 }
 
-/// `GetPetTimeRemaining` (`0x5d3180`): the expiry less the tick count as a dword at the call, no
-/// expiry `None`, one past it wrapping.
+/// `GetPetTimeRemaining` (`0x5d3180`): the expiry less the tick count as a dword at the call, no expiry `None`, one past it wrapping.
 #[test]
 fn the_time_remaining_is_the_expiry_less_now_as_a_dword() {
     use std::time::{Duration, Instant};

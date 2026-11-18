@@ -77,8 +77,7 @@ pub(crate) fn npc_out_of_range(
     transforms: &Query<&Transform>,
 ) -> Option<bool> {
     let self_tf = self_q.iter().next()?;
-    // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's
-    // compare.
+    // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's compare.
     Some(
         match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
             Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),

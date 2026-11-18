@@ -232,11 +232,7 @@ impl PetPress<'_, '_> {
     }
 }
 
-/// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: the spell cooldown start
-/// (`0x5d4427`) before the send, the spell's own `StartRecovery*` pair into the pet's list. The
-/// insert fires the pet's cooldown flush in its applier's turn.
-/// The client-targeted and possessed presses start it at their cast's send instead (the pending
-/// cast's send, `0x80ac90`).
+/// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: the spell cooldown start (`0x5d4427`) before the send, the spell's own `StartRecovery*` pair into the pet's list. The insert fires the pet's cooldown flush in its applier's turn. The client-targeted and possessed presses start it at their cast's send instead (the pending cast's send, `0x80ac90`).
 pub(super) fn arm_pet_gcd(
     bar: &mut PetBar,
     spell_id: u32,

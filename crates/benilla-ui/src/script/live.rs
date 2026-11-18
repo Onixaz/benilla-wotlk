@@ -404,8 +404,7 @@ pub trait LiveState {
         super::StableList::default()
     }
 
-    /// Creature `entry`'s family parts; a miss with a `callback` asks the record and queues the
-    /// callback's event for its answer (`0x5a13c1`), with none asks nothing (`0x67b6d0`).
+    /// Creature `entry`'s family parts; a miss with a `callback` asks the record and queues the callback's event for its answer (`0x5a13c1`), with none asks nothing (`0x67b6d0`).
     fn stable_family(
         &mut self,
         _entry: u32,
@@ -414,8 +413,7 @@ pub trait LiveState {
         None
     }
 
-    /// The pet held as a hunter's unit with its creature record, the paperdoll's live arm
-    /// (`0x5a15df`-`0x5a160a`).
+    /// The pet held as a hunter's unit with its creature record, the paperdoll's live arm (`0x5a15df`-`0x5a160a`).
     fn stable_live_pet(&self) -> bool {
         false
     }
@@ -428,8 +426,7 @@ pub trait LiveState {
     /// Send `verb` to the held stable master, or to guid 0 with none.
     fn stable_send(&self, _verb: super::StableIntent) {}
 
-    /// The stable close (`0x5a1971`-`0x5a19aa`): our open-stable auras cancelled and the master
-    /// cleared; whether one was held, so the caller fires `PET_STABLE_CLOSED`.
+    /// The stable close (`0x5a1971`-`0x5a19aa`): our open-stable auras cancelled and the master cleared; whether one was held, so the caller fires `PET_STABLE_CLOSED`.
     fn close_stables(&mut self) -> bool {
         false
     }
@@ -454,8 +451,7 @@ pub trait LiveState {
         None
     }
 
-    /// Pet bar slot `index` (0-based) resolved at the call, its cooldown on the `GetTime` clock that
-    /// `ui_now` seconds names at `anchor`; `None` past the ten words or with no bar.
+    /// Pet bar slot `index` (0-based) resolved at the call, its cooldown on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` past the ten words or with no bar.
     fn pet_action(
         &self,
         _index: usize,
@@ -465,8 +461,7 @@ pub trait LiveState {
         None
     }
 
-    /// The drag's write into the pet's words and its send, `(0-based slot, word)` pairs in one
-    /// packet (`0x5d5c3e`, `0x5d5cda`); whether it landed.
+    /// The drag's write into the pet's words and its send, `(0-based slot, word)` pairs in one packet (`0x5d5c3e`, `0x5d5cda`); whether it landed.
     fn pet_place_action(&mut self, _entries: &[(u32, u32)]) -> bool {
         false
     }
@@ -474,8 +469,7 @@ pub trait LiveState {
     /// `PetStopAttack`'s clear (`0x5d4650`): with the attacking global up, send the stop, lower it.
     fn pet_stop_attack(&mut self) {}
 
-    /// The bar toggle on 0-based slot `index` (`0x5d5d20`): past the usability gate (`0x5d5d3c`) a
-    /// slot with bit 31 flips (`0x5d5d88`) and is sent (`0x5d5deb`); whether the gate passed.
+    /// The bar toggle on 0-based slot `index` (`0x5d5d20`): past the usability gate (`0x5d5d3c`) a slot with bit 31 flips (`0x5d5d88`) and is sent (`0x5d5deb`); whether the gate passed.
     fn pet_toggle_autocast(&mut self, _index: u32) -> bool {
         false
     }
@@ -485,15 +479,12 @@ pub trait LiveState {
         false
     }
 
-    /// The pet's spellbook at the call (`[0xbe7d98]`), cooldowns on the `GetTime` clock that `ui_now`
-    /// seconds names at `anchor`; `None` with no pet book to read.
+    /// The pet's spellbook at the call (`[0xbe7d98]`), cooldowns on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` with no pet book to read.
     fn pet_book(&self, _anchor: std::time::Instant, _ui_now: f64) -> Option<super::PetBookState> {
         None
     }
 
-    /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it
-    /// (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now`
-    /// seconds names at `anchor`; `None` with nothing running.
+    /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` with nothing running.
     fn spell_cooldown(
         &self,
         _spell_id: u32,
@@ -508,11 +499,9 @@ pub trait LiveState {
 type Lent = Option<NonNull<dyn LiveState>>;
 
 thread_local! {
-    /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of
-    /// which puts the previous one back before its borrow ends.
+    /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of which puts the previous one back before its borrow ends.
     static SLOT: Cell<Lent> = const { Cell::new(None) };
-    /// The borrows of what is lent, live now, by [`Hold`] kind: a shared read and a write never
-    /// overlap, nor two verb writes, so none aliases another.
+    /// The borrows of what is lent, live now, by [`Hold`] kind: a shared read and a write never overlap, nor two verb writes, so none aliases another.
     static HELD: Cell<[u32; 3]> = const { Cell::new([0; 3]) };
 }
 
@@ -563,8 +552,7 @@ impl Drop for Held {
     }
 }
 
-/// A host's write to state its lent view reads, held while the write's borrow lives: no verb reaches
-/// the view meanwhile, and no shared read of it may be held.
+/// A host's write to state its lent view reads, held while the write's borrow lives: no verb reaches the view meanwhile, and no shared read of it may be held.
 pub struct OwnerWrite {
     _held: Held,
 }
@@ -576,8 +564,7 @@ pub fn owner_write() -> OwnerWrite {
     }
 }
 
-/// A host's shared read of state its lent view reads, held while the read's borrow lives: no owner
-/// writes it meanwhile.
+/// A host's shared read of state its lent view reads, held while the read's borrow lives: no owner writes it meanwhile.
 pub struct SharedRead {
     _held: Held,
 }
@@ -589,8 +576,7 @@ pub fn shared_read() -> SharedRead {
     }
 }
 
-/// The lent view, read by its host between calls into Lua; a verb that writes the view panics
-/// while it lives.
+/// The lent view, read by its host between calls into Lua; a verb that writes the view panics while it lives.
 pub struct ViewRef<'a, V> {
     view: &'a V,
     _held: Held,
@@ -629,8 +615,7 @@ impl Drop for Restore {
     }
 }
 
-/// A view lent to every verb on this thread until the loan drops, which puts the previous one
-/// back: the guard a host keeps for the length of a stretch of calls into Lua.
+/// A view lent to every verb on this thread until the loan drops, which puts the previous one back: the guard a host keeps for the length of a stretch of calls into Lua.
 pub struct LiveLoan<V: LiveState> {
     /// The boxed view, owned through this pointer, so the lent address holds while the loan moves.
     view: NonNull<V>,
@@ -653,8 +638,7 @@ impl<V: LiveState> LiveLoan<V> {
     /// The lent view, read between calls into Lua; a verb's write to it panics while this lives.
     pub fn view(&self) -> ViewRef<'_, V> {
         let held = Held::new(Hold::Shared);
-        // SAFETY: the box lives until the drop; a verb's mutable borrow of it panics while `held`
-        // counts this one, and a verb's shared one ends with its closure.
+        // SAFETY: the box lives until the drop; a verb's mutable borrow of it panics while `held` counts this one, and a verb's shared one ends with its closure.
         ViewRef {
             view: unsafe { self.view.as_ref() },
             _held: held,
@@ -666,8 +650,7 @@ impl<V: LiveState> LiveLoan<V> {
         f(&self.view())
     }
 
-    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from
-    /// inside `f` panics.
+    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from inside `f` panics.
     pub fn with_view_mut<R>(&mut self, f: impl FnOnce(&mut V) -> R) -> R {
         let _held = Held::new(Hold::Verb);
         // SAFETY: the box lives until the drop, and `_held` keeps every other borrow of the view
@@ -685,8 +668,7 @@ impl<V: LiveState> Drop for LiveLoan<V> {
 }
 
 impl UiScript {
-    /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
-    /// nested call lends its own and restores the outer one.
+    /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a nested call lends its own and restores the outer one.
     pub fn with_live<R>(&mut self, live: &mut dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
         // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too.
         let _restore = Restore(unsafe { lend(NonNull::from(live)) });
@@ -716,20 +698,16 @@ pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
     let _held = Held::new(Hold::Shared);
-    // SAFETY: a pointer in the slot is a mutable borrow held by an enclosing `with_live` or
-    // `LiveLoan`, which outlives this call; `_held` panics beside an owner's write, the view
-    // never calls back into Lua, and the reference cannot escape `f`.
+    // SAFETY: a pointer in the slot is a mutable borrow held by an enclosing `with_live` or `LiveLoan`, which outlives this call; `_held` panics beside an owner's write, the view never calls back into Lua, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
     Some(f(live))
 }
 
-/// `f` over the view lent right now, mutably, for a verb that writes the state it reads; `None`
-/// with none lent.
+/// `f` over the view lent right now, mutably, for a verb that writes the state it reads; `None` with none lent.
 pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
     let mut ptr = SLOT.with(Cell::get)?;
     let _held = Held::new(Hold::Verb);
-    // SAFETY: as `read_live`; `_held` panics beside any of the host's own borrows of the view, so
-    // nothing else reaches it for the length of `f`.
+    // SAFETY: as `read_live`; `_held` panics beside any of the host's own borrows of the view, so nothing else reaches it for the length of `f`.
     let live = unsafe { ptr.as_mut() };
     Some(f(live))
 }
@@ -1137,8 +1115,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Answer `state` as the pet book of every test view on this thread, lending one until the thread
-/// ends if none is up yet.
+/// Answer `state` as the pet book of every test view on this thread, lending one until the thread ends if none is up yet.
 #[cfg(test)]
 pub(crate) fn set_test_pet_book(state: super::PetBookState) {
     TEST_PET_BOOK.with(|b| *b.borrow_mut() = Some(state));
@@ -1150,8 +1127,7 @@ pub(crate) fn set_test_pet_book(state: super::PetBookState) {
     }
 }
 
-/// Lend a pet bar with `slots`, for the VM's own tests: `has_bar`, `actions_usable` and
-/// `pickup_allowed` as given.
+/// Lend a pet bar with `slots`, for the VM's own tests: `has_bar`, `actions_usable` and `pickup_allowed` as given.
 #[cfg(test)]
 pub(crate) fn lend_pets(
     has_bar: bool,

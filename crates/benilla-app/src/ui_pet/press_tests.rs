@@ -194,8 +194,7 @@ pub(super) fn rig(
         commands,
         feed,
     };
-    // The bar was written without its packet, so nothing has fired; every test reads what a press
-    // adds.
+    // The bar was written without its packet, so nothing has fired; every test reads what a press adds.
     assert_eq!(
         rig.frame(),
         Vec::<String>::new(),

@@ -1,10 +1,4 @@
-//! The possess spell `[0xc234e0]`, which the stock possess bar (`BonusActionBarFrame.lua`) reads
-//! through `IsPossessBarVisible` and `GetPossessInfo` when called. The possess-spell lookup
-//! (`0x5d62a0`) takes it from the active player's own auras inside the handler that runs it: the
-//! UI's world entry with a pet (`0x5d6ede`), our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` watch
-//! (`0x6d1ab1`) and our far-sight watch when its subject resolves (`0x6e5034`); a far sight with no
-//! subject clears it (`0x6e5042`), as does leaving the world. Every change fires
-//! `UPDATE_BONUS_ACTIONBAR` (`0x5d30e0`).
+//! The possess spell `[0xc234e0]`, which the stock possess bar (`BonusActionBarFrame.lua`) reads through `IsPossessBarVisible` and `GetPossessInfo` when called. The possess-spell lookup (`0x5d62a0`) takes it from the active player's own auras inside the handler that runs it: the UI's world entry with a pet (`0x5d6ede`), our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` watch (`0x6d1ab1`) and our far-sight watch when its subject resolves (`0x6e5034`); a far sight with no subject clears it (`0x6e5042`), as does leaving the world. Every change fires `UPDATE_BONUS_ACTIONBAR` (`0x5d30e0`).
 
 use bevy::prelude::*;
 
@@ -30,14 +24,11 @@ const POSSESS_CANCEL_ICON: u32 = 693;
 /// `Attributes`' sign bit, which disables the cancel button (`0x5d59c7`).
 const ATTR_CANCEL_DISABLED: u32 = 0x8000_0000;
 
-/// The possess spell `[0xc234e0]`, 0 for none, written by the handlers alone, and the bar latch
-/// `[0xc234d8]` a held spell raises (`0x5d30f5`, `0x5d646e`) and a new pet drops (`0x5d6a3c`), which
-/// the temporary bar's used test reads (`0x5d35ff`).
+/// The possess spell `[0xc234e0]`, 0 for none, written by the handlers alone, and the bar latch `[0xc234d8]` a held spell raises (`0x5d30f5`, `0x5d646e`) and a new pet drops (`0x5d6a3c`), which the temporary bar's used test reads (`0x5d35ff`).
 #[derive(Resource, Default)]
 pub(crate) struct PossessSpell(pub(crate) u32, pub(crate) bool);
 
-/// `0x5d30e0`: hold `spell`, raising the bar latch for a nonzero one, and firing
-/// `UPDATE_BONUS_ACTIONBAR` when it changed.
+/// `0x5d30e0`: hold `spell`, raising the bar latch for a nonzero one, and firing `UPDATE_BONUS_ACTIONBAR` when it changed.
 pub(crate) fn set_possess_spell(held: &mut PossessSpell, spell: u32, ui: &mut UiEvents) {
     if spell != 0 {
         held.1 = true;
@@ -48,8 +39,7 @@ pub(crate) fn set_possess_spell(held: &mut PossessSpell, spell: u32, ui: &mut Ui
     }
 }
 
-/// The world leave's pet part (`0x5d3360`): the possess spell zeroed, `UPDATE_BONUS_ACTIONBAR`
-/// fired when one was held.
+/// The world leave's pet part (`0x5d3360`): the possess spell zeroed, `UPDATE_BONUS_ACTIONBAR` fired when one was held.
 pub(crate) fn leave_world(world: &mut World) {
     let held = world
         .get_resource_mut::<PossessSpell>()
@@ -59,8 +49,7 @@ pub(crate) fn leave_world(world: &mut World) {
     }
 }
 
-/// `0x5d62a0` for the active player's fields and auras, `riding` its transport: a found spell is
-/// held, no find keeps the held one.
+/// `0x5d62a0` for the active player's fields and auras, `riding` its transport: a found spell is held, no find keeps the held one.
 pub(crate) fn find_possessed(
     me: &ObjectFields,
     auras: Option<&UnitAuras>,
@@ -79,16 +68,14 @@ pub(crate) fn find_possessed(
     }
 }
 
-/// The world entry's pet step the cascade owes, run after `PLAYER_ENTERING_WORLD` (`0x5281a6`
-/// before `0x5281fe`); `asked` when the pet ask went out, owing the possess lookup (`0x5d6ede`).
+/// The world entry's pet step the cascade owes, run after `PLAYER_ENTERING_WORLD` (`0x5281a6` before `0x5281fe`); `asked` when the pet ask went out, owing the possess lookup (`0x5d6ede`).
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WorldEntryPetStep {
     pub(crate) owed: bool,
     pub(crate) asked: bool,
 }
 
-/// The world entry's pet step (`0x5d6e60`): the setter's clear and its tail, then the owed lookup,
-/// each event fired in turn ahead of the reputation's entry (`0x528208`).
+/// The world entry's pet step (`0x5d6e60`): the setter's clear and its tail, then the owed lookup, each event fired in turn ahead of the reputation's entry (`0x528208`).
 pub(crate) fn world_entry_step(world: &mut World) {
     let step = world
         .get_resource_mut::<WorldEntryPetStep>()
@@ -228,9 +215,7 @@ pub(super) fn possess_view(spell_id: u32, spells: &SpellCatalog) -> PossessView 
 mod tests {
     use super::*;
 
-    /// A cross-map worldport runs the UI's world leave (`0x528c30`), whose pet part zeroes a held
-    /// possess spell and fires `UPDATE_BONUS_ACTIONBAR` (`0x528d14` -> `0x5d3360`); with none held
-    /// it fires nothing, and a same-map port leaves nothing.
+    /// A cross-map worldport runs the UI's world leave (`0x528c30`), whose pet part zeroes a held possess spell and fires `UPDATE_BONUS_ACTIONBAR` (`0x528d14` -> `0x5d3360`); with none held it fires nothing, and a same-map port leaves nothing.
     #[test]
     fn a_worldport_drops_the_possess_spell_and_fires_the_bonus_bar_once() {
         let mut app = App::new();

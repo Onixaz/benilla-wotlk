@@ -1,7 +1,4 @@
-//! The flush behind every mutation of the pet's cooldown list, whole client headless: each packet
-//! that reaches the list arrives as the session event it is and flushes in its handler, each press
-//! in its applier. The reference fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`,
-//! and then `PET_BAR_UPDATE_COOLDOWN`; none of the callers fires `PET_BAR_UPDATE`.
+//! The flush behind every mutation of the pet's cooldown list, whole client headless: each packet that reaches the list arrives as the session event it is and flushes in its handler, each press in its applier. The reference fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, and then `PET_BAR_UPDATE_COOLDOWN`; none of the callers fires `PET_BAR_UPDATE`.
 
 use std::time::{Duration, Instant};
 
@@ -289,8 +286,7 @@ fn a_natural_expiry_fires_nothing() {
     );
 }
 
-/// A new VM meets the list as it stands: the flush is for a mutation, not for a load, and the
-/// bar's verbs read the list at the call, so nothing is pushed or fired for it.
+/// A new VM meets the list as it stands: the flush is for a mutation, not for a load, and the bar's verbs read the list at the call, so nothing is pushed or fired for it.
 #[test]
 fn a_new_vm_is_not_flushed_for_a_list_that_already_moved() {
     let mut rig = growl_rig();
@@ -469,9 +465,7 @@ fn an_insert_leaves_the_pets_list_its_live_records_alone() {
     );
 }
 
-/// The reference flushes no event for a cooldown's end, and the insert's prune is that end: each
-/// press's insert flushes once in its applier (`0x805ec3`, `0x805eda`), and nothing else. An
-/// insert that arms nothing changes nothing (`0x805e42`).
+/// The reference flushes no event for a cooldown's end, and the insert's prune is that end: each press's insert flushes once in its applier (`0x805ec3`, `0x805eda`), and nothing else. An insert that arms nothing changes nothing (`0x805e42`).
 #[test]
 fn an_inserts_prune_fires_only_the_inserts_own_flush() {
     let mut rig = rig(

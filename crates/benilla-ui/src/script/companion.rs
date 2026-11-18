@@ -1,7 +1,4 @@
-//! The companion bindings, over the spellbook's two companion lists (`0xbe8df4`) read through the
-//! live view when called: critters and mounts, each resolved to creature, name, icon and active
-//! flag at the call. `CallCompanion` and `SummonRandomCritter` queue the spell's cast;
-//! `DismissCompanion` queues an intent the app drains ([`CompanionIntent`]).
+//! The companion bindings, over the spellbook's two companion lists (`0xbe8df4`) read through the live view when called: critters and mounts, each resolved to creature, name, icon and active flag at the call. `CallCompanion` and `SummonRandomCritter` queue the spell's cast; `DismissCompanion` queues an intent the app drains ([`CompanionIntent`]).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -40,8 +37,7 @@ pub struct CompanionView {
     pub active: bool,
 }
 
-/// The two lists, each in the reference's order (by creature name once every name is cached,
-/// `0x53cec0`): a fixed view's shape, for tests and hosts without the app.
+/// The two lists, each in the reference's order (by creature name once every name is cached, `0x53cec0`): a fixed view's shape, for tests and hosts without the app.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CompanionState {
     pub critters: Vec<CompanionView>,
@@ -167,9 +163,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetCompanionCooldown(type, index) (`0x53e490`): `start, duration, enable` of the spell's
-    // cooldown, the history asked at the call (`0x53e54c`); with no player, or past the list,
-    // nothing.
+    // GetCompanionCooldown(type, index) (`0x53e490`): `start, duration, enable` of the spell's cooldown, the history asked at the call (`0x53e54c`); with no player, or past the list, nothing.
     g.set(
         "GetCompanionCooldown",
         lua.create_function(|lua, (ty, index): (Value, Value)| {

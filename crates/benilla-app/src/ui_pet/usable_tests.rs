@@ -357,8 +357,7 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
     }
 }
 
-/// Both toggles send, then signal inside the call (`0x5d5deb` then `0x5d5e01`, `0x5d5fdc` then
-/// `0x5d5fe8`): the next verb reads the new bit, and a handler's own send follows on the wire.
+/// Both toggles send, then signal inside the call (`0x5d5deb` then `0x5d5e01`, `0x5d5fdc` then `0x5d5fe8`): the next verb reads the new bit, and a handler's own send follows on the wire.
 #[test]
 fn both_toggles_send_then_signal_inside_the_call() {
     for (toggle, read, nested, first) in [
@@ -546,8 +545,7 @@ fn with_stock_ui(rig: &mut Rig) {
     // The in-game UI loads on world entry, so a player exists.
     crate::ui_script::test_ui::load_stock_ui(&mut script);
     rig.app.world_mut().insert_non_send_resource(script);
-    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`): our summon
-    // names the pet (`0x60acd0`), and the token's fan-out runs as the units' feed.
+    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`): our summon names the pet (`0x60acd0`), and the token's fan-out runs as the units' feed.
     set_player(
         rig,
         &guid_pair(benilla_protocol::field::FIELD_UNIT_SUMMON, PET),
@@ -561,8 +559,7 @@ fn with_stock_ui(rig: &mut Rig) {
     );
 }
 
-/// The pet's flags field moved: its unit watch fires `UNIT_FLAGS` for the `"pet"` token (#1266
-/// builds it from the values update), and the stock bar repaints off it, reading at that call.
+/// The pet's flags field moved: its unit watch fires `UNIT_FLAGS` for the `"pet"` token (#1266 builds it from the values update), and the stock bar repaints off it, reading at that call.
 fn flags_moved(rig: &mut Rig) {
     rig.feed.run(rig.app.world_mut());
     ui(rig, |s| {

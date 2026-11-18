@@ -1889,10 +1889,7 @@ fn feed_units(
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             crate::ui_script::fire_armed_player_login(&mut script);
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-            // The quest log's entry (`0x5281db`), the pet step (`0x5281fe`), then the reputation
-            // world entry (`0x528208`), which re-sorts and fires `UPDATE_FACTION` (`0x5d1bfa`) with
-            // the player seated, re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS`
-            // fire hid at a 0 maximum.
+            // The quest log's entry (`0x5281db`), the pet step (`0x5281fe`), then the reputation world entry (`0x528208`), which re-sorts and fires `UPDATE_FACTION` (`0x5d1bfa`) with the player seated, re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             crate::ui_quest_log::rows::queue_enter_world(&mut deferred);
             deferred.queue(|world: &mut World| {
                 crate::ui_pet::possess::world_entry_step(world);

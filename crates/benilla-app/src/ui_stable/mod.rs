@@ -1,10 +1,4 @@
-//! The stable window's app side: [`StableOpen`] holds the globals the `MSG_LIST_STABLED_PETS`
-//! handler writes (`0x5a11a0`), [`StableView`] is what the stable verbs read and send through
-//! when called, and the handlers fire the window's events.
-//!
-//! A row's family, and with it the icon, talent tree and diet, is not on the wire: it comes from
-//! the creature record, whose miss asks for it and fires `PET_STABLE_UPDATE` from the answer
-//! (`0x5a0e80`).
+//! The stable window's app side: the list handler's globals (`0x5a11a0`), the view the verbs read and send through, and the window's events; a row's family comes from its creature record, whose answer fires `PET_STABLE_UPDATE` (`0x5a0e80`).
 
 use benilla_protocol::messages::StabledPet;
 use bevy::prelude::*;
@@ -38,9 +32,7 @@ impl Plugin for UiStablePlugin {
                 close_out_of_range
                     .after(UiDrain)
                     .before(benilla_world::schedule::WorldStage::Input),
-                // After the VM ticks: the selection is written by a click in `UiPress`
-                // and by `PetStable_Update`'s re-pick (`PetStable.lua:48-63`) inside the
-                // handlers' events, so an earlier read shows the previous pet for a frame.
+                // After the VM ticks: the selection is written by a click in `UiPress` and by `PetStable_Update`'s re-pick (`PetStable.lua:48-63`) inside the handlers' events, so an earlier read shows the previous pet for a frame.
                 feed_stable_booth
                     .in_set(UiDrain)
                     // Gated: the feed starts with a name lookup over every UI frame.
@@ -57,9 +49,7 @@ impl Plugin for UiStablePlugin {
     }
 }
 
-/// The stable globals: the master `[0xc0f6c0]`, cleared inside `ClosePetStables`, the bought slots
-/// and the list's rows as the wire gave them, which outlive a close until the next world entry
-/// (`0x5a0ec0`).
+/// The stable globals: the master `[0xc0f6c0]`, cleared inside `ClosePetStables`, the bought slots and the list's rows as the wire gave them, which outlive a close until the next world entry (`0x5a0ec0`).
 #[derive(Resource, Default)]
 pub(crate) struct StableOpen {
     master: u64,
@@ -166,8 +156,7 @@ pub(crate) fn fire_closed(world: &mut World) {
     crate::ui_script::live::fire_handler_events(world);
 }
 
-/// The interaction range guard's close (`0x513065`): a master out of the leash or gone closes the
-/// stable, its interact target already cleared, so `PET_STABLE_CLOSED` fires once.
+/// The interaction range guard's close (`0x513065`): a master out of the leash or gone closes the stable, its interact target already cleared, so `PET_STABLE_CLOSED` fires once.
 fn close_out_of_range(
     mut open: ResMut<StableOpen>,
     index: Res<crate::net::GuidIndex>,
@@ -182,14 +171,12 @@ fn close_out_of_range(
     }
 }
 
-/// The forced close an open-stable aura's removal runs (`0x71ea25`): `PET_STABLE_CLOSED` fired
-/// held or not, twice with a master held.
+/// The forced close an open-stable aura's removal runs (`0x71ea25`): `PET_STABLE_CLOSED` fired held or not, twice with a master held.
 pub(crate) fn close_forced(world: &mut World) {
     close_and_fire(world, true);
 }
 
-/// The world leave's stable part (`0x528d5a`, `0x5a1160`): a held master closes, firing
-/// `PET_STABLE_CLOSED` twice.
+/// The world leave's stable part (`0x528d5a`, `0x5a1160`): a held master closes, firing `PET_STABLE_CLOSED` twice.
 pub(crate) fn leave_world(world: &mut World) {
     close_and_fire(world, false);
 }
@@ -242,8 +229,7 @@ impl StableView<'_, '_> {
         self.open.as_ref().map(|o| o.list()).unwrap_or_default()
     }
 
-    /// Creature `entry`'s family parts; a miss asks with our guid as the requester and queues
-    /// `callback` (`0x5a13c1`).
+    /// Creature `entry`'s family parts; a miss asks with our guid as the requester and queues `callback` (`0x5a13c1`).
     pub(crate) fn family(
         &mut self,
         entry: u32,
@@ -345,8 +331,7 @@ impl StableView<'_, '_> {
         !self.open_stable_auras(false).is_empty()
     }
 
-    /// `ClosePetStables`' writes (`0x5a1971`, `0x5a1996`): our open-stable auras cancelled, then
-    /// the master cleared; whether one was held.
+    /// `ClosePetStables`' writes (`0x5a1971`, `0x5a1996`): our open-stable auras cancelled, then the master cleared; whether one was held.
     pub(crate) fn close(&mut self) -> bool {
         if let Some(commands) = self.commands.as_deref() {
             for spell_id in self.open_stable_auras(true) {

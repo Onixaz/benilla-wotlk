@@ -146,8 +146,7 @@ fn a_worldport_create_sends_them_again() {
     assert_eq!(sent(&rx), the_sends());
 }
 
-/// With our summon field set the pet ask follows the time query (`0x5d6e60`, from `0x528010`);
-/// the setter's clear waits for the UI's entry after `PLAYER_ENTERING_WORLD`, owed here.
+/// With our summon field set the pet ask follows the time query (`0x5d6e60`, from `0x528010`); the setter's clear waits for the UI's entry after `PLAYER_ENTERING_WORLD`, owed here.
 #[test]
 fn a_create_with_a_pet_out_asks_its_bar() {
     use benilla_protocol::field::FIELD_UNIT_SUMMON;
@@ -179,8 +178,7 @@ fn a_create_with_a_pet_out_asks_its_bar() {
     );
 }
 
-/// With no charm or summon nothing is asked (`0x5d6ea6`), but the setter's clear ahead of that
-/// gate (`0x5d6e6d`) is owed all the same.
+/// With no charm or summon nothing is asked (`0x5d6ea6`), but the setter's clear ahead of that gate (`0x5d6e6d`) is owed all the same.
 #[test]
 fn a_create_with_no_pet_field_owes_the_clear_but_asks_nothing() {
     let (mut app, rx) = app();

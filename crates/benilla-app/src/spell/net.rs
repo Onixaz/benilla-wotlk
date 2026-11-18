@@ -219,8 +219,7 @@ fn on_spell_learned(
                 l.multicast.refill_due = true;
             }
         }
-        // The add's companion arm, its line and `COMPANION_LEARNED` (`0x5426a5`); before our
-        // object exists the spell waits in the buffer its init replays (`0x6e7de0`).
+        // The add's companion arm, its line and `COMPANION_LEARNED` (`0x5426a5`); before our object exists the spell waits in the buffer its init replays (`0x6e7de0`).
         match me.map(|me| race_class_of(&me.0)) {
             Some(me) => companion_add(&mut l, me, spell_id),
             None => l.known_buffer.0.push(spell_id),
@@ -230,8 +229,7 @@ fn on_spell_learned(
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // The known-spell removal drops a companion from its list (`0x53fad0`); before our object
-        // exists it zeroes the buffer's entry (`0x6e7888`).
+        // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
         if !our_object_exists(&l) {
             l.known_buffer.0.retain(|&s| s != spell_id);
         } else {
@@ -242,8 +240,7 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResM
     }
 }
 
-/// The companion arm of a known-spell removal (`0x53fad0`); the lists are borrowed only for a
-/// spell they hold, so another removal leaves them unchanged.
+/// The companion arm of a known-spell removal (`0x53fad0`); the lists are borrowed only for a spell they hold, so another removal leaves them unchanged.
 fn companion_remove(l: &mut Lifecycle, spell_id: u32) {
     let Some(spells) = l.spells.as_deref() else {
         return;
@@ -266,8 +263,7 @@ fn companion_remove(l: &mut Lifecycle, spell_id: u32) {
     crate::ui_companion::remove_known(&mut l.companions, spell_id, &mut cx);
 }
 
-/// Whether the object manager holds our object, from its create on (`0x6e7840`), not from the
-/// frame's tag.
+/// Whether the object manager holds our object, from its create on (`0x6e7840`), not from the frame's tag.
 fn our_object_exists(l: &Lifecycle) -> bool {
     l.self_guid.0.is_some_and(|g| l.index.0.contains_key(&g))
 }
@@ -283,8 +279,7 @@ fn race_class_of(f: &benilla_protocol::ObjectFields) -> (u8, u8) {
     (f.unit_race().unwrap_or(0), f.unit_class().unwrap_or(0))
 }
 
-/// The companion arm of a live known-spell add (`0x5426a5`); `(race, class)` are ours, which the
-/// pool's skill line lookup reads (`0x6e7b00`).
+/// The companion arm of a live known-spell add (`0x5426a5`); `(race, class)` are ours, which the pool's skill line lookup reads (`0x6e7b00`).
 fn companion_add(l: &mut Lifecycle, (race, class): (u8, u8), spell_id: u32) {
     let Some(spells) = l.spells.as_deref() else {
         return;
@@ -336,9 +331,7 @@ fn on_spell_superceded(
         new_spell_id,
     } = ev
     {
-        // Before our object exists the pair edits the buffer: the old entry renamed, else the new
-        // one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run
-        // their companion arms (`0x542eba`, `0x542ec6`).
+        // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`).
         match our_store(&l, &stores).map(|me| race_class_of(&me.0)) {
             Some(me) => {
                 companion_remove(&mut l, old_spell_id);
@@ -750,8 +743,7 @@ fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
 /// [`pet_or_player_store`].
 fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     let pet = |caster: u64| l.pet_bar.has_bar() && l.pet_bar.spells.pet_guid == caster;
-    // A packet addressed to the pet flushes its bar once, whatever it changed (`0x807039`,
-    // `0x802bd6`, `0x802c1e`, `0x804179`); the player is tested first (`0x806e0e`, `0x804122`).
+    // A packet addressed to the pet flushes its bar once, whatever it changed (`0x807039`, `0x802bd6`, `0x802c1e`, `0x804179`); the player is tested first (`0x806e0e`, `0x804122`).
     let flush = match ev {
         SessionEvent::SpellCooldowns { caster, .. } | SessionEvent::CooldownCheat { caster } => {
             l.self_guid.0 != Some(caster) && pet(caster)

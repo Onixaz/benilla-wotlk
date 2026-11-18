@@ -75,11 +75,9 @@ thread_local! {
     static STICKY: RefCell<Option<LiveLoan<View>>> = const { RefCell::new(None) };
 }
 
-/// Set pet and companion answers on a bare VM, as the app's live view answers them: the first
-/// call lends [`View`] for the rest of the test's thread.
+/// Set pet and companion answers on a bare VM, as the app's live view answers them: the first call lends [`View`] for the rest of the test's thread.
 pub(crate) trait PetAnswersExt {
-    /// The pet bar as the live view answers it: `has_bar`, `actions_usable`, `pickup_allowed`,
-    /// and the slots, the attacking global raised by a slot showing it.
+    /// The pet bar as the live view answers it: `has_bar`, `actions_usable`, `pickup_allowed`, and the slots, the attacking global raised by a slot showing it.
     fn set_pet_actions(
         &mut self,
         has_bar: bool,
@@ -97,8 +95,7 @@ pub(crate) trait PetAnswersExt {
     fn take_pet_writes(&mut self) -> PetWrites;
 }
 
-/// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no
-/// other loan may be up when it is made.
+/// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no other loan may be up when it is made.
 fn sticky(script: &UiScript) {
     STICKY.with(|s| {
         if s.borrow().is_none() {

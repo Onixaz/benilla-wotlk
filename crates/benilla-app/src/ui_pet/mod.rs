@@ -52,17 +52,11 @@ mod usable_tests;
 pub(crate) struct PetBar {
     /// The last `SMSG_PET_SPELLS`, with `SMSG_PET_MODE` and local presses folded in.
     pub(crate) spells: PetSpells,
-    /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by
-    /// `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's
-    /// GCD. Each mutation but the seed fires the flush where it lands ([`pet_cooldown_flush`]).
+    /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's GCD. Each mutation but the seed fires the flush where it lands ([`pet_cooldown_flush`]).
     pub(crate) cooldowns: Cooldowns,
-    /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that
-    /// lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a
-    /// possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test
-    /// (`0x5d6a80`).
+    /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test (`0x5d6a80`).
     pub(crate) attacking: bool,
-    /// The `PET_BAR_UPDATE`s a press's latch raised, counted (`0x5d300c`, `0x5d3041`): its applier
-    /// fires one per count as the press returns ([`fire_bar_signals`]). Wrapping.
+    /// The `PET_BAR_UPDATE`s a press's latch raised, counted (`0x5d300c`, `0x5d3041`): its applier fires one per count as the press returns ([`fire_bar_signals`]). Wrapping.
     pub(crate) bar_signals: u32,
     /// The charm or possess expiry, the packet's duration past its arrival; `None` when the
     /// duration is 0, as for a hunter's or warlock's own pet.
@@ -92,10 +86,7 @@ pub(crate) struct PetRenameable(pub(crate) u32);
 #[derive(Resource, Default)]
 pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 
-/// The cascade's pet ask (`0x5d6e60`): the bodyless `CMSG_REQUEST_PET_INFO` while our charm, else
-/// our summon, is set (`0x5d6ea6`), in the cascade's send order; the setter's clear, its events
-/// and the possess lookup wait for the UI's entry after `PLAYER_ENTERING_WORLD`
-/// ([`possess::world_entry_step`]).
+/// The cascade's pet ask (`0x5d6e60`): the bodyless `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set (`0x5d6ea6`), in the cascade's send order; the setter's clear, its events and the possess lookup wait for the UI's entry after `PLAYER_ENTERING_WORLD` ([`possess::world_entry_step`]).
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
@@ -137,18 +128,14 @@ impl PetBar {
     }
 }
 
-/// The pet's cooldown flush behind a mutation of its list: the spellbook's (`0x53bac0`),
-/// `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, then the pet's own
-/// `PET_BAR_UPDATE_COOLDOWN` (`0x5d3090`), as the go's insert (`0x80fe3b`, `0x80fe4b`) and the
-/// cooldown packet's (`0x80702e`, `0x807039`) call them.
+/// The pet's cooldown flush behind a mutation of its list: the spellbook's (`0x53bac0`), `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, then the pet's own `PET_BAR_UPDATE_COOLDOWN` (`0x5d3090`), as the go's insert (`0x80fe3b`, `0x80fe4b`) and the cooldown packet's (`0x80702e`, `0x807039`) call them.
 pub(crate) fn pet_cooldown_flush(ui: &mut crate::ui_script::live::UiEvents) {
     ui.fire("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
     ui.fire("SPELL_UPDATE_COOLDOWN", Vec::new());
     ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
 }
 
-/// [`pet_cooldown_flush`] into the VM a press's applier holds, for the press's own insert
-/// (`0x805ec3`, `0x805eda`).
+/// [`pet_cooldown_flush`] into the VM a press's applier holds, for the press's own insert (`0x805ec3`, `0x805eda`).
 pub(crate) fn pet_cooldown_flush_now(script: &mut benilla_ui::script::UiScript) {
     script.fire_event("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
     script.fire_event("SPELL_UPDATE_COOLDOWN", Vec::new());
@@ -177,11 +164,7 @@ impl Plugin for UiPetPlugin {
             .add_systems(
                 Update,
                 (
-                    // Feeds ride the unit feed, before the VM ticks; the bar's drain runs in the
-                    // press pass so a click is sent, and shown, that frame (a press is a script
-                    // call, `PetPress`). The old-target clear precedes the bar feed so Attack goes
-                    // dark the frame the selection moves.
-                    // Between the press and the feed: it writes the bar every lent view reads.
+                    // Feeds ride the unit feed, before the VM ticks; the bar's drain runs in the press pass so a click is sent, and shown, that frame (a press is a script call, `PetPress`). The old-target clear precedes the bar feed so Attack goes dark the frame the selection moves. Between the press and the feed: it writes the bar every lent view reads.
                     pet_stop_on_old_target_clear
                         .after(crate::ui_script::UiPress)
                         .before(crate::ui_script::UiFeed)
