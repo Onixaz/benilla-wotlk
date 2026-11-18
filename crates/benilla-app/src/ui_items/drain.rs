@@ -152,7 +152,6 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     trade: Option<Res<'w, crate::ui_trade::TradeSession>>,
     self_q: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     merchant: Res<'w, crate::ui_merchant::MerchantOpen>,
-    bank: Res<'w, crate::ui_bank::BankOpen>,
     equip_sound: MessageWriter<'w, crate::sound::AutoEquipSound>,
     item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
     targeting: crate::spell::cast_target::CastTargeting<'w, 's>,
@@ -346,7 +345,6 @@ impl ScriptItemUse<'_, '_> {
             trade: _,
             self_q,
             merchant,
-            bank,
             equip_sound,
             item_text,
             targeting,
@@ -388,7 +386,9 @@ impl ScriptItemUse<'_, '_> {
         // any other deposits (`CMSG_AUTOBANK_ITEM`): the reference's bank flag, set for bags -1
         // and 5..11, picks the opcode. Doll clicks come through `use_inventory_item`, so worn gear
         // keeps its plain use.
-        if !direct && bank.is_open() {
+        // The banker through the lent view, as the bank flag reads it (`0xbeb9a0`).
+        let bank_open = benilla_ui::script::read_live(|l| l.banker().is_some()).unwrap_or(false);
+        if !direct && bank_open {
             let withdrawing = bag == super::BANK_CONTAINER
                 || (super::BANK_BAG_ID_FIRST..=super::BANK_BAG_ID_LAST).contains(&bag);
             if withdrawing {
@@ -944,7 +944,7 @@ mod tests {
         app.add_message::<crate::sound::AutoEquipSound>()
             .add_message::<crate::creature_anim::SheathRequest>()
             .init_resource::<crate::ui_merchant::MerchantOpen>()
-            .init_resource::<crate::ui_bank::BankOpen>()
+            .init_non_send_resource::<crate::ui_bank::BankOpen>()
             .init_resource::<crate::ui_item_text::ItemTextOpen>()
             .init_resource::<PendingItemOps>()
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
@@ -1919,7 +1919,7 @@ mod bind_confirm_tests {
         app.add_message::<crate::sound::AutoEquipSound>()
             .add_message::<crate::creature_anim::SheathRequest>()
             .init_resource::<crate::ui_merchant::MerchantOpen>()
-            .init_resource::<crate::ui_bank::BankOpen>()
+            .init_non_send_resource::<crate::ui_bank::BankOpen>()
             .init_resource::<crate::ui_item_text::ItemTextOpen>()
             .init_resource::<PendingItemOps>()
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()

@@ -9,6 +9,7 @@ use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use std::ptr::NonNull;
 
+use crate::ui_bank::BankOpen;
 use crate::ui_quest::QuestGiver;
 use crate::ui_quest_log::rows::{QuestAsks, RebuildMarks};
 use crate::ui_quest_log::QuestExpiries;
@@ -38,6 +39,7 @@ pub(crate) struct LiveView<'w, 's> {
     quest_tooltip: crate::ui_quest_log::tooltip::QuestTooltipLive<'w, 's>,
     quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     net: Option<Res<'w, crate::net::NetCommands>>,
+    bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -49,6 +51,7 @@ pub(crate) struct Lent<'w> {
     pub(crate) marks: LentSlot<'w, RebuildMarks>,
     pub(crate) expiries: LentSlot<'w, QuestExpiries>,
     pub(crate) giver: LentSlot<'w, QuestGiver>,
+    pub(crate) bank: LentSlot<'w, BankOpen>,
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
@@ -58,6 +61,7 @@ pub(crate) mod lent {
     pub(crate) const MARKS: u8 = 4;
     pub(crate) const EXPIRIES: u8 = 8;
     pub(crate) const GIVER: u8 = 16;
+    pub(crate) const BANK: u8 = 32;
 }
 
 /// One kind of [`Lent`] state.
@@ -83,6 +87,7 @@ lendable!(QuestAsks, asks, lent::ASKS);
 lendable!(RebuildMarks, marks, lent::MARKS);
 lendable!(QuestExpiries, expiries, lent::EXPIRIES);
 lendable!(QuestGiver, giver, lent::GIVER);
+lendable!(BankOpen, bank, lent::BANK);
 
 /// One piece of [`Lent`] state: the borrow [`LendLive`] took, or the one its owner lends for the call in progress.
 pub(crate) struct LentSlot<'w, T: 'static> {
@@ -131,6 +136,7 @@ pub(crate) struct LentAll<'w> {
     marks: Option<NonSendMut<'w, RebuildMarks>>,
     expiries: Option<NonSendMut<'w, QuestExpiries>>,
     giver: Option<NonSendMut<'w, QuestGiver>>,
+    bank: Option<NonSendMut<'w, BankOpen>>,
 }
 
 impl<'w> From<LentAll<'w>> for Lent<'w> {
@@ -154,6 +160,10 @@ impl<'w> From<LentAll<'w>> for Lent<'w> {
             },
             giver: LentSlot {
                 fetched: all.giver,
+                overlay: None,
+            },
+            bank: LentSlot {
+                fetched: all.bank,
                 overlay: None,
             },
         }
@@ -589,6 +599,61 @@ impl LiveState for LiveNow<'_, '_> {
     fn clear_inspect_target(&self) {
         self.inspect.clear();
     }
+
+    fn banker(&self) -> Option<u64> {
+        self.lent.bank.get()?.banker
+    }
+
+    fn bank_bag_slots(&self) -> Option<u8> {
+        Some(
+            self.unit(self.active_player()?)?
+                .player_bank_bag_slots_purchased()
+                .unwrap_or(0),
+        )
+    }
+
+    fn bank_slot_cost(&self, slot: u32) -> u32 {
+        let row = u8::try_from(slot.saturating_sub(1)).unwrap_or(u8::MAX);
+        self.view
+            .bank_prices
+            .as_ref()
+            .and_then(|p| p.0.next_slot_price(row))
+            .unwrap_or(0)
+    }
+
+    /// The active player, control, a banker and fewer than seven slots gate silently; short of the price shows `ERR_BANKSLOT_INSUFFICIENT_FUNDS`; else `CMSG_BUY_BANK_SLOT` names the interact target, the banker (`0x57bc54`).
+    fn purchase_bank_slot(&self) -> Option<&'static str> {
+        let me = self.unit(self.active_player()?)?;
+        let banker = self.banker().filter(|_| self.has_control())?;
+        let slots = me.player_bank_bag_slots_purchased().unwrap_or(0);
+        if slots >= 7 {
+            return None;
+        }
+        if me.player_money().unwrap_or(0) < self.bank_slot_cost(u32::from(slots) + 1) {
+            return Some("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
+        }
+        debug!("bank: purchase next bag slot at {banker:#x}");
+        let _ = self
+            .view
+            .net
+            .as_deref()?
+            .0
+            .send(crate::net::ClientCommand::BuyBankSlot { guid: banker });
+        None
+    }
+
+    fn close_bank_interaction(&mut self) -> bool {
+        self.lent
+            .bank
+            .get_mut()
+            .is_some_and(|b| b.close_interaction())
+    }
+
+    fn clear_banker(&mut self) {
+        if let Some(b) = self.lent.bank.get_mut() {
+            b.clear();
+        }
+    }
 }
 
 impl Lent<'_> {
@@ -666,7 +731,7 @@ impl<T: Lendable> Drop for ClearOverlay<'_, '_, '_, T> {
 type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 
 /// The [`Lent`] state's ids, in [`lent`] bit order.
-type LentIds = [bevy::ecs::component::ComponentId; 5];
+type LentIds = [bevy::ecs::component::ComponentId; 6];
 
 /// Declare `T`'s borrow unless the system owns it.
 fn lent_access<T: 'static>(
@@ -731,6 +796,7 @@ unsafe impl<const OWN: u8> SystemParam for LendLive<'_, '_, OWN> {
             reg.register_non_send::<RebuildMarks>(),
             reg.register_non_send::<QuestExpiries>(),
             reg.register_non_send::<QuestGiver>(),
+            reg.register_non_send::<BankOpen>(),
         ];
         (view, ids)
     }
@@ -747,13 +813,14 @@ unsafe impl<const OWN: u8> SystemParam for LendLive<'_, '_, OWN> {
             component_access_set,
             world,
         );
-        let [signals, asks, marks, expiries, giver] = &state.1;
+        let [signals, asks, marks, expiries, giver, bank] = &state.1;
         let (meta, set) = (system_meta, component_access_set);
         lent_access::<UniqueSignals>(OWN, lent::SIGNALS, signals, meta, set, world);
         lent_access::<QuestAsks>(OWN, lent::ASKS, asks, meta, set, world);
         lent_access::<RebuildMarks>(OWN, lent::MARKS, marks, meta, set, world);
         lent_access::<QuestExpiries>(OWN, lent::EXPIRIES, expiries, meta, set, world);
         lent_access::<QuestGiver>(OWN, lent::GIVER, giver, meta, set, world);
+        lent_access::<BankOpen>(OWN, lent::BANK, bank, meta, set, world);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -795,7 +862,7 @@ unsafe impl<const OWN: u8> SystemParam for LendLive<'_, '_, OWN> {
                 change_tick,
             )
         };
-        let [signals, asks, marks, expiries, giver] = *ids;
+        let [signals, asks, marks, expiries, giver, bank] = *ids;
         let (meta, tick) = (system_meta, change_tick);
         // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
         let lent = unsafe {
@@ -805,6 +872,7 @@ unsafe impl<const OWN: u8> SystemParam for LendLive<'_, '_, OWN> {
                 marks: lent_fetch(OWN, lent::MARKS, marks, meta, world, tick),
                 expiries: lent_fetch(OWN, lent::EXPIRIES, expiries, meta, world, tick),
                 giver: lent_fetch(OWN, lent::GIVER, giver, meta, world, tick),
+                bank: lent_fetch(OWN, lent::BANK, bank, meta, world, tick),
             }
         };
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,

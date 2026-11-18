@@ -356,6 +356,34 @@ pub trait LiveState {
 
     /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
     fn clear_inspect_target(&self) {}
+
+    /// The open bank's banker (`0xbeb9a0`), `None` with no bank open.
+    fn banker(&self) -> Option<u64> {
+        None
+    }
+
+    /// The active player's purchased bank bag slots, `PLAYER_BYTES_2` byte 2 (`0x57badb`); `None` with no active player.
+    fn bank_bag_slots(&self) -> Option<u8> {
+        None
+    }
+
+    /// `BankBagSlotPrices.dbc` row `slot`'s cost, 0 with no row (`0x57ba30`).
+    fn bank_slot_cost(&self, _slot: u32) -> u32 {
+        0
+    }
+
+    /// `PurchaseSlot`'s gates and send (`0x57bbc0`): the refusal line's key, `None` once sent or gated silently.
+    fn purchase_bank_slot(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The interaction close's bank leg when the interact target is the banker (`0x518d50` -> `0x512fa7`): the target zeroed, whether it was.
+    fn close_bank_interaction(&mut self) -> bool {
+        false
+    }
+
+    /// The banker cleared, `SetBanker(0)`'s tail (`0x57b8f9`).
+    fn clear_banker(&mut self) {}
 }
 
 /// A lent view's address, its lifetime erased, and whether its loan lets verbs write through it.
@@ -595,10 +623,36 @@ pub(crate) struct TestView {
     /// The questgiver calls made, in order, and the outcome each answers.
     pub quest_calls: Vec<Result<super::QuestAction, super::QuestSelect>>,
     pub quest_outcome: super::QuestActOutcome,
+    /// The open banker and whether the interact target is it.
+    pub banker: Option<u64>,
+    pub bank_interacting: bool,
+    /// The purchased bank bag slots, `None` without the active player, and the price rows.
+    pub bank_slots: Option<u8>,
+    pub bank_costs: std::collections::HashMap<u32, u32>,
 }
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn banker(&self) -> Option<u64> {
+        self.banker
+    }
+
+    fn close_bank_interaction(&mut self) -> bool {
+        std::mem::take(&mut self.bank_interacting) && self.banker.is_some()
+    }
+
+    fn clear_banker(&mut self) {
+        self.banker = None;
+    }
+
+    fn bank_bag_slots(&self) -> Option<u8> {
+        self.bank_slots
+    }
+
+    fn bank_slot_cost(&self, slot: u32) -> u32 {
+        self.bank_costs.get(&slot).copied().unwrap_or(0)
+    }
+
     fn unit_flags(&self, guid: u64) -> Option<u32> {
         self.units.get(&guid).map(|u| u.0)
     }

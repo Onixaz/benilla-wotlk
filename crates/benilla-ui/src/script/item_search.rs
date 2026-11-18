@@ -522,7 +522,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             if model.unit_guids.player == 0
                 || !(-1..=11).contains(&bag)
-                || (bag == BANK as i32 && model.bank.is_none())
+                || (bag == BANK as i32 && !super::bank::bank_open())
             {
                 return Ok(Value::Nil);
             }

@@ -108,7 +108,7 @@ pub(crate) struct InteractWindows<'w> {
     merchant: Option<ResMut<'w, crate::ui_merchant::MerchantOpen>>,
     taxi: Option<ResMut<'w, crate::ui_taxi::TaxiState>>,
     trainer: Option<ResMut<'w, crate::ui_trainer::TrainerOpen>>,
-    bank: Option<ResMut<'w, crate::ui_bank::BankOpen>>,
+    bank: Option<NonSend<'w, crate::ui_bank::BankOpen>>,
     registrar: Option<ResMut<'w, crate::ui_petition::GuildRegistrarState>>,
     tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
     auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
@@ -119,6 +119,9 @@ pub(crate) struct InteractWindows<'w> {
 
 /// The quest window's place in [`InteractWindows`].
 const QUEST_WINDOW: usize = 1;
+
+/// The bank's place in [`InteractWindows`].
+const BANK_WINDOW: usize = 5;
 
 /// [`InteractWindows`]' count; the gossip menu is first.
 const INTERACT_WINDOWS: usize = 12;
@@ -134,7 +137,7 @@ impl InteractWindows<'_> {
             npc(&self.merchant),
             npc(&self.taxi),
             npc(&self.trainer),
-            npc(&self.bank),
+            self.bank.as_ref().and_then(|b| b.banker),
             npc(&self.registrar),
             npc(&self.tabard),
             npc(&self.auction),
@@ -156,7 +159,8 @@ impl InteractWindows<'_> {
             2 => close(&mut self.merchant),
             3 => close(&mut self.taxi),
             4 => close(&mut self.trainer),
-            5 => close(&mut self.bank),
+            // The bank closes through its own leg, its events with it.
+            5 => {}
             6 => close(&mut self.registrar),
             7 => close(&mut self.tabard),
             8 => close(&mut self.auction),
@@ -189,6 +193,12 @@ pub(crate) fn close_interaction(
             if other == QUEST_WINDOW {
                 // The quest window's leg of the interaction close (`0x512f16`): 12340's close, `QUEST_FINISHED` with it.
                 commands.queue(crate::ui_quest::close_interaction);
+            } else if other == BANK_WINDOW {
+                // The bank's leg (`0x512fa7`), `BANKFRAME_CLOSED` with it.
+                commands.queue(|world: &mut World| {
+                    crate::ui_bank::close_by_interaction(world);
+                    crate::ui_script::live::fire_handler_events(world);
+                });
             } else {
                 windows.close(other);
             }
@@ -212,7 +222,7 @@ pub(crate) fn feed_interact_npc(
     taxi: Option<Res<crate::ui_taxi::TaxiState>>,
     // Trade's "npc" is the partner, a live player.
     trade: Option<Res<crate::ui_trade::TradeSession>>,
-    bank: Option<Res<crate::ui_bank::BankOpen>>,
+    bank: Option<NonSend<crate::ui_bank::BankOpen>>,
     auction: Option<Res<crate::ui_auction::AuctionOpen>>,
     // Not covered by the gossip arm: vmangos closes the gossip menu before it sends
     // `SMSG_PETITION_SHOWLIST` (`Player.cpp:12428-12431`).
@@ -235,7 +245,7 @@ pub(crate) fn feed_interact_npc(
         .or_else(|| trainer.and_then(|s| s.npc()))
         .or_else(|| taxi.and_then(|s| s.npc()))
         .or_else(|| trade.and_then(|s| s.npc()))
-        .or_else(|| bank.and_then(|s| s.npc()))
+        .or_else(|| bank.and_then(|s| s.banker))
         .or_else(|| auction.and_then(|s| s.npc()))
         .or_else(|| registrar.and_then(|s| s.npc()))
         .or_else(|| stable.and_then(|s| s.npc()))

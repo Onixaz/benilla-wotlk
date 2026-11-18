@@ -6,13 +6,13 @@ use crate::layout::{LayoutInput, LayoutSolver, Rect};
 use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
-    auction, backdrop, bank, bind_confirm, calendar, camera_view, char_stats, chat_window,
-    colorselect, combat_log, container, cursor, death, duel, follow, gossip, guild, inspect,
-    item_text, lfg, loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party,
-    petition, pvp, quest, quest_log, reputation, session, simplehtml, skills, slider, social,
-    spellbook, stable, taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot,
-    AuraState, FontObject, ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue,
-    SoundRequest, UnitState, UnitTokenParse,
+    auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
+    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
+    loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
+    quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
+    taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest,
+    UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -840,11 +840,6 @@ pub(crate) struct Model {
 
     /// The stable window: snapshot, selection, drag and queued calls, reset together on close.
     pub(crate) stable: stable::StableModel,
-
-    /// The open bank's slot-purchase row and calls; its contents are bags -1 and 5..=11.
-    pub(crate) bank: Option<bank::BankState>,
-    pub(crate) bank_purchase: bool,
-    pub(crate) bank_close: bool,
 
     /// The open trainer, its buys, selection and close. The selection is a spell id, since
     /// filters, collapses and re-lists all move row numbers.
@@ -1695,9 +1690,6 @@ impl Model {
             repair_all: None,
             repair_mode: false,
             stable: Default::default(),
-            bank: None,
-            bank_purchase: false,
-            bank_close: false,
             trainer: None,
             trainer_buys: Vec::new(),
             trainer_selection: None,

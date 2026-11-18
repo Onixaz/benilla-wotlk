@@ -1,9 +1,10 @@
-//! The bank's packet handlers: they fill [`BankOpen`] and [`BankErrors`] for the bank feed.
+//! The bank's packet handlers: `SMSG_SHOW_BANK` sets the banker and `SMSG_BUY_BANK_SLOT_RESULT`
+//! shows its refusal, each in its handler's turn (`0x6e352a`, `0x6e355d`).
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{BankErrors, BankOpen};
+use super::BankOpen;
 use crate::net::NetHandlerApp;
 use crate::ui_gossip::GossipState;
 use crate::ui_quest::QuestGiver;
@@ -18,49 +19,42 @@ pub(super) fn register(app: &mut App) {
 
 fn on_show_bank(
     In(ev): In<SessionEvent>,
-    mut bank: ResMut<BankOpen>,
     mut gossip: ResMut<GossipState>,
     mut quest: NonSendMut<QuestGiver>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::ShowBank { banker } = ev {
         let quest_closes = gossip.npc.is_some() && quest.is_open();
-        show_bank(banker, &mut bank, &mut gossip, &mut quest);
+        end_gossip(&mut gossip, &mut quest);
         // The quest window's close fires its event in the handler's turn (`0x58cb98`).
         if quest_closes {
             ui.fire("QUEST_FINISHED", vec![]);
         }
+        ui.world(move |world| super::open_bank(world, banker));
     }
 }
 
-fn on_buy_slot_result(In(ev): In<SessionEvent>, mut errors: ResMut<BankErrors>) {
+/// `SMSG_BUY_BANK_SLOT_RESULT` (`0x6e354c`): a code below 3 shows its line in the handler's turn; vmangos sends one only on failure.
+fn on_buy_slot_result(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::BuyBankSlotResult { result } = ev {
-        bank_buy_slot_result(result, &mut errors);
+        debug!("net: bank slot purchase refused (code {result})");
+        if let Some(key) = super::bank_slot_error_key(result) {
+            crate::ui_action::show_in_turn(&mut ui, "ui_bank", crate::ui_action::UiError::key(key));
+        }
     }
 }
 
 /// The bank window closes with the connection.
-fn on_session_end(In(_): In<SessionEvent>, mut bank: ResMut<BankOpen>) {
-    bank.clear_session();
+fn on_session_end(In(_): In<SessionEvent>, mut bank: NonSendMut<BankOpen>) {
+    bank.clear();
 }
 
-/// `SMSG_SHOW_BANK`, sent for `CMSG_BANKER_ACTIVATE` and unprompted for the gossip bank option.
-/// It ends an open gossip interaction: vmangos sends no `SMSG_GOSSIP_COMPLETE` for that option
-/// (`Player::OnGossipSelect`), and the bank's `pushable = 6` (`UIParent.lua:28`) would open beside
-/// the gossip frame rather than replace it. The reference's gossip menu is gone once the vault
-/// shows; its mechanism for that is untraced.
-fn show_bank(banker: u64, bank: &mut BankOpen, gossip: &mut GossipState, quest: &mut QuestGiver) {
-    debug!("net: bank opened at {banker:#x}");
+/// `SMSG_SHOW_BANK`, sent for `CMSG_BANKER_ACTIVATE` and unprompted for the gossip bank option:
+/// the new interact target closes the gossip menu on it (`0x51fce0` -> `0x512ef6`).
+fn end_gossip(gossip: &mut GossipState, quest: &mut QuestGiver) {
     if gossip.npc.is_some() {
         crate::ui_gossip::end_interaction(gossip, quest);
     }
-    bank.open(banker);
-}
-
-/// `SMSG_BUY_BANK_SLOT_RESULT`, a refusal: vmangos sends it only on failure.
-fn bank_buy_slot_result(result: u32, errors: &mut BankErrors) {
-    debug!("net: bank slot purchase refused (code {result})");
-    errors.0.push(result);
 }
 
 #[cfg(test)]
@@ -69,18 +63,10 @@ mod tests {
 
     #[test]
     fn show_bank_ends_the_gossip_interaction() {
-        let mut bank = BankOpen::default();
         let mut gossip = GossipState::default();
         let mut quest = QuestGiver::default();
         gossip.npc = Some(0x42);
-
-        show_bank(0x42, &mut bank, &mut gossip, &mut quest);
-        assert_eq!(bank.banker, Some(0x42));
+        end_gossip(&mut gossip, &mut quest);
         assert_eq!(gossip.npc, None, "the gossip session ended with the menu");
-
-        // No gossip open: a plain open, nothing else touched.
-        bank.clear();
-        show_bank(0x43, &mut bank, &mut gossip, &mut quest);
-        assert_eq!(bank.banker, Some(0x43));
     }
 }

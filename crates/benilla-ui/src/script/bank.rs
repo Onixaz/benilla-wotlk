@@ -1,5 +1,6 @@
-//! The bank bindings: the app pushes the open bank's snapshot ([`UiScript::set_bank`]), and
-//! `PurchaseSlot` and `CloseBankFrame` queue intents it drains.
+//! The bank bindings: the verbs read the active player's purchased slots and the open banker
+//! through the lent view at the call (`0x57bab0`, `0x57bb30`); `PurchaseSlot` sends from the call
+//! (`0x57bbc0`) and `CloseBankFrame` closes the bank in it (`0x57b9c0`).
 //!
 //! The vault is container `-1` (28 slots) and containers 5..=11 (the seven bags), the reference's
 //! own ids (`BankFrame.xml`), so the container verbs work on it unchanged. The bag items
@@ -8,49 +9,38 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-/// The open bank's purchase row, pushed whole by the app.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BankState {
-    /// Purchased bag slots, 0..=7: `PLAYER_BYTES_2` byte 2.
-    pub num_purchased: u32,
-    /// The next slot's price in copper, `BankBagSlotPrices.dbc` row `num_purchased + 1`
-    /// (`0x57bb30`); the rows past 7 hold a sentinel, and 0 means the row is absent.
-    pub next_cost: u32,
+/// Whether a banker is open (`0xbeb9a0`), through the lent view; none lent, none open.
+pub(crate) fn bank_open() -> bool {
+    super::read_live(|l| l.banker().is_some()).unwrap_or(false)
 }
 
-impl super::UiScript {
-    /// Push (or clear, with `None`) the open bank's snapshot.
-    pub fn set_bank(&mut self, state: Option<BankState>) {
-        set_field!(self, bank, state);
-    }
+/// The purchased bank bag slots through the lent view, 0 with no active player (`0x57badb`).
+fn bank_bag_slots() -> u8 {
+    super::read_live(|l| l.bank_bag_slots())
+        .flatten()
+        .unwrap_or(0)
+}
 
-    /// Whether `PurchaseSlot()` was called since the last drain; the app sends
-    /// `CMSG_BUY_BANK_SLOT`. Success has no reply packet, only the `PLAYER_BYTES_2` byte-2 change
-    /// (`ItemHandler.cpp:934`).
-    pub fn take_bank_purchase(&mut self) -> bool {
-        drain_field!(self, bank_purchase)
+/// `CloseBankFrame` (`0x57b9c0`), `SetBanker(0)` (`0x57b8d0`): `BANKFRAME_CLOSED` with the banker
+/// still set, then, with the interact target the banker, the interaction close's bank leg fires it
+/// again (`0x57b8f1` -> `0x518d50` -> `0x512fa7`), then the banker clears.
+fn close_bank_frame(lua: &Lua) {
+    super::tick::fire_event_into(lua, "BANKFRAME_CLOSED", Vec::new());
+    if super::write_live(|l| l.close_bank_interaction()).unwrap_or(false) {
+        super::tick::fire_event_into(lua, "BANKFRAME_CLOSED", Vec::new());
     }
-
-    /// Whether `CloseBankFrame()` was called since the last drain; no packet exists for it.
-    pub fn take_bank_close(&mut self) -> bool {
-        drain_field!(self, bank_close)
-    }
+    super::write_live(|l| l.clear_banker());
 }
 
 /// Register the bank globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // GetNumBankSlots() → numSlots, full: `full` is 1 from seven slots up, else nil (`0x57bab0`).
+    // GetNumBankSlots() → numSlots, full: the active player's byte, banker or not, `full` 1 from seven up (`0x57bab0`).
     g.set(
         "GetNumBankSlots",
-        lua.create_function(|lua, ()| {
-            let n = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.bank.as_ref().map_or(0, |b| b.num_purchased)
-            };
+        lua.create_function(|_, ()| {
+            let n = bank_bag_slots();
             let full = if n >= 7 {
                 Value::Integer(1)
             } else {
@@ -63,23 +53,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetBankSlotCost(numSlots): the argument is unread; the pushed state names the next slot.
+    // GetBankSlotCost(numSlots): the argument is unread; the price row after the purchased count (`0x57bb30`).
     g.set(
         "GetBankSlotCost",
-        lua.create_function(|lua, _n: Option<u32>| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.bank.as_ref().map_or(0, |b| b.next_cost)))
+        lua.create_function(|_, _n: Option<Value>| {
+            let cost = super::read_live(|l| {
+                l.bank_bag_slots()
+                    .map_or(0, |n| l.bank_slot_cost(u32::from(n) + 1))
+            })
+            .unwrap_or(0);
+            Ok(i64::from(cost))
         })?,
     )?;
 
-    // PurchaseSlot(): the `CONFIRM_BUY_BANK_SLOT` popup's accept (`StaticPopup.lua:52`).
+    // PurchaseSlot(): the `CONFIRM_BUY_BANK_SLOT` popup's accept (`StaticPopup.lua:52`); its refusal line shows from the call (`0x57bc2c`).
     g.set(
         "PurchaseSlot",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.bank_purchase = true;
+            if let Some(key) = super::read_live(|l| l.purchase_bank_slot()).flatten() {
+                crate::script::model_mut_of(lua).ui_errors.push(key);
+            }
             Ok(())
         })?,
     )?;
@@ -87,8 +80,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseBankFrame",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.bank_close = true;
+            close_bank_frame(lua);
             Ok(())
         })?,
     )?;
@@ -120,47 +112,86 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::BankState;
     use crate::script::UiScript;
 
+    /// A view with `slots` purchased, the two price rows past it, and `banker` open.
+    fn bank_view(slots: Option<u8>, banker: Option<u64>) -> crate::script::live::TestView {
+        crate::script::live::TestView {
+            bank_slots: slots,
+            bank_costs: [(3, 100_000), (7, 250_000), (8, 999_999_999)].into(),
+            banker,
+            bank_interacting: banker.is_some(),
+            ..Default::default()
+        }
+    }
+
+    /// The count and price read the active player at the call, banker or not (`0x57bab0`, `0x57bb30`).
     #[test]
-    fn bank_snapshot_reads() {
-        let mut s = UiScript::new().unwrap();
-        assert!(s
-            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 0 and full == nil")
-            .unwrap());
-        assert_eq!(s.eval::<i64>("return GetBankSlotCost(0)").unwrap(), 0);
+    fn bank_slots_and_cost_read_the_player_at_the_call() {
+        let s = UiScript::new().unwrap();
+        let counts = |s: &UiScript| {
+            s.eval::<String>("local n, full = GetNumBankSlots() return n .. ',' .. tostring(full) .. ',' .. GetBankSlotCost(0)").unwrap()
+        };
+        assert_eq!(counts(&s), "0,nil,0", "no view, no player");
+        {
+            let _l = crate::script::live::lend_test(bank_view(None, None));
+            assert_eq!(counts(&s), "0,nil,0", "no active player");
+        }
+        {
+            let _l = crate::script::live::lend_test(bank_view(Some(2), None));
+            assert_eq!(
+                counts(&s),
+                "2,nil,100000",
+                "no banker: the count and the next row still answer"
+            );
+        }
+        {
+            let _l = crate::script::live::lend_test(bank_view(Some(6), Some(0x42)));
+            assert_eq!(counts(&s), "6,nil,250000", "six is not yet full");
+        }
+        {
+            let _l = crate::script::live::lend_test(bank_view(Some(7), Some(0x42)));
+            assert_eq!(
+                counts(&s),
+                "7,1,999999999",
+                "seven is full; the row past it is the sentinel"
+            );
+        }
+    }
 
-        s.set_bank(Some(BankState {
-            num_purchased: 2,
-            next_cost: 100_000,
-        }));
-        assert!(s
-            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 2 and full == nil")
-            .unwrap());
-        assert_eq!(s.eval::<i64>("return GetBankSlotCost(2)").unwrap(), 100_000);
-
-        // Six purchased is not yet full.
-        s.set_bank(Some(BankState {
-            num_purchased: 6,
-            next_cost: 250_000,
-        }));
-        assert!(s
-            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 6 and full == nil")
-            .unwrap());
-        // Seven purchased: full = 1, and 999999999 is the DBC's sentinel row.
-        s.set_bank(Some(BankState {
-            num_purchased: 7,
-            next_cost: 999_999_999,
-        }));
-        assert!(s
-            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 7 and full == 1")
-            .unwrap());
-
-        s.set_bank(None);
-        assert!(s
-            .eval::<bool>("local n, full = GetNumBankSlots()\nreturn n == 0 and full == nil")
-            .unwrap());
+    /// `CloseBankFrame` fires `BANKFRAME_CLOSED` with the banker still set, again from the interaction close while the interact target is the banker, then clears it (`0x57b8d0`, `0x512fa7`).
+    #[test]
+    fn close_bank_frame_fires_twice_with_the_banker_set_then_clears_it() {
+        let s = UiScript::new().unwrap();
+        s.run("SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('BANKFRAME_CLOSED') f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(BankOpenNow()) end)").unwrap();
+        s.lua()
+            .globals()
+            .set(
+                "BankOpenNow",
+                s.lua()
+                    .create_function(|_, ()| Ok(super::bank_open()))
+                    .unwrap(),
+            )
+            .unwrap();
+        let seen = |s: &UiScript| {
+            s.eval::<String>("local t = table.concat(SEEN, ',') SEEN = {} return t")
+                .unwrap()
+        };
+        let mut loan = crate::script::live::lend_test(bank_view(Some(1), Some(0x42)));
+        s.run("CloseBankFrame()").unwrap();
+        assert_eq!(seen(&s), "true,true");
+        assert!(!super::bank_open(), "the banker cleared in the call");
+        s.run("CloseBankFrame()").unwrap();
+        assert_eq!(seen(&s), "false", "with no bank, the lone fire");
+        drop(loan);
+        // A banker whose interact target already went: one fire.
+        loan = crate::script::live::lend_test(crate::script::live::TestView {
+            bank_interacting: false,
+            ..bank_view(Some(1), Some(0x42))
+        });
+        s.run("CloseBankFrame()").unwrap();
+        assert_eq!(seen(&s), "true");
+        drop(loan);
     }
 
     /// The bank bags are inventory slots 68..=74, as the reference's bank reads them
@@ -209,20 +240,6 @@ mod tests {
         assert!(s
             .eval::<bool>("return GetInventoryItemTexture(\"player\", 74) == nil")
             .unwrap());
-    }
-
-    #[test]
-    fn purchase_and_close_flag_the_intents() {
-        let mut s = UiScript::new().unwrap();
-        assert!(!s.take_bank_purchase());
-        s.run("PurchaseSlot()").unwrap();
-        assert!(s.take_bank_purchase());
-        assert!(!s.take_bank_purchase(), "drained");
-
-        assert!(!s.take_bank_close());
-        s.run("CloseBankFrame()").unwrap();
-        assert!(s.take_bank_close());
-        assert!(!s.take_bank_close(), "drained");
     }
 
     /// The reference paints the vault through the inventory API (`BankFrame.lua:35`) while the app

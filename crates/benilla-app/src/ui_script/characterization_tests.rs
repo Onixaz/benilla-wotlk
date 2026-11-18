@@ -98,6 +98,9 @@ local VERBS = {
     { "qtitle", function() return GetTitleText() end },
     { "qdone", function() return IsQuestCompletable() end },
     { "qreward", function() return GetRewardMoney() end },
+    { "bankslots", function() return (GetNumBankSlots()) end },
+    { "bankcost", function() return GetBankSlotCost() end },
+    { "bankopen", function() return GetContainerFreeSlots(-1) ~= nil end },
     { "ws", function()
         local t = {}
         for i = 1, GetNumWorldStateUI() do t[#t + 1] = (select(3, GetWorldStateUIInfo(i))) end
@@ -3331,4 +3334,160 @@ fn close_and_accept_finish_the_window_inside_their_call() {
             "{verb}"
         );
     }
+}
+
+/// The banker's guid.
+const BANKER: u64 = 0xF130_0000_0200_0001;
+
+/// The banker as a stream create sends it, with `npc_flags`.
+fn banker_create(npc_flags: u32) -> SessionEvent {
+    let pairs = vec![
+        (2, 0x9),
+        (FIELD_UNIT_HEALTH, 500),
+        (FIELD_UNIT_MAXHEALTH, 500),
+        (FIELD_UNIT_LEVEL, 30),
+        (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, npc_flags),
+    ];
+    SessionEvent::ObjectCreate {
+        guid: BANKER,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Unit),
+    }
+}
+
+/// Our purchased bank bag slots, `PLAYER_BYTES_2` byte 2.
+fn bank_slots(n: u32) -> SessionEvent {
+    self_values(&[(benilla_protocol::field::FIELD_PLAYER_BYTES_2, n << 16)])
+}
+
+const BANK_EVENTS: &[&str] = &[
+    "BANKFRAME_OPENED",
+    "BANKFRAME_CLOSED",
+    "PLAYERBANKBAGSLOTS_CHANGED",
+    "UI_ERROR_MESSAGE",
+];
+
+/// `SMSG_SHOW_BANK` sets the banker and fires `BANKFRAME_OPENED` in its handler (`0x6e352a` -> `0x57b926`); the slot byte's watch fires `PLAYERBANKBAGSLOTS_CHANGED` whether a banker is open or not, its count read live (`0x57b8b0`, `0x57bab0`); a buy refusal shows in its handler's turn (`0x6e355d`).
+#[test]
+fn bank_open_slot_byte_and_refusal_fire_from_their_handlers() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let verbs = &["bankslots", "bankopen"];
+    // The byte moves with no bank open: the watch fires all the same.
+    let seen = rig.packets(vec![bank_slots(1)], 2);
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, verbs),
+        ["PLAYERBANKBAGSLOTS_CHANGED | bankslots=1 bankopen=false"]
+    );
+    let seen = rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+            bank_slots(2),
+            SessionEvent::BuyBankSlotResult { result: 1 },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, verbs),
+        [
+            "BANKFRAME_OPENED | bankslots=1 bankopen=true",
+            "PLAYERBANKBAGSLOTS_CHANGED | bankslots=2 bankopen=true",
+            "UI_ERROR_MESSAGE You can't afford that. | bankslots=2 bankopen=true",
+        ]
+    );
+    // The other packet order: the byte first, then the bank.
+    let seen = rig.packets(
+        vec![bank_slots(3), SessionEvent::ShowBank { banker: BANKER }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, verbs),
+        [
+            "PLAYERBANKBAGSLOTS_CHANGED | bankslots=3 bankopen=true",
+            "BANKFRAME_CLOSED | bankslots=3 bankopen=true",
+            "BANKFRAME_CLOSED | bankslots=3 bankopen=false",
+            "BANKFRAME_OPENED | bankslots=3 bankopen=true",
+        ],
+        "a second banker over an open bank closes it through the interaction close first; the stock frame's OnHide calls CloseBankFrame inside that fire, ahead of the observer"
+    );
+}
+
+/// `CloseBankFrame` fires `BANKFRAME_CLOSED` with the banker still set, then again from the interaction close's bank leg, then clears it, all inside its call (`0x57b9c0` -> `0x57b8d0`, `0x512fa7`).
+#[test]
+fn close_bank_frame_closes_inside_its_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    assert_eq!(fired(&seen, &["BANKFRAME_OPENED"]), ["BANKFRAME_OPENED"]);
+    let read = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local before = #(CHARZ_LOG or {}) CloseBankFrame() local t = {}              for i = before + 1, #(CHARZ_LOG or {}) do                if CHARZ_LOG[i]:find('BANKFRAME_CLOSED', 1, true) then t[#t + 1] = CHARZ_LOG[i]:match('bankopen=(%a+)') end end              return table.concat(t, ',') .. '|' .. tostring(GetContainerFreeSlots(-1) ~= nil)",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    // The stock `BankFrame` hears the first fire ahead of the observer and its `OnHide` calls `CloseBankFrame` again, which fires twice with the banker set and clears it; the outer call's second fire is gone with the interact target.
+    assert_eq!(read, "true,true,false|false");
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
+}
+
+/// The banker flag lost on the open bank's banker closes it from the NPC-flag watch (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED` with the banker set, again from the interaction close, then the banker clears.
+#[test]
+fn the_banker_flag_lost_closes_the_bank_from_the_flag_watch() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BANKER,
+            fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, 0)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, &["bankopen"]),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ],
+        "the stock frame's OnHide closes it inside the first fire, as `CloseBankFrame` does"
+    );
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
 }

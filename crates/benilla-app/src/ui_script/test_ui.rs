@@ -833,6 +833,76 @@ pub(crate) fn seat_chain_addon(s: &mut UiScript, name: &str) {
     s.register_addons(vec![info], None, None, None);
 }
 
+/// A bank lent to the verbs: `slots` purchased, every next slot at `cost`, the banker open with the interact target on it, and each `PurchaseSlot` send counted.
+pub(crate) struct BankView {
+    pub(crate) slots: u8,
+    pub(crate) cost: u32,
+    pub(crate) banker: Option<u64>,
+    pub(crate) interacting: bool,
+    pub(crate) purchases: std::cell::Cell<u32>,
+}
+
+impl benilla_ui::script::LiveState for BankView {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn banker(&self) -> Option<u64> {
+        self.banker
+    }
+
+    fn bank_bag_slots(&self) -> Option<u8> {
+        Some(self.slots)
+    }
+
+    fn bank_slot_cost(&self, _slot: u32) -> u32 {
+        self.cost
+    }
+
+    fn purchase_bank_slot(&self) -> Option<&'static str> {
+        self.purchases.set(self.purchases.get() + 1);
+        None
+    }
+
+    fn close_bank_interaction(&mut self) -> bool {
+        std::mem::take(&mut self.interacting) && self.banker.is_some()
+    }
+
+    fn clear_banker(&mut self) {
+        self.banker = None;
+    }
+}
+
+/// Lend an open bank with `slots` purchased and the next slot at `cost` until the loan drops.
+pub(crate) fn lend_bank(slots: u8, cost: u32) -> benilla_ui::script::LiveLoan<BankView> {
+    // SAFETY: a test drops its loans on its own thread, the latest first.
+    unsafe {
+        benilla_ui::script::LiveLoan::new(BankView {
+            slots,
+            cost,
+            banker: Some(0x42),
+            interacting: true,
+            purchases: std::cell::Cell::new(0),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use benilla_ui::script::UiScript;

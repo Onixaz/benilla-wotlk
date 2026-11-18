@@ -1592,8 +1592,6 @@ pub(crate) mod schedule_tests {
          "filled only by a world right-click on a GameObject; the drain sends casts to the wire"),
         ("ui_auction/mod.rs", "drain_auction", Because::FilledByVm,
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
-        ("ui_bank/mod.rs", "feed_bank", Because::PlayerRoundTrip,
-         "`BankErrors` answers a `BuyBankSlot` click; the OPENED edge rides `VmMemo`s"),
         ("ui_guild_bank/mod.rs", "feed_guild_bank", Because::PlayerRoundTrip,
          "every owed event answers a click on a guild banker or a guild bank verb, and the view rides a `VmMemo`"),
         ("ui_battlefield.rs", "drain_battlefield", Because::PlayerRoundTrip,

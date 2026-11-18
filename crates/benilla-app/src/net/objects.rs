@@ -1509,6 +1509,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 }
             });
         }
+        // Its bank leg (`0x71a1a8`-`0x71a1db`): the banker bit lost on the open bank's banker.
+        if old & NPC_FLAG_BANKER != 0 && new & NPC_FLAG_BANKER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_non_send_resource::<crate::ui_bank::BankOpen>()
+                    .is_some_and(|b| b.banker == Some(guid));
+                if open {
+                    crate::ui_bank::set_banker_none(world);
+                }
+            });
+        }
     }
     if sc.self_guid.0 != Some(guid) {
         return;
@@ -1546,10 +1557,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     own_player_watches(sc, guid, &merged.watched);
 }
 
-/// Our player watches past the flags in field order: honor, then the arena-team words once per update (`0x6cdda0`).
+/// Our player watches past the flags in field order: the bank's slot byte, honor, then the arena-team words once per update (`0x6cdda0`).
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     for &(index, old, new) in edges {
+        // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
+        if index == benilla_protocol::field::FIELD_PLAYER_BYTES_2 {
+            if (old >> 16) as u8 != (new >> 16) as u8 {
+                sc.ui.fire("PLAYERBANKBAGSLOTS_CHANGED", Vec::new());
+            }
+            continue;
+        }
         if !crate::ui_arena_team::is_team_info(index) {
             crate::ui_honor::own_field_changed(index, old, new, &mut sc.ui);
             continue;
@@ -1644,7 +1662,8 @@ fn merge_fields(
             }
             if own
                 && (crate::ui_honor::is_honor_watch(e.index)
-                    || crate::ui_arena_team::is_team_info(e.index))
+                    || crate::ui_arena_team::is_team_info(e.index)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
@@ -1664,6 +1683,9 @@ fn merge_fields(
 /// `UNIT_NPC_FLAG_QUESTGIVER`, the bit the NPC-flag watch tests (`0x71a104`).
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 
+/// `UNIT_NPC_FLAG_BANKER`, the bit the NPC-flag watch's bank leg tests (`0x71a1a8`).
+const NPC_FLAG_BANKER: u32 = 0x20000;
+
 /// What [`merge_fields`] saw.
 #[derive(Default)]
 struct Merged {
@@ -1680,7 +1702,7 @@ struct Merged {
     item_entry: bool,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
-    /// Our own honor and arena-team watches' `(index, old, new)`, in field order.
+    /// Our own bank, honor and arena-team watches' `(index, old, new)`, in field order.
     watched: Vec<(u16, u32, u32)>,
 }
 

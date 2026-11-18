@@ -225,7 +225,7 @@ fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, &ContainerSlot)> {
     for cid in 1..=4 {
         bag(cid, &|n| ItemPlace::Bag(cid, n));
     }
-    if model.bank.is_some() {
+    if super::bank::bank_open() {
         bag(-1, &|n| {
             ItemPlace::Player(BANK_VAULT_FIRST + i64::from(n) - 1)
         });
@@ -1210,7 +1210,10 @@ mod tests {
         assert_eq!(loc(&s, 16), 0x300000 | (1 << 8) | 3);
         assert_eq!(loc(&s, 17), -1, "the vault needs a banker");
         assert_eq!(loc(&s, 18), -1);
-        s.set_bank(Some(Default::default()));
+        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+            banker: Some(0x42),
+            ..Default::default()
+        });
         assert_eq!(loc(&s, 17), 0x400000 | 41, "vault slot 2 is player slot 40");
         let id = |s: &UiScript, i: u32| -> i64 {
             s.eval(&format!("return GetEquipmentSetItemIDs(\"Mix\")[{i}]"))

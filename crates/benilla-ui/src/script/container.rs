@@ -558,7 +558,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let slot = if index < 4 {
                     Some(index + 20)
                 } else {
-                    model.bank.is_some().then_some(index + 64)
+                    super::bank::bank_open().then_some(index + 64)
                 };
                 slot.and_then(|s| usize::try_from(s).ok())
                     .and_then(|s| model.inv_slot("player", s))
@@ -610,7 +610,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !model.containers.contains_key(&0) {
                 return Ok(mlua::MultiValue::from_vec(vec![Value::Integer(0)]));
             }
-            let bank_open = model.bank.is_some();
+            let bank_open = super::bank::bank_open();
             let resolved = match bag {
                 0 => true,
                 -1 | 5..=11 => bank_open,
@@ -1743,7 +1743,10 @@ mod tests {
         );
         assert_eq!(free(&s, "2"), (0, None));
         assert_eq!(free(&s, "-1"), (0, None), "the bank, closed");
-        s.set_bank(Some(crate::script::BankState::default()));
+        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+            banker: Some(0x42),
+            ..Default::default()
+        });
         assert_eq!(free(&s, "-1"), (27, Some(0)), "the bank, open");
         assert_eq!(free(&s, "-2"), (0, None), "the keyring is not a case");
         assert_eq!(free(&s, "12"), (0, None));
