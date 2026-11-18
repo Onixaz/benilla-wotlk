@@ -125,19 +125,22 @@ fn run_step(world: &mut World, me: Option<Entity>, ask: bool) -> bool {
     gated
 }
 
-/// The setter with no pet (`0x5d6e6d`), ahead of the ask's gate; its tail runs on the old guid.
-fn world_entry_clear(
+/// The setter with no pet (`0x5d6e6d`), ahead of the ask's gate: the cached guid, the list and the expiry empty (`0x5d6932`, `0x5d6943`, `0x5d6a29`) and the tail runs; the words and cooldowns stay for the next `SMSG_PET_SPELLS` (`0x5d6ba0`).
+pub(super) fn world_entry_clear(
     mut bar: ResMut<super::PetBar>,
     list: Option<ResMut<super::PetList>>,
     mut held: ResMut<PossessSpell>,
+    player: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     mut ui: ResMut<UiEvents>,
 ) {
-    let changed = bar.cached != 0;
-    bar.clear();
+    let changed = std::mem::take(&mut bar.cached) != 0;
+    bar.spells.pet_guid = 0;
+    bar.expires = None;
     if let Some(mut list) = list {
         list.0.clear();
     }
-    super::set_pet_tail(changed, &mut bar, &mut held, None, &mut ui);
+    let dead = player.iter().next().is_some_and(super::net::player_dead);
+    super::set_pet_tail(changed, &mut bar, &mut held, None, dead, &mut ui);
 }
 
 /// Our fields, auras and transport seat, as the lookup reads them.

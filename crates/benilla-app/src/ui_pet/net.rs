@@ -86,12 +86,14 @@ fn on_spells(
     mut list: ResMut<super::PetList>,
     mut possess: ResMut<super::possess::PossessSpell>,
     combat: PetCombat,
+    player: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetSpells(spells) = ev {
         let changed = pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
         let held = combat.held(bar.spells.pet_guid);
-        set_pet_tail(changed, &mut bar, &mut possess, held, &mut ui);
+        let dead = player.iter().next().is_some_and(player_dead);
+        set_pet_tail(changed, &mut bar, &mut possess, held, dead, &mut ui);
         // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`, `0x53ceae`).
         ui.fire("SPELLS_CHANGED", Vec::new());
     }
@@ -140,19 +142,28 @@ impl PetCombat<'_, '_> {
     }
 }
 
-/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`): on a new guid the latches drop, a held pet's tests run, then `UNIT_PET`; every call ends in the temporary bar's `PET_BAR_UPDATE`.
+/// Our health at or below 0, the setter's dead test on the active player (`0x5d6b55`).
+pub(crate) fn player_dead(store: &crate::net::ObjectStore) -> bool {
+    store.0.unit_health().is_some_and(|h| h as i32 <= 0)
+}
+
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6b80`): on a new guid the latches drop, a held head's tests run, an empty head zeroes the pet's combo points (`0x5d6ab0`), then `UNIT_PET`; every call updates the temporary bar (`0x5d6ad2`); a new guid while we are `dead` fires `RAISED_AS_GHOUL` for a head (`0x5d6b80`), else refreshes the active player (`0x5d6b6f`).
 pub(crate) fn set_pet_tail(
     changed: bool,
     bar: &mut PetBar,
     possess: &mut super::possess::PossessSpell,
     held: Option<HeldPet>,
+    dead: bool,
     ui: &mut crate::ui_script::live::UiEvents,
 ) {
+    let head = bar.spells.pet_guid != 0;
     if changed {
         // The possess latch and the attacking global drop (`0x5d6a3c`, `0x5d6a42`).
         possess.1 = false;
         bar.attacking = false;
-        if let Some(held) = held.filter(|_| bar.spells.pet_guid != 0) {
+        if !head {
+            ui.world(zero_pet_combo);
+        } else if let Some(held) = held {
             // The combat test (`0x5d6a80`), then a hunter's pet closes the pet UI (`0x5d6a94`).
             bar.attacking = held.in_combat;
             if held.can_gain_xp {
@@ -167,15 +178,31 @@ pub(crate) fn set_pet_tail(
         );
     }
     ui.world(super::temp_bar::update_pet_temp_bar_step);
+    if changed && dead {
+        if head {
+            ui.fire("RAISED_AS_GHOUL", Vec::new());
+        } else {
+            crate::death::refresh_active_player(0, ui);
+        }
+    }
+}
+
+/// `SetComboPoints(0, 0, 0)` on the setter's empty arm (`0x5d6ab0`): the pet's bank zeroed, which signals as a pet combo packet does (`0x5d34b0`).
+fn zero_pet_combo(world: &mut World) {
+    if let Some(mut combo) = world.get_resource_mut::<crate::spell::ComboPoints>() {
+        combo.pet = Default::default();
+        combo.pet_epoch += 1;
+    }
 }
 
 fn on_mode(
     In(ev): In<SessionEvent>,
     mut bar: ResMut<PetBar>,
+    list: Res<super::PetList>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetMode(mode) = ev {
-        if pet_mode(mode, &mut bar) {
+        if pet_mode(mode, list.head().unwrap_or(0), &mut bar) {
             // `PET_BAR_UPDATE` whatever changed (`0x5d3689`).
             ui.fire("PET_BAR_UPDATE", Vec::new());
         }
@@ -285,11 +312,13 @@ fn on_tame_failure(In(ev): In<SessionEvent>, mut failures: ResMut<PetTameFailure
     }
 }
 
+/// `SMSG_PET_NAME_INVALID` (`0x6e2fb1`): the name error (`0x6e2fc0`), then with declined forms `PET_FORCE_NAME_DECLENSION` (`0x6e303d`); `SMSG_PET_BROKEN`'s line.
 fn on_refusal_line(
     In(ev): In<SessionEvent>,
     mut errors: ResMut<UiErrorKeys>,
-    mut declensions: ResMut<super::PetDeclensions>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
+    use benilla_ui::script::ScriptValue;
     match ev {
         SessionEvent::PetNameInvalid {
             code,
@@ -297,8 +326,18 @@ fn on_refusal_line(
             declensions: forms,
         } => {
             pet_name_invalid(code, &mut errors);
-            if let Some(forms) = forms {
-                declensions.0.push((name, forms));
+            if let Some([a, b, c, d, e]) = forms {
+                ui.fire(
+                    "PET_FORCE_NAME_DECLENSION",
+                    vec![
+                        ScriptValue::Str(name),
+                        ScriptValue::Str(a),
+                        ScriptValue::Str(b),
+                        ScriptValue::Str(c),
+                        ScriptValue::Str(d),
+                        ScriptValue::Str(e),
+                    ],
+                );
             }
         }
         SessionEvent::PetBroken => pet_broken(&mut errors),
@@ -338,11 +377,11 @@ fn on_spell_line(
     }
 }
 
-/// `SMSG_PET_RENAMEABLE`: counted for the menu drain, which fires `PET_RENAMEABLE`.
-fn on_renameable(In(ev): In<SessionEvent>, mut renameable: ResMut<super::PetRenameable>) {
+/// `SMSG_PET_RENAMEABLE` (`0x5d3140`): `PET_RENAMEABLE`, which the stock `PetFrame` answers with the `RENAME_PET` popup (`0x5d3147`).
+fn on_renameable(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::PetRenameable = ev {
         debug!("net: pet renameable");
-        renameable.0 += 1;
+        ui.fire("PET_RENAMEABLE", Vec::new());
     }
 }
 
@@ -366,7 +405,10 @@ fn pet_spells(
         if bar.spells.pet_guid != 0 {
             debug!("net: pet bar torn down");
         }
-        bar.clear();
+        // The words, the pet book and the pet's cooldowns empty first (`0x5d6ba0`, `0x5d6be1`), then the setter empties the list and the expiry (`0x5d6943`, `0x5d6a29`).
+        bar.spells = PetSpells::default();
+        bar.cooldowns.clear_silent();
+        bar.expires = None;
         list.0.clear();
         return changed;
     }
@@ -471,9 +513,9 @@ fn pet_spell_line(
     errors.0.push(UiError::s(key, display.ranked_name()));
 }
 
-/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names; whether it applied.
-fn pet_mode(mode: PetMode, bar: &mut PetBar) -> bool {
-    if bar.spells.pet_guid == 0 || bar.spells.pet_guid != mode.pet_guid {
+/// `SMSG_PET_MODE` (`0x5d3630`): the state word alone, applied when the packet's guid is the pet list's `head`, 0 for an empty list (`0x5d366e`, `0x5d3683`); whether it applied.
+fn pet_mode(mode: PetMode, head: u64, bar: &mut PetBar) -> bool {
+    if mode.pet_guid != head {
         return false;
     }
     debug!("net: pet mode — state {:#010x}", mode.state);
@@ -638,6 +680,7 @@ mod tests {
                 pet_guid: 0x99,
                 state: 0x0202,
             },
+            list.head().unwrap_or(0),
             &mut bar,
         );
         assert_eq!(bar.spells.react_state(), 1, "a stranger's mode is ignored");
@@ -647,6 +690,7 @@ mod tests {
                 pet_guid: 0x2A,
                 state: 0x0202,
             },
+            list.head().unwrap_or(0),
             &mut bar,
         );
         assert_eq!(bar.spells.react_state(), 2);
@@ -667,7 +711,7 @@ mod tests {
                 in_combat,
                 can_gain_xp: false,
             });
-            set_pet_tail(changed, bar, &mut possess, held, &mut ui);
+            set_pet_tail(changed, bar, &mut possess, held, false, &mut ui);
         };
         set(&mut bar, 0x2A, None);
         bar.attacking = true;
@@ -804,15 +848,87 @@ mod tests {
             pet_guid,
             state: 0x0100,
         };
-        assert!(pet_mode(mode(0xF14), &mut bar));
+        assert!(pet_mode(mode(0xF14), 0xF14, &mut bar));
         assert!(
-            pet_mode(mode(0xF14), &mut bar),
+            pet_mode(mode(0xF14), 0xF14, &mut bar),
             "the same state signals again"
         );
         assert!(
-            !pet_mode(mode(0xABC), &mut bar),
+            !pet_mode(mode(0xABC), 0xF14, &mut bar),
             "another pet's mode is not ours"
         );
+    }
+
+    /// The mode handler compares the packet's guid with the list's head, 0 for an empty list, so a zero-guid mode with no pet still writes the word and signals (`0x5d366e`, `0x5d3683`, `0x5d3689`).
+    #[test]
+    fn a_zero_guid_mode_with_no_pet_writes_and_signals() {
+        let mut bar = PetBar::default();
+        let mode = |pet_guid| PetMode {
+            pet_guid,
+            state: 0x0201,
+        };
+        assert!(
+            !pet_mode(mode(0xF14), 0, &mut bar),
+            "no head, no pet's mode"
+        );
+        assert_eq!(bar.spells.state, 0);
+        assert!(pet_mode(mode(0), 0, &mut bar));
+        assert_eq!(bar.spells.state, 0x0201);
+    }
+
+    /// The zero-guid packet empties the words, the book and the cooldowns, and the setter's change test alone drops the attacking global (`0x5d6ba0`, `0x5d6be1`, `0x5d6a42`); a repeated teardown keeps a global it did not change.
+    #[test]
+    fn a_teardown_drops_the_attack_only_on_a_change() {
+        let mut bar = PetBar::default();
+        let mut list = super::super::PetList::default();
+        let mut possess = super::super::possess::PossessSpell::default();
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let changed = pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
+        set_pet_tail(changed, &mut bar, &mut possess, None, false, &mut ui);
+        bar.attacking = true;
+        let changed = pet_spells(PetSpells::default(), None, &mut bar, &mut list);
+        set_pet_tail(changed, &mut bar, &mut possess, None, false, &mut ui);
+        assert!(!bar.attacking);
+        assert_eq!(bar.spells, PetSpells::default());
+        assert!(list.0.is_empty());
+        bar.attacking = true;
+        let changed = pet_spells(PetSpells::default(), None, &mut bar, &mut list);
+        assert!(!changed);
+        set_pet_tail(changed, &mut bar, &mut possess, None, false, &mut ui);
+        assert!(bar.attacking, "no change, no drop");
+    }
+
+    /// The setter's dead arm on a new guid (`0x5d6b55`): a head fires `RAISED_AS_GHOUL` after the temporary bar (`0x5d6b80`), no head refreshes the active player, `PLAYER_DEAD` with a cursor clear (`0x5d6b6f`); the empty arm zeroes the pet's combo points first (`0x5d6ab0`); alive, neither fires.
+    #[test]
+    fn a_new_pet_while_dead_raises_the_ghoul() {
+        let mut bar = PetBar::default();
+        let mut list = super::super::PetList::default();
+        let mut possess = super::super::possess::PossessSpell::default();
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let changed = pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
+        set_pet_tail(changed, &mut bar, &mut possess, None, true, &mut ui);
+        assert_eq!(
+            ui.names(),
+            ["<world>", "UNIT_PET", "<world>", "RAISED_AS_GHOUL"]
+        );
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let changed = pet_spells(PetSpells::default(), None, &mut bar, &mut list);
+        set_pet_tail(changed, &mut bar, &mut possess, None, true, &mut ui);
+        assert_eq!(
+            ui.names(),
+            [
+                "<world>",
+                "<world>",
+                "UNIT_PET",
+                "<world>",
+                "PLAYER_DEAD",
+                "<clear cursor>"
+            ]
+        );
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let changed = pet_spells(a_bar(0x2B), None, &mut bar, &mut list);
+        set_pet_tail(changed, &mut bar, &mut possess, None, false, &mut ui);
+        assert_eq!(ui.names(), ["<world>", "UNIT_PET", "<world>"]);
     }
 
     #[test]
