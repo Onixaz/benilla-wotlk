@@ -187,8 +187,9 @@ impl GuildCache {
         ])
     }
 
-    /// A guild's record dropped with no ask (`0x67a5f0`); whether one was held.
+    /// A guild's record dropped with no ask (`0x67a5f0`); whether one was held. A pending one runs its callbacks unfound (`0x67a61f` -> `0x67a533`), which the timestamp walk skips (`0x6e1b93`), so its asks go.
     pub(crate) fn evict(&mut self, guild_id: u32) -> bool {
+        self.stamp_asks.retain(|g| *g != guild_id);
         let evicted = self.identities.evict(guild_id);
         if evicted {
             self.generation = self.generation.wrapping_add(1);

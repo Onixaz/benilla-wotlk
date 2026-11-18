@@ -22,6 +22,7 @@ impl Plugin for UiSessionPlugin {
         // Inside the net chain, after the apply pass that opens and swaps sessions and before the
         // facing chain: a `MERCHANT_SHOW` handler reads `UnitName("NPC")` the frame it opens.
         app.init_resource::<InteractNpc>()
+            .init_resource::<InteractTarget>()
             .add_systems(
                 Update,
                 feed_interact_npc
@@ -118,6 +119,8 @@ pub(crate) struct InteractWindows<'w, 's> {
     queue: Commands<'w, 's>,
     petition_vendor: Option<ResMut<'w, crate::ui_petition::PetitionVendorState>>,
     battlemaster: Option<ResMut<'w, crate::ui_battlefield::Battlefield>>,
+    /// Zeroed by the interaction close ahead of its walk (`0x512e89`).
+    target: Option<ResMut<'w, InteractTarget>>,
 }
 
 /// The quest window's place in [`InteractWindows`].
@@ -167,11 +170,11 @@ impl InteractWindows<'_, '_> {
             5 => {}
             6 => close(&mut self.registrar),
             7 => {
-                if self
-                    .tabard
-                    .as_deref_mut()
-                    .is_some_and(|t| t.npc().is_some())
-                {
+                let vendor = self.tabard.as_deref().and_then(|t| t.npc());
+                if vendor.is_some() {
+                    if let Some(t) = self.target.as_mut().filter(|t| t.0 == vendor) {
+                        t.0 = None;
+                    }
                     close(&mut self.tabard);
                     self.queue.queue(crate::ui_tabard::fire_closed);
                 }
@@ -236,6 +239,35 @@ pub(crate) fn close_interaction(
         }
     }
     *last = windows.npcs();
+}
+
+/// The interact target (`0xbd07a8`): a window's open sets it (`0x51fce0`), the interaction close zeroes it first (`0x512e89`). The tabard designer sets and clears it; the other windows still answer through [`InteractNpc`] (#1329).
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub(crate) struct InteractTarget(pub(crate) Option<u64>);
+
+/// The interact target's set (`0x51fce0`): a held one, even the same guid, is cleared through the interaction close first (`0x51fd08` -> `0x51fd1c`), which closes the first window of [`InteractWindows`] still on it; then the new one is stored (`0x51fd26`).
+pub(crate) fn set_interact_target(world: &mut World, guid: u64) {
+    let old = world
+        .get_resource_mut::<InteractTarget>()
+        .and_then(|mut t| t.0.take());
+    if let Some(old) = old {
+        close_window_on(world, old);
+    }
+    if let Some(mut t) = world.get_resource_mut::<InteractTarget>() {
+        t.0 = Some(guid);
+    }
+}
+
+/// The interaction close's walk (`0x512e60`) for a target already zeroed: the first window of [`InteractWindows`] on `old` closes.
+fn close_window_on(world: &mut World, old: u64) {
+    let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
+    let mut windows = state.get_mut(world);
+    if let Some(window) = windows.npcs().iter().position(|n| *n == Some(old)) {
+        if window != BANK_WINDOW {
+            windows.close(window);
+        }
+    }
+    state.apply(world);
 }
 
 /// The `"npc"` unit: the open [`NpcSession`]'s world entity and guid, read by the portrait booth

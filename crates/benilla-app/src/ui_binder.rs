@@ -101,7 +101,7 @@ impl TalkView<'_, '_> {
     }
 }
 
-/// The binder talk with a guid (`0x6d2120`): a held innkeeper in reach is latched (`0x6d21cc`) and `CONFIRM_BINDER` fires with the current subzone's name, else the zone's, else `HOME_INN` (`0x6d21d7`-`0x6d2201`).
+/// The binder talk (`0x6d2120`): a zero guid stands for the latch (`0x6d2137`-`0x6d2139`); a held innkeeper in reach with a guid is latched (`0x6d21cc`) and `CONFIRM_BINDER` fires with the current subzone's name, else the zone's, else `HOME_INN` (`0x6d21d7`-`0x6d2201`); with no guid it sends `CMSG_BINDER_ACTIVATE` naming the latch (`0x6d21ca` -> `0x6d2257`).
 pub(crate) fn talk_to_binder(
     In(npc): In<u64>,
     mut binder: ResMut<BinderState>,
@@ -110,10 +110,22 @@ pub(crate) fn talk_to_binder(
     units: Query<(&ObjectStore, &Transform)>,
     ids: Option<Res<crate::area::ZoneIds>>,
     areas: Option<Res<AreaTableRes>>,
+    net: Option<Res<NetCommands>>,
     mut ui: ResMut<UiEvents>,
 ) {
-    if !in_talk_reach(npc, me.single().ok(), index.as_deref(), &units) {
-        debug!("ui_binder: innkeeper {npc:#x} not held in reach, no question");
+    let held = if npc != 0 {
+        npc
+    } else {
+        binder.npc.unwrap_or(0)
+    };
+    if held == 0 || !in_talk_reach(held, me.single().ok(), index.as_deref(), &units) {
+        debug!("ui_binder: innkeeper {held:#x} not held in reach, no question");
+        return;
+    }
+    if npc == 0 {
+        if let Some(net) = &net {
+            let _ = net.0.send(ClientCommand::BinderActivate { binder: held });
+        }
         return;
     }
     binder.npc = Some(npc);
@@ -177,7 +189,7 @@ pub(crate) mod net {
             .net_handler(K::PlayerBound, on_bound);
     }
 
-    /// `SMSG_BINDER_CONFIRM`: the binder talk with the packet's guid (`0x6e3db9`).
+    /// `SMSG_BINDER_CONFIRM`: the binder talk with the packet's guid, a zero one included (`0x6e3db9`).
     fn on_confirm(In(ev): In<SessionEvent>, world: &mut World) {
         if let SessionEvent::BinderConfirm { binder: npc } = ev {
             if let Err(e) = world.run_system_cached_with(talk_to_binder, npc) {

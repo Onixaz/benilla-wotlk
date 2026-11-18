@@ -97,8 +97,8 @@ pub(crate) struct TabardView<'w, 's> {
     open: Option<ResMut<'w, TabardOpen>>,
     design: Option<ResMut<'w, TabardDesign>>,
     cache: Option<Res<'w, GuildCache>>,
-    /// The interact target the save names (`0x599438`).
-    target: Option<Res<'w, crate::ui_session::InteractNpc>>,
+    /// The interact target the save names (`0x599438`) and the close clears (`0x598efa`).
+    target: Option<ResMut<'w, crate::ui_session::InteractTarget>>,
     commands: Option<Res<'w, NetCommands>>,
     me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
 }
@@ -133,7 +133,7 @@ impl TabardView<'_, '_> {
             Ok(d) => d,
             Err(key) => return Some(Err(key)),
         };
-        let vendor = self.target.as_ref().and_then(|t| t.1).unwrap_or(0);
+        let vendor = self.target.as_ref().and_then(|t| t.0).unwrap_or(0);
         if let Some(c) = &self.commands {
             let _ = c.0.send(ClientCommand::SaveGuildEmblem { vendor, design });
         }
@@ -143,15 +143,24 @@ impl TabardView<'_, '_> {
         Some(Ok(()))
     }
 
-    /// `CloseTabardCreation` (`0x598f30` -> `0x598ec0`): with a vendor held, the purchase off and the vendor cleared, and the count of `CLOSE_TABARD_FRAME`s: the interact target's clear re-enters the close through its tabard leg first (`0x598ef5` -> `0x512e60` -> `0x51300e`), then its own; none with no vendor (`0x598ecb`).
+    /// `CloseTabardCreation` (`0x598f30` -> `0x598ec0`): with a vendor held, the purchase off and the vendor cleared, and the count of `CLOSE_TABARD_FRAME`s: an interact target on the vendor is cleared and re-enters the close through its tabard leg first (`0x598efa` -> `0x512e60` -> `0x51300e`), then its own; one with the target elsewhere (`0x518d69`); none with no vendor (`0x598ecb`).
     pub(crate) fn close(&mut self) -> u32 {
-        if !self.open.as_mut().is_some_and(|o| o.close()) {
+        let Some(vendor) = self.open.as_ref().and_then(|o| o.vendor) else {
             return 0;
+        };
+        if let Some(o) = self.open.as_mut() {
+            o.close();
         }
         if let Some(d) = self.design.as_mut() {
             d.purchase = false;
         }
-        2
+        match self.target.as_mut() {
+            Some(t) if t.0 == Some(vendor) => {
+                t.0 = None;
+                2
+            }
+            _ => 1,
+        }
     }
 
     /// The seed's and each cycle's colours onto our body (`0x5993b0`), with our player object held.
@@ -179,6 +188,7 @@ pub(crate) fn fire_closed(world: &mut World) {
 /// The interaction range guard's close: a vendor out of the leash or gone closes the designer through the interaction close, its target cleared first, so `CLOSE_TABARD_FRAME` fires once.
 fn close_out_of_range(
     mut open: ResMut<TabardOpen>,
+    mut target: ResMut<crate::ui_session::InteractTarget>,
     index: Res<crate::net::GuidIndex>,
     self_q: Query<&Transform, With<SelfPlayer>>,
     transforms: Query<&Transform>,
@@ -188,6 +198,9 @@ fn close_out_of_range(
     if crate::ui_session::npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true)
         && open.close()
     {
+        if target.0 == Some(npc) {
+            target.0 = None;
+        }
         debug!("ui_tabard: tabard vendor {npc:#x} out of range/gone — closed");
         queue.queue(fire_closed);
     }
@@ -249,21 +262,23 @@ mod net {
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    /// `MSG_TABARDVENDOR_ACTIVATE` (`0x6cc576` -> `0x598e60`): the vendor stored, the purchase on with our player object, then `OPEN_TABARD_FRAME`.
-    fn on_activate(
-        In(ev): In<SessionEvent>,
-        mut tabard: ResMut<TabardOpen>,
-        mut design: ResMut<TabardDesign>,
-        me: Query<(), With<SelfPlayer>>,
-        mut ui: ResMut<UiEvents>,
-    ) {
-        if let SessionEvent::TabardVendorActivate(vendor) = ev {
-            tabard.vendor = Some(vendor);
-            if me.single().is_ok() {
-                design.purchase = true;
-            }
-            ui.fire("OPEN_TABARD_FRAME", vec![]);
+    /// `MSG_TABARDVENDOR_ACTIVATE` (`0x6cc576` -> `0x598e60`): the vendor stored (`0x598e69`), the purchase on with our player object (`0x598e98`), the interact target set to it (`0x598e9e`), then `OPEN_TABARD_FRAME` (`0x598eaa`).
+    fn on_activate(In(ev): In<SessionEvent>, world: &mut World) {
+        let SessionEvent::TabardVendorActivate(vendor) = ev else {
+            return;
+        };
+        world.resource_mut::<TabardOpen>().vendor = Some(vendor);
+        let me = world
+            .query_filtered::<(), With<SelfPlayer>>()
+            .single(world)
+            .is_ok();
+        if me {
+            world.resource_mut::<TabardDesign>().purchase = true;
         }
+        crate::ui_session::set_interact_target(world, vendor);
+        world
+            .resource_mut::<UiEvents>()
+            .fire("OPEN_TABARD_FRAME", vec![]);
     }
 
     /// `MSG_SAVE_GUILD_EMBLEM` (`0x6d9230`): a code past 5 is dropped (`0x6d9246`); else its line unless the table's sentinel (`0x6d924f`), the latch cleared (`0x6d9264`), then success drops our guild's record with no ask (`0x6d929b`) and fires `GUILDTABARD_UPDATE` (`0x6d92a7`), a failure `TABARD_SAVE_PENDING` (`0x6d92bf`).

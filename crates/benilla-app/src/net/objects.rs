@@ -182,6 +182,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             own_flags_watch(&mut sc, guid, merged);
             return;
         }
+        // Our own player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`) before the active player's init (`0x6e8378`).
+        if sc.self_guid.0 == Some(guid) && kind == EntityKind::Player {
+            sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+        }
         // Our own create's init replays the known-spell buffer into the companion lists and updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
         if sc.self_guid.0 == Some(guid) {
             let me = (
@@ -302,8 +306,8 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         if let Some(m) = mover.filter(|_| sc.self_guid.0 != Some(guid)) {
             seed_player_word(e, guid, m, &mut sc.commands);
         }
-        // A player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`).
-        if kind == EntityKind::Player {
+        // Another player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`).
+        if kind == EntityKind::Player && sc.self_guid.0 != Some(guid) {
             sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
         }
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
@@ -1718,7 +1722,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if merged.guild_moved {
         sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
     }
-    // The guild timestamp's watch (`0x6e1c60`), any player's.
+    // Another player's guild timestamp watch (`0x6e1c60`), after its guild id's (`0x6e1bb0`); ours runs in index order in [`own_player_watches`].
     if let Some(stamp) = merged.guild_stamp {
         guild_stamp_watch(sc, guid, stamp);
     }
@@ -1975,6 +1979,11 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             }
             continue;
         }
+        // Our guild timestamp's watch (`0x6e1c60`), after our guild id's in field order.
+        if index == benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP {
+            guild_stamp_watch(sc, guid, new);
+            continue;
+        }
         // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
         if index == benilla_protocol::field::FIELD_PLAYER_BYTES_2 {
             if (old >> 16) as u8 != (new >> 16) as u8 {
@@ -2121,7 +2130,7 @@ fn merge_fields(
             if e.kind == benilla_protocol::messages::ObjectType::Player {
                 merged.guild_moved |=
                     !own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID);
-                if e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP) {
+                if !own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP) {
                     merged.guild_stamp = Some(e.new);
                 }
             }
@@ -2130,6 +2139,7 @@ fn merge_fields(
                     || crate::ui_arena_team::is_team_info(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index))
             {
@@ -2193,7 +2203,7 @@ struct Merged {
     form: Option<u8>,
     /// Another player's `PLAYER_GUILDID` moved (`0x6e1bb0`).
     guild_moved: bool,
-    /// A player's `PLAYER_GUILD_TIMESTAMP` moved to this stamp (`0x6e1c60`).
+    /// Another player's `PLAYER_GUILD_TIMESTAMP` moved to this stamp (`0x6e1c60`).
     guild_stamp: Option<u32>,
 }
 

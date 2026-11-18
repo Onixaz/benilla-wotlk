@@ -136,8 +136,13 @@ fn confirm_binder_sends_inside_its_call_while_in_reach() {
     assert_eq!(sends(&rx), 1);
     call(&mut rig, "ConfirmBinder()");
     assert_eq!(sends(&rx), 1, "the latch outlives the accept");
+    // A zero guid in `SMSG_BINDER_CONFIRM` is the talk with no guid (`0x6d2137` -> `0x6d2257`): it sends for the latch, no question.
+    let seen = rig.packets(vec![SessionEvent::BinderConfirm { binder: 0 }], 2);
+    assert!(pin(&seen, &["CONFIRM_BINDER"], &[]).is_empty());
+    assert_eq!(sends(&rx), 1, "the zero-guid confirm activates the latch");
     rig.packets(vec![SessionEvent::ObjectDestroyed(NPC)], 2);
     call(&mut rig, "ConfirmBinder()");
+    rig.packets(vec![SessionEvent::BinderConfirm { binder: 0 }], 2);
     assert_eq!(sends(&rx), 0, "not held");
 }
 
@@ -634,4 +639,120 @@ fn the_cansave_event_fires_from_the_guild_change_handlers() {
     );
     let seen = rig.packets(vec![guild_record(8, "Other Guild")], 2);
     assert!(pin(&seen, events, &[]).is_empty(), "no ask waits on it now");
+}
+
+/// Our own player's init runs its guild change (`0x6e82c0`) before the active player's init (`0x6e8378`), whose UI world entry fires after it (`0x6e8186`); a worldport's fresh create of ours.
+#[test]
+fn our_create_fires_the_cansave_event_before_the_active_players_init() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    let events = &[
+        "TABARD_CANSAVE_CHANGED",
+        "PLAYER_CONTROL_GAINED",
+        "PLAYER_ENTERING_WORLD",
+        "ACTIONBAR_SLOT_CHANGED",
+        "UPDATE_SHAPESHIFT_FORM",
+    ];
+    rig.packets(
+        vec![SessionEvent::ObjectDestroyed(
+            super::characterization_tests::ME,
+        )],
+        2,
+    );
+    let seen = rig.packets(
+        vec![super::characterization_tests::self_create(&guild_master())],
+        3,
+    );
+    let fired: Vec<_> = seen
+        .iter()
+        .filter(|s| events.contains(&s.event.as_str()))
+        .map(|s| s.event.clone())
+        .collect();
+    assert_eq!(fired, ["TABARD_CANSAVE_CHANGED", "PLAYER_ENTERING_WORLD"]);
+}
+
+/// One values update moving our guild id and its timestamp: the guild id's watch runs first (`0x6e1bb0` before `0x6e1c60`), so `CanSaveTabardNow` reads the new guild's cached record at its `TABARD_CANSAVE_CHANGED`; the stamp's drop follows (`0x6e1d47`).
+#[test]
+fn our_guild_id_watch_runs_before_the_stamp_drops_the_record() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    rig.packets(vec![guild_record(8, "New Guild")], 2);
+    let seen = rig.packets(
+        vec![self_values(&[
+            (benilla_protocol::field::FIELD_PLAYER_GUILDID, 8),
+            (benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP, 77),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["TABARD_CANSAVE_CHANGED"], &["cansave"]),
+        ["TABARD_CANSAVE_CHANGED | cansave=1"]
+    );
+    assert_eq!(
+        rig.live_now().verbs["cansave"],
+        "nil",
+        "the stamp dropped it"
+    );
+}
+
+/// A stamp moving twice before its guild's answer: the second drop runs the first ask's callback unfound (`0x67a610` -> `0x67a61f` -> `0x67a533`), which the walk skips (`0x6e1b93`), so the answer walks once.
+#[test]
+fn a_pending_stamp_ask_dropped_with_its_record_never_walks() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    const OTHER: u64 = 0x11;
+    rig.packets(vec![player_in(OTHER, 8)], 2);
+    let stamp = |s| SessionEvent::ObjectValues {
+        guid: OTHER,
+        fields: ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP,
+            s,
+        )]),
+    };
+    rig.packets(vec![stamp(1)], 2);
+    rig.packets(vec![stamp(2)], 2);
+    let seen = rig.packets(vec![guild_record(8, "Other Guild")], 2);
+    assert_eq!(
+        pin(&seen, &["TABARD_CANSAVE_CHANGED"], &[]).len(),
+        1,
+        "one walk, one visible member"
+    );
+}
+
+/// The open sets the interact target before `OPEN_TABARD_FRAME` (`0x598e9e`, `0x598eaa`), and `Save` names it at the call (`0x599438`): a save from the event's own handler names the vendor. A second activate on the same vendor clears the held target through the interaction close first (`0x51fd1c` -> `0x51300e`): `CLOSE_TABARD_FRAME`, then `OPEN_TABARD_FRAME`; the closing then fires once, its vendor zeroed by that close while the target holds.
+#[test]
+fn the_save_names_the_interact_target_the_open_set() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    rig.packets(
+        vec![npc_at(NPC, 0x80000, NEAR), guild_record(7, "Probe Guild")],
+        2,
+    );
+    call(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('OPEN_TABARD_FRAME') \
+         f:SetScript('OnEvent', function() if not CHARZ_SAVED then CHARZ_SAVED = 1 \
+         TabardModel:InitializeTabardColors() TabardModel:CycleVariation(1, 1) TabardModel:Save() end end)",
+    );
+    let rx = tap(&mut rig);
+    rig.packets(vec![SessionEvent::TabardVendorActivate(NPC)], 2);
+    let sent: Vec<_> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SaveGuildEmblem { vendor, .. } => Some(vendor),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![NPC], "the handler's save names the vendor");
+    let seen = rig.packets(vec![SessionEvent::TabardVendorActivate(NPC)], 2);
+    assert_eq!(
+        pin(&seen, TABARD_EVENTS, &[]),
+        vec!["CLOSE_TABARD_FRAME", "OPEN_TABARD_FRAME"]
+    );
+    let pinned = fired_in_call(&mut rig, "CloseTabardCreation()", TABARD_EVENTS, &[]);
+    assert!(pinned.is_empty(), "the vendor was zeroed: {pinned:?}");
 }

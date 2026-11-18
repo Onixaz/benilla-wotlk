@@ -839,6 +839,10 @@ pub(crate) fn leave_world(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.write(UiScript::leave_battlefield_world);
     }
+    // The interaction close zeroes the interact target ahead of its walk (`0x512e89`).
+    if let Some(mut t) = world.get_resource_mut::<crate::ui_session::InteractTarget>() {
+        t.0 = None;
+    }
     crate::ui_stable::leave_world(world);
     // The interaction close's bank leg, after the stable part.
     crate::ui_bank::close_by_interaction(world);
