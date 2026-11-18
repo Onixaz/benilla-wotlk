@@ -94,7 +94,7 @@ impl TabardDesign {
 }
 
 /// The save's fourteen checks in the reference's order, each a `UI_ERROR_MESSAGE` key: the ten
-/// range checks share one, and the money check is the client's own `ERR_NOT_ENOUGH_MONEY` (0x25),
+/// range checks share one, and the money check is the client's own `ERR_NOT_ENOUGH_MONEY` (0x28),
 /// not the server's.
 pub(crate) fn preflight(
     design: [i32; 5],
