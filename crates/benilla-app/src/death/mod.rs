@@ -997,6 +997,8 @@ fn drain_death(
                 }
             }
         };
+        // The press's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script);
     }
 }
 

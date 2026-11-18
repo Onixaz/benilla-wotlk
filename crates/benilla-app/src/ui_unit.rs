@@ -1505,6 +1505,14 @@ struct Interactions<'w> {
     instance: crate::ui_arena::ArenaInstance<'w>,
 }
 
+/// The world entry's inputs and the new target's cast re-read, one parameter under Bevy's 16.
+type EntryAndTarget<'w, 's> = (
+    Option<MessageReader<'w, 's, crate::net::EnteredWorldMessage>>,
+    Commands<'w, 's>,
+    Option<ResMut<'w, crate::net::EntryHold>>,
+    Option<crate::ui_cast::TargetReread<'w, 's>>,
+);
+
 fn feed_units(
     (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     tables: SnapshotTables,
@@ -1527,12 +1535,9 @@ fn feed_units(
     mut guild: ResMut<crate::ui_guild::GuildState>,
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
-    // The commands carry the world-enter cascade's death part.
-    (entered_world, mut deferred, mut hold): (
-        Option<MessageReader<crate::net::EnteredWorldMessage>>,
-        Commands,
-        Option<ResMut<crate::net::EntryHold>>,
-    ),
+    // The commands carry the world-enter cascade's death part. The new target's cast re-read rides
+    // `PLAYER_TARGET_CHANGED`.
+    (entered_world, mut deferred, mut hold, mut target_cast): EntryAndTarget,
 ) {
     let Some(mut script) = script else {
         return;
@@ -2032,6 +2037,11 @@ fn feed_units(
     if selection.guid != memo.target_guid {
         gate.audit("feed_units", "the PLAYER_TARGET_CHANGED edge");
         memo.target_guid = selection.guid;
+        // The target set re-reads the new target's not-interruptible bit, with no event
+        // (`0x524dbc`), ahead of the change's event.
+        if let (Some(target), Some(reread)) = (selection.guid, target_cast.as_mut()) {
+            reread.reread(target);
+        }
         script.fire_event("PLAYER_TARGET_CHANGED", vec![]);
     }
 

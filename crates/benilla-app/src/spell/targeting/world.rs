@@ -61,6 +61,8 @@ pub(crate) fn commit_ground_cast_on_click(
     debug!("ui_action: ground cast {spell_id} committed at {at:?} as {bound:?}");
     // The cast send: a thrown grenade commits as `CMSG_USE_ITEM` with the location block.
     ladder.commit_targeted(spell_id, commit, bound);
+    // No VM here: the commit's cast-bar edges fire once this system's commands apply.
+    ladder.press.flush(&mut ladder.ecs);
 }
 
 /// The object leg. A left-click on an object goes to the selection set, whose first act while
@@ -103,6 +105,7 @@ pub(crate) fn commit_object_cast_on_click(
         } else if let Some((entity, guid)) = hovered.corpse.zip(hovered.corpse_guid) {
             super::corpse::bind_target_corpse(&mut ladder, &checks, entity, guid);
         }
+        ladder.press.flush(&mut ladder.ecs);
         return;
     }
     let held = ladder.ground.read().pending_for(TargetingWants::GameObject);
@@ -115,6 +118,8 @@ pub(crate) fn commit_object_cast_on_click(
     debug!("ui_action: cast {spell_id} committed at gameobject {guid:#x}");
     // `CMSG_CAST_SPELL` mask `0x800` and the packed guid, or `CMSG_USE_ITEM` for a key.
     ladder.commit_targeted(spell_id, commit, TargetedBind::Object(guid));
+    // No VM here: the commit's cast-bar edges fire once this system's commands apply.
+    ladder.press.flush(&mut ladder.ecs);
 }
 
 #[cfg(test)]

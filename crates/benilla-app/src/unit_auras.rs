@@ -293,7 +293,7 @@ fn on_aura_update(
     if !store.is_unit() {
         return; // the lookup is unit-typed (`0x4d4db0`, mask 8)
     }
-    let (me, spells, ui) = own;
+    let (me, spells, mut ui) = own;
     let mine = me.is_some_and(|m| m.0 == Some(update.unit));
     let moves = mine.then(|| own_aura_moves(auras.as_deref(), &update));
     match auras {
@@ -304,10 +304,15 @@ fn on_aura_update(
             commands.entity(entity).insert(auras);
         }
     }
+    // The reader's not-interruptible re-read for a watched caster (`0x72fd30`), after the apply.
+    let unit = update.unit;
+    if let Some(ui) = ui.as_mut() {
+        ui.world(move |world| crate::ui_cast::auras_changed(world, unit));
+    }
     // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
-    if let (Some(moves), Some(spells), Some(mut ui)) = (moves, spells, ui) {
+    if let (Some(moves), Some(spells), Some(ui)) = (moves, spells, ui.as_mut()) {
         for (spell_id, removed) in moves {
-            crate::ui_companion::mount_updates(spell_id, &spells.catalog, &mut ui);
+            crate::ui_companion::mount_updates(spell_id, &spells.catalog, ui);
             // An open-stable effect's removal closes the stable, forced (`0x71ea25`).
             let opens_stable = || {
                 spells.catalog.get(spell_id).is_some_and(|rec| {

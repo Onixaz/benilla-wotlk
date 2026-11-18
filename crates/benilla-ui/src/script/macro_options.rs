@@ -288,9 +288,9 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         "bonusbar" => any_number(i64::from(model.bonus_bar_offset), args, false),
         // The player's running channel, by spell name when arguments say (`0x5efeb0`).
         "channeling" => {
-            let channel = model
-                .unit_casts
-                .channel_of(model.unit_guids.player)
+            let player = model.unit_guids.player;
+            let channel = super::live::read_live(|l| l.unit_cast(player, true))
+                .flatten()
                 .filter(|c| model.now * 1000.0 < c.end_ms);
             match channel {
                 None => false,

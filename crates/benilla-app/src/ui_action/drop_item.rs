@@ -95,6 +95,8 @@ pub(crate) fn drop_item_on_unit(
         };
         debug!("DropItemOnUnit(\"pet\") — Feed Pet {spell_id} at item {item_guid:#x}");
         ladder.commit_targeted(spell_id, CastCommit::Spell, TargetedBind::Item(item_guid));
+        // The send's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script);
         // `ClearCursor(1,1)`, on success only.
         script.clear_cursor_payload();
     }

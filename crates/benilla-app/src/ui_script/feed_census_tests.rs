@@ -28,7 +28,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_barber::feed_barber",
     "benilla_app::ui_binder::feed_binder",
     "benilla_app::ui_calendar::feed_calendar",
-    "benilla_app::ui_cast::feed_cast_bar",
     "benilla_app::ui_char::feed_char",
     "benilla_app::ui_char::feed_skills",
     "benilla_app::ui_char::watch_skill_ups",

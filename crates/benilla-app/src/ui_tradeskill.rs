@@ -802,6 +802,8 @@ fn drain_trade_skill(
         }
         debug!("ui_tradeskill: DoTradeSkill({spell_id})");
         ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
+        // The send's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script);
     }
 
     let self_entity = ladder.self_player.single().ok().map(|(e, _)| e);
@@ -815,6 +817,7 @@ fn drain_trade_skill(
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
+                    ladder.press.fire(&mut script);
                 }
             }
             CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),

@@ -7,7 +7,7 @@ use std::ops::{Deref, DerefMut};
 use benilla_ui::script::{
     CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetActionView, PetBarLive,
     PetBookState, PetStats, PossessView, RuneRegen, RuneState, SpellTargetingLive, StableCallback,
-    StableFamily, StableList, UiScript,
+    StableFamily, StableList, UiScript, UnitCast,
 };
 
 /// The death answers a test sets.
@@ -75,6 +75,10 @@ struct SpellAnswers {
     runes: Option<(RuneState, RuneRegen)>,
     /// The targeting cursor.
     targeting: SpellTargetingLive,
+    /// The units' held casts and channels, by `(guid, channel)`.
+    unit_casts: std::collections::HashMap<(u64, bool), UnitCast>,
+    /// `SpellStopCasting`'s test.
+    stoppable: bool,
 }
 
 thread_local! {
@@ -112,12 +116,32 @@ pub(crate) trait SpellAnswersExt {
     fn set_runes(&mut self, runes: RuneState, regen: RuneRegen);
     /// The targeting cursor up or down, an arm counted as the cast's cursor arm counts it.
     fn set_spell_targeting(&mut self, active: bool);
+    /// A unit's held cast, or with `channel` its channel; `None` clears it.
+    fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>);
+    /// `SpellStopCasting`'s test: an auto-repeat or an in-flight cast to stop.
+    fn set_casting(&mut self, casting: bool);
 }
 
 impl SpellAnswersExt for UiScript {
     fn set_runes(&mut self, runes: RuneState, regen: RuneRegen) {
         sticky(self);
         SPELL.with(|s| s.borrow_mut().runes = Some((runes, regen)));
+    }
+
+    fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>) {
+        sticky(self);
+        SPELL.with(|s| {
+            let casts = &mut s.borrow_mut().unit_casts;
+            match cast {
+                Some(c) => casts.insert((guid, channel), c),
+                None => casts.remove(&(guid, channel)),
+            };
+        });
+    }
+
+    fn set_casting(&mut self, casting: bool) {
+        sticky(self);
+        SPELL.with(|s| s.borrow_mut().stoppable = casting);
     }
 
     fn set_spell_targeting(&mut self, active: bool) {
@@ -399,6 +423,14 @@ impl LiveState for View {
 
     fn spell_targeting(&self) -> SpellTargetingLive {
         SPELL.with(|s| s.borrow().targeting)
+    }
+
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<UnitCast> {
+        SPELL.with(|s| s.borrow().unit_casts.get(&(guid, channel)).cloned())
+    }
+
+    fn has_stoppable_cast(&self) -> bool {
+        SPELL.with(|s| s.borrow().stoppable)
     }
 
     fn runes(&self) -> Option<(RuneState, RuneRegen)> {

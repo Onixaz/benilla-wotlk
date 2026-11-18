@@ -283,8 +283,6 @@ pub(crate) struct Model {
     pub(crate) unit_auras: HashMap<u64, Vec<AuraState>>,
     /// The unit-token resolver's inputs, which the aura bindings resolve through.
     pub(crate) unit_guids: super::UnitGuids,
-    /// Each unit's running cast and channel, for `UnitCastingInfo` and `UnitChannelInfo`.
-    pub(crate) unit_casts: super::unit_cast::UnitCasts,
     /// Spell ids the cancel verbs queued (`CancelUnitBuff`, `SetTracking`, …), one
     /// `CMSG_CANCEL_AURA` each.
     pub(crate) cancel_aura_requests: Vec<u32>,
@@ -598,9 +596,6 @@ pub(crate) struct Model {
     pub(crate) macro_item_icons: Vec<String>,
     /// Builds [`Self::macro_item_icons`] on first use, then is spent.
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
-    /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
-    /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
-    pub(crate) casting: bool,
 
     pub(crate) talents: super::talent::TalentUiState,
     /// The achievement tables, lists and tracked set.
@@ -1412,7 +1407,6 @@ impl Model {
             player_auras: Vec::new(),
             unit_auras: HashMap::new(),
             unit_guids: Default::default(),
-            unit_casts: Default::default(),
             cancel_aura_requests: Vec::new(),
             minimap_tracking: Default::default(),
             script_calls: Vec::new(),
@@ -1559,7 +1553,6 @@ impl Model {
             macro_icon_source: None,
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
-            casting: false,
             talents: super::talent::TalentUiState::default(),
             achievement: Default::default(),
             talent_preview: Vec::new(),

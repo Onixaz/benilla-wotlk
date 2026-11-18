@@ -248,6 +248,11 @@ pub(super) fn drain_go_openers(
             super::GoOpener::Spell { spell_id, go_guid } => {
                 debug!("ui_action: gameobject opener casts {spell_id} at {go_guid:#x}");
                 ladder.send_at_object(spell_id, &ctx, go_guid);
+                // The send's cast-bar edges, fired as it returns (`0x80b556`).
+                match script.as_deref_mut() {
+                    Some(script) => ladder.press.fire(script),
+                    None => ladder.press.flush(&mut ladder.ecs),
+                }
             }
             // The key goes through the shared item-use fork, as a bag click does.
             super::GoOpener::Key(it) => {
@@ -267,6 +272,7 @@ pub(super) fn drain_go_openers(
                     false,
                     &mut ui_errors,
                 );
+                ladder.press.fire(script);
             }
         }
     }

@@ -127,6 +127,9 @@ local VERBS = {
     { "totem1", function() return (GetTotemInfo(1)) end },
     { "totem1name", function() return (select(2, GetTotemInfo(1))) end },
     { "totem1left", function() return GetTotemTimeLeft(1) end },
+    { "casting", function() return (UnitCastingInfo("player")) end },
+    { "castid", function() return (select(8, UnitCastingInfo("player"))) end },
+    { "stopcast", function() return SpellStopCasting ~= nil end },
 }
 local function answers()
     local verbs = {}
@@ -4967,6 +4970,67 @@ fn attack_start_and_stop_fire_from_their_handlers_in_wire_order() {
             "UNIT_FLAGS player | combat=1",
             "PLAYER_LEAVE_COMBAT | combat=1",
             "PLAYER_REGEN_DISABLED | combat=1",
+        ]
+    );
+}
+
+/// A cast's edges apply in their handlers and fire there, in wire order: `SMSG_SPELL_START` opens
+/// our cast and fires `UNIT_SPELLCAST_START` with it already readable (`0x805409`), and
+/// `SMSG_SPELL_GO` fires `SUCCEEDED` with the cast still running, then `STOP` with it gone
+/// (`0x7fecc0`, `0x7fee38`); a flags update between them fires between them.
+#[test]
+fn cast_bar_events_fire_from_the_spell_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const FIREBALL: u32 = 133;
+    let start = SessionEvent::SpellStart {
+        caster: ME,
+        cast_count: 4,
+        spell_id: FIREBALL,
+        cast_flags: 0,
+        cast_time_ms: 1500,
+        target: None,
+        ammo_display_id: None,
+        immunities: None,
+    };
+    let go = SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 4,
+        spell_id: FIREBALL,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![],
+        misses: vec![],
+        reflects: vec![],
+        target: None,
+        go_target: None,
+        target_mask: 0,
+        src: None,
+        dest: None,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    let seen = rig.packets(
+        vec![start, flags(crate::player::UNIT_FLAG_IN_COMBAT), go],
+        2,
+    );
+    let events = &[
+        "UNIT_SPELLCAST_START",
+        "UNIT_FLAGS",
+        "UNIT_SPELLCAST_SUCCEEDED",
+        "UNIT_SPELLCAST_STOP",
+    ];
+    assert_eq!(
+        pin(&seen, events, &["casting", "castid"]),
+        vec![
+            "UNIT_SPELLCAST_START player Fireball Rank 1 4 | casting=Fireball castid=4",
+            "UNIT_FLAGS player | casting=Fireball castid=4",
+            "UNIT_SPELLCAST_SUCCEEDED player Fireball Rank 1 4 | casting=Fireball castid=4",
+            "UNIT_SPELLCAST_STOP player Fireball Rank 1 4 | casting=nil castid=nil",
         ]
     );
 }

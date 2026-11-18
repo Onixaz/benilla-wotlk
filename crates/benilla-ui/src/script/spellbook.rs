@@ -221,13 +221,6 @@ impl super::UiScript {
         })
     }
 
-    /// Whether `SpellStopCasting()` has something to stop: an auto-repeat or an in-flight cast,
-    /// never a channel (the reference reads only the auto-repeat key and the in-flight id, which is
-    /// 0 mid-channel). Pushed each frame before the ESC chain runs.
-    pub fn set_casting(&mut self, casting: bool) {
-        set_field!(self, casting, casting);
-    }
-
     /// Take the `SpellStopCasting()` calls out of the call stream: whether there was one. The app
     /// stops the auto-repeat first, else the in-flight cast, the reference's order.
     pub fn take_spell_stop(&mut self) -> bool {
@@ -903,9 +896,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SpellStopCasting",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.casting {
-                model.script_calls.push(ScriptCall::SpellStopCasting);
+            if super::live::read_live(|l| l.has_stoppable_cast()).unwrap_or(false) {
+                crate::script::model_mut_of(lua)
+                    .script_calls
+                    .push(ScriptCall::SpellStopCasting);
                 Ok(Value::Integer(1))
             } else {
                 Ok(Value::Nil)

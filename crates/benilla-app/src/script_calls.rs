@@ -146,14 +146,16 @@ pub(crate) fn apply_script_calls(
         }
         // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
         // picked and resumed before the next call reads the selection.
-        let Some(held) = appliers.p3().ladder.take_held() else {
-            return;
-        };
-        if appliers.p7().pick_for_cast(held) {
-            let mut cast = appliers.p3();
-            let ctx = cast.targeting.context();
-            cast.ladder.resume_after_pick(held, &ctx);
+        if let Some(held) = appliers.p3().ladder.take_held() {
+            if appliers.p7().pick_for_cast(held) {
+                let mut cast = appliers.p3();
+                let ctx = cast.targeting.context();
+                cast.ladder.resume_after_pick(held, &ctx);
+            }
         }
+        // A press's cast-bar edges, fired as the call that made them returns (`0x80b556`,
+        // `0x806200`); the cancel's share the ladder's queue.
+        appliers.p3().ladder.press.fire(script);
     });
 }
 

@@ -124,6 +124,8 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) trade_skill_opens: ResMut<'w, crate::ui_tradeskill::TradeSkillOpens>,
     pub(crate) ground: crate::ui_script::OwnedMut<'w, super::targeting::SpellTargeting>,
     pub(crate) held_for_pick: ResMut<'w, HeldForPick>,
+    /// The cast send's `UNIT_SPELLCAST_SENT`, fired by the caller inside the press (`0x80b556`).
+    pub(crate) press: crate::ui_cast::PressSignals<'w, 's>,
     /// The pet's cooldown list and pending cast, which a cast as the pet reads; its writes are
     /// queued, as the script appliers share the bar.
     pub(crate) pet_bar: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
@@ -286,7 +288,7 @@ impl CastLadder<'_, '_> {
                 TargetedBind::Unit(guid) => Some(guid),
                 _ => None,
             };
-            crate::ui_cast::queue_sent(&mut self.ecs, spell_id, target);
+            self.press.sent(spell_id, target);
         }
         if let Some(prelude) = self.ground.read().prelude() {
             prelude.send(&self.commands, &mut self.ecs);
@@ -586,6 +588,7 @@ impl CastLadder<'_, '_> {
             &mut self.ground.write(),
             &mut self.held_for_pick,
             &self.area_gate,
+            &mut self.press,
         );
     }
 }
@@ -648,6 +651,7 @@ fn send_spell_cast(
     ground: &mut super::targeting::SpellTargeting,
     held_for_pick: &mut HeldForPick,
     area_gate: &crate::area::CastAreaGate,
+    press: &mut crate::ui_cast::PressSignals,
 ) {
     let now = Instant::now();
     let def = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1103,7 +1107,7 @@ fn send_spell_cast(
         }
     }
     if matches!(commit, CastCommit::Spell) {
-        crate::ui_cast::queue_sent(ecs, spell_id, target);
+        press.sent(spell_id, target);
     }
     // The pending send's stand, dismount and unshift go out ahead of the cast.
     prelude.send(commands, ecs);

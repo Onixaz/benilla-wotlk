@@ -514,6 +514,16 @@ pub trait LiveState {
         false
     }
 
+    /// A unit's cast, or with `channel` its channel, as the unit holds it at the call (`+0xa6c`-`+0xa7c`, `+0xa80`-`+0xa88`), with the not-interruptible test's answer (`0x71ab20`); `None` with none.
+    fn unit_cast(&self, _guid: u64, _channel: bool) -> Option<super::UnitCast> {
+        None
+    }
+
+    /// `SpellStopCasting`'s test at the call: the auto-repeating spell is set, else a cast is in flight (`0x7fe130`, `0x805f30`); never a channel.
+    fn has_stoppable_cast(&self) -> bool {
+        false
+    }
+
     /// The totem table's live slot `slot` (0-based) at the call (`0xbd0b00`), `None` for an empty one.
     fn totem(&self, _slot: usize) -> Option<super::TotemView> {
         None
@@ -857,6 +867,10 @@ pub(crate) struct TestView {
     pub pet_stops: Cell<u32>,
     /// The 0-based slots the bar toggle reached past its gate, in order.
     pub pet_toggles: std::cell::RefCell<Vec<u32>>,
+    /// The units' held casts and channels, by `(guid, channel)`.
+    pub unit_casts: std::collections::HashMap<(u64, bool), super::UnitCast>,
+    /// `SpellStopCasting`'s test.
+    pub stoppable_cast: bool,
     /// The totem table's slots, which the destroy clears, and each empty slot's tool flag.
     pub totems: std::cell::RefCell<[Option<super::TotemView>; super::MAX_TOTEM_SLOTS]>,
     pub totem_tools: [bool; super::MAX_TOTEM_SLOTS],
@@ -880,6 +894,14 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {
+        self.unit_casts.get(&(guid, channel)).cloned()
+    }
+
+    fn has_stoppable_cast(&self) -> bool {
+        self.stoppable_cast
+    }
+
     fn spell_targeting(&self) -> super::SpellTargetingLive {
         TEST_TARGETING.with(|t| t.borrow().0)
     }

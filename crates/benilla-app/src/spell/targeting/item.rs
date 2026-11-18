@@ -186,6 +186,8 @@ pub(crate) fn commit_item_cast_on_pick(
                 crate::spell::cast_send::TargetedBind::TradeItem,
             ),
         }
+        // The commit's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script);
     }
     // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
     // not.
@@ -228,6 +230,7 @@ pub(crate) fn commit_item_cast_on_pick(
                     crate::spell::CastCommit::Spell,
                     crate::spell::cast_send::TargetedBind::Item(item),
                 );
+                ladder.press.fire(&mut script);
             }
             continue;
         }
@@ -240,6 +243,8 @@ pub(crate) fn commit_item_cast_on_pick(
     }
 
     for (item_guid, confirmed) in asks {
+        // The last commit's cast-bar edges, fired before this pick's popup can run Lua.
+        ladder.press.fire(&mut script);
         let held = ladder.ground.read().pending_for(TargetingWants::Item);
         let Some((spell_id, commit)) = held else {
             continue; // a click raced a cancel
@@ -364,6 +369,8 @@ pub(crate) fn commit_item_cast_on_pick(
             crate::spell::cast_send::TargetedBind::Item(item_guid),
         );
     }
+    // The commits' cast-bar edges, fired as they return (`0x80b556`).
+    ladder.press.fire(&mut script);
 }
 
 #[cfg(test)]

@@ -1435,6 +1435,8 @@ pub(super) fn drain_bind_on_use_confirms(
         true,
         &mut ui_errors,
     );
+    // The use's cast-bar edges, fired as it returns (`0x80b556`).
+    ladder.press.fire(&mut script);
 }
 
 #[cfg(test)]

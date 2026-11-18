@@ -20,7 +20,7 @@ use super::{
 };
 use crate::creature_anim::{CastEvent, CastEventKind, Casting, SpellGoTargets};
 use crate::ui_action::{CastErrors, PlayerActions, Spells, UiError, UiErrorKeys};
-use crate::ui_cast::{CastBarEdge, CastBarFeed};
+use crate::ui_cast::CastBarEdge;
 use crate::ui_spellbook::LearnedInTab;
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -81,7 +81,8 @@ pub(crate) struct Lifecycle<'w> {
     /// The companion adds' tutorials (`0x542751`).
     tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
     multicast: ResMut<'w, super::multicast::MultiCastLists>,
-    cast_bar: ResMut<'w, CastBarFeed>,
+    /// The book update's school masks, which the not-interruptible test reads.
+    schools: ResMut<'w, crate::ui_cast::InterruptSchools>,
     pending: ResMut<'w, PendingCast>,
     queued_melee: ResMut<'w, QueuedMeleeSpell>,
     cooldowns: ResMut<'w, Cooldowns>,
@@ -92,6 +93,17 @@ pub(crate) struct Lifecycle<'w> {
     /// The animation call-order counter: every animation-bearing message stamps `next()`, in packet
     /// order.
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
+}
+
+impl Lifecycle<'_> {
+    /// The book update's mask rebuild over the known spells (`0x53cd48`-`0x53ce75`).
+    fn update_book(&mut self) {
+        crate::ui_cast::book_updated(
+            &mut self.schools,
+            &self.actions.spells,
+            self.spells.as_deref(),
+        );
+    }
 }
 
 /// The scene a cast lands in: the streamed units, the item store, and the animation, text and
@@ -157,6 +169,8 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             }
         }
     }
+    // The book update rebuilds the school masks (`0x53cd48`).
+    l.update_book();
 }
 
 fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
@@ -227,6 +241,8 @@ fn on_spell_learned(
             None => l.known_buffer.0.push(spell_id),
         }
     }
+    // The book update rebuilds the school masks (`0x53cd48`).
+    l.update_book();
 }
 
 fn on_spell_removed(
@@ -246,6 +262,8 @@ fn on_spell_removed(
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
     }
+    // The book update rebuilds the school masks (`0x53cd48`).
+    l.update_book();
 }
 
 /// The companion arm of a known-spell removal (`0x53fad0`); the lists are borrowed only for a spell they hold, so another removal leaves them unchanged.
@@ -382,14 +400,16 @@ fn on_spell_superceded(
             }
         }
     }
+    // The book update rebuilds the school masks (`0x53cd48`).
+    l.update_book();
 }
 
 /// What the cast-result handler reaches beyond the ladder.
 #[derive(SystemParam)]
 pub(crate) struct Reply<'w, 's> {
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     self_guid: Res<'w, SelfGuid>,
     index: Res<'w, GuidIndex>,
-    cast_bar: ResMut<'w, CastBarFeed>,
     casting: Query<'w, 's, &'static Casting>,
     cast_events: MessageWriter<'w, CastEvent>,
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
@@ -419,7 +439,7 @@ fn on_cast_result(
     {
         // `SMSG_CAST_FAILED` ends our cast through `0x808200` -> `0x7fecc0` with its reason.
         if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
-            r.cast_bar.0.push(CastBarEdge::Failed {
+            r.ui.cast_edge(CastBarEdge::Failed {
                 caster,
                 spell_id,
                 cast_count,
@@ -448,6 +468,8 @@ fn on_cast_result(
         if let Some(next) = chained {
             let ctx = targeting.context();
             ladder.send(next, &ctx, CastCommit::Spell);
+            // The chained send's `UNIT_SPELLCAST_SENT`, in this handler's turn (`0x80b556`).
+            ladder.press.defer(&mut r.ui);
         }
     }
 }
@@ -493,6 +515,8 @@ fn on_own_spell_go(
     if let Some(next) = chained {
         let ctx = targeting.context();
         ladder.send(next, &ctx, CastCommit::Spell);
+        // The chained send's `UNIT_SPELLCAST_SENT`, in this handler's turn (`0x80b556`).
+        ladder.press.defer(&mut r.ui);
     }
 }
 
@@ -522,7 +546,7 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             &sc.casting,
             &mut sc.cast_events,
             &l.self_guid,
-            &mut l.cast_bar,
+            &mut l.ui,
             &mut l.pending,
             l.spells.as_deref(),
             l.play_seq.next(),
@@ -636,7 +660,7 @@ fn on_spell_go_inner(ev: SessionEvent, l: &mut Lifecycle, sc: &mut Scene, arm: &
             &mut sc.go_targets,
             &l.self_guid,
             &sc.stores,
-            &mut l.cast_bar,
+            &mut l.ui,
             &mut l.pending,
             &mut l.queued_melee,
             &mut sc.go_lid,
@@ -709,7 +733,7 @@ fn on_spell_failed(
         }
         // Both handlers end the cast through `0x7fecc0` with the packet's reason (`0x809db3`,
         // `0x806bb0`).
-        l.cast_bar.0.push(CastBarEdge::Failed {
+        l.ui.cast_edge(CastBarEdge::Failed {
             caster,
             spell_id,
             cast_count,
@@ -733,13 +757,7 @@ fn on_spell_failed(
 
 fn on_spell_delayed(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     if let SessionEvent::SpellDelayed { caster, delay_ms } = ev {
-        spell_delayed(
-            caster,
-            delay_ms,
-            &l.self_guid,
-            &mut l.cast_bar,
-            &mut l.pending,
-        );
+        spell_delayed(caster, delay_ms, &l.self_guid, &mut l.ui, &mut l.pending);
     }
 }
 
@@ -861,7 +879,7 @@ fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
                 spell_id,
                 duration_ms,
                 &mut l.channel,
-                &mut l.cast_bar,
+                &mut l.ui,
             );
         }
         SessionEvent::ChannelUpdate {
@@ -869,7 +887,7 @@ fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
             remaining_ms,
         } => {
             let own = l.self_guid.0 == Some(caster);
-            channel_update(caster, own, remaining_ms, &mut l.channel, &mut l.cast_bar);
+            channel_update(caster, own, remaining_ms, &mut l.channel, &mut l.ui);
         }
         _ => {}
     }
@@ -885,7 +903,7 @@ fn on_resume_cast_bar(In(ev): In<SessionEvent>, mut l: Lifecycle) {
         );
         // The caster must be a streamed unit (`0x802150`).
         if l.index.0.contains_key(&r.caster) {
-            l.cast_bar.0.push(CastBarEdge::Resume {
+            l.ui.cast_edge(CastBarEdge::Resume {
                 caster: r.caster,
                 spell_id: r.spell_id,
                 remaining_ms: r.remaining_ms,
@@ -1431,7 +1449,7 @@ fn spell_start(
     casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
     self_guid: &SelfGuid,
-    cast_bar: &mut CastBarFeed,
+    ui: &mut crate::ui_script::live::UiEvents,
     pending: &mut PendingCast,
     spells: Option<&crate::ui_action::Spells>,
     seq: u64,
@@ -1481,7 +1499,7 @@ fn spell_start(
     // A hidden start (`castFlags & 1`) skips the cast state, precast and UI start (`0x80694e`).
     let hidden = cast_flags & 0x1 != 0;
     // Every caster's start reaches the unit-cast feed, which applies the event gate.
-    cast_bar.0.push(CastBarEdge::Start {
+    ui.cast_edge(CastBarEdge::Start {
         caster,
         spell_id,
         cast_count,
@@ -1614,7 +1632,7 @@ fn spell_go(
     go_targets: &mut MessageWriter<SpellGoTargets>,
     self_guid: &SelfGuid,
     stores: &Query<&mut ObjectStore>,
-    cast_bar: &mut CastBarFeed,
+    ui: &mut crate::ui_script::live::UiEvents,
     pending: &mut PendingCast,
     queued_melee: &mut QueuedMeleeSpell,
     go_lid: &mut MessageWriter<crate::go_anim::GoLidOpen>,
@@ -1671,7 +1689,7 @@ fn spell_go(
         return;
     }
     // Every caster's launch reaches the unit-cast feed (`0x80e763`).
-    cast_bar.0.push(CastBarEdge::Go {
+    ui.cast_edge(CastBarEdge::Go {
         caster,
         spell_id,
         cast_count,
@@ -1977,11 +1995,11 @@ fn spell_delayed(
     caster: u64,
     delay_ms: u32,
     self_guid: &SelfGuid,
-    cast_bar: &mut CastBarFeed,
+    ui: &mut crate::ui_script::live::UiEvents,
     pending: &mut PendingCast,
 ) {
     debug!("net: spell delayed by {caster:#x} (+{delay_ms}ms pushback)");
-    cast_bar.0.push(CastBarEdge::Delayed { caster, delay_ms });
+    ui.cast_edge(CastBarEdge::Delayed { caster, delay_ms });
     if self_guid.0 == Some(caster) {
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_DELAYED — +{delay_ms}ms pushback (bar extends, does NOT vanish)");
@@ -2114,7 +2132,7 @@ fn channel_start(
     spell_id: u32,
     duration_ms: u32,
     channel: &mut ActiveChannel,
-    feed: &mut CastBarFeed,
+    ui: &mut crate::ui_script::live::UiEvents,
 ) {
     if duration_ms as i32 <= 0 || !streamed {
         debug!("net: channel start {spell_id} on {caster:#x} for {duration_ms} ms dropped");
@@ -2123,7 +2141,7 @@ fn channel_start(
     if own {
         channel.start(spell_id, duration_ms, Instant::now());
     }
-    feed.0.push(CastBarEdge::ChannelStart {
+    ui.cast_edge(CastBarEdge::ChannelStart {
         caster,
         spell_id,
         duration_ms,
@@ -2136,12 +2154,12 @@ fn channel_update(
     own: bool,
     remaining_ms: u32,
     channel: &mut ActiveChannel,
-    feed: &mut CastBarFeed,
+    ui: &mut crate::ui_script::live::UiEvents,
 ) {
     if own {
         channel.update(remaining_ms, Instant::now());
     }
-    feed.0.push(CastBarEdge::ChannelUpdate {
+    ui.cast_edge(CastBarEdge::ChannelUpdate {
         caster,
         remaining_ms,
     });
@@ -2808,7 +2826,7 @@ mod tests {
             .add_message::<crate::player::StandStateRequest>()
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
-            .init_resource::<CastBarFeed>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<Cooldowns>()
@@ -2850,7 +2868,7 @@ mod tests {
                           mut go_targets: MessageWriter<SpellGoTargets>,
                           self_guid: Res<SelfGuid>,
                           stores: Query<&mut ObjectStore>,
-                          mut cast_bar: ResMut<CastBarFeed>,
+                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
                           mut pending: ResMut<PendingCast>,
                           mut queued_melee: ResMut<QueuedMeleeSpell>,
                           mut go_lid: MessageWriter<GoLidOpen>,
@@ -2917,7 +2935,9 @@ mod tests {
             cast_flags: 0,
         };
         assert_eq!(
-            app.world().resource::<CastBarFeed>().0,
+            app.world()
+                .resource::<crate::ui_script::live::UiEvents>()
+                .cast_edges(),
             vec![go(6136), go(133)]
         );
 
@@ -2934,7 +2954,13 @@ mod tests {
             .resource_mut::<PendingCast>()
             .arm(10, Instant::now(), true);
         fire_go(&mut app, 10, false);
-        assert_eq!(app.world().resource::<CastBarFeed>().0.len(), 2);
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_script::live::UiEvents>()
+                .cast_edges()
+                .len(),
+            2
+        );
         assert_eq!(
             app.world()
                 .resource::<PendingCast>()
@@ -2958,7 +2984,7 @@ mod tests {
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           self_guid: Res<SelfGuid>,
-                          mut cast_bar: ResMut<CastBarFeed>,
+                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
                           mut pending: ResMut<PendingCast>| {
                         spell_start(
                             10,
@@ -3037,7 +3063,7 @@ mod tests {
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
             .init_resource::<CastErrors>()
-            .init_resource::<CastBarFeed>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<Cooldowns>()
@@ -3065,7 +3091,7 @@ mod tests {
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           self_guid: Res<SelfGuid>,
-                          mut cast_bar: ResMut<CastBarFeed>,
+                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
                           mut pending: ResMut<PendingCast>| {
                         spell_start(
                             10,
@@ -3176,7 +3202,7 @@ mod tests {
     fn a_channel_arms_the_mirror_and_feeds_its_edges() {
         const BLIZZARD: u32 = 10;
         let t0 = Instant::now();
-        let mut feed = CastBarFeed::default();
+        let mut feed = crate::ui_script::live::UiEvents::default();
         let mut channel = ActiveChannel::default();
         channel_start(10, true, true, BLIZZARD, 8_000, &mut channel, &mut feed);
         assert_eq!(
@@ -3193,7 +3219,7 @@ mod tests {
         channel_start(0x42, false, true, BLIZZARD, 8_000, &mut channel, &mut feed);
         assert_eq!(channel.current(t0 + Duration::from_secs(1)), None);
         assert_eq!(
-            feed.0,
+            feed.cast_edges(),
             vec![
                 CastBarEdge::ChannelStart {
                     caster: 10,
@@ -3265,7 +3291,7 @@ mod tests {
             .add_message::<crate::player::StandStateRequest>()
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
-            .init_resource::<CastBarFeed>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<Cooldowns>()
@@ -3307,7 +3333,7 @@ mod tests {
                       mut go_targets: MessageWriter<SpellGoTargets>,
                       self_guid: Res<SelfGuid>,
                       stores: Query<&mut ObjectStore>,
-                      mut cast_bar: ResMut<CastBarFeed>,
+                      mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
                       mut pending: ResMut<PendingCast>,
                       mut queued_melee: ResMut<QueuedMeleeSpell>,
                       mut go_lid: MessageWriter<GoLidOpen>,
@@ -3477,7 +3503,7 @@ mod tests {
             .add_message::<crate::player::StandStateRequest>()
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
-            .init_resource::<CastBarFeed>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<Cooldowns>()
@@ -3518,7 +3544,7 @@ mod tests {
                       mut go_targets: MessageWriter<SpellGoTargets>,
                       self_guid: Res<SelfGuid>,
                       stores: Query<&mut ObjectStore>,
-                      mut cast_bar: ResMut<CastBarFeed>,
+                      mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
                       mut pending: ResMut<PendingCast>,
                       mut queued_melee: ResMut<QueuedMeleeSpell>,
                       mut go_lid: MessageWriter<GoLidOpen>,
@@ -3609,7 +3635,7 @@ mod tests {
             .init_resource::<SelfGuid>()
             .init_resource::<CastErrors>()
             .init_resource::<crate::ui_action::UiErrorKeys>()
-            .init_resource::<CastBarFeed>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<Cooldowns>()
@@ -3876,7 +3902,7 @@ mod tests {
                 .add_message::<crate::player::StandStateRequest>()
                 .init_resource::<GuidIndex>()
                 .init_resource::<SelfGuid>()
-                .init_resource::<CastBarFeed>()
+                .init_resource::<crate::ui_script::live::UiEvents>()
                 .init_resource::<PendingCast>()
                 .init_resource::<QueuedMeleeSpell>()
                 .init_resource::<Cooldowns>()
@@ -3912,7 +3938,7 @@ mod tests {
                           mut go_targets: MessageWriter<SpellGoTargets>,
                           self_guid: Res<SelfGuid>,
                           stores: Query<&mut ObjectStore>,
-                          mut cast_bar: ResMut<CastBarFeed>,
+                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
                           mut pending: ResMut<PendingCast>,
                           mut queued_melee: ResMut<QueuedMeleeSpell>,
                           mut go_lid: MessageWriter<GoLidOpen>,
@@ -4060,7 +4086,7 @@ mod tests {
                 .init_resource::<CastErrors>()
                 .init_resource::<crate::ui_action::UiErrorKeys>()
                 .init_resource::<crate::ui_action::UiErrorKeys>()
-                .init_resource::<CastBarFeed>()
+                .init_resource::<crate::ui_script::live::UiEvents>()
                 .init_resource::<PendingCast>()
                 .init_resource::<QueuedMeleeSpell>()
                 .init_resource::<Cooldowns>()
@@ -4310,12 +4336,12 @@ mod tests {
     #[test]
     fn a_channel_with_no_positive_duration_or_no_unit_opens_nothing() {
         let t0 = Instant::now();
-        let mut feed = CastBarFeed::default();
+        let mut feed = crate::ui_script::live::UiEvents::default();
         let mut channel = ActiveChannel::default();
         channel_start(10, true, true, 10, 0, &mut channel, &mut feed);
         channel_start(10, true, true, 10, u32::MAX, &mut channel, &mut feed);
         channel_start(0x42, false, false, 10, 8_000, &mut channel, &mut feed);
-        assert!(feed.0.is_empty());
+        assert!(feed.cast_edges().is_empty());
         assert_eq!(channel.current(t0), None);
     }
 

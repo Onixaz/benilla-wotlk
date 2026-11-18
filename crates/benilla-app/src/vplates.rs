@@ -378,7 +378,8 @@ struct PlateWorld<'w, 's> {
 /// `GetTime` stamp of the last frame, keyed as the plates are.
 #[derive(SystemParam)]
 struct PlateCasts<'w, 's> {
-    units: Option<Res<'w, crate::ui_cast::UnitCasts>>,
+    units: crate::ui_script::LentRef<'w, crate::ui_cast::UnitCasts>,
+    schools: Option<Res<'w, crate::ui_cast::InterruptSchools>>,
     spells: Option<Res<'w, crate::ui_action::Spells>>,
     bars: Local<'s, (std::collections::HashMap<u64, PlateCastBar>, Option<f64>)>,
 }
@@ -689,7 +690,10 @@ fn drive_vplates(
         let mark = group.raid_target_index(guid.0);
         // Only the target's plate is fed a cast (`0x720e50`); any other plate reads the stop.
         let source = (world.selection.target == Some(entity))
-            .then(|| casts.units.as_ref()?.plate_source(guid.0))
+            .then(|| {
+                let schools = casts.schools.as_deref().copied().unwrap_or_default();
+                casts.units.get()?.plate_source(guid.0, schools)
+            })
             .flatten();
         let spells = casts.spells.as_deref();
         let bar = casts.bars.0.entry(guid.0).or_default();

@@ -383,8 +383,7 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         model.cursor,
         Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
     );
-    if !placing
-        && (super::spellbook::targeting().wants_item || super::merchant::repair_mode(&model))
+    if !placing && (super::spellbook::targeting().wants_item || super::merchant::repair_mode(model))
     {
         let occupied = model
             .containers

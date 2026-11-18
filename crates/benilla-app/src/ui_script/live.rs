@@ -76,6 +76,10 @@ pub(crate) struct LiveView<'w, 's> {
     totems: crate::ui_totem::TotemLive<'w, 's>,
     /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
     bind: Option<crate::spell::targeting::BindChecks<'w, 's>>,
+    /// The book update's school masks (`0x53cd48`), which the not-interruptible test reads.
+    schools: Option<Res<'w, crate::ui_cast::InterruptSchools>>,
+    /// Each unit's cast state on the unit, the in-flight test's started spell.
+    casting: Query<'w, 's, &'static crate::creature_anim::Casting>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -87,6 +91,8 @@ pub(crate) struct CastSlots<'w> {
     pub(crate) queued_melee: Slot<'w, crate::spell::QueuedMeleeSpell>,
     pub(crate) auto_repeat: Slot<'w, crate::spell::AutoRepeatActive>,
     pub(crate) targeting: Slot<'w, crate::spell::SpellTargeting>,
+    /// Each unit's running cast and channel and its not-interruptible bit (`+0xa34 & 8`).
+    pub(crate) unit_casts: Slot<'w, crate::ui_cast::UnitCasts>,
 }
 
 // SAFETY: it registers no access and fetches nothing; `LendLive` fills it under its own access.
@@ -1304,6 +1310,32 @@ impl LiveState for LiveView<'_, '_> {
         self.totems.category_name(row)
     }
 
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<benilla_ui::script::UnitCast> {
+        let casts = self.cast.unit_casts.get()?;
+        let schools = self.schools.as_deref().copied().unwrap_or_default();
+        casts.live_cast(guid, channel, self.spells.as_deref(), schools)
+    }
+
+    /// The auto-repeating spell, else the in-flight slot the cancel resolves (`0x7fe130`,
+    /// `0x805f30`), as `SpellStopCasting` tests them.
+    fn has_stoppable_cast(&self) -> bool {
+        if self.cast.auto_repeat.get().is_some_and(|a| a.0.is_some()) {
+            return true;
+        }
+        let (Some(pending), Some(melee)) = (self.cast.pending.get(), self.cast.queued_melee.get())
+        else {
+            return false;
+        };
+        let started = self
+            .self_guid
+            .as_ref()
+            .and_then(|g| g.0)
+            .and_then(|g| self.index.as_ref()?.0.get(&g).copied())
+            .and_then(|e| self.casting.get(e).ok())
+            .map(|c| c.spell_id);
+        crate::spell::inflight(pending, melee, started, std::time::Instant::now()).is_some()
+    }
+
     /// The rune table and our `PLAYER_RUNE_REGEN` rates now, behind the player-mask lookup of the
     /// active player every rune verb opens with (`0x613078`).
     fn runes(&self) -> Option<(benilla_ui::script::RuneState, benilla_ui::script::RuneRegen)> {
@@ -1402,8 +1434,8 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
 /// The lendable resources' ids: the history, the pet's words, the selection, the player's place,
-/// then the cast state's four ([`CastSlots`]).
-type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds, [SlotIds; 4]);
+/// then the cast state's five ([`CastSlots`]).
+type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds, [SlotIds; 5]);
 
 /// Register `X` and its pair's marks.
 fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
@@ -1525,6 +1557,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                     slot_ids::<crate::spell::QueuedMeleeSpell>(world),
                     slot_ids::<crate::spell::AutoRepeatActive>(world),
                     slot_ids::<crate::spell::SpellTargeting>(world),
+                    slot_ids::<crate::ui_cast::UnitCasts>(world),
                 ],
             ),
             lent_ids(world),
@@ -1548,11 +1581,12 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
         slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
         slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
-        let [pending, melee, repeat, targeting] = state.1 .4;
+        let [pending, melee, repeat, targeting, casts] = state.1 .4;
         slot_access::<crate::spell::PendingCast>(true, pending, system_meta, set);
         slot_access::<crate::spell::QueuedMeleeSpell>(true, melee, system_meta, set);
         slot_access::<crate::spell::AutoRepeatActive>(true, repeat, system_meta, set);
         slot_access::<crate::spell::SpellTargeting>(true, targeting, system_meta, set);
+        slot_access::<crate::ui_cast::UnitCasts>(true, casts, system_meta, set);
         let [signals, asks, marks, expiries, giver] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
@@ -1604,7 +1638,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         unsafe {
             let own = |owned: bool, id| owned.then_some((world, id));
             let ((cd, ..), (bar, ..), (sel, ..), (place, ..), cast) = state.1;
-            let [(pending, ..), (melee, ..), (repeat, ..), (targeting, ..)] = cast;
+            let [(pending, ..), (melee, ..), (repeat, ..), (targeting, ..), (casts, ..)] = cast;
             let c = &mut view.cast;
             c.pending
                 .set(slot_fetch(world, pending), own(true, pending));
@@ -1614,6 +1648,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, repeat), own(true, repeat));
             c.targeting
                 .set(slot_fetch(world, targeting), own(true, targeting));
+            c.unit_casts.set(slot_fetch(world, casts), own(true, casts));
             view.cooldowns
                 .set(slot_fetch(world, cd), own(O::COOLDOWNS, cd));
             view.pet_bar.set(slot_fetch(world, bar), own(true, bar));
@@ -1665,6 +1700,8 @@ enum UiEvent {
     SystemLine(&'static str, Vec<LineArg>),
     /// A step over the `World`, such as the unit pushes an event's tokens read.
     World(WorldStep),
+    /// One cast or channel edge applied to the caster's cast state, its events fired in turn.
+    CastEdge(crate::ui_cast::CastBarEdge),
 }
 
 /// An argument a system line's template takes.
@@ -1703,6 +1740,24 @@ impl UiEvents {
         self.0.push(UiEvent::World(Box::new(step)));
     }
 
+    /// Apply a cast or channel edge to its caster in turn with the events around it, as the
+    /// handler or press that made it does; its `UNIT_SPELLCAST_*` events fire next.
+    pub(crate) fn cast_edge(&mut self, edge: crate::ui_cast::CastBarEdge) {
+        self.0.push(UiEvent::CastEdge(edge));
+    }
+
+    /// The cast edges queued, in order.
+    #[cfg(test)]
+    pub(crate) fn cast_edges(&self) -> Vec<crate::ui_cast::CastBarEdge> {
+        self.0
+            .iter()
+            .filter_map(|e| match e {
+                UiEvent::CastEdge(edge) => Some(edge.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The fired event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
@@ -1714,6 +1769,7 @@ impl UiEvents {
                 UiEvent::Write(_) => "<write>",
                 UiEvent::SystemLine(key, _) => key,
                 UiEvent::World(_) => "<world>",
+                UiEvent::CastEdge(_) => "<cast edge>",
             })
             .collect()
     }
@@ -1809,9 +1865,13 @@ pub(crate) fn fire_handler_events(world: &mut World) {
     let mut batch = Vec::new();
     while let Some(event) = events.pop_front() {
         match event {
-            UiEvent::World(step) => {
+            step @ (UiEvent::World(_) | UiEvent::CastEdge(_)) => {
                 fire_batch(world, &mut batch, &mut lines);
-                step(world);
+                match step {
+                    UiEvent::World(step) => step(world),
+                    UiEvent::CastEdge(edge) => crate::ui_cast::apply_edge(world, edge),
+                    _ => unreachable!(),
+                }
                 // What the step queued fires in its turn, ahead of the rest.
                 if let Some(mut queued) = world.get_resource_mut::<UiEvents>() {
                     for e in std::mem::take(&mut queued.0).into_iter().rev() {
@@ -1857,7 +1917,7 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
                     lines.extend(text.filter(|t| !t.is_empty()));
                 }
                 // Split out by the caller.
-                UiEvent::World(_) => {}
+                UiEvent::World(_) | UiEvent::CastEdge(_) => {}
             }
         }
     });
