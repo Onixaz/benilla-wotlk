@@ -1124,9 +1124,7 @@ fn bagnon_forevers_records_survive_the_logout_boundary() {
         "the login scan records the occupied slot's short link"
     );
 
-    // An equipped bag: the inventory slot (20) first, then the container and its `BAG_UPDATE`.
-    // The size row reads the bag item's own count and link, so the other order records the bag
-    // without its link.
+    // An equipped bag: the inventory slot (20) first, then the container and its `BAG_UPDATE`. The size row reads the bag item's own count and link, so the other order records the bag without its link.
     let mut inv: benilla_ui::script::InventorySlots = Default::default();
     inv[20] = Some(benilla_ui::script::InvSlotView {
         item_id: 4497,

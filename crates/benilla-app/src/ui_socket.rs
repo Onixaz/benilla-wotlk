@@ -1,8 +1,6 @@
 //! The socketing and purchase-refund round trips. The VM's socketing engine and refund verbs
 //! ([`benilla_ui::script`]) queue sends; here they go out, `SMSG_SOCKET_GEMS_RESULT` writes the
-//! socketed item's enchants (`0x7081b0`), the refund records (`item+0x3d4`) are asked and kept for
-//! the verbs to read at the call, and `SMSG_ITEM_REFUND_RESULT` prints its lines in its handler
-//! (`0x6d9b40`).
+//! socketed item's enchants (`0x7081b0`), the refund records (`item+0x3d4`) are asked and kept for the verbs to read at the call, and `SMSG_ITEM_REFUND_RESULT` prints its lines in its handler (`0x6d9b40`).
 
 use std::collections::{HashMap, HashSet};
 

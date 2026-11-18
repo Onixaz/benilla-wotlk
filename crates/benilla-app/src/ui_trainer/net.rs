@@ -96,8 +96,7 @@ fn on_list(
     }
 }
 
-/// The trainer setter takes the interact target (`0x594149`) for a new trainer only: the same one
-/// skips the whole setter (`0x5940fa`), and the active player skips the target call (`0x59413f`).
+/// The trainer setter takes the interact target (`0x594149`) for a new trainer only: the same one skips the whole setter (`0x5940fa`), and the active player skips the target call (`0x59413f`).
 fn takes_interact_target(previous: Option<u64>, trainer: u64, me: Option<u64>) -> bool {
     trainer != 0 && previous != Some(trainer) && me != Some(trainer)
 }

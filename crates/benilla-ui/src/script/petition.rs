@@ -1070,8 +1070,7 @@ mod tests {
         assert_eq!(held_slot(&s), Some(1));
     }
 
-    /// The list's show forgets the button's item with no lock event (`0x5a22cb`), the app keeping
-    /// its lock; an empty button forgets nothing.
+    /// The list's show forgets the button's item with no lock event (`0x5a22cb`), the app keeping its lock; an empty button forgets nothing.
     #[test]
     fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
         let mut s = vendor_with_charters();

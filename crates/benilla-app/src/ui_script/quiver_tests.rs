@@ -431,8 +431,7 @@ fn the_hawk_reminder_is_suppressed_only_once_frames_are_locked() {
     );
 }
 
-/// An arrow stack one lighter, its count watch's `BAG_UPDATE` fired as the update's handler fires
-/// it (`0x707805`), starts Quiver's reload.
+/// An arrow stack one lighter, its count watch's `BAG_UPDATE` fired as the update's handler fires it (`0x707805`), starts Quiver's reload.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {

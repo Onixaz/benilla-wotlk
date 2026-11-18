@@ -464,8 +464,7 @@ impl Plugin for UiActionPlugin {
                     // the identity feed that consumes its `dirty`, the state feed after it, so a
                     // slot's rank fix and first state land the same frame. The drains follow the
                     // input pass, in any order: a gesture fills only one of their queues.
-                    // The rank pass writes the store every lent view reads, so it runs ahead of
-                    // every VM holder, after the packets that dirty it.
+                    // The rank pass writes the store every lent view reads, so it runs ahead of every VM holder, after the packets that dirty it.
                     ranks::normalize_action_ranks
                         .in_set(ActionRanks)
                         .after(benilla_world::schedule::WorldStage::Net)

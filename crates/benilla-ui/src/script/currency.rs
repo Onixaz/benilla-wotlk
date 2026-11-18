@@ -50,9 +50,7 @@ pub struct CurrencyHoldings {
     pub items: std::collections::HashMap<u32, (Option<String>, Option<String>)>,
 }
 
-/// What a `ReloadUI` carries into the new VM, as these live outside the Lua state: the categories'
-/// open flags, set only at a world entry from the character screen (`0x5afd90`), the display list as
-/// its last build left it, and the records its builds still wait on.
+/// What a `ReloadUI` carries into the new VM, as these live outside the Lua state: the categories' open flags, set only at a world entry from the character screen (`0x5afd90`), the display list as its last build left it, and the records its builds still wait on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CurrencyFolds {
     collapsed: std::collections::HashMap<u32, bool>,
@@ -77,14 +75,12 @@ impl super::UiScript {
         set_field!(self, token_slots, slots);
     }
 
-    /// The display list build (`0x5b0030`) over the live tables and our currencies, as each of
-    /// 12340's triggers runs it before its event (`0x5b0640`, `0x5b0660`).
+    /// The display list build (`0x5b0030`) over the live tables and our currencies, as each of 12340's triggers runs it before its event (`0x5b0640`, `0x5b0660`).
     pub fn rebuild_currency_list(&mut self) {
         build(&mut self.model_mut());
     }
 
-    /// A record a build asked for landed, answered or denied: whether a build waited on it, so its
-    /// callback rebuilds and fires `CURRENCY_DISPLAY_UPDATE` (`0x5b01d7`, `0x5b0260` -> `0x5b0660`).
+    /// A record a build asked for landed, answered or denied: whether a build waited on it, so its callback rebuilds and fires `CURRENCY_DISPLAY_UPDATE` (`0x5b01d7`, `0x5b0260` -> `0x5b0660`).
     pub fn currency_record_landed(&mut self, item_id: u32) -> bool {
         let waited = self.model_mut().currency_waiting.remove(&item_id);
         if waited {
@@ -161,8 +157,7 @@ fn sorted_categories(catalog: &CurrencyCatalogView) -> Vec<&CurrencyCategoryView
 }
 
 /// The display list build (`0x5b0030`): a header per category with a row to show, then, expanded,
-/// its known rows not marked unused, or under the last category every row marked unused; each
-/// listed row's uncached record is asked for with the landing callback (`0x5b01d7`, `0x5b0260`).
+/// its known rows not marked unused, or under the last category every row marked unused; each listed row's uncached record is asked for with the landing callback (`0x5b01d7`, `0x5b0260`).
 fn build(model: &mut super::Model) {
     let h = holdings();
     let list = with_catalog(|c| display_list(model, c, h.as_ref())).unwrap_or_default();
@@ -290,8 +285,7 @@ fn index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64> {
 }
 
 /// The unused and backpack setters (`0x5b0440`, `0x5b0590`): a non-header row's bit set or cleared
-/// in the CVar pair, written with `%d` through the CVar store, never Lua's `SetCVar` (`0x5b04a4`);
-/// the verb rebuilds the list after (`0x5b09ff`, `0x5b0a6f`).
+/// in the CVar pair, written with `%d` through the CVar store, never Lua's `SetCVar` (`0x5b04a4`); the verb rebuilds the list after (`0x5b09ff`, `0x5b0a6f`).
 fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
     let mut model = super::model_mut_of(lua);
     let write = (|| {
@@ -386,8 +380,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 9)));
             };
-            // A header is unused when its category sorts last (`0x5b0518`), a row by its CVar bit,
-            // both read at the call (`0x5b071c`).
+            // A header is unused when its category sorts last (`0x5b0518`), a row by its CVar bit, both read at the call (`0x5b071c`).
             let unused = with_catalog(|c| {
                 if e.header {
                     sorted_categories(c)
@@ -693,8 +686,7 @@ mod tests {
         assert!(s.run("GetCurrencyListInfo()").is_err());
     }
 
-    /// The build asks only a listed row's uncached record (`0x5b01ef`); its landing rebuilds once
-    /// (`0x5b01d7` -> `0x5b0660`), a later landing of it nothing.
+    /// The build asks only a listed row's uncached record (`0x5b01ef`); its landing rebuilds once (`0x5b01d7` -> `0x5b0660`), a later landing of it nothing.
     #[test]
     fn the_build_asks_a_listed_rows_record_and_its_landing_rebuilds() {
         let (mut s, loan) = script();
