@@ -465,9 +465,43 @@ pub(crate) struct Items {
     /// is set up, counting seconds from then; they live as long as the player, here the session.
     /// `SMSG_ITEM_TIME_UPDATE` has no such list.
     pending_enchant_times: Vec<(u64, u32, u32)>,
+    /// The record callbacks waiting on their record, in ask order: `(entry, item, callback)`.
+    record_waiters: Vec<(u32, u64, RecordWait)>,
+}
+
+/// A record callback an item registered with its ask.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecordWait {
+    /// The post-init's (`0x70af17` -> `0x70ae90`).
+    PostInit,
+    /// The entry watch's (`0x7079cf` -> `0x7078e0`).
+    Entry,
 }
 
 impl Items {
+    /// The entry watch's drop of the old record (`0x7079bb`): the next read asks again.
+    pub(crate) fn evict_template(&mut self, entry: u32) {
+        self.templates.evict(entry);
+    }
+
+    /// `item`'s `callback`, run when `entry`'s record lands.
+    pub(crate) fn wait_record(&mut self, entry: u32, item: u64, callback: RecordWait) {
+        self.record_waiters.push((entry, item, callback));
+    }
+
+    /// The callbacks waiting on `entry`'s record, in ask order.
+    pub(crate) fn take_record_waiters(&mut self, entry: u32) -> Vec<(u64, RecordWait)> {
+        let mut taken = Vec::new();
+        self.record_waiters.retain(|&(e, item, callback)| {
+            let hit = e == entry;
+            if hit {
+                taken.push((item, callback));
+            }
+            !hit
+        });
+        taken
+    }
+
     /// Queue an `SMSG_ITEM_ENCHANT_TIME_UPDATE` for an item not held. The caller has checked the
     /// active player resolves: the reference drops the update when none does.
     pub(crate) fn queue_enchant_time(&mut self, guid: u64, slot: u32, seconds: u32) {
@@ -585,6 +619,7 @@ impl Items {
     /// item objects and their countdowns go with the index's sweep.
     pub(crate) fn clear_session(&mut self) {
         self.pending_enchant_times.clear();
+        self.record_waiters.clear();
         self.templates.clear_pending();
     }
 }

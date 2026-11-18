@@ -5747,6 +5747,140 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
     );
 }
 
+/// The inventory watch runs on the worn slots too (`0x6e51c5`-`0x6e51fb`): an equipped item unlocks at its new slot (`0x6dee39`) before the slot's `PLAYER_EQUIPMENT_CHANGED` (`0x6deea2`), an emptied slot fires it with the slot alone (`0x6dee81`); an owned item's entry change drops the old record (`0x7079bb`) and fires its container's `BAG_UPDATE` from the record callback, at once when cached (`0x707a07` -> `0x707949`), else when the record lands.
+#[test]
+fn a_worn_slot_and_an_entry_change_run_their_watches() {
+    use crate::pending_item_ops::PendingItemOps;
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const SWORD: u64 = 0x4000_0000_0000_0600;
+    const STONE: u64 = 0x4000_0000_0000_0601;
+    const SWORD_ENTRY: u32 = 25;
+    const OLD: u32 = 6948;
+    const CACHED: u32 = 4496;
+    const ASKED: u32 = 2589;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        [
+            (SWORD_ENTRY, "Worn Shortsword"),
+            (OLD, "Hearthstone"),
+            (CACHED, "Small Brown Pouch"),
+        ]
+        .into_iter()
+        .map(|(entry, name)| SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(crate::items::test_template(name))),
+        })
+        .collect(),
+        2,
+    );
+    let pair = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let item = |guid: u64, entry: u32| {
+        let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 1)];
+        pairs.extend(pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(pair(FIELD_ITEM_CONTAINED, ME));
+        SessionEvent::ItemCreate {
+            guid,
+            container: false,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+        }
+    };
+    let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+    rig.packets(
+        vec![
+            item(SWORD, SWORD_ENTRY),
+            item(STONE, OLD),
+            self_values(&pair(FIELD_PLAYER_PACK_SLOT_1, SWORD)),
+            self_values(&pair(FIELD_PLAYER_PACK_SLOT_1 + 2, STONE)),
+        ],
+        2,
+    );
+    rig.app
+        .world_mut()
+        .resource_mut::<PendingItemOps>()
+        .lock(SWORD);
+    let events = &[
+        "ITEM_LOCK_CHANGED",
+        "ITEM_UNLOCKED",
+        "PLAYER_EQUIPMENT_CHANGED",
+        "BAG_UPDATE",
+    ];
+    let mut words = pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15, SWORD).to_vec();
+    words.extend(pair(FIELD_PLAYER_PACK_SLOT_1, 0));
+    let seen = rig.packets(vec![self_values(&words)], 2);
+    assert_eq!(
+        pin(&seen, events, &[]),
+        [
+            "ITEM_LOCK_CHANGED 16",
+            "ITEM_UNLOCKED 16",
+            "PLAYER_EQUIPMENT_CHANGED 16 1",
+            "BAG_UPDATE 0",
+            "BAG_UPDATE -2",
+            "BAG_UPDATE -4",
+        ],
+        "the worn slot's watch runs first, in field order, and unlocks the item it now holds"
+    );
+    assert!(
+        !rig.app
+            .world()
+            .resource::<PendingItemOps>()
+            .is_locked(SWORD),
+        "the equipped item is unlocked"
+    );
+    let seen = rig.packets(vec![self_values(&pair(main_hand, 0))], 2);
+    assert_eq!(pin(&seen, events, &[]), ["PLAYER_EQUIPMENT_CHANGED 16"]);
+
+    // An entry change to a cached record: the callback at once, then the queued quest update.
+    let entry_events = &["BAG_UPDATE", "PLAYERBANKSLOTS_CHANGED", "QUEST_LOG_UPDATE"];
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: STONE,
+            fields: ObjectFields::from_pairs(&[(FIELD_OBJECT_ENTRY, CACHED)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, entry_events, &[]),
+        [
+            "BAG_UPDATE 0",
+            "BAG_UPDATE -2",
+            "BAG_UPDATE -4",
+            "QUEST_LOG_UPDATE"
+        ]
+    );
+    let items = rig.app.world().resource::<crate::items::Items>();
+    assert!(
+        items.template_cached(OLD).is_none(),
+        "the old record is dropped"
+    );
+    assert!(items.template_cached(CACHED).is_some());
+    // An entry change to an uncached record: the quest update now, the callback when it lands.
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: STONE,
+            fields: ObjectFields::from_pairs(&[(FIELD_OBJECT_ENTRY, ASKED)]),
+        }],
+        2,
+    );
+    assert_eq!(pin(&seen, entry_events, &[]), ["QUEST_LOG_UPDATE"]);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: ASKED,
+            info: Some(Box::new(crate::items::test_template("Red Woolen Bag"))),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["BAG_UPDATE"], &[]),
+        ["BAG_UPDATE 0", "BAG_UPDATE -2", "BAG_UPDATE -4"],
+        "the record callback runs when the record lands"
+    );
+}
+
 /// A watched bag's slot watch runs once per slot field (`0x5d9600`, registered per slot at `0x5d9af8`): a swap inside a bag unlocks each slot's new item before that slot's `BAG_UPDATE`; the count watch unlocks every stack of a stackable kind at its place (`0x7077c1` -> `0x754d90`); the enchant watch unlocks nothing and returns on a charter (`0x707f6b`); `BAG_OPEN` names the container (`0x5d7110`).
 #[test]
 fn a_bag_slot_count_and_enchant_watch_each_run_their_own_handler() {

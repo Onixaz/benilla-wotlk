@@ -256,10 +256,21 @@ pub(crate) fn inv_slot_changed(world: &mut World, slot: u8, old: u64, new: u64) 
     let me = world
         .get_resource::<crate::net::SelfGuid>()
         .and_then(|s| s.0);
-    // The inventory watch (`0x6dedd0`), on every slot but the pack's (`0x6e51fd`): a changed slot's new item unlocks (`0x6dee39`), a vault or bank-bag slot fires its event (`0x6deed6`).
-    if !(23..=38).contains(&slot) {
+    // The inventory watch (`0x6dedd0`), on the worn, vault, bank-bag, keyring and token slots (`0x6e51c5`-`0x6e52c3`): a changed slot's new item unlocks (`0x6dee39`), a worn slot fires its equipment event (`0x6dee81`, `0x6deea2`), a vault or bank-bag slot its bank event (`0x6deed6`).
+    if matches!(slot, 0..=22 | 39..=73 | 86..=149) {
         if old != new {
             unlock_item(world, new);
+        }
+        if let (0..=18, Some(mut ui)) = (slot, world.get_resource_mut::<UiEvents>()) {
+            let id = i64::from(slot) + 1;
+            if new != 0 {
+                ui.fire(
+                    "PLAYER_EQUIPMENT_CHANGED",
+                    vec![ScriptValue::Int(id), ScriptValue::Int(1)],
+                );
+            } else {
+                ui.fire("PLAYER_EQUIPMENT_CHANGED", vec![ScriptValue::Int(id)]);
+            }
         }
         if (39..=73).contains(&slot) {
             if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
@@ -363,6 +374,12 @@ fn character_item_updated(world: &mut World, item: u64) {
             vec![ScriptValue::Int(i64::from(s) - 38)],
         );
     }
+}
+
+/// The entry watch's record callback (`0x7078e0`): its container's `BAG_UPDATE` (`0x707949`) and the character page's slot event (`0x707955`).
+pub(crate) fn entry_record(world: &mut World, item: u64) {
+    item_updated(world, item);
+    character_item_updated(world, item);
 }
 
 /// The template's stack size and flags, `None` uncached.
