@@ -367,8 +367,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(move |lua, i: Value| {
             let i =
                 super::binding_abi::number_arg(lua, i, "Usage: GetPetActionSlotsUsable(index)")?;
-            // The slot word is read at the call; the usability walk's answer is the slot feed's
-            // (#1325).
+            // The slot word is read at the call; the usability walk's answer is the slot push's.
             let usable = u32::try_from(i)
                 .ok()
                 .filter(|&i| live_slot(lua, i).is_some())

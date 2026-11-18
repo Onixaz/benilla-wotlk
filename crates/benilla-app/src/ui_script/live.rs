@@ -731,7 +731,7 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     /// The slot word at the call (`0x5d4ec0`), its cooldown asked of the pet's history
-    /// (`0x5d5345`); its usability is the slot feed's (#1325).
+    /// (`0x5d5345`); its usability is `feed_pet_slot_usable`'s push.
     fn pet_action(
         &self,
         index: usize,

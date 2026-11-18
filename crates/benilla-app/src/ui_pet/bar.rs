@@ -312,9 +312,8 @@ pub(crate) fn action_live(
     Some(view)
 }
 
-/// Push the ten `GetPetActionSlotUsable` answers on a change, with no event: the stock bar reads
-/// them on its own repaints. The walk reads the selection and the bags, which the press appliers
-/// holding the VM write, so the view cannot lend them yet (#1325).
+/// Push the ten `GetPetActionSlotUsable` answers, with no event; the walk's selection and bags are
+/// written by press appliers that hold the VM, which do not yet lend their own borrow of them.
 pub(crate) fn feed_pet_slot_usable(
     (script, _live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
