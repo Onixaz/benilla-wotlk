@@ -650,6 +650,85 @@ pub trait LiveState {
     ) -> Option<super::ItemSetView> {
         None
     }
+
+    /// Whether a guild banker is open (`0xc1dc10`).
+    fn guild_bank_open(&self) -> bool {
+        false
+    }
+
+    /// The current guild bank tab, 0-based (`0xc1dc0d`).
+    fn guild_bank_current_tab(&self) -> u8 {
+        0
+    }
+
+    /// `SetCurrentGuildBankTab`'s write (`0x5a43c0`).
+    fn set_guild_bank_current_tab(&mut self, _tab: u8) {}
+
+    /// The bought guild bank tabs (`0xc1dc0c`).
+    fn guild_bank_num_tabs(&self) -> u8 {
+        0
+    }
+
+    /// Tab `tab`'s name, icon and text (`0xc11458`); `None` past the six.
+    fn guild_bank_tab(&self, _tab: u8) -> Option<super::GuildBankTabView> {
+        None
+    }
+
+    /// Slot `(tab, slot)`'s item id and count; `None` for an empty or unlisted slot (`0x5a4c10`).
+    fn guild_bank_item(&self, _tab: u8, _slot: u8) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Slot `(tab, slot)` resolved at the call: icon, link, name, enchants and stack size.
+    fn guild_bank_slot(&self, _tab: u8, _slot: u8) -> Option<super::GuildBankSlotView> {
+        None
+    }
+
+    /// Slot `(tab, slot)`'s icon alone, the read `GetGuildBankItemInfo` makes per slot (`0x5a6000`).
+    fn guild_bank_texture(&self, tab: u8, slot: u8) -> Option<String> {
+        self.guild_bank_slot(tab, slot).and_then(|s| s.texture)
+    }
+
+    /// Whether slot `(tab, slot)` holds `item_id` locked (`0x5a4c40`).
+    fn guild_bank_locked(&self, _tab: u8, _slot: u8, _item_id: u32) -> bool {
+        false
+    }
+
+    /// Lock or unlock slot `(tab, slot)` while it holds `item_id` (`0x5a4c90`, `0x5a4ce0`).
+    fn set_guild_bank_lock(&mut self, _tab: u8, _slot: u8, _item_id: u32, _locked: bool) {}
+
+    /// The last list's item withdrawals left (`0xc1dc30`).
+    fn guild_bank_withdrawals(&self) -> i32 {
+        0
+    }
+
+    /// The guild bank's money (`0xc1dc20`).
+    fn guild_bank_money(&self) -> u64 {
+        0
+    }
+
+    /// Today's money withdrawal left (`0xc1dc34`), -1 unlimited.
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        0
+    }
+
+    /// The rows of log `tab`, 6 the money log.
+    fn guild_bank_log_len(&self, _tab: u8) -> usize {
+        0
+    }
+
+    /// Row `index` of log `tab` resolved at the call.
+    fn guild_bank_log(&self, _tab: u8, _index: u8) -> Option<super::GuildBankLogView> {
+        None
+    }
+
+    /// The banker setter's clear with no banker (`0x5a4270`): both bankers zeroed.
+    fn clear_guild_banker(&mut self) {}
+
+    /// `QueryGuildBankText`'s gate and send (`0x5a5940`): `true` when the text answers at once.
+    fn guild_bank_query_text(&mut self, _tab: u8) -> bool {
+        true
+    }
 }
 
 /// A lent view's address, its lifetime erased.
@@ -971,6 +1050,15 @@ pub(crate) struct TestView {
     pub pet_stops: Cell<u32>,
     /// The 0-based slots the bar toggle reached past its gate, in order.
     pub pet_toggles: std::cell::RefCell<Vec<u32>>,
+    /// The guild bank, its locks as `(tab, slot, item)`, the current tab and the two moneys.
+    pub guild_bank: super::GuildBankView,
+    pub guild_bank_locks: Vec<(u8, u8, u32)>,
+    pub guild_bank_tab: u8,
+    pub guild_bank_money: u64,
+    pub guild_bank_withdraw_money: i32,
+    /// The tabs whose text is stale, and the text asks sent, in order.
+    pub guild_bank_text_stale: Vec<u8>,
+    pub guild_bank_text_sent: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -985,6 +1073,92 @@ impl TestView {
 impl LiveState for TestView {
     fn item_tables(&self) -> Option<&super::ItemTables> {
         self.item_tables.as_ref()
+    }
+
+    fn guild_bank_open(&self) -> bool {
+        self.guild_bank.open
+    }
+
+    fn guild_bank_current_tab(&self) -> u8 {
+        self.guild_bank_tab
+    }
+
+    fn set_guild_bank_current_tab(&mut self, tab: u8) {
+        self.guild_bank_tab = tab;
+    }
+
+    fn guild_bank_num_tabs(&self) -> u8 {
+        self.guild_bank.num_tabs
+    }
+
+    fn guild_bank_tab(&self, tab: u8) -> Option<super::GuildBankTabView> {
+        self.guild_bank.tabs.get(usize::from(tab)).cloned()
+    }
+
+    fn guild_bank_item(&self, tab: u8, slot: u8) -> Option<(u32, u32)> {
+        self.guild_bank
+            .slot(usize::from(tab), usize::from(slot))
+            .map(|s| (s.item_id, s.count))
+    }
+
+    fn guild_bank_slot(&self, tab: u8, slot: u8) -> Option<super::GuildBankSlotView> {
+        self.guild_bank
+            .slot(usize::from(tab), usize::from(slot))
+            .cloned()
+    }
+
+    fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
+        self.guild_bank_locks.contains(&(tab, slot, item_id))
+    }
+
+    fn set_guild_bank_lock(&mut self, tab: u8, slot: u8, item_id: u32, locked: bool) {
+        if self.guild_bank_item(tab, slot).map(|(id, _)| id) != Some(item_id) {
+            return;
+        }
+        self.guild_bank_locks.retain(|&l| l != (tab, slot, item_id));
+        if locked {
+            self.guild_bank_locks.push((tab, slot, item_id));
+        }
+    }
+
+    fn guild_bank_withdrawals(&self) -> i32 {
+        self.guild_bank.withdrawals_remaining
+    }
+
+    fn guild_bank_money(&self) -> u64 {
+        self.guild_bank_money
+    }
+
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        self.guild_bank_withdraw_money
+    }
+
+    fn guild_bank_log_len(&self, tab: u8) -> usize {
+        self.guild_bank
+            .logs
+            .get(usize::from(tab))
+            .map_or(0, Vec::len)
+    }
+
+    fn guild_bank_log(&self, tab: u8, index: u8) -> Option<super::GuildBankLogView> {
+        self.guild_bank
+            .logs
+            .get(usize::from(tab))?
+            .get(usize::from(index))
+            .cloned()
+    }
+
+    fn clear_guild_banker(&mut self) {
+        self.guild_bank.open = false;
+    }
+
+    fn guild_bank_query_text(&mut self, tab: u8) -> bool {
+        if !self.guild_bank.open || !self.guild_bank_text_stale.contains(&tab) {
+            return true;
+        }
+        self.guild_bank_text_stale.retain(|&t| t != tab);
+        self.guild_bank_text_sent.push(tab);
+        false
     }
 
     fn banker(&self) -> Option<u64> {

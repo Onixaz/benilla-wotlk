@@ -471,7 +471,11 @@ pub(crate) mod net {
             .net_handler(K::InvalidatePlayer, on_invalidate_player);
     }
 
-    fn on_player_name(In(ev): In<SessionEvent>, mut names: ResMut<NameCache>) {
+    fn on_player_name(
+        In(ev): In<SessionEvent>,
+        mut names: ResMut<NameCache>,
+        mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    ) {
         if let SessionEvent::PlayerName {
             guid,
             name,
@@ -490,6 +494,8 @@ pub(crate) mod net {
             );
             player_name(guid, name, race, class, gender, &mut names);
             names.set_player_realm(guid, realm);
+            // The record's callbacks run once it is cached (`0x5a47d0`).
+            ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
         }
     }
 
@@ -497,9 +503,14 @@ pub(crate) mod net {
         In(ev): In<SessionEvent>,
         mut names: ResMut<NameCache>,
         commands: Res<NetCommands>,
+        mut ui: ResMut<crate::ui_script::live::UiEvents>,
     ) {
         if let SessionEvent::PlayerNameMiss { guid, miss } = ev {
             names.player_name_miss(guid, miss, &commands);
+            // A placeholder or a denial ends the ask, its callbacks told (`0x635849`, `0x63583f`); a retry asks again.
+            if miss != benilla_protocol::messages::NameQueryMiss::Retry {
+                ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
+            }
         }
     }
 

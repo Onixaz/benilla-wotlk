@@ -357,12 +357,6 @@ pub(crate) struct Model {
     pub(crate) guild_requests: Vec<guild::GuildRequest>,
     /// The guild event log as the app pushes it, oldest first.
     pub(crate) guild_event_log: Vec<guild::GuildEventView>,
-    /// The guild bank as the app pushes it.
-    pub(crate) guild_bank: super::guild_bank::GuildBankView,
-    /// The current bank tab, 0-based (`0xc1dc0d`).
-    pub(crate) guild_bank_tab: u8,
-    /// Locked bank slots as `(tab, slot, item id)`, the reference's per-slot lock (`0x5a4c90`).
-    pub(crate) guild_bank_locks: Vec<(u8, u8, u32)>,
     /// Guild bank sends, queued for the app.
     pub(crate) guild_bank_requests: Vec<super::guild_bank::GuildBankRequest>,
     /// The charter price and open petition, names resolved from caches as the reference does.
@@ -1448,9 +1442,6 @@ impl Model {
             guild_control: guild::GuildRankEdit::default(),
             guild_requests: Vec::new(),
             guild_event_log: Vec::new(),
-            guild_bank: Default::default(),
-            guild_bank_tab: 0,
-            guild_bank_locks: Vec::new(),
             guild_bank_requests: Vec::new(),
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),

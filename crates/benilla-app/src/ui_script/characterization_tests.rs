@@ -138,6 +138,16 @@ local VERBS = {
     { "slots5", function() return GetContainerNumSlots(5) end },
     { "name5", function() return GetBagName(5) end },
     { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
+    { "gbtabs", function() return GetNumGuildBankTabs() end },
+    { "gbtab1", function() return (GetGuildBankTabInfo(1)) end },
+    { "gbtab2", function() return (GetGuildBankTabInfo(2)) end },
+    { "gbleft", function() return (select(6, GetGuildBankTabInfo(1))) end },
+    { "gbcount4", function() return (select(2, GetGuildBankItemInfo(1, 4))) end },
+    { "gbmoney", function() return GetGuildBankMoney() end },
+    { "gbwithdraw", function() return GetGuildBankWithdrawMoney() end },
+    { "gblog", function() return GetNumGuildBankTransactions(1) end },
+    { "gblogname", function() return (select(2, GetGuildBankTransaction(1, 1))) end },
+    { "gbtext", function() return GetGuildBankText(1) end },
 }
 local function answers()
     local verbs = {}
@@ -3815,7 +3825,7 @@ fn only_an_open_reaching_the_setter_closes_the_bank() {
         let world = rig.app.world_mut();
         let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
         world
-            .resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
             .talk(BANKER + 5, &net);
     }
     let seen = rig.packets(vec![list()], 2);
@@ -6375,5 +6385,164 @@ fn the_banks_open_closes_the_vendor_holding_the_target() {
     assert!(
         order.iter().any(|e| e == "MERCHANT_CLOSED"),
         "the vendor's close fired: {order:?}"
+    );
+}
+
+/// The guild bank's handlers fire in 12340's turn with the verbs reading the bank at the call: the hello's list fires each tab row's `GUILDBANK_UPDATE_TABS` after that row and before the slots (`0x5a73f6`), then `GUILDBANKFRAME_OPENED` (`0x5a774c`); an open bank's list waits on an uncached record and fires `GUILDBANKBAGSLOTS_CHANGED` from its callback (`0x5a767c`, `0x5a47a0`), or at once with the record cached (`0x5a76c7`); the log waits on its names (`0x5a4a34`, `0x5a47d0`); the money, the withdrawal and the text fire from their handlers (`0x6d97ad`, `0x5a4ab0`, `0x5a4ae0`); the quit closes the bank (`0x6cc630`).
+#[test]
+fn the_guild_bank_fires_from_its_handlers_with_the_bank_read_at_the_call() {
+    use benilla_protocol::messages::{
+        guild_command, guild_command_error, guild_event, GuildBankList, GuildBankLog,
+        GuildBankLogEntry, GuildBankSlot, GuildBankTab, GuildCommandResult, GuildEventNotice,
+    };
+    const BANK: &[&str] = &[
+        "GUILDBANK_UPDATE_TABS",
+        "GUILDBANKFRAME_OPENED",
+        "GUILDBANKFRAME_CLOSED",
+        "GUILDBANKBAGSLOTS_CHANGED",
+        "GUILDBANKLOG_UPDATE",
+        "GUILDBANK_UPDATE_MONEY",
+        "GUILDBANK_UPDATE_WITHDRAWMONEY",
+        "GUILDBANK_UPDATE_TEXT",
+    ];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    // A guild banker held beside us, so the walk-away watchdog keeps it open.
+    const VAULT: u64 = BANKER + 9;
+    rig.packets(vec![npc_create(VAULT, 0x80_0000)], 2);
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(VAULT, &net);
+    }
+    let slot = |slot: u8, item_id: u32, count: u32| GuildBankSlot {
+        slot,
+        item_id,
+        count,
+        ..Default::default()
+    };
+    let template = |entry: u32| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template("Linen Cloth"))),
+    };
+    let list = |slots: Vec<GuildBankSlot>, tabs: Option<Vec<GuildBankTab>>| {
+        SessionEvent::GuildBankList(GuildBankList {
+            money: 1234,
+            tab: 0,
+            withdrawals_remaining: 5,
+            tabs,
+            slots,
+        })
+    };
+    let tab = |name: &str| GuildBankTab {
+        name: name.into(),
+        icon: "INV_Misc_Bag_10".into(),
+    };
+    // The hello's answer: each row's event after that row, the slots after both, then the open.
+    let seen = rig.packets(
+        vec![
+            template(2589),
+            list(vec![slot(3, 2589, 20)], Some(vec![tab("Mats"), tab("Ore")])),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            BANK,
+            &["gbtabs", "gbtab1", "gbtab2", "gbleft", "gbcount4", "gbmoney"]
+        ),
+        [
+            "GUILDBANK_UPDATE_TABS | gbtabs=2 gbtab1=Mats gbtab2=Tab2 gbleft=5 gbcount4=0 gbmoney=1234",
+            "GUILDBANK_UPDATE_TABS | gbtabs=2 gbtab1=Mats gbtab2=Ore gbleft=5 gbcount4=0 gbmoney=1234",
+            "GUILDBANKFRAME_OPENED | gbtabs=2 gbtab1=Mats gbtab2=Ore gbleft=5 gbcount4=20 gbmoney=1234",
+        ]
+    );
+    // An open bank's list with a record not cached waits for it; its landing fires the event.
+    let seen = rig.packets(vec![list(vec![slot(3, 4306, 7)], None)], 2);
+    assert!(fired(&seen, BANK).is_empty(), "{:?}", fired(&seen, BANK));
+    let seen = rig.packets(vec![template(4306)], 2);
+    assert_eq!(
+        pin(&seen, BANK, &["gbcount4"]),
+        ["GUILDBANKBAGSLOTS_CHANGED | gbcount4=7"]
+    );
+    // The record cached first, the list fires at once.
+    let seen = rig.packets(vec![list(vec![slot(3, 4306, 9)], None)], 2);
+    assert_eq!(
+        pin(&seen, BANK, &["gbcount4"]),
+        ["GUILDBANKBAGSLOTS_CHANGED | gbcount4=9"]
+    );
+    // The log waits on its row's name; the name's answer fires it.
+    const WRITER: u64 = 0x42;
+    let log = SessionEvent::GuildBankLog(GuildBankLog {
+        tab: 0,
+        entries: vec![GuildBankLogEntry {
+            kind: 1,
+            player: WRITER,
+            item_id: 4306,
+            count: 2,
+            ..Default::default()
+        }],
+    });
+    let seen = rig.packets(vec![log], 2);
+    assert!(fired(&seen, BANK).is_empty(), "{:?}", fired(&seen, BANK));
+    let name = SessionEvent::PlayerName {
+        guid: WRITER,
+        name: "Benilla".into(),
+        realm: String::new(),
+        race: 1,
+        gender: 0,
+        class: 1,
+        declensions: None,
+    };
+    let seen = rig.packets(vec![name], 2);
+    assert_eq!(
+        pin(&seen, BANK, &["gblog", "gblogname"]),
+        ["GUILDBANKLOG_UPDATE | gblog=1 gblogname=Benilla"]
+    );
+    // The withdrawal, the money and the text, each from its handler in wire order.
+    let money = SessionEvent::GuildEvent(GuildEventNotice {
+        event: guild_event::BANK_MONEY_SET,
+        params: vec!["0000000000002710".into()],
+        guid: None,
+    });
+    let seen = rig.packets(
+        vec![
+            SessionEvent::GuildBankWithdrawMoney { remaining: 500 },
+            money,
+            SessionEvent::GuildBankText {
+                tab: 0,
+                text: "hello".into(),
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK, &["gbmoney", "gbwithdraw", "gbtext"]),
+        [
+            "GUILDBANK_UPDATE_WITHDRAWMONEY | gbmoney=1234 gbwithdraw=500 gbtext=",
+            "GUILDBANK_UPDATE_MONEY | gbmoney=10000 gbwithdraw=500 gbtext=",
+            "GUILDBANK_UPDATE_TEXT 1 | gbmoney=10000 gbwithdraw=500 gbtext=hello",
+        ]
+    );
+    // Leaving the guild closes the bank, and the stock window's hide calls `CloseGuildBankFrame`, which fires it again (`0x5a4500`); a list then has no banker and none asked: closed once more (`0x5a76ef`).
+    let quit = SessionEvent::GuildCommandResult(GuildCommandResult {
+        command: guild_command::QUIT,
+        name: "Benilla".into(),
+        result: guild_command_error::PLAYER_NO_MORE_IN_GUILD,
+    });
+    let seen = rig.packets(vec![quit, list(Vec::new(), None)], 2);
+    assert_eq!(
+        fired(&seen, BANK),
+        [
+            "GUILDBANKFRAME_CLOSED",
+            "GUILDBANKFRAME_CLOSED",
+            "GUILDBANKFRAME_CLOSED"
+        ]
     );
 }

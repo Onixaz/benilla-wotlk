@@ -483,6 +483,8 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             debug!("net: item template {entry} → {info:?}");
             sc.items.insert_template(entry, info);
             crate::ui_currency::record_landed(&mut sc.ui, entry);
+            sc.ui
+                .world(move |world| crate::ui_guild_bank::item_landed(world, entry));
             // The callbacks that asked for this record, in ask order; each needs its item held and the record found (`0x70aeb6`, `0x70aebc`; `0x7078e7`).
             for (item, callback) in sc.items.take_record_waiters(entry) {
                 let Some(fields) = sc.index.0.get(&item).and_then(|&e| sc.stores.get(e).ok())
@@ -1689,6 +1691,20 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 }
             });
         }
+        // Its guild bank leg (`0x71a1eb`-`0x71a216`): the guild banker bit lost on the open guild banker.
+        if old & NPC_FLAG_GUILD_BANKER != 0 && new & NPC_FLAG_GUILD_BANKER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_non_send_resource::<crate::ui_guild_bank::GuildBankState>()
+                    .is_some_and(|b| b.banker() == Some(guid));
+                if let (true, Some(mut ui)) = (
+                    open,
+                    world.get_resource_mut::<crate::ui_script::live::UiEvents>(),
+                ) {
+                    crate::ui_guild_bank::set_guild_banker_none(&mut ui);
+                }
+            });
+        }
     }
     if sc.self_guid.0 != Some(guid) {
         return;
@@ -1916,6 +1932,13 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             own_slot_watches(sc, guid, edges, at);
             continue;
         }
+        // The guild id's watch on the active player: the guild bank's tabs clear (`0x6e1bb0`).
+        if index == benilla_protocol::field::FIELD_PLAYER_GUILDID {
+            if old != new {
+                crate::ui_guild_bank::guild_id_changed(&mut sc.ui);
+            }
+            continue;
+        }
         // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
         if index == benilla_protocol::field::FIELD_PLAYER_BYTES_2 {
             if (old >> 16) as u8 != (new >> 16) as u8 {
@@ -2063,6 +2086,7 @@ fn merge_fields(
                 && (crate::ui_honor::is_honor_watch(e.index)
                     || crate::ui_arena_team::is_team_info(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index))
             {
@@ -2086,6 +2110,9 @@ const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 
 /// `UNIT_NPC_FLAG_BANKER`, the bit the NPC-flag watch's bank leg tests (`0x71a1a8`).
 const NPC_FLAG_BANKER: u32 = 0x20000;
+
+/// `UNIT_NPC_FLAG_GUILD_BANKER`, the bit the NPC-flag watch's guild bank leg tests (`0x71a1eb`).
+const NPC_FLAG_GUILD_BANKER: u32 = 0x80_0000;
 
 /// What [`merge_fields`] saw.
 #[derive(Default)]

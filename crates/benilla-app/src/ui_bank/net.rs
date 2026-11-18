@@ -6,7 +6,6 @@ use bevy::prelude::*;
 use super::BankOpen;
 use crate::net::{GuidIndex, NetHandlerApp, ObjectStore};
 use crate::ui_gossip::GossipState;
-use crate::ui_guild_bank::GuildBankState;
 use crate::ui_quest::QuestGiver;
 
 /// Register the bank handlers and the session-end listener.
@@ -29,7 +28,6 @@ pub(super) fn register(app: &mut App) {
         .net_handler_first(K::AuctionHello, on_interact_target_taken)
         .net_handler_first(K::ListStabledPets, on_interact_target_taken)
         .net_handler_first(K::ShowMailbox, on_interact_target_taken)
-        .net_handler_first(K::GuildBankList, on_interact_target_taken)
         .net_handler_first(K::BattlefieldList, on_interact_target_taken)
         .net_handler_first(K::TradeStatus, on_interact_target_taken);
 }
@@ -47,7 +45,6 @@ fn on_interact_target_taken(
     In(ev): In<SessionEvent>,
     bank: NonSend<BankOpen>,
     quest: NonSend<QuestGiver>,
-    guild_bank: Option<Res<GuildBankState>>,
     index: Option<Res<GuidIndex>>,
     stores: Query<&ObjectStore>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
@@ -69,8 +66,6 @@ fn on_interact_target_taken(
                 && (list.bg_type == benilla_ui::script::RANDOM_BATTLEGROUND || !list.from_anywhere)
         }
         SessionEvent::TradeStatus { status } => matches!(status, TradeStatus::OpenWindow { .. }),
-        // Only the list answering a hello with no banker open opens the window (`0x5a76b3`-`0x5a772b`).
-        SessionEvent::GuildBankList(_) => guild_bank.is_some_and(|g| g.list_opens()),
         // A held player's share onto an open window answers busy and opens nothing (`0x6d0753`-`0x6d07d0`).
         SessionEvent::QuestDetail(d)
             if benilla_protocol::guid::is_player(d.npc) && held(d.npc, 0x8) && quest.is_open() =>

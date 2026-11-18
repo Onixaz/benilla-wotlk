@@ -108,8 +108,6 @@ pub(super) fn feed_guild(
             .collect(),
         selection,
         show_offline: guild.show_offline,
-        bank_money: guild.bank_money,
-        bank_withdraw_money: guild.bank_withdraw_money,
         tabard: guild.in_guild().then(|| guild.own_tabard()).flatten(),
     });
 
@@ -121,12 +119,6 @@ pub(super) fn feed_guild(
         let _ = commands
             .0
             .send(ClientCommand::GuildBankMoneyWithdrawnRequest);
-    }
-    if std::mem::take(&mut guild.bank_money_event) {
-        script.fire_event("GUILDBANK_UPDATE_MONEY", Vec::new());
-    }
-    if std::mem::take(&mut guild.bank_withdraw_event) {
-        script.fire_event("GUILDBANK_UPDATE_WITHDRAWMONEY", Vec::new());
     }
 
     // `GUILD_ROSTER_UPDATE`; `super::RosterUpdate` decides whether it carries arg1.
