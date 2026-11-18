@@ -1,6 +1,6 @@
 //! WDL, the low-detail distant terrain: loader and coarse mesher. One `.wdl` per map holds the
 //! whole 64×64-tile world at one height per MCNK, the horizon the reference draws beyond the
-//! streamed tiles out to `horizonfarclip`, unlit, untextured, vertex-white and fogged.
+//! streamed tiles out to `horizonFarclipScale × farclip`, unlit, untextured, vertex-white and fogged.
 //!
 //! Layout: `MVER` (version 18), `MAOF` (4096 `u32` tile offsets, `[tile_y][tile_x]`), then per
 //! present tile a `MARE` of 17×17 outer and 16×16 inner `int16` heights; vanilla Azeroth has no
@@ -45,6 +45,26 @@ pub struct WdlTileMesh {
     pub indices: Vec<u32>,
 }
 
+/// The tile box the horizon walk visits (`0x7cc0b0`), as inclusive tile ranges: `cols` are
+/// `tile_x` (from world `y`), `rows` are `tile_y` (from world `x`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HorizonWalk {
+    pub cols: std::ops::RangeInclusive<i32>,
+    pub rows: std::ops::RangeInclusive<i32>,
+}
+
+/// The reference's horizon walk (`0x7cc0b0`): the viewer's chunk on each axis, `(17066.666 − p) ×
+/// 0.03` less 0.5 rounded to nearest, then `((chunk ∓ radius) >> 4) ∓ 2` tiles, clamped to 0..=63.
+pub fn horizon_walk(world_x: f32, world_y: f32, radius_chunks: i32) -> HorizonWalk {
+    let chunk = |w: f32| (-(w - 17066.666_f32) * 0.03_f32 - 0.5).round_ties_even() as i32;
+    let span =
+        |c: i32| (((c - radius_chunks) >> 4) - 2).max(0)..=(((c + radius_chunks) >> 4) + 2).min(63);
+    HorizonWalk {
+        cols: span(chunk(world_y)),
+        rows: span(chunk(world_x)),
+    }
+}
+
 /// The MAOF index of a tile, row-major over `tile_y` as on disk and in `benilla_wdt`.
 fn tile_index(tile_x: u32, tile_y: u32) -> usize {
     tile_y as usize * 64 + tile_x as usize
@@ -75,26 +95,14 @@ impl WdlFile {
         (0..4096u32).filter_map(move |i| self.tiles[i as usize].as_ref().map(|_| (i % 64, i / 64)))
     }
 
-    /// Present tiles within a Chebyshev `radius` of world `(x, y)`, the centre tile included, as
-    /// the reference's far walk visits a ±3-tile window. Below a tile of view distance (vanilla
-    /// goes down to 177) the camera's own tile draws the near horizon, and without it sky shows
-    /// through; the far band's near plane in `wdl.wgsl` alone bounds that side.
-    pub fn tiles_in_ring(&self, world_x: f32, world_y: f32, radius: u32) -> Vec<(u32, u32)> {
-        let (cx, cy) = benilla_wdt::world_to_tile(world_x, world_y);
-        let r = radius as i32;
-        let mut out = Vec::new();
-        for dy in -r..=r {
-            for dx in -r..=r {
-                let (tx, ty) = (cx as i32 + dx, cy as i32 + dy);
-                if (0..64).contains(&tx)
-                    && (0..64).contains(&ty)
-                    && self.is_present(tx as u32, ty as u32)
-                {
-                    out.push((tx as u32, ty as u32));
-                }
-            }
-        }
-        out
+    /// Present tiles in the reference's horizon walk around world `(x, y)` ([`horizon_walk`]),
+    /// row by row.
+    pub fn tiles_in_walk(&self, world_x: f32, world_y: f32, radius_chunks: i32) -> Vec<(u32, u32)> {
+        let walk = horizon_walk(world_x, world_y, radius_chunks);
+        walk.rows
+            .flat_map(|row| walk.cols.clone().map(move |col| (col as u32, row as u32)))
+            .filter(|&(tx, ty)| self.is_present(tx, ty))
+            .collect()
     }
 
     /// The coarse centre-fan mesh of tile `(tile_x, tile_y)`. Vertex X/Y come from the global
@@ -266,6 +274,33 @@ fn parse_wdl(bytes: &[u8]) -> Result<WdlFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The walk's box from the reference's sums: the viewer's chunk ± the radius, shifted to
+    /// tiles, two tiles of margin, held to the grid.
+    #[test]
+    fn the_horizon_walk_is_the_references_box() {
+        // Chunk 512 on both axes (world −15, −15: 512.45 less 0.5); 4 × 777 × 0.03 = 93 chunks.
+        let w = horizon_walk(-15.0, -15.0, 93);
+        assert_eq!(w.cols, ((512 - 93) >> 4) - 2..=((512 + 93) >> 4) + 2);
+        assert_eq!(w.cols, 24..=39);
+        assert_eq!(w.rows, w.cols);
+        // The minimum view distance at the minimum scale: 3 × 550/3 × 0.03 = 16 chunks.
+        assert_eq!(horizon_walk(-15.0, -15.0, 16).cols, 29..=35);
+        // Near the map's corner the box is clamped, never negative or past 63.
+        let corner = horizon_walk(17000.0, -17000.0, 190);
+        assert_eq!(*corner.rows.start(), 0);
+        assert_eq!(*corner.cols.end(), 63);
+    }
+
+    /// Columns follow world `y` and rows world `x`, the `tile_x`/`tile_y` of `benilla_wdt`.
+    #[test]
+    fn the_walk_centres_on_the_viewers_own_tile() {
+        let (x, y) = (-5841.9_f32, -3802.4);
+        let (tx, ty) = benilla_wdt::world_to_tile(x, y);
+        let w = horizon_walk(x, y, 0);
+        assert_eq!(w.cols, tx as i32 - 2..=tx as i32 + 2);
+        assert_eq!(w.rows, ty as i32 - 2..=ty as i32 + 2);
+    }
 
     #[test]
     fn tile_index_is_row_major_over_y() {

@@ -1242,6 +1242,11 @@ mod tests {
         assert_eq!(d["farclip"], benilla_world::view::FARCLIP_DEFAULT);
         assert_eq!(d["nearclip"], benilla_world::view::NEARCLIP_DEFAULT);
         assert_eq!(
+            d["horizonFarclipScale"],
+            ViewDistance::default().horizon_scale,
+            "the registered default and the resource's own must be one number"
+        );
+        assert_eq!(
             d["nearclip"],
             ViewDistance::default().nearclip,
             "the registered default and the resource's own must be one number"
@@ -1476,6 +1481,13 @@ mod tests {
         assert_eq!(res::<ViewDistance>(&app).nearclip, 0.33, "its high bound");
         apply(&mut app, "nearclip", "0.3");
         assert_eq!(res::<ViewDistance>(&app).nearclip, 0.3);
+        // `horizonFarclipScale` clamps to the callback's `[3, 6]`.
+        apply(&mut app, "horizonFarclipScale", "1");
+        assert_eq!(res::<ViewDistance>(&app).horizon_scale, 3.0);
+        apply(&mut app, "horizonFarclipScale", "10");
+        assert_eq!(res::<ViewDistance>(&app).horizon_scale, 6.0);
+        apply(&mut app, "horizonFarclipScale", "5");
+        assert_eq!(res::<ViewDistance>(&app).horizon_scale, 5.0);
         // A sample count, clamped to the reference's [1, 16]; 1 is none.
         apply(&mut app, "gxMultisample", "4");
         assert_eq!(res::<MsaaSetting>(&app).samples, 4);
@@ -1990,6 +2002,7 @@ mod tests {
                 farclip: benilla_world::view::FARCLIP_DEFAULT,
                 setting: benilla_world::view::FARCLIP_DEFAULT,
                 nearclip: benilla_world::view::NEARCLIP_DEFAULT,
+                horizon_scale: benilla_world::view::HORIZON_SCALE_DEFAULT,
             })
             .insert_resource(MsaaSetting { samples: 1 })
             // Literal: `TexFilterSetting::default()` reads `$WOW_TEXTURE_FILTERING`.

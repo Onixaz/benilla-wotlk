@@ -363,7 +363,7 @@ mod wdl;
 pub use benilla_wdt::{
     tile_to_world, world_to_chunk, world_to_tile, GlobalWmo, WdtFile, WdtReader, WowVersion,
 };
-pub use wdl::{WdlFile, WdlTileMesh};
+pub use wdl::{horizon_walk, HorizonWalk, WdlFile, WdlTileMesh};
 
 // The minimap tile hash catalog and the world-map DBCs.
 mod minimap_translate;
