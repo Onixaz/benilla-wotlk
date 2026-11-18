@@ -350,7 +350,7 @@ pub(crate) fn split_container_item(model: &mut Model, bag: i64, slot: u32, count
     if model.cursor.is_some() || count < 1 {
         return false;
     }
-    let Some(s) = super::container::live_slot(model, bag, slot) else {
+    let Some(s) = super::container::index_slot(model, bag, slot) else {
         return false;
     };
     if s.item_id == 0 || s.locked {

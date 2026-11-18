@@ -5,9 +5,8 @@
 //! 86.. with no container object, like the bank), the object index and the template cache, and
 //! fires `BAG_UPDATE(bagID)` per changed bag. [`drain`] sends the Lua intents over [`wire_pos`]:
 //! an equippable item that starts no quest goes out as `CMSG_AUTOEQUIP_ITEM`, anything else
-//! through [`send_item_use`]. A move or split locks both ends and a destroy its slot in
-//! [`PendingItemOps`], until the descriptor resolves them or the server answers a non-zero
-//! `SMSG_INVENTORY_CHANGE_FAILURE`.
+//! through [`send_item_use`]. A send locks its items in [`PendingItemOps`] until a field watch,
+//! the post-init or a refusal unlocks them ([`watch`]).
 
 use benilla_protocol::messages::{
     BAG_PLAYER_INVENTORY, SLOT_BAG_FIRST, SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST,
@@ -29,7 +28,7 @@ mod equip_error;
 pub(crate) use equip_error::{equip_error_key, inventory_error_key};
 mod container_live;
 pub(crate) mod watch;
-pub(crate) use container_live::{ContainerLent, ContainerLive};
+pub(crate) use container_live::{BagRead, ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
 pub(crate) mod view_reads;
@@ -156,8 +155,7 @@ pub(crate) fn slot_guid(
     }
 }
 
-/// `(item guid, stack count)` at a Lua-space `(bag, 1-based slot)`, `(0, 0)` when empty:
-/// [`PendingItemOps`]'s baseline, since a partial split or destroy changes only the count.
+/// `(item guid, stack count)` at a Lua-space `(bag, 1-based slot)`, `(0, 0)` when empty.
 pub(crate) fn slot_guid_count(
     store: Option<&ObjectStore>,
     bag: i64,

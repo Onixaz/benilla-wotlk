@@ -201,6 +201,46 @@ pub(crate) fn live_slot(model: &super::Model, bag: i64, slot: u32) -> Option<Con
     }
 }
 
+/// Container `bag` as a Lua bag index names it, read at the call (`0x5d7380` -> `0x5d6f20`): bags 1..11 through the watched-bag array, the bank's only with a banker set.
+pub(crate) fn index_bag(model: &super::Model, bag: i64) -> Option<ContainerState> {
+    let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+    match super::read_live(|l| l.indexed_container(bag, anchor, ui_now)).flatten() {
+        Some(live) => live,
+        None => live_bag(model, bag),
+    }
+}
+
+/// One 1-based slot of container `bag` as [`index_bag`] names the bag.
+pub(crate) fn index_slot(model: &super::Model, bag: i64, slot: u32) -> Option<ContainerSlot> {
+    if bag == -4 {
+        return None;
+    }
+    let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+    match super::read_live(|l| l.indexed_container_slot(bag, slot, anchor, ui_now)).flatten() {
+        Some(live) => live,
+        None => live_slot(model, bag, slot),
+    }
+}
+
+/// A slot's cooldown as [`index_slot`] names the bag, read at the call (`0x5d7d90`).
+pub(crate) fn index_cooldown(
+    model: &super::Model,
+    bag: i64,
+    slot: u32,
+) -> Option<(f64, f64, bool)> {
+    let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+    match super::read_live(|l| l.indexed_container_slot(bag, slot, anchor, ui_now)).flatten() {
+        Some(live) => live?.cooldown.map(|(start_ms, duration_ms, enabled)| {
+            (
+                start_ms as f64 / 1000.0,
+                f64::from(duration_ms) / 1000.0,
+                enabled,
+            )
+        }),
+        None => live_cooldown(model, bag, slot),
+    }
+}
+
 /// Every container the player holds, read at the call: the keyring, the vault, the backpack and the eleven bags.
 pub(crate) fn live_bags(model: &super::Model) -> Vec<(i64, ContainerState)> {
     (-2..=11)
@@ -403,11 +443,11 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
     // only caller of the wrap sender, so an equipped item cannot be wrapped.
     if let Some(wrap) = model.pending_wrap {
         // An empty or unresolved target leaves the wrap armed, as in the reference.
-        if !live_slot(model, bag, slot).is_some_and(|s| s.item_id != 0) {
+        if !index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0) {
             return;
         }
         // A vanished paper also bails, the wrap armed and the paper locked.
-        if !live_slot(model, wrap.bag, wrap.slot).is_some_and(|s| s.item_id != 0) {
+        if !index_slot(model, wrap.bag, wrap.slot).is_some_and(|s| s.item_id != 0) {
             return;
         }
         // No eligibility test: the server refuses with an `ERR_CANT_WRAP_*` reason
@@ -429,7 +469,7 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
     );
     if !placing && (model.item_pick_armed || model.repair_mode) {
-        let occupied = live_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
+        let occupied = index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
         if occupied && model.item_pick_armed {
             model.item_picks.push((bag, slot));
         } else if occupied {
@@ -443,7 +483,7 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         || super::petition::holds_slot(model, bag, slot);
     match model.cursor.take() {
         None => {
-            let picked = live_slot(model, bag, slot)
+            let picked = index_slot(model, bag, slot)
                 .filter(|s| s.item_id != 0 && !s.locked && !socketed)
                 .map(|s| CursorItem {
                     bag,
@@ -468,7 +508,7 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         }
         Some(CursorPayload::Item(held)) => {
             // Cloned so the moves below can borrow `model`; an unresolved slot reads as empty.
-            let dest = live_slot(model, bag, slot)
+            let dest = index_slot(model, bag, slot)
                 .filter(|d| d.item_id != 0);
             match (held.count, dest) {
                 // A split carry cannot swap with a different item: it stays held.
@@ -616,7 +656,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             // The currency container -4 counts the 32 token slots (`0x5d7529`).
-            Ok(live_bag(&model, bag).map_or(0, |c| c.num_slots))
+            Ok(index_bag(&model, bag).map_or(0, |c| c.num_slots))
         })?,
     )?;
 
@@ -637,7 +677,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             // The backpack's snapshot stands for the active player, which every branch needs.
-            if live_bag(&model, 0).is_none() {
+            if index_bag(&model, 0).is_none() {
                 return Ok(mlua::MultiValue::from_vec(vec![Value::Integer(0)]));
             }
             let bank_open = super::bank::bank_open();
@@ -647,7 +687,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 1..=4 => true,
                 _ => false,
             };
-            let answer = resolved.then(|| live_bag(&model, bag)).flatten().map(|c| {
+            let answer = resolved.then(|| index_bag(&model, bag)).flatten().map(|c| {
                 let free = c.num_slots.saturating_sub(c.slots.len() as u32);
                 (free, c.bag_family)
             });
@@ -676,7 +716,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let Some(s) = u32::try_from(slot)
                 .ok()
-                .and_then(|slot| live_slot(&model, bag, slot))
+                .and_then(|slot| index_slot(&model, bag, slot))
             else {
                 return Ok((Value::Nil, Value::Nil, Value::Nil));
             };
@@ -704,7 +744,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                live_bag(&model, bag).and_then(|c| c.name.clone())
+                index_bag(&model, bag).and_then(|c| c.name.clone())
             };
             match name {
                 Some(n) => Ok(Value::String(lua.create_string(&n)?)),
@@ -723,7 +763,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(match live_cooldown(&model, bag, slot) {
+            Ok(match index_cooldown(&model, bag, slot) {
                 Some((start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
                 }
@@ -739,7 +779,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                live_slot(&model, bag, slot).and_then(|s| s.link.clone())
+                index_slot(&model, bag, slot).and_then(|s| s.link.clone())
             };
             match link {
                 Some(l) => Ok(Value::String(lua.create_string(&l)?)),
@@ -760,7 +800,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 let held = slot_held(&model, bag, slot);
-                let info = live_slot(&model, bag, slot);
+                let info = index_slot(&model, bag, slot);
                 let template = info
                     .as_ref()
                     .and_then(|s| model.item_templates.get(&s.item_id));
@@ -811,7 +851,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let entry = live_slot(&model, bag as i64, slot as u32).map_or(0, |s| s.item_id);
+            let entry = index_slot(&model, bag as i64, slot as u32).map_or(0, |s| s.item_id);
             Ok(if entry == 0 {
                 mlua::MultiValue::new()
             } else {
@@ -829,7 +869,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             cursor::clear_cursor(&mut model);
             if model.repair_mode {
                 // Then the item in the slot is repaired.
-                let occupied = live_slot(&model, bag, slot).is_some_and(|s| s.item_id != 0);
+                let occupied = index_slot(&model, bag, slot).is_some_and(|s| s.item_id != 0);
                 if occupied {
                     model.container_repairs.push((bag, slot));
                 }
@@ -863,7 +903,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ShowContainerSellCursor",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
             let mut model = crate::script::model_mut_of(lua);
-            let occupied = live_slot(&model, bag, slot).is_some();
+            let occupied = index_slot(&model, bag, slot).is_some();
             // An armed spell or repair cursor suppresses it first; each is sticky, so a Buy here
             // would stamp out the active base cursor.
             if occupied && !model.spell_targeting && !model.repair_mode {

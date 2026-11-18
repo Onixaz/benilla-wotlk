@@ -920,7 +920,7 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
 /// A container slot's field, `None` for an empty slot or unknown bag.
 fn container_slot<T>(lua: &Lua, bag: i64, slot: u32, f: impl Fn(&ContainerSlot) -> T) -> Option<T> {
     let model = read(lua);
-    super::container::live_slot(&model, bag, slot)
+    super::container::index_slot(&model, bag, slot)
         .filter(|s| s.item_id != 0 || s.guid != 0)
         .map(|s| f(&s))
 }

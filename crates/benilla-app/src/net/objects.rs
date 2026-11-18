@@ -498,8 +498,6 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                     .collect();
                 for (item, owner) in owners {
                     item_record_watch(&mut sc, item, (entry, owner));
-                    sc.ui
-                        .world(move |world| crate::ui_items::watch::item_changed(world, item));
                 }
             }
         }
@@ -719,6 +717,14 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
 fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectDestroyed(guid) = ev {
         item_disable_watch(&mut sc, guid);
+        // The item's lock goes with its object.
+        sc.ui.world(move |world| {
+            if let Some(mut locks) =
+                world.get_resource_mut::<crate::pending_item_ops::PendingItemOps>()
+            {
+                locks.forget(guid);
+            }
+        });
         crate::death::net::forget_corpse(guid, &mut sc.death_net);
         let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
         crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
@@ -1627,15 +1633,19 @@ fn pet_number_watch(sc: &mut Scene, guid: u64) {
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
-    // The bag's slot watch (`0x5d9600`), only on a bag the UI watches.
-    if merged.bag_slots {
+    // The count watch (`0x707720`), then the enchant watch (`0x708bd0`), each its own handler in field order.
+    if merged.item_stack {
         sc.ui
-            .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid));
+            .world(move |world| crate::ui_items::watch::stack_changed(world, guid));
     }
-    // The count and enchant watches' container leg (`0x707720`, `0x707f50` -> `0x5d7320`).
-    if merged.item_stack || merged.item_enchants {
+    if merged.item_enchants {
         sc.ui
-            .world(move |world| crate::ui_items::watch::item_changed(world, guid));
+            .world(move |world| crate::ui_items::watch::enchants_changed(world, guid));
+    }
+    // The bag's slot watch (`0x5d9600`), once per slot field that moved, only on a bag the UI watches.
+    for j in merged.bag_slots.clone() {
+        sc.ui
+            .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j));
     }
     if merged.item_stack || merged.item_entry {
         item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
@@ -2029,8 +2039,14 @@ fn merge_fields(
                 merged.item_enchants |= (FIELD_ITEM_ENCHANTMENT_1_1
                     ..FIELD_ITEM_ENCHANTMENT_1_1 + 36)
                     .contains(&e.index);
-                merged.bag_slots |= e.kind == benilla_protocol::messages::ObjectType::Container
-                    && (FIELD_CONTAINER_SLOT_1..FIELD_CONTAINER_SLOT_1 + 72).contains(&e.index);
+                if e.kind == benilla_protocol::messages::ObjectType::Container
+                    && (FIELD_CONTAINER_SLOT_1..FIELD_CONTAINER_SLOT_1 + 72).contains(&e.index)
+                {
+                    let j = ((e.index - FIELD_CONTAINER_SLOT_1) / 2) as u8;
+                    if merged.bag_slots.last() != Some(&j) {
+                        merged.bag_slots.push(j);
+                    }
+                }
             }
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
@@ -2087,8 +2103,8 @@ struct Merged {
     item_entry: bool,
     /// An item's enchant fields moved (`0x707f50`).
     item_enchants: bool,
-    /// A container's own slot fields moved (`0x5d9600`).
-    bag_slots: bool,
+    /// A container's own slots whose fields moved, each once in field order (`0x5d9600`).
+    bag_slots: Vec<u8>,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
     pvp_flags: Option<(u32, u32)>,
     /// Our own bank, honor and arena-team watches' `(index, old, new)`, in field order.
@@ -2140,19 +2156,20 @@ fn item_quest_watch(sc: &mut Scene, guid: u64, stack: bool, entry: bool) {
 fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>)) {
     if entry != 0 && sc.items.template(entry, guid, &sc.net).is_some() {
         item_record_watch(sc, guid, (entry, owner));
-        // Its container's `BAG_UPDATE` (`0x70aa40` -> `0x5d7320`).
-        sc.ui
-            .world(move |world| crate::ui_items::watch::item_changed(world, guid));
     }
 }
 
-/// The post-init with the record's quest-log test (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), the stack watch's walk (`0x70adfc` -> `0x5e1250`).
+/// The post-init with the record (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), its unlock (`0x70ad8d`, `0x70ad9e`), the stack watch's walk (`0x70adfc` -> `0x5e1250`), its container's `BAG_UPDATE` (`0x70ae0b`), then the refund ask.
 fn item_record_watch(sc: &mut Scene, item: u64, (entry, owner): (u32, Option<u64>)) {
     let me = sc.self_guid.0.filter(|g| sc.index.0.contains_key(g));
     if me.is_none() || owner != me {
         return;
     }
+    sc.ui
+        .world(move |world| crate::ui_items::watch::post_init_unlock(world, item));
     item_log_walk(sc, entry, true);
+    sc.ui
+        .world(move |world| crate::ui_items::watch::item_updated(world, item));
     // A refundable purchase without a record or a pending ask asks it (`0x70ae13`-`0x70ae34`).
     if crate::ui_socket::refundable(&sc.items, entry) {
         if let Some(refunds) = sc.refunds.as_deref_mut() {

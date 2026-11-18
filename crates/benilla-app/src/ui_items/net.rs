@@ -133,14 +133,10 @@ pub(crate) fn show_equip_error(world: &mut World, e: EquipError) {
     );
 }
 
-/// Both items' unlocks (`0x6e3259`, `0x6e326f`), `ITEM_LOCK_CHANGED` for each slot freed.
+/// Both items' unlocks (`0x6e3259`, `0x6e326f`), each a locked item's lock edge at its place.
 fn unlock(world: &mut World, f: InventoryFailure) {
-    let Some(mut pending) = world.get_resource_mut::<PendingItemOps>() else {
-        return;
-    };
-    let mut slots = pending.clear_by_failure(f.item);
-    slots.extend(pending.clear_by_guid(f.item2));
-    super::watch::fire_lock_changes(world, slots);
+    super::watch::unlock_item(world, f.item);
+    super::watch::unlock_item(world, f.item2);
 }
 
 /// A limit-category refusal's line: the row's quantity then its name (`0x6e31c1`-`0x6e31cd`). A
@@ -193,18 +189,27 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<UiEvents>();
         world.init_resource::<PendingItemOps>();
-        world.resource_mut::<PendingItemOps>().add([
-            (0, 3, 0x4000_0000_0000_0007, 1),
-            (0, 4, 0x4000_0000_0000_0008, 1),
-        ]);
+        world
+            .resource_mut::<PendingItemOps>()
+            .lock(0x4000_0000_0000_0007);
+        world
+            .resource_mut::<PendingItemOps>()
+            .lock(0x4000_0000_0000_0008);
+        world
+            .resource_mut::<PendingItemOps>()
+            .lock(0x4000_0000_0000_0009);
         unlock(
             &mut world,
             failure(0x57, InventoryFailureTail::RequiredLevel(40)),
         );
-        assert!(world.resource::<PendingItemOps>().is_empty());
-        assert_eq!(
-            world.resource::<UiEvents>().names(),
-            ["ITEM_LOCK_CHANGED", "ITEM_LOCK_CHANGED"]
+        let locks = world.resource::<PendingItemOps>();
+        assert!(
+            !locks.is_locked(0x4000_0000_0000_0007) && !locks.is_locked(0x4000_0000_0000_0008),
+            "both named items unlock"
+        );
+        assert!(
+            locks.is_locked(0x4000_0000_0000_0009),
+            "an item the packet does not name stays locked"
         );
     }
 
@@ -263,7 +268,7 @@ mod tests {
         register(&mut app);
         app.world_mut()
             .resource_mut::<PendingItemOps>()
-            .add([(0, 3, 0x4000_0000_0000_0007, 1)]);
+            .lock(0x4000_0000_0000_0007);
         let epoch = app.world().resource::<PendingItemOps>().epoch();
 
         crate::net::handlers::dispatch(
@@ -275,7 +280,7 @@ mod tests {
         );
 
         let pending = app.world().resource::<PendingItemOps>();
-        assert!(pending.is_empty() && !pending.contains(0, 3));
+        assert!(pending.is_empty() && !pending.is_locked(0x4000_0000_0000_0007));
         assert_ne!(pending.epoch(), epoch);
     }
 }

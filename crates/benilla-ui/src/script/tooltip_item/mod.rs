@@ -1090,7 +1090,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (item_id, count, has_cd, inst, repair_cost) = {
                 let model = crate::script::model_mut_of(lua);
                 let cost = model.repair_costs.bags.get(&(bag, slot)).copied();
-                match crate::script::container::live_slot(&model, bag, slot)
+                match crate::script::container::index_slot(&model, bag, slot)
                     .filter(|s| s.item_id != 0)
                 {
                     // The reference takes the p6=1 leg iff the cooldown query reports enable, start

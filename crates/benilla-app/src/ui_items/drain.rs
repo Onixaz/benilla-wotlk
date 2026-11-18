@@ -1,5 +1,5 @@
 //! The per-frame drains that send the queued Lua container intents as `ClientCommand`s, locking
-//! the slots each send touches in [`crate::pending_item_ops::PendingItemOps`].
+//! the items each send touches in [`crate::pending_item_ops::PendingItemOps`].
 
 use bevy::prelude::*;
 
@@ -188,7 +188,7 @@ pub(crate) fn send_equip_to_slot(
     (bag, slot, dst): (i64, u32, u8),
     suppress: bool,
 ) {
-    let (guid, count) = slot_guid_count(store, bag, slot, objects);
+    let (guid, _) = slot_guid_count(store, bag, slot, objects);
     if guid == 0 {
         return;
     }
@@ -199,7 +199,10 @@ pub(crate) fn send_equip_to_slot(
         );
         return;
     }
-    pending.write().add([(bag, slot, guid, count)]);
+    // The lock before the send (`0x6e0136` -> `0x513740`), its edge signalled at its place.
+    if pending.write().lock(guid) {
+        super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
+    }
     let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
         item: guid,
         slot: dst,
@@ -566,11 +569,12 @@ impl ScriptItemUse<'_, '_> {
             {
                 deselect.write(crate::target::DeselectGuid(g));
             }
-            // Each unlock fires as it clears (`0x707020`).
+            // Each unlock signals at the item's place as it clears (`0x707020`).
             for item in loot.take_unlocks() {
-                let slots = pending_items.write().clear_by_guid(item);
-                for (bag, slot) in slots {
-                    script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+                if pending_items.write().unlock(item) {
+                    if let Some(args) = super::watch::lock_args(&ladder.objects, item) {
+                        super::watch::fire_lock_edge_now(script, false, args);
+                    }
                 }
             }
             let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
@@ -578,13 +582,14 @@ impl ScriptItemUse<'_, '_> {
             // The latch on the item, before the send (`0x6dcdd4`), so its type-1 response passes.
             loot_latch.0 = Some(c.guid);
             // The grey lock, before the send (`0x6dcded`), until the loot closes.
-            let (guid, count) = self_q
+            let (guid, _) = self_q
                 .iter()
                 .next()
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
-            pending_items.write().add([(bag, slot, guid, count)]);
-            script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+            if pending_items.write().lock(guid) {
+                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
+            }
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
                 slot: wire_slot,
@@ -857,20 +862,11 @@ pub(crate) fn send_container_move(
                 });
             }
         }
-        // Both ends lock on their current (guid, count), which the resolving clear watches.
-        let (src_guid, src_count) = slot_guid_count(store, mv.src_bag, mv.src_slot, objects);
-        let (dst_guid, dst_count) = slot_guid_count(store, mv.dst_bag, mv.dst_slot, objects);
-        pending.write().add([
-            (mv.src_bag, mv.src_slot, src_guid, src_count),
-            (mv.dst_bag, mv.dst_slot, dst_guid, dst_count),
-        ]);
-        // One event per end that holds an item: the reference locks items, not slots (`0x706fe0`).
-        for (bag, slot, guid) in [
-            (mv.src_bag, mv.src_slot, src_guid),
-            (mv.dst_bag, mv.dst_slot, dst_guid),
-        ] {
-            if guid != 0 {
-                script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+        // The item at each end locks, its edge signalled at its place (`0x706fe0`).
+        for (bag, slot) in [(mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)] {
+            let (guid, _) = slot_guid_count(store, bag, slot, objects);
+            if pending.write().lock(guid) {
+                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
             }
         }
     }
@@ -905,9 +901,10 @@ pub(super) fn drain_container_destroys(
             slot: wire_slot,
             count,
         });
-        let (guid, stack) = slot_guid_count(store, bag, slot, &objects);
-        pending.write().add([(bag, slot, guid, stack)]);
-        script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+        let (guid, _) = slot_guid_count(store, bag, slot, &objects);
+        if pending.write().lock(guid) {
+            super::watch::fire_lock_edge_now(&mut script, true, item_lock_args(bag, slot));
+        }
     }
 }
 
@@ -1040,7 +1037,7 @@ mod tests {
         );
         // The grey lock, the reference's other pre-send write.
         assert!(
-            app.world().resource::<PendingItemOps>().contains(0, 1),
+            app.world().resource::<PendingItemOps>().is_locked(CLAM),
             "the slot greys at the click"
         );
     }
@@ -1319,13 +1316,50 @@ mod tests {
     }
 }
 
-/// The answers to `EquipPendingItem`/`CancelPendingEquip`. Accept re-runs the original sender with
-/// `suppress` set, as the reference's does: 1.12 has no confirm opcode, and a slot that changed
-/// under the dialog is judged afresh. Cancel sends nothing and frees the record.
-///
-/// Deviation: the reference's cancel also unlocks both occupants, which its deferral locked; ours
-/// locks nothing while the question is up, because a [`PendingItemOps`] lock clears only against a
-/// wire op and a deferred action has none.
+/// The item at a wire position: the player's slot under bag 255, else the slot of the bag in that player slot.
+fn wire_item(store: Option<&ObjectStore>, objects: &Objects, (bag, slot): (u8, u8)) -> u64 {
+    let Some(me) = store else {
+        return 0;
+    };
+    if bag == BAG_PLAYER_INVENTORY {
+        return me.0.player_slot(slot).unwrap_or(0);
+    }
+    me.0.player_slot(bag)
+        .and_then(|g| objects.object(g))
+        .and_then(|b| b.container_slot(slot))
+        .unwrap_or(0)
+}
+
+/// The cancel's two unlocks (`0x6e0273`, `0x6e02cd`): the record's source and destination occupants; a slotted equip files its equip slot as the source slot in the item's own container (`0x6e00d7`), and an auto-equip has no destination.
+fn cancel_occupants(
+    store: Option<&ObjectStore>,
+    objects: &Objects,
+    rec: &crate::ui_bind_confirm::PendingEquip,
+) -> Vec<u64> {
+    use crate::ui_bind_confirm::PendingEquip;
+    let at = |pos: Option<(u8, u8)>| pos.map_or(0, |p| wire_item(store, objects, p));
+    match *rec {
+        PendingEquip::Swap {
+            src_bag,
+            src_slot,
+            dst_bag,
+            dst_slot,
+        } => vec![
+            at(wire_pos(src_bag, src_slot)),
+            at(wire_pos(dst_bag, dst_slot)),
+        ],
+        PendingEquip::Slot { bag, slot, dst } => {
+            vec![at(
+                wire_pos(bag, slot).map(|(container, _)| (container, dst))
+            )]
+        }
+        PendingEquip::AutoEquip {
+            bag_index, slot, ..
+        } => vec![at(Some((bag_index, slot)))],
+    }
+}
+
+/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants, which its deferral never locked, so only an item another send locked fires.
 pub(super) fn drain_bind_confirm_answers(
     (script, _live): (
         Option<NonSendMut<UiScript>>,
@@ -1353,6 +1387,13 @@ pub(super) fn drain_bind_confirm_answers(
         };
         if !answer.accept {
             debug!("ui_items: pending equip {} cancelled", answer.index);
+            for guid in cancel_occupants(store, &objects, &rec) {
+                if pending.write().unlock(guid) {
+                    if let Some(args) = super::watch::lock_args(&objects, guid) {
+                        super::watch::fire_lock_edge_now(&mut script, false, args);
+                    }
+                }
+            }
             continue;
         }
         match rec {
@@ -2065,5 +2106,56 @@ mod bind_confirm_tests {
             "the reference's bind arm sits BELOW the on-use lookup's failure exits, not above them"
         );
         assert!(rx.try_iter().next().is_none());
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use crate::ui_bind_confirm::PendingEquip;
+    use benilla_protocol::field::{FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1};
+    use benilla_protocol::ObjectFields;
+    use bevy::ecs::system::RunSystemOnce;
+
+    const ITEM: u64 = 0x4000_0000_0000_0101;
+    const SWORD: u64 = 0x4000_0000_0000_0102;
+
+    /// The cancel unlocks the record's occupants as 12340 files them: a swap's two ends, a slotted equip's equip slot in the item's own container, an auto-equip's source.
+    #[test]
+    fn a_cancel_names_the_records_occupants() {
+        let mut world = World::new();
+        world.init_resource::<crate::net::GuidIndex>();
+        let pair = |f: u16, g: u64| [(f, g as u32), (f + 1, (g >> 32) as u32)];
+        let mut fields = pair(FIELD_PLAYER_PACK_SLOT_1, ITEM).to_vec();
+        fields.extend(pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15, SWORD));
+        world.spawn((SelfPlayer, ObjectStore(ObjectFields::from_pairs(&fields))));
+        let occupants = |world: &mut World, rec: PendingEquip| {
+            world
+                .run_system_once(
+                    move |q: Query<&ObjectStore, With<SelfPlayer>>, objects: Objects| {
+                        cancel_occupants(q.iter().next(), &objects, &rec)
+                    },
+                )
+                .unwrap()
+        };
+        let swap = PendingEquip::Swap {
+            src_bag: 0,
+            src_slot: 1,
+            dst_bag: EQUIPMENT_BAG,
+            dst_slot: 16,
+        };
+        assert_eq!(occupants(&mut world, swap), [ITEM, SWORD]);
+        let slotted = PendingEquip::Slot {
+            bag: 0,
+            slot: 1,
+            dst: 15,
+        };
+        assert_eq!(occupants(&mut world, slotted), [SWORD]);
+        let auto = PendingEquip::AutoEquip {
+            bag_index: BAG_PLAYER_INVENTORY,
+            slot: 23,
+            guid: ITEM,
+        };
+        assert_eq!(occupants(&mut world, auto), [ITEM]);
     }
 }

@@ -171,11 +171,9 @@ struct ItemUnlock<'a> {
 
 impl ItemUnlock<'_> {
     fn unlock(&mut self, guid: u64) {
-        for (bag, slot) in self.pending.clear_by_guid(guid) {
-            self.ui.fire(
-                "ITEM_LOCK_CHANGED",
-                benilla_ui::script::item_lock_args(bag, slot),
-            );
+        if self.pending.unlock(guid) {
+            self.ui
+                .world(move |world| crate::ui_items::watch::signal_unlocked(world, guid));
         }
     }
 }
@@ -840,7 +838,7 @@ mod tests {
         world.init_resource::<crate::net::GuidIndex>();
         world.init_resource::<bevy::ecs::message::Messages<crate::target::DeselectGuid>>();
         let mut pending = PendingItemOps::default();
-        pending.add([(0, 3, LOCKBOX, 1)]);
+        pending.lock(LOCKBOX);
         world.insert_resource(pending);
         world
     }
@@ -855,13 +853,13 @@ mod tests {
             .open(LOCKBOX, 1, 0, Vec::new());
         release(&mut world, LOCKBOX, 1);
         assert!(
-            !world.resource::<PendingItemOps>().contains(0, 3),
+            !world.resource::<PendingItemOps>().is_locked(LOCKBOX),
             "the lockbox is no longer grey and locked"
         );
         assert_eq!(
             world.resource::<UiEvents>().names(),
-            ["ITEM_LOCK_CHANGED"],
-            "…and its unlock fires ITEM_LOCK_CHANGED in the handler's turn"
+            ["<world>"],
+            "…and its unlock signals at the item's place in the handler's turn"
         );
     }
 
@@ -872,7 +870,7 @@ mod tests {
             .resource_mut::<LootState>()
             .open(LOCKBOX, 1, 0, Vec::new());
         release(&mut world, CORPSE, 1);
-        assert!(world.resource::<PendingItemOps>().contains(0, 3));
+        assert!(world.resource::<PendingItemOps>().is_locked(LOCKBOX));
         assert!(world.resource::<UiEvents>().is_empty());
     }
 
@@ -1544,7 +1542,7 @@ mod tests {
                 },
             )
             .expect("the handler runs as a one-shot system");
-        assert!(world.resource::<PendingItemOps>().contains(0, 3));
+        assert!(world.resource::<PendingItemOps>().is_locked(LOCKBOX));
         // TOO_FAR (4) does.
         world
             .run_system_once_with(
@@ -1555,8 +1553,8 @@ mod tests {
                 },
             )
             .expect("the handler runs as a one-shot system");
-        assert!(!world.resource::<PendingItemOps>().contains(0, 3));
-        assert_eq!(world.resource::<UiEvents>().names(), ["ITEM_LOCK_CHANGED"]);
+        assert!(!world.resource::<PendingItemOps>().is_locked(LOCKBOX));
+        assert_eq!(world.resource::<UiEvents>().names(), ["<world>"]);
     }
 
     const ME: u64 = 0x0000_0000_0000_002A;

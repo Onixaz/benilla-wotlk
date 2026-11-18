@@ -1174,24 +1174,22 @@ struct OpenWhileMoving<'w, 's> {
     dead: DeadUnitDeselect<'w, 's>,
 }
 
-/// The locks a loot close released: each unlock fires `ITEM_LOCK_CHANGED` as it clears (`0x707020`).
+/// The locks a loot close released: each unlock signals at the item's place as it clears (`0x707020`).
 #[derive(bevy::ecs::system::SystemParam)]
-struct LootUnlocks<'w> {
+struct LootUnlocks<'w, 's> {
     pending: crate::ui_script::OwnedMut<'w, crate::pending_item_ops::PendingItemOps>,
+    objects: crate::net::Objects<'w, 's>,
 }
 
-impl LootUnlocks<'_> {
-    fn flush(&mut self, loot: &mut LootState, script: Option<&mut UiScript>) {
-        let mut slots = Vec::new();
+impl LootUnlocks<'_, '_> {
+    fn flush(&mut self, loot: &mut LootState, mut script: Option<&mut UiScript>) {
         for guid in loot.take_unlocks() {
-            slots.extend(self.pending.write().clear_by_guid(guid));
-        }
-        if let Some(script) = script {
-            for (bag, slot) in slots {
-                script.fire_event(
-                    "ITEM_LOCK_CHANGED",
-                    benilla_ui::script::item_lock_args(bag, slot),
-                );
+            if !self.pending.write().unlock(guid) {
+                continue;
+            }
+            let args = crate::ui_items::watch::lock_args(&self.objects, guid);
+            if let (Some(script), Some(args)) = (script.as_deref_mut(), args) {
+                crate::ui_items::watch::fire_lock_edge_now(script, false, args);
             }
         }
     }

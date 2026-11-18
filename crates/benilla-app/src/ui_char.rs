@@ -12,7 +12,7 @@ use benilla_formats::{GameTableId, GameTables};
 use benilla_protocol::messages::{PLAYER_COMBAT_RATINGS, PLAYER_SKILL_SLOTS};
 use benilla_ui::script::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, ScriptValue, SkillEntry,
-    SkillsState, UiScript, UnitCombatStats, EQUIPMENT_BAG, SKILL_DEFENSE, SKILL_UNARMED,
+    SkillsState, UiScript, UnitCombatStats, SKILL_DEFENSE, SKILL_UNARMED,
 };
 use benilla_ui::strings::Arg;
 
@@ -653,7 +653,6 @@ fn slot_view(
     // The player's `ChrClasses.dbc` relic flag, which decides `find_equip_slot`'s INVSLOT 17.
     has_relic_slot: bool,
     guid: u64,
-    live_id: u32,
 ) -> Option<InvSlotView> {
     let countdowns = objects.countdowns(guid);
     let enchant_ms: [Option<u64>; crate::items::ENCHANT_SLOTS] =
@@ -748,7 +747,7 @@ fn slot_view(
         durability,
         flags,
         already_bound,
-        locked: pending.contains(EQUIPMENT_BAG, live_id),
+        locked: pending.is_locked(guid),
         equip_slots,
         bar_placeable,
         creator,
@@ -860,7 +859,6 @@ fn inventory_slots(
             sub_classes,
             has_relic_slot,
             guid,
-            live,
         );
     }
     inv
@@ -897,14 +895,10 @@ fn bank_bag_slots(
             // A bank bag slot holds a bag; the relic flag decides INVSLOT 17 alone.
             false,
             guid,
-            BANK_BAG_LIVE_FIRST + i as u32,
         );
     }
     bags
 }
-
-/// `BankButtonIDToInvSlotID(5, isBag)`: the first of the seven bank-bag slots' live ids.
-const BANK_BAG_LIVE_FIRST: u32 = 68;
 
 /// Fire the paper doll's repaint events for one unit's snapshot transition, `arg1 = token`: the
 /// eight unit-stat events both pages register (`PaperDollFrame.lua:14-28`,
@@ -1399,12 +1393,7 @@ mod tests {
         let _ = seen(&mut app);
 
         // The same bag, now locked by an outbound move.
-        app.world_mut().resource_mut::<PendingItemOps>().add([(
-            EQUIPMENT_BAG,
-            BANK_BAG_LIVE_FIRST,
-            BAG,
-            1,
-        )]);
+        app.world_mut().resource_mut::<PendingItemOps>().lock(BAG);
         app.world_mut().run_system_once(feed_char).unwrap();
         let events = seen(&mut app);
         assert!(
@@ -1424,12 +1413,7 @@ mod tests {
     #[test]
     fn the_frame_a_lock_clears_still_repushes_the_slot() {
         let mut app = world_with_bank_bag(Some(BAG));
-        app.world_mut().resource_mut::<PendingItemOps>().add([(
-            EQUIPMENT_BAG,
-            BANK_BAG_LIVE_FIRST,
-            BAG,
-            1,
-        )]);
+        app.world_mut().resource_mut::<PendingItemOps>().lock(BAG);
         app.world_mut().run_system_once(feed_char).unwrap();
         let _ = seen(&mut app);
         assert!(
@@ -1441,11 +1425,7 @@ mod tests {
         );
 
         // A refusal: the lock clears without any object moving.
-        let cleared = app
-            .world_mut()
-            .resource_mut::<PendingItemOps>()
-            .clear_by_failure(BAG);
-        assert_eq!(cleared, vec![(EQUIPMENT_BAG, BANK_BAG_LIVE_FIRST)]);
+        assert!(app.world_mut().resource_mut::<PendingItemOps>().unlock(BAG));
         app.world_mut().run_system_once(feed_char).unwrap();
         assert!(
             !app.world_mut()
