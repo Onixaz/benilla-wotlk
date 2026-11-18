@@ -109,6 +109,23 @@ pub(crate) fn close_by_interaction(world: &mut World) {
     ui.world(clear_banker);
 }
 
+/// `SpellShapeshiftForm` `flags1`: a stance, which the shapeshift test does not count (`0x721cdd`).
+const FORM_STANCE: u32 = 0x1;
+/// `SpellShapeshiftForm` `flags1`: the form keeps NPC interaction (`0x6da1cf`).
+const FORM_NPC_INTERACT: u32 = 0x8;
+
+/// The form byte's watch (`0x6da130`): shapeshifted into a form without the NPC-interact bit, the interact target clears (`0x6da1dc` -> `0x512e60`), the bank's leg with it.
+pub(crate) fn form_entered(world: &mut World, form: u8) {
+    let clears = form != 0
+        && world
+            .get_resource::<crate::ui_action::Spells>()
+            .and_then(|s| s.forms.get(&u32::from(form)))
+            .is_some_and(|f| f.flags & (FORM_STANCE | FORM_NPC_INTERACT) == 0);
+    if clears {
+        close_by_interaction(world);
+    }
+}
+
 /// The banker setter with no banker from the NPC-flag watch's bank leg (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED`, then with the interact target the banker the interaction close fires it again (`0x57b8f1` -> `0x512fa7`), then the banker clears.
 pub(crate) fn set_banker_none(world: &mut World) {
     let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {

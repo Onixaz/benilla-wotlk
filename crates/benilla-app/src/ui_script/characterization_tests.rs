@@ -3767,6 +3767,78 @@ fn only_an_open_reaching_the_setter_closes_the_bank() {
         .is_open());
 }
 
+/// The interact target's clears outside the windows close the open bank through its leg (`0x512fa7`): our own death (`0x6dc17a`), ahead of `PLAYER_DEAD`; the banker's death (`0x7293bf`); and a form without the NPC-interact bit (`0x6da1dc`), where a stance or a form with the bit keeps it.
+#[test]
+fn the_interact_target_clears_close_the_bank() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_2;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let open = |rig: &mut Rig| {
+        rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+    };
+    let closed = |seen: &[Seen]| pin(seen, &["BANKFRAME_CLOSED", "PLAYER_DEAD"], &["bankopen"]);
+    rig.packets(vec![banker_create(0x20000)], 1);
+    open(&mut rig);
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 3);
+    assert_eq!(
+        closed(&seen),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+            "PLAYER_DEAD | bankopen=false",
+        ],
+        "our death: the stock OnHide closes it again inside the first fire"
+    );
+    rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 100)])], 2);
+    open(&mut rig);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BANKER,
+            fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 0)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        closed(&seen),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ],
+        "the banker's death"
+    );
+    let forms: Vec<(u32, u32)> = rig
+        .app
+        .world()
+        .get_resource::<crate::ui_action::Spells>()
+        .map(|s| s.forms.iter().map(|(&id, f)| (id, f.flags)).collect())
+        .unwrap_or_default();
+    let keeps = forms.iter().find(|(id, f)| *id < 256 && f & 0x9 != 0);
+    let clears = forms.iter().find(|(id, f)| *id < 256 && f & 0x9 == 0);
+    let (Some(&(keeps, _)), Some(&(clears, _))) = (keeps, clears) else {
+        panic!("SpellShapeshiftForm has a form of each kind: {forms:?}");
+    };
+    rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BANKER,
+            fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 500)]),
+        }],
+        1,
+    );
+    open(&mut rig);
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_BYTES_2, keeps << 24)])], 2);
+    assert!(closed(&seen).is_empty(), "form {keeps} keeps the bank");
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_BYTES_2, clears << 24)])], 2);
+    assert_eq!(
+        closed(&seen),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ],
+        "form {clears} clears the interact target"
+    );
+}
+
 /// The banker flag lost on the open bank's banker closes it from the NPC-flag watch (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED` with the banker set, again from the interaction close, then the banker clears.
 #[test]
 fn the_banker_flag_lost_closes_the_bank_from_the_flag_watch() {

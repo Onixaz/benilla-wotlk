@@ -1603,6 +1603,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if merged.item_stack || merged.item_entry {
         item_quest_watch(sc, guid, merged.item_stack, merged.item_entry);
     }
+    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`), the bank's leg.
+    if merged.died {
+        sc.ui.world(move |world| {
+            let held = world
+                .get_non_send_resource::<crate::ui_bank::BankOpen>()
+                .is_some_and(|b| b.interact_target() == Some(guid));
+            if held {
+                crate::ui_bank::close_by_interaction(world);
+            }
+        });
+    }
     // The NPC-flag watch's quest leg (`0x71a104`-`0x71a133`): the questgiver bit lost on the open window's giver closes it through the giver's close, nothing owed.
     if let Some((old, new)) = merged.npc_flags {
         if old & NPC_FLAG_QUESTGIVER != 0 && new & NPC_FLAG_QUESTGIVER == 0 {
@@ -1657,6 +1668,9 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     let split = after.partition_point(|&(index, ..)| index < FIELD_PLAYER_FLAGS);
     let (unit, player) = after.split_at(split);
     own_death_fields(sc, guid, unit);
+    if let Some(form) = merged.form {
+        sc.ui.world(move |world| crate::ui_bank::form_entered(world, form));
+    }
     if let Some((old, new)) = merged.pvp_flags {
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
@@ -1832,6 +1846,18 @@ fn merge_fields(
             {
                 merged.death.push((e.index, e.old, e.new));
             }
+            // A unit's death: health crossing zero (`0x73f3fa`) or the dead bit set (`0x740623`).
+            merged.died |= (e.unit_field(FIELD_UNIT_HEALTH)
+                && (e.old as i32) > 0
+                && (e.new as i32) < 1)
+                || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS) && !e.old & e.new & 0x20 != 0);
+            // Our form byte's watch (`0x6da130`, byte `0x1d3`).
+            if own
+                && e.unit_field(benilla_protocol::field::FIELD_UNIT_BYTES_2)
+                && (e.old ^ e.new) >> 24 != 0
+            {
+                merged.form = Some((e.new >> 24) as u8);
+            }
             if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
                 merged.quest_slots.push((e.index, e.old, e.new));
             }
@@ -1898,6 +1924,10 @@ struct Merged {
     pvp_flags: Option<(u32, u32)>,
     /// Our own bank, honor and arena-team watches' `(index, old, new)`, in field order.
     watched: Vec<(u16, u32, u32)>,
+    /// The unit died (`0x729220`).
+    died: bool,
+    /// Our own shapeshift form byte, when it moved.
+    form: Option<u8>,
 }
 
 /// An item's watches past its create, on the quest log: its stack count's test of the logged quests' required items (`0x707820` -> `0x5e1250`), and its entry moving on an item we own, which queues `QUEST_LOG_UPDATE` outright (`0x707a0f`).
