@@ -955,8 +955,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let can = model
-                .unit_guids
-                .guid_of(&token)
+                .token_guid(&token)
                 .is_some_and(|guid| model.spell_targetable_units.contains(&guid));
             Ok(flag(can))
         })?,

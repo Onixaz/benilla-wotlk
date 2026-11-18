@@ -59,7 +59,11 @@ impl ScriptSelect<'_, '_> {
     pub(crate) fn select(&mut self, request: SelectionRequest, script: &mut UiScript) {
         match request {
             SelectionRequest::Unit(token) => {
-                let guid = self.tokens.guid_of(&token, &self.commit.selection.read());
+                let guid = self.tokens.guid_of(
+                    &token,
+                    &self.commit.selection.read(),
+                    crate::ui_unit::VmUnits::of(script),
+                );
                 if let Some(guid) = guid {
                     self.target_if_valid(guid, script);
                 }
@@ -68,7 +72,11 @@ impl ScriptSelect<'_, '_> {
             // shows `ERR_UNIT_NOT_FOUND` (`0x525f87`), or `ERR_GENERIC_NO_TARGET` for an empty or
             // `"target"` token (`0x525f9c`).
             SelectionRequest::Assist(token) => {
-                let basis = self.tokens.resolve(&token, &self.commit.selection.read());
+                let basis = self.tokens.resolve(
+                    &token,
+                    &self.commit.selection.read(),
+                    crate::ui_unit::VmUnits::of(script),
+                );
                 match basis {
                     Some((basis, _)) => {
                         if self.commit.assist(basis, "AssistUnit") {
@@ -125,8 +133,17 @@ impl ScriptSelect<'_, '_> {
 
     /// `StartAttack`'s named unit (`0x523090`): a token, else the closest attackable name, as a
     /// unit to commit once the actor checks pass.
-    pub(crate) fn attack_unit(&self, unit: &str, exact: bool) -> Option<(Entity, u64)> {
-        let named = self.tokens.resolve(unit, &self.commit.selection.read());
+    pub(crate) fn attack_unit(
+        &self,
+        unit: &str,
+        exact: bool,
+        vm: &UiScript,
+    ) -> Option<(Entity, u64)> {
+        let named = self.tokens.resolve(
+            unit,
+            &self.commit.selection.read(),
+            crate::ui_unit::VmUnits::of(vm),
+        );
         named.or_else(|| self.by_name.attackable(unit, exact))
     }
 
@@ -910,11 +927,10 @@ mod tests {
             run(&mut world, r#"TargetUnit("PARTY1TARGET")"#),
             Some(VICTIM)
         );
+        // A hop off us reads the target global, not our `UNIT_FIELD_TARGET` (`0x60aae3`): with
+        // the selection cleared, nobody.
         reset(&mut world);
-        assert_eq!(
-            run(&mut world, r#"TargetUnit("playertarget")"#),
-            Some(VICTIM)
-        );
+        assert_eq!(run(&mut world, r#"TargetUnit("playertarget")"#), None);
         reset(&mut world);
         assert_eq!(run(&mut world, r#"TargetUnit("pettarget")"#), Some(THIRD));
         reset(&mut world);
@@ -1222,7 +1238,9 @@ mod tests {
 
         // `StartAttack`'s name (filter mode 1) skips the group scans.
         let attack = world
-            .run_system_once(|select: ScriptSelect| select.attack_unit("Clara", false))
+            .run_system_once(|select: ScriptSelect, script: NonSend<UiScript>| {
+                select.attack_unit("Clara", false, &script)
+            })
             .expect("the resolve runs as a one-shot system");
         assert_eq!(attack, None);
 

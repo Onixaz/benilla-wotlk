@@ -208,8 +208,10 @@ fn a_token_without_a_hop_still_reads_its_own_push() {
         eval::<String>(&s, r#"return UnitName("targettarget")"#),
         "Pia"
     );
-    // And the entry is dropped with `None`.
+    // And the entry is dropped with `None`; with party1's own push gone too, no snapshot holds
+    // the guid.
     s.set_unit_by_guid(P1, None);
+    s.set_unit("party1", None);
     assert!(eval::<bool>(
         &s,
         r#"return UnitName("targettarget") == nil"#
@@ -233,6 +235,23 @@ fn a_malformed_chain_and_an_unknown_token_are_nobody() {
     }
     assert!(eval::<bool>(&s, r#"return UnitName("npctarget") == nil"#));
     assert!(eval::<bool>(&s, r#"return UnitHealth("bogustarget") == 0"#));
+}
+
+/// A raid member's name reads as its unit, the hops after a `-` off it (`0x60a630`); a name no
+/// member goes by names nobody.
+#[test]
+fn a_members_name_reads_as_its_unit() {
+    let mut s = world();
+    s.set_unit("raid2", Some(state("Pia", P1, 800)));
+    for (chunk, want) in [
+        (r#"return UnitName("pia")"#, "Pia"),
+        (r#"return UnitName("PIA")"#, "Pia"),
+        (r#"return UnitName("Pia-target")"#, "Boss"),
+    ] {
+        assert_eq!(eval::<String>(&s, chunk), want, "{chunk}");
+    }
+    assert!(eval::<bool>(&s, r#"return UnitName("Piatarget") == nil"#));
+    assert!(eval::<bool>(&s, r#"return UnitName("Nobody") == nil"#));
 }
 
 /// `UnitInParty` judges a chain by the unit it ends on, not by the `party` in its text.
