@@ -87,7 +87,7 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
         }],
         ..Default::default()
     });
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![SpellSlotView {
             spell_id: 3110,
@@ -912,7 +912,7 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
             firebolt_slot(),
         ],
     );
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![SpellSlotView {
             spell_id: 6307,
@@ -1003,7 +1003,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
         name: "Sacrifice".into(),
         ..Default::default()
     };
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![slot.clone()],
     });

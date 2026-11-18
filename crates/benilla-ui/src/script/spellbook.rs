@@ -191,10 +191,10 @@ impl super::UiScript {
         self.model_mut().known_spells.next_rank = next_rank;
     }
 
-    /// Answer `state` as the pet's book at every call, for the VM's own tests.
+    /// Answer `state` as the pet's book at every call while the guard lives, for the VM's own tests.
     #[cfg(test)]
-    pub(crate) fn set_pet_book(&mut self, state: PetBookState) {
-        super::live::set_test_pet_book(state);
+    pub(crate) fn set_pet_book(&mut self, state: PetBookState) -> super::live::TestPetBook {
+        super::live::set_test_pet_book(state)
     }
 
     /// Take the `CastSpell(id, "pet")` calls out of the call stream as `(spell id, onSelf)`: each
@@ -1219,7 +1219,7 @@ mod tests {
     fn the_slot_marshaller_gates_the_index_and_names_the_book() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
         for bad in ["0", "-11", "1025", "nil", "\"x\"", "{}"] {
             let err = s
                 .eval::<mlua::Value>(&format!("return GetSpellTexture({bad}, BOOKTYPE_SPELL)"))
@@ -1489,7 +1489,7 @@ mod tests {
     fn cast_spell_reads_on_self_from_its_third_argument() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
         for (arg, on_self) in [
             ("", false),
             (", 0.5", false),
@@ -1596,7 +1596,7 @@ mod tests {
     #[test]
     fn has_pet_spells_answers_a_count_and_a_class_token() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
         assert!(s
             .eval::<bool>(r#"local n, t = HasPetSpells() return n == 3 and t == "PET""#)
             .unwrap());
@@ -1604,7 +1604,7 @@ mod tests {
         // A warlock's token, which FrameXML reads as `PET_TYPE_DEMON`.
         let mut demon = pet_book();
         demon.token = Some("DEMON".into());
-        s.set_pet_book(demon);
+        let _book = s.set_pet_book(demon);
         assert_eq!(
             s.eval::<String>("local _, t = HasPetSpells() return t")
                 .unwrap(),
@@ -1614,7 +1614,7 @@ mod tests {
         // No token resolved (no `ChrClasses.dbc`) still answers a string.
         let mut untokened = pet_book();
         untokened.token = None;
-        s.set_pet_book(untokened);
+        let _book = s.set_pet_book(untokened);
         assert_eq!(
             s.eval::<String>("local _, t = HasPetSpells() return t")
                 .unwrap(),
@@ -1626,7 +1626,7 @@ mod tests {
     fn one_id_reads_two_different_books() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
 
         assert_eq!(
             s.eval::<String>(r#"return GetSpellName(1, BOOKTYPE_SPELL)"#)
@@ -1659,7 +1659,7 @@ mod tests {
     fn autocast_is_a_pet_only_pair() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
 
         assert!(s
             .eval::<bool>(
@@ -1699,7 +1699,7 @@ mod tests {
     fn only_an_autocastable_pet_slot_sets_its_autocast() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
 
         s.run(
             r#"ToggleSpellAutocast(1, BOOKTYPE_PET)
@@ -1732,7 +1732,7 @@ mod tests {
     fn a_pet_cast_queues_apart_from_a_player_cast() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
 
         s.run(
             r#"CastSpell(1, BOOKTYPE_PET)
@@ -1753,7 +1753,7 @@ mod tests {
     fn a_pet_book_pickup_carries_the_packed_word() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
 
         assert!(s
             .eval::<bool>(r#"return PickupSpell(1, BOOKTYPE_PET)"#)
@@ -1782,7 +1782,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.tick(10.0); // GetTime == 10
         s.set_spellbook(book());
-        s.set_pet_book(pet_book());
+        let _book = s.set_pet_book(pet_book());
 
         let (start, duration, enable) = s
             .eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_PET)"#)

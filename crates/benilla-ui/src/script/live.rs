@@ -1120,21 +1120,33 @@ thread_local! {
     /// The pet book's set writes through a test view, in order.
     static TEST_SPELL_AUTOCASTS: std::cell::RefCell<Vec<(u32, bool)>> =
         const { std::cell::RefCell::new(Vec::new()) };
-    /// The view lent for the rest of the thread once a test sets a pet book.
-    static TEST_STICKY: std::cell::RefCell<Option<LiveLoan<TestView>>> =
-        const { std::cell::RefCell::new(None) };
 }
 
-/// Answer `state` as the pet book of every test view on this thread, lending one until the thread ends if none is up yet.
+/// A test's pet book: the book before it comes back, and the view it lent with none up drops, when it drops.
 #[cfg(test)]
-pub(crate) fn set_test_pet_book(state: super::PetBookState) {
-    TEST_PET_BOOK.with(|b| *b.borrow_mut() = Some(state));
-    if read_live(|_| ()).is_none() {
-        TEST_STICKY.with(|s| {
-            // SAFETY: made with no loan up, so it encloses every later loan; held to the thread's end.
-            *s.borrow_mut() = Some(unsafe { LiveLoan::new(TestView::default()) });
-        });
+#[must_use = "the pet book answers only while the guard lives"]
+pub(crate) struct TestPetBook {
+    previous: Option<super::PetBookState>,
+    loan: Option<LiveLoan<TestView>>,
+}
+
+#[cfg(test)]
+impl Drop for TestPetBook {
+    fn drop(&mut self) {
+        TEST_PET_BOOK.with(|b| *b.borrow_mut() = self.previous.take());
+        drop(self.loan.take());
     }
+}
+
+/// Answer `state` as the pet book of every test view on this thread while the guard lives, lending one if none is up yet.
+#[cfg(test)]
+pub(crate) fn set_test_pet_book(state: super::PetBookState) -> TestPetBook {
+    let previous = TEST_PET_BOOK.with(|b| b.borrow_mut().replace(state));
+    // SAFETY: the guard drops on this thread, in scope order with the loans made after it.
+    let loan = read_live(|_| ())
+        .is_none()
+        .then(|| unsafe { LiveLoan::new(TestView::default()) });
+    TestPetBook { previous, loan }
 }
 
 /// Lend a pet bar with `slots`, for the VM's own tests: `has_bar`, `actions_usable` and `pickup_allowed` as given.
