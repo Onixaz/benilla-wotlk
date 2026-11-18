@@ -587,6 +587,8 @@ impl Cvars {
                 },
                 device_default: r.first_run.then(|| r.default.clone()),
                 latched: r.latched,
+                per_account: r.scope == Scope::Account,
+                per_character: r.scope == Scope::Character,
             })
             .collect()
     }

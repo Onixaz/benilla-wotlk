@@ -213,6 +213,10 @@ pub(crate) struct Model {
     /// Event name to its frames in registration order, never a set: the event signal dispatches in
     /// that order across frames. Re-registering keeps a frame's position.
     pub(crate) event_to_frames: HashMap<String, Vec<FrameHandle>>,
+    /// Events signalled since the VM began or `ResetCPUUsage`, every event counted with
+    /// profiling on or off (`0x81aa00` bumps the event's count before its listeners run);
+    /// `GetEventCPUUsage` answers the sum. A cell, so counting is no model mutation.
+    pub(crate) event_signals: std::cell::Cell<u32>,
     pub(crate) frame_events: HashMap<FrameHandle, HashSet<String>>,
     /// `RegisterAllEvents` frames in registration order, dispatched after an event's own list and
     /// cleared only by `UnregisterAllEvents`. Deviation: a flag, not the reference's append to
@@ -1410,6 +1414,7 @@ impl Model {
             model_facts_wanted: Vec::new(),
             model_instances: 0,
             event_to_frames: HashMap::new(),
+            event_signals: std::cell::Cell::new(0),
             frame_events: HashMap::new(),
             all_event_frames: Vec::new(),
             focused_editbox: None,

@@ -12,6 +12,7 @@ pub(super) mod common;
 mod cooldown;
 mod create_frame_template;
 mod cvar_bindings;
+mod debug_verbs;
 mod dispatch_bench;
 mod end_to_end;
 mod events;
