@@ -6,6 +6,7 @@ use benilla_protocol::{EntityKind, ObjectFields, SessionEvent};
 
 use super::characterization_tests::{pin, self_values, Rig, OBJECT_TYPE_PLAYER};
 use crate::net::ClientCommand;
+use bevy::prelude::{Entity, Transform};
 
 /// The NPC's guid.
 const NPC: u64 = 0xF130_0000_0300_0001;
@@ -288,10 +289,128 @@ fn the_spirit_healer_time_polls_first_and_fires_in_range() {
         pin(&seen, events, verbs),
         ["AREA_SPIRIT_HEALER_IN_RANGE | spirittime=30"]
     );
-    // Alive again: the frame's poll drops the healer, cancelling the wave.
+    // Alive again: the frame's poll drops the healer, its cancel firing while the wave still
+    // reads (`0x523eea` before `0x523efa` zeroes it), and the clock reads 0 after.
     let seen = rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0)])], 2);
     assert_eq!(
         pin(&seen, events, verbs),
-        ["AREA_SPIRIT_HEALER_OUT_OF_RANGE | spirittime=0"]
+        ["AREA_SPIRIT_HEALER_OUT_OF_RANGE | spirittime=30"]
     );
+    assert_eq!(rig.live_now().line(verbs), "NOW | spirittime=0");
+}
+
+/// A ghost holding a guide with a 30 s wave armed, the guide at `NEAR`.
+fn armed_ghost() -> Option<Rig> {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_FLAGS, FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_FLAGS,
+    };
+    let mut rig = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_FACTIONTEMPLATE, 1)])?;
+    let seen = rig.packets(
+        vec![
+            npc_with(
+                NPC,
+                0x8000,
+                NEAR,
+                &[(FIELD_UNIT_FACTIONTEMPLATE, 35), (FIELD_UNIT_FLAGS, 0x1000)],
+            ),
+            self_values(&[(FIELD_PLAYER_FLAGS, 0x10)]),
+            SessionEvent::AreaSpiritHealerTime {
+                healer: NPC,
+                ms: 30_500,
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["AREA_SPIRIT_HEALER_IN_RANGE"], &["spirittime"]),
+        ["AREA_SPIRIT_HEALER_IN_RANGE | spirittime=30"]
+    );
+    Some(rig)
+}
+
+/// The sends of `rx` by name, the healer's guid as `npc`.
+fn spirit_sends(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<String> {
+    rx.try_iter()
+        .map(|c| match c {
+            ClientCommand::CancelAura { spell_id } => format!("cancel {spell_id}"),
+            ClientCommand::AreaSpiritHealerQuery { healer } if healer == NPC => "query npc".into(),
+            ClientCommand::AreaSpiritHealerQueue { healer } if healer == NPC => "queue npc".into(),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+/// `AcceptAreaSpiritHeal` polls inside its call (`0x524b60` -> `0x524010`): a guide past 22 yd is
+/// dropped, the cancel's event firing inside the call while `GetAreaSpiritHealerTime` still reads
+/// the wave (`0x523eea` before `0x523efa`), then the aura cancel goes out and, no healer left,
+/// no queue.
+#[test]
+fn accept_area_spirit_heal_drops_a_far_guide_inside_its_call_with_the_wave_read() {
+    let Some(mut rig) = armed_ghost() else {
+        return;
+    };
+    let rx = tap(&mut rig);
+    // The guide steps off between frames, so only the verb's own poll sees it.
+    let world = rig.app.world_mut();
+    let guide = world
+        .query::<(Entity, &crate::net::Guid)>()
+        .iter(world)
+        .find(|(_, g)| g.0 == NPC)
+        .map(|(e, _)| e)
+        .expect("the guide");
+    // 30 yd along one horizontal axis: past the 22 yd retain radius.
+    world
+        .entity_mut(guide)
+        .get_mut::<Transform>()
+        .expect("the guide stands somewhere")
+        .translation
+        .x += 30.0;
+    assert_eq!(call(&mut rig, "AcceptAreaSpiritHeal()"), "returned");
+    assert_eq!(spirit_sends(&rx), ["cancel 2584"]);
+    rig.run(1);
+    assert_eq!(
+        pin(
+            &rig.take(),
+            &["AREA_SPIRIT_HEALER_OUT_OF_RANGE"],
+            &["spirittime"]
+        ),
+        ["AREA_SPIRIT_HEALER_OUT_OF_RANGE | spirittime=30"]
+    );
+    assert_eq!(rig.live_now().line(&["spirittime"]), "NOW | spirittime=0");
+}
+
+/// In reach, `AcceptAreaSpiritHeal` keeps the guide, fires nothing and queues for its wave.
+#[test]
+fn accept_area_spirit_heal_queues_for_a_guide_in_reach() {
+    let Some(mut rig) = armed_ghost() else {
+        return;
+    };
+    let rx = tap(&mut rig);
+    assert_eq!(call(&mut rig, "AcceptAreaSpiritHeal()"), "returned");
+    assert_eq!(spirit_sends(&rx), ["queue npc"]);
+    rig.run(1);
+    assert!(pin(&rig.take(), &["AREA_SPIRIT_HEALER_OUT_OF_RANGE"], &[]).is_empty());
+    assert_eq!(rig.live_now().line(&["spirittime"]), "NOW | spirittime=30");
+}
+
+/// `CancelAreaSpiritHeal` runs the aura cancel alone (`0x522fa0` -> `0x51f710`): the event inside
+/// the call, then the cancel's send, and the wave deadline left as it was.
+#[test]
+fn cancel_area_spirit_heal_fires_in_its_call_and_keeps_the_wave() {
+    let Some(mut rig) = armed_ghost() else {
+        return;
+    };
+    let rx = tap(&mut rig);
+    assert_eq!(call(&mut rig, "CancelAreaSpiritHeal()"), "returned");
+    assert_eq!(spirit_sends(&rx), ["cancel 2584"]);
+    rig.run(1);
+    assert_eq!(
+        pin(
+            &rig.take(),
+            &["AREA_SPIRIT_HEALER_OUT_OF_RANGE"],
+            &["spirittime"]
+        ),
+        ["AREA_SPIRIT_HEALER_OUT_OF_RANGE | spirittime=30"]
+    );
+    assert_eq!(rig.live_now().line(&["spirittime"]), "NOW | spirittime=30");
 }

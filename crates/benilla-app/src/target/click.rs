@@ -985,22 +985,18 @@ impl Dispatch<'_, '_> {
             }
             ServiceAction::AcquireSpiritGuide => {
                 debug!("right-click interact: {guid:#x} (spirit guide — adopting, 0x2E2)");
-                let outcome = self.service.spirit.click_guide(guid);
-                if outcome.cancel_aura {
-                    let service = &mut self.service;
-                    if let Some(script) = service.script.as_deref_mut() {
-                        service.live.lending(&mut *service.spirit, || {
-                            script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
-                        });
-                    }
-                }
-                crate::ui_dialog_verbs::poll_sends(
-                    benilla_ui::script::SpiritPoll {
-                        cancel_aura: outcome.cancel_aura,
-                        query: outcome.query,
-                    },
-                    &self.seam.net,
-                );
+                let service = &mut self.service;
+                let (script, live) = (&mut service.script, &mut service.live);
+                // Each set's cancel fires its event with the deadline still set (`0x523eea`).
+                service
+                    .spirit
+                    .click_guide(guid, Some(&*self.seam.net), &mut |spirit| {
+                        if let Some(script) = script.as_deref_mut() {
+                            live.lending(spirit, || {
+                                script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+                            });
+                        }
+                    });
             }
             ServiceAction::OpenMailbox => {
                 debug!("right-click interact: {guid:#x} (mailbox NPC — mail window, no packet)");

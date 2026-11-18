@@ -670,13 +670,16 @@ pub trait LiveState {
         0
     }
 
-    /// `AcceptAreaSpiritHeal`'s healer poll at the call (`0x524b60` -> `0x524010`), its state written; `None` where no view lends it.
-    fn area_spirit_poll(&mut self) -> Option<super::SpiritPoll> {
+    /// `AcceptAreaSpiritHeal`'s healer poll at the call (`0x524b60` -> `0x524010`) up to its drop's cancel: whether a wave is cancelled, its event owed while the deadline still reads (`0x523eea` before `0x523efa`); `None` where no view lends it.
+    fn area_spirit_poll_drop(&mut self) -> Option<bool> {
         None
     }
 
-    /// The poll's sends, then `CMSG_AREA_SPIRIT_HEALER_QUEUE` naming the healer it left held (`0x524b60`).
-    fn accept_area_spirit_heal(&self, _poll: super::SpiritPoll) {}
+    /// The rest of the poll after that event, then `CMSG_AREA_SPIRIT_HEALER_QUEUE` naming the healer it left held (`0x524b60`).
+    fn accept_area_spirit_heal(&mut self, _cancelled: bool) {}
+
+    /// `CancelAreaSpiritHeal`'s `CMSG_CANCEL_AURA` for 2584, after its event (`0x522fa0` -> `0x51f710`).
+    fn cancel_area_spirit_heal(&self) {}
 }
 
 /// A lent view's address, its lifetime erased.

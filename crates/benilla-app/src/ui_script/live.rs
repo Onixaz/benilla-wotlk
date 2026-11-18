@@ -1528,13 +1528,22 @@ impl LiveState for LiveView<'_, '_> {
             .map_or(0, |s| s.secs(std::time::Instant::now()))
     }
 
-    fn area_spirit_poll(&mut self) -> Option<benilla_ui::script::SpiritPoll> {
+    fn area_spirit_poll_drop(&mut self) -> Option<bool> {
         let spirit = self.lent.spirit.get_mut()?;
-        Some(crate::ui_dialog_verbs::poll(spirit, &self.dialogs.spirit))
+        Some(crate::ui_dialog_verbs::poll_drop(
+            spirit,
+            &self.dialogs.spirit,
+        ))
     }
 
-    fn accept_area_spirit_heal(&self, poll: benilla_ui::script::SpiritPoll) {
-        self.dialogs.accept(poll, self.lent.spirit.get());
+    fn accept_area_spirit_heal(&mut self, cancelled: bool) {
+        if let Some(spirit) = self.lent.spirit.get_mut() {
+            self.dialogs.accept(spirit, cancelled);
+        }
+    }
+
+    fn cancel_area_spirit_heal(&self) {
+        self.dialogs.cancel_area_spirit_heal();
     }
 }
 
