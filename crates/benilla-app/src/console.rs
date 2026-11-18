@@ -381,8 +381,17 @@ mod tests {
             "{list:?}"
         );
         assert!(list.last().unwrap().ends_with(" CVar(s)"));
+        // A substring match, case-insensitive: `horizonFarclipScale` matches too.
         let some = run(&mut app, "cvarlist FARCLIP");
-        assert_eq!(some.len(), 2, "matched case-insensitively: {some:?}");
+        assert_eq!(
+            some,
+            vec![
+                "farclip = \"500\" (default \"777\")".to_string(),
+                "horizonFarclipScale = \"4.0\"".to_string(),
+                "2 CVar(s)".to_string(),
+            ],
+            "matched case-insensitively"
+        );
     }
 
     #[test]
