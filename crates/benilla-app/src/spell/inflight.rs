@@ -280,10 +280,10 @@ enum CancelBy {
 /// (`SpellStopCasting`) and lands in call order ([`crate::script_calls`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct SelfCancel<'w, 's> {
-    pending: ResMut<'w, PendingCast>,
-    queued_melee: ResMut<'w, QueuedMeleeSpell>,
+    pending: crate::ui_script::OwnedMut<'w, PendingCast>,
+    queued_melee: crate::ui_script::OwnedMut<'w, QueuedMeleeSpell>,
     channel: Res<'w, ActiveChannel>,
-    auto_repeat: ResMut<'w, AutoRepeatActive>,
+    auto_repeat: crate::ui_script::OwnedMut<'w, AutoRepeatActive>,
     feed: ResMut<'w, CastBarFeed>,
     spells: Option<Res<'w, Spells>>,
     net: Res<'w, NetCommands>,
@@ -312,8 +312,8 @@ impl SelfCancel<'_, '_> {
         let Self {
             pending,
             queued_melee,
-            channel,
             auto_repeat,
+            channel,
             feed,
             spells,
             net,
@@ -324,6 +324,10 @@ impl SelfCancel<'_, '_> {
             play_seq,
             ecs,
         } = self;
+        // The cancel calls into no script: its writes hold the owner's borrow throughout.
+        let (mut pending_w, mut melee_w, mut repeat_w) =
+            (pending.write(), queued_melee.write(), auto_repeat.write());
+        let (pending, queued_melee, auto_repeat) = (&mut *pending_w, &mut *melee_w, &mut *repeat_w);
         let now = Instant::now();
         let self_e = self_guid.0.as_ref().and_then(|g| index.0.get(g)).copied();
         let moved = by == CancelBy::Moved;

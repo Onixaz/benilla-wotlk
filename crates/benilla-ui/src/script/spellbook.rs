@@ -236,24 +236,6 @@ impl super::UiScript {
             .is_empty()
     }
 
-    /// Whether the spell-targeting cursor is up, for `SpellIsTargeting()` and
-    /// `SpellStopTargeting()`; pushed each frame before the input pass runs the ESC chain. Arming
-    /// ends repair mode, as `HideRepairCursor` does: the targeting arm writes the Cast base mode
-    /// over Repair, and its end restores Point, never Repair.
-    pub fn set_spell_targeting(&mut self, targeting: bool) {
-        {
-            let m = self.model_ref();
-            if m.spell_targeting == targeting && (!targeting || !m.repair_mode) {
-                return;
-            }
-        }
-        let mut model = self.model_mut();
-        model.spell_targeting = targeting;
-        if targeting {
-            model.repair_mode = false;
-        }
-    }
-
     /// Take the `SpellStopTargeting()` calls, the ESC chain's rung (`UIParent.lua:1490`), out of
     /// the call stream: whether there was one. The app clears its targeting mode.
     pub fn take_stop_targeting(&mut self) -> bool {
@@ -440,6 +422,21 @@ fn pickup_spell(model: &mut Model, id: u32, book_type: &str) -> bool {
 }
 
 /// Register the spellbook globals.
+/// The targeting cursor as the lent view reads it at the call: up while its flag word is set
+/// (`0xd3f4e0`), wanting an item while the word carries an item bit (`& 0x4010`, `0x7fdd10`), and
+/// how many times it has armed, each arm writing the Cast base mode (`0x80d7f7`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpellTargetingLive {
+    pub active: bool,
+    pub wants_item: bool,
+    pub arms: u32,
+}
+
+/// The targeting cursor through the lent view; idle with none lent.
+pub(crate) fn targeting() -> SpellTargetingLive {
+    super::live::read_live(|l| l.spell_targeting()).unwrap_or_default()
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -920,23 +917,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // (`& 0x4010`), else nil; `SecureActionButton_OnClick` asks it after every press.
     g.set(
         "SpellCanTargetItem",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.spell_targeting && model.item_pick_armed))
+        lua.create_function(|_, ()| {
+            let t = targeting();
+            Ok(flag(t.active && t.wants_item))
         })?,
     )?;
 
     // SpellIsTargeting(): 1 while the targeting cursor is up, else nil.
     g.set(
         "SpellIsTargeting",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.spell_targeting))
-        })?,
+        lua.create_function(|_, ()| Ok(flag(targeting().active)))?,
     )?;
 
     // SpellCanTargetUnit("unit"): the argument is a string or a number (else `Usage:`), resolved
@@ -954,10 +944,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let can = model
-                .unit_guids
-                .guid_of(&token)
-                .is_some_and(|guid| model.spell_targetable_units.contains(&guid));
+            let guid = model.unit_guids.guid_of(&token);
+            drop(model);
+            let can = guid.is_some_and(|guid| {
+                super::live::read_live(|l| l.spell_can_target_unit(guid)).unwrap_or(false)
+            });
             Ok(flag(can))
         })?,
     )?;
@@ -968,9 +959,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SpellStopTargeting",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.spell_targeting {
-                model.script_calls.push(ScriptCall::SpellStopTargeting);
+            if targeting().active {
+                crate::script::model_mut_of(lua)
+                    .script_calls
+                    .push(ScriptCall::SpellStopTargeting);
                 Ok(Value::Integer(1))
             } else {
                 Ok(Value::Nil)
@@ -985,6 +977,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{HighestRankView, PetBookState, SpellBookState, SpellSlotView, SpellTabView};
     use crate::script::cursor::{CursorAction, CursorPayload};
+    use crate::script::live::TestTargeting;
     use crate::script::UiScript;
     use crate::script::{CastAt, ScriptCall};
 

@@ -175,7 +175,7 @@ fn on_unit_create(
 /// A name or creature record answered: each held unit's callback re-names the slot holding it
 /// and fires `PLAYER_TOTEM_UPDATE` (`0x728ce3`, `0x72ce73`).
 fn on_record_answer(
-    In(_): In<SessionEvent>,
+    In(ev): In<SessionEvent>,
     mut totems: ResMut<Totems>,
     index: Res<GuidIndex>,
     units: Query<&ObjectStore>,
@@ -183,6 +183,12 @@ fn on_record_answer(
     commands: Res<NetCommands>,
     mut ui: ResMut<UiEvents>,
 ) {
+    if !matches!(
+        ev,
+        SessionEvent::CreatureName { .. } | SessionEvent::PlayerName { .. }
+    ) {
+        return;
+    }
     for slot in 0..MAX_TOTEM_SLOTS {
         let Some(t) = totems.slots[slot].as_ref() else {
             continue;

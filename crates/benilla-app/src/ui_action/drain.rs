@@ -101,8 +101,8 @@ impl AttackPress<'_, '_> {
             e,
             guid,
             engaged,
-            &mut seam.queued_melee,
-            &mut seam.auto_repeat,
+            &mut seam.queued_melee.write(),
+            &mut seam.auto_repeat.write(),
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
@@ -158,8 +158,8 @@ impl AttackPress<'_, '_> {
             e,
             guid,
             false,
-            &mut seam.queued_melee,
-            &mut seam.auto_repeat,
+            &mut seam.queued_melee.write(),
+            &mut seam.auto_repeat.write(),
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
@@ -189,8 +189,8 @@ impl AttackPress<'_, '_> {
             e,
             0,
             true,
-            &mut seam.queued_melee,
-            &mut seam.auto_repeat,
+            &mut seam.queued_melee.write(),
+            &mut seam.auto_repeat.write(),
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
@@ -334,12 +334,12 @@ pub(crate) fn use_action(
         Some(b) if b.kind == ACTION_KIND_SPELL => {
             // In `UseAction` only: re-pressing the spell whose targeting cursor is up cancels it
             // before the cast attempt. A spellbook re-press aborts and re-enters.
-            if ladder.ground.spell() == Some(b.action) {
+            if ladder.ground.read().spell() == Some(b.action) {
                 debug!(
                     "ui_action: cast {} re-pressed — targeting toggles off",
                     b.action
                 );
-                ladder.ground.clear();
+                ladder.ground.write().clear();
                 return UseOutcome::Done;
             }
             // `ClickSpell` (`0x80da80`): an active spell re-pressed cancels. The form-match toggle

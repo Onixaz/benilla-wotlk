@@ -512,9 +512,9 @@ type SelfCastState = (
 /// What [`CastNow`] reads off the world.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct CastNowInputs<'w, 's> {
-    pending: Res<'w, crate::spell::PendingCast>,
-    auto_repeat: Option<Res<'w, crate::spell::AutoRepeatActive>>,
-    queued_melee: Res<'w, crate::spell::QueuedMeleeSpell>,
+    pending: crate::ui_script::LentRef<'w, crate::spell::PendingCast>,
+    auto_repeat: crate::ui_script::LentRef<'w, crate::spell::AutoRepeatActive>,
+    queued_melee: crate::ui_script::LentRef<'w, crate::spell::QueuedMeleeSpell>,
     trade_skill: Option<Res<'w, crate::ui_tradeskill::TradeSkillOpen>>,
     summons: Res<'w, crate::spell::SummonSlots>,
     actions: Res<'w, crate::ui_action::PlayerActions>,
@@ -527,16 +527,20 @@ impl CastNowInputs<'_, '_> {
             Some((s, c, e, a)) => (Some(s), c, e, a),
             None => (None, None, false, None),
         };
+        let (Some(pending), Some(queued_melee)) = (self.pending.get(), self.queued_melee.get())
+        else {
+            return;
+        };
         cast.pending = crate::spell::inflight(
-            &self.pending,
-            &self.queued_melee,
+            &pending,
+            &queued_melee,
             // The pending list alone (`0x805f30`), not the unit's cast state.
             casting.filter(|c| c.listed).map(|c| c.spell_id),
             std::time::Instant::now(),
         )
         .map(|i| i.spell_id());
-        cast.item = self.pending.current_item(std::time::Instant::now());
-        cast.auto_repeat = self.auto_repeat.as_ref().and_then(|a| a.0);
+        cast.item = pending.current_item(std::time::Instant::now());
+        cast.auto_repeat = self.auto_repeat.get().and_then(|a| a.0);
         cast.attacking = engaged;
         cast.trade_line = self.trade_skill.as_ref().and_then(|t| t.line);
         cast.race_class = crate::spell::race_class(store);

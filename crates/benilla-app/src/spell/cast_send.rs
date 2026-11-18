@@ -114,15 +114,15 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) objects: Objects<'w, 's>,
     pub(crate) sheath: MessageWriter<'w, crate::creature_anim::SheathRequest>,
     pub(crate) ecs: Commands<'w, 's>,
-    pub(crate) pending: ResMut<'w, crate::spell::PendingCast>,
-    pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) pending: crate::ui_script::OwnedMut<'w, crate::spell::PendingCast>,
+    pub(crate) queued_melee: crate::ui_script::OwnedMut<'w, crate::spell::QueuedMeleeSpell>,
     pub(crate) cooldowns: crate::ui_script::OwnedMut<'w, crate::spell::Cooldowns>,
     /// The talent spell modifiers the power gate's cost goes through.
     pub(crate) spell_mods: Res<'w, crate::spell::SpellModifiers>,
     pub(crate) cast_errors: ResMut<'w, CastErrors>,
-    pub(crate) auto_repeat: ResMut<'w, AutoRepeatActive>,
+    pub(crate) auto_repeat: crate::ui_script::OwnedMut<'w, AutoRepeatActive>,
     pub(crate) trade_skill_opens: ResMut<'w, crate::ui_tradeskill::TradeSkillOpens>,
-    pub(crate) ground: ResMut<'w, super::targeting::SpellTargeting>,
+    pub(crate) ground: crate::ui_script::OwnedMut<'w, super::targeting::SpellTargeting>,
     pub(crate) held_for_pick: ResMut<'w, HeldForPick>,
     /// The pet's cooldown list and pending cast, which a cast as the pet reads; its writes are
     /// queued, as the script appliers share the bar.
@@ -233,7 +233,7 @@ impl CastLadder<'_, '_> {
     ) {
         if let CastCommit::Pet { caster } = commit {
             self.commit_pet(spell_id, caster, bound_target(bound));
-            self.ground.clear();
+            self.ground.write().clear();
             return;
         }
         if let TargetedBind::Dest(p) | TargetedBind::Source(p) = bound {
@@ -288,7 +288,7 @@ impl CastLadder<'_, '_> {
             };
             crate::ui_cast::queue_sent(&mut self.ecs, spell_id, target);
         }
-        if let Some(prelude) = self.ground.prelude() {
+        if let Some(prelude) = self.ground.read().prelude() {
             prelude.send(&self.commands, &mut self.ecs);
         }
         let _ = self.commands.0.send(cmd);
@@ -298,7 +298,7 @@ impl CastLadder<'_, '_> {
         }
         let now = Instant::now();
         if let CastCommit::Item { entry, .. } = commit {
-            self.pending.arm_item(spell_id, entry, now);
+            self.pending.write().arm_item(spell_id, entry, now);
         } else {
             // The ladder's `normal_cast` predicate; a ranged shot never raises the cursor.
             let guards = self
@@ -306,7 +306,7 @@ impl CastLadder<'_, '_> {
                 .as_ref()
                 .and_then(|s| s.catalog.get(spell_id))
                 .is_none_or(|d| !d.ranged_attack() && !d.on_next_swing());
-            self.pending.arm(spell_id, now, guards);
+            self.pending.write().arm(spell_id, now, guards);
         }
         if let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) {
             let speed = cast_speed(self.objects.player_object());
@@ -314,7 +314,7 @@ impl CastLadder<'_, '_> {
                 .write()
                 .start_gcd(spell_id, d, now, &self.spell_mods, speed);
         }
-        self.ground.clear();
+        self.ground.write().clear();
     }
 
     /// The spell-cast entry (`0x80cce0`) with the pet as caster, for the pet's client-targeted and
@@ -346,8 +346,8 @@ impl CastLadder<'_, '_> {
                 return;
             }
         }
-        if self.ground.active() {
-            self.ground.clear();
+        if self.ground.read().active() {
+            self.ground.write().clear();
         }
         let candidates = cast_target::CastCandidates {
             selection: ctx.selection_guid,
@@ -434,6 +434,7 @@ impl CastLadder<'_, '_> {
         if let Some(word) = pending_word {
             debug!("ui_pet: pet cast {spell_id} awaits its click ({word:#06x})");
             self.ground
+                .write()
                 .enter(spell_id, CastCommit::Pet { caster: pet }, word);
             return;
         }
@@ -575,14 +576,14 @@ impl CastLadder<'_, '_> {
             self.totem_categories.as_deref().map(|t| &t.0),
             &mut self.sheath,
             &mut self.ecs,
-            &mut self.pending,
-            &mut self.queued_melee,
+            &mut self.pending.write(),
+            &mut self.queued_melee.write(),
             &mut self.cooldowns.write(),
             &self.spell_mods,
             &mut self.cast_errors,
-            &mut self.auto_repeat,
+            &mut self.auto_repeat.write(),
             &mut self.trade_skill_opens,
-            &mut self.ground,
+            &mut self.ground.write(),
             &mut self.held_for_pick,
             &self.area_gate,
         );

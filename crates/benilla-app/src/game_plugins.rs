@@ -864,7 +864,7 @@ pub(crate) mod schedule_tests {
     ///   facing and nearest-unit reads see a rider's pose or the camera a frame late at worst, as
     ///   the range compare's readers do;
     /// - the range compare's readers (`ui_action::state::feed_action_state`,
-    ///   `ui_tooltip::spell_feed::feed_spell_tooltips`, `spell::targeting::feed_targeting_to_vm`,
+    ///   `ui_tooltip::spell_feed::feed_spell_tooltips`,
     ///   the targeting cursor and the object-click commit) against the writers of `Player` and
     ///   `RemoteMotion` (`world_focus`'s focus publish and settle release,
     ///   `transport::compose_riders` and `ground_deck_riders`): the readers take the

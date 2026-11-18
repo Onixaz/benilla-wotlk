@@ -383,13 +383,15 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         model.cursor,
         Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
     );
-    if !placing && (model.item_pick_armed || model.repair_mode) {
+    if !placing
+        && (super::spellbook::targeting().wants_item || super::merchant::repair_mode(&model))
+    {
         let occupied = model
             .containers
             .get(&bag)
             .and_then(|c| c.slots.get(&slot))
             .is_some_and(|s| s.item_id != 0);
-        if occupied && model.item_pick_armed {
+        if occupied && super::spellbook::targeting().wants_item {
             model.item_picks.push((bag, slot));
         } else if occupied {
             model.container_repairs.push((bag, slot));
@@ -812,7 +814,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // Every right-click clears the cursor before it reads the slot: a held payload goes
             // back, never placed, and an armed gift wrap is cancelled.
             cursor::clear_cursor(&mut model);
-            if model.repair_mode {
+            if super::merchant::repair_mode(&model) {
                 // Then the item in the slot is repaired.
                 let occupied = model
                     .containers
@@ -859,7 +861,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .is_some();
             // An armed spell or repair cursor suppresses it first; each is sticky, so a Buy here
             // would stamp out the active base cursor.
-            if occupied && !model.spell_targeting && !model.repair_mode {
+            if occupied
+                && !super::spellbook::targeting().active
+                && !super::merchant::repair_mode(&model)
+            {
                 model.ui_cursor = Some(UiCursorMode::Buy);
                 model.ui_cursor_dirty = true;
             }

@@ -7,8 +7,8 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{
-    Engaged, EnvDamageTable, KitPush, MountFlourish, PlaySeq, PlayerCombatEdges, RangedHold,
-    SheathRequest, SwingFlush, SwingImpact, SwingMessage,
+    Engaged, EnvDamageTable, KitPush, MountFlourish, PlaySeq, RangedHold, SheathRequest,
+    SwingFlush, SwingImpact, SwingMessage,
 };
 use crate::net::{AiReactionMessage, EmoteKind, EmoteMessage, GuidIndex, NetHandlerApp, SelfGuid};
 use crate::swing_refusal::SwingRefusalEdge;
@@ -39,17 +39,10 @@ fn on_attack_start(
     mut commands: Commands,
     index: Res<GuidIndex>,
     self_guid: Res<SelfGuid>,
-    mut edges: ResMut<PlayerCombatEdges>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::AttackStart { attacker, victim } = ev {
-        attack_start(
-            attacker,
-            victim,
-            &mut commands,
-            &index,
-            &self_guid,
-            &mut edges,
-        );
+        attack_start(attacker, victim, &mut commands, &index, &self_guid, &mut ui);
     }
 }
 
@@ -59,7 +52,7 @@ fn on_attack_stop(
     index: Res<GuidIndex>,
     self_guid: Res<SelfGuid>,
     transforms: Query<&Transform>,
-    mut edges: ResMut<PlayerCombatEdges>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut flushes: MessageWriter<SwingFlush>,
 ) {
     if let SessionEvent::AttackStop {
@@ -78,7 +71,7 @@ fn on_attack_stop(
             &index,
             &self_guid,
             &transforms,
-            &mut edges,
+            &mut ui,
             &mut flushes,
         );
     }
@@ -241,7 +234,7 @@ fn attack_start(
     commands: &mut Commands,
     index: &GuidIndex,
     self_guid: &SelfGuid,
-    edges: &mut PlayerCombatEdges,
+    ui: &mut crate::ui_script::live::UiEvents,
 ) {
     // The Ready idle rides this window: the client's gate is the auto-attack target being set.
     debug!("net: attack start {attacker:#x} → {victim:#x}");
@@ -256,7 +249,7 @@ fn attack_start(
         .insert(Engaged(victim))
         .remove::<RangedHold>();
     if self_guid.0 == Some(attacker) {
-        edges.0.push(true);
+        ui.fire("PLAYER_ENTER_COMBAT", Vec::new());
     }
 }
 
@@ -276,7 +269,7 @@ fn attack_stop(
     index: &GuidIndex,
     self_guid: &SelfGuid,
     transforms: &Query<&Transform>,
-    edges: &mut PlayerCombatEdges,
+    ui: &mut crate::ui_script::live::UiEvents,
     flushes: &mut MessageWriter<SwingFlush>,
 ) {
     let AttackStop {
@@ -306,7 +299,7 @@ fn attack_stop(
         commands.entity(e).insert(crate::net::FacingHold::new(yaw));
     }
     if self_guid.0 == Some(attacker) {
-        edges.0.push(false);
+        ui.fire("PLAYER_LEAVE_COMBAT", Vec::new());
     }
 }
 
@@ -671,8 +664,8 @@ mod tests {
         );
     }
 
-    /// `0x756800`: every start and stop of ours queues its combat event, a new victim's start
-    /// too; a stop with its flag set holds the attacker's facing toward a streamed victim
+    /// `0x756800`: every start and stop of ours fires its combat event from the handler (`0x756897`,
+    /// `0x756b86`), a new victim's start too; a stop with its flag set holds the attacker's facing toward a streamed victim
     /// (`0x7567a5`); an unstreamed attacker does nothing.
     #[test]
     fn each_attack_start_and_stop_of_ours_queues_its_event_and_a_flagged_stop_holds_the_facing() {
@@ -681,7 +674,7 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<GuidIndex>();
         world.init_resource::<SelfGuid>();
-        world.init_resource::<PlayerCombatEdges>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<Messages<SwingFlush>>();
         world.resource_mut::<SelfGuid>().0 = Some(ME);
         let me = world.spawn(Transform::default()).id();
@@ -715,8 +708,13 @@ mod tests {
             .expect("the handler runs as a one-shot system");
         }
         assert_eq!(
-            world.resource::<PlayerCombatEdges>().0,
-            [true, true, false, true],
+            world.resource::<crate::ui_script::live::UiEvents>().names(),
+            [
+                "PLAYER_ENTER_COMBAT",
+                "PLAYER_ENTER_COMBAT",
+                "PLAYER_LEAVE_COMBAT",
+                "PLAYER_ENTER_COMBAT"
+            ],
             "ENTER per start, a new victim's too, LEAVE per stop; another unit's fire nothing"
         );
         assert!(world.entity(mob).contains::<crate::net::FacingHold>());

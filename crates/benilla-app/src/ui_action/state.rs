@@ -31,6 +31,8 @@ pub(crate) struct StateMemory {
     pushed: HashMap<u32, ActionState>,
     last_generation: Option<u64>,
     auto_repeat: Option<u32>,
+    /// The targeting cursor's spell, for its `CURRENT_SPELL_CAST_CHANGED` on each edge.
+    targeting_spell: Option<u32>,
     last_cd_trace: Option<Instant>,
     /// The reactive spells and whether each was ready last frame ([`reactive_spells`]); `None`
     /// until built, rebuilt when the book changes.
@@ -152,14 +154,14 @@ pub(crate) fn feed_action_state(
     spells: Option<Res<Spells>>,
     mut cooldowns: crate::ui_script::OwnedMut<Cooldowns>,
     clock: Res<crate::ui_script::UiClock>,
-    auto_repeat: Res<AutoRepeatActive>,
+    auto_repeat: crate::ui_script::LentRef<AutoRepeatActive>,
     // One tuple for Bevy's 16-param ceiling: cast tracking, macro bindings, spell mods and the
     // range units.
     cast_state: (
-        Res<crate::spell::PendingCast>,
-        Res<crate::spell::QueuedMeleeSpell>,
+        crate::ui_script::LentRef<crate::spell::PendingCast>,
+        crate::ui_script::LentRef<crate::spell::QueuedMeleeSpell>,
         Res<crate::spell::ActiveChannel>,
-        Res<crate::spell::SpellTargeting>,
+        crate::ui_script::LentRef<crate::spell::SpellTargeting>,
         Res<crate::ui_macro::MacroBoundSpells>,
         Res<crate::spell::SpellModifiers>,
         // The caster's and the target's reach and motion, which the range compare reads.
@@ -270,7 +272,11 @@ pub(crate) fn feed_action_state(
         .unwrap_or(0);
     // The pending list alone (`0x805f30`), not the unit's cast state.
     let casting_spell = me.and_then(|(_, _, _, c)| c.filter(|c| c.listed).map(|c| c.spell_id));
-    let current_cast = pending.current(now).or(casting_spell);
+    let current_cast = pending.get().and_then(|p| p.current(now)).or(casting_spell);
+    // The cast state's reads, taken before any call into Lua below.
+    let melee_current = queued_melee.get().and_then(|q| q.current());
+    let targeting_spell = targeting.get().and_then(|t| t.spell());
+    let auto_repeat = auto_repeat.get().and_then(|a| a.0);
     let caster = range_units.caster();
     let self_pos = me.map(|(_, t, _, _)| t.translation);
     // The target's reach, motion and squared distance (the reference tests dx²+dy²+dz²).
@@ -387,13 +393,13 @@ pub(crate) fn feed_action_state(
                     engaged
                 } else {
                     current_cast == Some(button.action)
-                        || queued_melee.current() == Some(button.action)
+                        || melee_current == Some(button.action)
                         || channel.current(now) == Some(button.action)
                         // Checked while its ground click is pending.
-                        || targeting.spell() == Some(button.action)
+                        || targeting_spell == Some(button.action)
                         || (form_byte != 0 && d.shapeshift_form == Some(u32::from(form_byte)))
                 };
-                st.auto_repeat = auto_repeat.0 == Some(button.action);
+                st.auto_repeat = auto_repeat == Some(button.action);
                 // The usable walk; only its power gate sets `notEnoughMana`.
                 if let (Some((store, _, _, _)), Some(sp)) = (me, spells.as_deref()) {
                     let ctx = usable::UsableCtx {
@@ -631,34 +637,19 @@ pub(crate) fn feed_action_state(
             );
         }
     }
-    if auto_repeat.0 != memory.auto_repeat {
-        memory.auto_repeat = auto_repeat.0;
+    // The targeting cursor's arm, bind and abort sites each signal the selection update; until
+    // those sites fire it, it fires on the cursor's spell changing (`0x80d806`, `0x8054f0`).
+    if targeting_spell != memory.targeting_spell {
+        memory.targeting_spell = targeting_spell;
+        script.fire_event("CURRENT_SPELL_CAST_CHANGED", vec![]);
+    }
+    if auto_repeat != memory.auto_repeat {
+        memory.auto_repeat = auto_repeat;
         script.fire_event(
-            if auto_repeat.0.is_some() {
+            if auto_repeat.is_some() {
                 "START_AUTOREPEAT_SPELL"
             } else {
                 "STOP_AUTOREPEAT_SPELL"
-            },
-            vec![],
-        );
-    }
-}
-
-/// `PLAYER_ENTER_COMBAT` and `PLAYER_LEAVE_COMBAT`, one per attack start and stop of ours, in
-/// packet order: a new victim enters again, a stop and a start in one frame leave then enter.
-pub(super) fn fire_combat_edges(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    edges: Option<ResMut<crate::creature_anim::PlayerCombatEdges>>,
-) {
-    let (Some(mut script), Some(mut edges)) = (script, edges) else {
-        return;
-    };
-    for enter in edges.0.drain(..) {
-        script.fire_event(
-            if enter {
-                "PLAYER_ENTER_COMBAT"
-            } else {
-                "PLAYER_LEAVE_COMBAT"
             },
             vec![],
         );

@@ -155,7 +155,8 @@ pub(crate) fn commit_item_cast_on_pick(
         let Some(current) = trade.as_deref().and_then(|t| t.their_enchant_slot()) else {
             continue;
         };
-        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let Some((spell_id, commit)) = held else {
             continue;
         };
         let replaced = (!accepted && current != 0)
@@ -239,7 +240,8 @@ pub(crate) fn commit_item_cast_on_pick(
     }
 
     for (item_guid, confirmed) in asks {
-        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let Some((spell_id, commit)) = held else {
             continue; // a click raced a cancel
         };
         // An unresolved template binds ungated and the server judges.
@@ -351,7 +353,8 @@ pub(crate) fn commit_item_cast_on_pick(
 
     // `ReplaceEnchant`: bind the parked guid with no gate re-run.
     for item_guid in bind_outright {
-        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let Some((spell_id, commit)) = held else {
             continue;
         };
         debug!("ui_action: replace-enchant accepted — cast {spell_id} at item {item_guid:#x}");

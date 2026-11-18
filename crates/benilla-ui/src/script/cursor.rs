@@ -438,19 +438,6 @@ impl super::UiScript {
 // The targeting cursor's item pick and the enchant confirms
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 impl super::UiScript {
-    /// Arm or disarm the targeting cursor's item half: while armed, a bag or paper-doll click
-    /// queues its `(bag, slot)` as a pick instead of picking up, as the reference's two pickups do.
-    pub fn set_item_pick_armed(&mut self, armed: bool) {
-        set_field!(self, item_pick_armed, armed);
-    }
-
-    /// Push the guids of the units for which the armed word's unit checks all pass.
-    /// `SpellCanTargetUnit` resolves its token to a guid, as the reference does, and asks this set,
-    /// so a chain such as `"party1target"` reads the unit it ends on.
-    pub fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
-        set_field!(self, spell_targetable_units, guids.into_iter().collect());
-    }
-
     /// Drain the `(bag, slot)` picks since the last call; a paper-doll pick reports as
     /// [`EQUIPMENT_BAG`] and its 1-based inventory slot.
     pub fn take_item_picks(&mut self) -> Vec<(i64, u32)> {

@@ -601,13 +601,6 @@ pub(crate) struct Model {
     /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
     /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
     pub(crate) casting: bool,
-    /// Spell targeting is on (`SpellIsTargeting`); it gates `SpellStopTargeting()`, whose nil the
-    /// ESC chain falls through on (`UIParent.lua:1490`).
-    pub(crate) spell_targeting: bool,
-    /// The units, by guid, for which `SpellCanTargetUnit`'s armed unit word clears fully, which
-    /// stock unit frames ask before they call `SpellTargetUnit`; a token resolves to its guid
-    /// through [`Self::unit_guids`].
-    pub(crate) spell_targetable_units: HashSet<u64>,
 
     pub(crate) talents: super::talent::TalentUiState,
     /// The achievement tables, lists and tracked set.
@@ -742,8 +735,6 @@ pub(crate) struct Model {
     pub(crate) container_moves: Vec<container::ContainerMove>,
     /// `(bag, slot)` clicks made in repair mode.
     pub(crate) container_repairs: Vec<(i64, u32)>,
-    /// Targeting wants an item: a bag or paper-doll click becomes a pick.
-    pub(crate) item_pick_armed: bool,
     /// Picked `(bag, slot)`s; a paper-doll click is `EQUIPMENT_BAG` and its 1-based inventory slot.
     pub(crate) item_picks: Vec<(i64, u32)>,
     /// `BindEnchant()` and `ReplaceEnchant()`, the enchant popups' answers.
@@ -816,6 +807,9 @@ pub(crate) struct Model {
     pub(crate) merchant_buybacks: Vec<u32>,
     pub(crate) repair_all: Option<bool>,
     pub(crate) repair_mode: bool,
+    /// The targeting cursor's arm count when repair mode armed: a later arm writes the Cast base
+    /// mode over Repair (`0x80d7f7`), ending it.
+    pub(crate) repair_armed_at: u32,
 
     /// The stable selection.
     pub(crate) stable: stable::StableModel,
@@ -1566,8 +1560,6 @@ impl Model {
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
             casting: false,
-            spell_targeting: false,
-            spell_targetable_units: HashSet::new(),
             talents: super::talent::TalentUiState::default(),
             achievement: Default::default(),
             talent_preview: Vec::new(),
@@ -1632,7 +1624,6 @@ impl Model {
             pet_grid_shown: false,
             container_moves: Vec::new(),
             container_repairs: Vec::new(),
-            item_pick_armed: false,
             item_picks: Vec::new(),
             enchant_confirms: Vec::new(),
             container_destroys: Vec::new(),
@@ -1666,6 +1657,7 @@ impl Model {
             merchant_buybacks: Vec::new(),
             repair_all: None,
             repair_mode: false,
+            repair_armed_at: 0,
             stable: Default::default(),
             bank: None,
             bank_purchase: false,

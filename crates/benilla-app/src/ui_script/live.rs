@@ -53,6 +53,9 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
     pub(crate) selection: Slot<'w, crate::target::Selection>,
     pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
+    /// The player's cast state, which every loan owns: the pending cast (`0x805f30`), the queued
+    /// on-swing strike, the auto-repeating spell (`0x7fe130`) and the ground-targeting cursor.
+    pub(crate) cast: CastSlots<'w>,
     /// The wire, for the sends a verb makes inside its call.
     commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
@@ -71,8 +74,42 @@ pub(crate) struct LiveView<'w, 's> {
     runes: Option<Res<'w, crate::ui_rune::Runes>>,
     /// The totem table and the tool search's inputs.
     totems: crate::ui_totem::TotemLive<'w, 's>,
+    /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
+    bind: Option<crate::spell::targeting::BindChecks<'w, 's>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
+
+/// The player's cast state as the view lends it, owned by every loan as the pet's words are: a VM
+/// holder writes it through [`OwnedMut`], and a verb through [`Slot::get_mut`].
+#[derive(Default)]
+pub(crate) struct CastSlots<'w> {
+    pub(crate) pending: Slot<'w, crate::spell::PendingCast>,
+    pub(crate) queued_melee: Slot<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) auto_repeat: Slot<'w, crate::spell::AutoRepeatActive>,
+    pub(crate) targeting: Slot<'w, crate::spell::SpellTargeting>,
+}
+
+// SAFETY: it registers no access and fetches nothing; `LendLive` fills it under its own access.
+unsafe impl SystemParam for CastSlots<'_> {
+    type State = ();
+    type Item<'w, 's> = CastSlots<'w>;
+
+    fn init_state(_: &mut World) -> Self::State {}
+
+    fn init_access(_: &(), _: &mut SystemMeta, _: &mut FilteredAccessSet, _: &mut World) {}
+
+    unsafe fn get_param<'w, 's>(
+        _: &'s mut (),
+        _: &SystemMeta,
+        _: UnsafeWorldCell<'w>,
+        _: Tick,
+    ) -> Self::Item<'w, 's> {
+        CastSlots::default()
+    }
+}
+
+// SAFETY: it accesses nothing.
+unsafe impl ReadOnlySystemParam for CastSlots<'_> {}
 
 /// The main-thread state a verb writes inside its call, as 12340's verbs write the game's globals: each lent mutably beside the [`LiveView`], by [`LendLive`] or by the system that owns the borrow ([`LendLive::lending`]).
 #[derive(Default)]
@@ -214,6 +251,16 @@ pub(crate) struct Slot<'w, X: Resource> {
     /// The lending system's world and `X`'s id when it writes `X` itself, so a verb's write marks it.
     owner: Option<(UnsafeWorldCell<'w>, ComponentId)>,
     _life: PhantomData<&'w X>,
+}
+
+impl<X: Resource> Default for Slot<'_, X> {
+    fn default() -> Self {
+        Slot {
+            ptr: None,
+            owner: None,
+            _life: PhantomData,
+        }
+    }
 }
 
 impl<'w, X: Resource> Slot<'w, X> {
@@ -1210,6 +1257,29 @@ impl LiveState for LiveView<'_, '_> {
             .ui_triple(anchor, ui_now)
     }
 
+    fn spell_targeting(&self) -> benilla_ui::script::SpellTargetingLive {
+        let Some(t) = self.cast.targeting.get() else {
+            return Default::default();
+        };
+        benilla_ui::script::SpellTargetingLive {
+            active: t.active(),
+            wants_item: t.wants(crate::spell::targeting::TargetingWants::Item),
+            arms: t.arms(),
+        }
+    }
+
+    /// The target check's unit leg toward the held unit `guid` at the call (`0x804190`): the
+    /// standing word binds it and no range refusal stands.
+    fn spell_can_target_unit(&self, guid: u64) -> bool {
+        let (Some(t), Some(bind)) = (self.cast.targeting.get(), self.bind.as_ref()) else {
+            return false;
+        };
+        let Some(&entity) = self.index.as_ref().and_then(|i| i.0.get(&guid)) else {
+            return false;
+        };
+        t.can_target_unit(entity, bind)
+    }
+
     fn totem(&self, slot: usize) -> Option<benilla_ui::script::TotemView> {
         self.totems.slot(slot)
     }
@@ -1331,8 +1401,9 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 /// A lendable resource's id, then the loan's and the owner's marks.
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// The lendable resources' ids: the history, the pet's words, the selection and the player's place.
-type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds);
+/// The lendable resources' ids: the history, the pet's words, the selection, the player's place,
+/// then the cast state's four ([`CastSlots`]).
+type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds, [SlotIds; 4]);
 
 /// Register `X` and its pair's marks.
 fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
@@ -1449,6 +1520,12 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 slot_ids::<crate::ui_pet::PetBar>(world),
                 slot_ids::<crate::target::Selection>(world),
                 slot_ids::<crate::area::PlayerPlace>(world),
+                [
+                    slot_ids::<crate::spell::PendingCast>(world),
+                    slot_ids::<crate::spell::QueuedMeleeSpell>(world),
+                    slot_ids::<crate::spell::AutoRepeatActive>(world),
+                    slot_ids::<crate::spell::SpellTargeting>(world),
+                ],
             ),
             lent_ids(world),
         )
@@ -1471,6 +1548,11 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
         slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
         slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
+        let [pending, melee, repeat, targeting] = state.1 .4;
+        slot_access::<crate::spell::PendingCast>(true, pending, system_meta, set);
+        slot_access::<crate::spell::QueuedMeleeSpell>(true, melee, system_meta, set);
+        slot_access::<crate::spell::AutoRepeatActive>(true, repeat, system_meta, set);
+        slot_access::<crate::spell::SpellTargeting>(true, targeting, system_meta, set);
         let [signals, asks, marks, expiries, giver] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
@@ -1521,7 +1603,17 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         // SAFETY: both registered in `init_access`.
         unsafe {
             let own = |owned: bool, id| owned.then_some((world, id));
-            let ((cd, ..), (bar, ..), (sel, ..), (place, ..)) = state.1;
+            let ((cd, ..), (bar, ..), (sel, ..), (place, ..), cast) = state.1;
+            let [(pending, ..), (melee, ..), (repeat, ..), (targeting, ..)] = cast;
+            let c = &mut view.cast;
+            c.pending
+                .set(slot_fetch(world, pending), own(true, pending));
+            c.queued_melee
+                .set(slot_fetch(world, melee), own(true, melee));
+            c.auto_repeat
+                .set(slot_fetch(world, repeat), own(true, repeat));
+            c.targeting
+                .set(slot_fetch(world, targeting), own(true, targeting));
             view.cooldowns
                 .set(slot_fetch(world, cd), own(O::COOLDOWNS, cd));
             view.pet_bar.set(slot_fetch(world, bar), own(true, bar));

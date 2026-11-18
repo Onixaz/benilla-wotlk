@@ -504,6 +504,16 @@ pub trait LiveState {
         None
     }
 
+    /// The targeting cursor at the call: up, wanting an item, and its arm count.
+    fn spell_targeting(&self) -> super::SpellTargetingLive {
+        super::SpellTargetingLive::default()
+    }
+
+    /// `SpellCanTargetUnit`'s unit leg toward the held unit `guid` at the call (`0x804190`): the standing word binds it with no range refusal; false while not targeting.
+    fn spell_can_target_unit(&self, _guid: u64) -> bool {
+        false
+    }
+
     /// The totem table's live slot `slot` (0-based) at the call (`0xbd0b00`), `None` for an empty one.
     fn totem(&self, _slot: usize) -> Option<super::TotemView> {
         None
@@ -870,6 +880,17 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn spell_targeting(&self) -> super::SpellTargetingLive {
+        TEST_TARGETING.with(|t| t.borrow().0)
+    }
+
+    fn spell_can_target_unit(&self, guid: u64) -> bool {
+        TEST_TARGETING.with(|t| {
+            let t = t.borrow();
+            t.0.active && t.1.contains(&guid)
+        })
+    }
+
     fn multicast_list(&self, element: usize) -> Vec<u32> {
         self.multicast_lists
             .get(element)
@@ -1206,6 +1227,62 @@ thread_local! {
     /// The pet book's set writes through a test view, in order.
     static TEST_SPELL_AUTOCASTS: std::cell::RefCell<Vec<(u32, bool)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The targeting cursor and the guids `SpellCanTargetUnit` passes, as every test view on this thread answers them.
+    static TEST_TARGETING: std::cell::RefCell<(super::SpellTargetingLive, std::collections::HashSet<u64>)> =
+        std::cell::RefCell::default();
+    /// The view lent for the rest of the thread once a test moves the cursor with none up.
+    static TEST_TARGETING_LOAN: std::cell::RefCell<Option<LiveLoan<TestView>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Move the targeting cursor on a bare VM as the app's view answers it, lending a view for the rest of the thread when none is up.
+#[cfg(test)]
+pub(crate) trait TestTargeting {
+    /// The cursor up or down; going up counts an arm, as the cast's cursor arm does (`0x80d7f7`).
+    fn set_spell_targeting(&mut self, active: bool);
+    /// The word's item half (`& 0x4010`).
+    fn set_item_pick_armed(&mut self, armed: bool);
+    /// The guids `SpellCanTargetUnit` passes while the cursor is up.
+    fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>);
+}
+
+#[cfg(test)]
+fn sticky_targeting() {
+    if read_live(|_| ()).is_none() {
+        // SAFETY: held until the thread ends, made with no other loan up.
+        let loan = unsafe { LiveLoan::new(TestView::default()) };
+        TEST_TARGETING_LOAN.with(|l| *l.borrow_mut() = Some(loan));
+    }
+}
+
+#[cfg(test)]
+impl TestTargeting for UiScript {
+    fn set_spell_targeting(&mut self, active: bool) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| {
+            let t = &mut t.borrow_mut().0;
+            if active && !t.active {
+                t.arms = t.arms.wrapping_add(1);
+            }
+            t.active = active;
+            if !active {
+                t.wants_item = false;
+            }
+        });
+    }
+
+    fn set_item_pick_armed(&mut self, armed: bool) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| t.borrow_mut().0.wants_item = armed);
+    }
+
+    fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| t.borrow_mut().1 = guids.into_iter().collect());
+    }
 }
 
 /// A test's pet book: the book before it comes back, and the view it lent with none up drops, when it drops.

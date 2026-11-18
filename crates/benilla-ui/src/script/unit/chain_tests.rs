@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::script::live::TestTargeting;
 use crate::script::{UiScript, UnitGuids, UnitState};
 
 const ME: u64 = 0x10;
@@ -264,6 +265,7 @@ fn unit_in_party_judges_the_unit_a_party_chain_ends_on() {
 #[test]
 fn spell_can_target_unit_answers_the_verdict_of_the_unit_the_token_names() {
     let mut s = world();
+    s.set_spell_targeting(true);
     s.set_spell_targetable_units([BOSS, P1]);
     let can = |s: &UiScript, token: &str| {
         s.eval::<bool>(&format!("return SpellCanTargetUnit({token:?}) == 1"))

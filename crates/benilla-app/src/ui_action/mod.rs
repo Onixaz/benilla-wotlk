@@ -473,9 +473,6 @@ impl Plugin for UiActionPlugin {
                         .in_set(UnitFeed)
                         .in_set(CooldownEvents)
                         .after(feed::feed_actions),
-                    state::fire_combat_edges
-                        .in_set(UnitFeed)
-                        .after(state::feed_action_state),
                     drain::drain_action_sets.in_set(UiDrain),
                     equipment_sets::drain_equipment_sets.in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.

@@ -485,6 +485,7 @@ pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects};
 pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
+    SpellTargetingLive,
 };
 pub use stable::{
     StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,

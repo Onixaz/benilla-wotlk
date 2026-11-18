@@ -670,7 +670,7 @@ pub(super) fn follow_requests(
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     places: Query<&Transform>,
-    cast: Res<crate::spell::PendingCast>,
+    cast: crate::ui_script::LentRef<crate::spell::PendingCast>,
     mut errors: ResMut<crate::ui_action::UiErrorKeys>,
     mut follow: ResMut<crate::player::FollowState>,
     mut approach: ResMut<crate::player::Approach>,
@@ -704,7 +704,8 @@ pub(super) fn follow_requests(
         if let Some(key) = scan_params.follow_refusal(
             guid,
             followee,
-            cast.in_flight(std::time::Instant::now()),
+            cast.get()
+                .is_some_and(|c| c.in_flight(std::time::Instant::now())),
             at,
         ) {
             info!("follow: refused — {key}");

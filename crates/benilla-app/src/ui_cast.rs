@@ -375,9 +375,9 @@ pub(crate) fn feed_cast_bar(
     mut feed: ResMut<CastBarFeed>,
     mut units: ResMut<UnitCasts>,
     spells: Option<Res<Spells>>,
-    pending: Res<PendingCast>,
-    queued_melee: Res<QueuedMeleeSpell>,
-    auto_repeat: Res<crate::spell::AutoRepeatActive>,
+    pending: crate::ui_script::LentRef<PendingCast>,
+    queued_melee: crate::ui_script::LentRef<QueuedMeleeSpell>,
+    auto_repeat: crate::ui_script::LentRef<crate::spell::AutoRepeatActive>,
     self_guid: Res<SelfGuid>,
     index: Res<GuidIndex>,
     casting: Query<&Casting>,
@@ -405,9 +405,14 @@ pub(crate) fn feed_cast_bar(
         .and_then(|g| index.0.get(g))
         .and_then(|&e| casting.get(e).ok())
         .map(|c| c.spell_id);
-    script.set_casting(
-        auto_repeat.0.is_some() || inflight(&pending, &queued_melee, started, now).is_some(),
-    );
+    let casting_now = {
+        let (pending, queued_melee) = (pending.get(), queued_melee.get());
+        auto_repeat.get().is_some_and(|a| a.0.is_some())
+            || pending
+                .zip(queued_melee)
+                .is_some_and(|(p, q)| inflight(&p, &q, started, now).is_some())
+    };
+    script.set_casting(casting_now);
     let spells = spells.as_deref();
     let now_ms = script.now() * 1000.0;
     let is_self = |guid: u64| self_guid.0 == Some(guid);

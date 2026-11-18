@@ -127,15 +127,6 @@ impl Plugin for SpellPlugin {
                         .after(WorldStage::Net)
                         .before(crate::ui_script::UiPress)
                         .before(UnitFeed),
-                    // The state push follows the press, so a `SpellStopTargeting` its script
-                    // calls applied (an ESC's `ToggleGameMenu`) is pushed this frame. After the
-                    // old-target clear, the pet bar's writer in the feed: `"pet"` resolves off
-                    // the bar. After the aura feed, whose resolver inputs list the units the
-                    // hover verdict is asked for.
-                    targeting::feed_targeting_to_vm
-                        .in_set(UnitFeed)
-                        .after(crate::ui_pet::pet_stop_on_old_target_clear)
-                        .after(crate::ui_aura::AuraEvents),
                     (
                         targeting::publish_picks_self,
                         targeting::publish_corpse_pick,

@@ -366,7 +366,7 @@ struct PlateWorld<'w, 's> {
     camera: Query<'w, 's, (&'static Camera, &'static Transform), With<WorldCamera>>,
     window: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
     // The pending ground-target cast, for the plate's hit-test veto.
-    targeting: Res<'w, crate::spell::SpellTargeting>,
+    targeting: crate::ui_script::LentRef<'w, crate::spell::SpellTargeting>,
     // An owner guid to its unit, for the owned-unit categories.
     index: Res<'w, crate::net::GuidIndex>,
     // The current map's instance type, for the arena range skip.
@@ -387,6 +387,11 @@ struct PlateCasts<'w, 's> {
 /// [`PlateState`]s. Runs after the targeting chain, whose selection it reads.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn drive_vplates(
+    // `None` in a run with no UI VM; the loan comes first, so the plate world's lent read pairs it.
+    (script, _live): (
+        Option<NonSendMut<benilla_ui::script::UiScript>>,
+        crate::ui_script::LendLive,
+    ),
     mode: Res<VPlateMode>,
     mut plates: ResMut<VPlates>,
     mut plate_hover: ResMut<PlateHover>,
@@ -395,11 +400,6 @@ fn drive_vplates(
     world: PlateWorld,
     names: Res<NameCache>,
     net_commands: Res<NetCommands>,
-    // `None` in a run with no UI VM.
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
     anchor_q: (
         Query<&BoneAttach>,
         Query<&benilla_world::rig_anim::RigPose>,
@@ -469,7 +469,8 @@ fn drive_vplates(
     script.set_nameplate_hit_test_veto(
         world
             .targeting
-            .wants(crate::spell::targeting::TargetingWants::Location),
+            .get()
+            .is_some_and(|t| t.wants(crate::spell::targeting::TargetingWants::Location)),
     );
     let hovered_key = script.hovered_nameplate();
     let clicked = script.take_nameplate_clicks();

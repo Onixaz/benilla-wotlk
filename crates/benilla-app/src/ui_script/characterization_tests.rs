@@ -4928,3 +4928,45 @@ fn destroy_totem_acts_inside_the_call() {
     .expect("the chunk runs");
     assert_eq!(answers, (true, 1, false));
 }
+
+/// Our attack start and stop fire `PLAYER_ENTER_COMBAT` and `PLAYER_LEAVE_COMBAT` from their
+/// handlers (`0x756897`, `0x756b86`), so a flags update between them fires its `UNIT_FLAGS`
+/// between them, in wire order. `PLAYER_REGEN_DISABLED` still fires from the units' feed after the
+/// frame's packets (#1289).
+#[test]
+fn attack_start_and_stop_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const MOB: u64 = 0xF130_0000_0000_0099;
+    let seen = rig.packets(
+        vec![
+            SessionEvent::AttackStart {
+                attacker: ME,
+                victim: MOB,
+            },
+            flags(crate::player::UNIT_FLAG_IN_COMBAT),
+            SessionEvent::AttackStop {
+                attacker: ME,
+                victim: MOB,
+                face_victim: false,
+            },
+        ],
+        3,
+    );
+    let events = &[
+        "PLAYER_ENTER_COMBAT",
+        "PLAYER_LEAVE_COMBAT",
+        "UNIT_FLAGS",
+        "PLAYER_REGEN_DISABLED",
+    ];
+    assert_eq!(
+        pin(&seen, events, &["combat"]),
+        vec![
+            "PLAYER_ENTER_COMBAT | combat=nil",
+            "UNIT_FLAGS player | combat=1",
+            "PLAYER_LEAVE_COMBAT | combat=1",
+            "PLAYER_REGEN_DISABLED | combat=1",
+        ]
+    );
+}

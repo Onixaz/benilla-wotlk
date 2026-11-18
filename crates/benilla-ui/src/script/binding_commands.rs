@@ -389,10 +389,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SpellTargetItem",
         lua.create_function(|lua, item: Value| {
-            let mut model = crate::script::model_mut_of(lua);
-            if !model.item_pick_armed {
+            if !super::spellbook::targeting().wants_item {
                 return Ok(());
             }
+            let mut model = crate::script::model_mut_of(lua);
             let query = match item {
                 Value::Integer(_) | Value::Number(_) | Value::String(_) => {
                     ItemQuery::of(lua, &item, ItemQuery::Prefix)?

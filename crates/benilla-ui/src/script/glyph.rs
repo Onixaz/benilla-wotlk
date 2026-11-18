@@ -380,7 +380,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(flag(
-                model.spell_targeting && model.glyph_targeting.is_some_and(|t| t.wants_socket),
+                super::spellbook::targeting().active
+                    && model.glyph_targeting.is_some_and(|t| t.wants_socket),
             ))
         })?,
     )?;
@@ -542,6 +543,7 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script::live::TestTargeting;
     use crate::script::{TalentGroupView, TalentUiState, UiScript, UnitState};
 
     const ICON: &str = r"Interface\Icons\INV_Glyph_MajorHunter";

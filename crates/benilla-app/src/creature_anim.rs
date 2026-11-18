@@ -126,11 +126,6 @@ impl Wielded {
 #[derive(Component)]
 pub(crate) struct Engaged(pub(crate) u64);
 
-/// Our player's attack starts (`true`) and stops (`false`) in packet order, each one
-/// `PLAYER_ENTER_COMBAT` or `PLAYER_LEAVE_COMBAT` for the UI to fire (`0x756800`).
-#[derive(Resource, Default)]
-pub(crate) struct PlayerCombatEdges(pub(crate) Vec<bool>);
-
 /// The local player's auto-repeat is armed: the reference's `[+0xd58] & 0x200`, set only by the
 /// local cast-send; with the ranged sheath drawn a standing unit idles on the Load clip. Cleared
 /// by the auto-repeat cancel, and by `SMSG_CANCEL_AUTO_REPEAT` for the unit it names. A remote shooter plays LoadBow once
@@ -325,8 +320,8 @@ pub(crate) fn toggle_attack_local(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) net: Res<'w, crate::net::NetCommands>,
-    pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
-    pub(crate) auto_repeat: ResMut<'w, crate::spell::AutoRepeatActive>,
+    pub(crate) queued_melee: crate::ui_script::OwnedMut<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) auto_repeat: crate::ui_script::OwnedMut<'w, crate::spell::AutoRepeatActive>,
     pub(crate) sheath: MessageWriter<'w, SheathRequest>,
     pub(crate) ecs: Commands<'w, 's>,
     /// Our own entity.
@@ -364,12 +359,12 @@ impl AttackSeam<'_, '_> {
     /// The auto-repeat cancel (`0x807560`).
     pub(crate) fn cancel_auto_repeat(&mut self) {
         let me = self.me.single().ok();
-        cancel_auto_repeat_local(me, &mut self.auto_repeat, &mut self.ecs, &self.net);
+        cancel_auto_repeat_local(me, &mut self.auto_repeat.write(), &mut self.ecs, &self.net);
     }
 
     /// StopAttack.
     pub(crate) fn stop(&mut self, engaged: bool) {
-        stop_attack_local(engaged, &mut self.queued_melee, &self.net);
+        stop_attack_local(engaged, &mut self.queued_melee.write(), &self.net);
     }
 
     /// StartAttack; a no-op before our own entity streams in.
@@ -380,7 +375,7 @@ impl AttackSeam<'_, '_> {
             target,
             engaged,
             stop_in_flight,
-            &mut self.auto_repeat,
+            &mut self.auto_repeat.write(),
             &mut self.sheath,
             &mut self.ecs,
             &self.net,
@@ -1199,7 +1194,6 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<DefenseAnim>()
             .add_message::<SwingSlowdown>()
             .init_resource::<PendingImpacts>()
-            .init_resource::<PlayerCombatEdges>()
             .init_resource::<PlaySeq>()
             .init_resource::<gesture::GestureQueue>()
             .add_message::<EmoteAnim>()

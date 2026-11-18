@@ -1292,7 +1292,10 @@ fn add_sell_price(lua: &Lua, this: &Table, v: &ItemTemplateView, sell: Sell) -> 
     }
     let (repairing, merchant_open) = {
         let model = crate::script::model_mut_of(lua);
-        (model.repair_mode, model.merchant.is_some())
+        (
+            crate::script::merchant::repair_mode(&model),
+            model.merchant.is_some(),
+        )
     };
     if repairing {
         return Ok(());
