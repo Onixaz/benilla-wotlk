@@ -166,7 +166,16 @@ impl InteractWindows<'_, '_> {
             // The bank closes through its own leg, its events with it.
             5 => {}
             6 => close(&mut self.registrar),
-            7 => close(&mut self.tabard),
+            7 => {
+                if self
+                    .tabard
+                    .as_deref_mut()
+                    .is_some_and(|t| t.npc().is_some())
+                {
+                    close(&mut self.tabard);
+                    self.queue.queue(crate::ui_tabard::fire_closed);
+                }
+            }
             8 => close(&mut self.auction),
             9 => {
                 if self.stable.as_deref_mut().is_some_and(|s| s.close()) {

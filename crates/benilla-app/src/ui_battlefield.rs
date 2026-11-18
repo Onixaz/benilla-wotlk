@@ -842,6 +842,8 @@ pub(crate) fn leave_world(world: &mut World) {
     crate::ui_stable::leave_world(world);
     // The interaction close's bank leg, after the stable part.
     crate::ui_bank::close_by_interaction(world);
+    // Its tabard leg (`0x51300e`).
+    crate::ui_tabard::leave_world(world);
     crate::ui_script::live::fire_handler_events(world);
 }
 
@@ -856,6 +858,7 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
         crate::ui_stable::enter_world(world);
+        crate::ui_tabard::enter_world(world);
         crate::ui_currency::enter_world(world);
         if world.contains_resource::<NetCommands>()
             && world.contains_resource::<StatusRequestOwed>()

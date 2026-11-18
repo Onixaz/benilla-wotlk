@@ -152,6 +152,7 @@ local VERBS = {
     { "gblog", function() return GetNumGuildBankTransactions(1) end },
     { "gblogname", function() return (select(2, GetGuildBankTransaction(1, 1))) end },
     { "gbtext", function() return GetGuildBankText(1) end },
+    { "cansave", function() return TabardModel and TabardModel:CanSaveTabardNow() end },
 }
 local function answers()
     local verbs = {}
@@ -180,7 +181,7 @@ pub(super) struct Seen {
 }
 
 impl Seen {
-    fn parse(line: &str) -> Self {
+    pub(super) fn parse(line: &str) -> Self {
         let mut parts = line.splitn(3, '\t');
         let event = parts.next().unwrap_or_default().to_string();
         let args = parts.next().unwrap_or_default().to_string();

@@ -302,6 +302,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         if let Some(m) = mover.filter(|_| sc.self_guid.0 != Some(guid)) {
             seed_player_word(e, guid, m, &mut sc.commands);
         }
+        // A player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`).
+        if kind == EntityKind::Player {
+            sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+        }
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
             sc.commands.entity(e).insert(FreshSpawn);
@@ -1706,6 +1710,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             });
         }
     }
+    // Another player's guild id watch (`0x6e1bb0` -> `0x6e1bd9` -> `0x6df7a0`).
+    if merged.guild_moved {
+        sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+    }
+    // The guild timestamp's watch (`0x6e1c60`), any player's.
+    if let Some(stamp) = merged.guild_stamp {
+        guild_stamp_watch(sc, guid, stamp);
+    }
     if sc.self_guid.0 != Some(guid) {
         return;
     }
@@ -1764,6 +1776,25 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     own_death_fields(sc, guid, past_farsight);
     own_player_watches(sc, guid, &merged.watched);
+}
+
+/// The guild timestamp's watch (`0x6e1c60`): a stamp new for the player's guild drops its record and asks it again with the walk as its callback (`0x6e1d5f` -> `0x6e1b90`).
+fn guild_stamp_watch(sc: &mut Scene, guid: u64, stamp: u32) {
+    let Some(guild_id) = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .map(|s| s.0.player_guild_id())
+    else {
+        return;
+    };
+    let net = NetCommands(sc.net.0.clone());
+    sc.ui.world(move |world| {
+        if let Some(mut cache) = world.get_resource_mut::<crate::ui_guild::GuildCache>() {
+            cache.stamp_changed(guild_id, stamp, &net);
+        }
+    });
 }
 
 /// The possess lookup (`0x5d62a0`) over our held fields, auras and transport.
@@ -1932,9 +1963,10 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             own_slot_watches(sc, guid, edges, at);
             continue;
         }
-        // The guild id's watch on the active player: the guild bank's tabs clear (`0x6e1bb0`).
+        // The guild id's watch on the active player: the guild change's event (`0x6e1bd9` -> `0x6df7a0`), then the guild bank's tabs clear (`0x6e1bb0`).
         if index == benilla_protocol::field::FIELD_PLAYER_GUILDID {
             if old != new {
+                sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
                 crate::ui_guild_bank::guild_id_changed(&mut sc.ui);
             }
             continue;
@@ -2082,6 +2114,13 @@ fn merge_fields(
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
             }
+            if e.kind == benilla_protocol::messages::ObjectType::Player {
+                merged.guild_moved |=
+                    !own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID);
+                if e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP) {
+                    merged.guild_stamp = Some(e.new);
+                }
+            }
             if own
                 && (crate::ui_honor::is_honor_watch(e.index)
                     || crate::ui_arena_team::is_team_info(e.index)
@@ -2148,6 +2187,10 @@ struct Merged {
     died: bool,
     /// Our own shapeshift form byte, when it moved.
     form: Option<u8>,
+    /// Another player's `PLAYER_GUILDID` moved (`0x6e1bb0`).
+    guild_moved: bool,
+    /// A player's `PLAYER_GUILD_TIMESTAMP` moved to this stamp (`0x6e1c60`).
+    guild_stamp: Option<u32>,
 }
 
 /// An item's entry moved (`0x707960`), on an item we own (`0x70799f`-`0x7079a5`): the old record dropped (`0x7079bb`), the new one asked with the record callback, run now when cached (`0x707a07`), then `QUEST_LOG_UPDATE` (`0x707a14`).

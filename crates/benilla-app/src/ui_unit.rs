@@ -1523,8 +1523,8 @@ fn feed_units(
     group: Res<crate::ui_party::GroupState>,
     // Chat and the message-sound queue, for the rest and PvP lines.
     mut sink: crate::ui_action::MessageSink,
-    // `ResMut` because the guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
-    mut guild: ResMut<crate::ui_guild::GuildState>,
+    // The guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
+    guild: Res<crate::ui_guild::GuildCache>,
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
     // The commands carry the world-enter cascade's death part.
@@ -1571,7 +1571,7 @@ fn feed_units(
 
     // The gate: every input read below, despawns included (invisible to `Changed`).
     let names_moved = memo.names_generation.moved(names.generation());
-    let guild_moved = memo.guild_generation.moved(guild.identity_generation());
+    let guild_moved = memo.guild_generation.moved(guild.generation());
     let focus_guid = script.focus_guid();
     let focus_moved = memo.focus_guid.moved(focus_guid);
     let selection_changed = selection.is_changed();
@@ -1650,7 +1650,7 @@ fn feed_units(
         s.faction_group = side.and_then(|(c, m)| c.faction_group_internal_name(m).map(Into::into));
         s.faction_group_localized = side.and_then(|(c, m)| c.faction_group_name(m).map(Into::into));
         // `GetGuildInfo`: the public guild fields (191/192) joined against the lazy guild cache.
-        s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+        s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
         s
     });
     // What the three snapshots below (target, target-of-target, NPC) read besides a descriptor.
@@ -1669,7 +1669,7 @@ fn feed_units(
     let target = match (selection.target, selection.guid) {
         (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {
             let mut s = held.state(store, guid);
-            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+            s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
             s
         }),
         // A group member or pet selected by guid alone reads its roster record.
@@ -1690,7 +1690,7 @@ fn feed_units(
         .and_then(|&e| stores.all.get(e).ok())
         .map(|store| {
             let mut s = held.state(store, focus_guid);
-            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+            s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
             s
         });
 
@@ -3692,7 +3692,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             // The feed's `MessageSink` reads chat and sounds: a message key's row carries its cue.
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_guild::GuildState>();
+            .init_resource::<crate::ui_guild::GuildCache>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
         let script = UiScript::new().unwrap();
@@ -4232,7 +4232,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             // `show_messages`' sink is the chat log and the message-sound queue.
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_guild::GuildState>()
+            .init_resource::<crate::ui_guild::GuildCache>()
             .init_resource::<InteractNpc>();
         app.add_message::<FieldChanged>();
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -4330,7 +4330,7 @@ mod tests {
             .init_resource::<crate::ui_party::GroupState>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_guild::GuildState>();
+            .init_resource::<crate::ui_guild::GuildCache>();
         app.add_message::<FieldChanged>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));

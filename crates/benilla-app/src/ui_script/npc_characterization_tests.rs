@@ -4,7 +4,7 @@ use benilla_protocol::field::{FIELD_UNIT_HEALTH, FIELD_UNIT_LEVEL, FIELD_UNIT_MA
 use benilla_protocol::messages::ObjectType;
 use benilla_protocol::{EntityKind, ObjectFields, SessionEvent};
 
-use super::characterization_tests::{pin, self_values, Rig, OBJECT_TYPE_PLAYER};
+use super::characterization_tests::{pin, self_values, Rig, Seen, OBJECT_TYPE_PLAYER};
 use crate::net::ClientCommand;
 use bevy::prelude::{Entity, Transform};
 
@@ -413,4 +413,225 @@ fn cancel_area_spirit_heal_fires_in_its_call_and_keeps_the_wave() {
         ["AREA_SPIRIT_HEALER_OUT_OF_RANGE | spirittime=30"]
     );
     assert_eq!(rig.live_now().line(&["spirittime"]), "NOW | spirittime=30");
+}
+
+/// Our guild's record as its query answers it: a designed record.
+fn guild_record(guild_id: u32, name: &str) -> SessionEvent {
+    SessionEvent::GuildQueryResponse(benilla_protocol::messages::GuildQueryResponse {
+        guild_id,
+        name: name.into(),
+        emblem_style: 3,
+        emblem_color: 4,
+        border_style: 1,
+        border_color: 2,
+        background_color: 9,
+        ..Default::default()
+    })
+}
+
+/// Another player beside us, in guild `guild_id`.
+fn player_in(guid: u64, guild_id: u32) -> SessionEvent {
+    SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::Player,
+        display_id: None,
+        position: NEAR,
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: false,
+        fields: ObjectFields::from_pairs(&[
+            (2, 0x19),
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+            (benilla_protocol::field::FIELD_PLAYER_GUILDID, guild_id),
+        ])
+        .into_created(ObjectType::Player),
+    }
+}
+
+/// A guild master of guild 7 with the designer's price.
+fn guild_master() -> Vec<(u16, u32)> {
+    vec![
+        OBJECT_TYPE_PLAYER,
+        (benilla_protocol::field::FIELD_PLAYER_GUILDID, 7),
+        (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 0),
+        (benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE, 200_000),
+    ]
+}
+
+/// The events a script call fired inside it, as the observer logged them.
+fn fired_in_call(rig: &mut Rig, chunk: &str, events: &[&str], verbs: &[&str]) -> Vec<String> {
+    rig.take();
+    call(rig, chunk);
+    let lines = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<Vec<String>>("local t = CHARZ_LOG or {}; CHARZ_LOG = {}; return t")
+    })
+    .expect("a VM")
+    .expect("the log reads");
+    let seen: Vec<_> = lines.iter().map(|l| Seen::parse(l)).collect();
+    pin(&seen, events, verbs)
+}
+
+const TABARD_EVENTS: &[&str] = &[
+    "OPEN_TABARD_FRAME",
+    "CLOSE_TABARD_FRAME",
+    "TABARD_SAVE_PENDING",
+    "GUILDTABARD_UPDATE",
+    "TABARD_CANSAVE_CHANGED",
+];
+
+/// `MSG_TABARDVENDOR_ACTIVATE` fires `OPEN_TABARD_FRAME` from its handler (`0x6cc576` -> `0x598e60`), and `CanSaveTabardNow` reads our guild's record at the call (`0x6de1c0`); a record landing fires no `TABARD_CANSAVE_CHANGED` of its own. `Save` sends, latches and fires `TABARD_SAVE_PENDING` inside its call (`0x6db4cc`, `0x6db4d3`); the result clears the latch, drops the record and fires `GUILDTABARD_UPDATE` (`0x6d9264`, `0x6d929b`, `0x6d92a7`); `CloseTabardCreation` fires `CLOSE_TABARD_FRAME` twice inside its call (`0x598ef5`, `0x51300e`).
+#[test]
+fn the_tabard_designer_reads_its_gate_at_the_call_and_fires_from_its_handlers() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    let verbs = &["cansave"];
+    // The vendor stands beside us: an unheld one is closed by the range guard.
+    rig.packets(vec![npc_at(NPC, 0x80000, NEAR)], 2);
+    let seen = rig.packets(vec![SessionEvent::TabardVendorActivate(NPC)], 2);
+    assert_eq!(
+        pin(&seen, TABARD_EVENTS, verbs),
+        vec!["OPEN_TABARD_FRAME | cansave=nil"],
+        "no record cached yet, and none asked by the read"
+    );
+    let seen = rig.packets(vec![guild_record(7, "Probe Guild")], 2);
+    assert!(
+        pin(&seen, TABARD_EVENTS, verbs).is_empty(),
+        "a record's arrival alone fires nothing: {:?}",
+        pin(&seen, TABARD_EVENTS, verbs)
+    );
+    assert_eq!(rig.live_now().verbs["cansave"], "1");
+    let rx = tap(&mut rig);
+    // The seeded record saved as it is: the same-design check refuses inside the call.
+    let lines = call(
+        &mut rig,
+        "TabardModel:InitializeTabardColors() TabardModel:Save()",
+    );
+    assert!(
+        lines.ends_with("|returned") && lines != "returned",
+        "{lines}"
+    );
+    let pinned = fired_in_call(
+        &mut rig,
+        "TabardModel:CycleVariation(1, 1) TabardModel:Save()",
+        TABARD_EVENTS,
+        verbs,
+    );
+    assert_eq!(pinned, vec!["TABARD_SAVE_PENDING | cansave=nil"]);
+    let sent: Vec<_> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SaveGuildEmblem { vendor, design } => Some((vendor, design)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![(NPC, [4, 4, 1, 2, 9])]);
+    let seen = rig.packets(vec![SessionEvent::SaveGuildEmblemResult(0)], 2);
+    assert_eq!(
+        pin(&seen, TABARD_EVENTS, verbs),
+        vec!["GUILDTABARD_UPDATE | cansave=nil"],
+        "the latch is clear but the record is dropped"
+    );
+    let pinned = fired_in_call(&mut rig, "CloseTabardCreation()", TABARD_EVENTS, verbs);
+    assert_eq!(
+        pinned,
+        vec![
+            "CLOSE_TABARD_FRAME | cansave=nil",
+            "CLOSE_TABARD_FRAME | cansave=nil"
+        ]
+    );
+    let pinned = fired_in_call(&mut rig, "CloseTabardCreation()", TABARD_EVENTS, verbs);
+    assert!(pinned.is_empty(), "no vendor held: {pinned:?}");
+}
+
+/// A failed save's result clears the latch and fires `TABARD_SAVE_PENDING` again (`0x6d92bf`); a code past the table is dropped whole, the latch kept (`0x6d9246`).
+#[test]
+fn a_failed_save_refires_pending_and_an_unknown_code_keeps_the_latch() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    let verbs = &["cansave"];
+    rig.packets(
+        vec![
+            npc_at(NPC, 0x80000, NEAR),
+            guild_record(7, "Probe Guild"),
+            SessionEvent::TabardVendorActivate(NPC),
+        ],
+        2,
+    );
+    let pinned = fired_in_call(
+        &mut rig,
+        "TabardModel:InitializeTabardColors() TabardModel:CycleVariation(2, 1) TabardModel:Save()",
+        TABARD_EVENTS,
+        verbs,
+    );
+    assert_eq!(pinned, vec!["TABARD_SAVE_PENDING | cansave=nil"], "latched");
+    let seen = rig.packets(vec![SessionEvent::SaveGuildEmblemResult(6)], 2);
+    let pinned = pin(&seen, TABARD_EVENTS, verbs);
+    assert!(pinned.is_empty(), "{pinned:?}");
+    assert_eq!(rig.live_now().verbs["cansave"], "nil", "still latched");
+    let seen = rig.packets(vec![SessionEvent::SaveGuildEmblemResult(3)], 2);
+    assert_eq!(
+        pin(&seen, TABARD_EVENTS, verbs),
+        vec!["TABARD_SAVE_PENDING | cansave=1"]
+    );
+}
+
+/// `TABARD_CANSAVE_CHANGED` fires from a player's guild change (`0x6df7a0`): another player's create (`0x6e82c0`) and guild id watch (`0x6e1bd9`), our own guild id watch, and a guild timestamp's ask answered, once per visible player in that guild (`0x6e1d5f`, `0x6e1b83`); nothing else fires it.
+#[test]
+fn the_cansave_event_fires_from_the_guild_change_handlers() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    let events = &["TABARD_CANSAVE_CHANGED"];
+    const OTHER: u64 = 0x11;
+    let seen = rig.packets(vec![player_in(OTHER, 7)], 2);
+    assert_eq!(pin(&seen, events, &[]).len(), 1, "the create's init");
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 8)]),
+        }],
+        2,
+    );
+    assert_eq!(pin(&seen, events, &[]).len(), 1, "its guild id's watch");
+    let seen = rig.packets(
+        vec![self_values(&[(
+            benilla_protocol::field::FIELD_PLAYER_GUILDID,
+            9,
+        )])],
+        2,
+    );
+    assert_eq!(pin(&seen, events, &[]).len(), 1, "our guild id's watch");
+    let rx = tap(&mut rig);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP,
+                1234,
+            )]),
+        }],
+        2,
+    );
+    assert!(pin(&seen, events, &[]).is_empty(), "the stamp only asks");
+    assert!(rx
+        .try_iter()
+        .any(|c| matches!(c, ClientCommand::GuildQuery { guild_id: 8 })));
+    let seen = rig.packets(vec![guild_record(8, "Other Guild")], 2);
+    assert_eq!(
+        pin(&seen, events, &[]).len(),
+        1,
+        "the answer's walk: one visible player in guild 8"
+    );
+    let seen = rig.packets(vec![guild_record(8, "Other Guild")], 2);
+    assert!(pin(&seen, events, &[]).is_empty(), "no ask waits on it now");
 }

@@ -81,7 +81,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_social::feed::feed_social",
     "benilla_app::ui_spell_info::feed_spell_info",
     "benilla_app::ui_spellbook::feed_spellbook",
-    "benilla_app::ui_tabard::feed_tabard",
     "benilla_app::ui_talent::feed_inspect_talents",
     "benilla_app::ui_talent::feed_talents",
     "benilla_app::ui_taxi::feed_taxi",
@@ -127,6 +126,10 @@ const KEPT: &[(&str, &str)] = &[
     ),
     (
         "benilla_app::ui_pet_doll::sync_pet_booth",
+        "rendering, no event: 12340's model frame reads its facing and model on every frame render (0x960240), the facing its rotate buttons write (0x9606e0)",
+    ),
+    (
+        "benilla_app::ui_tabard::sync_tabard_booth",
         "rendering, no event: 12340's model frame reads its facing and model on every frame render (0x960240), the facing its rotate buttons write (0x9606e0)",
     ),
 ];

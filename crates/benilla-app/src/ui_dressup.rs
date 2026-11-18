@@ -202,9 +202,8 @@ fn feed_dressup(
     items: Res<Items>,
     commands: Res<NetCommands>,
     self_q: Query<(&ObjectStore, &NetEntity), With<SelfPlayer>>,
-    // `ResMut` because the guild cache is lazy: a miss sends the `CMSG_GUILD_QUERY` whose answer
-    // paints the tabard.
-    mut guilds: ResMut<crate::ui_guild::GuildState>,
+    // The guild cache is lazy: a miss sends the `CMSG_GUILD_QUERY` whose answer paints the tabard.
+    guilds: Res<crate::ui_guild::GuildCache>,
     spells: Option<Res<crate::ui_action::Spells>>,
     enchants: Option<Res<crate::items::Enchants>>,
     icons: Option<Res<crate::entities::ItemDisplays>>,
@@ -240,7 +239,7 @@ fn feed_dressup(
     let look = match (room.open, self_q.single().ok()) {
         (true, Some((store, net))) => {
             player_look(store, net, &room, &items, &commands).map(|l| DressUpLook {
-                emblem: crate::ui_guild::unit_guild_emblem(&store.0, &mut guilds, &commands),
+                emblem: crate::ui_guild::unit_guild_emblem(&store.0, &guilds, &commands),
                 ..l
             })
         }

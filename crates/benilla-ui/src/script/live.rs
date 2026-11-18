@@ -686,6 +686,34 @@ pub trait LiveState {
     /// `CancelAreaSpiritHeal`'s `CMSG_CANCEL_AURA` for 2584, after its event (`0x522fa0` -> `0x51f710`).
     fn cancel_area_spirit_heal(&self) {}
 
+    /// Our player object held, the lookup the designer's verbs make first (`0x6de1d9`, `0x5997fd`).
+    fn active_player_held(&self) -> bool {
+        false
+    }
+
+    /// Our guild's record in the guild cache, asking nothing (`0x6de20c`): its five tabard fields, `-1`s when undesigned; `None` for no guild or no record.
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        None
+    }
+
+    /// The tabard save latch (`0xc9eacc`).
+    fn tabard_save_pending(&self) -> bool {
+        false
+    }
+
+    /// `SaveTabard` (`0x6db320`): the first failing check's message key, else `MSG_SAVE_GUILD_EMBLEM` sent and the latch set; `None` with no player object.
+    fn save_tabard(&mut self, _design: [i32; 5]) -> Option<Result<(), &'static str>> {
+        None
+    }
+
+    /// The designer's close (`0x598ec0`): the vendor cleared, and how many `CLOSE_TABARD_FRAME`s fire, 0 with none held.
+    fn close_tabard(&mut self) -> u32 {
+        0
+    }
+
+    /// The seed's and a cycle's colours onto our body (`0x5993b0`).
+    fn apply_guild_color(&mut self, _design: [i32; 5]) {}
+
     /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
     fn item_set(
         &self,
@@ -1103,6 +1131,9 @@ pub(crate) struct TestView {
     /// The tabs whose text is stale, and the text asks sent, in order.
     pub guild_bank_text_stale: Vec<u8>,
     pub guild_bank_text_sent: Vec<u8>,
+    /// Our guild's cached tabard record and the save latch.
+    pub tabard_record: Option<[i32; 5]>,
+    pub tabard_pending: bool,
 }
 
 #[cfg(test)]
@@ -1271,6 +1302,18 @@ impl LiveState for TestView {
 
     fn spirit_cancel_has_body(&self) -> bool {
         self.player.is_some()
+    }
+
+    fn active_player_held(&self) -> bool {
+        self.player.is_some()
+    }
+
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        self.tabard_record
+    }
+
+    fn tabard_save_pending(&self) -> bool {
+        self.tabard_pending
     }
 
     fn has_control(&self) -> bool {

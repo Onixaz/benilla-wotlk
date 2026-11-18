@@ -1,7 +1,7 @@
 //! The guild tabard designer: the `TabardModel` method table and the window's two globals. Its
 //! state is five ints on the frame, which the constructor leaves unwritten until
-//! `InitializeTabardColors()` seeds them; the app pushes the guild record and save latch and runs
-//! the save's fourteen checks.
+//! `InitializeTabardColors()` seeds them; the guild record, the save latch, the save and the close
+//! are the app's, read and written at the call through the live view.
 
 use mlua::{Lua, Value};
 
@@ -30,38 +30,10 @@ pub fn emblem_mask_path(texture: &str) -> Option<&str> {
     texture.strip_prefix(EMBLEM_MASK_TOKEN)
 }
 
-/// The designer's two host-side facts, pushed by the app.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct TabardHost {
-    /// The cached guild record's emblem fields, `-1` each when undesigned; `None` until cached.
-    pub guild_record: Option<[i32; 5]>,
-    /// The save-in-flight latch: set when the save is sent, cleared by the reply.
-    pub save_pending: bool,
-}
-
-/// What the designer asks the app to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TabardIntent {
-    /// `Save()`: the five values, for the checks and the send.
-    Save([i32; 5]),
-    /// `CloseTabardCreation()`.
-    Close,
-}
-
 impl super::UiScript {
-    /// Push the guild record and the save latch.
-    pub fn set_tabard_host(&mut self, host: TabardHost) {
-        set_field!(self, tabard_host, host);
-    }
-
     /// The design the app previews on the player's body, `None` before the seed.
     pub fn tabard_design(&self) -> Option<[i32; 5]> {
         self.model_ref().tabard_preview
-    }
-
-    /// The queued intents since the last drain.
-    pub fn take_tabard_intents(&mut self) -> Vec<TabardIntent> {
-        drain_field!(self, tabard_intents)
     }
 }
 
@@ -99,10 +71,14 @@ fn design(model: &Model, h: FrameHandle) -> [i32; 5] {
     model.tabard_designs.get(&h).copied().unwrap_or([0; 5])
 }
 
+/// The frame's five, then the colours onto our body (`0x5993b0`).
 fn store(lua: &Lua, h: FrameHandle, five: [i32; 5]) {
-    let mut model = crate::script::model_mut_of(lua);
-    model.tabard_designs.insert(h, five);
-    model.tabard_preview = Some(five);
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        model.tabard_designs.insert(h, five);
+        model.tabard_preview = Some(five);
+    }
+    super::write_live(|l| l.apply_guild_color(five));
 }
 
 /// `(count * rand) >> 32`, a draw in `[0, count)`.
@@ -126,10 +102,9 @@ fn random_words() -> impl Iterator<Item = u32> {
     })
 }
 
-/// `InitializeTabardColors()`'s worker: the cached guild record unless a field is `-1`, else five
-/// random draws.
-fn seed(host: TabardHost) -> [i32; 5] {
-    match host.guild_record {
+/// `InitializeTabardColors()`'s worker (`0x599670`): the cached guild record unless a field is `-1`, else five random draws.
+fn seed(record: Option<[i32; 5]>) -> [i32; 5] {
+    match record {
         Some(rec) if rec.iter().all(|v| *v != -1) => rec,
         _ => {
             let mut words = random_words();
@@ -202,36 +177,40 @@ fn emblem_texture(lua: &Lua, this: Value, texture: Value, upper: bool) -> mlua::
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // The seed needs an active player.
+    // The seed needs our player object (`0x599807`), and reads our guild's record at the call.
     m.set(
         "InitializeTabardColors",
         lua.create_function(|lua, this: Value| {
             let h = this_tabard(lua, &this)?;
-            let host = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                if !model.unit("player").is_some_and(|u| u.exists) {
-                    return Ok(());
-                }
-                model.tabard_host
+            let Some(record) =
+                super::read_live(|l| l.active_player_held().then(|| l.tabard_guild_record()))
+                    .flatten()
+            else {
+                return Ok(());
             };
-            store(lua, h, seed(host));
+            store(lua, h, seed(record));
             Ok(())
         })?,
     )?;
 
-    // The app runs the fourteen checks on the queued five.
+    // `Save` (`0x599410`): `SaveTabard`'s checks, send and latch at the call; its first failing check's line, else `TABARD_SAVE_PENDING` inside the call (`0x6db4d3`).
     m.set(
         "Save",
         lua.create_function(|lua, this: Value| {
             let h = this_tabard(lua, &this)?;
-            let mut model = crate::script::model_mut_of(lua);
-            if !model.unit("player").is_some_and(|u| u.exists) {
-                return Ok(());
+            let five = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                design(&model, h)
+            };
+            match super::write_live(|l| l.save_tabard(five)).flatten() {
+                Some(Err(key)) => super::ui_errors::show_now(lua, key),
+                Some(Ok(())) => {
+                    super::tick::fire_event_into(lua, "TABARD_SAVE_PENDING", Vec::new());
+                }
+                None => {}
             }
-            let five = design(&model, h);
-            model.tabard_intents.push(TabardIntent::Save(five));
             Ok(())
         })?,
     )?;
@@ -307,17 +286,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The reference's `CanSaveTabardNow` never resolves `this`: the number 1 or nil, from a player,
-    // a cached record and no save pending, not a would-it-succeed test.
+    // `CanSaveTabardNow` never resolves `this` (`0x598fa0`): 1 or nil, from our player object, our guild's cached record and no save pending, read at the call (`0x6de1c0`).
     m.set(
         "CanSaveTabardNow",
-        lua.create_function(|lua, _: mlua::MultiValue| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let can = model.unit("player").is_some_and(|u| u.exists)
-                && model.tabard_host.guild_record.is_some()
-                && !model.tabard_host.save_pending;
+        lua.create_function(|_, _: mlua::MultiValue| {
+            let can = super::read_live(|l| {
+                l.active_player_held()
+                    && l.tabard_guild_record().is_some()
+                    && !l.tabard_save_pending()
+            })
+            .unwrap_or(false);
             Ok(if can { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;
@@ -329,13 +307,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTabardCreationCost",
         lua.create_function(|_, ()| Ok(i64::from(TABARD_CREATION_COST)))?,
     )?;
-    // No packet: the app runs the close and its `CLOSE_TABARD_FRAME`, gated on a stored vendor.
+    // No packet: the close at the call (`0x598f30`), its `CLOSE_TABARD_FRAME`s inside it.
     g.set(
         "CloseTabardCreation",
         lua.create_function(|lua, _: mlua::MultiValue| {
-            crate::script::model_mut_of(lua)
-                .tabard_intents
-                .push(TabardIntent::Close);
+            let fired = super::write_live(|l| l.close_tabard()).unwrap_or(0);
+            for _ in 0..fired {
+                super::tick::fire_event_into(lua, "CLOSE_TABARD_FRAME", Vec::new());
+            }
             Ok(())
         })?,
     )?;
@@ -346,6 +325,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::*;
     use crate::script::{UiScript, UnitState};
+
+    /// Lend a view with our player object `player` and our guild's record `record`.
+    fn lend(
+        player: Option<u64>,
+        record: Option<[i32; 5]>,
+    ) -> crate::script::live::LiveLoan<crate::script::live::TestView> {
+        crate::script::live::lend_test(crate::script::live::TestView {
+            player,
+            tabard_record: record,
+            ..Default::default()
+        })
+    }
 
     fn vm() -> UiScript {
         let mut s = UiScript::new().unwrap();
@@ -387,11 +378,8 @@ mod tests {
 
     #[test]
     fn the_seed_takes_the_guild_record_or_draws_in_range() {
-        let mut s = vm();
-        s.set_tabard_host(TabardHost {
-            guild_record: Some([7, 3, 2, 12, 5]),
-            save_pending: false,
-        });
+        let s = vm();
+        let _loan = lend(Some(1), Some([7, 3, 2, 12, 5]));
         s.run("t:InitializeTabardColors()").unwrap();
         assert_eq!(s.tabard_design(), Some([7, 3, 2, 12, 5]));
         assert_eq!(
@@ -406,33 +394,23 @@ mod tests {
         );
         // An undesigned record (a -1 anywhere) and no record both draw at random, in range.
         for rec in [Some([7, 3, 2, -1, 5]), None] {
-            s.set_tabard_host(TabardHost {
-                guild_record: rec,
-                save_pending: false,
-            });
+            let _loan = lend(Some(1), rec);
             s.run("t:InitializeTabardColors()").unwrap();
             let five = s.tabard_design().unwrap();
             for (v, count) in five.iter().zip(TABARD_COUNTS) {
                 assert!((0..count).contains(v), "{five:?} within {TABARD_COUNTS:?}");
             }
         }
-        // No player: nothing is seeded (the design keeps its last value).
-        s.set_unit("player", None);
-        s.set_tabard_host(TabardHost {
-            guild_record: Some([1, 1, 1, 1, 1]),
-            save_pending: false,
-        });
+        // No player object: nothing is seeded (the design keeps its last value).
+        let _loan = lend(None, Some([1, 1, 1, 1, 1]));
         s.run("t:InitializeTabardColors()").unwrap();
         assert_ne!(s.tabard_design(), Some([1, 1, 1, 1, 1]));
     }
 
     #[test]
     fn cycle_variation_wraps_both_ways_and_ignores_a_delta_past_the_count() {
-        let mut s = vm();
-        s.set_tabard_host(TabardHost {
-            guild_record: Some([0, 0, 0, 0, 0]),
-            save_pending: false,
-        });
+        let s = vm();
+        let _loan = lend(Some(1), Some([0, 0, 0, 0, 0]));
         s.run("t:InitializeTabardColors()").unwrap();
         s.run("t:CycleVariation(1, -1)").unwrap();
         assert_eq!(s.tabard_design().unwrap()[0], 169, "wraps down");
@@ -489,11 +467,8 @@ mod tests {
 
     #[test]
     fn the_texture_setters_install_the_mask_token_and_raise_on_a_non_texture() {
-        let mut s = vm();
-        s.set_tabard_host(TabardHost {
-            guild_record: Some([12, 4, 0, 0, 0]),
-            save_pending: false,
-        });
+        let s = vm();
+        let _loan = lend(Some(1), Some([12, 4, 0, 0, 0]));
         s.run("t:InitializeTabardColors() t:GetUpperEmblemTexture(tex)")
             .unwrap();
         let got = s.eval::<String>("return tex:GetTexture()").unwrap();
@@ -524,40 +499,36 @@ mod tests {
     }
 
     #[test]
-    fn can_save_is_one_or_nil_over_the_three_conjuncts_and_save_and_close_queue_intents() {
-        let mut s = vm();
-        s.set_tabard_host(TabardHost {
-            guild_record: None,
-            save_pending: false,
-        });
+    fn can_save_is_one_or_nil_over_the_three_conjuncts_read_at_the_call() {
+        let s = vm();
+        let _loan = lend(Some(1), None);
         assert!(s
             .eval::<bool>("return t:CanSaveTabardNow() == nil")
             .unwrap());
-        s.set_tabard_host(TabardHost {
-            guild_record: Some([-1; 5]),
-            save_pending: false,
-        });
+        let _loan = lend(Some(1), Some([-1; 5]));
         assert!(
             s.eval::<bool>("return t:CanSaveTabardNow() == 1").unwrap(),
             "a cached record counts even undesigned; the number 1, not true"
         );
-        s.set_tabard_host(TabardHost {
-            guild_record: Some([-1; 5]),
-            save_pending: true,
+        let _loan = crate::script::live::lend_test(crate::script::live::TestView {
+            player: Some(1),
+            tabard_record: Some([-1; 5]),
+            tabard_pending: true,
+            ..Default::default()
         });
         assert!(s
             .eval::<bool>("return t:CanSaveTabardNow() == nil")
             .unwrap());
+        let _loan = lend(None, Some([-1; 5]));
         assert!(
-            s.eval::<bool>("return TabardModel_CanSave == nil and t.CanSaveTabardNow() == nil")
+            s.eval::<bool>("return t:CanSaveTabardNow() == nil")
                 .unwrap(),
-            "never resolves this: a dot-call is fine"
+            "no player object"
         );
-        s.run("t:InitializeTabardColors() t:Save() CloseTabardCreation()")
-            .unwrap();
-        let intents = s.take_tabard_intents();
-        assert!(matches!(intents[0], TabardIntent::Save(_)));
-        assert_eq!(intents[1], TabardIntent::Close);
-        assert!(s.take_tabard_intents().is_empty());
+        let _loan = lend(Some(1), Some([-1; 5]));
+        assert!(
+            s.eval::<bool>("return t.CanSaveTabardNow() == 1").unwrap(),
+            "never resolves this: a dot-call answers too"
+        );
     }
 }

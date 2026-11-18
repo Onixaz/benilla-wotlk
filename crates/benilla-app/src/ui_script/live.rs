@@ -96,6 +96,8 @@ pub(crate) struct LiveView<'w, 's> {
     item_sets: Option<crate::ui_items::ItemSetLive<'w, 's>>,
     /// The caches a guild bank slot and log row resolve through at the call.
     guild_bank: Option<crate::ui_guild_bank::BankCatalogs<'w>>,
+    /// The tabard designer's vendor, save latch and our guild's record.
+    pub(crate) tabard: crate::ui_tabard::TabardView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1673,6 +1675,33 @@ impl LiveState for LiveView<'_, '_> {
 
     fn cancel_area_spirit_heal(&self) {
         self.dialogs.cancel_area_spirit_heal();
+    }
+
+    fn active_player_held(&self) -> bool {
+        self.self_guid
+            .as_ref()
+            .and_then(|g| g.0)
+            .is_some_and(|g| self.player_entity(g).is_some())
+    }
+
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        self.tabard.guild_record()
+    }
+
+    fn tabard_save_pending(&self) -> bool {
+        self.tabard.save_pending()
+    }
+
+    fn save_tabard(&mut self, design: [i32; 5]) -> Option<Result<(), &'static str>> {
+        self.tabard.save(design)
+    }
+
+    fn close_tabard(&mut self) -> u32 {
+        self.tabard.close()
+    }
+
+    fn apply_guild_color(&mut self, design: [i32; 5]) {
+        self.tabard.apply_guild_color(design);
     }
 }
 

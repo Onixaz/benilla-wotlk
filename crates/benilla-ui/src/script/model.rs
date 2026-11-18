@@ -1074,8 +1074,6 @@ pub(crate) struct Model {
     /// Tabard designs per `TabardModel`, the app's preview five, the host facts and queued calls.
     pub(crate) tabard_designs: HashMap<crate::widget::FrameHandle, [i32; 5]>,
     pub(crate) tabard_preview: Option<[i32; 5]>,
-    pub(crate) tabard_host: super::tabard::TabardHost,
-    pub(crate) tabard_intents: Vec<super::tabard::TabardIntent>,
     /// The barber shop's host facts, preview dials and queued calls.
     pub(crate) barber: super::barber::BarberState,
     /// The `WorldFrame` type's one-shot record: true once the first is made.
@@ -1808,8 +1806,6 @@ impl Model {
             dressup_intents: Vec::new(),
             tabard_designs: HashMap::new(),
             tabard_preview: None,
-            tabard_host: Default::default(),
-            tabard_intents: Vec::new(),
             barber: Default::default(),
             world_frame_made: false,
             unit_reach: HashMap::new(),

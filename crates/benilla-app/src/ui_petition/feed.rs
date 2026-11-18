@@ -289,7 +289,7 @@ pub(super) fn feed_petition(
 /// (`decline_on_close`); `CloseGuildRegistrar` sends nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_petition(
-    (script, _live): (
+    (script, live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsPetitions>,
     ),
@@ -304,7 +304,6 @@ pub(super) fn drain_petition(
     self_guid: Res<SelfGuid>,
     selection: Res<crate::target::Selection>,
     commands: Res<NetCommands>,
-    tabard: Res<crate::ui_tabard::TabardOpen>,
     mut errors: ResMut<crate::ui_action::UiErrorKeys>,
 ) {
     let Some(mut script) = script else {
@@ -426,7 +425,7 @@ pub(super) fn drain_petition(
                 if let Some(store) = self_q.iter().next() {
                     tabard_vendor_activate(
                         npc,
-                        tabard.npc().unwrap_or(0),
+                        live.view().tabard.vendor().unwrap_or(0),
                         store,
                         &commands,
                         &mut errors,

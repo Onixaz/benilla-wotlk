@@ -1265,8 +1265,6 @@ mod quiver_tests;
 mod world_entry_tests;
 
 /// The guild tabard designer: the stock `TabardFrame.xml` off the chain.
-#[cfg(test)]
-mod tabard_tests;
 /// The stock world map: its POI pool, unit blips, player arrow and full-screen quads.
 #[cfg(test)]
 mod world_map_tests;

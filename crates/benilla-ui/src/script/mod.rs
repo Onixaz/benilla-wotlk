@@ -386,10 +386,7 @@ pub use petition::{
     petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionButtonItem,
     PetitionRecordView, PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
 };
-pub use tabard::{
-    emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
-    TABARD_CREATION_COST,
-};
+pub use tabard::{emblem_mask_path, EMBLEM_MASK_TOKEN, TABARD_COUNTS, TABARD_CREATION_COST};
 pub use tooltip_quest::{QuestRecord, QuestTooltipRead, QuestTooltipView};
 pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
