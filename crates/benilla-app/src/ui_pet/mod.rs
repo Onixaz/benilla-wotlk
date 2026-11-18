@@ -32,7 +32,7 @@ pub(crate) use drain::{
 use menu::drain_pet_menu;
 #[cfg(test)]
 pub(crate) use menu::PET_FLAG_ABANDON;
-pub(crate) use menu::{menu_predicates, summon_bars_dismiss};
+pub(crate) use menu::{menu_predicates, run_menu_verb, summon_bars_dismiss, MenuCx};
 pub(crate) use net::set_pet_tail;
 pub(crate) use temp_bar::{temp_slot_texture, update_pet_temp_bar_step};
 pub(crate) use unit::{feed_pet_unit, pet_combat_flag, pet_renamed, push_pet_token};
@@ -80,15 +80,6 @@ impl PetList {
         self.0.first().copied()
     }
 }
-
-/// `SMSG_PET_RENAMEABLE`s not yet fired as `PET_RENAMEABLE`.
-#[derive(Resource, Default)]
-pub(crate) struct PetRenameable(pub(crate) u32);
-
-/// Refused pet names with their five declined forms, not yet fired as
-/// `PET_FORCE_NAME_DECLENSION`.
-#[derive(Resource, Default)]
-pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 
 /// The cascade's pet step (`0x5d6e60`): its ask sent here in the cascade's send order (`0x5281fe` between `0x5281db` and `0x52822b`), on the gate read inside our create when the step ran there, else while the drain waits for the entry, so no answer lands before the step's clear; the rest owed for after `PLAYER_ENTERING_WORLD`.
 pub(crate) fn request_pet_info_on_world_enter(
@@ -175,8 +166,6 @@ impl Plugin for UiPetPlugin {
             .init_resource::<PetList>()
             .init_resource::<possess::PossessSpell>()
             .init_resource::<possess::WorldEntryPetStep>()
-            .init_resource::<PetRenameable>()
-            .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
             .add_systems(
                 Update,

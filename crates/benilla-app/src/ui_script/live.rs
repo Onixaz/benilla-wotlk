@@ -61,6 +61,10 @@ pub(crate) struct LiveView<'w, 's> {
     pet_unit: Option<crate::ui_pet::PetUnit<'w, 's>>,
     /// The spell records, the cooldown query's category and global-cooldown legs.
     spells: Option<Res<'w, crate::ui_action::Spells>>,
+    /// `SummonProperties.dbc`, the dismiss's no-dismiss row (`0x5d484c`).
+    summons: Option<Res<'w, crate::spell::SummonSlots>>,
+    /// The active mover (`[0xca1238]`), the dismiss's controlled-vehicle test (`0x5d4744`).
+    mover: Query<'w, 's, &'static crate::net::Guid, With<crate::net::ActiveMover>>,
     /// `ChrClasses.dbc`, the pet book's token.
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
     _mark: Option<Res<'w, LendsLive>>,
@@ -1082,6 +1086,27 @@ impl LiveState for LiveView<'_, '_> {
             });
         }
         true
+    }
+
+    /// A pet menu verb on the lent bar inside its call ([`crate::ui_pet::run_menu_verb`]).
+    fn pet_menu_verb(
+        &mut self,
+        verb: benilla_ui::script::PetMenuVerb<'_>,
+    ) -> Option<benilla_ui::script::PetMenuOutcome> {
+        let stable_master = self
+            .stable
+            .open()
+            .and_then(crate::ui_session::NpcSession::npc);
+        let cx = crate::ui_pet::MenuCx {
+            bar: self.pet_bar.get()?,
+            pet: self.pet_unit.as_ref()?,
+            spells: self.spells.as_deref(),
+            summons: self.summons.as_deref(),
+            commands: self.commands.as_deref()?,
+            stable_master,
+            mover: self.mover.iter().next().map(|g| g.0),
+        };
+        Some(crate::ui_pet::run_menu_verb(&cx, verb))
     }
 
     /// `PetStopAttack`'s clear on the lent bar (`0x5d4650`).

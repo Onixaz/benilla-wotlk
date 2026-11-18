@@ -469,6 +469,11 @@ pub trait LiveState {
     /// `PetStopAttack`'s clear (`0x5d4650`): with the attacking global up, send the stop, lower it.
     fn pet_stop_attack(&mut self) {}
 
+    /// A pet menu verb inside its call (`0x5d4900`, `0x5d46f0`, `0x5d5670`): `None` leaves it to the queue.
+    fn pet_menu_verb(&mut self, _verb: super::PetMenuVerb<'_>) -> Option<super::PetMenuOutcome> {
+        None
+    }
+
     /// A press on 1-based `slot`, or the order word `order`, that writes only the bar (a reaction or a command other than Attack) and sends, inside the call (`0x5d4210`): `None` leaves it to the script call, else whether it signalled the bar (`0x5d4530`).
     fn pet_press(&mut self, _slot: u32, _order: Option<u32>) -> Option<bool> {
         None

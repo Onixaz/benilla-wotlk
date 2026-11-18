@@ -991,3 +991,73 @@ fn an_attack_order_is_applied_in_call_order_and_raises_the_global() {
         "{sent:?}"
     );
 }
+
+/// `PetDismiss` acts inside its call (`0x5d46f0`): the Dismiss order is out and `PET_DISMISS_START` fired, with its 10 s, before the verb returns (`0x5d48be`, `0x5d48c3`); `PetAbandon` sends under the head and `PetRename` checks and sends inside theirs (`0x5d4900`, `0x5d5670`), and a refused rename's message is queued in the call.
+#[test]
+fn the_menu_verbs_act_inside_the_call() {
+    let mut rig = scene();
+    let _ = rig.sent();
+    let (started, queued) = ui(&mut rig, |s| {
+        s.run("STARTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_DISMISS_START') f:SetScript('OnEvent', function(_, _, ms) STARTED = ms end)")
+            .unwrap();
+        let started = s
+            .eval::<Option<i64>>("PetDismiss() return STARTED")
+            .unwrap();
+        (started, s.take_pet_gives_up())
+    });
+    assert_eq!(started, Some(10_000));
+    assert_eq!(queued, (0, 0), "nothing is left to the drain");
+    let dismiss = 3 | ((PET_ACT_COMMAND as u32) << 24);
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetAction { pet_guid: PET, packed, target_guid: 0 }] if *packed == dismiss
+        ),
+        "{sent:?}"
+    );
+
+    ui(&mut rig, |s| s.run("PetAbandon()").unwrap());
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetAbandon { pet_guid: PET }]
+        ),
+        "{sent:?}"
+    );
+
+    // Not renameable: the pet-flags byte's bit 0 is clear (`0x5d5710`).
+    ui(&mut rig, |s| s.run("PetRename('Bruce')").unwrap());
+    assert!(rig.sent().is_empty());
+    set_pet(
+        &mut rig,
+        &[(benilla_protocol::field::FIELD_UNIT_BYTES_2, 0x01 << 16)],
+    );
+    ui(&mut rig, |s| {
+        s.run("PetRename('Bruce') PetRename('')").unwrap()
+    });
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetRename { pet_guid: PET, name }] if name == "Bruce"
+        ),
+        "{sent:?}"
+    );
+    assert!(ui(&mut rig, |s| s.take_pet_renames()).is_empty());
+}
+
+/// A menu verb behind a queued call waits for it, as a press does: the drain runs it after the call applied.
+#[test]
+fn a_menu_verb_behind_a_queued_call_waits() {
+    let mut rig = scene();
+    let _ = rig.sent();
+    let (queued, gives_up) = ui(&mut rig, |s| {
+        s.run("TargetUnit('player') PetDismiss()").unwrap();
+        (s.take_script_calls(), s.take_pet_gives_up())
+    });
+    assert_eq!(queued.len(), 1);
+    assert_eq!(gives_up, (0, 1));
+    assert!(rig.sent().is_empty());
+}
