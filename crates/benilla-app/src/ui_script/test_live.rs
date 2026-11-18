@@ -5,8 +5,8 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
-    CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetStats, PossessView,
-    StableCallback, StableFamily, StableList, UiScript,
+    CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetActionView, PetBarLive,
+    PetBookState, PetStats, PossessView, StableCallback, StableFamily, StableList, UiScript,
 };
 
 /// The death answers a test sets.
@@ -44,6 +44,12 @@ struct PetAnswers {
     stable: StableList,
     /// The stable's creature records, by entry.
     stable_families: std::collections::HashMap<u32, StableFamily>,
+    /// The pet bar's bar-wide state, `None` for no pet info.
+    pet_bar: Option<PetBarLive>,
+    /// The pet bar's slots, which the drag writes.
+    pet_slots: Vec<PetActionView>,
+    /// The pet's book.
+    pet_book: Option<PetBookState>,
 }
 
 thread_local! {
@@ -56,12 +62,22 @@ thread_local! {
 
 /// Set pet and companion answers on a bare VM, as the app's live view answers them: the first
 /// call lends [`View`] for the rest of the test's thread.
-pub(super) trait PetAnswersExt {
+pub(crate) trait PetAnswersExt {
+    /// The pet bar as the live view answers it: `has_bar`, `actions_usable`, `pickup_allowed`,
+    /// and the slots, the attacking global raised by a slot showing it.
+    fn set_pet_actions(
+        &mut self,
+        has_bar: bool,
+        actions_usable: bool,
+        pickup_allowed: bool,
+        slots: Vec<PetActionView>,
+    );
     fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats);
     fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool);
     fn set_companions(&mut self, state: CompanionState);
     fn set_possess_spell(&mut self, possess: Option<PossessView>);
     fn set_stable(&mut self, list: StableList, families: Vec<(u32, StableFamily)>);
+    fn set_pet_book(&mut self, book: PetBookState);
 }
 
 /// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no
@@ -80,6 +96,33 @@ fn sticky(script: &UiScript) {
 }
 
 impl PetAnswersExt for UiScript {
+    fn set_pet_actions(
+        &mut self,
+        has_bar: bool,
+        actions_usable: bool,
+        pickup_allowed: bool,
+        slots: Vec<PetActionView>,
+    ) {
+        sticky(self);
+        self.set_pet_slot_usable(slots.iter().map(|s| s.slot_usable).collect());
+        PET.with(|p| {
+            let mut p = p.borrow_mut();
+            p.pet_bar = Some(PetBarLive {
+                has_bar,
+                actions_usable,
+                pickup_allowed,
+                attacking: slots.iter().any(|s| s.attack_active),
+                time_remaining_ms: None,
+            });
+            p.pet_slots = if has_bar { slots } else { Vec::new() };
+        });
+    }
+
+    fn set_pet_book(&mut self, book: PetBookState) {
+        sticky(self);
+        PET.with(|p| p.borrow_mut().pet_book = Some(book));
+    }
+
     fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats) {
         sticky(self);
         PET.with(|p| p.borrow_mut().stats = (has_ui, stats));
@@ -228,6 +271,35 @@ impl LiveState for View {
 
     fn stable_family(&mut self, entry: u32, _: Option<StableCallback>) -> Option<StableFamily> {
         PET.with(|p| p.borrow().stable_families.get(&entry).cloned())
+    }
+
+    fn pet_bar(&self) -> Option<PetBarLive> {
+        PET.with(|p| p.borrow().pet_bar.clone())
+    }
+
+    fn pet_action(
+        &self,
+        index: usize,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<PetActionView> {
+        PET.with(|p| p.borrow().pet_slots.get(index).cloned())
+    }
+
+    fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
+        PET.with(|p| {
+            let mut p = p.borrow_mut();
+            for &(i, word) in entries {
+                if let Some(s) = p.pet_slots.get_mut(i as usize) {
+                    s.packed = word;
+                }
+            }
+        });
+        true
+    }
+
+    fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<PetBookState> {
+        PET.with(|p| p.borrow().pet_book.clone())
     }
 }
 

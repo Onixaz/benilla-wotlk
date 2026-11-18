@@ -1,5 +1,6 @@
 //! The stock spellbook window (`SpellBookFrame.xml`) over a small synthetic book, engine only.
 
+use crate::ui_script::test_live::PetAnswersExt;
 use benilla_ui::script::{CastAt, SpellBookState, SpellSlotView, SpellTabView, UiScript};
 
 use super::test_ui::load_ui as load_xml;

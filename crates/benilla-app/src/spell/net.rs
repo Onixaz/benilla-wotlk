@@ -529,6 +529,18 @@ struct SpellGoLoot<'w> {
 }
 
 fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut arm: SpellGoLoot) {
+    if !matches!(ev, SessionEvent::SpellGo { .. }) {
+        return;
+    }
+    let pet_generation = l.pet_bar.cooldowns.generation;
+    on_spell_go_inner(ev, &mut l, &mut sc, &mut arm);
+    // The pet leg's insert flushes in the go (`0x80fe3b`, `0x80fe4b`).
+    if l.pet_bar.cooldowns.generation != pet_generation {
+        crate::ui_pet::pet_cooldown_flush(&mut l.ui);
+    }
+}
+
+fn on_spell_go_inner(ev: SessionEvent, l: &mut Lifecycle, sc: &mut Scene, arm: &mut SpellGoLoot) {
     if let SessionEvent::SpellGo {
         caster,
         cast_count,
@@ -737,6 +749,29 @@ fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
 /// `SMSG_COOLDOWN_CHEAT` through [`addressed_store`], the other three through
 /// [`pet_or_player_store`].
 fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
+    let pet = |caster: u64| l.pet_bar.has_bar() && l.pet_bar.spells.pet_guid == caster;
+    // A packet addressed to the pet flushes its bar once, whatever it changed (`0x807039`,
+    // `0x802bd6`, `0x802c1e`, `0x804179`); the player is tested first (`0x806e0e`, `0x804122`).
+    let flush = match ev {
+        SessionEvent::SpellCooldowns { caster, .. } | SessionEvent::CooldownCheat { caster } => {
+            l.self_guid.0 != Some(caster) && pet(caster)
+        }
+        SessionEvent::CooldownEvent { caster, .. } | SessionEvent::ClearCooldown { caster, .. } => {
+            pet(caster)
+        }
+        // Spell 0 is skipped before the delay (`0x8040e4`).
+        SessionEvent::ModifyCooldown {
+            spell_id, caster, ..
+        } => spell_id != 0 && pet(caster),
+        _ => false,
+    };
+    cooldown_packet(ev, &mut l);
+    if flush {
+        crate::ui_pet::pet_cooldown_flush(&mut l.ui);
+    }
+}
+
+fn cooldown_packet(ev: SessionEvent, l: &mut Lifecycle) {
     let Lifecycle {
         self_guid,
         spells,
@@ -744,7 +779,7 @@ fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
         pet_bar,
         spell_mods,
         ..
-    } = &mut l;
+    } = l;
     match ev {
         SessionEvent::SpellCooldowns {
             caster,

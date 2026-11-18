@@ -84,10 +84,8 @@ impl StableOpen {
         std::mem::take(&mut self.master) != 0
     }
 
-    /// A close that clears the held master through the interaction close first (`0x5a0f2c`,
-    /// `0x5a1174`): a held master is the interact target the list set (`0x5a11d9`), so the
-    /// interaction close's stable arm fires `PET_STABLE_CLOSED` (`0x513065`, `0x5a0f4c`) before
-    /// the caller's own. How many fire: two with one held, else `forced` alone.
+    /// The interaction close first (`0x5a0f2c`, `0x5a1174`), whose stable arm fires `PET_STABLE_CLOSED` (`0x5a0f4c`), then the caller's: two with one held, else `forced` alone.
+    // A held master is always the interact target: its compare (`0x518d67`) cannot miss, as every target change closes the stable first (`0x51fd1c`).
     pub(crate) fn close_through_target(&mut self, forced: bool) -> usize {
         if self.close() {
             2

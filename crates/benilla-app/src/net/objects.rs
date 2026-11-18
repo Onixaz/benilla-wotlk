@@ -1490,15 +1490,20 @@ enum PetSignal {
     Experience,
     /// `UNIT_FIELD_FLAGS` `0x800` moved to set or clear: the flags callback's pet arm (`0x73c503`).
     Attack(bool),
+    /// `UNIT_FIELD_PET_NAME_TIMESTAMP` moved: the name watcher's callback on offset `0x218`.
+    Renamed,
 }
 
 /// The unit signal a pet stat field raises: the field's index is its event slot (`0x614190`), 23
 /// `UNIT_HAPPINESS` and 71-72 `UNIT_PET_EXPERIENCE`.
 fn pet_signal(e: &FieldChanged) -> Option<PetSignal> {
     use benilla_protocol::field::{
-        FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_POWER1,
+        FIELD_UNIT_PETEXPERIENCE, FIELD_UNIT_PETNEXTLEVELEXP, FIELD_UNIT_PET_NAME_TIMESTAMP,
+        FIELD_UNIT_POWER1,
     };
-    if e.unit_field(FIELD_UNIT_POWER1 + 4) {
+    if e.unit_field(FIELD_UNIT_PET_NAME_TIMESTAMP) {
+        Some(PetSignal::Renamed)
+    } else if e.unit_field(FIELD_UNIT_POWER1 + 4) {
         Some(PetSignal::Happiness)
     } else if e.unit_field(FIELD_UNIT_PETEXPERIENCE) || e.unit_field(FIELD_UNIT_PETNEXTLEVELEXP) {
         Some(PetSignal::Experience)
@@ -1553,9 +1558,9 @@ fn pet_token_watch(sc: &mut Scene, guid: u64, merged: &Merged) {
                     if let Some(mut bar) = world.get_resource_mut::<crate::ui_pet::PetBar>() {
                         bar.attacking = on;
                     }
-                    crate::ui_pet::push_pet_attacking(world);
                 });
             }
+            PetSignal::Renamed => crate::ui_pet::pet_renamed(guid, ours, &mut sc.ui),
             _ => {}
         }
     }
@@ -1569,6 +1574,13 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     if merged.pet_moved {
         possess_lookup(sc, guid);
+        // Our charm and summon fields' unit watches, event slots 0 and 2 (`0x614190`): `UNIT_PET`
+        // with the `"pet"` token pushed ahead.
+        sc.ui.world(crate::ui_pet::push_pet_token);
+        sc.ui.fire(
+            "UNIT_PET",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
     }
     if merged.critter_moved {
         crate::ui_companion::critter_update(&mut sc.ui);
@@ -1595,6 +1607,8 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     own_death_fields(sc, guid, player);
     if merged.farsight_moved {
         farsight_possess(sc, guid);
+        // The far-sight callback's temporary bar update (`0x6e504a`).
+        sc.ui.world(crate::ui_pet::update_pet_temp_bar_step);
     }
     own_death_fields(sc, guid, past_farsight);
     own_player_watches(sc, guid, &merged.watched);

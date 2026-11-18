@@ -1,5 +1,6 @@
 //! The pet action bar, stock `PetActionBarFrame.xml`, from a pushed slot list to its quads.
 
+use crate::ui_script::test_live::PetAnswersExt;
 use benilla_ui::script::{PetActionView, QuadContent, UiScript};
 
 /// The whole production interface, the pet bar and the chat window over it among it, with a pet
@@ -244,14 +245,12 @@ fn clicks_cast_and_flip_autocast() {
     assert_eq!(s.take_pet_actions(), vec![1]);
     assert_eq!(s.take_pet_stop_attacks(), 0);
 
-    // A right-click flips a spell's autocast; a token is not autocastable.
+    // A right-click toggles; a token's reaches the applier too, which repaints and flips nothing
+    // (`0x5d5e01`).
     click(&mut s, 201.0, 71.0, "RightButton");
     assert_eq!(s.take_pet_autocast_toggles(), vec![4]);
     click(&mut s, 87.0, 71.0, "RightButton");
-    assert!(
-        s.take_pet_autocast_toggles().is_empty(),
-        "a command token cannot autocast"
-    );
+    assert_eq!(s.take_pet_autocast_toggles(), vec![1], "a token's toggle");
     assert!(
         super::test_ui::errors_but_unported(&s).is_empty(),
         "script errors: {:?}",
@@ -349,6 +348,8 @@ fn a_disabled_bar_greys_rather_than_hides() {
 /// The pet bar with the bottom-left multibar up or not: shelf strips drawn, top of Attack's icon.
 fn pet_bar_row(with_multibar: bool) -> (usize, f32) {
     let mut s = UiScript::new().unwrap();
+    // No bar yet: the thread's test view outlives the previous VM.
+    s.set_pet_actions(false, false, false, Vec::new());
     s.set_screen_size(1024.0, 768.0);
     load_pet_bar(&mut s);
     if with_multibar {

@@ -85,22 +85,23 @@ fn on_spells(
     catalog: Option<Res<Spells>>,
     mut bar: ResMut<PetBar>,
     mut list: ResMut<super::PetList>,
+    mut possess: ResMut<super::possess::PossessSpell>,
     combat: PetCombat,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetSpells(spells) = ev {
-        let previous = bar.spells.pet_guid;
-        pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
-        // A new pet's attacking global is its combat test once held (`0x5d6a42`, `0x5d6a80`).
-        let pet = bar.spells.pet_guid;
-        if pet != previous && pet != 0 {
-            bar.attacking = combat.in_combat(pet).unwrap_or(false);
-        }
+        let changed = pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
+        let in_combat = combat.in_combat(bar.spells.pet_guid);
+        set_pet_tail(changed, &mut bar, &mut possess, in_combat, &mut ui);
+        // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`,
+        // `0x53ceae`).
+        ui.fire("SPELLS_CHANGED", Vec::new());
     }
 }
 
 /// The held pet's combat test (`0x71afb0`): `UNIT_FIELD_FLAGS` `0x800`, or an auto-attack running.
 #[derive(bevy::ecs::system::SystemParam)]
-struct PetCombat<'w, 's> {
+pub(crate) struct PetCombat<'w, 's> {
     index: Option<Res<'w, GuidIndex>>,
     units: Query<
         'w,
@@ -114,7 +115,7 @@ struct PetCombat<'w, 's> {
 
 impl PetCombat<'_, '_> {
     /// `None` when `guid` names no held unit (`0x5d6a6d`), else whether it is in combat.
-    fn in_combat(&self, guid: u64) -> Option<bool> {
+    pub(crate) fn in_combat(&self, guid: u64) -> Option<bool> {
         let &e = self.index.as_ref()?.0.get(&guid)?;
         let (store, engaged) = self.units.get(e).ok()?;
         store.0.is_unit().then(|| {
@@ -123,9 +124,39 @@ impl PetCombat<'_, '_> {
     }
 }
 
-fn on_mode(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>) {
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`). A new guid drops the possess bar latch and the
+/// attacking global (`0x5d6a3c`, `0x5d6a42`), the global then takes the held pet's combat test
+/// (`0x5d6a80`), and `UNIT_PET` fires with the token pushed ahead (`0x5d6aca`); every call then
+/// runs the temporary bar's update, which ends in `PET_BAR_UPDATE` (`0x5d6ad2` -> `0x5d4c1b`).
+pub(crate) fn set_pet_tail(
+    changed: bool,
+    bar: &mut PetBar,
+    possess: &mut super::possess::PossessSpell,
+    in_combat: Option<bool>,
+    ui: &mut crate::ui_script::live::UiEvents,
+) {
+    if changed {
+        possess.1 = false;
+        bar.attacking = bar.spells.pet_guid != 0 && in_combat.unwrap_or(false);
+        ui.world(super::unit::push_pet_token);
+        ui.fire(
+            "UNIT_PET",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+    }
+    ui.world(super::temp_bar::update_pet_temp_bar_step);
+}
+
+fn on_mode(
+    In(ev): In<SessionEvent>,
+    mut bar: ResMut<PetBar>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
     if let SessionEvent::PetMode(mode) = ev {
-        pet_mode(mode, &mut bar);
+        if pet_mode(mode, &mut bar) {
+            // `PET_BAR_UPDATE` whatever changed (`0x5d3689`).
+            ui.fire("PET_BAR_UPDATE", Vec::new());
+        }
     }
 }
 
@@ -154,6 +185,7 @@ fn on_cast_failed(
     mut errors: ResMut<CastErrors>,
     mut bar: ResMut<super::PetBar>,
     mut ends: PetCastEnd,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetCastFailed {
         cast_count,
@@ -164,8 +196,10 @@ fn on_cast_failed(
     } = ev
     {
         bar.pending_cast = None;
-        // The start cooldown the press armed clears, then the pet bar refreshes (`0x806d41`).
+        // The start cooldown the press armed clears, then the pet bar's flush alone (`0x806d41`,
+        // `0x806d46`).
         bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
+        ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
         ends.end(spell_id, cast_count, wire_reason);
     }
@@ -304,18 +338,16 @@ fn pet_spells(
     catalog: Option<&Spells>,
     bar: &mut PetBar,
     list: &mut super::PetList,
-) {
+) -> bool {
+    // The setter compares the guid it caches (`0x5d690f`).
+    let changed = bar.spells.pet_guid != spells.pet_guid;
     if spells.pet_guid == 0 {
         if bar.spells.pet_guid != 0 {
             debug!("net: pet bar torn down");
         }
         bar.clear();
         list.0.clear();
-        return;
-    }
-    // A new pet guid clears the attack latch; a re-send from the same pet keeps it.
-    if bar.spells.pet_guid != spells.pet_guid {
-        bar.attacking = false;
+        return changed;
     }
     // The pet setter (`0x5d6900`): a listed guid moves to the head, swapping places with it; an
     // unlisted one becomes the whole list.
@@ -383,9 +415,7 @@ fn pet_spells(
         bar.cooldowns.seed_pet(cd, display, now);
     }
     bar.spells = spells;
-    // The pet setter ends in a `PET_BAR_UPDATE` signal (event `0x161`) on every packet, whatever
-    // changed: the one repaint a packet that moves only the pet's cooldowns gets.
-    bar.bar_signals = bar.bar_signals.wrapping_add(1);
+    changed
 }
 
 /// `SMSG_PET_GUIDS` (`0x5d6550`): the list replaced whole, with no event. Every pet verb reads the
@@ -420,16 +450,16 @@ fn pet_spell_line(
     errors.0.push(UiError::s(key, display.ranked_name()));
 }
 
-/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names.
-fn pet_mode(mode: PetMode, bar: &mut PetBar) {
+/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names; whether it
+/// applied.
+fn pet_mode(mode: PetMode, bar: &mut PetBar) -> bool {
     if bar.spells.pet_guid == 0 || bar.spells.pet_guid != mode.pet_guid {
-        return;
+        return false;
     }
     debug!("net: pet mode — state {:#010x}", mode.state);
-    // The whole dword, as the client stores both packets' state, and `PET_BAR_UPDATE` whatever
-    // changed (`0x5d3689`).
+    // The whole dword, as the client stores both packets' state.
     bar.spells.state = mode.state;
-    bar.bar_signals = bar.bar_signals.wrapping_add(1);
+    true
 }
 
 /// `SMSG_PET_ACTION_FEEDBACK`: a refused order's reason byte, onto the red line; `helpful` is
@@ -604,19 +634,28 @@ mod tests {
         assert_eq!(bar.spells.bar[0].action(), PET_COMMAND_ATTACK);
     }
 
-    /// The client's pet-guid writer clears the latch only on a change.
+    /// The setter's tail writes the attacking global only on a new guid (`0x5d6a42`), then from
+    /// the new pet's combat test (`0x5d6a80`); every packet runs the temporary bar's update.
     #[test]
     fn the_attack_latch_survives_a_resend_and_dies_on_a_new_pet() {
         let mut bar = PetBar::default();
         let mut list = super::super::PetList::default();
-        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
+        let mut possess = super::super::possess::PossessSpell::default();
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let mut set = |bar: &mut PetBar, guid, in_combat| {
+            let changed = pet_spells(a_bar(guid), None, bar, &mut list);
+            set_pet_tail(changed, bar, &mut possess, in_combat, &mut ui);
+        };
+        set(&mut bar, 0x2A, None);
         bar.attacking = true;
 
-        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
+        set(&mut bar, 0x2A, Some(false));
         assert!(bar.attacking, "the same pet re-sending keeps its attack");
 
-        pet_spells(a_bar(0x99), None, &mut bar, &mut list);
+        set(&mut bar, 0x99, None);
         assert!(!bar.attacking, "a different pet is not attacking");
+        set(&mut bar, 0x2A, Some(true));
+        assert!(bar.attacking, "a new pet in combat starts attacking");
     }
 
     fn catalog() -> Spells {
@@ -722,13 +761,15 @@ mod tests {
             pet_guid,
             state: 0x0100,
         };
-        pet_mode(mode(0xF14), &mut bar);
-        let first = bar.bar_signals;
-        pet_mode(mode(0xF14), &mut bar);
-        assert_ne!(bar.bar_signals, first, "the same state signals again");
-        let before = bar.bar_signals;
-        pet_mode(mode(0xABC), &mut bar);
-        assert_eq!(bar.bar_signals, before, "another pet's mode is not ours");
+        assert!(pet_mode(mode(0xF14), &mut bar));
+        assert!(
+            pet_mode(mode(0xF14), &mut bar),
+            "the same state signals again"
+        );
+        assert!(
+            !pet_mode(mode(0xABC), &mut bar),
+            "another pet's mode is not ours"
+        );
     }
 
     #[test]

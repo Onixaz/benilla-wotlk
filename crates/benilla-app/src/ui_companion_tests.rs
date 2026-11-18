@@ -315,16 +315,3 @@ fn a_mount_ridden_through_another_spell_cancels_that_one() {
         "{sends:?}"
     );
 }
-
-/// The pet unit's feed runs before the bar's, whose `PET_BAR_UPDATE` handler reads
-/// `UnitIsVisible("pet")`, which the pet unit feed pushes.
-#[test]
-fn the_pet_bar_follows_the_pet_unit() {
-    use crate::test_support::runs_before;
-    let mut app = crate::game_plugins::schedule_tests::headless_client();
-    assert!(runs_before(
-        &mut app,
-        crate::ui_pet::feed_pet_unit,
-        crate::ui_pet::feed_pet_bar
-    ));
-}

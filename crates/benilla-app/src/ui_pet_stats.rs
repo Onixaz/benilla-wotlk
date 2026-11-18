@@ -24,8 +24,6 @@ const CLASS_HUNTER: u8 = 3;
 const POWER_HAPPINESS: u8 = 4;
 
 /// `PetPersonality.dbc`, loaded once; without it happiness answers the binding's failure form.
-/// 12340 has no pet loyalty (no `PetLoyalty.dbc`), so the 1.12 `GetPetLoyalty`, until #52 removes
-/// it, answers its no-data form: nil.
 #[derive(Resource)]
 pub(crate) struct PetStatTables {
     pub(crate) personalities: benilla_formats::PetPersonalities,
@@ -584,12 +582,6 @@ mod tests {
             .resource_mut::<GuidIndex>()
             .0
             .insert(PET_GUID, pet);
-        app.world_mut()
-            .resource_mut::<crate::ui_pet::PetBar>()
-            .spells
-            .pet_guid = PET_GUID;
-        app.world_mut().resource_mut::<crate::ui_pet::PetList>().0 = vec![PET_GUID];
-
         // A frame standing in for the pet page records what `HasPetUI()` answers at dispatch.
         let script = UiScript::new().unwrap();
         script
@@ -606,7 +598,16 @@ mod tests {
             .unwrap();
         app.insert_non_send_resource(script);
 
-        app.update();
+        // The setter fires `UNIT_PET` once the guid and the list are written (`0x5d6aca`).
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![benilla_protocol::SessionEvent::PetSpells(Box::new(
+                benilla_protocol::messages::PetSpells {
+                    pet_guid: PET_GUID,
+                    ..Default::default()
+                },
+            ))],
+        );
 
         let saw: String = app
             .world_mut()

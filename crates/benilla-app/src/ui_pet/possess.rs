@@ -30,12 +30,18 @@ const POSSESS_CANCEL_ICON: u32 = 693;
 /// `Attributes`' sign bit, which disables the cancel button (`0x5d59c7`).
 const ATTR_CANCEL_DISABLED: u32 = 0x8000_0000;
 
-/// The possess spell `[0xc234e0]`, 0 for none, written by the handlers alone.
+/// The possess spell `[0xc234e0]`, 0 for none, written by the handlers alone, and the bar latch
+/// `[0xc234d8]` a held spell raises (`0x5d30f5`, `0x5d646e`) and a new pet drops (`0x5d6a3c`), which
+/// the temporary bar's used test reads (`0x5d35ff`).
 #[derive(Resource, Default)]
-pub(crate) struct PossessSpell(pub(crate) u32);
+pub(crate) struct PossessSpell(pub(crate) u32, pub(crate) bool);
 
-/// `0x5d30e0`: hold `spell`, firing `UPDATE_BONUS_ACTIONBAR` when it changed.
+/// `0x5d30e0`: hold `spell`, raising the bar latch for a nonzero one, and firing
+/// `UPDATE_BONUS_ACTIONBAR` when it changed.
 pub(crate) fn set_possess_spell(held: &mut PossessSpell, spell: u32, ui: &mut UiEvents) {
+    if spell != 0 {
+        held.1 = true;
+    }
     if std::mem::replace(&mut held.0, spell) != spell {
         debug!("ui_pet: possess spell -> {spell}");
         ui.fire("UPDATE_BONUS_ACTIONBAR", Vec::new());
@@ -204,7 +210,7 @@ mod tests {
         let mut app = App::new();
         app.add_message::<crate::net::WorldportMessage>()
             .init_resource::<UiEvents>()
-            .insert_resource(PossessSpell(42))
+            .insert_resource(PossessSpell(42, false))
             .add_systems(Update, crate::ui_battlefield::leave_world_on_worldport);
         let port = |needs_ack: bool| crate::net::WorldportMessage {
             map_id: 1,
@@ -226,7 +232,7 @@ mod tests {
 
         // The pet part's event, queued in turn with the rest of the leave's.
         let mut world = World::new();
-        world.insert_resource(PossessSpell(42));
+        world.insert_resource(PossessSpell(42, false));
         world.init_resource::<UiEvents>();
         leave_world(&mut world);
         leave_world(&mut world);

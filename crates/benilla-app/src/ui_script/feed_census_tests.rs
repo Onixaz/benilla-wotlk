@@ -77,11 +77,10 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_party::difficulty::feed_menu_gates",
     "benilla_app::ui_party::feed::feed_marks",
     "benilla_app::ui_party::feed::feed_party",
-    "benilla_app::ui_pet::bar::feed_pet_bar",
-    "benilla_app::ui_pet::bar::fire_pet_cooldown_events",
-    "benilla_app::ui_pet::temp_bar::update_pet_temp_bar",
+    "benilla_app::ui_pet::bar::feed_pet_slot_usable",
+    // The `"pet"` token's per-field fan-out, the units' (#1289).
     "benilla_app::ui_pet::unit::feed_pet_unit",
-    "benilla_app::ui_pet_book::feed_pet_book",
+    // The pet page's stat fan-out under `"pet"`, the units' (#1289).
     "benilla_app::ui_pet_doll::feed_pet_doll",
     "benilla_app::ui_petition::feed::feed_petition",
     "benilla_app::ui_quest::feed_quest",
@@ -143,10 +142,16 @@ const FEEDS: &[&str] = &[
 
 /// Systems in [`super::UiFeed`] that hold the VM and stay, each with why: state 12340 does not
 /// read live, or no state at all. A piece of #1245 moves a feed here only with its reason.
-const KEPT: &[(&str, &str)] = &[(
-    "benilla_app::death::update_corpse_distance",
-    "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
-)];
+const KEPT: &[(&str, &str)] = &[
+    (
+        "benilla_app::death::update_corpse_distance",
+        "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
+    ),
+    (
+        "benilla_app::ui_pet_doll::sync_pet_booth",
+        "rendering, no event: 12340's model frame reads its facing and model on every frame render (0x960240), the facing its rotate buttons write (0x9606e0)",
+    ),
+];
 
 /// Every system in [`super::UiFeed`] that holds the VM, off the built `Update` schedule.
 fn scheduled_feeds() -> Vec<String> {

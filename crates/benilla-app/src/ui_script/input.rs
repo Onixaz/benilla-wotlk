@@ -71,7 +71,11 @@ fn feed_wheel(
 /// fires its binding). Runs first in [`super::UiPress`], before the binding dispatch,
 /// `WorldStage::Input` and every key reader.
 pub(crate) fn feed_ui_input(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    // It owns the pet bar: the drag a click runs writes the pet's words inside its call (`0x5d5c3e`).
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPetBar>,
+    ),
     // Carries the `wl_display` the Wayland clipboard backend needs, once winit has a surface.
     window: Query<(&Window, Option<&bevy::window::RawHandleWrapper>), With<PrimaryWindow>>,
     buttons: Res<ButtonInput<MouseButton>>,

@@ -21,15 +21,33 @@ pub(crate) struct UiPetDollPlugin;
 impl Plugin for UiPetDollPlugin {
     fn build(&self, app: &mut App) {
         // In the unit feed, so the page repaints in the pass that pushes the pet's health.
-        app.add_systems(Update, feed_pet_doll.in_set(UnitFeed));
+        app.add_systems(Update, (sync_pet_booth, feed_pet_doll).in_set(UnitFeed));
     }
 }
 
+/// The booth `PetModelFrame` draws, read each frame as the model frame renders (`0x960240`): its
+/// facing, which the rotate buttons write (`0x9606e0`), and the pet's model.
+fn sync_pet_booth(
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    bar: Res<PetBar>,
+    pet: PetUnit,
+    mut booth: ResMut<PetDollBooth>,
+) {
+    let Some(script) = script else {
+        return;
+    };
+    // Written every frame, pet or not, so a new pet does not snap to a stale yaw.
+    booth.yaw = script.model_pane_facing("PetModelFrame");
+    let pet_guid = bar.spells.pet_guid;
+    // A guid whose object never streamed is no pet: `None` empties the booth.
+    booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
+}
+
+/// The pet page's stats pushed under `"pet"` and their `UNIT_*` fan-out, the units' (#1289).
 fn feed_pet_doll(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: Res<PetBar>,
     pet: PetUnit,
-    mut booth: ResMut<PetDollBooth>,
     mut last: Local<crate::ui_script::VmMemo<Option<UnitCombatStats>>>,
     tables: Option<Res<crate::ui_char::SheetTables>>,
     names: Res<crate::names::NameCache>,
@@ -39,14 +57,8 @@ fn feed_pet_doll(
         return;
     };
     let last = last.get(&script);
-    // The pane's rotate buttons own the yaw. Written every frame, pet or not, so a new pet does
-    // not snap to a stale one.
-    booth.yaw = script.model_pane_facing("PetModelFrame");
-
     let pet_guid = bar.spells.pet_guid;
     let store = (pet_guid != 0).then(|| pet.store(pet_guid)).flatten();
-    // A guid whose object never streamed is no pet: `None` empties the booth.
-    booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
 
     let owner_class = self_q
         .iter()

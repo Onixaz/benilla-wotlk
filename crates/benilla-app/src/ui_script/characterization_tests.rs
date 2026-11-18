@@ -889,10 +889,13 @@ fn pet_summon_and_dismiss() {
         ],
         3,
     );
+    // Our summon field's watch fires `UNIT_PET` (`0x614190` slot 2), the token already our summon
+    // (`0x60acd0`); the packet's setter fires its own on the new guid (`0x5d6aca`), then the
+    // temporary bar's `PET_BAR_UPDATE` (`0x5d6ad2` -> `0x5d4c1b`).
     assert_eq!(
         pin(&summon, events, verbs),
-        // The pet unit feeds before the bar (#1244), so the bar's handler sees the pet.
         vec![
+            "UNIT_PET player | pet=1 petui=nil",
             "UNIT_PET player | pet=1 petui=nil",
             "PET_BAR_UPDATE | pet=1 petui=nil",
         ]
@@ -900,6 +903,7 @@ fn pet_summon_and_dismiss() {
     assert_eq!(
         pin(&dismiss, events, verbs),
         vec![
+            "UNIT_PET player | pet=nil petui=nil",
             "UNIT_PET player | pet=nil petui=nil",
             "PET_BAR_UPDATE | pet=nil petui=nil",
         ]
@@ -2750,8 +2754,8 @@ fn a_learn_and_an_unlearn_after_our_create_in_one_frame_reach_the_lists() {
 
 /// The bar's `PET_BAR_UPDATE` handler re-tests the Pets tab off `GetNumCompanions` (#1244): it
 /// reads the lists the spell handler filled, whichever of the mount's record and the pet packet
-/// lands first. `COMPANION_UPDATE` fires from the record's answer; `PET_BAR_UPDATE` still fires from
-/// the bar's frame feed after every handler, so it follows in both orders.
+/// lands first. `COMPANION_UPDATE` fires from the record's answer, `PET_BAR_UPDATE` from the pet
+/// packet's setter (`0x5d6ad2` -> `0x5d4c1b`), each in its own packet's turn.
 #[test]
 fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
     let events = &["COMPANION_UPDATE", "PET_BAR_UPDATE"];
@@ -2769,8 +2773,8 @@ fn the_pet_bar_reads_the_mounts_the_spell_handler_filed_in_both_orders() {
     assert_eq!(
         pin(&answer_last, events, verbs),
         vec![
-            "COMPANION_UPDATE | mounts=1 petui=nil",
             "PET_BAR_UPDATE | mounts=1 petui=nil",
+            "COMPANION_UPDATE | mounts=1 petui=nil",
         ]
     );
     drop(rig);
@@ -2936,6 +2940,39 @@ fn pet_attack_events_fire_from_the_flags_field_handler() {
     );
 }
 
+/// A pet created already fighting fires no `PET_ATTACK_START`: a new object's create runs no field
+/// handler (`0x4d64a4`, only a re-enabled one reaches `0x4d64be`), and the setter takes the pet's
+/// combat test into the attacking global instead (`0x5d6a80`).
+#[test]
+fn a_pet_created_in_combat_fires_no_attack_start_and_reads_attacking() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let mut pet = hunter_pet(1_000_000, 4200);
+    if let SessionEvent::ObjectCreate { fields, .. } = &mut pet {
+        fields.merge(ObjectFields::from_pairs(&[(FIELD_UNIT_FLAGS, 0x800)]));
+    }
+    let events = &["PET_ATTACK_START", "PET_ATTACK_STOP", "PET_BAR_UPDATE"];
+    let seen = rig.packets(
+        vec![
+            pet,
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                ..Default::default()
+            })),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, &["petattack"]),
+        vec!["PET_BAR_UPDATE | petattack=true"]
+    );
+}
+
 /// `COMPANION_UPDATE "CRITTER"` fires from our `UNIT_FIELD_CRITTER` watch after the field applies
 /// (`0x6cf722`), so the critter's active flag reads the new critter at it.
 #[test]
@@ -2970,7 +3007,7 @@ fn the_critter_update_fires_from_our_critter_field() {
 
 /// `UPDATE_BONUS_ACTIONBAR` fires from our field handler once the possess spell changes: our
 /// charm's move looks it up in our auras (`0x6d1ab1`), a far sight on a held subject looks again
-/// and finds the same (`0x6e5034`), and one with no subject clears it (`0x6e5042`); the possess
+/// and finds the same (`0x6e5034`), and one with no held subject clears it (`0x6e5042`); the possess
 /// verbs read the held spell at each.
 #[test]
 fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
@@ -3014,6 +3051,23 @@ fn the_possess_spell_follows_our_charm_and_far_sight_in_the_handler() {
     );
     assert_eq!(
         pin(&seen, events, verbs),
+        vec![
+            "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
+            "UPDATE_BONUS_ACTIONBAR | possess=false possname=nil",
+        ]
+    );
+    // A far sight on a subject we do not hold misses its lookup (`0x6e5020`) and clears too
+    // (`0x6e5042`), after one on the held victim found the spell again (`0x6e5034`).
+    const UNHELD: u64 = 0xF130_0000_0000_0099;
+    let unheld = rig.packets(
+        vec![
+            guid(FIELD_PLAYER_FARSIGHT, VICTIM),
+            guid(FIELD_PLAYER_FARSIGHT, UNHELD),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&unheld, events, verbs),
         vec![
             "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
             "UPDATE_BONUS_ACTIONBAR | possess=false possname=nil",

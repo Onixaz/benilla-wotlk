@@ -228,7 +228,7 @@ impl PetPress<'_, '_> {
 
 /// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: the spell cooldown start
 /// (`0x5d4427`) before the send, the spell's own `StartRecovery*` pair into the pet's list. The
-/// insert moves the list's generation, which carries its flush to `bar::fire_pet_cooldown_events`.
+/// insert fires the pet's cooldown flush in its applier's turn.
 /// The client-targeted and possessed presses start it at their cast's send instead (the pending
 /// cast's send, `0x80ac90`).
 pub(super) fn arm_pet_gcd(
@@ -273,9 +273,8 @@ pub(super) fn drain_pet_actions(
         debug!("ui_pet: dropping queued pet intents — the bar is gone");
         return;
     }
-    // The repaint is `latch_press`'s alone, not every click's: a refused `TogglePetAutocast` (any
-    // right-click on a token) signals nothing, so after `OnClick`'s `SetChecked(0)` that button
-    // stays unlit until the next repaint, as in the reference.
+    // The toggle (`0x5d5d20`): past the usability gate every slot signals the bar, a token's
+    // right-click too (`0x5d5e01`); only a slot with bit 31 flips and sends.
     for slot in toggles {
         if !pet.actions_usable(&bar) {
             debug!(
@@ -283,19 +282,19 @@ pub(super) fn drain_pet_actions(
             );
             continue;
         }
-        let Some(flipped) = toggle_slot_autocast(&mut bar.write(), slot) else {
-            continue;
-        };
-        debug!(
-            "ui_pet: autocast {} for spell {} (slot {slot})",
-            flipped.autocast_on(),
-            flipped.action()
-        );
-        let _ = commands.0.send(ClientCommand::PetSetAction {
-            pet_guid,
-            // Lua slots are 1-based, the wire's 0-based; `slot_entry` already refused 0.
-            entries: vec![(slot - 1, flipped.packed)],
-        });
+        if let Some(flipped) = toggle_slot_autocast(&mut bar.write(), slot) {
+            debug!(
+                "ui_pet: autocast {} for spell {} (slot {slot})",
+                flipped.autocast_on(),
+                flipped.action()
+            );
+            let _ = commands.0.send(ClientCommand::PetSetAction {
+                pet_guid,
+                // Lua slots are 1-based, the wire's 0-based; `slot_entry` already refused 0.
+                entries: vec![(slot - 1, flipped.packed)],
+            });
+        }
+        script.fire_event("PET_BAR_UPDATE", Vec::new());
     }
     for _ in 0..stops {
         if stop_pet_attack(&mut bar.write(), &commands) {

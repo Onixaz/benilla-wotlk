@@ -214,8 +214,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 })
                 .unwrap_or((0, true));
             let autocast = match resolved {
-                (spell, true) => model
-                    .pet_book
+                (spell, true) => super::spellbook::live_pet_book(&model)
                     .slots
                     .iter()
                     .find(|s| s.spell_id & 0xffff == spell)
@@ -301,8 +300,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // pet book index, "pet", the id; nothing for an order or mode.
                 ACTION_KIND_PET => match a.pet_spell {
                     Some(spell) => {
-                        let index = model
-                            .pet_book
+                        let index = super::spellbook::live_pet_book(&model)
                             .slots
                             .iter()
                             .position(|s| s.spell_id == spell)
@@ -754,7 +752,7 @@ mod tests {
     #[test]
     fn the_pet_s_temporary_bar_hides_the_pet_bar_and_another_owner_does_not() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_actions(true, true, true, Vec::new());
+        let _pets = crate::script::live::lend_pets(true, true, true, Vec::new());
         s.run("ChangeActionBarPage(3)").unwrap();
         assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
 

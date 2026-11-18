@@ -324,6 +324,34 @@ pub trait LiveState {
         false
     }
 
+    /// The pet bar's bar-wide state at the call, `None` with no pet info to read.
+    fn pet_bar(&self) -> Option<super::PetBarLive> {
+        None
+    }
+
+    /// Pet bar slot `index` (0-based) resolved at the call, its cooldown on the `GetTime` clock that
+    /// `ui_now` seconds names at `anchor`; `None` past the ten words or with no bar.
+    fn pet_action(
+        &self,
+        _index: usize,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<super::PetActionView> {
+        None
+    }
+
+    /// The drag's write into the pet's words, `(0-based slot, word)` pairs (`0x5d5c3e`); whether
+    /// it landed.
+    fn pet_place_action(&mut self, _entries: &[(u32, u32)]) -> bool {
+        false
+    }
+
+    /// The pet's spellbook at the call (`[0xbe7d98]`), cooldowns on the `GetTime` clock that `ui_now`
+    /// seconds names at `anchor`; `None` with no pet book to read.
+    fn pet_book(&self, _anchor: std::time::Instant, _ui_now: f64) -> Option<super::PetBookState> {
+        None
+    }
+
     /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it
     /// (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now`
     /// seconds names at `anchor`; `None` with nothing running.
@@ -614,6 +642,10 @@ pub(crate) struct TestView {
     pub cooldowns: std::collections::HashMap<u32, (i64, u32, bool)>,
     /// The pet is out as a hunter's unit with its creature record.
     pub stable_live_pet: bool,
+    /// The pet bar's bar-wide state.
+    pub pet_bar: Option<super::PetBarLive>,
+    /// The pet bar's slots, which the drag writes.
+    pub pet_slots: std::cell::RefCell<Vec<super::PetActionView>>,
 }
 
 #[cfg(test)]
@@ -795,6 +827,78 @@ impl LiveState for TestView {
     ) -> Option<(i64, u32, bool)> {
         self.cooldowns.get(&spell_id).copied()
     }
+
+    fn pet_bar(&self) -> Option<super::PetBarLive> {
+        self.pet_bar.clone()
+    }
+
+    fn pet_action(
+        &self,
+        index: usize,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<super::PetActionView> {
+        self.pet_slots.borrow().get(index).cloned()
+    }
+
+    fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
+        let mut slots = self.pet_slots.borrow_mut();
+        for &(i, word) in entries {
+            if let Some(s) = slots.get_mut(i as usize) {
+                s.packed = word;
+            }
+        }
+        true
+    }
+
+    fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<super::PetBookState> {
+        TEST_PET_BOOK.with(|b| b.borrow().clone())
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The pet book every test view answers, set by `UiScript::set_pet_book`.
+    static TEST_PET_BOOK: std::cell::RefCell<Option<super::PetBookState>> =
+        const { std::cell::RefCell::new(None) };
+    /// The view lent for the rest of the thread once a test sets a pet book.
+    static TEST_STICKY: std::cell::RefCell<Option<LiveLoan<TestView>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Answer `state` as the pet book of every test view on this thread, lending one until the thread
+/// ends if none is up yet.
+#[cfg(test)]
+pub(crate) fn set_test_pet_book(state: super::PetBookState) {
+    TEST_PET_BOOK.with(|b| *b.borrow_mut() = Some(state));
+    if read_live(|_| ()).is_none() {
+        TEST_STICKY.with(|s| {
+            // SAFETY: made with no loan up, so it encloses every later loan; held to the thread's end.
+            *s.borrow_mut() = Some(unsafe { LiveLoan::new(TestView::default()) });
+        });
+    }
+}
+
+/// Lend a pet bar with `slots`, for the VM's own tests: `has_bar`, `actions_usable` and
+/// `pickup_allowed` as given.
+#[cfg(test)]
+pub(crate) fn lend_pets(
+    has_bar: bool,
+    actions_usable: bool,
+    pickup_allowed: bool,
+    slots: Vec<super::PetActionView>,
+) -> LiveLoan<TestView> {
+    lend_test(TestView {
+        pet_bar: Some(super::PetBarLive {
+            has_bar,
+            actions_usable,
+            pickup_allowed,
+            attacking: slots.iter().any(|s| s.attack_active),
+            time_remaining_ms: None,
+        }),
+        pet_slots: std::cell::RefCell::new(slots),
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]

@@ -576,8 +576,6 @@ pub(crate) struct Model {
     pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
     /// The full known-spell set, a superset of [`Self::spellbook`], and the rank table the item tests walk.
     pub(crate) known_spells: spellbook::KnownSpells,
-    /// The pet's spellbook, a second array as in the reference.
-    pub(crate) pet_book: spellbook::PetBookState,
     /// `DismissCompanion` and `SummonRandomCritter` asks, in call order, for the app.
     pub(crate) companion_intents: Vec<super::companion::CompanionIntent>,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
@@ -727,8 +725,8 @@ pub(crate) struct Model {
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
-    /// The pet bar's ten slots and two bar-wide bits, replaced whole by every `SMSG_PET_SPELLS`.
-    pub(crate) pet_bar: super::pet::PetBarState,
+    /// `GetPetActionSlotUsable`'s answers by 0-based slot, pushed by the app's slot feed.
+    pub(crate) pet_slot_usable: Vec<bool>,
     /// 1-based slot indices `TogglePetAutocast` queued.
     pub(crate) pet_autocast_toggles: Vec<u32>,
     /// `PetStopAttack()` calls.
@@ -1582,7 +1580,6 @@ impl Model {
             spellbook: spellbook::SpellBookState::default(),
             known_spells: spellbook::KnownSpells::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),
-            pet_book: spellbook::PetBookState::default(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
             macros_dirty: false,
@@ -1654,7 +1651,7 @@ impl Model {
             totem_destroys: Vec::new(),
             multicast: Default::default(),
             ui_errors_s: Vec::new(),
-            pet_bar: super::pet::PetBarState::default(),
+            pet_slot_usable: Vec::new(),
             pet_autocast_toggles: Vec::new(),
             pet_stop_attacks: 0,
             pet_set_actions: Vec::new(),

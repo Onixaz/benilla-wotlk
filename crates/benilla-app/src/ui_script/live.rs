@@ -44,8 +44,12 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) stable: crate::ui_stable::StableView<'w, 's>,
     pub(crate) cooldowns: Slot<'w, crate::spell::Cooldowns>,
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
+    /// The bar's pet, our seat and the pet's auras, for the bar's usability and active reads.
+    pet_unit: Option<crate::ui_pet::PetUnit<'w, 's>>,
     /// The spell records, the cooldown query's category and global-cooldown legs.
     spells: Option<Res<'w, crate::ui_action::Spells>>,
+    /// `ChrClasses.dbc`, the pet book's token.
+    classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -85,6 +89,8 @@ impl LiveView<'_, '_> {
 /// owner's latest write when called.
 pub(crate) struct Slot<'w, X: Resource> {
     ptr: Option<NonNull<X>>,
+    /// The lending system writes `X` itself, so a verb inside its call may write it too.
+    owned: bool,
     _life: PhantomData<&'w X>,
 }
 
@@ -96,8 +102,19 @@ impl<X: Resource> Slot<'_, X> {
         self.ptr.map(|p| unsafe { p.as_ref() })
     }
 
-    fn set(&mut self, ptr: Option<NonNull<X>>) {
+    /// The resource for a verb's write inside the call (`write_live`), `None` unless the lending
+    /// system owns it: a system that only reads it leaves the write to its owner.
+    pub(crate) fn get_mut(&mut self) -> Option<&mut X> {
+        // SAFETY: an owner registered the write; a verb's write excludes every other borrow of the
+        // view for its length, and none outlives the call.
+        self.ptr
+            .filter(|_| self.owned)
+            .map(|mut p| unsafe { p.as_mut() })
+    }
+
+    fn set(&mut self, ptr: Option<NonNull<X>>, owned: bool) {
         self.ptr = ptr;
+        self.owned = owned;
     }
 }
 
@@ -118,6 +135,7 @@ unsafe impl<X: Resource> SystemParam for Slot<'_, X> {
     ) -> Self::Item<'w, 's> {
         Slot {
             ptr: None,
+            owned: false,
             _life: PhantomData,
         }
     }
@@ -149,6 +167,13 @@ impl Owns for OwnsPetBar {
 /// The system writes both.
 pub(crate) struct OwnsCooldownsAndPetBar;
 impl Owns for OwnsCooldownsAndPetBar {
+    const COOLDOWNS: bool = true;
+    const PET_BAR: bool = true;
+}
+
+/// An exclusive lender holds the whole `World`, so every verb may write every lendable resource.
+pub(crate) struct OwnsAll;
+impl Owns for OwnsAll {
     const COOLDOWNS: bool = true;
     const PET_BAR: bool = true;
 }
@@ -699,6 +724,58 @@ impl LiveState for LiveView<'_, '_> {
         self.stable.open_stable_aura()
     }
 
+    /// The pet setter's words and globals (`0x5d6900`) with the usability predicate (`0x5d3e80`).
+    fn pet_bar(&self) -> Option<benilla_ui::script::PetBarLive> {
+        let bar = self.pet_bar.get()?;
+        Some(crate::ui_pet::bar_live(bar, self.pet_unit.as_ref()))
+    }
+
+    /// The slot word at the call (`0x5d4ec0`), its cooldown asked of the pet's history
+    /// (`0x5d5345`); its usability is the slot feed's (#1325).
+    fn pet_action(
+        &self,
+        index: usize,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<benilla_ui::script::PetActionView> {
+        crate::ui_pet::action_live(
+            self.pet_bar.get()?,
+            index,
+            self.spells.as_deref(),
+            self.pet_unit.as_ref(),
+            None,
+            (anchor, ui_now),
+        )
+    }
+
+    /// The drag's write into the pet's words (`0x5d5c3e`), when the lending system owns the bar.
+    fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
+        let Some(bar) = self.pet_bar.get_mut() else {
+            return false;
+        };
+        for &(position, packed) in entries {
+            if let Some(e) = bar.spells.bar.get_mut(position as usize) {
+                *e = benilla_protocol::messages::PetActionEntry::from(packed);
+            }
+        }
+        true
+    }
+
+    /// The pet's book at the call, the array the last `SMSG_PET_SPELLS` filled (`0x5d6cc0`).
+    fn pet_book(
+        &self,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<benilla_ui::script::PetBookState> {
+        Some(crate::ui_pet_book::book_live(
+            self.pet_bar.get()?,
+            self.spells.as_deref()?,
+            self.classes.as_deref(),
+            self.pet_unit.as_ref()?,
+            (anchor, ui_now),
+        ))
+    }
+
     /// The history's answer for the spell at the call (`0x53e54c` into `0x809000`), with the
     /// category and global-cooldown legs its record names.
     fn spell_cooldown(
@@ -726,6 +803,7 @@ pub(crate) struct LendLive<'w, 's, O: Owns = ()> {
 impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     /// The lent view, read by the system between its calls into Lua; a verb that writes the view,
     /// or the system's own owned write, panics while it lives.
+    // Never hold it across a call into Lua: a verb that writes the view would panic at the call.
     pub(crate) fn view(&self) -> benilla_ui::script::ViewRef<'_, LiveView<'w, 's>> {
         self.loan.view()
     }
@@ -851,8 +929,10 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         };
         // SAFETY: both registered in `init_access`.
         unsafe {
-            view.cooldowns.set(slot_fetch(world, state.1 .0 .0));
-            view.pet_bar.set(slot_fetch(world, state.1 .1 .0));
+            view.cooldowns
+                .set(slot_fetch(world, state.1 .0 .0), O::COOLDOWNS);
+            view.pet_bar
+                .set(slot_fetch(world, state.1 .1 .0), O::PET_BAR);
         }
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
         // after any loan made inside it, and never leaks one.
@@ -940,8 +1020,8 @@ impl UiEvents {
     }
 }
 
-/// What [`with_live_world`] lends: the view as a system lends it.
-type WorldView = LendLive<'static, 'static>;
+/// What [`with_live_world`] lends: the view as a system lends it, owning what it may write.
+type WorldView = LendLive<'static, 'static, OwnsAll>;
 
 /// The cached parameter state [`with_live_world`] lends from.
 #[derive(Resource)]

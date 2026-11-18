@@ -65,7 +65,13 @@ fn pet_bar_vm() -> benilla_ui::script::UiScript {
     s.set_screen_size(1024.0, 768.0);
     super::pet_bar_tests::load_pet_bar(&mut s);
     super::pet_bar_tests::declare_token_strings(&s);
-    s.set_pet_actions(true, true, true, super::pet_bar_tests::hunter_slots());
+    crate::ui_script::test_live::PetAnswersExt::set_pet_actions(
+        &mut s,
+        true,
+        true,
+        true,
+        super::pet_bar_tests::hunter_slots(),
+    );
     s.fire_event("PET_BAR_UPDATE", vec![]);
     for _ in 0..3 {
         s.tick(0.05);

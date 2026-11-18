@@ -167,12 +167,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// The known-spell test (`0x53b930`): the player's book, or the pet's book then its bar.
 pub(super) fn has_spell(model: &Model, id: u32, is_pet: bool) -> bool {
     if is_pet {
-        model.pet_book.slots.iter().any(|s| s.spell_id == id)
-            || model
-                .pet_bar
-                .slots
+        super::spellbook::live_pet_book(model)
+            .slots
+            .iter()
+            .any(|s| s.spell_id == id)
+            || super::pet::live_slots()
                 .iter()
-                .any(|s| !s.view.is_token && s.view.spell_id == Some(id))
+                .any(|s| !s.is_token && s.spell_id == Some(id))
     } else {
         model.spellbook.slots.iter().any(|s| s.spell_id == id)
     }
