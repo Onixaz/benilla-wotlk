@@ -193,7 +193,8 @@ pub(crate) fn close_interaction(
         let (Some(npc), None) = (*was, is) else {
             continue;
         };
-        if window == 0 {
+        // The bank's closes run the interaction close themselves; one from a new window taking the target leaves that window open (`0x512e89`, `0x57b8f1`).
+        if window == 0 || window == BANK_WINDOW {
             continue;
         }
         if let Some(other) = now.iter().position(|n| *n == Some(npc)) {

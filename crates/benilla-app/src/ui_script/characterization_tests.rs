@@ -3646,6 +3646,86 @@ fn another_window_taking_the_interact_target_closes_the_bank() {
     assert_eq!(fired(&seen, &["QUEST_DETAIL"]).len(), 1);
 }
 
+/// A window opened on the banker itself keeps the interact target: the setter zeroes it before the bank's leg runs (`0x512e89`), so the bank's close finds no target and closes nothing else (`0x57b8f1`); the gossip menu then closes at the next bank open (`0x51fce0` -> `0x512ef6`).
+#[test]
+fn a_window_on_the_banker_itself_stays_open_after_the_bank_closes() {
+    use crate::ui_session::NpcSession;
+    use benilla_protocol::messages::GossipMenu;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let gossip_npc = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::ui_gossip::GossipState>()
+            .npc
+    };
+    rig.packets(
+        vec![
+            banker_create(0x20001),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let menu = SessionEvent::GossipMenu(GossipMenu {
+        npc: BANKER,
+        menu_id: 1,
+        text_id: 1,
+        options: Vec::new(),
+        quests: Vec::new(),
+    });
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let greeting = SessionEvent::NpcGreeting {
+        text_id: 1,
+        blocks: vec![benilla_protocol::messages::NpcTextBlock {
+            probability: 1.0,
+            male: "Charz".into(),
+            ..Default::default()
+        }],
+    };
+    let seen = rig.packets(vec![menu, greeting], 4);
+    assert_eq!(
+        fired(&seen, &["BANKFRAME_CLOSED", "GOSSIP_SHOW", "GOSSIP_CLOSED"]),
+        ["BANKFRAME_CLOSED", "BANKFRAME_CLOSED", "GOSSIP_SHOW"],
+        "the stock frame's OnHide closes the bank again inside the first fire"
+    );
+    assert_eq!(gossip_npc(&rig), Some(BANKER), "the menu keeps its state");
+    let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+    // Their order is the gossip feed's, #1279's.
+    let mut both = fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]);
+    both.sort();
+    assert_eq!(
+        both,
+        ["BANKFRAME_OPENED", "GOSSIP_CLOSED"],
+        "the bank's open closes the menu it finds"
+    );
+    assert_eq!(gossip_npc(&rig), None);
+    // A vendor on the banker: the same.
+    let seen = rig.packets(
+        vec![SessionEvent::VendorInventory {
+            vendor: BANKER,
+            items: Vec::new(),
+            error: Some(0),
+        }],
+        4,
+    );
+    assert_eq!(
+        fired(
+            &seen,
+            &["BANKFRAME_CLOSED", "MERCHANT_SHOW", "MERCHANT_CLOSED"]
+        ),
+        ["BANKFRAME_CLOSED", "BANKFRAME_CLOSED", "MERCHANT_SHOW"]
+    );
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::ui_merchant::MerchantOpen>()
+            .npc(),
+        Some(BANKER)
+    );
+}
+
 /// Only an open that reaches the setter closes the bank: a taxi map with one known node shows `ERR_TAXINOPATHS` instead (`0x6d61b5`-`0x6d61d1`); a quest panel from a giver not held opens without it (`0x58c5c7`); a guild bank list closes it only as the answer to a hello with no banker open (`0x5a76b3`-`0x5a772b`); the random battleground's list from a battlemaster takes it even for the PvP window (`0x54e509`-`0x54e52e`); a mailbox opened in the client takes it before `MAIL_SHOW` (`0x56da67`).
 #[test]
 fn only_an_open_reaching_the_setter_closes_the_bank() {
