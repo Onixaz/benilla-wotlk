@@ -294,8 +294,8 @@ impl CastLadder<'_, '_> {
             start_sent_cast(&mut self.ecs, None, spell_id, false);
         }
         let now = Instant::now();
-        if commit.is_item() {
-            self.pending.arm_item(spell_id, now);
+        if let CastCommit::Item { entry, .. } = commit {
+            self.pending.arm_item(spell_id, entry, now);
         } else {
             // The ladder's `normal_cast` predicate; a ranged shot never raises the cursor.
             let guards = self
@@ -1148,8 +1148,8 @@ fn send_spell_cast(
     // match a ranged shot; only `normal_cast` and the item arm guard. The item arm's deadline is
     // shorter because vmangos answers some `CMSG_USE_ITEM` legs with
     // `SMSG_INVENTORY_CHANGE_FAILURE` and no cast result.
-    if commit.is_item() {
-        pending.arm_item(spell_id, now);
+    if let CastCommit::Item { entry, .. } = commit {
+        pending.arm_item(spell_id, entry, now);
     } else {
         pending.arm(spell_id, now, normal_cast);
     }

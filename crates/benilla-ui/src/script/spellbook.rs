@@ -659,9 +659,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some((id, pet))
             } else {
                 // A slot past the book's spells reads spell 0, cold; only a name misses.
-                let slot = lua.coerce_number(args.front().cloned().unwrap_or(Value::Nil))?;
-                super::spell_info::spell_of(lua, &args, "GetSpellCooldown")?
-                    .or(slot.map(|_| (0, false)))
+                super::spell_info::spell_or_zero(lua, &args, "GetSpellCooldown")?
             };
             let Some((spell_id, pet)) = spell else {
                 return Ok(MultiValue::new());
