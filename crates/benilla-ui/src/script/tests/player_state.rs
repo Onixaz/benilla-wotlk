@@ -271,8 +271,8 @@ fn the_resurrect_offerer_is_the_cached_casters_name_or_nil() {
     };
     assert_eq!(ask(&mut s), None);
     assert_eq!(
-        s.with_live(&Offer(Some("Healer".into())), ask),
+        s.with_live(&mut Offer(Some("Healer".into())), ask),
         Some("Healer".into())
     );
-    assert_eq!(s.with_live(&Offer(None), ask), None);
+    assert_eq!(s.with_live(&mut Offer(None), ask), None);
 }
