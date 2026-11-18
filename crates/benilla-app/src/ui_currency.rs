@@ -12,7 +12,7 @@ use benilla_ui::script::{
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
-use crate::net::{NetCommands, Objects};
+use crate::net::NetCommands;
 use crate::ui_script::live::UiEvents;
 
 /// The currency tables as the verbs read them, absent when the client data failed to load.

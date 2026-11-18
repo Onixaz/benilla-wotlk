@@ -442,10 +442,10 @@ pub fn item_use_refusal(
     if v.required_city_rank != 0 && !has_medal(req, v.required_city_rank) {
         return CANT_USE;
     }
-    if v.required_rep_faction != 0 {
-        if u32::from(req.rep_rank(v.required_rep_faction)) < v.required_rep_rank {
-            return CANT_USE;
-        }
+    if v.required_rep_faction != 0
+        && u32::from(req.rep_rank(v.required_rep_faction)) < v.required_rep_rank
+    {
+        return CANT_USE;
     }
     None
 }
