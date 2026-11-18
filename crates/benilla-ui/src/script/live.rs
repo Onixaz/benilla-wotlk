@@ -488,7 +488,7 @@ pub trait LiveState {
         None
     }
 
-    /// The active player's purchased bank bag slots, `PLAYER_BYTES_2` byte 2 (`0x57badb`); `None` with no active player.
+    /// The active player's purchased bank bag slots, `PLAYER_BYTES_2` byte 2 (`0x57badb`); `None` with no active player (`0x57bae1`).
     fn bank_bag_slots(&self) -> Option<u8> {
         None
     }

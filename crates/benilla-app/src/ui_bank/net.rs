@@ -1,5 +1,4 @@
-//! The bank's packet handlers: `SMSG_SHOW_BANK` sets the banker and `SMSG_BUY_BANK_SLOT_RESULT`
-//! shows its refusal, each in its handler's turn (`0x6e352a`, `0x6e355d`).
+//! The bank's packet handlers: `SMSG_SHOW_BANK` sets the banker and `SMSG_BUY_BANK_SLOT_RESULT` shows its refusal, each in its handler's turn (`0x6e352a`, `0x6e355d`).
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
@@ -43,7 +42,7 @@ fn held_as(index: Option<&GuidIndex>, stores: &Query<&ObjectStore>, guid: u64, m
         .is_some_and(|s| s.0.type_mask() & mask != 0)
 }
 
-/// A window's open takes the interact target (`0x51fce0`): gossip (`0x58b1b0`), the quest frame (`0x6d0240`, `0x6d0460`, `0x6d08f0`, `0x6d0ab0`), the vendor (`0x6d9960`), the taxi map (`0x6d6050`), the trainer (`0x5940e0`), the tabard designer (`0x598e60`), the registrar and charter vendor (`0x599e00`, `0x5a22a0`), the auctioneer (`0x59f000`), the stable (`0x5a11a0`), the mailbox (`0x56dbc0`), the guild bank (`0x5a7250`), the battlemaster (`0x54e390`) and the trade window (`0x5873e0`); the setter's interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open. The mailbox and item-text opens made in the client close it through [`benilla_ui::script::UiScript::close_bank_interaction`].
+/// A window's open takes the interact target (`0x51fce0`): gossip (`0x58b1b0`), the quest frame (`0x6d0240`, `0x6d0460`, `0x6d08f0`, `0x6d0ab0`), the vendor (`0x6defef`), the taxi map (`0x6d6050`), the trainer (`0x5940e0`), the tabard designer (`0x598e60`), the registrar and charter vendor (`0x599e00`, `0x5a22a0`), the auctioneer (`0x59f000`), the stable (`0x5a11a0`), the mailbox (`0x56dbc0`), the guild bank (`0x5a7250`), the battlemaster (`0x54e390`) and the trade window (`0x5873e0`); the setter's interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open. The mailbox and item-text opens made in the client close it through [`benilla_ui::script::UiScript::close_bank_interaction`].
 fn on_interact_target_taken(
     In(ev): In<SessionEvent>,
     bank: NonSend<BankOpen>,

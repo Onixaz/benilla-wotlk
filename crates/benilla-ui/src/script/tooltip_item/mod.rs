@@ -106,7 +106,7 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
 
 /// A link block's enchant lines: the enchant and gems in their slots, then the roll's five in
 /// slots 7..11, as the reference copies a block source's row.
-fn link_enchants(_lua: &Lua, f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
+fn link_enchants(f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
     crate::script::item_stats::with_item_tables(|t| link_enchants_in(t, f))
 }
 
@@ -146,20 +146,20 @@ fn link_enchants_in(
 }
 
 /// A block source's instance (p6=1): its name and what its link names, no placeholder line.
-fn block_instance(lua: &Lua, name: Option<String>, link: Option<&str>) -> render::ItemInstance {
+fn block_instance(name: Option<String>, link: Option<&str>) -> render::ItemInstance {
     let link = link
         .and_then(ItemLinkFields::parse)
         .map_or_else(Default::default, |(_, f)| f);
     render::ItemInstance {
         name,
-        enchants: link_enchants(lua, &link),
+        enchants: link_enchants(&link),
         link,
         ..Default::default()
     }
 }
 
 /// The item's name with its roll's suffix (`0x706d70`).
-fn rolled_name(_model: &crate::script::Model, lua: &Lua, name: &str, roll: i32) -> String {
+fn rolled_name(lua: &Lua, name: &str, roll: i32) -> String {
     let suffix = crate::script::item_stats::roll_suffix(roll);
     match (suffix, crate::strings::global(lua, "ITEM_SUFFIX_TEMPLATE")) {
         (Some(sfx), Some(t)) => crate::strings::fill(
@@ -629,16 +629,11 @@ fn set_item_link(
     };
     match view_of(lua, id) {
         Some(v) => {
-            let name = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                rolled_name(&model, lua, &v.name, fields.random_property)
-            };
+            let name = rolled_name(lua, &v.name, fields.random_property);
             // The link block rides to the builder, so a scaling item shows the link's level.
             let inst = render::ItemInstance {
                 name: Some(name),
-                enchants: link_enchants(lua, &fields),
+                enchants: link_enchants(&fields),
                 link: fields,
                 link_level: fields.level,
                 ..Default::default()
@@ -718,7 +713,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 (id != 0).then(|| {
                     let view = model.item_templates.get(&id);
                     let name = view.map_or_else(String::new, |v| {
-                        rolled_name(&model, lua, &v.name, fields.random_property)
+                        rolled_name(lua, &v.name, fields.random_property)
                     });
                     let quality = view.map_or(1, |v| v.quality);
                     (id, name, quality, fields, model.player_req.level)
@@ -1171,7 +1166,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
-                let inst = block_instance(lua, item.name.clone(), item.link.as_deref());
+                let inst = block_instance(item.name.clone(), item.link.as_deref());
                 // Ours is an item object (`0x62eff0`), theirs a block of its count (`0x62f1e0`).
                 let sell = if player_side {
                     Sell::Object {
@@ -1228,7 +1223,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             // line and shows a scaling item at a source unit's level.
             let inst = render::ItemInstance {
                 requester_level: source_level as i32,
-                ..block_instance(lua, row.name.clone(), row.link.as_deref())
+                ..block_instance(row.name.clone(), row.link.as_deref())
             };
             // The slot's count as the block's stack (`0x62e520`).
             let flags = BuilderFlags {
@@ -1331,7 +1326,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            let inst = block_instance(lua, entry.name.clone(), entry.link.as_deref());
+            let inst = block_instance(entry.name.clone(), entry.link.as_deref());
             // A zero requester (`0x63018b`).
             let flags = BuilderFlags {
                 sell: Sell::Block {
@@ -1621,7 +1616,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the attachment's roll: no placeholder.
-            let inst = block_instance(lua, name, link.as_deref());
+            let inst = block_instance(name, link.as_deref());
             // The attachment's count as the block's stack and a zero requester (`0x62fbdb`).
             let flags = BuilderFlags {
                 sell: Sell::Block { stack, max: None },
@@ -1666,7 +1661,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the listing's roll: no placeholder.
-            let inst = block_instance(lua, name, link.as_deref());
+            let inst = block_instance(name, link.as_deref());
             // A listing skips the sell price (`0x62fcf0`).
             match view_of(lua, item_id) {
                 Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,

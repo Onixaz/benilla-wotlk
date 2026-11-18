@@ -1,11 +1,4 @@
-//! The bank bindings: the verbs read the active player's purchased slots and the open banker
-//! through the lent view at the call (`0x57bab0`, `0x57bb30`); `PurchaseSlot` sends from the call
-//! (`0x57bbc0`) and `CloseBankFrame` closes the bank in it (`0x57b9c0`).
-//!
-//! The vault is container `-1` (28 slots) and containers 5..=11 (the seven bags), the reference's
-//! own ids (`BankFrame.xml`), so the container verbs work on it unchanged. The bag items
-//! themselves are inventory slots 68..=74, read through `GetInventoryItem*` as the reference's bank
-//! reads them (`BankFrame.lua:2`); they stream whether or not a banker is open.
+//! The bank bindings: verbs that read the purchased slots and the banker at the call (`0x57bab0`, `0x57bb30`), `PurchaseSlot`'s send (`0x57bbc0`) and `CloseBankFrame`'s close (`0x57b9c0`); the vault is containers `-1` and `5..=11` (`BankFrame.xml`).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -14,7 +7,7 @@ pub(crate) fn bank_open() -> bool {
     super::read_live(|l| l.banker().is_some()).unwrap_or(false)
 }
 
-/// The purchased bank bag slots through the lent view, 0 with no active player (`0x57badb`).
+/// The purchased bank bag slots through the lent view, 0 with no active player (`0x57bae1`).
 fn bank_bag_slots() -> u8 {
     super::read_live(|l| l.bank_bag_slots())
         .flatten()

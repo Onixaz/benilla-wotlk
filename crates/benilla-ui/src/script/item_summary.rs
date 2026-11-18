@@ -366,20 +366,27 @@ impl StatSummary {
 
     /// An enchant effect: 3 a spell, 4 a resistance, 5 a stat (`0x61f2b0`).
     fn add_enchant(&mut self, model: &Model, id: u32, amount: Option<i32>) {
-        let Some(row) = super::item_stats::with_item_tables(|t| t.enchant_rows.get(&id).cloned())
-        else {
-            return;
-        };
-        for e in &row.effects {
-            let value = amount.unwrap_or((e.points_min + e.points_max) / 2);
-            match e.kind {
-                3 => self.add_spell(model, e.arg),
+        // Each effect's kind, argument and amount, read in place off the row.
+        let effects = super::item_stats::with_item_tables(|t| {
+            t.enchant_rows.get(&id).map(|row| {
+                row.effects
+                    .iter()
+                    .map(|e| {
+                        let value = amount.unwrap_or((e.points_min + e.points_max) / 2);
+                        (e.kind, e.arg, value)
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+        for (kind, arg, value) in effects.into_iter().flatten() {
+            match kind {
+                3 => self.add_spell(model, arg),
                 4 => {
-                    if let Some(cell) = self.stats.get_mut(e.arg as usize) {
+                    if let Some(cell) = self.stats.get_mut(arg as usize) {
                         *cell += value;
                     }
                 }
-                5 => self.add_stat(e.arg as usize, value),
+                5 => self.add_stat(arg as usize, value),
                 _ => {}
             }
         }
@@ -387,29 +394,29 @@ impl StatSummary {
 
     /// A roll: a positive id's enchants at their average, a negative id's by the seed (`0x61fa20`).
     fn add_roll(&mut self, model: &Model, f: &ItemLinkFields) {
-        if f.random_property > 0 {
-            let Some(row) = super::item_stats::with_item_tables(|t| {
+        // The roll's enchant ids with their amounts, read in place off its row.
+        let parts = super::item_stats::with_item_tables(|t| {
+            if f.random_property > 0 {
                 t.random_properties
                     .get(&(f.random_property as u32))
-                    .cloned()
-            }) else {
-                return;
-            };
-            for e in &row.enchants {
-                self.add_enchant(model, e.id, None);
+                    .map(|row| {
+                        row.enchants
+                            .iter()
+                            .map(|e| (e.id, None))
+                            .collect::<Vec<_>>()
+                    })
+            } else {
+                t.random_suffixes
+                    .get(&f.random_property.unsigned_abs())
+                    .map(|row| {
+                        (0..row.enchants.len())
+                            .map(|slot| (row.enchants[slot], Some(row.value(slot, f.seed))))
+                            .collect()
+                    })
             }
-            return;
-        }
-        let Some(row) = super::item_stats::with_item_tables(|t| {
-            t.random_suffixes
-                .get(&f.random_property.unsigned_abs())
-                .cloned()
-        }) else {
-            return;
-        };
-        for slot in 0..row.enchants.len() {
-            let amount = row.value(slot, f.seed);
-            self.add_enchant(model, row.enchants[slot], Some(amount));
+        });
+        for (id, amount) in parts.into_iter().flatten() {
+            self.add_enchant(model, id, amount);
         }
     }
 

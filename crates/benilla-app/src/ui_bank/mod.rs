@@ -1,7 +1,4 @@
-//! The bank window's app side: the open banker the verbs read live and the events its changes fire
-//! where 12340 fires them (`0x57b8d0`). The vault itself is descriptor fields that
-//! [`crate::ui_items`] feeds as containers `-1` and `5..=11`, and moves items in and out of on a
-//! right-click.
+//! The bank window's app side: the open banker the verbs read live and the events its changes fire where 12340 fires them (`0x57b8d0`).
 
 use benilla_protocol::messages::bank_slot_result;
 use bevy::prelude::*;

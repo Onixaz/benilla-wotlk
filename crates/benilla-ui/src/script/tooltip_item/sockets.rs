@@ -191,12 +191,11 @@ pub(super) fn empty_socket(
 /// unmet enchant or prismatic skill and level requirement.
 /// An enchant's text (`0x577260`): a random suffix's `$i` takes its share of the seed, which an
 /// item object's points read the same off the field the server writes.
-fn suffix_line(lua: &Lua, inst: &ItemInstance, e: &crate::script::EnchantView) -> String {
+fn suffix_line(inst: &ItemInstance, e: &crate::script::EnchantView) -> String {
     let roll = inst.link.random_property;
     if roll >= 0 || !(7..=11).contains(&e.slot) || !e.name.contains("$i") {
         return e.name.clone();
     }
-    let _ = lua;
     let value = crate::script::item_stats::with_item_tables(|t| {
         t.random_suffixes
             .get(&roll.unsigned_abs())
@@ -335,7 +334,7 @@ pub(super) fn socket_lines(
                 Some(t) => t,
                 None => continue,
             },
-            None => suffix_line(lua, inst, e),
+            None => suffix_line(inst, e),
         };
         // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"`.
         if let Some(charges) = charges_phrase(e.charges, get) {
