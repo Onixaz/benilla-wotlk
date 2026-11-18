@@ -253,6 +253,13 @@ impl Plugin for UnitAurasPlugin {
     }
 }
 
+/// What our own auras' effect watch reads: our guid, the catalog and the queue it fires into.
+type OwnAuraWatch<'w> = (
+    Option<Res<'w, crate::net::SelfGuid>>,
+    Option<Res<'w, crate::ui_action::Spells>>,
+    Option<ResMut<'w, crate::ui_script::live::UiEvents>>,
+);
+
 /// A packet for a unit not in the object manager is skipped whole (`0x7300f1`); a unit's first
 /// packet gives it the table.
 fn on_aura_update(
@@ -261,6 +268,7 @@ fn on_aura_update(
     mut units: Query<(&ObjectStore, Option<&mut UnitAuras>)>,
     mut commands: Commands,
     clock: Res<Time<Real>>,
+    own: OwnAuraWatch<'_>,
 ) {
     let SessionEvent::AuraUpdate(update) = ev else {
         return;
@@ -285,14 +293,67 @@ fn on_aura_update(
     if !store.is_unit() {
         return; // the lookup is unit-typed (`0x4d4db0`, mask 8)
     }
-    match auras {
-        Some(mut auras) => auras.apply(&update, now),
+    let (me, spells, ui) = own;
+    let mine = me.is_some_and(|m| m.0 == Some(update.unit));
+    let before = mine.then(|| auras.as_deref().cloned().unwrap_or_default());
+    let after = match auras {
+        Some(mut auras) => {
+            auras.apply(&update, now);
+            before.is_some().then(|| auras.clone())
+        }
         None => {
             let mut auras = UnitAuras::default();
             auras.apply(&update, now);
+            let after = before.is_some().then(|| auras.clone());
             commands.entity(entity).insert(auras);
+            after
+        }
+    };
+    // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
+    if let (Some(before), Some(after), Some(spells), Some(mut ui)) = (before, after, spells, ui) {
+        for (spell_id, removed) in own_aura_moves(&before, &after, update.all) {
+            crate::ui_companion::mount_updates(spell_id, &spells.catalog, &mut ui);
+            // An open-stable effect's removal closes the stable, forced (`0x71ea25`).
+            let opens_stable = || {
+                spells.catalog.get(spell_id).is_some_and(|rec| {
+                    rec.effect_apply_aura
+                        .contains(&crate::ui_stable::SPELL_AURA_OPEN_STABLE)
+                })
+            };
+            if removed && opens_stable() {
+                ui.world(crate::ui_stable::close_forced);
+            }
         }
     }
+}
+
+/// One packet's removed then applied spells, flagged removed (`0x72f803`, `0x72f904`, `0x72f9dc`).
+fn own_aura_moves(before: &UnitAuras, after: &UnitAuras, all: bool) -> Vec<(u32, bool)> {
+    let mut slots: Vec<u8> = before
+        .by_slot
+        .keys()
+        .chain(after.by_slot.keys())
+        .copied()
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    let moved = |slot: &u8| {
+        let (old, new) = (before.by_slot.get(slot), after.by_slot.get(slot));
+        (old.map(|a| a.spell_id) != new.map(|a| a.spell_id)).then_some((old, new))
+    };
+    let removed = slots.iter().filter_map(|s| moved(s)?.0.map(|a| a.spell_id));
+    let added: Vec<u32> = if all {
+        after.by_slot.values().map(|a| a.spell_id).collect()
+    } else {
+        slots
+            .iter()
+            .filter_map(|s| moved(s)?.1.map(|a| a.spell_id))
+            .collect()
+    };
+    removed
+        .map(|s| (s, true))
+        .chain(added.into_iter().map(|s| (s, false)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -321,6 +382,46 @@ mod tests {
             all,
             slots,
         }
+    }
+
+    /// The effect walk: a delta removes then adds only the slots that moved; an `ALL` packet adds
+    /// every live aura it carries, one we already hold too (`0x72f904`), after the removals.
+    #[test]
+    fn an_all_packet_reapplies_every_aura_it_carries() {
+        let mut held = UnitAuras::default();
+        held.apply(
+            &update(
+                false,
+                vec![
+                    (0, Some(rec(458, 0x01, None))),
+                    (1, Some(rec(7, 0x01, None))),
+                ],
+            ),
+            0.0,
+        );
+        let after = |all, slots| {
+            let mut a = held.clone();
+            a.apply(&update(all, slots), 0.0);
+            a
+        };
+        let same = after(false, vec![(0, Some(rec(458, 0x01, None)))]);
+        assert_eq!(own_aura_moves(&held, &same, false), vec![]);
+        let all = after(
+            true,
+            vec![
+                (0, Some(rec(458, 0x01, None))),
+                (2, Some(rec(9, 0x01, None))),
+            ],
+        );
+        assert_eq!(
+            own_aura_moves(&held, &all, true),
+            vec![(7, true), (458, false), (9, false)]
+        );
+        let swapped = after(false, vec![(1, Some(rec(8, 0x01, None)))]);
+        assert_eq!(
+            own_aura_moves(&held, &swapped, false),
+            vec![(7, true), (8, false)]
+        );
     }
 
     /// `0x72f5d0`'s log diff: removals first, then arrivals, a stack change, a new expiry; an

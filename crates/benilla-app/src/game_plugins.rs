@@ -72,7 +72,6 @@ use crate::ui_pass::PlayerUiPlugin;
 use crate::ui_pet::UiPetPlugin;
 use crate::ui_pet_book::UiPetBookPlugin;
 use crate::ui_pet_doll::UiPetDollPlugin;
-use crate::ui_pet_stats::UiPetStatsPlugin;
 use crate::ui_petition::UiPetitionPlugin;
 use crate::ui_quest::UiQuestPlugin;
 use crate::ui_quest_log::UiQuestLogPlugin;
@@ -252,7 +251,6 @@ impl PluginGroup for GamePlugins {
             .add(UiPetPlugin)
             .add(ChrClassesPlugin)
             .add(UiPetBookPlugin)
-            .add(UiPetStatsPlugin)
             .add(UiPetDollPlugin)
             .add(UiNetPlugin)
             .add(UiCastPlugin)
@@ -699,6 +697,9 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`): every VM holder reaches it
+    ///   through its lent view and runs on the main thread, so two VM holders fighting over it
+    ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
     ///   page texts, `WorldAssets`, `Creatures`' and `ItemDisplays`' display models): two misses for one key commute.
     ///   A cache that is also a window's state is not pure, and not here.
@@ -715,6 +716,8 @@ pub(crate) mod schedule_tests {
     pub(crate) struct Classes {
         /// The VM's own id, for the executor census.
         pub vm: Option<ComponentId>,
+        /// What every VM holder's lent view reaches.
+        pub lent: HashSet<ComponentId>,
         pub non_send: HashSet<ComponentId>,
         pub caches: HashSet<ComponentId>,
         pub sinks: HashSet<ComponentId>,
@@ -722,6 +725,11 @@ pub(crate) mod schedule_tests {
     }
 
     impl Classes {
+        const LENT: &[ClassRow] = &[
+            ("StableOpen", TypeId::of::<crate::ui_stable::StableOpen>),
+            ("Cooldowns", TypeId::of::<crate::spell::Cooldowns>),
+            ("PetBar", TypeId::of::<crate::ui_pet::PetBar>),
+        ];
         const CACHES: &[ClassRow] = &[
             ("NameCache", TypeId::of::<crate::names::NameCache>),
             (
@@ -770,6 +778,7 @@ pub(crate) mod schedule_tests {
             };
             Self {
                 vm: comps.get_resource_id(TypeId::of::<benilla_ui::script::UiScript>()),
+                lent: resolve(Self::LENT),
                 non_send: comps
                     .iter_registered()
                     .filter(|info| !info.is_send_and_sync())
@@ -788,16 +797,19 @@ pub(crate) mod schedule_tests {
                 || self.streams.contains(&id)
         }
 
-        /// Which class explains this pair; `None` if it is actionable.
-        pub fn class_of(&self, what: &[ComponentId]) -> Option<&'static str> {
+        /// Which class explains this pair, `both_hold_vm` when each side's access names the VM;
+        /// `None` if it is actionable.
+        pub fn class_of(&self, what: &[ComponentId], both_hold_vm: bool) -> Option<&'static str> {
             // An exclusive system on one side: bevy cannot see its access, so no class applies.
             if what.is_empty() {
                 return None;
             }
-            if !what.iter().all(|id| self.explains(*id)) {
+            // The lent state is explained only between two VM holders.
+            let lent = |id: &ComponentId| both_hold_vm && self.lent.contains(id);
+            if !what.iter().all(|id| self.explains(*id) || lent(id)) {
                 return None;
             }
-            Some(if self.vm_only(what) {
+            Some(if what.iter().all(|id| Some(*id) == self.vm || lent(id)) {
                 "VM only"
             } else if self.non_send_only(what) {
                 "non-Send owners"
@@ -1034,9 +1046,8 @@ pub(crate) mod schedule_tests {
     // paint): the transport chain before the press, the tick's drains (`UiDrain`) before the
     // world update, and the booths, quest markers and entity visuals after the drains, taking it
     // to 3152.
-    // The quest rows read at the call (#1276) put `ItemDisplays`, a pure display cache, in every VM system's view; classed with `Creatures`, 3108 with the place legs (#1313).
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_108;
-
+    // The quest rows read at the call (#1276) put `ItemDisplays`, a pure display cache, in every VM system's view; classed with `Creatures`.
+    const UPDATE_ACTIONABLE_CEILING: usize = 2_826;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1067,7 +1078,8 @@ pub(crate) mod schedule_tests {
         let mut explained: BTreeMap<&str, usize> = BTreeMap::new();
         let mut actionable = Vec::new();
         for (a, b, what) in &update.conflicts {
-            match update.classes.class_of(what) {
+            let both_hold_vm = update.holds_vm.contains(a) && update.holds_vm.contains(b);
+            match update.classes.class_of(what, both_hold_vm) {
                 Some(class) => *explained.entry(class).or_default() += 1,
                 None => actionable.push((*a, *b, what)),
             }
@@ -1181,7 +1193,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 722, 714),
+        ("Update", 706, 698),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1632,6 +1644,10 @@ pub(crate) mod schedule_tests {
          "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
         ("ui_merchant/mod.rs", "feed_merchant", Because::PlayerRoundTrip,
          "a buy/sell refusal answers a click on an open merchant; show/update ride `VmMemo`s"),
+        ("ui_pet/drain.rs", "drain_pet_actions", Because::FilledByVm,
+         "the intents are the VM's own pet bar calls; each fires its `PET_BAR_UPDATE` into the VM that made it"),
+        ("ui_pet_book.rs", "drain_pet_book", Because::FilledByVm,
+         "the autocast toggles are the VM's own pet book calls; each fires its `PET_BAR_UPDATE` into the VM that made it"),
         ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
          "every line answers a charter action of ours; the window edges ride the `fed` memo"),
         ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
@@ -1640,8 +1656,6 @@ pub(crate) mod schedule_tests {
          "per-frame paint and cost state, not a queue"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,
          "acts on the glue VM alone, which the lifecycle installs with its GlueXML loaded and seated, so there is no frameless window; its takes are the manager's own flags and outbox"),
-        ("ui_stable/mod.rs", "feed_stable", Because::PlayerRoundTrip,
-         "both packets follow a stable master's gossip and a click in its window"),
         ("ui_tabard.rs", "drain_tabard", Because::FilledByVm,
          "the intents are Lua's; the event answers a Save intent"),
         ("ui_tabard.rs", "feed_tabard", Because::PlayerRoundTrip,

@@ -390,14 +390,14 @@ pub(crate) fn publish_picks_self(
 /// the targeting stop among them. It fires on the spell changing, so a cancel and re-arm in one
 /// frame still counts.
 pub(crate) fn feed_targeting_to_vm(
-    targeting: Res<SpellTargeting>,
-    checks: BindChecks,
-    tokens: crate::ui_unit::UnitTokens,
-    mut last: Local<crate::ui_script::VmMemo<Option<u32>>>,
     (script, _live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
         crate::ui_script::LendLive,
     ),
+    targeting: Res<SpellTargeting>,
+    checks: BindChecks,
+    tokens: crate::ui_unit::UnitTokens,
+    mut last: Local<crate::ui_script::VmMemo<Option<u32>>>,
 ) {
     if let Some(mut script) = script {
         let last = last.get(&script);
@@ -473,7 +473,8 @@ fn merge(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ScriptCursor<'w, 's> {
     tokens: crate::ui_unit::UnitTokens<'w, 's>,
-    selection: Res<'w, crate::target::Selection>,
+    /// Read beside the press appliers' own write of it, at each call.
+    selection: crate::ui_script::LentRef<'w, crate::target::Selection>,
     checks: BindChecks<'w, 's>,
     ladder: crate::spell::CastLadder<'w, 's>,
 }
@@ -488,7 +489,8 @@ impl ScriptCursor<'_, '_> {
         let Some(spell_id) = self.ladder.ground.spell() else {
             return;
         };
-        match self.tokens.resolve(token, &self.selection) {
+        let selection = self.selection.get().map(|s| s.clone()).unwrap_or_default();
+        match self.tokens.resolve(token, &selection) {
             Some((entity, guid)) => bind_target_unit(&mut self.ladder, &self.checks, entity, guid),
             None => {
                 debug!("ui_action: SpellTargetUnit({token}) names no unit — cast {spell_id} ends");

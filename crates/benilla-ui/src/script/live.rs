@@ -10,7 +10,7 @@ use std::ptr::NonNull;
 
 use super::UiScript;
 
-/// What the verbs read live, implemented by the app over its state; the `&mut self` methods, reached through [`write_live`], write what a verb changes in its call.
+/// What the verbs read live, implemented by the app over its state; the `&mut self` methods, reached through [`write_live`], write what a verb changes in its call, as `ClosePetStables` clears the master inside its call.
 pub trait LiveState {
     /// A held unit's flags word (`UNIT_FIELD_FLAGS`); `None` for a guid that is no held unit.
     fn unit_flags(&self, guid: u64) -> Option<u32>;
@@ -227,6 +227,7 @@ pub trait LiveState {
     fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
         None
     }
+
     /// Queue slot `index` (`0xbea4b8`) at the call, `None` off the two.
     fn battlefield_slot(&self, index: usize) -> Option<super::BattlefieldQueueSlot> {
         (index < 2).then(Default::default)
@@ -357,6 +358,131 @@ pub trait LiveState {
     /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
     fn clear_inspect_target(&self) {}
 
+    /// Companion list `ty`'s spells in order (`0xbe8df4`), as the known-spell adds file them.
+    fn companion_spells(&self, _ty: super::CompanionType) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// `GetCompanionInfo`'s companion at `index` of list `ty`, read when called (`0x53e2c0`).
+    fn companion(&self, _ty: super::CompanionType, _index: usize) -> Option<super::CompanionView> {
+        None
+    }
+
+    /// The known spells of skill line 778 `SummonRandomCritter` draws from (`0x6e7b00`).
+    fn companion_random_pool(&self) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// The pet stat verbs' block for the pet list's head (`0x5d3960`), `HasPetUI`'s first return beside it.
+    fn pet_stats(&self) -> (bool, super::PetStats) {
+        (false, super::PetStats::default())
+    }
+
+    /// `(PetCanBeAbandoned, PetCanBeRenamed, PetCanBeDismissed)` for the pet list's head (`0x5d3780`, `0x5d38c0`, `0x5d3820`).
+    fn pet_menu(&self) -> (bool, bool, bool) {
+        (false, false, true)
+    }
+
+    /// A held unit's `CreatureFamily.dbc` name off its cached creature record (`0x611820`).
+    fn creature_family(&self, _guid: u64) -> Option<String> {
+        None
+    }
+
+    /// The possess spell `[0xc234e0]`'s record when called, `None` while none is held.
+    fn possess(&self) -> Option<super::PossessView> {
+        None
+    }
+
+    /// The stable globals the list handler writes (`0x5a11a0`).
+    fn stable(&self) -> super::StableList {
+        super::StableList::default()
+    }
+
+    /// Creature `entry`'s family parts; a miss with a `callback` asks the record and queues the
+    /// callback's event for its answer (`0x5a13c1`), with none asks nothing (`0x67b6d0`).
+    fn stable_family(
+        &mut self,
+        _entry: u32,
+        _callback: Option<super::StableCallback>,
+    ) -> Option<super::StableFamily> {
+        None
+    }
+
+    /// The pet held as a hunter's unit with its creature record, the paperdoll's live arm
+    /// (`0x5a15df`-`0x5a160a`).
+    fn stable_live_pet(&self) -> bool {
+        false
+    }
+
+    /// `StableSlotPrices.dbc` row `slot`'s price (`0x5a14d0`).
+    fn stable_slot_price(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// Send `verb` to the held stable master, or to guid 0 with none.
+    fn stable_send(&self, _verb: super::StableIntent) {}
+
+    /// The stable close (`0x5a1971`-`0x5a19aa`): our open-stable auras cancelled and the master
+    /// cleared; whether one was held, so the caller fires `PET_STABLE_CLOSED`.
+    fn close_stables(&mut self) -> bool {
+        false
+    }
+
+    /// The pet list holds a pet, the stable drop's fork (`0x5a1ca0`).
+    fn pet_out(&self) -> bool {
+        false
+    }
+
+    /// Our charm or summon field is set, `UnstablePet`'s refusal (`0x5a1ac0`).
+    fn charm_or_summon(&self) -> bool {
+        false
+    }
+
+    /// An open-stable aura is on us (`0x5a19c0`).
+    fn open_stable_aura(&self) -> bool {
+        false
+    }
+
+    /// The pet bar's bar-wide state at the call, `None` with no pet info to read.
+    fn pet_bar(&self) -> Option<super::PetBarLive> {
+        None
+    }
+
+    /// Pet bar slot `index` (0-based) resolved at the call, its cooldown on the `GetTime` clock that
+    /// `ui_now` seconds names at `anchor`; `None` past the ten words or with no bar.
+    fn pet_action(
+        &self,
+        _index: usize,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<super::PetActionView> {
+        None
+    }
+
+    /// The drag's write into the pet's words, `(0-based slot, word)` pairs (`0x5d5c3e`); whether
+    /// it landed.
+    fn pet_place_action(&mut self, _entries: &[(u32, u32)]) -> bool {
+        false
+    }
+
+    /// The pet's spellbook at the call (`[0xbe7d98]`), cooldowns on the `GetTime` clock that `ui_now`
+    /// seconds names at `anchor`; `None` with no pet book to read.
+    fn pet_book(&self, _anchor: std::time::Instant, _ui_now: f64) -> Option<super::PetBookState> {
+        None
+    }
+
+    /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it
+    /// (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now`
+    /// seconds names at `anchor`; `None` with nothing running.
+    fn spell_cooldown(
+        &self,
+        _spell_id: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        None
+    }
+
     /// The open bank's banker (`0xbeb9a0`), `None` with no bank open.
     fn banker(&self) -> Option<u64> {
         None
@@ -391,30 +517,116 @@ pub trait LiveState {
     }
 }
 
-/// A lent view's address, its lifetime erased, and whether its loan lets verbs write through it.
-type Lent = Option<(NonNull<dyn LiveState>, bool)>;
-
-/// No reference into the lent view is out.
-const FREE: u32 = 0;
-/// A [`write_live`] closure holds the view.
-const WRITING: u32 = u32::MAX;
+/// A lent view's address, its lifetime erased.
+type Lent = Option<NonNull<dyn LiveState>>;
 
 thread_local! {
-    /// The view lent on this thread, set only by [`UiScript::with_live`], [`UiScript::with_live_mut`] and [`LiveLoan`], each restoring the previous one.
+    /// The view lent on this thread: set only by [`UiScript::with_live`] and [`LiveLoan`], each of
+    /// which puts the previous one back before its borrow ends.
     static SLOT: Cell<Lent> = const { Cell::new(None) };
-    /// The references into the lent view now out: [`FREE`], a count of readers, or [`WRITING`].
-    static HELD: Cell<u32> = const { Cell::new(FREE) };
+    /// The borrows of what is lent, live now, by [`Hold`] kind: a shared read and a write never
+    /// overlap, nor two verb writes, so none aliases another.
+    static HELD: Cell<[u32; 3]> = const { Cell::new([0; 3]) };
+}
+
+/// What a borrow of the lent state does.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// A read: a verb's, the host's view, or the host's read of a lendable resource.
+    Shared = 0,
+    /// The host's write to a lendable resource its view reads.
+    Owner = 1,
+    /// A verb's write to the view.
+    Verb = 2,
+}
+
+/// One borrow of the lent state, counted in [`HELD`] until it drops.
+struct Held(Hold);
+
+impl Held {
+    /// Count a borrow; one that would alias a live one panics.
+    fn new(hold: Hold) -> Self {
+        HELD.with(|h| {
+            let mut held = h.get();
+            let [shared, owner, verb] = held;
+            let clear = match hold {
+                Hold::Shared => owner == 0 && verb == 0,
+                Hold::Owner => shared == 0 && verb == 0,
+                Hold::Verb => shared == 0 && owner == 0 && verb == 0,
+            };
+            assert!(
+                clear,
+                "the lent state is borrowed as {} beside {held:?} (shared, owner, verb) borrows",
+                ["shared", "its owner's write", "a verb's write"][hold as usize],
+            );
+            held[hold as usize] += 1;
+            h.set(held);
+        });
+        Self(hold)
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        HELD.with(|h| {
+            let mut held = h.get();
+            held[self.0 as usize] -= 1;
+            h.set(held);
+        });
+    }
+}
+
+/// A host's write to state its lent view reads, held while the write's borrow lives: no verb reaches
+/// the view meanwhile, and no shared read of it may be held.
+pub struct OwnerWrite {
+    _held: Held,
+}
+
+/// Start an owner's write; it ends when the guard drops.
+pub fn owner_write() -> OwnerWrite {
+    OwnerWrite {
+        _held: Held::new(Hold::Owner),
+    }
+}
+
+/// A host's shared read of state its lent view reads, held while the read's borrow lives: no owner
+/// writes it meanwhile.
+pub struct SharedRead {
+    _held: Held,
+}
+
+/// Start a host's shared read; it ends when the guard drops.
+pub fn shared_read() -> SharedRead {
+    SharedRead {
+        _held: Held::new(Hold::Shared),
+    }
+}
+
+/// The lent view, read by its host between calls into Lua; a verb that writes the view panics
+/// while it lives.
+pub struct ViewRef<'a, V> {
+    view: &'a V,
+    _held: Held,
+}
+
+impl<V> std::ops::Deref for ViewRef<'_, V> {
+    type Target = V;
+
+    fn deref(&self) -> &V {
+        self.view
+    }
 }
 
 /// Lend `live` on this thread, returning what it replaces.
 ///
 /// # Safety
-/// The caller puts the returned value back with [`restore`] before `live`'s borrow ends; `live` came from a `&mut` borrow when `writable`.
-unsafe fn lend(live: NonNull<dyn LiveState + '_>, writable: bool) -> Lent {
+/// `live` is borrowed mutably until the caller puts the returned value back with [`restore`], and
+/// nothing else reaches it in between.
+unsafe fn lend(live: NonNull<dyn LiveState + '_>) -> Lent {
     // SAFETY: only the lifetime is erased; the caller restores the slot before the borrow ends,
     // and `read_live` and `write_live` hand the view out only for the length of one closure.
     let ptr: NonNull<dyn LiveState + 'static> = unsafe { std::mem::transmute(live) };
-    SLOT.with(|s| s.replace(Some((ptr, writable))))
+    SLOT.with(|s| s.replace(Some(ptr)))
 }
 
 fn restore(previous: Lent) {
@@ -430,15 +642,16 @@ impl Drop for Restore {
     }
 }
 
-/// A view lent to every verb on this thread until the loan drops, which restores the previous one.
+/// A view lent to every verb on this thread until the loan drops, which puts the previous one
+/// back: the guard a host keeps for the length of a stretch of calls into Lua.
 pub struct LiveLoan<V: LiveState> {
-    /// Boxed and held raw, so the lent address holds while the loan moves and [`Self::with_view_mut`] shares its borrow.
+    /// The boxed view, owned through this pointer, so the lent address holds while the loan moves.
     view: NonNull<V>,
     previous: Lent,
 }
 
 impl<V: LiveState> LiveLoan<V> {
-    /// Lend `view` until the loan drops; verbs may write through it.
+    /// Lend `view` until the loan drops.
     ///
     /// # Safety
     /// The loan is dropped, never leaked, on the thread that made it, and loans on one thread
@@ -446,31 +659,31 @@ impl<V: LiveState> LiveLoan<V> {
     pub unsafe fn new(view: V) -> Self {
         let view = NonNull::from(Box::leak(Box::new(view)));
         // SAFETY: `Drop` restores the slot before the box, and with it the view, is freed.
-        let previous = unsafe { lend(view as NonNull<dyn LiveState + '_>, true) };
+        let previous = unsafe { lend(view) };
         Self { view, previous }
+    }
+
+    /// The lent view, read between calls into Lua; a verb's write to it panics while this lives.
+    pub fn view(&self) -> ViewRef<'_, V> {
+        let held = Held::new(Hold::Shared);
+        // SAFETY: the box lives until the drop; a verb's mutable borrow of it panics while `held`
+        // counts this one, and a verb's shared one ends with its closure.
+        ViewRef {
+            view: unsafe { self.view.as_ref() },
+            _held: held,
+        }
     }
 
     /// `f` over the lent view; a verb writing through the loan from inside `f` panics.
     pub fn with_view<R>(&self, f: impl FnOnce(&V) -> R) -> R {
-        let held = HELD.with(Cell::get);
-        assert_ne!(held, WRITING, "a loan's view was read inside a write");
-        HELD.with(|h| h.set(held + 1));
-        let _release = Release(held);
-        // SAFETY: the box lives until the drop, and the hold count keeps every writer out while
-        // the reference, which cannot escape `f`, is out.
-        f(unsafe { self.view.as_ref() })
+        f(&self.view())
     }
 
-    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from inside `f` panics.
+    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from
+    /// inside `f` panics.
     pub fn with_view_mut<R>(&mut self, f: impl FnOnce(&mut V) -> R) -> R {
-        let held = HELD.with(Cell::get);
-        assert_eq!(
-            held, FREE,
-            "a loan's view was written while a reference into it was out"
-        );
-        HELD.with(|h| h.set(WRITING));
-        let _release = Release(FREE);
-        // SAFETY: the box lives until the drop, and the hold count keeps every reader and writer
+        let _held = Held::new(Hold::Verb);
+        // SAFETY: the box lives until the drop, and `_held` keeps every other borrow of the view
         // out while the reference, which cannot escape `f`, is out.
         f(unsafe { self.view.as_mut() })
     }
@@ -479,43 +692,23 @@ impl<V: LiveState> LiveLoan<V> {
 impl<V: LiveState> Drop for LiveLoan<V> {
     fn drop(&mut self) {
         restore(self.previous);
-        // SAFETY: made by `Box::leak` in `new`, and the slot no longer names it.
+        // SAFETY: made by `Box::leak` in `new` and no longer lent.
         drop(unsafe { Box::from_raw(self.view.as_ptr()) });
     }
 }
 
 impl UiScript {
-    /// Run `f` with `live` lent read-only to every verb it reaches, a nested call restoring the outer loan.
-    pub fn with_live<R>(&mut self, live: &dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
-        // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too; the
-        // loan is read-only, so the shared borrow is never written through.
-        let _restore = Restore(unsafe { lend(NonNull::from(live), false) });
-        f(self)
-    }
-
-    /// [`Self::with_live`], with the verbs' writes going through `live`.
-    pub fn with_live_mut<R>(
-        &mut self,
-        live: &mut dyn LiveState,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+    /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
+    /// nested call lends its own and restores the outer one.
+    pub fn with_live<R>(&mut self, live: &mut dyn LiveState, f: impl FnOnce(&mut Self) -> R) -> R {
         // SAFETY: `Restore` puts the slot back before `live`'s borrow ends, on unwind too.
-        let _restore = Restore(unsafe { lend(NonNull::from(live), true) });
+        let _restore = Restore(unsafe { lend(NonNull::from(live)) });
         f(self)
     }
 
     /// Whether a view is lent right now.
     pub fn has_live(&self) -> bool {
         SLOT.with(|s| s.get().is_some())
-    }
-}
-
-/// Puts the hold count back, on return and on unwind.
-struct Release(u32);
-
-impl Drop for Release {
-    fn drop(&mut self) {
-        HELD.with(|h| h.set(self.0));
     }
 }
 
@@ -533,43 +726,23 @@ pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str
 }
 
 /// `f` over the view lent right now, `None` with none lent.
-///
-/// # Panics
-/// Inside a [`write_live`] closure: a verb's write never reaches back into Lua.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
-    let (ptr, _) = SLOT.with(Cell::get)?;
-    let held = HELD.with(Cell::get);
-    assert_ne!(
-        held, WRITING,
-        "the live view was read inside a write through it"
-    );
-    HELD.with(|h| h.set(held + 1));
-    let _release = Release(held);
-    // SAFETY: a pointer in the slot is a live borrow held by an enclosing `with_live` or
-    // `LiveLoan`, which outlives this call; no writer holds it, and the reference cannot escape `f`.
+    let ptr = SLOT.with(Cell::get)?;
+    let _held = Held::new(Hold::Shared);
+    // SAFETY: a pointer in the slot is a mutable borrow held by an enclosing `with_live` or
+    // `LiveLoan`, which outlives this call; `_held` panics beside an owner's write, the view
+    // never calls back into Lua, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
     Some(f(live))
 }
 
-/// `f` over the view lent right now, to write what a verb changes in its call; `None` with none lent or a read-only loan.
-///
-/// # Panics
-/// Inside a [`read_live`] or [`write_live`] closure: one writer and no reader at a time.
+/// `f` over the view lent right now, mutably, for a verb that writes the state it reads; `None`
+/// with none lent.
 pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
-    let (mut ptr, writable) = SLOT.with(Cell::get)?;
-    if !writable {
-        return None;
-    }
-    let held = HELD.with(Cell::get);
-    assert_eq!(
-        held, FREE,
-        "the live view was written while a reference into it was out"
-    );
-    HELD.with(|h| h.set(WRITING));
-    let _release = Release(FREE);
-    // SAFETY: a writable slot holds a live `&mut` borrow lent by an enclosing `with_live_mut` or
-    // `LiveLoan`, which outlives this call; no other reference into it is out, and this one
-    // cannot escape `f`.
+    let mut ptr = SLOT.with(Cell::get)?;
+    let _held = Held::new(Hold::Verb);
+    // SAFETY: as `read_live`; `_held` panics beside any of the host's own borrows of the view, so
+    // nothing else reaches it for the length of `f`.
     let live = unsafe { ptr.as_mut() };
     Some(f(live))
 }
@@ -636,6 +809,46 @@ pub(crate) struct TestView {
     pub bank_costs: std::collections::HashMap<u32, u32>,
     /// The item tables.
     pub item_tables: Option<super::ItemTables>,
+    /// The companion lists and pool.
+    pub companions: super::CompanionState,
+    /// The pet stat block and `HasPetUI`'s first return.
+    pub pet_stats: (bool, super::PetStats),
+    /// The pet menu's three predicates; `None` answers the no-pet `(nil, nil, 1)`.
+    pub pet_menu: Option<(bool, bool, bool)>,
+    /// The held possess spell.
+    pub possess: Option<super::PossessView>,
+    /// The stable globals.
+    pub stable: std::cell::RefCell<super::StableList>,
+    /// The creature records the stable verbs find, by entry.
+    pub stable_families: std::cell::RefCell<std::collections::HashMap<u32, super::StableFamily>>,
+    /// `StableSlotPrices.dbc`, by row.
+    pub stable_prices: std::cell::RefCell<std::collections::HashMap<u32, u32>>,
+    /// The record asks a stable miss made, in order.
+    pub stable_asks: std::cell::RefCell<Vec<(u32, super::StableCallback)>>,
+    /// The stable verbs sent, in order.
+    pub stable_sent: std::cell::RefCell<Vec<super::StableIntent>>,
+    /// The pet list holds a pet.
+    pub pet_out: bool,
+    /// Our charm or summon is set.
+    pub charm_or_summon: bool,
+    /// An open-stable aura is on us.
+    pub open_stable_aura: bool,
+    /// The player's cooldown history by spell, as `(start_ms, duration_ms, enabled)`.
+    pub cooldowns: std::collections::HashMap<u32, (i64, u32, bool)>,
+    /// The pet is out as a hunter's unit with its creature record.
+    pub stable_live_pet: bool,
+    /// The pet bar's bar-wide state.
+    pub pet_bar: Option<super::PetBarLive>,
+    /// The pet bar's slots, which the drag writes.
+    pub pet_slots: std::cell::RefCell<Vec<super::PetActionView>>,
+}
+
+#[cfg(test)]
+impl TestView {
+    /// The stable verbs sent since the last take.
+    pub(crate) fn take_sent(&self) -> Vec<super::StableIntent> {
+        std::mem::take(&mut *self.stable_sent.borrow_mut())
+    }
 }
 
 #[cfg(test)]
@@ -784,6 +997,165 @@ impl LiveState for TestView {
     fn clear_inspect_target(&self) {
         self.inspect_target.set(0);
     }
+
+    fn companion_spells(&self, ty: super::CompanionType) -> Vec<u32> {
+        self.companions
+            .list(ty)
+            .iter()
+            .map(|c| c.spell_id)
+            .collect()
+    }
+
+    fn companion(&self, ty: super::CompanionType, index: usize) -> Option<super::CompanionView> {
+        self.companions.list(ty).get(index).cloned()
+    }
+
+    fn companion_random_pool(&self) -> Vec<u32> {
+        self.companions.random_pool.clone()
+    }
+
+    fn pet_stats(&self) -> (bool, super::PetStats) {
+        self.pet_stats.clone()
+    }
+
+    fn pet_menu(&self) -> (bool, bool, bool) {
+        self.pet_menu.unwrap_or((false, false, true))
+    }
+
+    fn creature_family(&self, guid: u64) -> Option<String> {
+        (self.player != Some(guid) && self.units.contains_key(&guid))
+            .then(|| self.pet_stats.1.family.clone())
+            .flatten()
+    }
+
+    fn possess(&self) -> Option<super::PossessView> {
+        self.possess.clone()
+    }
+
+    fn stable(&self) -> super::StableList {
+        self.stable.borrow().clone()
+    }
+
+    fn stable_family(
+        &mut self,
+        entry: u32,
+        callback: Option<super::StableCallback>,
+    ) -> Option<super::StableFamily> {
+        let found = self.stable_families.borrow().get(&entry).cloned();
+        if let (None, Some(callback)) = (&found, callback) {
+            self.stable_asks.borrow_mut().push((entry, callback));
+        }
+        found
+    }
+
+    fn stable_live_pet(&self) -> bool {
+        self.stable_live_pet
+    }
+
+    fn stable_slot_price(&self, slot: u32) -> Option<u32> {
+        self.stable_prices.borrow().get(&slot).copied()
+    }
+
+    fn stable_send(&self, verb: super::StableIntent) {
+        self.stable_sent.borrow_mut().push(verb);
+    }
+
+    fn close_stables(&mut self) -> bool {
+        std::mem::take(&mut self.stable.borrow_mut().master) != 0
+    }
+
+    fn pet_out(&self) -> bool {
+        self.pet_out
+    }
+
+    fn charm_or_summon(&self) -> bool {
+        self.charm_or_summon
+    }
+
+    fn open_stable_aura(&self) -> bool {
+        self.open_stable_aura
+    }
+
+    fn spell_cooldown(
+        &self,
+        spell_id: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        self.cooldowns.get(&spell_id).copied()
+    }
+
+    fn pet_bar(&self) -> Option<super::PetBarLive> {
+        self.pet_bar.clone()
+    }
+
+    fn pet_action(
+        &self,
+        index: usize,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<super::PetActionView> {
+        self.pet_slots.borrow().get(index).cloned()
+    }
+
+    fn pet_place_action(&mut self, entries: &[(u32, u32)]) -> bool {
+        let mut slots = self.pet_slots.borrow_mut();
+        for &(i, word) in entries {
+            if let Some(s) = slots.get_mut(i as usize) {
+                s.packed = word;
+            }
+        }
+        true
+    }
+
+    fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<super::PetBookState> {
+        TEST_PET_BOOK.with(|b| b.borrow().clone())
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The pet book every test view answers, set by `UiScript::set_pet_book`.
+    static TEST_PET_BOOK: std::cell::RefCell<Option<super::PetBookState>> =
+        const { std::cell::RefCell::new(None) };
+    /// The view lent for the rest of the thread once a test sets a pet book.
+    static TEST_STICKY: std::cell::RefCell<Option<LiveLoan<TestView>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Answer `state` as the pet book of every test view on this thread, lending one until the thread
+/// ends if none is up yet.
+#[cfg(test)]
+pub(crate) fn set_test_pet_book(state: super::PetBookState) {
+    TEST_PET_BOOK.with(|b| *b.borrow_mut() = Some(state));
+    if read_live(|_| ()).is_none() {
+        TEST_STICKY.with(|s| {
+            // SAFETY: made with no loan up, so it encloses every later loan; held to the thread's end.
+            *s.borrow_mut() = Some(unsafe { LiveLoan::new(TestView::default()) });
+        });
+    }
+}
+
+/// Lend a pet bar with `slots`, for the VM's own tests: `has_bar`, `actions_usable` and
+/// `pickup_allowed` as given.
+#[cfg(test)]
+pub(crate) fn lend_pets(
+    has_bar: bool,
+    actions_usable: bool,
+    pickup_allowed: bool,
+    slots: Vec<super::PetActionView>,
+) -> LiveLoan<TestView> {
+    lend_test(TestView {
+        pet_bar: Some(super::PetBarLive {
+            has_bar,
+            actions_usable,
+            pickup_allowed,
+            attacking: slots.iter().any(|s| s.attack_active),
+            time_remaining_ms: None,
+        }),
+        pet_slots: std::cell::RefCell::new(slots),
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]
@@ -822,11 +1194,11 @@ mod tests {
     fn a_view_is_lent_for_the_call_only_and_a_nested_loan_restores_the_outer() {
         let mut s = UiScript::new().unwrap();
         assert!(!s.has_live());
-        let outer = One { guid: 1, flags: 7 };
-        let inner = One { guid: 1, flags: 9 };
-        s.with_live(&outer, |s| {
+        let mut outer = One { guid: 1, flags: 7 };
+        let mut inner = One { guid: 1, flags: 9 };
+        s.with_live(&mut outer, |s| {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
-            s.with_live(&inner, |_| {
+            s.with_live(&mut inner, |_| {
                 assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(9)));
             });
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
@@ -846,11 +1218,11 @@ mod tests {
         s.lua().globals().set("Flags", flags).unwrap();
         let ask = |s: &UiScript| s.eval::<Option<u32>>("return Flags(2)").unwrap();
         assert_eq!(ask(&s), None);
-        let riding = One {
+        let mut riding = One {
             guid: 2,
             flags: 1 << 20,
         };
-        assert_eq!(s.with_live(&riding, |s| ask(s)), Some(1 << 20));
+        assert_eq!(s.with_live(&mut riding, |s| ask(s)), Some(1 << 20));
         assert_eq!(ask(&s), None);
     }
 
@@ -872,16 +1244,16 @@ mod tests {
             .unwrap()
         };
         assert_eq!(ask(&s), "nilnil");
-        let riding = One {
+        let mut riding = One {
             guid: 2,
             flags: 1 << 20,
         };
-        assert_eq!(s.with_live(&riding, |s| ask(s)), "nil1");
-        let grounded = One {
+        assert_eq!(s.with_live(&mut riding, |s| ask(s)), "nil1");
+        let mut grounded = One {
             guid: 1,
             flags: !(1 << 20),
         };
-        assert_eq!(s.with_live(&grounded, |s| ask(s)), "nilnil");
+        assert_eq!(s.with_live(&mut grounded, |s| ask(s)), "nilnil");
     }
 
     /// `HasFullControl` needs the active player held, not looking through far sight, with health
@@ -890,7 +1262,7 @@ mod tests {
     #[test]
     fn has_full_control_reads_the_flag_and_the_players_health() {
         let mut s = UiScript::new().unwrap();
-        let ask = |s: &mut UiScript, view: &TestView| {
+        let ask = |s: &mut UiScript, view: &mut TestView| {
             s.with_live(view, |s| {
                 s.eval::<String>("return tostring(HasFullControl())")
             })
@@ -903,31 +1275,31 @@ mod tests {
             control,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &alive(true)), "1");
-        assert_eq!(ask(&mut s, &alive(false)), "nil");
-        let far = TestView {
+        assert_eq!(ask(&mut s, &mut alive(true)), "1");
+        assert_eq!(ask(&mut s, &mut alive(false)), "nil");
+        let mut far = TestView {
             far_sight: true,
             ..alive(true)
         };
-        assert_eq!(ask(&mut s, &far), "nil");
-        let dead = TestView {
+        assert_eq!(ask(&mut s, &mut far), "nil");
+        let mut dead = TestView {
             player: Some(1),
             units: [(1, (0, 0))].into(),
             control: true,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &dead), "nil");
-        let nobody = TestView {
+        assert_eq!(ask(&mut s, &mut dead), "nil");
+        let mut nobody = TestView {
             control: true,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &nobody), "nil");
-        let unheld = TestView {
+        assert_eq!(ask(&mut s, &mut nobody), "nil");
+        let mut unheld = TestView {
             player: Some(1),
             control: true,
             ..Default::default()
         };
-        assert_eq!(ask(&mut s, &unheld), "nil");
+        assert_eq!(ask(&mut s, &mut unheld), "nil");
     }
 
     /// A loan lends until it drops, a call's loan inside it restores it, and dropping it restores
@@ -935,11 +1307,11 @@ mod tests {
     #[test]
     fn a_loan_lends_until_it_drops() {
         let mut s = UiScript::new().unwrap();
-        let outer = One { guid: 1, flags: 7 };
+        let mut outer = One { guid: 1, flags: 7 };
         // SAFETY: dropped below, on this thread, after the inner one.
         let loan = unsafe { LiveLoan::new(One { guid: 1, flags: 5 }) };
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        s.with_live(&outer, |_| {
+        s.with_live(&mut outer, |_| {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
             // SAFETY: dropped at the end of this closure, before `loan`.
             let inner = unsafe { LiveLoan::new(One { guid: 1, flags: 9 }) };
@@ -948,7 +1320,7 @@ mod tests {
             assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
         });
         assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        assert_eq!(loan.with_view(|v| v.flags), 5);
+        assert_eq!(loan.view().flags, 5);
         drop(loan);
         assert!(!s.has_live());
     }
@@ -1006,9 +1378,9 @@ mod tests {
     #[test]
     fn an_unwinding_call_ends_the_loan() {
         let mut s = UiScript::new().unwrap();
-        let view = One { guid: 1, flags: 7 };
+        let mut view = One { guid: 1, flags: 7 };
         let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            s.with_live(&view, |_| panic!("a call that unwinds"));
+            s.with_live(&mut view, |_| panic!("a call that unwinds"));
         }));
         assert!(unwound.is_err());
         assert!(!s.has_live());

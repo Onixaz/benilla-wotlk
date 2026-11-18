@@ -1148,8 +1148,7 @@ fn the_mouseover_token_clears_when_no_unit_is_hovered() {
 #[test]
 fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
     use benilla_ui::script::{
-        AuraState, PetActionView, TradeSkillDifficulty, TradeSkillGroup, TradeSkillRecipe,
-        TradeSkillState,
+        AuraState, TradeSkillDifficulty, TradeSkillGroup, TradeSkillRecipe, TradeSkillState,
     };
     let spell = |name: &str, description: &str| benilla_formats::SpellDisplay {
         name: name.into(),
@@ -1171,19 +1170,17 @@ fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
     .init_resource::<Items>()
     .init_resource::<crate::net::GuidIndex>()
     .init_resource::<crate::spell::SpellModifiers>()
+    .init_resource::<crate::net::SelfGuid>()
     .add_systems(Update, feed_spell_tooltips);
+    // The pet's bar, Firebolt in slot 1, read by the verbs at the call.
+    let mut bar = crate::ui_pet::PetBar::default();
+    bar.spells.pet_guid = 0xF140_0000_0000_002A;
+    bar.spells.bar[0] = benilla_protocol::messages::PetActionEntry::from(
+        3110 | (u32::from(benilla_protocol::messages::PET_ACT_ENABLED) << 24),
+    );
+    app.insert_resource(bar);
 
     let mut script = UiScript::new().unwrap();
-    script.set_pet_actions(
-        true,
-        true,
-        true,
-        vec![PetActionView {
-            name: Some("Firebolt".into()),
-            spell_id: Some(3110),
-            ..Default::default()
-        }],
-    );
     // A recipe that makes no item hovers its own spell; row 1 is its header.
     script.set_trade_skill(Some(TradeSkillState {
         line: 333,
@@ -1236,7 +1233,7 @@ fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
     app.insert_non_send_resource(script);
     app.update();
 
-    let script = app.world().non_send_resource::<UiScript>();
+    crate::ui_script::live::with_live_world(app.world_mut(), |script| {
     script
         .run(
             r#"
@@ -1265,6 +1262,8 @@ fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
         script.eval::<String>("return TOT").unwrap(),
         "Shadow Word: Pain | Shadow damage over time."
     );
+    })
+    .expect("the VM");
 }
 
 /// The feed builds the pet's bar and book against the pet (the charm, else the summon), keeps the
@@ -1272,7 +1271,7 @@ fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
 #[test]
 fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level() {
     use benilla_protocol::ObjectFields;
-    use benilla_ui::script::{PetActionView, PetBookState, SpellBookState, SpellSlotView};
+    use benilla_ui::script::{SpellBookState, SpellSlotView};
     const ME: u64 = 0x10;
     const IMP: u64 = 0xF140_0000_0000_0077;
     // `$s1` is 10 plus 1 a level, uncapped: the player, in no line of its own, reads 10.
@@ -1322,27 +1321,23 @@ fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level(
     let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
     index.0.insert(ME, me);
     index.0.insert(IMP, imp);
+    app.insert_resource(crate::net::SelfGuid(Some(ME)));
+    // The imp's bar and book, Blood Pact in each, read by the verbs at the call.
+    let word = benilla_protocol::messages::PetActionEntry::from(
+        6307 | (u32::from(benilla_protocol::messages::PET_ACT_ENABLED) << 24),
+    );
+    let mut bar = crate::ui_pet::PetBar::default();
+    bar.spells.pet_guid = IMP;
+    bar.spells.bar[0] = word;
+    bar.spells.spells = vec![word];
+    app.insert_resource(bar);
 
     let mut script = UiScript::new().unwrap();
-    script.set_pet_actions(
-        true,
-        true,
-        true,
-        vec![PetActionView {
-            name: Some("Blood Pact".into()),
-            spell_id: Some(6307),
-            ..Default::default()
-        }],
-    );
     let slot = SpellSlotView {
         spell_id: 6307,
         name: "Blood Pact".into(),
         ..Default::default()
     };
-    script.set_pet_book(PetBookState {
-        token: Some("DEMON".into()),
-        slots: vec![slot.clone()],
-    });
     script.set_spellbook(SpellBookState {
         tabs: Vec::new(),
         slots: vec![slot],
@@ -1361,16 +1356,18 @@ fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level(
     // The feed runs over the pet bar and book; the player's book's view is an ask on its hover.
     app.update();
     let descs = |app: &mut App| {
-        let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
-        let d = script
-            .eval::<(String, String, Option<String>)>(
-                r#"return DESC(function() TT:SetPetAction(1) end),
-                    DESC(function() TT:SetSpell(1, "pet") end),
-                    DESC(function() TT:SetSpell(1, "spell") end)"#,
-            )
-            .unwrap();
-        assert!(script.take_errors().is_empty());
-        d
+        crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            let d = script
+                .eval::<(String, String, Option<String>)>(
+                    r#"return DESC(function() TT:SetPetAction(1) end),
+                        DESC(function() TT:SetSpell(1, "pet") end),
+                        DESC(function() TT:SetSpell(1, "spell") end)"#,
+                )
+                .unwrap();
+            assert!(script.take_errors().is_empty());
+            d
+        })
+        .expect("the VM")
     };
     let _ = descs(&mut app);
     app.update();

@@ -883,7 +883,10 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 
 /// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
 fn drain_death(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     death_net: Res<DeathNet>,
     mut commands: Commands,
     net: Res<NetCommands>,

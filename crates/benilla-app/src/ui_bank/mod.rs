@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::net::{GuidIndex, SelfPlayer};
 use crate::ui_script::live::UiEvents;
-use crate::ui_session::session_out_of_range;
+use crate::ui_session::npc_out_of_range;
 
 /// `BankBagSlotPrices.dbc`, the client's own slot prices; absent, the purchase row shows 0 and
 /// the server still charges its own price.
@@ -148,7 +148,7 @@ fn close_bank_out_of_range(
     let Some(banker) = bank.banker.filter(|_| bank.interacting) else {
         return;
     };
-    if session_out_of_range(banker, &index, &self_q, &transforms) {
+    if npc_out_of_range(banker, &index, &self_q, &transforms) == Some(true) {
         debug!("ui_bank: banker {banker:#x} out of range/gone — closing the interaction");
         commands.queue(|world: &mut World| {
             close_by_interaction(world);

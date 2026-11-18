@@ -11,7 +11,6 @@ use benilla_protocol::messages::PetSpells;
 
 use crate::net::{GuidIndex, ObjectStore};
 use crate::spell::Cooldowns;
-use crate::ui_action::CooldownEvents;
 use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 
@@ -19,19 +18,23 @@ mod bar;
 mod drain;
 mod menu;
 mod net;
-mod possess;
+pub(crate) mod possess;
 mod temp_bar;
 mod unit;
 mod usable;
 
-pub(crate) use bar::{feed_pet_bar, fire_pet_cooldown_events};
+pub(crate) use bar::{action_live, bar_live, PetSlotWalk, WalkLent};
 use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{PetCast, PetPress};
-use menu::{drain_pet_menu, feed_pet_menu};
-pub(crate) use temp_bar::temp_slot_texture;
-pub(crate) use unit::feed_pet_unit;
+use menu::drain_pet_menu;
+#[cfg(test)]
+pub(crate) use menu::PET_FLAG_ABANDON;
+pub(crate) use menu::{menu_predicates, summon_bars_dismiss};
+pub(crate) use net::set_pet_tail;
+pub(crate) use temp_bar::{temp_slot_texture, update_pet_temp_bar_step};
+pub(crate) use unit::{feed_pet_unit, pet_combat_flag, pet_renamed, push_pet_token};
 
 #[cfg(test)]
 mod flush_tests;
@@ -44,10 +47,6 @@ mod tests;
 #[cfg(test)]
 mod usable_tests;
 
-/// The pet's temporary-bar writer, which the override bar's follows.
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct PetTempBar;
-
 /// The pet action bar's state. A zero `spells.pet_guid` means no bar: the teardown packet carries
 /// only that guid.
 #[derive(Resource, Default)]
@@ -56,17 +55,15 @@ pub(crate) struct PetBar {
     pub(crate) spells: PetSpells,
     /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by
     /// `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's
-    /// GCD. Each mutation but the seed fires the flush, off [`Cooldowns::generation`]
-    /// (`bar::fire_pet_cooldown_events`).
+    /// GCD. Each mutation but the seed fires the flush where it lands ([`pet_cooldown_flush`]).
     pub(crate) cooldowns: Cooldowns,
-    /// The client's attack latch, local: all of `IsPetAttackActive`, and the only thing that lights
-    /// Attack. Raised only for a possessed unit, so never on a hunter's bar; lowered by
-    /// `PetStopAttack`, a new pet and the old-target clear. `PET_ATTACK_*` read the pet's flag
-    /// `0x800` instead.
+    /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that
+    /// lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a
+    /// possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test
+    /// (`0x5d6a80`).
     pub(crate) attacking: bool,
-    /// `PET_BAR_UPDATE` signals, counted. Both state writes signal unconditionally, and `OnClick`'s
-    /// `SetChecked(0)` needs that repaint to relight a press on the current mode, so the count is
-    /// in the feed's dedup key. Wrapping: only a change is read.
+    /// The `PET_BAR_UPDATE`s a press's latch raised, counted (`0x5d300c`, `0x5d3041`): its applier
+    /// fires one per count as the press returns ([`fire_bar_signals`]). Wrapping.
     pub(crate) bar_signals: u32,
     /// The charm or possess expiry, the packet's duration past its arrival; `None` when the
     /// duration is 0, as for a hunter's or warlock's own pet.
@@ -74,9 +71,17 @@ pub(crate) struct PetBar {
     /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
     /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
     pub(crate) pending_cast: Option<(u32, Instant)>,
-    /// The controlled-pet list (`[0xc23500]`, count `[0xc234fc]`), its head `spells.pet_guid`:
-    /// written by the pet setter and replaced whole by `SMSG_PET_GUIDS`.
-    pub(crate) pets: Vec<u64>,
+}
+
+/// The controlled-pet list (`[0xc23500]`), which the pet verbs read at call time (`0x5d3a24`).
+#[derive(Resource, Default)]
+pub(crate) struct PetList(pub(crate) Vec<u64>);
+
+impl PetList {
+    /// The head the pet verbs read, `None` for an empty list (`0x5d3a2b`).
+    pub(crate) fn head(&self) -> Option<u64> {
+        self.0.first().copied()
+    }
 }
 
 /// `SMSG_PET_RENAMEABLE`s not yet fired as `PET_RENAMEABLE`.
@@ -92,12 +97,22 @@ pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
 /// `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set; the `SMSG_PET_SPELLS` it
 /// answers rebuilds the bar. The reference's entry waits out the loading screen, so the summon
 /// field has landed; ours rides the self create, which a login's `SMSG_PET_SPELLS` can beat while
-/// the field comes a frame later, so the bar drops only when the ask goes out.
+/// the field comes a frame later, so the bar drops only when the ask goes out. The ask owes the
+/// possess lookup, which the UI's entry runs after `PLAYER_ENTERING_WORLD`
+/// ([`possess::world_entry_step`]).
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(crate) fn request_pet_info_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut bar: ResMut<PetBar>,
+    list: Option<ResMut<PetList>>,
     player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
+    owed: Option<ResMut<possess::PossessLookupOwed>>,
+    (possess, ui): (
+        Option<ResMut<possess::PossessSpell>>,
+        Option<ResMut<crate::ui_script::live::UiEvents>>,
+    ),
+    mut flush: Commands,
 ) {
     if cascades.read().next().is_none() {
         return;
@@ -106,8 +121,20 @@ pub(crate) fn request_pet_info_on_world_enter(
         return;
     };
     debug!("ui_pet: world entry with pet {pet:#x}, asking its bar");
+    // The setter cleared (`0x5d6e6d`), its tail run as any setter call's.
+    let changed = bar.spells.pet_guid != 0;
     bar.clear();
+    if let (Some(mut possess), Some(mut ui)) = (possess, ui) {
+        set_pet_tail(changed, &mut bar, &mut possess, None, &mut ui);
+        flush.queue(crate::ui_script::live::fire_handler_events);
+    }
+    if let Some(mut list) = list {
+        list.0.clear();
+    }
     let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
+    if let Some(mut owed) = owed {
+        owed.0 = true;
+    }
 }
 
 impl PetBar {
@@ -128,12 +155,40 @@ impl PetBar {
     }
 }
 
+/// The pet's cooldown flush behind a mutation of its list: the spellbook's (`0x53bac0`),
+/// `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, then the pet's own
+/// `PET_BAR_UPDATE_COOLDOWN` (`0x5d3090`), as the go's insert (`0x80fe3b`, `0x80fe4b`) and the
+/// cooldown packet's (`0x80702e`, `0x807039`) call them.
+pub(crate) fn pet_cooldown_flush(ui: &mut crate::ui_script::live::UiEvents) {
+    ui.fire("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
+    ui.fire("SPELL_UPDATE_COOLDOWN", Vec::new());
+    ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
+}
+
+/// [`pet_cooldown_flush`] into the VM a press's applier holds, for the press's own insert
+/// (`0x805ec3`, `0x805eda`).
+pub(crate) fn pet_cooldown_flush_now(script: &mut benilla_ui::script::UiScript) {
+    script.fire_event("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
+    script.fire_event("SPELL_UPDATE_COOLDOWN", Vec::new());
+    script.fire_event("PET_BAR_UPDATE_COOLDOWN", Vec::new());
+}
+
+/// Fire the `PET_BAR_UPDATE`s a press raised since `before`, the bar's signal count then.
+pub(crate) fn fire_bar_signals(script: &mut benilla_ui::script::UiScript, before: u32, now: u32) {
+    for _ in 0..now.wrapping_sub(before) {
+        script.fire_event("PET_BAR_UPDATE", Vec::new());
+    }
+}
+
 pub(crate) struct UiPetPlugin;
 
 impl Plugin for UiPetPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<PetBar>()
+            .init_resource::<PetList>()
+            .init_resource::<possess::PossessSpell>()
+            .init_resource::<possess::PossessLookupOwed>()
             .init_resource::<PetRenameable>()
             .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
@@ -144,27 +199,12 @@ impl Plugin for UiPetPlugin {
                     // press pass so a click is sent, and shown, that frame (a press is a script
                     // call, `PetPress`). The old-target clear precedes the bar feed so Attack goes
                     // dark the frame the selection moves.
+                    // Between the press and the feed: it writes the bar every lent view reads.
                     pet_stop_on_old_target_clear
-                        .in_set(UnitFeed)
-                        .before(feed_pet_bar)
+                        .after(crate::ui_script::UiPress)
+                        .before(crate::ui_script::UiFeed)
                         .before(crate::ui_action::SlotIdentityFeed),
-                    // After the pet snapshot: these feeds' events reach Lua at once, and their
-                    // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
-                    // its cooldown triples before the cooldown events and the pet's flush fires after
-                    // them, so the buttons it wakes read the new list. After the pet unit: the
-                    // bar's `PET_BAR_UPDATE` handler reads `UnitIsVisible("pet")`, the live object.
-                    feed_pet_bar
-                        .in_set(UnitFeed)
-                        .after(crate::ui_pet_stats::PetSnapshot)
-                        .after(feed_pet_unit)
-                        .before(CooldownEvents),
-                    fire_pet_cooldown_events
-                        .in_set(UnitFeed)
-                        .after(CooldownEvents),
-                    feed_pet_unit
-                        .in_set(UnitFeed)
-                        .after(crate::ui_pet_stats::PetSnapshot),
-                    feed_pet_menu.in_set(UnitFeed),
+                    feed_pet_unit.in_set(UnitFeed),
                     // The UI's world entry asks after the time and before the mail (`0x528010`);
                     // its bar drop lands before the press and the feeds read the bar.
                     request_pet_info_on_world_enter
@@ -172,14 +212,6 @@ impl Plugin for UiPetPlugin {
                         .before(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(UnitFeed)
                         .before(crate::ui_script::UiPress),
-                    possess::feed_possess_spell.in_set(UnitFeed),
-                    // Before the slot feed, which shows the slots it writes.
-                    temp_bar::update_pet_temp_bar
-                        .in_set(UnitFeed)
-                        .in_set(PetTempBar)
-                        .after(crate::ui_action::ActionRanks)
-                        .after(pet_stop_on_old_target_clear)
-                        .before(crate::ui_action::SlotIdentityFeed),
                     // After this frame's presses, as the one drain before it ran them ahead of the
                     // toggles, stops and writes; in the press pass, so the bar's feed shows them.
                     drain_pet_actions
@@ -190,7 +222,6 @@ impl Plugin for UiPetPlugin {
                     // the stable it reads before the stable's own verbs move it.
                     drain_pet_menu
                         .in_set(UiDrain)
-                        .before(crate::ui_stable::drain_stable)
                         .run_if(crate::ui_script::ingame_ui_up),
                 ),
             );

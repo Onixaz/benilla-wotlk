@@ -89,9 +89,9 @@ pub(super) fn seed_ui_fixture(
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
+        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
     ),
-    mut selection: ResMut<crate::target::Selection>,
+    mut selection: crate::ui_script::OwnedMut<crate::target::Selection>,
     // A nested tuple, one param under Bevy's 16-param cap.
     (mut actions, mut exit, mut loading): (
         ResMut<crate::ui_action::PlayerActions>,
@@ -1127,8 +1127,9 @@ pub(super) fn seed_ui_fixture(
             // As the V binding does, so FrameXML's replay at `PLAYER_ENTERING_WORLD` agrees.
             set_enemy_plates(script.as_deref(), true);
             // The wolf is the target, so its plate draws lit with the target ring.
-            selection.target = Some(wolf);
-            selection.guid = Some(WOLF_GUID);
+            let mut selected = selection.write();
+            selected.target = Some(wolf);
+            selected.guid = Some(WOLF_GUID);
         }
         UiFixture::Options => {
             let Some(script) = script else {

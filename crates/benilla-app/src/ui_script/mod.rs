@@ -23,7 +23,7 @@ pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
-pub(crate) use live::LendLive;
+pub(crate) use live::{LendLive, LentRef, OwnedMut, OwnsCooldowns, OwnsPlace, OwnsSelection};
 #[cfg(test)]
 pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
@@ -1092,7 +1092,7 @@ mod binder_tests;
 #[cfg(test)]
 mod summon_tests;
 #[cfg(test)]
-mod test_live;
+pub(crate) mod test_live;
 
 #[cfg(test)]
 mod talent_wipe_tests;

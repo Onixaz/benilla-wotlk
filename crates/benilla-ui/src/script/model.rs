@@ -578,10 +578,6 @@ pub(crate) struct Model {
     pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
     /// The full known-spell set, a superset of [`Self::spellbook`], and the rank table the item tests walk.
     pub(crate) known_spells: spellbook::KnownSpells,
-    /// The pet's spellbook, a second array as in the reference.
-    pub(crate) pet_book: spellbook::PetBookState,
-    /// The critter and mount lists (`0xbe8df4`).
-    pub(crate) companions: super::companion::CompanionState,
     /// `DismissCompanion` and `SummonRandomCritter` asks, in call order, for the app.
     pub(crate) companion_intents: Vec<super::companion::CompanionIntent>,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
@@ -731,8 +727,6 @@ pub(crate) struct Model {
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
 
-    /// The pet bar's ten slots and two bar-wide bits, replaced whole by every `SMSG_PET_SPELLS`.
-    pub(crate) pet_bar: super::pet::PetBarState,
     /// 1-based slot indices `TogglePetAutocast` queued.
     pub(crate) pet_autocast_toggles: Vec<u32>,
     /// `PetStopAttack()` calls.
@@ -840,7 +834,7 @@ pub(crate) struct Model {
     pub(crate) repair_all: Option<bool>,
     pub(crate) repair_mode: bool,
 
-    /// The stable window: snapshot, selection, drag and queued calls, reset together on close.
+    /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
     /// The open trainer, its buys, selection and close. The selection is a spell id, since
@@ -1561,8 +1555,6 @@ impl Model {
             spellbook: spellbook::SpellBookState::default(),
             known_spells: spellbook::KnownSpells::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),
-            pet_book: spellbook::PetBookState::default(),
-            companions: super::companion::CompanionState::default(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
             macros_dirty: false,
@@ -1634,7 +1626,6 @@ impl Model {
             totem_destroys: Vec::new(),
             multicast: Default::default(),
             ui_errors_s: Vec::new(),
-            pet_bar: super::pet::PetBarState::default(),
             pet_autocast_toggles: Vec::new(),
             pet_stop_attacks: 0,
             pet_set_actions: Vec::new(),

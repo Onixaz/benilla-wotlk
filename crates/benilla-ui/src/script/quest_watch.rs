@@ -868,7 +868,7 @@ mod tests {
             .unwrap()
         };
         assert_eq!(ask(&s), "nilnilnil");
-        let carried = TestView {
+        let mut carried = TestView {
             special_items: [(
                 2,
                 QuestSpecialItemView {
@@ -884,15 +884,18 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            s.with_live(&carried, |s| ask(s)),
+            s.with_live(&mut carried, |s| ask(s)),
             r"|Hitem:5000|h[Relic]|hInterface\Icons\Relic4"
         );
         let row_one = |s: &UiScript| {
             s.eval::<i64>("return select('#', GetQuestLogSpecialItemInfo(1))")
                 .unwrap()
         };
-        assert_eq!(s.with_live(&carried, |s| row_one(s)), 0);
-        assert_eq!(s.with_live(&TestView::default(), |s| ask(s)), "nilnilnil");
+        assert_eq!(s.with_live(&mut carried, |s| row_one(s)), 0);
+        assert_eq!(
+            s.with_live(&mut TestView::default(), |s| ask(s)),
+            "nilnilnil"
+        );
     }
 
     /// The range check's answer: spell 1000 reaches [`NEAR`] and not [`FAR`]; any other unit or spell has no answer.
@@ -924,7 +927,7 @@ mod tests {
             pet: FAR,
             ..Default::default()
         });
-        let view = TestView {
+        let mut view = TestView {
             special_items: [(
                 2,
                 QuestSpecialItemView {
@@ -938,8 +941,8 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        let ask = |s: &mut UiScript, call: &str| {
-            s.with_live(&view, |s| {
+        let mut ask = |s: &mut UiScript, call: &str| {
+            s.with_live(&mut view, |s| {
                 s.eval::<String>(&format!("return tostring({call})"))
                     .unwrap()
             })
@@ -970,9 +973,9 @@ mod tests {
         assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2)"), "nil");
         assert_eq!(ask(&mut s, "IsQuestLogSpecialItemInRange(2, 'pet')"), "0");
         // The item gone from the view: nil, whatever the unit.
-        let none = TestView::default();
+        let mut none = TestView::default();
         assert_eq!(
-            s.with_live(&none, |s| s
+            s.with_live(&mut none, |s| s
                 .eval::<String>("return tostring(IsQuestLogSpecialItemInRange(2, 'pet'))")
                 .unwrap()),
             "nil"

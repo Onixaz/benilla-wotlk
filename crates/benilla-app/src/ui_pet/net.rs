@@ -32,23 +32,131 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PetUnlearnedSpell, on_spell_line)
         .net_handler(K::PetRenameable, on_renameable)
         .net_handler(K::PetGuids, on_guids)
-        .net_handler(K::Disconnected, on_session_end);
+        .net_handler(K::Disconnected, on_session_end)
+        .net_handler(K::LoggedOut, on_left_world);
 }
 
-/// A lost socket sends no zero-guid `SMSG_PET_SPELLS`, so the session end resets the bar itself.
-fn on_session_end(In(_): In<SessionEvent>, mut bar: ResMut<PetBar>) {
-    bar.clear();
-}
-
-fn on_spells(In(ev): In<SessionEvent>, catalog: Option<Res<Spells>>, mut bar: ResMut<PetBar>) {
-    if let SessionEvent::PetSpells(spells) = ev {
-        pet_spells(*spells, catalog.as_deref(), &mut bar);
+/// Leaving the world drops the possess spell as the world leave's pet part does (`0x5d3360`),
+/// and a world entry's lookup not yet run.
+fn on_left_world(
+    In(ev): In<SessionEvent>,
+    mut possess: ResMut<super::possess::PossessSpell>,
+    owed: Option<ResMut<super::possess::PossessLookupOwed>>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+) {
+    if let SessionEvent::LoggedOut = ev {
+        drop_possess(&mut possess, ui);
+        if let Some(mut owed) = owed {
+            owed.0 = false;
+        }
     }
 }
 
-fn on_mode(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>) {
+/// A lost socket sends no zero-guid `SMSG_PET_SPELLS`, so the session end resets the bar itself.
+fn on_session_end(
+    In(_): In<SessionEvent>,
+    mut bar: ResMut<PetBar>,
+    mut list: ResMut<super::PetList>,
+    mut possess: ResMut<super::possess::PossessSpell>,
+    owed: Option<ResMut<super::possess::PossessLookupOwed>>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+) {
+    bar.clear();
+    list.0.clear();
+    drop_possess(&mut possess, ui);
+    if let Some(mut owed) = owed {
+        owed.0 = false;
+    }
+}
+
+/// The world leave's possess zero (`0x5d3360`), firing `UPDATE_BONUS_ACTIONBAR` when one was held.
+fn drop_possess(
+    possess: &mut super::possess::PossessSpell,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+) {
+    match ui {
+        Some(mut ui) => super::possess::set_possess_spell(possess, 0, &mut ui),
+        None => possess.0 = 0,
+    }
+}
+
+fn on_spells(
+    In(ev): In<SessionEvent>,
+    catalog: Option<Res<Spells>>,
+    mut bar: ResMut<PetBar>,
+    mut list: ResMut<super::PetList>,
+    mut possess: ResMut<super::possess::PossessSpell>,
+    combat: PetCombat,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    if let SessionEvent::PetSpells(spells) = ev {
+        let changed = pet_spells(*spells, catalog.as_deref(), &mut bar, &mut list);
+        let in_combat = combat.in_combat(bar.spells.pet_guid);
+        set_pet_tail(changed, &mut bar, &mut possess, in_combat, &mut ui);
+        // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`,
+        // `0x53ceae`).
+        ui.fire("SPELLS_CHANGED", Vec::new());
+    }
+}
+
+/// The held pet's combat test (`0x71afb0`): `UNIT_FIELD_FLAGS` `0x800`, or an auto-attack running.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct PetCombat<'w, 's> {
+    index: Option<Res<'w, GuidIndex>>,
+    units: Query<
+        'w,
+        's,
+        (
+            &'static crate::net::ObjectStore,
+            Option<&'static crate::creature_anim::Engaged>,
+        ),
+    >,
+}
+
+impl PetCombat<'_, '_> {
+    /// `None` when `guid` names no held unit (`0x5d6a6d`), else whether it is in combat.
+    pub(crate) fn in_combat(&self, guid: u64) -> Option<bool> {
+        let &e = self.index.as_ref()?.0.get(&guid)?;
+        let (store, engaged) = self.units.get(e).ok()?;
+        store.0.is_unit().then(|| {
+            store.0.unit_flags() & super::unit::UNIT_FLAG_PET_IN_COMBAT != 0 || engaged.is_some()
+        })
+    }
+}
+
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6ad2`). A new guid drops the possess bar latch and the
+/// attacking global (`0x5d6a3c`, `0x5d6a42`), the global then takes the held pet's combat test
+/// (`0x5d6a80`), and `UNIT_PET` fires with the token pushed ahead (`0x5d6aca`); every call then
+/// runs the temporary bar's update, which ends in `PET_BAR_UPDATE` (`0x5d6ad2` -> `0x5d4c1b`).
+pub(crate) fn set_pet_tail(
+    changed: bool,
+    bar: &mut PetBar,
+    possess: &mut super::possess::PossessSpell,
+    in_combat: Option<bool>,
+    ui: &mut crate::ui_script::live::UiEvents,
+) {
+    if changed {
+        possess.1 = false;
+        bar.attacking = bar.spells.pet_guid != 0 && in_combat.unwrap_or(false);
+        ui.world(super::unit::push_pet_token);
+        ui.fire(
+            "UNIT_PET",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+    }
+    ui.world(super::temp_bar::update_pet_temp_bar_step);
+}
+
+fn on_mode(
+    In(ev): In<SessionEvent>,
+    mut bar: ResMut<PetBar>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
     if let SessionEvent::PetMode(mode) = ev {
-        pet_mode(mode, &mut bar);
+        if pet_mode(mode, &mut bar) {
+            // `PET_BAR_UPDATE` whatever changed (`0x5d3689`).
+            ui.fire("PET_BAR_UPDATE", Vec::new());
+        }
     }
 }
 
@@ -77,6 +185,7 @@ fn on_cast_failed(
     mut errors: ResMut<CastErrors>,
     mut bar: ResMut<super::PetBar>,
     mut ends: PetCastEnd,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetCastFailed {
         cast_count,
@@ -87,8 +196,10 @@ fn on_cast_failed(
     } = ev
     {
         bar.pending_cast = None;
-        // The start cooldown the press armed clears, then the pet bar refreshes (`0x806d41`).
+        // The start cooldown the press armed clears, then the pet bar's flush alone (`0x806d41`,
+        // `0x806d46`).
         bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
+        ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
         ends.end(spell_id, cast_count, wire_reason);
     }
@@ -214,31 +325,35 @@ fn on_renameable(In(ev): In<SessionEvent>, mut renameable: ResMut<super::PetRena
     }
 }
 
-fn on_guids(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>) {
+fn on_guids(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>, mut list: ResMut<super::PetList>) {
     if let SessionEvent::PetGuids(guids) = ev {
-        pet_guids(guids, &mut bar);
+        pet_guids(guids, &mut bar, &mut list);
     }
 }
 
 /// `SMSG_PET_SPELLS`: replace the whole bar and reseed the pet's cooldowns from its tail. A zero
 /// guid is the teardown (`Player::RemovePetActionBar`), cooldowns included.
-fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
+fn pet_spells(
+    spells: PetSpells,
+    catalog: Option<&Spells>,
+    bar: &mut PetBar,
+    list: &mut super::PetList,
+) -> bool {
+    // The setter compares the guid it caches (`0x5d690f`).
+    let changed = bar.spells.pet_guid != spells.pet_guid;
     if spells.pet_guid == 0 {
         if bar.spells.pet_guid != 0 {
             debug!("net: pet bar torn down");
         }
         bar.clear();
-        return;
-    }
-    // A new pet guid clears the attack latch; a re-send from the same pet keeps it.
-    if bar.spells.pet_guid != spells.pet_guid {
-        bar.attacking = false;
+        list.0.clear();
+        return changed;
     }
     // The pet setter (`0x5d6900`): a listed guid moves to the head, swapping places with it; an
     // unlisted one becomes the whole list.
-    match bar.pets.iter().position(|&g| g == spells.pet_guid) {
-        Some(i) => bar.pets.swap(0, i),
-        None => bar.pets = vec![spells.pet_guid],
+    match list.0.iter().position(|&g| g == spells.pet_guid) {
+        Some(i) => list.0.swap(0, i),
+        None => list.0 = vec![spells.pet_guid],
     }
     debug!(
         "net: pet bar for {:#x} — react {} command {} {}, {} known spell(s), {} cooldown(s)",
@@ -300,18 +415,16 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
         bar.cooldowns.seed_pet(cd, display, now);
     }
     bar.spells = spells;
-    // The pet setter ends in a `PET_BAR_UPDATE` signal (event `0x161`) on every packet, whatever
-    // changed: the one repaint a packet that moves only the pet's cooldowns gets.
-    bar.bar_signals = bar.bar_signals.wrapping_add(1);
+    changed
 }
 
 /// `SMSG_PET_GUIDS` (`0x5d6550`): the list replaced whole, with no event. Every pet verb reads the
 /// list's head (`0x5d3390` with index 0), so the head is the bar's guid; an empty list is no pet
 /// while the bar's words stay for the next `SMSG_PET_SPELLS`.
-fn pet_guids(guids: Vec<u64>, bar: &mut PetBar) {
+fn pet_guids(guids: Vec<u64>, bar: &mut PetBar, list: &mut super::PetList) {
     debug!("net: pet guids {guids:x?}");
     bar.spells.pet_guid = guids.first().copied().unwrap_or(0);
-    bar.pets = guids;
+    list.0 = guids;
 }
 
 /// `Attributes & 0x10`, which picks `ERR_PET_LEARN_ABILITY_S` over the spell line (`0x5d4d62`).
@@ -337,16 +450,16 @@ fn pet_spell_line(
     errors.0.push(UiError::s(key, display.ranked_name()));
 }
 
-/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names.
-fn pet_mode(mode: PetMode, bar: &mut PetBar) {
+/// `SMSG_PET_MODE`: the state word alone, applied only to the bar of the pet it names; whether it
+/// applied.
+fn pet_mode(mode: PetMode, bar: &mut PetBar) -> bool {
     if bar.spells.pet_guid == 0 || bar.spells.pet_guid != mode.pet_guid {
-        return;
+        return false;
     }
     debug!("net: pet mode — state {:#010x}", mode.state);
-    // The whole dword, as the client stores both packets' state, and `PET_BAR_UPDATE` whatever
-    // changed (`0x5d3689`).
+    // The whole dword, as the client stores both packets' state.
     bar.spells.state = mode.state;
-    bar.bar_signals = bar.bar_signals.wrapping_add(1);
+    true
 }
 
 /// `SMSG_PET_ACTION_FEEDBACK`: a refused order's reason byte, onto the red line; `helpful` is
@@ -462,10 +575,11 @@ mod tests {
     #[test]
     fn a_zero_guid_tears_the_whole_bar_down() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         assert_eq!(bar.spells.pet_guid, 0x2A);
 
-        pet_spells(PetSpells::default(), None, &mut bar);
+        pet_spells(PetSpells::default(), None, &mut bar, &mut list);
         assert_eq!(bar.spells, PetSpells::default());
         assert!(!bar.has_bar());
     }
@@ -475,27 +589,29 @@ mod tests {
     #[test]
     fn each_pet_packet_rearms_or_clears_the_expiry() {
         let mut bar = PetBar::default();
+        let mut list = super::super::PetList::default();
         let mut charm = a_bar(0x2A);
         charm.duration_ms = 60_000;
         let before = Instant::now();
-        pet_spells(charm.clone(), None, &mut bar);
+        pet_spells(charm.clone(), None, &mut bar, &mut list);
         let left = bar.expires.expect("armed").duration_since(before);
         assert!(
             left >= std::time::Duration::from_secs(60) && left < std::time::Duration::from_secs(61)
         );
 
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         assert_eq!(bar.expires, None, "a 0 duration clears it");
-        pet_spells(charm, None, &mut bar);
+        pet_spells(charm, None, &mut bar, &mut list);
         assert!(bar.expires.is_some());
-        pet_spells(PetSpells::default(), None, &mut bar);
+        pet_spells(PetSpells::default(), None, &mut bar, &mut list);
         assert_eq!(bar.expires, None, "the teardown clears it");
     }
 
     #[test]
     fn pet_mode_only_writes_its_own_bar() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
 
         pet_mode(
             PetMode {
@@ -518,18 +634,28 @@ mod tests {
         assert_eq!(bar.spells.bar[0].action(), PET_COMMAND_ATTACK);
     }
 
-    /// The client's pet-guid writer clears the latch only on a change.
+    /// The setter's tail writes the attacking global only on a new guid (`0x5d6a42`), then from
+    /// the new pet's combat test (`0x5d6a80`); every packet runs the temporary bar's update.
     #[test]
     fn the_attack_latch_survives_a_resend_and_dies_on_a_new_pet() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        let mut list = super::super::PetList::default();
+        let mut possess = super::super::possess::PossessSpell::default();
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let mut set = |bar: &mut PetBar, guid, in_combat| {
+            let changed = pet_spells(a_bar(guid), None, bar, &mut list);
+            set_pet_tail(changed, bar, &mut possess, in_combat, &mut ui);
+        };
+        set(&mut bar, 0x2A, None);
         bar.attacking = true;
 
-        pet_spells(a_bar(0x2A), None, &mut bar);
+        set(&mut bar, 0x2A, Some(false));
         assert!(bar.attacking, "the same pet re-sending keeps its attack");
 
-        pet_spells(a_bar(0x99), None, &mut bar);
+        set(&mut bar, 0x99, None);
         assert!(!bar.attacking, "a different pet is not attacking");
+        set(&mut bar, 0x2A, Some(true));
+        assert!(bar.attacking, "a new pet in combat starts attacking");
     }
 
     fn catalog() -> Spells {
@@ -583,24 +709,25 @@ mod tests {
     #[test]
     fn the_pet_list_follows_the_setter_and_the_guid_packet() {
         let mut bar = PetBar::default();
-        pet_spells(a_bar(0x2A), None, &mut bar);
-        assert_eq!(bar.pets, [0x2A]);
+        let mut list = super::super::PetList::default();
+        pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
+        assert_eq!(list.0, [0x2A]);
 
-        pet_guids(vec![0x2A, 0x99, 0x77], &mut bar);
+        pet_guids(vec![0x2A, 0x99, 0x77], &mut bar, &mut list);
         assert_eq!(bar.spells.pet_guid, 0x2A);
-        pet_spells(a_bar(0x77), None, &mut bar);
-        assert_eq!(bar.pets, [0x77, 0x99, 0x2A], "a swap with the head");
-        pet_spells(a_bar(0x55), None, &mut bar);
-        assert_eq!(bar.pets, [0x55]);
+        pet_spells(a_bar(0x77), None, &mut bar, &mut list);
+        assert_eq!(list.0, [0x77, 0x99, 0x2A], "a swap with the head");
+        pet_spells(a_bar(0x55), None, &mut bar, &mut list);
+        assert_eq!(list.0, [0x55]);
 
-        pet_guids(vec![0x99], &mut bar);
+        pet_guids(vec![0x99], &mut bar, &mut list);
         assert_eq!(bar.spells.pet_guid, 0x99, "the head is the pet");
-        pet_guids(Vec::new(), &mut bar);
+        pet_guids(Vec::new(), &mut bar, &mut list);
         assert!(!bar.has_bar(), "an empty list is no pet");
         assert!(!bar.spells.bar[0].is_empty(), "the words stay");
 
-        pet_spells(PetSpells::default(), None, &mut bar);
-        assert!(bar.pets.is_empty());
+        pet_spells(PetSpells::default(), None, &mut bar, &mut list);
+        assert!(list.0.is_empty());
     }
 
     #[test]
@@ -634,13 +761,15 @@ mod tests {
             pet_guid,
             state: 0x0100,
         };
-        pet_mode(mode(0xF14), &mut bar);
-        let first = bar.bar_signals;
-        pet_mode(mode(0xF14), &mut bar);
-        assert_ne!(bar.bar_signals, first, "the same state signals again");
-        let before = bar.bar_signals;
-        pet_mode(mode(0xABC), &mut bar);
-        assert_eq!(bar.bar_signals, before, "another pet's mode is not ours");
+        assert!(pet_mode(mode(0xF14), &mut bar));
+        assert!(
+            pet_mode(mode(0xF14), &mut bar),
+            "the same state signals again"
+        );
+        assert!(
+            !pet_mode(mode(0xABC), &mut bar),
+            "another pet's mode is not ours"
+        );
     }
 
     #[test]

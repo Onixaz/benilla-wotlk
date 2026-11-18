@@ -2,6 +2,7 @@
 //! frame through the real hit paths. All drive `UnitPopup.lua`; a chat name goes through
 //! `SetItemRef`'s player branch to the FRIEND dropdown in `FriendsFrame.xml`.
 
+use super::test_live::PetAnswersExt;
 use benilla_ui::script::{FollowRequest, PartyRequest, UiScript, UnitState};
 
 use super::test_ui::load_ui as load_xml;

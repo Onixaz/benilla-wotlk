@@ -38,7 +38,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_chat::feed::feed_chat",
     "benilla_app::ui_chat::feed::played_time_bridge",
     "benilla_app::ui_chat::net::feed_channel_roster_names",
-    "benilla_app::ui_companion::feed_companions",
     "benilla_app::ui_currency::feed_currencies",
     "benilla_app::ui_dialog_verbs::feed_dialog_verbs",
     "benilla_app::ui_dressup::feed_dressup",
@@ -76,15 +75,10 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_party::difficulty::feed_menu_gates",
     "benilla_app::ui_party::feed::feed_marks",
     "benilla_app::ui_party::feed::feed_party",
-    "benilla_app::ui_pet::bar::feed_pet_bar",
-    "benilla_app::ui_pet::bar::fire_pet_cooldown_events",
-    "benilla_app::ui_pet::menu::feed_pet_menu",
-    "benilla_app::ui_pet::possess::feed_possess_spell",
-    "benilla_app::ui_pet::temp_bar::update_pet_temp_bar",
+    // The `"pet"` token's per-field fan-out, the units' (#1289).
     "benilla_app::ui_pet::unit::feed_pet_unit",
-    "benilla_app::ui_pet_book::feed_pet_book",
+    // The pet page's stat fan-out under `"pet"`, the units' (#1289).
     "benilla_app::ui_pet_doll::feed_pet_doll",
-    "benilla_app::ui_pet_stats::feed_pet_stats",
     "benilla_app::ui_petition::feed::feed_petition",
     "benilla_app::ui_reputation::feed_reputation",
     "benilla_app::ui_rune::feed_runes",
@@ -95,7 +89,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_socket::feed_refunds",
     "benilla_app::ui_spell_info::feed_spell_info",
     "benilla_app::ui_spellbook::feed_spellbook",
-    "benilla_app::ui_stable::feed_stable",
     "benilla_app::ui_tabard::feed_tabard",
     "benilla_app::ui_talent::feed_inspect_talents",
     "benilla_app::ui_talent::feed_talents",
@@ -140,6 +133,10 @@ const KEPT: &[(&str, &str)] = &[
     (
         "benilla_app::death::update_corpse_distance",
         "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
+    ),
+    (
+        "benilla_app::ui_pet_doll::sync_pet_booth",
+        "rendering, no event: 12340's model frame reads its facing and model on every frame render (0x960240), the facing its rotate buttons write (0x9606e0)",
     ),
 ];
 

@@ -69,6 +69,24 @@ pub(crate) fn npc_switched(prev: Option<u64>, now: Option<u64>) -> bool {
     matches!((prev, now), (Some(a), Some(b)) if a != b)
 }
 
+/// Whether `npc` is out of the leash or gone; `None` with no self player to measure from.
+pub(crate) fn npc_out_of_range(
+    npc: u64,
+    index: &GuidIndex,
+    self_q: &Query<&Transform, With<SelfPlayer>>,
+    transforms: &Query<&Transform>,
+) -> Option<bool> {
+    let self_tf = self_q.iter().next()?;
+    // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's
+    // compare.
+    Some(
+        match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
+            Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
+            None => true, // the NPC despawned out from under the window
+        },
+    )
+}
+
 /// Close `T`'s open session when the player leaves the leash or the NPC despawns.
 pub(crate) fn close_npc_session_out_of_range<T: NpcSession + Resource>(
     mut session: ResMut<T>,
@@ -77,32 +95,16 @@ pub(crate) fn close_npc_session_out_of_range<T: NpcSession + Resource>(
     transforms: Query<&Transform>,
 ) {
     let Some(npc) = session.npc() else { return };
-    if session_out_of_range(npc, &index, &self_q, &transforms) {
+    if npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true) {
         debug!("ui_session: NPC {npc:#x} out of range/gone — client-side close");
         session.close();
-    }
-}
-
-/// Whether a window latched on `npc` is past its leash or its NPC despawned; centre to centre with no bounding radii, `dist² <= leash²` keeping, as the reference compares.
-pub(crate) fn session_out_of_range(
-    npc: u64,
-    index: &GuidIndex,
-    self_q: &Query<&Transform, With<SelfPlayer>>,
-    transforms: &Query<&Transform>,
-) -> bool {
-    let Some(self_tf) = self_q.iter().next() else {
-        return false;
-    };
-    match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
-        Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
-        None => true,
     }
 }
 
 /// The windows the interaction close `0x512e60` walks, in its order; trade, the item text, the mail
 /// and the guild bank close by their own paths.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct InteractWindows<'w> {
+pub(crate) struct InteractWindows<'w, 's> {
     gossip: Option<ResMut<'w, crate::ui_gossip::GossipState>>,
     quest: Option<NonSendMut<'w, crate::ui_quest::QuestGiver>>,
     merchant: Option<ResMut<'w, crate::ui_merchant::MerchantOpen>>,
@@ -112,7 +114,9 @@ pub(crate) struct InteractWindows<'w> {
     registrar: Option<ResMut<'w, crate::ui_petition::GuildRegistrarState>>,
     tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
     auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
+    /// Its close fires its event in turn, once the closing system's commands apply.
     stable: Option<ResMut<'w, crate::ui_stable::StableOpen>>,
+    queue: Commands<'w, 's>,
     petition_vendor: Option<ResMut<'w, crate::ui_petition::PetitionVendorState>>,
     battlemaster: Option<ResMut<'w, crate::ui_battlefield::Battlefield>>,
 }
@@ -126,11 +130,12 @@ const BANK_WINDOW: usize = 5;
 /// [`InteractWindows`]' count; the gossip menu is first.
 const INTERACT_WINDOWS: usize = 12;
 
-impl InteractWindows<'_> {
+impl InteractWindows<'_, '_> {
     fn npcs(&self) -> [Option<u64>; INTERACT_WINDOWS] {
         fn npc<T: NpcSession>(s: &Option<impl std::ops::Deref<Target = T>>) -> Option<u64> {
             s.as_ref().and_then(|s| s.npc())
         }
+        let stable = npc(&self.stable);
         [
             npc(&self.gossip),
             npc(&self.quest),
@@ -141,7 +146,7 @@ impl InteractWindows<'_> {
             npc(&self.registrar),
             npc(&self.tabard),
             npc(&self.auction),
-            npc(&self.stable),
+            stable,
             npc(&self.petition_vendor),
             npc(&self.battlemaster),
         ]
@@ -164,7 +169,11 @@ impl InteractWindows<'_> {
             6 => close(&mut self.registrar),
             7 => close(&mut self.tabard),
             8 => close(&mut self.auction),
-            9 => close(&mut self.stable),
+            9 => {
+                if self.stable.as_deref_mut().is_some_and(|s| s.close()) {
+                    self.queue.queue(crate::ui_stable::fire_closed);
+                }
+            }
             10 => close(&mut self.petition_vendor),
             _ => close(&mut self.battlemaster),
         }

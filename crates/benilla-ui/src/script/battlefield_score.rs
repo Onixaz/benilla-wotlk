@@ -596,8 +596,8 @@ mod tests {
     #[test]
     fn rows_sort_by_kills_then_deaths_then_honor_then_name() {
         let mut s = UiScript::new().unwrap();
-        let view = view();
-        s.with_live(&view, |s| {
+        let mut view = view();
+        s.with_live(&mut view, |s| {
             s.set_battlefield_log(log());
             s.rebuild_battlefield_scores();
             assert_eq!(
@@ -634,7 +634,7 @@ mod tests {
     fn a_log_with_names_pending_holds_its_rows_in_wire_order() {
         let mut s = UiScript::new().unwrap();
         let mut view = view();
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             s.set_battlefield_log(BattlefieldScores {
                 rows: vec![row(9, 1, 0, 0)],
                 ..Default::default()
@@ -643,7 +643,7 @@ mod tests {
         });
         view.names.remove(&3);
         view.pending = true;
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             s.set_battlefield_log(log());
             s.rebuild_battlefield_scores();
             assert_eq!(
@@ -666,7 +666,7 @@ mod tests {
         });
         view.names.insert(3, name("Aye", 1));
         view.pending = false;
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             s.rebuild_battlefield_scores();
             assert_eq!(
                 s.eval::<i64>("return GetNumBattlefieldScores()").unwrap(),
@@ -685,11 +685,11 @@ mod tests {
     #[test]
     fn an_arena_keeps_the_wire_team() {
         let mut s = UiScript::new().unwrap();
-        let view = View {
+        let mut view = View {
             instance_type: crate::script::INSTANCE_TYPE_ARENA,
             ..view()
         };
-        s.with_live(&view, |s| {
+        s.with_live(&mut view, |s| {
             let mut log = log();
             log.rows[1].faction = 1;
             s.set_battlefield_log(log);

@@ -200,7 +200,10 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
-pub use live::{read_live, write_live, LiveLoan, LiveState};
+pub use live::{
+    owner_write, read_live, shared_read, write_live, LiveLoan, LiveState, OwnerWrite, SharedRead,
+    ViewRef,
+};
 mod loot;
 mod loot_roll;
 mod lua51;
@@ -451,7 +454,7 @@ pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};
 pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
-pub use pet::{PetActionView, PetStats, PossessView};
+pub use pet::{PetActionView, PetBarLive, PetStats, PossessView};
 pub use pvp::{
     pvp_name_global_keys, HonorState, InspectArenaTeamWords, InspectHonorData, RankTitle,
     PLAYER_FLAGS_PVP_TIMER,
@@ -482,7 +485,9 @@ pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffec
 pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
 };
-pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
+pub use stable::{
+    StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,
+};
 pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };

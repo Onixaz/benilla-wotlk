@@ -826,9 +826,10 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), duel (`0x528d23`), battlefield (`0x528d46`) and interaction close (`0x528dce`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
+    crate::ui_pet::possess::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
         duel.leave_world();
     }
@@ -838,7 +839,8 @@ pub(crate) fn leave_world(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.write(UiScript::leave_battlefield_world);
     }
-    // The interaction close's bank leg, after the battlefield part.
+    crate::ui_stable::leave_world(world);
+    // The interaction close's bank leg, after the stable part.
     crate::ui_bank::close_by_interaction(world);
     crate::ui_script::live::fire_handler_events(world);
 }
@@ -851,6 +853,7 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         }
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
+        crate::ui_stable::enter_world(world);
         if world.contains_resource::<NetCommands>()
             && world.contains_resource::<StatusRequestOwed>()
         {

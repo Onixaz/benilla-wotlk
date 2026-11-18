@@ -91,25 +91,37 @@ fn assign(slots: &mut [u32], target: usize, source: u32, passive: bool) -> Optio
     })
 }
 
+/// The pet bar as one `PickupPetAction` call reads it: the bar-wide state and the ten slots, both
+/// read live at the call's start (`0x5d6020` reads the words in place).
+struct BarRead {
+    bar: crate::script::pet::PetBarLive,
+    slots: Vec<crate::script::PetActionView>,
+}
+
 /// `PickupPetAction(slot)`, 1-based. A pet whose object does not resolve or is
 /// `UNIT_FLAG_POSSESSED` blocks both ends, the gate sitting above the cursor fork, so the cursor is
 /// left as it was. Another payload stays held here, where the reference clears it and picks the
-/// slot up. A pickup blanks only a spell slot, so a dragged token is copied, not moved.
-pub(super) fn pickup_pet_action(model: &mut Model, slot: u32) -> bool {
-    if !model.pet_bar.pickup_allowed {
-        return false;
+/// slot up. A pickup blanks only a spell slot, so a dragged token is copied, not moved. Returns
+/// whether it took or placed, and the bar write it made, for the caller to apply to the live bar.
+fn pickup_pet_action(
+    model: &mut Model,
+    read: &mut BarRead,
+    slot: u32,
+) -> (bool, Option<Vec<(u32, u32)>>) {
+    if !read.bar.pickup_allowed {
+        return (false, None);
     }
     match &model.cursor {
-        Some(CursorPayload::PetAction(_)) => return place_pet_action(model, slot),
-        Some(_) => return false,
+        Some(CursorPayload::PetAction(_)) => return place_pet_action(model, read, slot),
+        Some(_) => return (false, None),
         None => {}
     }
-    let Some(index) = slot_index(model, slot) else {
-        return false;
+    let Some(index) = slot_index(read, slot) else {
+        return (false, None);
     };
-    let view = model.pet_bar.slots[index].view.clone();
+    let view = read.slots[index].clone();
     let Some(packed) = payload_word(view.packed) else {
-        return false;
+        return (false, None);
     };
 
     model.cursor = Some(CursorPayload::PetAction(CursorPetAction {
@@ -120,30 +132,37 @@ pub(super) fn pickup_pet_action(model: &mut Model, slot: u32) -> bool {
     }));
     // A spell slot keeps its type and autocast bits with id 0, and the server is told. `false` is
     // right: the passive gate reads the source's spell record, and id 0 has none.
-    if kind(packed) == 1 {
-        write_slot(model, index, packed & 0xFFFF_0000, false);
-    }
+    let written = if kind(packed) == 1 {
+        write_slot(model, read, index, packed & 0xFFFF_0000, false).map(|(_, entries)| entries)
+    } else {
+        None
+    };
     queue_cursor_update(model);
-    true
+    (true, written)
 }
 
 /// The drop: the cursor always empties, and only a homeless occupant refills it. Returns whether
-/// anything was written; the cursor empties on `false` too.
-fn place_pet_action(model: &mut Model, slot: u32) -> bool {
+/// anything was written, and the write; the cursor empties on `false` too.
+fn place_pet_action(
+    model: &mut Model,
+    read: &mut BarRead,
+    slot: u32,
+) -> (bool, Option<Vec<(u32, u32)>>) {
     let Some(CursorPayload::PetAction(held)) = model.cursor.clone() else {
-        return false;
+        return (false, None);
     };
     // `ClearCursor(1,1)`, unconditionally, before anything is decided.
     model.cursor = None;
-    let Some(index) = slot_index(model, slot) else {
+    let Some(index) = slot_index(read, slot) else {
         queue_cursor_update(model);
-        return false;
+        return (false, None);
     };
     // Read before the write: a displaced word's passive bit and icon are its slot's.
-    let occupant_view = model.pet_bar.slots[index].view.clone();
-    let Some(assigned) = write_slot(model, index, held.packed, held.passive) else {
+    let occupant_view = read.slots[index].clone();
+    let Some((assigned, entries)) = write_slot(model, read, index, held.packed, held.passive)
+    else {
         queue_cursor_update(model);
-        return false;
+        return (false, None);
     };
 
     model.cursor = assigned.displaced.map(|packed| {
@@ -155,27 +174,32 @@ fn place_pet_action(model: &mut Model, slot: u32) -> bool {
         })
     });
     queue_cursor_update(model);
-    true
+    (true, Some(entries))
 }
 
 /// The 0-based index of a 1-based slot on a bar that exists.
-fn slot_index(model: &Model, slot: u32) -> Option<usize> {
-    if !model.pet_bar.has_bar || slot == 0 || slot > PET_SLOTS {
+fn slot_index(read: &BarRead, slot: u32) -> Option<usize> {
+    if !read.bar.has_bar || slot == 0 || slot > PET_SLOTS {
         return None;
     }
     let index = slot as usize - 1;
-    (index < model.pet_bar.slots.len()).then_some(index)
+    (index < read.slots.len()).then_some(index)
 }
 
-/// Run [`assign`] on the engine's optimistic mirror of the ten words and queue the send; the
-/// pickup's blank goes through it too, as in the reference. The reference takes its send flag from
-/// both callers as 1, which makes it ask before anything else; the app's answer, the one the bar's
-/// `GetPetActionsUsable` reads, is `PetBarState::actions_usable`.
-fn write_slot(model: &mut Model, target: usize, source: u32, passive: bool) -> Option<Assigned> {
-    if !model.pet_bar.actions_usable {
+/// Run [`assign`] on the ten words as read and queue the send; the pickup's blank goes through it
+/// too, as in the reference. The reference takes its send flag from both callers as 1, which makes
+/// it ask the usability predicate before anything else (`0x5d5af5`).
+fn write_slot(
+    model: &mut Model,
+    read: &mut BarRead,
+    target: usize,
+    source: u32,
+    passive: bool,
+) -> Option<(Assigned, Vec<(u32, u32)>)> {
+    if !read.bar.actions_usable {
         return None;
     }
-    let mut words: Vec<u32> = model.pet_bar.slots.iter().map(|s| s.view.packed).collect();
+    let mut words: Vec<u32> = read.slots.iter().map(|s| s.packed).collect();
     let assigned = assign(&mut words, target, source, passive)?;
 
     // One `CMSG_PET_SET_ACTION`: the relocation pair first whenever there was one, changed or not,
@@ -185,12 +209,12 @@ fn write_slot(model: &mut Model, target: usize, source: u32, passive: bool) -> O
         entries.push((j as u32, words[j]));
     }
     entries.push((target as u32, words[target]));
-    model.pet_set_actions.push(entries);
+    model.pet_set_actions.push(entries.clone());
 
     for (i, word) in words.into_iter().enumerate() {
-        model.pet_bar.slots[i].view.packed = word;
+        read.slots[i].packed = word;
     }
-    Some(assigned)
+    Some((assigned, entries))
 }
 
 /// A token's texture is a global's name (`GetPetActionInfo`), which the bar resolves with
@@ -220,10 +244,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "PickupPetAction",
         lua.create_function(|lua, slot: u32| {
-            let took = {
-                let mut model = crate::script::model_mut_of(lua);
-                pickup_pet_action(&mut model, slot)
+            let mut read = BarRead {
+                bar: crate::script::pet::live_bar(),
+                slots: (1..=PET_SLOTS)
+                    .map_while(|i| crate::script::pet::live_slot(lua, i))
+                    .collect(),
             };
+            let (took, written) = {
+                let mut model = crate::script::model_mut_of(lua);
+                pickup_pet_action(&mut model, &mut read, slot)
+            };
+            // The write lands in the pet's words inside the call and signals the bar there (the
+            // pickup's `0x5d5ce6`, the drop's `0x5d6257`), so a verb after it reads the new bar.
+            if let Some(entries) = written {
+                crate::script::live::write_live(|l| l.pet_place_action(&entries));
+                crate::script::tick::fire_event_into(lua, "PET_BAR_UPDATE", Vec::new());
+            }
             // Both the pickup and a drop's displaced occupant can put a token on the cursor.
             resolve_token_icon(lua);
             Ok(took)
@@ -330,15 +366,18 @@ mod tests {
         ]
     }
 
-    fn bar_script() -> UiScript {
-        let mut s = UiScript::new().unwrap();
-        s.set_pet_actions(true, true, true, hunter_bar());
-        s
+    fn bar_script() -> (
+        UiScript,
+        crate::script::LiveLoan<crate::script::live::TestView>,
+    ) {
+        let s = UiScript::new().unwrap();
+        let pets = crate::script::live::lend_pets(true, true, true, hunter_bar());
+        (s, pets)
     }
 
     #[test]
     fn picking_up_a_spell_blanks_its_slot_and_sends() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         assert!(s.eval::<bool>("return PickupPetAction(4)").unwrap());
         assert!(
             matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c)) if c.src_slot == 4),
@@ -354,8 +393,8 @@ mod tests {
 
     #[test]
     fn a_dragged_token_carries_a_resolved_icon_path() {
-        let mut s = UiScript::new().unwrap();
-        s.set_pet_actions(true, true, true, hunter_bar());
+        let s = UiScript::new().unwrap();
+        let _pets = crate::script::live::lend_pets(true, true, true, hunter_bar());
         s.run(r#"PET_ATTACK_TEXTURE = "Interface\\Icons\\Ability_GhoulFrenzy""#)
             .unwrap();
 
@@ -385,7 +424,7 @@ mod tests {
     #[test]
     fn an_unusable_bar_writes_nothing_at_either_end() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_actions(true, false, true, hunter_bar());
+        let _pets = crate::script::live::lend_pets(true, false, true, hunter_bar());
 
         assert!(s.eval::<bool>("return PickupPetAction(4)").unwrap());
         assert!(
@@ -427,7 +466,7 @@ mod tests {
     /// The same bar made usable takes the same two writes, which is what the test above stops.
     #[test]
     fn a_usable_bar_takes_both_writes() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
         assert_eq!(
             s.take_pet_set_actions().len(),
@@ -438,7 +477,7 @@ mod tests {
 
     #[test]
     fn picking_up_a_token_leaves_the_slot_alone() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         assert!(s.eval::<bool>("return PickupPetAction(1)").unwrap());
         assert!(
             s.take_pet_set_actions().is_empty(),
@@ -448,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_drag_between_two_spell_slots_sends_twice_and_carries_the_occupant() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
         assert_eq!(
             s.take_pet_set_actions(),
@@ -465,7 +504,7 @@ mod tests {
     /// (vmangos `Server/Packets/Pet.cpp:56`).
     #[test]
     fn dropping_onto_a_token_relocates_it_in_one_send() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         s.run("PickupPetAction(4) PickupPetAction(1)").unwrap();
         let sends = s.take_pet_set_actions();
         assert_eq!(sends.len(), 2, "the pickup's blank, then the drop");
@@ -488,7 +527,7 @@ mod tests {
             passive: true,
             ..view(CLAW, "Claw")
         };
-        s.set_pet_actions(true, true, true, bar);
+        let _pets = crate::script::live::lend_pets(true, true, true, bar);
 
         s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
         assert_eq!(
@@ -504,7 +543,7 @@ mod tests {
 
     #[test]
     fn slot_eleven_is_refused_rather_than_written_past_the_array() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         assert!(!s.eval::<bool>("return PickupPetAction(11)").unwrap());
         assert!(!s.eval::<bool>("return PickupPetAction(0)").unwrap());
         assert!(s.take_pet_set_actions().is_empty());
@@ -515,14 +554,14 @@ mod tests {
     #[test]
     fn a_possessed_bar_takes_no_drag_at_all() {
         let mut s = UiScript::new().unwrap();
-        s.set_pet_actions(true, true, false, hunter_bar());
+        let _pets = crate::script::live::lend_pets(true, true, false, hunter_bar());
         assert!(!s.eval::<bool>("return PickupPetAction(4)").unwrap());
         assert!(s.take_pet_set_actions().is_empty());
     }
 
     #[test]
     fn the_pet_payload_and_the_action_bar_refuse_each_other() {
-        let mut s = bar_script();
+        let (mut s, _pets) = bar_script();
         s.set_action(
             1,
             Some(crate::script::ActionSlot {

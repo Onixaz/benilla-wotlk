@@ -207,14 +207,17 @@ fn territory_visible(realm_pvp: bool, zone_flags: u32) -> bool {
 
 /// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event.
 fn feed_zone_events(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPlace>,
+    ),
     world: benilla_world::world_point::WorldPoint,
     areas: Option<Res<AreaTableRes>>,
     factions: Option<Res<Factions>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
-    mut place: ResMut<PlayerPlace>,
+    mut place: crate::ui_script::OwnedMut<PlayerPlace>,
 ) {
     let (Some(mut script), Some(areas)) = (script, areas) else {
         return;
@@ -232,13 +235,16 @@ fn feed_zone_events(
     };
     let real_zone_text = areas.0.name(zone).unwrap_or_default().to_string();
     let indoor = world.area_interior().is_some();
-    place.set_if_neq(PlayerPlace {
+    let fresh = PlayerPlace {
         indoors: match world.area_interior_rows() {
             Some((_, group, _)) => group.is_none_or(|row| row.flags & 0x4 == 0),
             None => indoor,
         },
         flyable_area: leaf_row.flags & 0x400 != 0 && leaf_row.flags & 0x2000_0000 == 0,
-    });
+    };
+    if *place.read() != fresh {
+        *place.write() = fresh;
+    }
 
     // The outdoor texts the indoor naming starts from.
     let mut zone_text = real_zone_text.clone();
@@ -405,6 +411,8 @@ impl Plugin for AreaPlugin {
                 // After the leaf authority: leaf, indoor bit and names must come from one frame, as
                 // in the client's single-pass resolve, or a stale leaf fires a spurious splash.
                 feed_zone_events
+                    // The selection and the pet's words its lent view reads are the clicks'.
+                    .after(crate::target::TargetUpdate)
                     .after(crate::char_select::RealmEntrySet)
                     .after(crate::ui_script::UiInput)
                     .after(benilla_world::terrain_stream::AreaAuthoritySet),

@@ -191,10 +191,10 @@ impl super::UiScript {
         self.model_mut().known_spells.next_rank = next_rank;
     }
 
-    /// Replace the pet's book; the app fires `SPELLS_CHANGED`, which the reference fires for both
-    /// books off one re-sort.
-    pub fn set_pet_book(&mut self, state: PetBookState) {
-        set_field!(self, pet_book, state);
+    /// Answer `state` as the pet's book at every call, for the VM's own tests.
+    #[cfg(test)]
+    pub(crate) fn set_pet_book(&mut self, state: PetBookState) {
+        super::live::set_test_pet_book(state);
     }
 
     /// Take the `CastSpell(id, "pet")` calls out of the call stream as `(spell id, onSelf)`: each
@@ -318,19 +318,35 @@ fn slot_index(id: u32) -> Option<usize> {
     usize::try_from(id.checked_sub(1)?).ok()
 }
 
+/// The pet's book read at the call, empty with none lent.
+pub(super) fn live_pet_book(model: &Model) -> PetBookState {
+    let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+    super::read_live(|l| l.pet_book(anchor, ui_now))
+        .flatten()
+        .unwrap_or_default()
+}
+
 /// The slot a `bookType` binding reads. The reference forks on `isPet` between the pet's array and
 /// the player's in each binding and in `GameTooltip:SetSpell`, which shares this.
 pub(super) fn book_slot<'a>(
     model: &'a Model,
     id: u32,
     book_type: &str,
-) -> Option<&'a SpellSlotView> {
-    let slots = if is_pet_book(book_type) {
-        &model.pet_book.slots
+) -> Option<std::borrow::Cow<'a, SpellSlotView>> {
+    let index = slot_index(id)?;
+    if is_pet_book(book_type) {
+        live_pet_book(model)
+            .slots
+            .into_iter()
+            .nth(index)
+            .map(std::borrow::Cow::Owned)
     } else {
-        &model.spellbook.slots
-    };
-    slots.get(slot_index(id)?)
+        model
+            .spellbook
+            .slots
+            .get(index)
+            .map(std::borrow::Cow::Borrowed)
+    }
 }
 
 /// Resolve a spell by name against the player's book, for `CastSpellByName` and so `/cast`, whose
@@ -655,7 +671,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 let in_book = |slots: &[SpellSlotView]| slots.iter().any(|s| s.spell_id == id);
-                let pet = !in_book(&model.spellbook.slots) && in_book(&model.pet_book.slots);
+                let pet = !in_book(&model.spellbook.slots) && in_book(&live_pet_book(&model).slots);
                 Some((id, pet))
             } else {
                 // A slot past the book's spells reads spell 0, cold; only a name misses.
@@ -670,8 +686,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
+            let pet_book;
             let slots = if pet {
-                &model.pet_book.slots
+                pet_book = live_pet_book(&model);
+                &pet_book.slots
             } else {
                 &model.spellbook.slots
             };
@@ -758,11 +776,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let n = model.pet_book.slots.len();
+            let book = live_pet_book(&model);
+            let n = book.slots.len();
             if n == 0 {
                 return Ok(MultiValue::from_vec(vec![Value::Nil, Value::Nil]));
             }
-            let token = match &model.pet_book.token {
+            let token = match &book.token {
                 Some(t) => Value::String(lua.create_string(t)?),
                 None => Value::String(lua.create_string(PET_TOKEN_FALLBACK)?),
             };

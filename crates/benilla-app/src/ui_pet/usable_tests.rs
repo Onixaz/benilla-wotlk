@@ -205,12 +205,9 @@ fn effects(rig: &Rig, sent: Vec<ClientCommand>) -> Vec<&'static str> {
     out
 }
 
+/// `f` on the rig's VM with the world lent, as every call into Lua is.
 fn ui<R>(rig: &mut Rig, f: impl FnOnce(&mut benilla_ui::script::UiScript) -> R) -> R {
-    let mut script = rig
-        .app
-        .world_mut()
-        .non_send_resource_mut::<benilla_ui::script::UiScript>();
-    f(&mut script)
+    crate::ui_script::live::with_live_world(rig.app.world_mut(), f).expect("the rig's VM")
 }
 
 /// `GetPetActionsUsable()` as the Lua reads it after the feed ran.
@@ -337,10 +334,7 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
         let mut rig = scene();
         apply(&mut rig);
         rig.frame();
-        let (word, signals) = {
-            let bar = rig.app.world().resource::<PetBar>();
-            (bar.spells.spells[0], bar.bar_signals)
-        };
+        let word = rig.app.world().resource::<PetBar>().spells.spells[0];
 
         ui(&mut rig, |s| {
             s.run("ToggleSpellAutocast(1, BOOKTYPE_PET)").unwrap()
@@ -351,6 +345,7 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
             .expect("the drain runs");
 
         let sent = rig.sent();
+        let repainted = rig.frame().iter().any(|e| e == "PET_BAR_UPDATE");
         let bar = rig.app.world().resource::<PetBar>();
         assert_eq!(
             bar.spells.spells[0] != word,
@@ -358,9 +353,8 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
             "{name}: the book's word flips only when usable"
         );
         assert_eq!(
-            bar.bar_signals != signals,
-            usable,
-            "{name}: the bar repaints only when usable"
+            repainted, usable,
+            "{name}: the bar repaints only when usable (`0x5d5fe8`)"
         );
         assert_eq!(
             sent.iter()
@@ -522,9 +516,31 @@ fn with_stock_ui(rig: &mut Rig) {
     // The in-game UI loads on world entry, so a player exists.
     crate::ui_script::test_ui::load_stock_ui(&mut script);
     rig.app.world_mut().insert_non_send_resource(script);
-    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`), so the
-    // `"pet"` token's feed runs beside the bar's.
+    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`): our summon
+    // names the pet (`0x60acd0`), and the token's fan-out runs as the units' feed.
+    set_player(
+        rig,
+        &guid_pair(benilla_protocol::field::FIELD_UNIT_SUMMON, PET),
+    );
     rig.feed.add_systems(super::unit::feed_pet_unit);
+    // The bar arrives by its packet, whose setter fires `UNIT_PET` and `PET_BAR_UPDATE`.
+    let spells = std::mem::take(&mut rig.app.world_mut().resource_mut::<PetBar>().spells);
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::PetSpells(Box::new(spells))],
+    );
+}
+
+/// The pet's flags field moved: its unit watch fires `UNIT_FLAGS` for the `"pet"` token (#1266
+/// builds it from the values update), and the stock bar repaints off it, reading at that call.
+fn flags_moved(rig: &mut Rig) {
+    rig.feed.run(rig.app.world_mut());
+    ui(rig, |s| {
+        s.fire_event(
+            "UNIT_FLAGS",
+            vec![benilla_ui::script::ScriptValue::Str("pet".into())],
+        );
+    });
 }
 
 /// The feeds, then the VM's clock and layout, so the bar's slide and repaint have happened.
@@ -599,8 +615,8 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
     );
 
     set_pet(&mut rig, &[(FLAGS, 0x0004_0000)]);
+    flags_moved(&mut rig);
     settle(&mut rig);
-
     assert!(icon_is_grey(&mut rig, ICON), "a stunned pet's bar greys");
     let before = latched(&rig);
     click_first_button(&mut rig);
@@ -612,6 +628,7 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
 
     // The same click again once the stun ends.
     set_pet(&mut rig, &[]);
+    flags_moved(&mut rig);
     settle(&mut rig);
     assert!(!icon_is_grey(&mut rig, ICON));
     click_first_button(&mut rig);

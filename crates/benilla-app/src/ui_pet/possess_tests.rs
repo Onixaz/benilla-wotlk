@@ -1,28 +1,22 @@
-//! The possess spell `[0xc234e0]`: `FindPossessedSpell`'s aura walk (`0x5d62a0`), the two verbs'
-//! reads of its record, and the feed's triggers, whole client headless.
+//! The possess spell `[0xc234e0]`: the aura walk (`0x5d62a0`), the two verbs' reads of its
+//! record, and the handlers that look it up.
 
 use std::collections::HashMap;
-
-use bevy::prelude::*;
 
 use benilla_formats::{SpellCatalog, SpellDisplay, SummonPropertiesCatalog};
 use benilla_protocol::messages::{ObjectType, AURA_UPDATE_FLAG_HARMFUL};
 
-use crate::net::{FieldChanged, Guid, GuidIndex, ObjectStore, SelfGuid};
 use crate::unit_auras::UnitAuras;
 
-use super::possess::{feed_possess_spell, find_possessed_spell, possess_view};
+use super::possess::{find_possessed, find_possessed_spell, possess_view, PossessSpell};
 
 const ME: u64 = 0x19;
-const VICTIM: u64 = 0x2A;
 const MIND_CONTROL: u32 = 605;
 const EYE: u32 = 126;
 const VEHICLE: u32 = 900;
 const DUMMY: u32 = 901;
 const ROW_POSSESSED: u32 = 65;
 const ROW_GUARDIAN: u32 = 61;
-const CHARM: u16 = benilla_protocol::field::FIELD_UNIT_CHARM;
-const FARSIGHT: u16 = benilla_protocol::field::FIELD_PLAYER_FARSIGHT;
 
 fn spell(name: &str, effects: [u32; 3], auras: [u32; 3], misc_b: [i32; 3]) -> SpellDisplay {
     SpellDisplay {
@@ -145,129 +139,31 @@ fn the_view_reads_the_spell_record_as_the_verbs_do() {
     );
 }
 
-struct Rig {
-    app: App,
-    me: Entity,
-}
-
-impl Rig {
-    fn new() -> Self {
-        let mut app = App::new();
-        app.add_message::<FieldChanged>()
-            .init_resource::<GuidIndex>()
-            .insert_resource(SelfGuid(Some(ME)))
-            .insert_resource(crate::ui_action::Spells {
-                catalog: catalog(),
-                ..crate::ui_action::Spells::empty_for_tests()
-            })
-            .insert_resource(crate::spell::SummonSlots(summons()))
-            .add_systems(Update, feed_possess_spell);
-        let script = benilla_ui::script::UiScript::new().unwrap();
-        script
-            .run(
-                "Bonus = 0 local f = CreateFrame('Frame') \
-                 f:RegisterEvent('UPDATE_BONUS_ACTIONBAR') \
-                 f:SetScript('OnEvent', function() Bonus = Bonus + 1 end)",
-            )
-            .unwrap();
-        app.insert_non_send_resource(script);
-        let me = app.world_mut().spawn(Guid(ME)).id();
-        app.world_mut().resource_mut::<GuidIndex>().0.insert(ME, me);
-        let victim = app
-            .world_mut()
-            .spawn((
-                Guid(VICTIM),
-                ObjectStore(benilla_protocol::ObjectFields::default()),
-            ))
-            .id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(VICTIM, victim);
-        Self { app, me }
-    }
-
-    /// Our object streams in, with `auras`.
-    fn enter(&mut self, auras: &[(u8, u32, u8)]) {
-        self.app.world_mut().entity_mut(self.me).insert((
-            ObjectStore(benilla_protocol::ObjectFields::default().into_created(ObjectType::Player)),
-            UnitAuras::of(ME, auras),
-        ));
-    }
-
-    fn auras(&mut self, auras: &[(u8, u32, u8)]) {
-        self.app
-            .world_mut()
-            .entity_mut(self.me)
-            .insert(UnitAuras::of(ME, auras));
-    }
-
-    /// One of our guid fields moves to `guid`, as a values update would.
-    fn field(&mut self, index: u16, guid: u64) {
-        let me = self.me;
-        let delta = benilla_protocol::ObjectFields::from_pairs(&[
-            (index, guid as u32),
-            (index + 1, (guid >> 32) as u32),
-        ]);
-        crate::net::apply_fields_for_test(self.app.world_mut(), me, delta);
-    }
-
-    /// One frame: `(IsPossessBarVisible, the first slot's name, events so far)`.
-    fn frame(&mut self) -> (bool, Option<String>, i64) {
-        self.app.update();
-        let s = self
-            .app
-            .world_mut()
-            .non_send_resource_mut::<benilla_ui::script::UiScript>();
-        s.eval("return IsPossessBarVisible(), select(2, GetPossessInfo(1)), Bonus")
-            .unwrap()
-    }
-}
-
-/// World entry walks the auras; a charm or far-sight move walks them again; the walk never
-/// clears, a far sight with no subject does, and leaving the world does. Each change fires
-/// `UPDATE_BONUS_ACTIONBAR` once.
+/// The lookup holds what the walk finds and keeps the held spell on no find; each change fires
+/// `UPDATE_BONUS_ACTIONBAR` once (`0x5d30e0`).
 #[test]
-fn the_feed_follows_entry_the_charm_far_sight_and_leaving() {
-    let mut rig = Rig::new();
-    let control = || Some("control".to_string());
-    assert_eq!(rig.frame(), (false, None, 0), "no player, no spell");
-
-    rig.enter(&[(0, MIND_CONTROL, 0)]);
-    assert_eq!(rig.frame(), (true, control(), 1), "entry finds it");
-    assert_eq!(
-        rig.frame(),
-        (true, control(), 1),
-        "a quiet frame fires nothing"
-    );
-
-    // An aura edge alone is no trigger, and a walk that finds nothing keeps the spell.
-    rig.auras(&[]);
-    assert_eq!(rig.frame(), (true, control(), 1));
-    rig.field(CHARM, VICTIM);
-    assert_eq!(rig.frame(), (true, control(), 1), "the walk never clears");
-
-    // A far sight on a streamed subject walks; one cleared drops the spell.
-    rig.field(FARSIGHT, VICTIM);
-    assert_eq!(rig.frame(), (true, control(), 1));
-    rig.field(FARSIGHT, 0);
-    assert_eq!(rig.frame(), (false, None, 2), "far sight gone");
-
-    // Eye of Kilrogg's summon row, found off the charm move; then a far sight on a subject not
-    // streamed clears it.
-    rig.auras(&[(2, EYE, 0)]);
-    rig.field(CHARM, 0);
-    assert_eq!(rig.frame(), (true, Some("eye".into()), 3));
-    rig.field(FARSIGHT, 0x7777);
-    assert_eq!(rig.frame(), (false, None, 4), "an unstreamed subject");
-
-    // Leaving the world clears it.
-    rig.auras(&[(0, MIND_CONTROL, 0)]);
-    rig.field(CHARM, VICTIM);
-    assert_eq!(rig.frame(), (true, control(), 5));
-    rig.app
-        .world_mut()
-        .entity_mut(rig.me)
-        .remove::<ObjectStore>();
-    assert_eq!(rig.frame(), (false, None, 6), "left the world");
+fn the_lookup_holds_a_find_and_fires_on_a_change() {
+    let me = benilla_protocol::ObjectFields::default().into_created(ObjectType::Player);
+    let (spells, summons) = (catalog(), summons());
+    let mut held = PossessSpell::default();
+    let mut ui = crate::ui_script::live::UiEvents::default();
+    let mut look = |auras: &[(u8, u32, u8)], held: &mut PossessSpell| {
+        let table = UnitAuras::of(ME, auras);
+        find_possessed(
+            &me,
+            Some(&table),
+            None,
+            Some((&spells, &summons)),
+            held,
+            &mut ui,
+        );
+    };
+    look(&[(0, MIND_CONTROL, 0)], &mut held);
+    assert_eq!(held.0, MIND_CONTROL);
+    look(&[], &mut held);
+    assert_eq!(held.0, MIND_CONTROL, "the walk never clears");
+    look(&[(0, MIND_CONTROL, 0)], &mut held);
+    look(&[(2, EYE, 0)], &mut held);
+    assert_eq!(held.0, EYE);
+    assert_eq!(ui.names(), vec!["UPDATE_BONUS_ACTIONBAR"; 2]);
 }

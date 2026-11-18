@@ -485,7 +485,7 @@ pub(super) fn drain_quest_progress_sends(
 fn announce_notices(
     (script, mut live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<'_, '_, { crate::ui_script::live::lent::EXPIRIES }>,
+        crate::ui_script::LendLive<'_, '_, crate::ui_script::live::OwnsExpiries>,
     ),
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     (log, mut marks, mut expiries): (

@@ -23,8 +23,8 @@ use super::{PetBar, PetUnit};
 /// the pet book's `CastSpell(id, "pet")`.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetPress<'w, 's> {
-    pub(crate) bar: ResMut<'w, PetBar>,
-    pub(crate) selection: ResMut<'w, Selection>,
+    pub(crate) bar: crate::ui_script::OwnedMut<'w, PetBar>,
+    pub(crate) selection: crate::ui_script::OwnedMut<'w, Selection>,
     pub(crate) commands: Res<'w, NetCommands>,
     pub(crate) pet: PetUnit<'w, 's>,
     pub(crate) spells: Option<Res<'w, Spells>>,
@@ -67,7 +67,8 @@ pub(crate) enum PetCast {
 impl PetPress<'_, '_> {
     /// `CastPetAction(slot)`, a 1-based bar slot.
     pub(crate) fn press_slot(&mut self, slot: u32) -> PetCast {
-        match slot_entry(&self.bar, slot) {
+        let entry = slot_entry(&self.bar.read(), slot);
+        match entry {
             Some(entry) => self.press(slot, entry, None),
             None => PetCast::Done,
         }
@@ -116,11 +117,11 @@ impl PetPress<'_, '_> {
             names,
         } = self;
         // The spell arm asks with `ignoreControl` set (`0x5d4283 push 1`), the others without.
-        let Some(pet_store) = pet.usable_pet_with(bar, entry.is_spell()) else {
+        let Some(pet_store) = pet.usable_pet_with(&bar.read(), entry.is_spell()) else {
             debug!("ui_pet: slot {slot} refused, the pet's actions are not usable — no packet");
             return PetCast::Done;
         };
-        let pet_guid = bar.spells.pet_guid;
+        let pet_guid = bar.read().spells.pet_guid;
         let possessing = possessing(Some(pet_store), pet.self_guid.0);
         // A press on a running spell cancels its aura (`0x5d4325`), kept if cast under 1.5 s ago.
         let display = entry
@@ -132,7 +133,12 @@ impl PetPress<'_, '_> {
                 .as_ref()
                 .and_then(|c| c.num("secureAbilityToggle"))
                 .is_some_and(|v| v != 0.0);
-            if secure && bar.cooldowns.recently_cast(spell_id, 0, Instant::now()) {
+            if secure
+                && bar
+                    .read()
+                    .cooldowns
+                    .recently_cast(spell_id, 0, Instant::now())
+            {
                 debug!("ui_pet: slot {slot} (spell {spell_id}) was just cast — the aura stays");
                 return PetCast::Done;
             }
@@ -156,7 +162,8 @@ impl PetPress<'_, '_> {
             None
         };
         // The passed target, else the selection (`0x5d4240`).
-        let mut target_guid = passed.filter(|&g| g != 0).or(selection.guid).unwrap_or(0);
+        let selected = selection.read().guid;
+        let mut target_guid = passed.filter(|&g| g != 0).or(selected).unwrap_or(0);
         // `AttributesEx4 & 0x20` (`0x5d4407`) or a possessed pet casts as the pet (`0x5d445a`).
         if let Some(spell) = spell {
             if pet_cannot_cast(pet_store.0.unit_flags(), spell) {
@@ -187,7 +194,7 @@ impl PetPress<'_, '_> {
                 crate::spell::validator::MountedGate::creature(pet_store, names.as_deref()),
                 ui_errors,
                 // No range leg: a mounted pet that got this far fights mounted (`0x72bdb0`).
-            ) || match pick.target(None, selection, seam, ui_errors, false) {
+            ) || match pick.target(None, &mut selection.write(), seam, ui_errors, false) {
                 Some(guid) => {
                     target_guid = guid;
                     false
@@ -197,13 +204,13 @@ impl PetPress<'_, '_> {
         } else {
             false
         };
-        if !commit_press(bar, entry, refused, possessing) {
+        if !commit_press(&mut bar.write(), entry, refused, possessing) {
             debug!("ui_pet: slot {slot} refused by the attack validator — no packet");
             return PetCast::Done;
         }
         if let Some(spell) = spell {
             arm_pet_gcd(
-                bar,
+                &mut bar.write(),
                 entry.action(),
                 spell,
                 possessing,
@@ -228,7 +235,7 @@ impl PetPress<'_, '_> {
 
 /// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: the spell cooldown start
 /// (`0x5d4427`) before the send, the spell's own `StartRecovery*` pair into the pet's list. The
-/// insert moves the list's generation, which carries its flush to `bar::fire_pet_cooldown_events`.
+/// insert fires the pet's cooldown flush in its applier's turn.
 /// The client-targeted and possessed presses start it at their cast's send instead (the pending
 /// cast's send, `0x80ac90`).
 pub(super) fn arm_pet_gcd(
@@ -252,7 +259,7 @@ pub(super) fn arm_pet_gcd(
 /// them, on the answer the bar last pushed.
 pub(super) fn drain_pet_actions(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut bar: ResMut<PetBar>,
+    mut bar: crate::ui_script::OwnedMut<PetBar>,
     commands: Res<NetCommands>,
     pet: PetUnit,
 ) {
@@ -265,45 +272,45 @@ pub(super) fn drain_pet_actions(
     if toggles.is_empty() && stops == 0 && writes.is_empty() {
         return;
     }
-    let pet_guid = bar.spells.pet_guid;
+    let pet_guid = bar.read().spells.pet_guid;
     if pet_guid == 0 {
         debug!("ui_pet: dropping queued pet intents — the bar is gone");
         return;
     }
-    // The repaint is `latch_press`'s alone, not every click's: a refused `TogglePetAutocast` (any
-    // right-click on a token) signals nothing, so after `OnClick`'s `SetChecked(0)` that button
-    // stays unlit until the next repaint, as in the reference.
+    // The toggle (`0x5d5d20`): past the usability gate every slot signals the bar, a token's
+    // right-click too (`0x5d5e01`); only a slot with bit 31 flips and sends.
     for slot in toggles {
-        if !pet.actions_usable(&bar) {
+        if !pet.actions_usable(&bar.read()) {
             debug!(
                 "ui_pet: autocast toggle on slot {slot} refused, the pet's actions are not usable"
             );
             continue;
         }
-        let Some(flipped) = toggle_slot_autocast(&mut bar, slot) else {
-            continue;
-        };
-        debug!(
-            "ui_pet: autocast {} for spell {} (slot {slot})",
-            flipped.autocast_on(),
-            flipped.action()
-        );
-        let _ = commands.0.send(ClientCommand::PetSetAction {
-            pet_guid,
-            // Lua slots are 1-based, the wire's 0-based; `slot_entry` already refused 0.
-            entries: vec![(slot - 1, flipped.packed)],
-        });
+        if let Some(flipped) = toggle_slot_autocast(&mut bar.write(), slot) {
+            debug!(
+                "ui_pet: autocast {} for spell {} (slot {slot})",
+                flipped.autocast_on(),
+                flipped.action()
+            );
+            let _ = commands.0.send(ClientCommand::PetSetAction {
+                pet_guid,
+                // Lua slots are 1-based, the wire's 0-based; `slot_entry` already refused 0.
+                entries: vec![(slot - 1, flipped.packed)],
+            });
+        }
+        script.fire_event("PET_BAR_UPDATE", Vec::new());
     }
     for _ in 0..stops {
-        if stop_pet_attack(&mut bar, &commands) {
+        if stop_pet_attack(&mut bar.write(), &commands) {
             debug!("ui_pet: stop attack");
         }
     }
     // The drag's `(0-based position, word)` pairs: mirrored here and sent as one batch, since the
     // server tells one pair from two by body size.
     for entries in writes {
+        let mut written = bar.write();
         for &(position, packed) in &entries {
-            if let Some(e) = bar.spells.bar.get_mut(position as usize) {
+            if let Some(e) = written.spells.bar.get_mut(position as usize) {
                 *e = PetActionEntry::from(packed);
             }
         }

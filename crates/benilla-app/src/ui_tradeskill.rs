@@ -782,7 +782,10 @@ fn feed_trade_skill(
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     mut open: ResMut<TradeSkillOpen>,
     mut cast_events: MessageReader<CastEvent>,
     targeting: cast_target::CastTargeting,
