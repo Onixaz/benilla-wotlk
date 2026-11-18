@@ -14,6 +14,7 @@ pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::ShowBank, on_show_bank)
         .net_handler(K::BuyBankSlotResult, on_buy_slot_result)
+        .net_handler(K::DestroyedOnDeath, on_destroyed_on_death)
         .net_handler(K::Disconnected, on_session_end);
     // Ahead of each window's own handler: the setter runs at the start of its open (`0x54970f` before `0x54972c`).
     app.net_handler_first(K::GossipMenu, on_interact_target_taken)
@@ -118,6 +119,27 @@ fn on_show_bank(
             ui.fire("QUEST_FINISHED", vec![]);
         }
         ui.world(move |world| super::open_bank(world, banker));
+    }
+}
+
+/// `SMSG_DESTROY_OBJECT`'s death byte on a unit above 0 health runs its death in the handler (`0x4d7661`-`0x4d7682`), whose interact-target clear with its guid (`0x7293bf`) takes the bank's leg on the banker.
+fn on_destroyed_on_death(
+    In(ev): In<SessionEvent>,
+    bank: NonSend<BankOpen>,
+    index: Option<Res<GuidIndex>>,
+    stores: Query<&ObjectStore>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    let SessionEvent::DestroyedOnDeath(guid) = ev else {
+        return;
+    };
+    let alive = index
+        .as_deref()
+        .and_then(|i| i.0.get(&guid))
+        .and_then(|&e| stores.get(e).ok())
+        .is_some_and(|s| s.0.is_unit() && s.0.unit_health().unwrap_or(0) > 0);
+    if alive && bank.interact_target() == Some(guid) {
+        ui.world(super::close_by_interaction);
     }
 }
 

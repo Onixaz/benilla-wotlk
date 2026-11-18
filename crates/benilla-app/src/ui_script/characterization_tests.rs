@@ -3920,6 +3920,58 @@ fn the_interact_target_clears_close_the_bank() {
     );
 }
 
+/// `SMSG_DESTROY_OBJECT` with its death byte on the living banker closes the bank inside the destroy's handler (`0x4d7682` -> `0x7293bf`), ahead of the next packet's events; on a banker already at 0 health it runs no death.
+#[test]
+fn the_bankers_destroy_on_death_closes_the_bank_in_its_handler() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let events = &["BANKFRAME_CLOSED", "UI_ERROR_MESSAGE"];
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::DestroyedOnDeath(BANKER),
+            SessionEvent::ObjectDestroyed(BANKER),
+            SessionEvent::BuyBankSlotResult { result: 1 },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["bankopen"]),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+            "UI_ERROR_MESSAGE You can't afford that. | bankopen=false",
+        ]
+    );
+    // A banker destroyed at 0 health with no interaction held runs nothing more.
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+            SessionEvent::ObjectValues {
+                guid: BANKER,
+                fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 0)]),
+            },
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::DestroyedOnDeath(BANKER),
+            SessionEvent::ObjectDestroyed(BANKER),
+        ],
+        2,
+    );
+    assert!(pin(&seen, events, &[]).is_empty(), "{seen:?}");
+}
+
 /// The banker flag lost on the open bank's banker closes it from the NPC-flag watch (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED` with the banker set, again from the interaction close, then the banker clears.
 #[test]
 fn the_banker_flag_lost_closes_the_bank_from_the_flag_watch() {
