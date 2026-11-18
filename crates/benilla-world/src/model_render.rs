@@ -420,18 +420,35 @@ pub(crate) const ENV_MAP_MARKER: u16 = 1 << 12;
 /// vertex with no raster bias; a `WowModelKey` axis, so every other draw keeps its real depth.
 pub(crate) const SKY_DEPTH_MARKER: u16 = 1 << 13;
 
-/// [`BATCH_ORDER_SORT_EPS`] for the WMO skybox lane: at the −6e4 rung the f32 ulp is 0.0039, so
-/// 1e-3 would round away; this step is 4 ulps. Every skybox batch pair ties, being eye-anchored.
-pub(crate) const SKYBOX_ORDER_EPS: f32 = 0.015625;
+/// [`BATCH_ORDER_SORT_EPS`] for the skybox lane: one f32 ulp at the −6e4 rung (2⁻⁸), since 1e-3
+/// would round away there. Every sky batch shares the camera's translation (the bones are baked into
+/// the mesh), so the sort adds one view-z to every bias and adjacent steps never tie or swap.
+pub(crate) const SKYBOX_ORDER_EPS: f32 = 0.003_906_25;
 
-/// The skybox band's ceiling: with [`FAR_KEY_PULL`] every batch lands on one pipeline-key integer.
-/// It ties past index 57; the largest skybox, `CavernsOfTimeSky.m2`, has 21 batches.
-pub(crate) const SKYBOX_ORDER_CAP: f32 = 0.9;
+/// The skybox band's ceiling within a rung: with [`FAR_KEY_PULL`] every batch of a rung lands on
+/// one pipeline-key integer. It ties past index 250; the largest sky, `ShadowmoonIllidan.m2`, has
+/// 143 batches.
+pub(crate) const SKYBOX_ORDER_CAP: f32 = 0.98;
 
-/// A batch's slot in the skybox band: the rung, pulled onto one pipeline key, plus its order.
-fn skybox_sort_bias(batch_order: u16) -> f32 {
-    crate::sky_order::WMO_SKYBOX_BIAS - FAR_KEY_PULL
-        + (f32::from(batch_order) * SKYBOX_ORDER_EPS).min(SKYBOX_ORDER_CAP)
+/// The batch-order field's stride per sky rung ([`skybox_order`]): above any sky's batch count.
+pub(crate) const SKYBOX_RUNG_STRIDE: u16 = 256;
+
+/// A sky batch's order key: the draw rung (blend slot 0 to 2, then the override sky,
+/// [`crate::skybox::SKY_RUNGS`]) and the authored batch order + 1, in one `u16` so the material
+/// cache keys rungs apart.
+pub fn skybox_order(rung: usize, batch_order: u16) -> u16 {
+    let rung = u16::try_from(rung).unwrap_or(u16::MAX / SKYBOX_RUNG_STRIDE);
+    rung.saturating_mul(SKYBOX_RUNG_STRIDE)
+        .saturating_add(batch_order.min(SKYBOX_RUNG_STRIDE - 1))
+}
+
+/// A batch's slot in the skybox band: its rung's pipeline-key integer plus its batch order, so each
+/// sky draws whole before the next, as the sky render does (`0x7f09b0`).
+fn skybox_sort_bias(order: u16) -> f32 {
+    let rung = f32::from(order / SKYBOX_RUNG_STRIDE);
+    let batch = order % SKYBOX_RUNG_STRIDE;
+    crate::sky_order::WMO_SKYBOX_BIAS + rung - FAR_KEY_PULL
+        + (f32::from(batch) * SKYBOX_ORDER_EPS).min(SKYBOX_ORDER_CAP)
 }
 
 /// The depth-prime twin's sort bias in yards (negative draws earlier), past the spread of one
@@ -1185,29 +1202,40 @@ mod tests {
     }
 
     #[test]
-    fn the_skybox_band_orders_its_batches_on_one_pipeline_key() {
-        // `CavernsOfTimeSky.m2` is 21 batches; `order` is the index + 1.
-        let band: Vec<f32> = (0..=21).map(super::skybox_sort_bias).collect();
+    fn the_skybox_band_orders_its_batches_on_one_pipeline_key_per_rung() {
+        // `ShadowmoonIllidan.m2` is 143 batches, the largest sky; `order` is the index + 1.
+        let rung_band = |rung: usize| -> Vec<f32> {
+            (0..=143u16)
+                .map(|b| super::skybox_sort_bias(super::skybox_order(rung, b)))
+                .collect()
+        };
 
-        // 1. Strictly increasing: at −6e4 the ordinary 1e-3 eps would round onto one f32.
-        for pair in band.windows(2) {
-            assert!(
-                pair[1] > pair[0],
-                "skybox batch order does not resolve at the rung's magnitude: {pair:?} — \
-                 SKYBOX_ORDER_EPS is under the f32 ulp there"
-            );
+        for rung in 0..crate::skybox::SKY_RUNGS {
+            let band = rung_band(rung);
+            // 1. Strictly increasing: at −6e4 the ordinary 1e-3 eps would round onto one f32.
+            for pair in band.windows(2) {
+                assert!(
+                    pair[1] > pair[0],
+                    "rung {rung}: skybox batch order does not resolve at the rung's magnitude: \
+                     {pair:?} — SKYBOX_ORDER_EPS is under the f32 ulp there"
+                );
+            }
+            // 2. One pipeline key per rung (`depth_bias as i32` is a key axis), for any batch
+            //    order: the cap holds it.
+            let key = band[0] as i32;
+            for order in [0u16, 1, 21, 143, 250, 255, 1000, u16::MAX] {
+                assert_eq!(
+                    super::skybox_sort_bias(super::skybox_order(rung, order)) as i32,
+                    key,
+                    "rung {rung}, batch order {order} mints a second skybox pipeline"
+                );
+            }
         }
-
-        // 2. One pipeline key for the whole band (`depth_bias as i32` is a key axis), for any
-        //    u16 order: the cap holds it.
-        let key = band[0] as i32;
-        for order in [0u16, 1, 21, 57, 58, 1000, u16::MAX] {
-            assert_eq!(
-                super::skybox_sort_bias(order) as i32,
-                key,
-                "batch order {order} mints a second skybox pipeline"
-            );
+        // The sky render's order (`0x7f09b0`): every batch of a rung before any of the next.
+        for rung in 1..crate::skybox::SKY_RUNGS {
+            assert!(rung_band(rung)[0] > *rung_band(rung - 1).last().unwrap());
         }
+        let band = rung_band(crate::skybox::SKY_RUNGS - 1);
 
         // 3. Under every world transparent, even with the skybox's shell radius (~94 yd for
         //    Caverns of Time) on its rung and a world draw at the far plane.

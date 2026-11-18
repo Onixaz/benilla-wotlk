@@ -172,7 +172,7 @@ pub(super) fn setup_cloud_layer(
     commands.insert_resource(CloudLayer { image, material });
 }
 
-/// Hides the dome with the rest of the sky: under a WMO skybox past weight 0.99, as the sky render
+/// Hides the dome with the rest of the sky: under a skybox past weight 0.99, as the sky render
 /// skips all six sky elements on one flag, and while submerged, as the scene skips the sky render.
 pub(super) fn apply_cloud_visibility(
     debug: Res<DebugState>,
