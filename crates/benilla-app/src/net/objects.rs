@@ -195,6 +195,11 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         if sc.self_guid.0 == Some(guid) && !std::mem::replace(&mut sc.control.0, true) {
             sc.ui.fire("PLAYER_CONTROL_GAINED", Vec::new());
         }
+        // The UI's world entry runs inside our create (`0x6e8186`).
+        if sc.self_guid.0 == Some(guid) {
+            sc.ui
+                .world(move |world| crate::net::enter_world_at_create(world, guid));
+        }
         // Our own create's init refreshes the dead or alive signal after its world entry
         // (`0x6e818b`).
         if sc.self_guid.0 == Some(guid) {

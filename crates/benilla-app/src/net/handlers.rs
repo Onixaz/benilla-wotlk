@@ -102,7 +102,38 @@ impl NetHandlerApp for App {
     }
 }
 
-/// One drain's dispatch in wire order, each handler's commands applied before the next event.
+/// The events queued now, in wire order, each handler's commands applied before the next, stopping behind one that owes the UI's world entry ([`super::EntryHold`]): the rest stay queued until its step has run (`0x6e8186`, `0x52ae84`).
+pub(crate) fn dispatch_until_entry(
+    world: &mut World,
+    rx: &crossbeam_channel::Receiver<SessionEvent>,
+) {
+    let handlers = world.remove_resource::<NetHandlers>().unwrap_or_default();
+    for _ in 0..rx.len() {
+        if entry_held(world) {
+            debug!("net: {} packet(s) wait for the UI's world entry", rx.len());
+            break;
+        }
+        let Ok(ev) = rx.try_recv() else {
+            break;
+        };
+        handlers.run(world, ev);
+    }
+    world.insert_resource(handlers);
+}
+
+/// Whether the drain waits for the UI's world entry; a hold with no in-game UI to run the entry is dropped.
+fn entry_held(world: &mut World) -> bool {
+    let Some(held) = world.get_resource::<super::EntryHold>().map(|h| h.0) else {
+        return false;
+    };
+    if held && !crate::ui_script::ingame_ui_up_in(world) {
+        world.resource_mut::<super::EntryHold>().0 = false;
+        return false;
+    }
+    held
+}
+
+/// `events` in wire order with no hold: the cache replay and the handler tests.
 pub(crate) fn dispatch(world: &mut World, events: Vec<SessionEvent>) {
     let handlers = world.remove_resource::<NetHandlers>().unwrap_or_default();
     for ev in events {
@@ -151,6 +182,55 @@ mod tests {
     fn run(app: &mut App, events: Vec<SessionEvent>) -> Vec<String> {
         dispatch(app.world_mut(), events);
         std::mem::take(&mut app.world_mut().resource_mut::<Log>().0)
+    }
+
+    /// Logs like [`on_queued`], and position 1 owes the UI's world entry.
+    fn on_queued_owing_the_entry(
+        In(ev): In<SessionEvent>,
+        mut log: ResMut<Log>,
+        mut hold: ResMut<crate::net::EntryHold>,
+    ) {
+        let SessionEvent::LoginQueued { position, .. } = ev else {
+            panic!("the table routes by kind");
+        };
+        log.0.push(format!("queued:{}", position.unwrap_or(0)));
+        hold.0 |= position == Some(1);
+    }
+
+    fn drain(app: &mut App, rx: &crossbeam_channel::Receiver<SessionEvent>) -> Vec<String> {
+        dispatch_until_entry(app.world_mut(), rx);
+        std::mem::take(&mut app.world_mut().resource_mut::<Log>().0)
+    }
+
+    /// The packets behind one that owes the UI's world entry wait queued, in wire order, until the entry's step releases the drain (`0x6e8186`, `0x52ae84`).
+    #[test]
+    fn an_owed_world_entry_holds_the_packets_behind_it() {
+        let mut app = app();
+        app.insert_resource(State::new(crate::char_select::ClientState::InWorld))
+            .init_resource::<crate::net::EntryHold>()
+            .net_handler(SessionEventKind::LoginQueued, on_queued_owing_the_entry);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        for p in 1..=3 {
+            tx.send(queued(p)).unwrap();
+        }
+        assert_eq!(drain(&mut app, &rx), vec!["queued:1"]);
+        assert_eq!(drain(&mut app, &rx), Vec::<String>::new(), "still owed");
+        app.world_mut().resource_mut::<crate::net::EntryHold>().0 = false;
+        assert_eq!(drain(&mut app, &rx), vec!["queued:2", "queued:3"]);
+    }
+
+    /// With no in-game UI up there is no entry step to wait for, so the hold drops (the state 12340's synchronous UI load never reaches).
+    #[test]
+    fn a_hold_with_no_ui_up_drops() {
+        let mut app = app();
+        app.init_resource::<crate::net::EntryHold>()
+            .net_handler(SessionEventKind::LoginQueued, on_queued_owing_the_entry);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        for p in 1..=2 {
+            tx.send(queued(p)).unwrap();
+        }
+        assert_eq!(drain(&mut app, &rx), vec!["queued:1", "queued:2"]);
+        assert!(!app.world().resource::<crate::net::EntryHold>().0);
     }
 
     #[test]
