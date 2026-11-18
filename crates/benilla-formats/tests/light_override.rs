@@ -21,8 +21,17 @@ fn catalog() -> Option<LightCatalog> {
 }
 
 fn at(cat: &LightCatalog, pos: [f32; 3], overrides: &[LightOverride]) -> [f32; 3] {
-    cat.sample_blended_with(MAP_EK, pos, NOON, false, Submersion::Dry, false, overrides)
-        .ambient
+    cat.sample_blended_with(
+        MAP_EK,
+        pos,
+        NOON,
+        false,
+        Submersion::Dry,
+        false,
+        777.0,
+        overrides,
+    )
+    .ambient
 }
 
 #[test]

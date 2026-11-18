@@ -23,6 +23,7 @@ fn deeprun_tram_takes_light_record_1_not_an_invented_default() {
         false,
         Submersion::Dry,
         false,
+        777.0,
     );
 
     // LightParams 12 at noon, off the shipped bands.
@@ -53,6 +54,7 @@ fn deeprun_tram_takes_light_record_1_not_an_invented_default() {
         false,
         Submersion::Dry,
         false,
+        777.0,
     );
     assert_eq!(
         rgb(other_rowless.fog_color),
@@ -67,6 +69,7 @@ fn deeprun_tram_takes_light_record_1_not_an_invented_default() {
         false,
         Submersion::Dry,
         false,
+        777.0,
     );
     assert_ne!(
         rgb(midnight.fog_color),
@@ -84,7 +87,15 @@ fn maps_with_positioned_rows_but_no_global_are_left_alone() {
     let cat = LightCatalog::load(&mut chain).expect("load Light/LightParams/*Band");
 
     // Map 169 (Emerald Dream): 4 rows, none a global, sampled far from all of them.
-    let far = cat.sample_blended(169, [0.0, 0.0, 0.0], NOON, false, Submersion::Dry, false);
+    let far = cat.sample_blended(
+        169,
+        [0.0, 0.0, 0.0],
+        NOON,
+        false,
+        Submersion::Dry,
+        false,
+        777.0,
+    );
     let tram = cat.sample_blended(
         MAP_DEEPRUN_TRAM,
         [25.0, -1256.0, -117.0],
@@ -92,6 +103,7 @@ fn maps_with_positioned_rows_but_no_global_are_left_alone() {
         false,
         Submersion::Dry,
         false,
+        777.0,
     );
     let rgb = |c: [f32; 3]| c.map(|v| (v * 255.0).round() as i32);
     assert_ne!(
