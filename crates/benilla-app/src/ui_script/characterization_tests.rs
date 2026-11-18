@@ -5562,6 +5562,53 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
         pin(&seen, events, verbs),
         ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex7"]
     );
+    // One update moving a packed token's count and enchants: the count handler's currency leg fires before the enchant handler runs (`0x707832`, `0x708bd0`), each handler's `BAG_UPDATE`s, our backpack, keyring and tokens (`0x5d7098`-`0x5d70ba`), in its turn (`0x707805`, `0x707fe4`).
+    const PACKED: u64 = 0x4000_0000_0000_0302;
+    let slot2 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 2;
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: PACKED,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (benilla_protocol::field::FIELD_ITEM_CONTAINED, ME as u32),
+                    (
+                        benilla_protocol::field::FIELD_ITEM_CONTAINED + 1,
+                        (ME >> 32) as u32,
+                    ),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(slot2, PACKED as u32), (slot2 + 1, (PACKED >> 32) as u32)]),
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: PACKED,
+            fields: ObjectFields::from_pairs(&[
+                (FIELD_ITEM_STACK_COUNT, 2),
+                (benilla_protocol::field::FIELD_ITEM_ENCHANTMENT_1_1, 1),
+            ]),
+        }],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE"
+        ]
+    );
     // A pack slot's leg reads the old item's class inside the field handler, before the same frame's destroy of it (`0x5d97fd`).
     const LOOSE: u64 = 0x4000_0000_0000_0301;
     let pack = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
