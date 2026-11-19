@@ -681,7 +681,6 @@ impl AttackPick<'_, '_> {
         passed: Option<u64>,
         selection: &mut Selection,
         seam: &mut crate::creature_anim::AttackSeam,
-        errors: &mut crate::ui_action::UiErrorKeys,
         check_range: bool,
         sink: &mut dyn crate::ui_action::signals::SignalSink,
     ) -> Option<u64> {
@@ -699,7 +698,7 @@ impl AttackPick<'_, '_> {
                 sink,
             );
         }
-        self.gated(selection, errors, check_range)
+        self.gated(selection, check_range, sink)
     }
 
     /// The pick's tail, which an explicit target runs alone: the selection as it stands through
@@ -707,14 +706,12 @@ impl AttackPick<'_, '_> {
     pub(crate) fn gated(
         &mut self,
         selection: &Selection,
-        errors: &mut crate::ui_action::UiErrorKeys,
         check_range: bool,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
     ) -> Option<u64> {
         let Some(guid) = selection.guid else {
             debug!("attack: nothing to attack (ERR_NO_ATTACK_TARGET)");
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+            sink.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
             return None;
         };
         // The second resolve: a miss refuses with no message.
@@ -725,9 +722,7 @@ impl AttackPick<'_, '_> {
         // The mounted range leg, ahead of the final gate.
         if check_range && self.scan.mounted_out_of_reach(guid, store) {
             debug!("attack: mounted, {guid:#x} is past melee reach (ERR_OUT_OF_RANGE)");
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
+            sink.line(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
             return None;
         }
         // The final gate's target legs; its actor legs repeat phase A's dead and mounted refusals,
@@ -740,9 +735,7 @@ impl AttackPick<'_, '_> {
             self.scan.self_store(),
         ) {
             debug!("attack: {guid:#x} fails the final gate (ERR_INVALID_ATTACK_TARGET)");
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_INVALID_ATTACK_TARGET"));
+            sink.line(crate::ui_action::UiError::key("ERR_INVALID_ATTACK_TARGET"));
             return None;
         }
         Some(guid)

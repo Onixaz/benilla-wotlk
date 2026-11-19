@@ -64,13 +64,13 @@ pub(crate) fn apply_script_calls(
                 exact,
             } => {
                 let named = appliers.p0().attack_unit(&unit, exact, script);
-                if appliers.p7().may_start() {
+                if appliers.p7().may_start(script) {
                     match named {
                         Some((entity, guid)) => {
                             appliers.p0().select_for_attack(entity, guid, script);
                             appliers.p7().swing_at_selection(script);
                         }
-                        None => appliers.p7().no_attack_target(),
+                        None => crate::ui_action::AttackPress::no_attack_target(script),
                     }
                 }
             }
@@ -493,14 +493,12 @@ mod tests {
     }
 
     /// The keys of the error lines raised.
-    fn errors(f: &Frame) -> Vec<&'static str> {
+    /// The keys of the lines shown, taken.
+    fn errors(f: &mut Frame) -> Vec<&'static str> {
         f.app
-            .world()
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
-            .iter()
-            .map(|e| e.key)
-            .collect()
+            .world_mut()
+            .non_send_resource_mut::<benilla_ui::script::UiScript>()
+            .take_shown_keys()
     }
 
     /// `CastSpellByName(name, unit)` (`0x540310`) casts at the unit its token names and
@@ -804,10 +802,10 @@ mod tests {
                     })
                     .collect();
             if x > 5.0 {
-                assert_eq!(errors(&f), vec!["ERR_OUT_OF_RANGE"]);
+                assert_eq!(errors(&mut f), vec!["ERR_OUT_OF_RANGE"]);
                 assert!(sent.is_empty());
             } else {
-                assert!(errors(&f).is_empty());
+                assert!(errors(&mut f).is_empty());
                 assert!(matches!(
                     sent.as_slice(),
                     [
@@ -843,7 +841,7 @@ mod tests {
             run(&mut f, lua);
             assert_eq!(selected(&f), Some(MOB), "{lua}");
             assert_eq!(swings(&f), (vec![MOB], false), "{lua}");
-            assert_eq!(errors(&f), Vec::<&str>::new(), "{lua}");
+            assert_eq!(errors(&mut f), Vec::<&str>::new(), "{lua}");
         }
     }
 
@@ -873,14 +871,14 @@ mod tests {
         with_factions(&mut f, FRIEND, &[]);
         run(&mut f, "AttackTarget()");
         assert_eq!(selected(&f), Some(OLD));
-        assert_eq!(errors(&f), vec!["ERR_INVALID_ATTACK_TARGET"]);
+        assert_eq!(errors(&mut f), vec!["ERR_INVALID_ATTACK_TARGET"]);
         assert_eq!(swings(&f), (vec![], false));
 
         let mut f = frame(false);
         with_factions(&mut f, FRIEND, &[]);
         run(&mut f, "AttackTarget()");
         assert_eq!(selected(&f), None);
-        assert_eq!(errors(&f), vec!["ERR_NO_ATTACK_TARGET"]);
+        assert_eq!(errors(&mut f), vec!["ERR_NO_ATTACK_TARGET"]);
         assert_eq!(swings(&f), (vec![], false));
     }
 
@@ -894,7 +892,7 @@ mod tests {
         spawn_mob(&mut f, &[(TEMPLATE, FOE)]);
         run(&mut f, "AttackTarget()");
         assert_eq!(selected(&f), Some(OLD));
-        assert_eq!(errors(&f), vec!["ERR_INVALID_ATTACK_TARGET"]);
+        assert_eq!(errors(&mut f), vec!["ERR_INVALID_ATTACK_TARGET"]);
         assert_eq!(swings(&f), (vec![], false));
     }
 
@@ -916,7 +914,7 @@ mod tests {
             run(&mut f, "AttackTarget()");
             assert_eq!(swings(&f), (vec![], stopped), "health {health}");
             assert_eq!(
-                errors(&f),
+                errors(&mut f),
                 refused.into_iter().collect::<Vec<_>>(),
                 "health {health}"
             );
@@ -1064,11 +1062,7 @@ mod tests {
         run(&mut f, "UseAction(1)");
         assert_eq!(casts(&f), vec![]);
         assert_eq!(selected(&f), None);
-        let world = f.app.world();
-        assert_eq!(
-            world.resource::<crate::ui_action::UiErrorKeys>().0,
-            vec![crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET")]
-        );
+        assert_eq!(errors(&mut f), vec!["ERR_NO_ATTACK_TARGET"]);
         assert!(crate::ui_action::take_refusals(f.app.world_mut()).is_empty());
     }
 }

@@ -9,7 +9,7 @@ use benilla_ui::script::UiScript;
 
 use crate::spell::{cast_target, CastLadder};
 
-use super::{attack_actor_refusal, ActionSlots, UiErrorKeys, SPELL_ATTACK};
+use super::{attack_actor_refusal, ActionSlots, SPELL_ATTACK};
 
 /// What clicking an item action does, and to which copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +71,6 @@ pub(crate) struct AttackPress<'w, 's> {
     pick: crate::target::AttackPick<'w, 's>,
     selection: crate::ui_script::OwnedMut<'w, crate::target::Selection>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
-    ui_errors: ResMut<'w, UiErrorKeys>,
     player: Option<Res<'w, crate::player::Player>>,
     auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
 }
@@ -112,13 +111,16 @@ impl AttackPress<'_, '_> {
 
     /// Whether the actor checks pass and we are not already attacking, `StartAttack`'s named leg
     /// running before its selection moves.
-    pub(crate) fn may_start(&mut self) -> bool {
+    pub(crate) fn may_start(
+        &mut self,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> bool {
         if self.pick.engaged() {
             return false;
         }
         let mounted = self.mounted_gate();
         let (me, my_guid) = self.pick.player();
-        !attack_actor_refusal(me, my_guid, mounted, &mut self.ui_errors)
+        !attack_actor_refusal(me, my_guid, mounted, sink)
     }
 
     fn mounted_gate(&self) -> crate::spell::validator::MountedGate {
@@ -129,10 +131,8 @@ impl AttackPress<'_, '_> {
     }
 
     /// `StartAttack` named nobody: the refusal, with the selection left alone (`0x72c2b0`).
-    pub(crate) fn no_attack_target(&mut self) {
-        self.ui_errors
-            .0
-            .push(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+    pub(crate) fn no_attack_target(sink: &mut dyn crate::ui_action::signals::SignalSink) {
+        sink.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
     }
 
     /// `StartAttack`'s swing at the selection a named unit left, past the nearest-enemy pick
@@ -145,10 +145,9 @@ impl AttackPress<'_, '_> {
             pick,
             selection,
             seam,
-            ui_errors,
             ..
         } = self;
-        let gated = pick.gated(&selection.read(), ui_errors, true);
+        let gated = pick.gated(&selection.read(), true, sink);
         let Some(guid) = gated else {
             return;
         };
@@ -227,21 +226,13 @@ impl AttackPress<'_, '_> {
             pick,
             selection,
             seam,
-            ui_errors,
             ..
         } = self;
         let (me, my_guid) = pick.player();
-        if attack_actor_refusal(me, my_guid, mounted, ui_errors) {
+        if attack_actor_refusal(me, my_guid, mounted, sink) {
             return None;
         }
-        pick.target(
-            passed,
-            &mut selection.write(),
-            seam,
-            ui_errors,
-            check_range,
-            sink,
-        )
+        pick.target(passed, &mut selection.write(), seam, check_range, sink)
     }
 }
 
@@ -256,8 +247,6 @@ pub(super) fn drain_go_openers(
     ),
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
-    // Not a `CastLadder` field: Bevy panics on a resource reachable twice from one system.
-    mut ui_errors: ResMut<UiErrorKeys>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     if queue.0.is_empty() {
@@ -285,15 +274,7 @@ pub(super) fn drain_go_openers(
                     "ui_action: gameobject opener uses the key at wire {}/{} on {:?}",
                     it.bag_index, it.slot, it.on_object
                 );
-                crate::ui_items::send_item_use(
-                    it,
-                    &ctx,
-                    &mut ladder,
-                    script,
-                    &mut gate,
-                    false,
-                    &mut ui_errors,
-                );
+                crate::ui_items::send_item_use(it, &ctx, &mut ladder, script, &mut gate, false);
                 ladder.press.fire(script);
             }
         }
@@ -305,9 +286,6 @@ pub(super) fn drain_go_openers(
 pub(crate) struct ActionPress<'w, 's> {
     actions: crate::ui_script::LentRef<'w, ActionSlots>,
     targeting: cast_target::CastTargeting<'w, 's>,
-    // The by-key error line. Not a `CastLadder` field: Bevy panics, at runtime and not in unit
-    // tests, on a resource reachable twice from one system.
-    ui_errors: ResMut<'w, UiErrorKeys>,
     ladder: CastLadder<'w, 's>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
     /// Resolves the press's unit token where it takes effect.
@@ -338,7 +316,6 @@ pub(crate) fn use_action(
     let ActionPress {
         actions,
         targeting,
-        ui_errors,
         ladder,
         gate,
         tokens,
@@ -461,7 +438,6 @@ pub(crate) fn use_action(
                     script,
                     gate,
                     false,
-                    ui_errors,
                 );
             }
         }

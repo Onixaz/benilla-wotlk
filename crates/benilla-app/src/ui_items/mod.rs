@@ -17,6 +17,8 @@ use benilla_protocol::ObjectFields;
 use benilla_ui::script::{ItemLinkFields, EQUIPMENT_BAG};
 use bevy::prelude::*;
 
+use crate::ui_action::signals::SignalSink;
+
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects};
 use crate::pending_item_ops::PendingItemOps;
@@ -629,7 +631,7 @@ pub(crate) fn refuse_item_use(
     script: &benilla_ui::script::UiScript,
     entry: u32,
     enchant_skill: Option<(u32, u32)>,
-    ui_errors: &mut crate::ui_action::UiErrorKeys,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
     let refusal = script.item_use_refusal(entry).or_else(|| {
         let (skill, rank) = enchant_skill?;
@@ -639,7 +641,7 @@ pub(crate) fn refuse_item_use(
         return false;
     };
     debug!("ui_items: item {entry} use refused — {key}");
-    ui_errors.0.push(crate::ui_action::UiError::key(key));
+    sink.line(crate::ui_action::UiError::key(key));
     true
 }
 
@@ -721,8 +723,6 @@ pub(crate) fn send_item_use(
     script: &mut benilla_ui::script::UiScript,
     gate: &mut crate::ui_bind_confirm::BindGate,
     suppress: bool,
-    // Passed in, not carried on `CastLadder`, so no system reaches it twice.
-    ui_errors: &mut crate::ui_action::UiErrorKeys,
 ) -> bool {
     // A quest-starter offers its quest ahead of the requirement check; every other use is refused
     // with nothing sent.
@@ -730,7 +730,7 @@ pub(crate) fn send_item_use(
         .guid
         .and_then(|guid| ladder.objects.object(guid))
         .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
-    if it.start_quest == 0 && refuse_item_use(script, it.entry, enchant_skill, ui_errors) {
+    if it.start_quest == 0 && refuse_item_use(script, it.entry, enchant_skill, &mut ladder.press) {
         return false;
     }
     // The toggle predicate over the caster's live aura slots.
@@ -746,7 +746,7 @@ pub(crate) fn send_item_use(
         )
     });
     let route = item_use_route(it, aura_cancels, disarmed_slots);
-    if matches!(route, ItemUseRoute::Cast(_)) && !leave_form_to_use(&it, ctx, ladder, ui_errors) {
+    if matches!(route, ItemUseRoute::Cast(_)) && !leave_form_to_use(&it, ctx, ladder) {
         return false;
     }
     match route {
@@ -755,9 +755,9 @@ pub(crate) fn send_item_use(
                 "ui_items: item use refused — that hand is disarmed (slot {})",
                 it.slot
             );
-            ui_errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_CANT_USE_DISARMED"));
+            ladder
+                .press
+                .line(crate::ui_action::UiError::key("ERR_CANT_USE_DISARMED"));
             false
         }
         ItemUseRoute::ToggleCancel(spell) => {
@@ -821,8 +821,7 @@ pub(crate) fn send_item_use(
 fn leave_form_to_use(
     it: &ItemUse,
     ctx: &crate::spell::cast_target::CastContext,
-    ladder: &crate::spell::CastLadder,
-    ui_errors: &mut crate::ui_action::UiErrorKeys,
+    ladder: &mut crate::spell::CastLadder,
 ) -> bool {
     let (Some(store), Some(template)) =
         (ctx.rel.self_store, ladder.items.template_cached(it.entry))
@@ -840,7 +839,7 @@ fn leave_form_to_use(
     }
     if !ctx.auto_unshift {
         debug!("ui_items: item use refused — shapeshifted");
-        ui_errors.0.push(crate::ui_action::UiError::key(
+        ladder.press.line(crate::ui_action::UiError::key(
             "ERR_NO_ITEMS_WHILE_SHAPESHIFTED",
         ));
         return false;
@@ -1135,7 +1134,7 @@ mod tests {
         };
         script.set_item_template(929, potion(22));
         script.set_item_template(118, potion(1));
-        let mut errors = crate::ui_action::UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         assert!(super::refuse_item_use(&script, 929, None, &mut errors));
         assert_eq!(
             errors.0,
@@ -1159,7 +1158,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut errors = crate::ui_action::UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         assert!(!super::refuse_item_use(
             &script,
             118,
@@ -1174,7 +1173,7 @@ mod tests {
                 skills: skills.iter().copied().collect(),
                 ..Default::default()
             });
-            let mut errors = crate::ui_action::UiErrorKeys::default();
+            let mut errors = crate::ui_action::signals::LinesSeen::default();
             let refused = super::refuse_item_use(&script, 118, Some((202, 400)), &mut errors);
             (refused, errors.0)
         };

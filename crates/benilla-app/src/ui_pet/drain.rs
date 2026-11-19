@@ -30,7 +30,6 @@ pub(crate) struct PetPress<'w, 's> {
     /// The talent modifiers the pet GCD's op 21 goes through: the player's tables, which gate on
     /// the spell's family and never on the caster.
     spell_mods: Res<'w, crate::spell::SpellModifiers>,
-    ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     pick: crate::target::AttackPick<'w, 's>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
     /// `secureAbilityToggle`, the recently-used guard on an aura cancel.
@@ -144,7 +143,6 @@ impl PetPress<'_, '_> {
             pet,
             spells,
             spell_mods,
-            ui_errors,
             pick,
             seam,
             cvars,
@@ -228,9 +226,9 @@ impl PetPress<'_, '_> {
                 Some(pet_store),
                 pet.self_guid.0,
                 crate::spell::validator::MountedGate::creature(pet_store, names.as_deref()),
-                ui_errors,
+                sink,
                 // No range leg: a mounted pet that got this far fights mounted (`0x72bdb0`).
-            ) || match pick.target(None, &mut selection.write(), seam, ui_errors, false, sink) {
+            ) || match pick.target(None, &mut selection.write(), seam, false, sink) {
                 Some(guid) => {
                     target_guid = guid;
                     false

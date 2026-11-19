@@ -27,8 +27,6 @@ pub(crate) struct ScriptSelect<'w, 's> {
     scan: scan::TargetScan<'w, 's>,
     history: ResMut<'w, scan::TabHistory>,
     time: Res<'w, Time>,
-    /// `AssistUnit`'s miss lines.
-    errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     /// A questgiver GameObject's use from `DeclineQuest`, its right-click (`0x711140`).
     interacts: Option<MessageWriter<'w, super::Interact>>,
     index: Res<'w, crate::net::GuidIndex>,
@@ -85,9 +83,11 @@ impl ScriptSelect<'_, '_> {
                     }
                     None => {
                         info!("assist (AssistUnit): \"{token}\" names no held unit");
-                        self.errors
-                            .0
-                            .push(crate::ui_action::UiError::key(unit_miss_key(&token)));
+                        // The miss line shows inside the call (`0x525f87`, `0x525f9c`).
+                        crate::ui_action::signals::SignalSink::line(
+                            script,
+                            crate::ui_action::UiError::key(unit_miss_key(&token)),
+                        );
                     }
                 }
             }
@@ -765,8 +765,14 @@ mod tests {
             (sel.target, sel.guid)
         };
         let sounds = |world: &mut World| world.non_send_resource_mut::<UiScript>().take_sounds();
-        let errors = |world: &mut World| {
-            std::mem::take(&mut world.resource_mut::<crate::ui_action::UiErrorKeys>().0)
+        // The lines shown in the call.
+        let errors = |world: &mut World| -> Vec<crate::ui_action::UiError> {
+            world
+                .non_send_resource_mut::<UiScript>()
+                .take_shown_keys()
+                .into_iter()
+                .map(crate::ui_action::UiError::key)
+                .collect()
         };
 
         select(&mut world, Some((basis, BASIS)));

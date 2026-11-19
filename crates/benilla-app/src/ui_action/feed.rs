@@ -38,6 +38,14 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", resolved);
 
+    // The chat-kind lines an app caller showed through the VM in hand.
+    let chat_lines: Vec<Shown> = script
+        .take_chat_lines()
+        .into_iter()
+        .map(|(key, text)| Shown::keyed(key, text))
+        .collect();
+    show_messages(&mut script, &mut sink, "ui_action", chat_lines);
+
     // The sound half of the lines verbs displayed inline, their events already fired in the call.
     for key in script.take_message_sounds() {
         if let Some(record) = benilla_ui::messages::by_key(key) {

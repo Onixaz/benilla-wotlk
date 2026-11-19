@@ -71,7 +71,7 @@ pub(crate) use benilla_ui::messages::MsgKind;
 
 /// One argText argument; the list is ordered and mixed because a template's specifiers are:
 /// `ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI` takes a string then an integer.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum FillArg {
     S(String),
     D(i64),
@@ -85,7 +85,7 @@ pub(crate) enum FillArg {
 /// One error-display message, whatever its surface: a GlobalStrings key and the argText the
 /// reference pushes after the id, at most three strings. Extra arguments are ignored and a starved
 /// specifier shows verbatim, as the reference's printf does, so a short list is passed short.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UiError {
     pub key: &'static str,
     pub args: Vec<FillArg>,
@@ -312,11 +312,14 @@ pub(crate) fn show_in_turn(
     who: &'static str,
     line: UiError,
 ) {
-    ui.world(move |world| {
-        if let Err(e) = world.run_system_cached_with(show_line_now, (who, line)) {
-            warn!("{who}: the line was not shown: {e}");
-        }
-    });
+    ui.world(move |world| show_line_in_world(world, who, line));
+}
+
+/// Show `line` now from a step over the `World`.
+pub(crate) fn show_line_in_world(world: &mut World, who: &'static str, line: UiError) {
+    if let Err(e) = world.run_system_cached_with(show_line_now, (who, line)) {
+        warn!("{who}: the line was not shown: {e}");
+    }
 }
 
 fn show_line_now(
@@ -357,13 +360,13 @@ pub(crate) fn attack_actor_refusal(
     actor: Option<&ObjectStore>,
     self_guid: Option<u64>,
     mounted: MountedGate,
-    errors: &mut UiErrorKeys,
+    sink: &mut dyn super::signals::SignalSink,
 ) -> bool {
     let Some(key) = attack_actor_blocked(actor, self_guid, mounted) else {
         return false;
     };
     debug!("attack refused locally by the actor's own state — {key}");
-    errors.0.push(UiError::key(key));
+    sink.line(UiError::key(key));
     true
 }
 
@@ -744,15 +747,15 @@ mod attack_actor_tests {
         move_flags: u32,
         auto_dismount: AutoDismount,
     ) -> Option<&'static str> {
-        let mut errors = UiErrorKeys::default();
+        let mut lines: Vec<&'static str> = Vec::new();
         let mounted = MountedGate::player(move_flags, Some(&auto_dismount));
-        let refused = attack_actor_refusal(store, self_guid, mounted, &mut errors);
+        let refused = attack_actor_refusal(store, self_guid, mounted, &mut lines);
         assert_eq!(
             refused,
-            !errors.0.is_empty(),
+            !lines.is_empty(),
             "a refusal and a message are the same event — the ref raises one per veto"
         );
-        errors.0.first().map(|e| e.key)
+        lines.first().copied()
     }
 
     /// Every gate of the validator's Phase A, each on its own, against an otherwise-healthy actor.

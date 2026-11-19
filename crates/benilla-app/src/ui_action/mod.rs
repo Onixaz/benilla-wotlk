@@ -29,6 +29,8 @@ mod feed;
 #[cfg(test)]
 mod feed_tests;
 mod net;
+#[cfg(test)]
+mod queue_census_tests;
 mod ranks;
 pub(crate) mod signals;
 pub(crate) mod slots;
@@ -56,8 +58,8 @@ pub(crate) use cast_refusal::{
 };
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, reagent_totem_refusal, show_in_turn,
-    show_messages, ui_error_text, CastFail, Caster, FillArg, MessageSink, Shown, ToolCheck,
-    UiError, UiErrorKeys, UiErrorTexts,
+    show_line_in_world, show_messages, ui_error_text, CastFail, Caster, FillArg, MessageSink,
+    Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
 };
 pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 

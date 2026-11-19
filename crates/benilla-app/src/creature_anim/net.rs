@@ -12,7 +12,7 @@ use super::{
 };
 use crate::net::{AiReactionMessage, EmoteKind, EmoteMessage, GuidIndex, NetHandlerApp, SelfGuid};
 use crate::swing_refusal::SwingRefusalEdge;
-use crate::ui_action::{UiError, UiErrorKeys};
+use crate::ui_action::UiError;
 
 /// Register the layer's handlers, from [`super::CreatureAnimPlugin`].
 pub(super) fn register(app: &mut App) {
@@ -95,9 +95,12 @@ fn on_swing_refusal(In(ev): In<SessionEvent>, mut edges: MessageWriter<SwingRefu
     }
 }
 
-fn on_feign_death_resisted(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_feign_death_resisted(
+    In(ev): In<SessionEvent>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
     if let SessionEvent::FeignDeathResisted = ev {
-        feign_death_resisted(&mut errors);
+        feign_death_resisted(&mut *ui);
     }
 }
 
@@ -317,9 +320,9 @@ fn cancel_combat(edges: &mut MessageWriter<SwingRefusalEdge>) {
 /// `SMSG_FEIGN_DEATH_RESISTED`: one red "Resisted" line and nothing else. The reference's handler
 /// is a bare error display of 421, with no latch and no state. vmangos sends it together with
 /// `SMSG_CANCEL_COMBAT` (`Unit.cpp:9469-9470`).
-fn feign_death_resisted(errors: &mut UiErrorKeys) {
+fn feign_death_resisted(sink: &mut dyn crate::ui_action::signals::SignalSink) {
     debug!("net: feign death resisted");
-    errors.0.push(UiError::key("ERR_FEIGN_DEATH_RESISTED"));
+    sink.line(UiError::key("ERR_FEIGN_DEATH_RESISTED"));
 }
 
 /// A creature flared aggro or a stealth pre-aggro alert (`SMSG_AI_REACTION`).

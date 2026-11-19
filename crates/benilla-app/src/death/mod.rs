@@ -903,7 +903,6 @@ fn drain_death(
     net: Res<NetCommands>,
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
-    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
     self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
@@ -991,7 +990,6 @@ fn drain_death(
                             &mut script,
                             &mut gate,
                             false,
-                            &mut ui_errors,
                         );
                         Ok(())
                     }

@@ -3,6 +3,8 @@
 
 use bevy::prelude::*;
 
+use crate::ui_action::signals::SignalSink;
+
 use benilla_protocol::messages::BAG_PLAYER_INVENTORY;
 use benilla_ui::script::{item_lock_args, UiScript, EQUIPMENT_BAG};
 
@@ -163,7 +165,6 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     deselect: MessageWriter<'w, crate::target::DeselectGuid>,
     ladder: crate::spell::CastLadder<'w, 's>,
-    ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
 }
 
@@ -256,9 +257,9 @@ impl ScriptItemUse<'_, '_> {
             return;
         };
         if self.trade.as_deref().is_some_and(|t| t.offers(bag, slot)) {
-            self.ui_errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"));
+            self.ladder
+                .press
+                .line(crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"));
             return;
         }
         send_equip_to_slot(
@@ -283,7 +284,6 @@ impl ScriptItemUse<'_, '_> {
             self_q,
             targeting,
             ladder,
-            ui_errors,
             gate,
             ..
         } = self;
@@ -325,7 +325,6 @@ impl ScriptItemUse<'_, '_> {
             script,
             gate,
             false,
-            ui_errors,
         );
     }
 
@@ -356,7 +355,6 @@ impl ScriptItemUse<'_, '_> {
             loot_cfg,
             deselect,
             ladder,
-            ui_errors,
             gate,
         } = self;
         let slot0 = u8::try_from(slot.saturating_sub(1)).ok();
@@ -508,7 +506,6 @@ impl ScriptItemUse<'_, '_> {
                 script,
                 gate,
                 false,
-                ui_errors,
             );
             return;
         }
@@ -519,7 +516,7 @@ impl ScriptItemUse<'_, '_> {
                 .objects
                 .object(c.guid)
                 .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
-            if super::refuse_item_use(script, c.entry, enchant_skill, ui_errors) {
+            if super::refuse_item_use(script, c.entry, enchant_skill, &mut ladder.press) {
                 return;
             }
         }
@@ -614,7 +611,6 @@ impl ScriptItemUse<'_, '_> {
             script,
             gate,
             false,
-            ui_errors,
         );
     }
 }
@@ -1464,7 +1460,6 @@ pub(super) fn drain_bind_on_use_confirms(
     ),
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
-    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     let Some(mut script) = script else {
@@ -1487,7 +1482,6 @@ pub(super) fn drain_bind_on_use_confirms(
         &mut script,
         &mut gate,
         true,
-        &mut ui_errors,
     );
     // The use's cast-bar edges, fired as it returns (`0x80b556`).
     ladder.press.fire(&mut script);

@@ -19,7 +19,7 @@ use super::{
     QueuedMeleeSpell,
 };
 use crate::creature_anim::{CastEvent, CastEventKind, Casting, SpellGoTargets};
-use crate::ui_action::{CastRefusals, PlayerActions, Spells, UiError, UiErrorKeys};
+use crate::ui_action::{CastRefusals, PlayerActions, Spells, UiError};
 use crate::ui_cast::CastBarEdge;
 use crate::ui_spellbook::LearnedInTab;
 
@@ -208,7 +208,6 @@ fn clear_bar(actions: &mut crate::ui_action::ActionSlots) {
 fn on_spell_learned(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
-    mut errors: ResMut<UiErrorKeys>,
     stores: Query<&ObjectStore>,
     mut commands: Commands,
 ) {
@@ -228,7 +227,7 @@ fn on_spell_learned(
             spell_id,
             (&mut l.actions, &mut l.slots),
             l.spells.as_deref(),
-            &mut errors,
+            &mut *l.ui,
             &mut flash,
             learner,
             &l.net,
@@ -269,12 +268,7 @@ fn on_spell_learned(
     }
 }
 
-fn on_spell_removed(
-    In(ev): In<SessionEvent>,
-    mut l: Lifecycle,
-    mut errors: ResMut<UiErrorKeys>,
-    mut commands: Commands,
-) {
+fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Commands) {
     refill_in_turn(&mut commands);
     if let SessionEvent::SpellRemoved { spell_id } = ev {
         // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
@@ -284,7 +278,7 @@ fn on_spell_removed(
         } else {
             companion_remove(&mut l, spell_id);
         }
-        removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
+        removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
         unlearn_totem(&mut l.multicast, spell_id);
         // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
         if exists {
@@ -388,7 +382,6 @@ fn unlearn_totem(lists: &mut super::multicast::MultiCastLists, spell_id: u32) {
 fn on_spell_superceded(
     In(ev): In<SessionEvent>,
     mut l: Lifecycle,
-    mut errors: ResMut<UiErrorKeys>,
     stores: Query<&ObjectStore>,
     mut commands: Commands,
 ) {
@@ -421,7 +414,7 @@ fn on_spell_superceded(
             new_spell_id,
             &mut l.actions,
             l.spells.as_deref(),
-            &mut errors,
+            &mut *l.ui,
             &mut flash,
         );
         // The pair is unlearn then a live learn (`0x542eb0`).
@@ -1318,7 +1311,7 @@ fn learned_spell(
     spell_id: u32,
     (actions, bar): (&mut PlayerActions, &mut crate::ui_action::ActionSlots),
     spells: Option<&Spells>,
-    errors: &mut UiErrorKeys,
+    errors: &mut dyn crate::ui_action::signals::SignalSink,
     tab_flash: &mut LearnedInTab,
     learner: Option<Learner>,
     net: &NetCommands,
@@ -1383,7 +1376,11 @@ const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
 /// and whether it carries the rank, is [`benilla_formats::SpellDisplay::learn_announcement`]'s. Ids
 /// `0x37`/`0x38`/`0x39` are chat type 10 rows, so all three land on the system channel. An unknown
 /// id says nothing, the registrar's bail.
-fn announce_learn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKeys) {
+fn announce_learn(
+    spell_id: u32,
+    spells: Option<&Spells>,
+    errors: &mut dyn crate::ui_action::signals::SignalSink,
+) {
     let Some(display) = spells.and_then(|s| s.catalog.get(spell_id)) else {
         return;
     };
@@ -1396,7 +1393,7 @@ fn announce_learn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKe
         // The recipe arm pushes the bare name: it returns before the rank composer.
         LearnAnnouncement::Recipe => ("ERR_LEARN_RECIPE_S", display.name.clone()),
     };
-    errors.0.push(UiError::s(key, arg));
+    errors.line(UiError::s(key, arg));
 }
 
 /// `SMSG_REMOVED_SPELL`: the spell leaves the book. A talent wipe arrives as these (vmangos
@@ -1412,7 +1409,7 @@ fn removed_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
     spells: Option<&Spells>,
-    errors: &mut UiErrorKeys,
+    errors: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     debug!("net: removed spell {spell_id}");
     if actions.spells.remove(&spell_id) {
@@ -1424,16 +1421,18 @@ fn removed_spell(
 /// `ERR_SPELL_UNLEARNED_S` with the bare name: the reference pushes `SpellRec+0x1e0` and this path
 /// has no rank composer. Which spells say it is
 /// [`benilla_formats::SpellDisplay::announces_unlearn`]'s.
-fn announce_unlearn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKeys) {
+fn announce_unlearn(
+    spell_id: u32,
+    spells: Option<&Spells>,
+    errors: &mut dyn crate::ui_action::signals::SignalSink,
+) {
     let Some(display) = spells.and_then(|s| s.catalog.get(spell_id)) else {
         return;
     };
     if !display.announces_unlearn() {
         return;
     }
-    errors
-        .0
-        .push(UiError::s("ERR_SPELL_UNLEARNED_S", display.name.clone()));
+    errors.line(UiError::s("ERR_SPELL_UNLEARNED_S", display.name.clone()));
 }
 
 /// `SMSG_SUPERCEDED_SPELL`: the new rank replaces the old in the book. The bar follows from the
@@ -1444,7 +1443,7 @@ fn superceded_spell(
     new_spell_id: u32,
     actions: &mut PlayerActions,
     spells: Option<&Spells>,
-    errors: &mut UiErrorKeys,
+    errors: &mut dyn crate::ui_action::signals::SignalSink,
     tab_flash: &mut LearnedInTab,
 ) {
     debug!("net: superceded spell {old_spell_id} -> {new_spell_id}");
@@ -2492,7 +2491,7 @@ mod tests {
         );
         let mut actions = PlayerActions::default();
         let mut bar = crate::ui_action::ActionSlots::default();
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         let mut flash = LearnedInTab::default();
         learned_spell(
             78,
@@ -2524,7 +2523,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         learned_spell(
             133,
             (
@@ -2550,7 +2549,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         learned_spell(
             2550,
             (
@@ -2602,7 +2601,7 @@ mod tests {
         );
         let mut actions = PlayerActions::default();
         actions.spells.insert(78);
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         let mut flash = LearnedInTab::default();
         superceded_spell(
             78,
@@ -2634,7 +2633,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         learned_spell(
             668,
             (
@@ -2671,7 +2670,7 @@ mod tests {
     fn learned_spell_adds_to_the_book_once() {
         let mut actions = PlayerActions::default();
         let mut bar = crate::ui_action::ActionSlots::default();
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         learned_spell(
             6603,
             (&mut actions, &mut bar),
@@ -2752,7 +2751,7 @@ mod tests {
                 kind: ACTION_KIND_SPELL,
             },
         );
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         let mut flash = LearnedInTab::default();
 
         learned_spell(
@@ -2898,7 +2897,7 @@ mod tests {
         ] {
             let mut actions = PlayerActions::default();
             let mut bar = crate::ui_action::ActionSlots::default();
-            let mut errors = UiErrorKeys::default();
+            let mut errors = crate::ui_action::signals::LinesSeen::default();
             let mut flash = LearnedInTab::default();
             learned_spell(
                 id,
@@ -2932,7 +2931,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut actions = PlayerActions::default();
         let mut bar = crate::ui_action::ActionSlots::default();
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         let mut flash = LearnedInTab::default();
         learned_spell(
             133,
@@ -2971,7 +2970,7 @@ mod tests {
             284,
             &mut actions,
             None,
-            &mut UiErrorKeys::default(),
+            &mut crate::ui_action::signals::LinesSeen::default(),
             &mut LearnedInTab::default(),
         );
 
@@ -3922,7 +3921,7 @@ mod tests {
         let mut actions = PlayerActions::default();
         actions.spells.extend([14522, 14788, 14789]);
 
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         removed_spell(14788, &mut actions, None, &mut errors);
         assert!(!actions.spells.contains(&14788));
         assert!(actions.dirty);
@@ -3943,7 +3942,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         removed_spell(
             11069,
             &mut PlayerActions::default(),
@@ -3972,7 +3971,7 @@ mod tests {
             ),
             (0x80, 0, "DO_NOT_DISPLAY — the sign test"),
         ] {
-            let mut errors = UiErrorKeys::default();
+            let mut errors = crate::ui_action::signals::LinesSeen::default();
             removed_spell(
                 11069,
                 &mut PlayerActions::default(),
@@ -3983,7 +3982,7 @@ mod tests {
         }
 
         // An unknown id says nothing, like every other display path here.
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         removed_spell(
             99999,
             &mut PlayerActions::default(),
@@ -4006,7 +4005,7 @@ mod tests {
             },
         );
 
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         learned_spell(
             1234,
             (
@@ -4023,7 +4022,7 @@ mod tests {
         assert_eq!(errors.0.len(), 1, "the learn block never reads castUI");
         assert_eq!(errors.0[0].key, "ERR_LEARN_SPELL_S");
 
-        let mut errors = UiErrorKeys::default();
+        let mut errors = crate::ui_action::signals::LinesSeen::default();
         removed_spell(
             1234,
             &mut PlayerActions::default(),

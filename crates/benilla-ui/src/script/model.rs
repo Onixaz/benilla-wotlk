@@ -552,7 +552,7 @@ pub(crate) struct Model {
     /// Equipment set sends, for the app.
     pub(crate) equipment_set_requests: Vec<super::equipment_manager::EquipmentSetRequest>,
     /// Every line the display showed, for the tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shown_lines: Vec<(&'static str, Option<String>)>,
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
@@ -700,6 +700,9 @@ pub(crate) struct Model {
     pub(crate) vehicle_aim_power: f32,
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
+    /// Chat-kind lines the app resolved and showed through [`super::UiScript::show_text`], their
+    /// key and text, which the app adds to the chat log.
+    pub(crate) chat_lines: Vec<(&'static str, String)>,
 
     /// `PetAbandon()` and `PetDismiss()` calls, counted apart though both end at one opcode.
     pub(crate) pet_abandons: u32,
@@ -1590,7 +1593,7 @@ impl Model {
             currency_collapsed: HashMap::new(),
             equipment_manager: Default::default(),
             equipment_set_requests: Vec::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             shown_lines: Vec::new(),
             action_states: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
@@ -1666,6 +1669,7 @@ impl Model {
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
             ui_errors_s: Vec::new(),
+            chat_lines: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,
             pet_renames: Vec::new(),

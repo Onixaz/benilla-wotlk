@@ -35,6 +35,50 @@ impl super::UiScript {
     pub fn show_line(&mut self, key: &'static str) {
         show_now(self.lua(), key);
     }
+
+    /// The message display (`0x5216f0`) for a line the app resolved, `key` naming its catalog
+    /// record: an error or info line's sound goes to the app and its event fires now with a
+    /// non-empty text; a chat line goes to the app whole ([`Self::take_chat_lines`]).
+    pub fn show_text(&mut self, key: &'static str, text: String) {
+        #[cfg(any(test, feature = "fixtures"))]
+        crate::script::model_mut_of(self.lua())
+            .shown_lines
+            .push((key, None));
+        let event = match crate::messages::kind_of(key) {
+            crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
+            crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
+            crate::messages::MsgKind::Chat => {
+                if !text.is_empty() {
+                    crate::script::model_mut_of(self.lua())
+                        .chat_lines
+                        .push((key, text));
+                }
+                return;
+            }
+        };
+        if crate::messages::by_key(key).is_some() {
+            crate::script::model_mut_of(self.lua())
+                .message_sounds
+                .push(key);
+        }
+        if !text.is_empty() {
+            self.fire_event(event, vec![super::ScriptValue::Str(text)]);
+        }
+    }
+
+    /// The keys of every line the display showed, in order, taken: the app's tests' record.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn take_shown_keys(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut crate::script::model_mut_of(self.lua()).shown_lines)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    /// The chat-kind lines [`Self::show_text`] handed over, taken.
+    pub fn take_chat_lines(&mut self) -> Vec<(&'static str, String)> {
+        std::mem::take(&mut crate::script::model_mut_of(self.lua()).chat_lines)
+    }
 }
 
 #[cfg(test)]
@@ -67,7 +111,7 @@ impl super::UiScript {
 }
 
 fn show(lua: &Lua, key: &'static str, arg: Option<String>) {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fixtures"))]
     crate::script::model_mut_of(lua)
         .shown_lines
         .push((key, arg.clone()));

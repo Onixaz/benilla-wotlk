@@ -17,22 +17,44 @@ use benilla_ui::script::UiScript;
 use crate::ui_script::live::UiEvents;
 
 use super::usable_cache::{self, Pass, UsableCaches};
+use super::UiError;
 
-/// Where a signal fires in turn with the write that raised it: a handler's queue, a press's edges,
-/// or a VM the caller holds, directly.
+/// The caller's ordered stream: where a signal fires, and a line shows, in turn with the write or
+/// the refusal that raised it. A packet handler's queue fires in its turn, a VM the caller holds
+/// directly, and a system without the VM once its commands apply ([`QueuedSignals`]). A press's
+/// edges fire in order as the press returns, inside the Lua call; the reference fires each at its
+/// step, so a handler there sees the state of that step, here the state after the press (#1363).
+///
+/// A refusal line goes here, never onto a frame-late queue: the reference's message display
+/// (`0x5216f0`) runs inside the code that refuses, so its `UI_ERROR_MESSAGE` or `UI_INFO_MESSAGE`
+/// fires before that code goes on. A Lua verb in the VM calls `ui_errors::show_now` instead.
 pub(crate) trait SignalSink {
     fn signal(&mut self, event: &'static str);
+
+    /// Show `line` here: its sound, then its event or its chat line.
+    fn line(&mut self, line: UiError);
 }
 
 impl SignalSink for UiEvents {
     fn signal(&mut self, event: &'static str) {
         self.fire(event, Vec::new());
     }
+
+    fn line(&mut self, line: UiError) {
+        super::show_in_turn(self, "ui_lines", line);
+    }
 }
 
 impl SignalSink for UiScript {
     fn signal(&mut self, event: &'static str) {
         self.fire_event(event, Vec::new());
+    }
+
+    fn line(&mut self, line: UiError) {
+        // The sound goes first whatever the text (`0x52172d`), so an unresolved line still sounds.
+        let text = super::ui_error_text(&line, &|key| self.lua().globals().get::<String>(key).ok())
+            .unwrap_or_default();
+        self.show_text(line.key, text);
     }
 }
 
@@ -49,6 +71,12 @@ impl SignalSink for QueuedSignals<'_> {
             ui.fire(event, Vec::new());
         }
     }
+
+    fn line(&mut self, line: UiError) {
+        if let Some(ui) = self.ui.as_mut() {
+            ui.line(line);
+        }
+    }
 }
 
 impl QueuedSignals<'_> {
@@ -60,10 +88,28 @@ impl QueuedSignals<'_> {
     }
 }
 
-/// A test's record of what fired, in order.
+/// A test's record of what fired, in order: a line by its key.
 impl SignalSink for Vec<&'static str> {
     fn signal(&mut self, event: &'static str) {
         self.push(event);
+    }
+
+    fn line(&mut self, line: UiError) {
+        self.push(line.key);
+    }
+}
+
+/// A test's record of the lines shown, in order; signals are not recorded.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct LinesSeen(pub(crate) Vec<UiError>);
+
+#[cfg(test)]
+impl SignalSink for LinesSeen {
+    fn signal(&mut self, _: &'static str) {}
+
+    fn line(&mut self, line: UiError) {
+        self.0.push(line);
     }
 }
 
