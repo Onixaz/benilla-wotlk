@@ -793,6 +793,48 @@ pub trait LiveState {
         None
     }
 
+    /// The trainer window the list handler built (`0x596450`), `Some(None)` with none; `None` where no view lends it.
+    fn trainer(&self) -> Option<Option<&super::TrainerWindow>> {
+        None
+    }
+
+    /// The trainer window, written by a verb's mask commit or selection inside its call.
+    fn trainer_mut(&mut self) -> Option<Option<&mut super::TrainerWindow>> {
+        None
+    }
+
+    /// Service `position` (in list order)'s gates and product link at the call (`0x595470`, `0x5955e0`, `0x596290`); `Some(None)` past the list, `None` where no view lends it.
+    fn trainer_service_live(&self, _position: usize) -> Option<Option<super::TrainerServiceLive>> {
+        None
+    }
+
+    /// Service `position`'s description parsed at the call (`0x5959d0`), a recipe's product asked with the trainer's record callback; `None` where no view lends it.
+    fn trainer_description(
+        &mut self,
+        _position: usize,
+        _global: GlobalStrings<'_>,
+    ) -> Option<Option<String>> {
+        None
+    }
+
+    /// `CMSG_TRAINER_BUY_SPELL` to the open trainer inside the call (`0x594da0`); false where no view lends the wire.
+    fn trainer_buy(&mut self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Whether a trainer is open, which the setter's zero leg tests (`0x5940fa`); `None` where no view lends the trainer.
+    fn trainer_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The setter's interact target clear (`0x594113`): true when the trainer held it, whose interaction close runs the zero leg again inside it (`0x512f80`).
+    fn trainer_release_target(&mut self) -> bool {
+        false
+    }
+
+    /// The setter's zero (`0x59411b`): the trainer and its records.
+    fn trainer_zero(&mut self) {}
+
     /// Our coinage at the call (`PLAYER_FIELD_COINAGE`), 0 with no player object; `None` where no view lends it.
     fn player_money(&self) -> Option<u64> {
         None

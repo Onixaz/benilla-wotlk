@@ -832,14 +832,13 @@ fn learning_a_spell_keeps_the_filter_and_a_re_open_resets_the_collapse_alone() {
     let mut s = trainer_script_base();
     s.set_money(5000);
 
-    // `ui_trainer::feed_trainer`, reduced to its reset-then-fire.
-    fn feed(s: &mut UiScript, open: &mut TrainerOpen, state: TrainerState, event: &str) {
-        if open.fresh_list {
+    // The list build's reset-then-fire (`0x596450`) and the re-evaluator's fire (`0x596b00`).
+    fn feed(s: &mut UiScript, _open: &mut TrainerOpen, state: TrainerState, event: &str) {
+        if event == "TRAINER_SHOW" {
             s.reset_trainer_list_state();
-            open.fresh_list = false;
         }
         s.set_trainer(Some(state));
-        s.fire_event(event, vec![ScriptValue::Str("Dazalar".into())]);
+        s.fire_event(event, vec![]);
     }
     let filter_on = |s: &mut UiScript, kind: &str| {
         s.eval::<bool>(&format!(

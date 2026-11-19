@@ -1219,7 +1219,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 681, 673),
+        ("Update", 672, 664),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1673,8 +1673,6 @@ pub(crate) mod schedule_tests {
          "per-frame paint and cost state, not a queue"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,
          "acts on the glue VM alone, which the lifecycle installs with its GlueXML loaded and seated, so there is no frameless window; its takes are the manager's own flags and outbox"),
-        ("ui_trainer/mod.rs", "feed_trainer", Because::PlayerRoundTrip,
-         "a refusal answers a Train click and a list answers a trainer gossip click; the edges ride `VmMemo`s"),
     ];
 
     /// `ui_chat/feed.rs` → `ui_chat::feed`; `target/mod.rs` → `target`; `lib.rs` → ``.

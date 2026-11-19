@@ -84,7 +84,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_totem::feed_totems",
     "benilla_app::ui_trade::feed_trade",
     "benilla_app::ui_tradeskill::feed_trade_skill",
-    "benilla_app::ui_trainer::feed_trainer",
     "benilla_app::ui_transfer::feed_difficulty_notices",
     "benilla_app::ui_transfer::feed_transfer_aborts",
     "benilla_app::ui_unit::feed_combo_points",

@@ -925,14 +925,14 @@ fn the_skill_lock_line_ramps_a_known_opener_by_its_margin() {
     );
 }
 
-/// A trainer list that lands this frame is hoverable in this frame's tick: the trainer feed derives
-/// the subjects the spell feed pushes.
+/// A trainer list that lands this frame is hoverable in this frame's tick: the list's handler
+/// writes the subjects the spell feed pushes.
 #[test]
-fn the_spell_feed_runs_after_the_trainer_feed() {
+fn the_spell_feed_runs_after_the_packet_handlers() {
     let mut app = crate::game_plugins::schedule_tests::headless_client();
     assert!(crate::test_support::runs_before(
         &mut app,
-        crate::ui_trainer::feed_trainer,
+        crate::net::apply_net_updates,
         feed_spell_tooltips
     ));
 }

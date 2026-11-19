@@ -816,11 +816,12 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
     crate::ui_item_text::leave_world(world);
     crate::ui_taxi::leave_world(world);
+    crate::ui_trainer::leave_world(world);
     crate::ui_merchant::leave_world(world);
     crate::ui_pet::possess::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {

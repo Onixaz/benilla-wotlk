@@ -501,8 +501,8 @@ pub use tradeskill::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
 };
 pub use trainer::{
-    TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory, TrainerSkillReq,
-    TrainerState, TrainerTooltip,
+    trainer_type_filter, TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory,
+    TrainerServiceLive, TrainerSkillReq, TrainerState, TrainerTooltip, TrainerWindow,
 };
 pub use types::{
     BlendMode, EditAction, EditBoxAdvanceRequest, EditBoxTextUi, EditOutcome, EditUnit,

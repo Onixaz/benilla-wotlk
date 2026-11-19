@@ -798,16 +798,10 @@ pub(crate) struct Model {
     /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
-    /// The open trainer, its buys, selection and close. The selection is a spell id, since
-    /// filters, collapses and re-lists all move row numbers.
-    pub(crate) trainer: Option<trainer::TrainerState>,
+    /// A test's trainer window, its buys and close, read where no view is lent.
+    pub(crate) trainer: Option<trainer::TrainerWindow>,
     pub(crate) trainer_buys: Vec<u32>,
-    pub(crate) trainer_selection: Option<u32>,
     pub(crate) trainer_close: bool,
-    /// Collapsed skill-line ids (the complement of the expanded set), reset per list.
-    pub(crate) trainer_collapsed: HashSet<u32>,
-    /// Skill-line ids `SetTrainerSkillLineFilter` turned off, reset per list.
-    pub(crate) trainer_lines_off: HashSet<u32>,
 
     /// The open taxi map, the `TakeTaxiNode` calls and whether `CloseTaxiMap` ran.
     pub(crate) taxi: Option<taxi::TaxiUiState>,
@@ -1691,10 +1685,7 @@ impl Model {
             stable: Default::default(),
             trainer: None,
             trainer_buys: Vec::new(),
-            trainer_selection: None,
             trainer_close: false,
-            trainer_collapsed: HashSet::new(),
-            trainer_lines_off: HashSet::new(),
             taxi: None,
             taxi_takes: Vec::new(),
             taxi_close: false,

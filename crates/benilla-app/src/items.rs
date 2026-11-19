@@ -488,6 +488,8 @@ pub(crate) enum RecordWait {
     Merchant,
     /// The buyback rows', from a buyback row's record read (`0x58515d` -> `0x5840b0`).
     Buyback,
+    /// The trainer's, from a recipe's description read (`0x595b02` -> `0x593ca0`).
+    Trainer,
     /// A callback the UI left inside a verb's call.
     Ui(benilla_ui::script::ItemRecordWait),
 }

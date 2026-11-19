@@ -1543,3 +1543,153 @@ fn a_second_flight_master_closes_the_first_and_a_reply_closes_in_its_turn() {
         ]
     );
 }
+
+/// The trainer window's events, with the marker line and the money event the coinage watch fires after the trainer's re-evaluation.
+const TRAINER_EVENTS: &[&str] = &[
+    "TRAINER_SHOW",
+    "TRAINER_UPDATE",
+    "TRAINER_CLOSED",
+    "PLAYER_MONEY",
+    "UI_ERROR_MESSAGE",
+];
+
+/// A human warrior's trainer list for `trainer`: Heroic Strike (78) and Rend (772, level 4) under Arms, Battle Shout (6673) under Fury.
+fn warrior_list(trainer: u64) -> SessionEvent {
+    let row = |spell, cost, req_level| benilla_protocol::messages::TrainerSpell {
+        spell,
+        state: benilla_protocol::messages::trainer_spell_state::GREEN,
+        cost,
+        talent_cost: 0,
+        profession_cost: 0,
+        req_level,
+        req_skill: 0,
+        req_skill_value: 0,
+        req_spells: [0, 0, 0],
+    };
+    SessionEvent::TrainerList {
+        trainer,
+        trainer_type: 0,
+        services: vec![row(78, 10, 1), row(772, 100, 4), row(6673, 10, 1)],
+        greeting: "Hello, $N.".into(),
+    }
+}
+
+/// A human warrior at level 2 with a trainer `guid` asked.
+fn warrior_rig(guid: u64) -> Option<Rig> {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    let mut rig = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_UNIT_LEVEL, 2),
+    ])?;
+    rig.packets(vec![npc_at(guid, 0x10, NEAR), npc_at(NPC2, 0x10, NEAR)], 2);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_trainer::TrainerAsked>()
+        .0 = Some(guid);
+    Some(rig)
+}
+
+/// `SMSG_TRAINER_LIST` runs the setter and the list build in its handler (`0x6d14ed`, `0x6d151e`): the interact target taken, the records sorted and `TRAINER_SHOW` fired in the packet's turn, ahead of the next packet's line (`0x596ae2`), with the visible count and the selection read at the call (`0x593d10`, `0x594430`). The coinage watch re-evaluates the trainer ahead of `PLAYER_MONEY` (`0x6da085`, `0x6da091`); `BuyTrainerService` sends inside its call (`0x594da0`); `CloseTrainer` fires `TRAINER_CLOSED` inside its call, again when the trainer held the interact target (`0x594113` -> `0x512f80`), and the records empty (`0x59411b`).
+#[test]
+fn the_trainer_opens_from_its_list_and_acts_inside_its_calls() {
+    let Some(mut rig) = warrior_rig(NPC) else {
+        return;
+    };
+    let rx = tap(&mut rig);
+    let verbs = &["trainn", "trainsel"];
+    let seen = rig.packets(
+        vec![warrior_list(NPC), SessionEvent::BarberShopResult(2)],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, TRAINER_EVENTS, verbs),
+        [
+            "TRAINER_SHOW | trainn=5 trainsel=2",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | trainn=5 trainsel=2",
+        ]
+    );
+    let seen = rig.packets(
+        vec![self_values(&[(
+            benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE,
+            1000,
+        )])],
+        1,
+    );
+    assert_eq!(
+        pin(&seen, TRAINER_EVENTS, verbs),
+        [
+            "TRAINER_UPDATE | trainn=5 trainsel=2",
+            "PLAYER_MONEY | trainn=5 trainsel=2",
+        ],
+        "the re-evaluation runs in the coinage watch's turn, ahead of its event"
+    );
+    let _ = rx.try_iter().count();
+    call(&mut rig, "BuyTrainerService(GetTrainerSelectionIndex())");
+    let sent: Vec<String> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::TrainerBuySpell { trainer, spell_id } => {
+                Some(format!("buy {trainer:#x} {spell_id}"))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, [format!("buy {NPC:#x} 78")], "sent inside the call");
+    assert_eq!(
+        fired_in_call(&mut rig, "CloseTrainer()", TRAINER_EVENTS, verbs),
+        [
+            "TRAINER_CLOSED | trainn=5 trainsel=2",
+            "TRAINER_CLOSED | trainn=5 trainsel=2",
+            "TRAINER_CLOSED | trainn=5 trainsel=nil",
+        ],
+        "the stock frame's hide calls CloseTrainer again inside the first event, whose clear of the          held target runs the leg a third time; the log line of the first lands last, after the zero"
+    );
+    let first = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>("return tostring(GetTrainerServiceInfo(1))")
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(first, "nil", "the zero empties the records");
+    assert!(fired_in_call(&mut rig, "CloseTrainer()", TRAINER_EVENTS, verbs).is_empty());
+}
+
+/// A second trainer's list takes the interact target, whose close runs the first's zero leg (`0x51fd1c` -> `0x512f80`), `TRAINER_CLOSED` before the second `TRAINER_SHOW`; the trainer bit lost on the open trainer closes it in the field's turn (`0x71a172`-`0x71a1a0`), twice with the target held.
+#[test]
+fn a_second_trainer_closes_the_first_and_a_lost_flag_closes_in_its_turn() {
+    let Some(mut rig) = warrior_rig(NPC) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["trainn"];
+    let seen = rig.packets(vec![warrior_list(NPC)], 1);
+    assert_eq!(
+        pin(&seen, TRAINER_EVENTS, verbs),
+        ["TRAINER_SHOW | trainn=5"]
+    );
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_trainer::TrainerAsked>()
+        .0 = Some(NPC2);
+    let seen = rig.packets(
+        vec![
+            warrior_list(NPC2),
+            npc_at(NPC2, 0, NEAR),
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, TRAINER_EVENTS, verbs),
+        [
+            "TRAINER_CLOSED | trainn=5",
+            "TRAINER_CLOSED | trainn=5",
+            "TRAINER_SHOW | trainn=5",
+            "TRAINER_CLOSED | trainn=5",
+            "TRAINER_CLOSED | trainn=5",
+            "TRAINER_CLOSED | trainn=5",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | trainn=5",
+        ],
+        "each close runs the stock frame's own CloseTrainer inside its event; the visible count          outlives the zero"
+    );
+}

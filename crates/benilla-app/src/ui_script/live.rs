@@ -112,6 +112,8 @@ pub(crate) struct LiveView<'w, 's> {
     merchant: Option<crate::ui_merchant::MerchantLive<'w, 's>>,
     /// The taxi map's globals and what its fares and activates read.
     taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
+    /// The trainer window and what its gates, descriptions and buys read.
+    trainer: Option<crate::ui_trainer::TrainerLive<'w, 's>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1853,6 +1855,63 @@ impl LiveState for LiveView<'_, '_> {
         Some(self.taxi.as_mut()?.act(act, target))
     }
 
+    fn trainer(&self) -> Option<Option<&benilla_ui::script::TrainerWindow>> {
+        Some(Some(self.trainer.as_ref()?.window()))
+    }
+
+    fn trainer_mut(&mut self) -> Option<Option<&mut benilla_ui::script::TrainerWindow>> {
+        Some(Some(self.trainer.as_mut()?.window_mut()))
+    }
+
+    fn trainer_service_live(
+        &self,
+        position: usize,
+    ) -> Option<Option<benilla_ui::script::TrainerServiceLive>> {
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.get().map_or(&empty, |a| &a.spells);
+        Some(self.trainer.as_ref()?.service_live(position, known))
+    }
+
+    fn trainer_description(
+        &mut self,
+        position: usize,
+        global: benilla_ui::script::GlobalStrings<'_>,
+    ) -> Option<Option<String>> {
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.get().map_or(&empty, |a| &a.spells);
+        let waits = self.record_waits.as_deref_mut();
+        Some(
+            self.trainer
+                .as_ref()?
+                .description(position, known, waits, global),
+        )
+    }
+
+    fn trainer_buy(&mut self, spell_id: u32) -> bool {
+        let Some(t) = self.trainer.as_ref() else {
+            return false;
+        };
+        t.buy(spell_id);
+        true
+    }
+
+    fn trainer_open(&self) -> Option<bool> {
+        Some(self.trainer.as_ref()?.is_open())
+    }
+
+    fn trainer_release_target(&mut self) -> bool {
+        let target = self.tabard.target_mut();
+        self.trainer
+            .as_mut()
+            .is_some_and(|t| t.release_target(target))
+    }
+
+    fn trainer_zero(&mut self) {
+        if let Some(t) = self.trainer.as_mut() {
+            t.zero();
+        }
+    }
+
     fn close_gossip(&mut self) -> u32 {
         use crate::ui_session::NpcSession;
         let giver_held = self.lent.giver.get().and_then(|q| q.npc()).is_some();
@@ -1935,6 +1994,11 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     }
 
     /// The vendor this parameter's view lends, between calls into Lua.
+    pub(crate) fn trainer_open(&self) -> Option<(u64, usize, u32)> {
+        self.loan
+            .with_view(|v| v.trainer.as_ref().and_then(|t| t.open()))
+    }
+
     pub(crate) fn merchant_vendor(&self) -> Option<u64> {
         self.loan
             .with_view(|v| v.merchant.as_ref().and_then(|m| m.state().vendor))

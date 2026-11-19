@@ -37,7 +37,6 @@ use benilla_ui::script::UiScript;
 
 use crate::ui_quest::{QuestGiver, QuestStatuses};
 use crate::ui_session::InteractNpc;
-use crate::ui_trainer::TrainerOpen;
 
 /// How wide to look around a `.go` landing: the reference's service reach,
 /// [`crate::target::SERVICE_RANGE_SQ`] (5.5556 yd). Past it the cursor goes gray, the click sends
@@ -261,16 +260,22 @@ fn flag_names(flags: u32) -> String {
     }
 }
 
+/// A stale trainer from the previous leg closes through the setter's zero leg.
+fn close_trainer(world: &mut World) {
+    crate::ui_trainer::set_none(world);
+    crate::ui_script::live::fire_handler_events(world);
+}
+
 /// Which window is open on `guid`, if any.
 fn open_window(
     guid: u64,
     gossip: &GossipState,
     giver: &QuestGiver,
-    trainer: &TrainerOpen,
+    trainer: Option<u64>,
 ) -> Option<Window> {
     // A trainer list reached through the NPC's menu leaves the menu's session latched, so the
     // trainer is read first.
-    if trainer.trainer == Some(guid) {
+    if trainer == Some(guid) {
         return Some(Window::Trainer);
     }
     // The gossip frame stays closed until the greeting's `CMSG_NPC_TEXT_QUERY` answers
@@ -288,7 +293,6 @@ fn service_probe(
     time: ProbeClock,
     mut probe: ResMut<ServiceProbe>,
     mut queue: Commands,
-    mut trainer: ResMut<TrainerOpen>,
     statuses: Res<QuestStatuses>,
     // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
     // window and only by one.
@@ -427,7 +431,7 @@ fn service_probe(
             // reference's own close sends no packet, so a local clear is the whole of it.
             queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
-            trainer.clear();
+            queue.queue(close_trainer);
 
             // The first click must get through: nothing is open, and the reference arms only from
             // window openers, so the gate must read disarmed at the send.
@@ -489,9 +493,10 @@ fn service_probe(
         }
         Phase::Await { i, since, guid } => {
             let leg = &LEGS[i];
+            let trainer = live.trainer_open();
             let Some((window, quest_view)) = live.with_giver(|giver| {
                 giver.map(|g| {
-                    let window = open_window(guid, &gossip, g, &trainer);
+                    let window = open_window(guid, &gossip, g, trainer.map(|t| t.0));
                     (window, g.view.as_ref().map(discr))
                 })
             }) else {
@@ -511,11 +516,10 @@ fn service_probe(
                                 gossip.greeting.as_str()
                             ),
                             Window::Quest => format!(" ({quest_view:?})"),
-                            Window::Trainer => format!(
-                                " ({} service(s), type {})",
-                                trainer.services.len(),
-                                trainer.trainer_type
-                            ),
+                            Window::Trainer => {
+                                let (_, n, ty) = trainer.unwrap_or_default();
+                                format!(" ({n} service(s), type {ty})")
+                            }
                         }
                     );
                     probe.passes += 1;
@@ -610,7 +614,7 @@ fn service_probe(
             let flags = store.0.unit_npc_flags();
             queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
-            trainer.clear();
+            queue.queue(close_trainer);
             queue.queue(|w: &mut World| {
                 crate::ui_merchant::close_merchant(w);
                 crate::ui_script::live::fire_handler_events(w);

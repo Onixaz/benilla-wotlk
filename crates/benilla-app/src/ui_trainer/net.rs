@@ -1,12 +1,14 @@
-//! The trainer window's packet handlers, filling [`TrainerOpen`] and [`TrainerErrors`].
+//! The trainer window's packet handlers: the list runs the setter and the list build, and each of
+//! the re-evaluator's triggers runs it in its turn.
 
 use benilla_protocol::messages::TrainerSpell;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{TrainerAsked, TrainerErrors, TrainerOpen};
+use super::{TrainerAsked, TrainerOpen};
 use crate::net::NetHandlerApp;
 use crate::ui_gossip::GossipState;
+use crate::ui_script::live::UiEvents;
 
 /// Register the trainer handlers, one per kind, plus the session-end listener.
 pub(super) fn register(app: &mut App) {
@@ -14,61 +16,51 @@ pub(super) fn register(app: &mut App) {
     app.net_handler(K::TrainerList, on_list)
         .net_handler(K::TrainerBuySucceeded, on_buy_succeeded)
         .net_handler(K::TrainerBuyFailed, on_buy_failed)
-        // Re-evaluation triggers, as second handlers on their kinds; the feed re-derives after
-        // every handler has run, so registration order does not matter.
+        // The re-evaluator's packet triggers, second handlers on their kinds, each after the
+        // book change its packet makes.
         .net_handler(K::SpellLearned, on_spell_learned)
         .net_handler(K::SpellRemoved, on_spell_removed)
         .net_handler(K::SpellSuperceded, on_spell_superceded)
         .net_handler(K::PetSpells, on_pet_spells)
-        .net_handler(K::SpellModifier, on_spell_modifier)
         .net_handler(K::UnlearnSpells, on_unlearn_spells)
         .net_handler(K::Disconnected, on_session_end);
 }
 
-/// `SMSG_SET_FLAT/PCT_SPELL_MODIFIER`, the two talent triggers.
-fn on_spell_modifier(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
-    if matches!(ev, SessionEvent::SpellModifier { .. }) {
-        trainer_open.trigger_re_derive();
+/// A spell entered the book: the learn registrar re-evaluates (`0x6e7d2a`).
+fn on_spell_learned(In(ev): In<SessionEvent>, ui: Option<ResMut<UiEvents>>) {
+    if let (SessionEvent::SpellLearned { .. }, Some(mut ui)) = (ev, ui) {
+        ui.world(super::refresh);
     }
 }
 
-/// A spell entered the book: `SMSG_LEARNED_SPELL`'s handler (`0x6e7d60`) re-evaluates through
-/// the learn registrar (`0x6e7d2a`).
-fn on_spell_learned(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
-    if matches!(ev, SessionEvent::SpellLearned { .. }) {
-        trainer_open.trigger_re_derive();
+/// A spell left the book: the unlearn re-evaluates (`0x6e7376`).
+fn on_spell_removed(In(ev): In<SessionEvent>, ui: Option<ResMut<UiEvents>>) {
+    if let (SessionEvent::SpellRemoved { .. }, Some(mut ui)) = (ev, ui) {
+        ui.world(super::refresh);
     }
 }
 
-/// A spell left the book: `SMSG_REMOVED_SPELL`'s handler (`0x6e7840`) re-evaluates through the
-/// unlearn (`0x6e7376`).
-fn on_spell_removed(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
-    if matches!(ev, SessionEvent::SpellRemoved { .. }) {
-        trainer_open.trigger_re_derive();
-    }
-}
-
-/// A rank replaced another, so the known-at-a-higher-rank answers may have moved (`0x6e7e97`).
-fn on_spell_superceded(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
-    if matches!(ev, SessionEvent::SpellSuperceded { .. }) {
-        trainer_open.trigger_re_derive();
+/// A rank replaced another (`0x6e7e97`).
+fn on_spell_superceded(In(ev): In<SessionEvent>, ui: Option<ResMut<UiEvents>>) {
+    if let (SessionEvent::SpellSuperceded { .. }, Some(mut ui)) = (ev, ui) {
+        ui.world(super::refresh);
     }
 }
 
 /// The pet's spellbook arrived or changed (`0x5d6d78`).
-fn on_pet_spells(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
-    if matches!(ev, SessionEvent::PetSpells(_)) {
-        trainer_open.trigger_re_derive();
+fn on_pet_spells(In(ev): In<SessionEvent>, ui: Option<ResMut<UiEvents>>) {
+    if let (SessionEvent::PetSpells(_), Some(mut ui)) = (ev, ui) {
+        ui.world(super::refresh);
     }
 }
 
+/// `SMSG_TRAINER_LIST` (`0x6d12c0`): a list for the trainer last asked or the gossip NPC
+/// (`0x6d14b6`, `0x6d14d5`) runs the setter and the list build in turn; any other is dropped.
 fn on_list(
     In(ev): In<SessionEvent>,
-    mut trainer_open: ResMut<TrainerOpen>,
     asked: Res<TrainerAsked>,
     gossip: Res<GossipState>,
-    me: Option<Res<crate::net::SelfGuid>>,
-    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+    ui: Option<ResMut<UiEvents>>,
 ) {
     if let SessionEvent::TrainerList {
         trainer,
@@ -77,39 +69,45 @@ fn on_list(
         greeting,
     } = ev
     {
-        let expected = [asked.0, gossip.npc];
-        let previous = trainer_open.trainer;
-        let opened = trainer_list(
-            trainer,
-            trainer_type,
-            services,
-            greeting,
-            &expected,
-            &mut trainer_open,
-        );
-        let me = me.and_then(|m| m.0);
-        if opened && takes_interact_target(previous, trainer, me) {
-            if let Some(mut ui) = ui {
-                ui.world(crate::ui_bank::close_by_interaction);
-            }
+        if !lands(trainer, &[asked.0, gossip.npc], &services) {
+            return;
+        }
+        if let Some(mut ui) = ui {
+            ui.world(move |w| super::list(w, trainer, trainer_type, services, greeting));
         }
     }
 }
 
-/// The trainer setter takes the interact target (`0x594149`) for a new trainer only: the same one skips the whole setter (`0x5940fa`), and the active player skips the target call (`0x59413f`).
-fn takes_interact_target(previous: Option<u64>, trainer: u64, me: Option<u64>) -> bool {
-    trainer != 0 && previous != Some(trainer) && me != Some(trainer)
+/// Whether a list lands: for the trainer last asked or the gossip NPC.
+fn lands(trainer: u64, expected: &[Option<u64>], services: &[TrainerSpell]) -> bool {
+    if !expected.contains(&Some(trainer)) {
+        debug!("net: trainer list for {trainer:#x}, neither asked nor the gossip npc — dropped");
+        return false;
+    }
+    debug!(
+        "net: trainer {trainer:#x} listed {} services",
+        services.len()
+    );
+    true
 }
 
+/// `SMSG_TRAINER_BUY_SUCCEEDED`, logged only: the reference registers no handler for it (absent
+/// from `reference/3.3.5a-opcodes.tsv`), the bought row repaints on `SMSG_LEARNED_SPELL`'s
+/// re-evaluation, and AzerothCore sends no fresh list (`HandleTrainerBuySpellOpcode`).
 fn on_buy_succeeded(In(ev): In<SessionEvent>) {
     if let SessionEvent::TrainerBuySucceeded { trainer, spell_id } = ev {
-        trainer_buy_succeeded(trainer, spell_id);
+        debug!("net: trainer {trainer:#x} taught spell {spell_id}");
     }
 }
 
-fn on_buy_failed(In(ev): In<SessionEvent>, mut errors: ResMut<TrainerErrors>) {
+/// `SMSG_TRAINER_BUY_FAILED` (`0x6d8410`): the reference shows the player nothing and only writes
+/// its line to the console.
+fn on_buy_failed(In(ev): In<SessionEvent>) {
     if let SessionEvent::TrainerBuyFailed { error, .. } = ev {
-        trainer_buy_failed(error, &mut errors);
+        info!(
+            "ui_trainer: {} (code {error})",
+            super::train_error_log_line(error)
+        );
     }
 }
 
@@ -132,66 +130,17 @@ fn on_unlearn_spells(In(ev): In<SessionEvent>, mut unlearned: ResMut<super::Unle
     }
 }
 
-/// `SMSG_TRAINER_LIST`: open the window on the trainer's services, when the list is for the
-/// trainer last asked or the gossip NPC (`0x6d14b6`, `0x6d14d5`); any other list is dropped.
-fn trainer_list(
-    trainer: u64,
-    trainer_type: u32,
-    services: Vec<TrainerSpell>,
-    greeting: String,
-    expected: &[Option<u64>],
-    trainer_open: &mut TrainerOpen,
-) -> bool {
-    if !expected.contains(&Some(trainer)) {
-        debug!("net: trainer list for {trainer:#x}, neither asked nor the gossip npc — dropped");
-        return false;
-    }
-    debug!(
-        "net: trainer {trainer:#x} (type {trainer_type}) listed {} services",
-        services.len()
-    );
-    trainer_open.open(trainer, trainer_type, services, greeting);
-    true
-}
-
-/// `SMSG_TRAINER_BUY_SUCCEEDED`, logged only: the reference registers no handler for it (absent
-/// from `reference/3.3.5a-opcodes.tsv`), the bought row repaints on `SMSG_LEARNED_SPELL`'s
-/// re-evaluation, and AzerothCore sends no fresh list (`HandleTrainerBuySpellOpcode`).
-fn trainer_buy_succeeded(trainer: u64, spell_id: u32) {
-    debug!("net: trainer {trainer:#x} taught spell {spell_id}");
-}
-
-/// `SMSG_TRAINER_BUY_FAILED`: queue the code for the feed to log.
-fn trainer_buy_failed(error: u32, errors: &mut TrainerErrors) {
-    debug!("net: trainer buy failed (code {error})");
-    errors.0.push(error);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_list_opens_only_for_the_asked_trainer_or_the_gossip_npc() {
-        let mut open = TrainerOpen::default();
-        let list = |guid, expected: &[Option<u64>], open: &mut TrainerOpen| {
-            trainer_list(guid, 0, Vec::new(), String::new(), expected, open);
-        };
-        list(0x99, &[Some(0x42), None], &mut open);
-        assert_eq!(open.trainer, None, "a stranger's list is dropped");
-        list(0x42, &[Some(0x42), None], &mut open);
-        assert_eq!(open.trainer, Some(0x42), "the asked trainer");
-        list(0x77, &[Some(0x42), Some(0x77)], &mut open);
-        assert_eq!(open.trainer, Some(0x77), "the gossip npc");
-    }
-
-    /// A new trainer takes the interact target; the open one again, the active player, or none do not.
-    #[test]
-    fn only_a_new_trainer_takes_the_interact_target() {
-        assert!(takes_interact_target(None, 0x42, Some(0x7)));
-        assert!(takes_interact_target(Some(0x41), 0x42, Some(0x7)));
-        assert!(!takes_interact_target(Some(0x42), 0x42, Some(0x7)));
-        assert!(!takes_interact_target(None, 0x7, Some(0x7)));
-        assert!(!takes_interact_target(None, 0, None));
+    fn a_list_lands_only_for_the_asked_trainer_or_the_gossip_npc() {
+        assert!(!lands(0x99, &[Some(0x42), None], &[]), "a stranger's list");
+        assert!(lands(0x42, &[Some(0x42), None], &[]), "the asked trainer");
+        assert!(
+            lands(0x77, &[Some(0x42), Some(0x77)], &[]),
+            "the gossip npc"
+        );
     }
 }

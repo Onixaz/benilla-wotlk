@@ -963,8 +963,14 @@ impl Dispatch<'_, '_> {
         match service_action(arm, guid, ghost, cursor_sale) {
             ServiceAction::Send(cmd) => {
                 debug!("right-click interact: {guid:#x} ({arm:?})");
+                // The trainer ask (`0x6d1f20`): the asked guid stored (`0x6d1f2f`), then the open
+                // trainer closed through the setter's zero leg (`0x6d1f48`), then the ask.
                 if let ClientCommand::TrainerList { trainer } = cmd {
                     self.service.trainer_asked.0 = Some(trainer);
+                    self.feedback.queue.queue(|world: &mut World| {
+                        crate::ui_trainer::set_none(world);
+                        crate::ui_script::live::fire_handler_events(world);
+                    });
                 }
                 let _ = self.seam.net.0.send(cmd);
             }

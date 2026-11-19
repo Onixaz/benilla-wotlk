@@ -164,6 +164,8 @@ local VERBS = {
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
     { "money", function() return GetMoney() end },
+    { "trainn", function() return GetNumTrainerServices() end },
+    { "trainsel", function() return GetTrainerSelectionIndex() end },
     { "taxin", function() return NumTaxiNodes() end },
     { "taxicost", function()
         for i = 1, NumTaxiNodes() do

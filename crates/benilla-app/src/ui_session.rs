@@ -177,7 +177,11 @@ impl InteractWindows<'_, '_> {
                 crate::ui_taxi::close_by_interaction(world);
                 crate::ui_script::live::fire_handler_events(world);
             }),
-            4 => close(&mut self.trainer),
+            // The trainer leg runs the setter's zero leg, its event with it (`0x512f80`).
+            4 => self.queue.queue(|world: &mut World| {
+                crate::ui_trainer::set_none(world);
+                crate::ui_script::live::fire_handler_events(world);
+            }),
             // The bank closes through its own leg, its events with it.
             5 => {}
             6 => close(&mut self.registrar),
@@ -308,6 +312,11 @@ fn close_window_on(world: &mut World, old: u64) {
         Some(3) => {
             state.apply(world);
             crate::ui_taxi::close_by_interaction(world);
+            return;
+        }
+        Some(4) => {
+            state.apply(world);
+            crate::ui_trainer::set_none(world);
             return;
         }
         Some(w) if w != BANK_WINDOW => windows.close(w),

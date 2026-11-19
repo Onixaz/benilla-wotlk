@@ -578,6 +578,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
             .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
         RecordWait::Merchant => sc.ui.world(crate::ui_merchant::record_callback),
         RecordWait::Buyback => sc.ui.world(crate::ui_merchant::buyback_record_callback),
+        // The trainer's callback fires on a found record (`0x593ca0`).
+        RecordWait::Trainer => {
+            if landed {
+                sc.ui.fire("TRAINER_DESCRIPTION_UPDATE", Vec::new());
+            }
+        }
         RecordWait::Ui(wait) => sc
             .ui
             .write(move |script| script.item_record_callback(entry, landed, wait)),
@@ -1741,6 +1747,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 }
             });
         }
+        // Its trainer leg (`0x71a172`-`0x71a1a0`): the trainer bit lost on the open trainer.
+        if old & NPC_FLAG_TRAINER != 0 && new & NPC_FLAG_TRAINER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_resource::<crate::ui_trainer::TrainerOpen>()
+                    .is_some_and(|t| t.trainer == Some(guid));
+                if open {
+                    crate::ui_trainer::set_none(world);
+                }
+            });
+        }
         // Its bank leg (`0x71a1a8`-`0x71a1db`): the banker bit lost on the open bank's banker.
         if old & NPC_FLAG_BANKER != 0 && new & NPC_FLAG_BANKER == 0 {
             sc.ui.world(move |world| {
@@ -1795,6 +1812,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         .partition_point(|&(index, ..)| index < FIELD_UNIT_FLAGS);
     let (before, after) = merged.death.split_at(split);
     own_death_fields(sc, guid, before);
+    // Our level's change, in field order: the trainer's re-evaluation (`0x6d6702`).
+    if merged.level_moved {
+        sc.ui.world(crate::ui_trainer::refresh);
+    }
     if merged.flags_moved {
         sc.ui.fire(
             "UNIT_FLAGS",
@@ -1914,6 +1935,25 @@ fn is_buyback_watch(index: u16) -> bool {
     (first..first + 24).contains(&index)
 }
 
+/// A skill slot's second or third word, whose halves the skill watches cover (`0x6e5426`, `0x6e5450`, `0x6e546a`).
+fn is_skill_watch(index: u16) -> bool {
+    let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+    index.checked_sub(first).is_some_and(|r| {
+        r < 3 * u16::from(benilla_protocol::messages::PLAYER_SKILL_SLOTS) && r % 3 != 0
+    })
+}
+
+/// How many skill watches a moved skill word runs: the second word's value half (`0x6da4a0`) and max half (`0x6cddb0`), the third word's permanent-bonus half (`0x6cddb0`).
+fn skill_watch_runs(index: u16, old: u32, new: u32) -> usize {
+    let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+    let low = old as u16 != new as u16;
+    let high = old >> 16 != new >> 16;
+    match (index - first) % 3 {
+        1 => usize::from(low) + usize::from(high),
+        _ => usize::from(high),
+    }
+}
+
 /// Our slot fields' watches, the inventory watch's (`0x6e51c5`-`0x6e52c3`) and the containers' (`0x5d9c20`): every slot but the buyback's.
 fn is_slot_watch(index: u16) -> bool {
     benilla_protocol::field::player_slot_of_field(index)
@@ -2030,9 +2070,17 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     let mut buyback_done = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
-        // The coinage watch (`0x6da070`): `PLAYER_MONEY` (`0x6da091`); its coin sound plays from [`crate::sound`].
+        // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`); its coin sound plays from [`crate::sound`].
         if index == benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE {
+            sc.ui.world(crate::ui_trainer::refresh);
             sc.ui.fire("PLAYER_MONEY", Vec::new());
+            continue;
+        }
+        // The skill slots' value, max and permanent-bonus halves, each its own watch re-evaluating the trainer (`0x6da5f3`, `0x6cddb0`).
+        if is_skill_watch(index) {
+            for _ in 0..skill_watch_runs(index, old, new) {
+                sc.ui.world(crate::ui_trainer::refresh);
+            }
             continue;
         }
         // The buyback prices' and stamps' watch, one handler over the range, once per update (`0x585f60`).
@@ -2157,6 +2205,7 @@ fn merge_fields(
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
             merged.display_moved |=
                 own && e.unit_field(benilla_protocol::field::FIELD_UNIT_DISPLAYID);
+            merged.level_moved |= own && e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL);
             if e.unit_field(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS) {
                 merged.npc_flags = Some((e.old, e.new));
             }
@@ -2242,7 +2291,8 @@ fn merge_fields(
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)
-                    || is_buyback_watch(e.index))
+                    || is_buyback_watch(e.index)
+                    || is_skill_watch(e.index))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
@@ -2265,6 +2315,9 @@ const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 /// `UNIT_NPC_FLAG_FLIGHTMASTER`, the bit the NPC-flag watch's taxi leg tests (`0x71a13b`).
 const NPC_FLAG_FLIGHTMASTER: u32 = 0x2000;
 
+/// `UNIT_NPC_FLAG_TRAINER`, the bit the NPC-flag watch's trainer leg tests (`0x71a172`).
+const NPC_FLAG_TRAINER: u32 = 0x10;
+
 /// `UNIT_NPC_FLAG_BANKER`, the bit the NPC-flag watch's bank leg tests (`0x71a1a8`).
 const NPC_FLAG_BANKER: u32 = 0x20000;
 
@@ -2277,6 +2330,8 @@ struct Merged {
     flags_moved: bool,
     /// Our own `UNIT_FIELD_DISPLAYID` moved (`0x716860`).
     display_moved: bool,
+    /// Our own `UNIT_FIELD_LEVEL` moved (`0x72e40c` -> `0x6d66e0`).
+    level_moved: bool,
     /// Our own `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` moved (`0x6d1970`).
     pet_moved: bool,
     /// Our own `PLAYER_FARSIGHT` moved (`0x6e4fd0`).
