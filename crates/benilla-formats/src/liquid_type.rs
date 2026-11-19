@@ -30,6 +30,10 @@ const DEPTH_TABLE: usize = 41;
 /// `LiquidType.Flags` bit: the loop is not played while the player is inside (`0x4d2390`).
 const FLAG_NO_SOUND_INSIDE: u32 = 0x80;
 
+/// `LiquidType.Flags` bit: a WMO pool of this type takes the exterior liquid environment even in an
+/// interior group (`0x793d20`); only 14, WMO Ocean, carries it.
+const FLAG_EXTERIOR_POOL: u32 = 0x200;
+
 /// A liquid's vertex format, `LiquidMaterial.LVF` or an MH2O instance's own: what each vertex of
 /// the grid stores (`0x8a3130`, `0x8a3160`, `0x8a31b0`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +130,21 @@ impl LiquidTypes {
     pub fn sound(&self, id: u32) -> Option<(u32, bool)> {
         let row = self.get(id)?;
         (row.sound_id != 0).then_some((row.sound_id, row.flags & FLAG_NO_SOUND_INSIDE != 0))
+    }
+
+    /// Whether a WMO pool of `id` takes the exterior liquid environment whatever its group's class
+    /// (`0x793d20`); false for an id with no row.
+    pub fn exterior_pool(&self, id: u32) -> bool {
+        self.get(id)
+            .is_some_and(|row| row.flags & FLAG_EXTERIOR_POOL != 0)
+    }
+
+    /// Every id [`Self::exterior_pool`] holds for.
+    pub fn exterior_pool_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.rows
+            .iter()
+            .filter(|(_, row)| row.flags & FLAG_EXTERIOR_POOL != 0)
+            .map(|(&id, _)| id)
     }
 
     pub fn len(&self) -> usize {
@@ -246,6 +265,9 @@ mod tests {
             None,
             "magma reads no depth"
         );
+        // Only WMO Ocean is an exterior pool; interior WMO water (13, 17) is not.
+        let exterior: Vec<u32> = (0..=200).filter(|&id| types.exterior_pool(id)).collect();
+        assert_eq!(exterior, [14], "the 0x200 rows");
         // Every id a shipped MH2O instance names resolves.
         for id in [1, 2, 3, 5, 7, 81, 141, 181] {
             assert!(types.kind(id).is_some(), "MH2O LiquidType {id}");

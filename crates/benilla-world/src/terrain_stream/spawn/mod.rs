@@ -676,7 +676,8 @@ pub(super) fn spawn_loaded_placements(
                             liquid_assets.as_deref(),
                             &mut meshes,
                             p.transform,
-                            // Interior (`MOGI & 0x48 == 0`): the pool takes the room's fog.
+                            // Interior (`MOGI & 0x48 == 0`): the pool takes the room's fog unless
+                            // its type is an exterior pool (`LiquidPath::wmo`).
                             m.group_bounds.get(gi).is_some_and(|g| g.interior),
                             crate::liquid::WmoPool::new(
                                 p.portal_instance.map(|instance| WmoRoom {

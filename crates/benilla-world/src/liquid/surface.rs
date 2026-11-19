@@ -4,7 +4,7 @@
 //! off the wall clock, so no CPU mutates a material; a deterministic run bakes the clock off
 //! (frame 0, scroll 0). Day and night follow server time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -19,13 +19,16 @@ use avian3d::prelude::{Collider, RigidBody};
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::materials::{LiquidExt, LiquidMaterial};
 use benilla_assets::LockRecover;
-use benilla_assets::{liquid_frame_array, RenderConfig, WorldAssets};
+use benilla_assets::{liquid_frame_array, LiquidTables, RenderConfig, WorldAssets};
 use benilla_formats::{read_texture_mip_chain, BlpMipChain, LiquidKind, LiquidMesh};
 
 /// The shared liquid materials by [`LiquidKey`]; absent without client data.
 #[derive(Resource, Default)]
 pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
+    /// The `LiquidType` ids whose WMO pools take the exterior environment in any group
+    /// ([`LiquidTypes::exterior_pool`](benilla_formats::LiquidTypes::exterior_pool)).
+    exterior_pools: HashSet<u32>,
 }
 
 /// Which of the reference's three liquid renderers draws a surface: its dispatch sends the type
@@ -48,9 +51,10 @@ pub(crate) enum LiquidPath {
 }
 
 impl LiquidPath {
-    /// A WMO group's own class, as the reference's `[owner+0x10] & 0x48` test reads it.
-    pub(crate) fn wmo(interior: bool) -> Self {
-        if interior {
+    /// A WMO pool's renderer: interior only in an interior group (`MOGP.flags & 0x48 == 0`) and for
+    /// a type without `LiquidType.Flags & 0x200`, the reference's exterior test (`0x793d20`).
+    pub(crate) fn wmo(group_interior: bool, exterior_pool: bool) -> Self {
+        if group_interior && !exterior_pool {
             Self::WmoInterior
         } else {
             Self::WmoExterior
@@ -113,6 +117,11 @@ impl LiquidAssets {
         self.materials
             .get(&LiquidKey { kind, path, scroll })
             .map(|e| e.material.clone())
+    }
+
+    /// Whether a WMO pool of `liquid_type` takes the exterior environment in any group.
+    fn exterior_pool(&self, liquid_type: u32) -> bool {
+        self.exterior_pools.contains(&liquid_type)
     }
 }
 
@@ -246,7 +255,8 @@ fn liquid_bevy_mesh(lq: &LiquidMesh, body_color: Option<[f32; 3]>) -> Mesh {
 
 /// Spawn a WMO group's liquid surfaces at the building's placement `transform`, pushed onto
 /// `entities` to despawn with the placement. `interior` is the group's `MOGI & 0x48 == 0` class,
-/// which picks the renderer and the fog block; `pool` scopes each surface to its room and floor.
+/// which with the pool's type picks the renderer and the fog block ([`LiquidPath::wmo`]); `pool`
+/// scopes each surface to its room and floor.
 pub(crate) fn spawn_wmo_liquids<'a>(
     commands: &mut Commands,
     liquids: impl Iterator<Item = &'a LiquidMesh>,
@@ -262,8 +272,8 @@ pub(crate) fn spawn_wmo_liquids<'a>(
     let Some(liquid) = liquid_assets else {
         return;
     };
-    let path = LiquidPath::wmo(interior);
     for lq in liquids {
+        let path = LiquidPath::wmo(interior, liquid.exterior_pool(lq.liquid_type));
         // The one path that can scroll, decided by the type, not the kind (`scrolls`).
         let scroll = scrolls(lq.liquid_type);
         // The interior arm's body colour via the pool's MLIQ `materialId`; none when fullbright.
@@ -332,6 +342,7 @@ pub(super) fn setup_liquid(
     mut commands: Commands,
     config: Option<Res<RenderConfig>>,
     world_assets: Option<ResMut<WorldAssets>>,
+    tables: Option<Res<LiquidTables>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LiquidMaterial>>,
 ) {
@@ -340,6 +351,9 @@ pub(super) fn setup_liquid(
     };
     // Light, fog and the water swatches come off the shared global-light buffer, as for terrain.
     let mut assets = LiquidAssets::default();
+    if let Some(tables) = &tables {
+        assets.exterior_pools = tables.0.types.exterior_pool_ids().collect();
+    }
     for &(kind, dir, stem, count) in FRAME_SETS {
         let Some((frames, frame_count)) =
             load_frame_array(&mut world_assets, &mut images, kind, dir, stem, count)
@@ -544,7 +558,18 @@ mod tests {
                     material: Handle::default(),
                 },
             )]),
+            exterior_pools: HashSet::new(),
         }
+    }
+
+    /// The reference's exterior test (`0x793d20`): an exterior group's pool is exterior, and so is
+    /// an interior group's pool whose type carries `LiquidType.Flags & 0x200`.
+    #[test]
+    fn a_wmo_pool_is_interior_only_in_an_interior_group_without_the_exterior_flag() {
+        assert_eq!(LiquidPath::wmo(true, false), LiquidPath::WmoInterior);
+        assert_eq!(LiquidPath::wmo(true, true), LiquidPath::WmoExterior);
+        assert_eq!(LiquidPath::wmo(false, false), LiquidPath::WmoExterior);
+        assert_eq!(LiquidPath::wmo(false, true), LiquidPath::WmoExterior);
     }
 
     /// An ADT surface carries `ExteriorScene` and none of the components `UnownedSceneFilter`
@@ -596,9 +621,43 @@ mod tests {
 /// The scroll and fog-block rules against the real client files.
 #[cfg(test)]
 mod real_data {
-    use super::LiquidKind;
+    use super::{LiquidKind, LiquidPath};
     use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh, WmoLiquidRule};
     use std::collections::HashMap;
+
+    /// Daggercap Bay's cave pool is the one interior-group pool of type 14 (WMO Ocean) in the
+    /// install, so it takes the exterior arm; Drak'Tharon's interior water (13) stays interior.
+    #[test]
+    fn the_daggercap_cave_pool_takes_the_exterior_arm() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let types = benilla_formats::load_liquid_types(&chain).expect("LiquidType loads");
+        let mut pool_path = |root_path: &str, gi: usize| -> (u32, LiquidPath) {
+            let bytes = chain.read_file(root_path).expect("root readable");
+            let root = parse_wmo_root(&bytes).expect("parse root");
+            let stem = root_path.strip_suffix(".wmo").expect("a .wmo path");
+            let gb = chain
+                .read_file(&format!("{stem}_{gi:03}.wmo"))
+                .expect("group readable");
+            let lq = wmo_group_liquid_mesh(&gb, WmoLiquidRule::for_root(&root)).expect("a pool");
+            let interior = root.group_infos().get(gi).expect("group info").interior;
+            (
+                lq.liquid_type,
+                LiquidPath::wmo(interior, types.exterior_pool(lq.liquid_type)),
+            )
+        };
+        assert_eq!(
+            pool_path("world\\wmo\\northrend\\howlingfjord\\daggercapcave.wmo", 0),
+            (14, LiquidPath::WmoExterior),
+            "the cave's ocean is drawn as exterior water; the interior arm adds its white MOMT \
+             colour and saturates it",
+        );
+        assert_eq!(
+            pool_path("world\\wmo\\dungeon\\draktharon\\draktharon.wmo", 2),
+            (13, LiquidPath::WmoInterior),
+            "interior WMO water keeps the interior arm",
+        );
+    }
 
     /// The scroll gate over the shipped pools, where both behaviours share buildings: Ironforge has
     /// 9 static nibble-2 and 2 scrolling nibble-6 magma groups, Blackrock is nibble 6 throughout,
