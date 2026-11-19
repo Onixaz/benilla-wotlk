@@ -44,6 +44,8 @@ pub(crate) struct BarberBody {
 #[derive(Resource, Default)]
 pub(crate) struct BarberShop {
     open: bool,
+    /// The skin style's look value (`[0xbd19b4]`): the open's real skin, then a skin step's; a reset keeps it (`0x52f7d0`).
+    skin_style: u8,
     /// The rows of our race and sex in file order and the grid the dials walk, set by the open.
     styles: Vec<BarberStyle>,
     grid: Option<GlueCustomizeGrid>,
@@ -121,6 +123,7 @@ impl BarberLive<'_, '_> {
             }),
             look,
             dials: self.body.as_deref().and_then(|b| b.preview).unwrap_or(look),
+            skin_style: shop.skin_style,
             styles: &shop.styles,
             grid: shop.grid.as_ref(),
             money: s.player_money().unwrap_or(0),
@@ -131,6 +134,13 @@ impl BarberLive<'_, '_> {
     pub(crate) fn set_dials(&mut self, dials: [u8; 5]) {
         if let Some(b) = self.body.as_mut().filter(|b| b.open) {
             b.preview = Some(dials);
+        }
+    }
+
+    /// A skin step's style pointer (`0x52fd94`).
+    pub(crate) fn set_skin_style(&mut self, data: u8) {
+        if let Some(s) = self.shop.as_mut().filter(|s| s.open) {
+            s.skin_style = data;
         }
     }
 
@@ -303,6 +313,7 @@ mod net {
                 sections: g.sections.clone(),
                 facial_hair_styles: g.facial_hair_styles,
             });
+        shop.skin_style = f.player_skin().unwrap_or(0);
         shop.open = true;
         shop.stand = None;
         *body = BarberBody {

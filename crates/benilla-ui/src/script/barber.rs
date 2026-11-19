@@ -46,6 +46,8 @@ pub struct BarberRead<'a> {
     pub look: [u8; 5],
     /// The look our body previews, in dial order.
     pub dials: [u8; 5],
+    /// The skin style's look value (`[0xbd19b4]`): set by the open and a skin step, kept by a reset (`0x52f7d0`).
+    pub skin_style: u8,
     /// The rows of our race and sex, in file order (`0x52fe90`).
     pub styles: &'a [BarberStyle],
     /// Our race and sex's `CharSections` grid, which the dials walk.
@@ -72,15 +74,23 @@ impl BarberRead<'_> {
         }
     }
 
-    /// The current style of a type with rows (`0x52e490`), off its dial.
-    fn current(&self, ty: usize) -> Option<&BarberStyle> {
-        self.style(ty, self.dials[Self::dial(ty)])
+    /// The value a type's style stands on: the skin's own pointer, every other type's dial.
+    fn value(&self, ty: usize) -> u8 {
+        if ty == SKIN {
+            self.skin_style
+        } else {
+            self.dials[Self::dial(ty)]
+        }
     }
 
-    /// `0x52e790`: the dial still holds the real look.
+    /// The current style of a type with rows (`0x52e490`).
+    fn current(&self, ty: usize) -> Option<&BarberStyle> {
+        self.style(ty, self.value(ty))
+    }
+
+    /// `0x52e790`: the type still stands on the real look.
     fn is_current(&self, ty: usize) -> bool {
-        let d = Self::dial(ty);
-        self.look[d] == self.dials[d]
+        self.look[Self::dial(ty)] == self.value(ty)
     }
 
     /// `CanAlterSkin()` (`0x52e4f0`): the skin has a style row.
@@ -227,7 +237,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
             .flatten();
             if let Some(dials) = next {
-                super::write_live(|l| l.set_barber_dials(dials));
+                super::write_live(|l| {
+                    l.set_barber_dials(dials);
+                    // Only the skin's step moves its style pointer (`0x52fd94`).
+                    if ty == SKIN {
+                        l.set_barber_skin_style(dials[DIAL_SKIN]);
+                    }
+                });
             }
             Ok(())
         })?,
@@ -273,9 +289,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x52f900`: the dials back to the real look. Deviation: the reference resets the hair and
-    // facial-hair styles and the body but leaves the skin's style on the preview, so a reset
-    // skin is still sent; we reset all four.
+    // `0x52f900` -> `0x52f7d0`: the hair and facial-hair styles and the body back to the real look (`0x52e630`); the skin's style pointer stays.
     g.set(
         "BarberShopReset",
         lua.create_function(|_, _: MultiValue| {
@@ -351,6 +365,7 @@ mod tests {
                 base_cost: 1001.5,
                 look: [0, 0, 1, 0, 0],
                 dials: [0, 0, 1, 0, 0],
+                skin_style: 0,
                 styles: vec![
                     row(10, 0, 0, 1.0),
                     row(11, 0, 1, 1.0),
@@ -535,6 +550,31 @@ mod tests {
             s.eval::<i64>("return GetBarberShopTotalCost()").unwrap()
         });
         assert_eq!(cost, 500, "the colour alone is left to pay");
+    }
+
+    #[test]
+    fn reset_keeps_the_skin_style_on_its_step() {
+        // `0x52f7d0` walks the hair and facial-hair pointers back and resets the body (`0x52e630`), never `[0xbd19b4]`.
+        let mut v = view();
+        let b = v.barber.as_mut().unwrap();
+        b.styles.push(row(30, 3, 0, 1.0));
+        b.styles.push(row(31, 3, 1, 1.0));
+        let mut s = UiScript::new().unwrap();
+        let (current, cost) = s.with_live(&mut v, |s| {
+            s.run("SetNextBarberShopStyle(4) BarberShopReset()")
+                .unwrap();
+            (
+                s.eval::<Option<f64>>("return (select(4, GetBarberShopStyleInfo(4)))")
+                    .unwrap(),
+                s.eval::<i64>("return GetBarberShopTotalCost()").unwrap(),
+            )
+        });
+        let b = v.barber.as_ref().unwrap();
+        assert_eq!((b.dials, b.skin_style), ([0, 0, 1, 0, 0], 1));
+        assert_eq!(current, None, "the skin still stands on its step");
+        assert_eq!(cost, 1001, "and is still priced");
+        s.with_live(&mut v, |s| s.run("ApplyBarberShopStyle()").unwrap());
+        assert_eq!(v.barber_sent, vec![[11, 0, 20, 31]], "and sent");
     }
 
     #[test]

@@ -750,6 +750,9 @@ pub trait LiveState {
     /// Our body's barber dials, written by a step or a reset inside its call (`0x52fc80`, `0x52f7d0`).
     fn set_barber_dials(&mut self, _dials: [u8; 5]) {}
 
+    /// The skin style pointer (`[0xbd19b4]`), written by a skin step inside its call (`0x52fd94`).
+    fn set_barber_skin_style(&mut self, _data: u8) {}
+
     /// `CMSG_ALTER_APPEARANCE` with the four style ids, sent inside the apply's call (`0x52eda0`).
     fn send_alter_appearance(&mut self, _styles: [u32; 4]) {}
 
@@ -1210,6 +1213,7 @@ pub(crate) struct TestBarber {
     pub base_cost: f32,
     pub look: [u8; 5],
     pub dials: [u8; 5],
+    pub skin_style: u8,
     pub styles: Vec<super::BarberStyle>,
     pub grid: Option<super::GlueCustomizeGrid>,
     pub money: u32,
@@ -1415,6 +1419,7 @@ impl LiveState for TestView {
             base_cost: b.base_cost,
             look: b.look,
             dials: b.dials,
+            skin_style: b.skin_style,
             styles: &b.styles,
             grid: b.grid.as_ref(),
             money: b.money,
@@ -1424,6 +1429,12 @@ impl LiveState for TestView {
     fn set_barber_dials(&mut self, dials: [u8; 5]) {
         if let Some(b) = self.barber.as_mut() {
             b.dials = dials;
+        }
+    }
+
+    fn set_barber_skin_style(&mut self, data: u8) {
+        if let Some(b) = self.barber.as_mut() {
+            b.skin_style = data;
         }
     }
 

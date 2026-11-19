@@ -1762,6 +1762,10 @@ impl LiveState for LiveView<'_, '_> {
         self.barber.set_dials(dials);
     }
 
+    fn set_barber_skin_style(&mut self, data: u8) {
+        self.barber.set_skin_style(data);
+    }
+
     fn send_alter_appearance(&mut self, styles: [u32; 4]) {
         self.barber.send(styles);
     }
