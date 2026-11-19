@@ -941,7 +941,7 @@ fn a_pet_bar_press_reaches_the_pet_and_its_bar() {
             .world()
             .resource::<crate::ui_pet::PetBar>()
             .cooldowns
-            .live_count()
+            .record_count()
             > 0,
         "the pet's GCD is on its list"
     );

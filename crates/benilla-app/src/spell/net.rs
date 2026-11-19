@@ -942,7 +942,7 @@ fn cooldown_packet(ev: SessionEvent, l: &mut Lifecycle) {
             let row = spells.as_deref().and_then(|s| s.catalog.get(spell_id));
             let left = |store: &Cooldowns| store.info(spell_id, 0, row, now).remaining_ms;
             let before = left(store);
-            store.delay(spell_id, delay_ms, now);
+            store.delay(spell_id, delay_ms);
             let after = left(store);
             debug!(
                 "net: modify cooldown — spell {spell_id} by {delay_ms} ms on {caster:#x}: \
