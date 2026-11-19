@@ -492,8 +492,8 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
                 str(ty.token())?,
             ]);
         }
-        let in_book = model
-            .spellbook
+        let in_book = super::spellbook::live_book()
+            .book
             .slots
             .iter()
             .position(|s| s.spell_id == spell_id)

@@ -59,17 +59,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             // The pet's book is read at the call, as every pet book verb reads it.
-            let pet_book;
-            let slots = if pet {
-                pet_book = super::spellbook::live_pet_book(&model);
-                &pet_book.slots
-            } else {
-                &model.spellbook.slots
+            let find = |slots: &[super::SpellSlotView]| {
+                slots.iter().rposition(|s| s.spell_id == id as u32)
             };
-            Ok(slots
-                .iter()
-                .rposition(|s| s.spell_id == id as u32)
-                .map_or(Value::Nil, |i| Value::Integer(i as i64)))
+            let at = if pet {
+                find(&super::spellbook::live_pet_book(&model).slots)
+            } else {
+                find(&super::spellbook::live_book().book.slots)
+            };
+            Ok(at.map_or(Value::Nil, |i| Value::Integer(i as i64)))
         })?,
     )?;
 

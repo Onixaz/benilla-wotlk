@@ -92,8 +92,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     model.action_sets.push((action, 0));
                 }
                 Some(true) => {
-                    let texture = model
-                        .spellbook
+                    let texture = super::spellbook::live_book()
+                        .book
                         .slots
                         .iter()
                         .find(|s| s.spell_id == spell)
@@ -154,7 +154,11 @@ pub(super) fn has_spell(model: &Model, id: u32, is_pet: bool) -> bool {
                 .iter()
                 .any(|s| !s.is_token && s.spell_id == Some(id))
     } else {
-        model.spellbook.slots.iter().any(|s| s.spell_id == id)
+        super::spellbook::live_book()
+            .book
+            .slots
+            .iter()
+            .any(|s| s.spell_id == id)
     }
 }
 
@@ -285,9 +289,12 @@ mod tests {
 
     #[test]
     fn is_spell_known_reads_the_book() {
-        let s = script();
-        s.model_mut().spellbook.slots.push(SpellSlotView {
-            spell_id: 8071,
+        let mut s = script();
+        s.set_spellbook(super::super::SpellBookState {
+            slots: vec![SpellSlotView {
+                spell_id: 8071,
+                ..Default::default()
+            }],
             ..Default::default()
         });
         assert!(s.eval::<bool>("return IsSpellKnown(8071)").unwrap());

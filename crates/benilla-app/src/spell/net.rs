@@ -69,7 +69,8 @@ pub(crate) struct Lifecycle<'w> {
     spells: Option<Res<'w, Spells>>,
     net: Res<'w, NetCommands>,
     actions: ResMut<'w, PlayerActions>,
-    learned_in_tab: ResMut<'w, LearnedInTab>,
+    /// The book the update rebuilds (`0x53ca70`).
+    book: ResMut<'w, crate::ui_spellbook::SpellBook>,
     summons: Res<'w, super::SummonSlots>,
     /// The companion lists the known-spell adds file into (`0x5426a5`).
     companions: ResMut<'w, crate::ui_companion::CompanionLists>,
@@ -96,13 +97,17 @@ pub(crate) struct Lifecycle<'w> {
 }
 
 impl Lifecycle<'_> {
-    /// The book update's mask rebuild over the known spells (`0x53cd48`-`0x53ce75`).
-    fn update_book(&mut self) {
-        crate::ui_cast::book_updated(
-            &mut self.schools,
-            &self.actions.spells,
-            self.spells.as_deref(),
-        );
+    /// The book update with its re-sort and masks (`0x53ca70`): the book, the school masks, then
+    /// `SPELLS_CHANGED`; then `LEARNED_SPELL_IN_TAB` for each spell `learned` names (`0x542d16`).
+    fn update_book(&mut self, learned: &LearnedInTab) {
+        let inputs = crate::ui_spellbook::BookInputs {
+            known: &self.actions.spells,
+            spells: self.spells.as_deref(),
+            summons: &self.summons.0,
+            skill_lines: self.skill_lines.as_deref().map(|s| &*s.catalog),
+        };
+        self.book.update(&inputs, &mut self.schools, &mut self.ui);
+        self.book.flash(learned, &inputs, &mut self.ui);
     }
 }
 
@@ -169,8 +174,8 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             }
         }
     }
-    // The book update rebuilds the school masks (`0x53cd48`).
-    l.update_book();
+    // The load passes the registrar with its live flag clear, which skips the book update
+    // (`0x542cc8`); our object's init runs it (`0x6e7fdb`).
 }
 
 fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
@@ -214,12 +219,13 @@ fn on_spell_learned(
             class: store.0.unit_class().unwrap_or(0),
             form: store.0.unit_shapeshift_form(),
         });
+        let mut flash = LearnedInTab::default();
         learned_spell(
             spell_id,
             &mut l.actions,
             l.spells.as_deref(),
             &mut errors,
-            &mut l.learned_in_tab,
+            &mut flash,
             learner,
             &l.net,
             &l.summons.0,
@@ -240,9 +246,12 @@ fn on_spell_learned(
             Some(me) => companion_add(&mut l, me, spell_id),
             None => l.known_buffer.0.push(spell_id),
         }
+        // The registrar's book update and tab flash, reached by a live learn past its exits, the
+        // same ones the flash is gated on (`0x542cbf`-`0x542d16`).
+        if !flash.0.is_empty() {
+            l.update_book(&flash);
+        }
     }
-    // The book update rebuilds the school masks (`0x53cd48`).
-    l.update_book();
 }
 
 fn on_spell_removed(
@@ -254,16 +263,19 @@ fn on_spell_removed(
     refill_in_turn(&mut commands);
     if let SessionEvent::SpellRemoved { spell_id } = ev {
         // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
-        if !our_object_exists(&l) {
+        let exists = our_object_exists(&l);
+        if !exists {
             l.known_buffer.0.retain(|&s| s != spell_id);
         } else {
             companion_remove(&mut l, spell_id);
         }
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
+        // The removal ends in the book update, a spell it held or not (`0x5401b8`).
+        if exists {
+            l.update_book(&LearnedInTab::default());
+        }
     }
-    // The book update rebuilds the school masks (`0x53cd48`).
-    l.update_book();
 }
 
 /// The companion arm of a known-spell removal (`0x53fad0`); the lists are borrowed only for a spell they hold, so another removal leaves them unchanged.
@@ -366,10 +378,13 @@ fn on_spell_superceded(
         new_spell_id,
     } = ev
     {
-        // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`).
-        match our_store(&l, &stores).map(|me| race_class_of(&me.0)) {
+        // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`), each ending in a book update (`0x5401b8`, `0x542cd4`).
+        let me = our_store(&l, &stores).map(|me| race_class_of(&me.0));
+        match me {
             Some(me) => {
                 companion_remove(&mut l, old_spell_id);
+                l.actions.spells.remove(&old_spell_id);
+                l.update_book(&LearnedInTab::default());
                 companion_add(&mut l, me, new_spell_id);
             }
             None => {
@@ -380,13 +395,14 @@ fn on_spell_superceded(
                 }
             }
         }
+        let mut flash = LearnedInTab::default();
         superceded_spell(
             old_spell_id,
             new_spell_id,
             &mut l.actions,
             l.spells.as_deref(),
             &mut errors,
-            &mut l.learned_in_tab,
+            &mut flash,
         );
         // The pair is unlearn then a live learn (`0x542eb0`).
         unlearn_totem(&mut l.multicast, old_spell_id);
@@ -399,9 +415,10 @@ fn on_spell_superceded(
                 l.multicast.refill_due = true;
             }
         }
+        if me.is_some() {
+            l.update_book(&flash);
+        }
     }
-    // The book update rebuilds the school masks (`0x53cd48`).
-    l.update_book();
 }
 
 /// What the cast-result handler reaches beyond the ladder.

@@ -484,7 +484,7 @@ pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects};
 pub use spellbook::{
-    resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
+    resolve_spell_by_name, PetBookState, PlayerBook, SpellBookState, SpellSlotView, SpellTabView,
     SpellTargetingLive,
 };
 pub use stable::{

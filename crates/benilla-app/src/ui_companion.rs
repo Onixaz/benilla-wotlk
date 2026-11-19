@@ -184,6 +184,10 @@ fn tutorial_of(kind: CompanionKind) -> u32 {
 #[derive(Resource, Default)]
 pub(crate) struct KnownSpellBuffer(pub(crate) Vec<u32>);
 
+/// No summon rows, before the catalog loads.
+static EMPTY_SUMMONS: std::sync::LazyLock<benilla_formats::SummonPropertiesCatalog> =
+    std::sync::LazyLock::new(Default::default);
+
 /// What the active player's init reads to replay the buffer into the lists.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct CompanionInit<'w> {
@@ -196,9 +200,13 @@ pub(crate) struct CompanionInit<'w> {
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     ui: ResMut<'w, UiEvents>,
     tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
+    /// The book its update rebuilds between the adds and the companion update (`0x6e7fdb`).
+    book: ResMut<'w, crate::ui_spellbook::SpellBook>,
+    schools: ResMut<'w, crate::ui_cast::InterruptSchools>,
+    actions: Res<'w, crate::ui_action::PlayerActions>,
 }
 
-/// The active player's init (`0x6e7f50`), run as our object is created with its race and class: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, then one update (`0x6e7fe3`).
+/// The active player's init (`0x6e7f50`), run as our object is created with its race and class: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`).
 pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: CompanionInit) {
     let CompanionInit {
         buffer,
@@ -210,7 +218,20 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         skill_lines,
         mut ui,
         mut tutorials,
+        mut book,
+        mut schools,
+        actions,
     } = init;
+    book.set_race_class(race, class);
+    let mut update_book = |ui: &mut UiEvents| {
+        let inputs = crate::ui_spellbook::BookInputs {
+            known: &actions.spells,
+            spells: spells.as_deref(),
+            summons: summons.as_deref().map_or(&EMPTY_SUMMONS, |s| &s.0),
+            skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
+        };
+        book.update(&inputs, &mut schools, ui);
+    };
     let (Some(spells), Some(summons), Some(names), Some(commands)) = (
         spells.as_deref(),
         summons.as_deref(),
@@ -218,6 +239,7 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands.as_deref(),
     ) else {
         *lists = CompanionLists::default();
+        update_book(&mut ui);
         return;
     };
     let line_of = |id: u32| {
@@ -233,7 +255,7 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands,
         ui: &mut ui,
     };
-    for id in add_initial(&mut lists, known, &mut cx) {
+    for id in add_initial(&mut lists, known, &mut cx, update_book) {
         if let Some(t) = tutorials.as_mut() {
             t.write(crate::tutorial::TutorialEvent::trigger(id));
         }
@@ -245,12 +267,14 @@ pub(crate) fn add_initial(
     lists: &mut CompanionLists,
     known: impl IntoIterator<Item = (u32, Option<u32>)>,
     cx: &mut CompanionCx,
+    before_update: impl FnOnce(&mut UiEvents),
 ) -> Vec<u32> {
     *lists = CompanionLists::default();
     let tutorials = known
         .into_iter()
         .filter_map(|(spell_id, line)| add_known(lists, spell_id, false, line, cx))
         .collect();
+    before_update(cx.ui);
     cx.update(lists, None);
     tutorials
 }

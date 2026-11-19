@@ -330,7 +330,7 @@ mod tests {
             };
         }
         let mut script = UiScript::new().expect("a VM");
-        script.set_spellbook(SpellBookState {
+        world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
             tabs: vec![SpellTabView {
                 name: "Holy".into(),
                 texture: None,
@@ -343,7 +343,7 @@ mod tests {
                 ..Default::default()
             }],
             ..Default::default()
-        });
+        }));
         if selected {
             // The frame's unit snapshot, as the feed pushed it before the input pass.
             script.set_unit(
@@ -527,22 +527,20 @@ mod tests {
             catalog: benilla_formats::SpellCatalog::from_displays([(FORTITUDE, display)].into()),
             ..crate::ui_action::Spells::empty_for_tests()
         });
-        world
-            .non_send_resource_mut::<UiScript>()
-            .set_spellbook(SpellBookState {
-                tabs: vec![SpellTabView {
-                    name: "Priest".into(),
-                    texture: None,
-                    offset: 0,
-                    num_spells: 1,
-                }],
-                slots: vec![SpellSlotView {
-                    spell_id: FORTITUDE,
-                    name: "Fortitude".into(),
-                    ..Default::default()
-                }],
+        world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+            tabs: vec![SpellTabView {
+                name: "Priest".into(),
+                texture: None,
+                offset: 0,
+                num_spells: 1,
+            }],
+            slots: vec![SpellSlotView {
+                spell_id: FORTITUDE,
+                name: "Fortitude".into(),
                 ..Default::default()
-            });
+            }],
+            ..Default::default()
+        }));
     }
 
     /// The bind runs the ordinary relation chain over the player: with a unit we cannot assist

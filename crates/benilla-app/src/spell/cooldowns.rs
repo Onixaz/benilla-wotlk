@@ -196,12 +196,14 @@ impl Cooldowns {
     }
 
     /// The counter a gated feed watches: moves on any mutation or pruned expiry.
+    #[cfg(test)]
     pub(crate) fn feed_epoch(&self) -> u64 {
         self.generation.wrapping_add(self.expiry_epoch)
     }
 
     /// An elapsed record awaits its prune. The feeds run before `feed_action_state`'s prune, so
     /// on the frame a timer crosses zero the read changes a frame before [`Self::feed_epoch`].
+    #[cfg(test)]
     pub(crate) fn sweep_pending(&self, now: Instant) -> bool {
         self.records.iter().any(|r| {
             !r.spent

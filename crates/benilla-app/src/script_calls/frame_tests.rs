@@ -144,7 +144,6 @@ enum Step {
     /// The action bar's state feed: `GetActionCooldown` and the cooldown events.
     ActionState,
     /// The spellbook's feed: `GetSpellCooldown`.
-    SpellBook,
     /// The pet bar's feed and its cooldown flush: `GetPetActionCooldown`.
     /// The VM's tick: the `OnUpdate` scripts and the cooldown widgets' update.
     Tick,
@@ -159,7 +158,6 @@ impl Step {
             Step::ScriptCalls => "::script_calls::apply_script_calls",
             Step::WorldSelect => "::click::select_on_click",
             Step::ActionState => "::state::feed_action_state",
-            Step::SpellBook => "::ui_spellbook::feed_spellbook",
             Step::Tick => "::extract::tick_script",
         }
     }
@@ -177,9 +175,6 @@ impl Step {
             }
             Step::ActionState => {
                 schedule.add_systems(crate::ui_action::feed_action_state.in_set(self))
-            }
-            Step::SpellBook => {
-                schedule.add_systems(crate::ui_spellbook::feed_spellbook.in_set(self))
             }
             Step::Tick => schedule.add_systems(crate::ui_script::extract::tick_script.in_set(self)),
         };
@@ -400,7 +395,7 @@ impl Rig {
         ));
         let mut script = UiScript::new().expect("a VM");
         script.set_now(NOW);
-        script.set_spellbook(SpellBookState {
+        world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
             tabs: vec![SpellTabView {
                 name: "General".into(),
                 texture: None,
@@ -413,7 +408,7 @@ impl Rig {
                 ..Default::default()
             }],
             ..Default::default()
-        });
+        }));
         script.set_default_bindings(benilla_ui::script::keybind::parse_bindings_wtf(
             "bind J PROBEPRESS\r\n",
         ));
@@ -991,7 +986,7 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
     assert_eq!(uses, [DRINK], "one use for one press");
     let log = rig.log();
     assert!(
-        in_frame(&log, 3).contains(&"OnUpdate action swept pet cold book cold".to_string()),
+        in_frame(&log, 3).contains(&"OnUpdate action swept pet cold book swept".to_string()),
         "the GCD reaches the bar by the frame after the press: {log:?}"
     );
 }
@@ -999,18 +994,14 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
 // ── B: #1215, the press before the frame's cooldown publication and its tick ───────────────────
 
 /// Every feed that publishes cooldowns runs after the press and before the tick, so a GCD a press
-/// arms reaches the frame's `OnUpdate` and its cooldown widgets: the action bar's, the spellbook's,
-/// the pet book's and the forms'; the pet bar's flush fires inside the press, the companions'
-/// cooldowns ride the spellbook's, the bags' read the cooldowns at the call, and the runes' regen
-/// tick runs before the UI's tick as the player's update does (`0x728aa6`).
+/// arms reaches the frame's `OnUpdate` and its cooldown widgets: the action bar's and the forms';
+/// the pet bar's flush fires inside the press, the spellbook, the companions and the bags read
+/// the cooldowns at the call, and the runes' regen tick runs before the UI's tick as the player's
+/// update does (`0x728aa6`).
 #[test]
 fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
     let g = graph_or_skip!();
-    for feed in [
-        Step::ActionState.suffix(),
-        Step::SpellBook.suffix(),
-        "::feed_shapeshift_bar",
-    ] {
+    for feed in [Step::ActionState.suffix(), "::feed_shapeshift_bar"] {
         for press in [Step::UiInput, Step::BindingDispatch, Step::ScriptCalls] {
             assert!(
                 g.before(press.suffix(), feed),
@@ -1049,21 +1040,20 @@ fn a_pressed_cast_shows_its_gcd_in_the_frame_of_the_press() {
         [
             "ACTIONBAR_UPDATE_COOLDOWN",
             "SPELL_UPDATE_COOLDOWN",
-            "OnUpdate action swept pet cold book cold",
+            "OnUpdate action swept pet cold book swept",
         ],
         "{log:?}"
     );
 }
 
 /// The spellbook's sweep of the same press, in the same frame: `GetSpellCooldown` reads the GCD
-/// from the frame's `OnUpdate`.
+/// from the history at the call in the frame's `OnUpdate` (`0x809000`).
 #[test]
 fn a_pressed_cast_shows_its_gcd_on_the_spellbook_in_the_frame_of_the_press() {
     let mut rig = rig_or_skip!(&[
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::SpellBook,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");

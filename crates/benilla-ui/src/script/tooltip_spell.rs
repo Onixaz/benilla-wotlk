@@ -708,16 +708,17 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 if !super::multicast::has_spell(&model, spell_id, is_pet) {
                     return Ok(());
                 }
-                let pet_book;
-                let book = if is_pet {
-                    pet_book = super::spellbook::live_pet_book(&model);
-                    &pet_book.slots
-                } else {
-                    &model.spellbook.slots
+                let find = |slots: &[super::SpellSlotView]| {
+                    slots
+                        .iter()
+                        .find(|s| s.spell_id == spell_id)
+                        .map(|s| s.name.clone())
                 };
-                book.iter()
-                    .find(|s| s.spell_id == spell_id)
-                    .map(|s| s.name.clone())
+                if is_pet {
+                    find(&super::spellbook::live_pet_book(&model).slots)
+                } else {
+                    find(&super::spellbook::live_book().book.slots)
+                }
             };
             // The pet flag is also the builder's unit selector, as `SetSpell`'s.
             let opts = SpellRenderOpts {
@@ -881,8 +882,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (town, spell) = {
                 let model = crate::script::model_mut_of(lua);
                 let t = &model.minimap_tracking;
-                let spell = t
-                    .spells
+                let spell = super::spellbook::live_book()
+                    .tracking
                     .iter()
                     .find(|s| s.spell_id == t.spell && t.spell != 0)
                     .map(|s| (s.spell_id, s.name.clone()));

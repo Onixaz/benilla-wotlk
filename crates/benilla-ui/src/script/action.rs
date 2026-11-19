@@ -329,8 +329,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     ]
                 }
                 0x00 => {
-                    let index = model
-                        .spellbook
+                    let index = super::spellbook::live_book()
+                        .book
                         .slots
                         .iter()
                         .position(|s| s.spell_id == a.action)

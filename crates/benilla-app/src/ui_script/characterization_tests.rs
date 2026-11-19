@@ -133,6 +133,9 @@ local VERBS = {
     { "casting", function() return (UnitCastingInfo("player")) end },
     { "castid", function() return (select(8, UnitCastingInfo("player"))) end },
     { "stopcast", function() return SpellStopCasting ~= nil end },
+    { "tabs", function() return GetNumSpellTabs() end },
+    { "book1", function() return (GetSpellName(1, "spell")) end },
+    { "book2", function() return (GetSpellName(2, "spell")) end },
     { "greenrange", function() return GetQuestGreenRange() end },
     { "cursize", function() return GetCurrencyListSize() end },
     { "cur2", function() local n, _, _, _, _, c = GetCurrencyListInfo(2) return tostring(n) .. "x" .. tostring(c) end },
@@ -6968,5 +6971,57 @@ fn an_item_record_reads_at_the_call_and_its_answer_repaints_from_the_handler() {
         ),
         "10",
         "the stat lines read the record at the call"
+    );
+}
+
+// ── The spellbook (#1281) ────────────────────────────────────────────────────────────────────────
+
+const FIREBALL_1: u32 = 133;
+const FIREBALL_2: u32 = 143;
+const FROSTBOLT_1: u32 = 116;
+
+/// The book update (`0x53ca70`) runs where 12340 runs it, each ending in `SPELLS_CHANGED` with the
+/// book rebuilt: our create's init (`0x6e7fdb`); a live learn, its tab flash after it (`0x542cd4`,
+/// `0x542d16`); a supersede, the removal's update then the learn's (`0x5401b8`, `0x542cd4`); a
+/// removal (`0x5401b8`); and our level watch, which re-sorts nothing (`0x6d66fd`). Fireball and
+/// Frostbolt sit on two skill lines, so the learn flashes the second tab. A handler's events fire
+/// once its changes apply, so both of the supersede's read the new rank in the book.
+#[test]
+fn book_updates_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[FIREBALL_1])], &[(2, 0x19)]) else {
+        return;
+    };
+    let events = &["SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB"];
+    let verbs = &["tabs", "book1", "book2"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ObjectDestroyed(ME),
+            self_create(&[(2, 0x19)]),
+            SessionEvent::SpellLearned {
+                spell_id: FROSTBOLT_1,
+            },
+            SessionEvent::SpellSuperceded {
+                old_spell_id: FIREBALL_1,
+                new_spell_id: FIREBALL_2,
+            },
+            SessionEvent::SpellRemoved {
+                spell_id: FROSTBOLT_1,
+            },
+            self_values(&[(FIELD_UNIT_LEVEL, 2)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt",
+            "LEARNED_SPELL_IN_TAB 2 | tabs=2 book1=Fireball book2=Frostbolt",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt",
+            "LEARNED_SPELL_IN_TAB 1 | tabs=2 book1=Fireball book2=Frostbolt",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil",
+        ]
     );
 }

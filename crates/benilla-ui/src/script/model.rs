@@ -9,8 +9,8 @@ use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
     combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
     loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
-    quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
-    taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    quest, quest_log, reputation, session, simplehtml, skills, slider, social, stable, taxi, trade,
+    tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
     MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
@@ -568,11 +568,6 @@ pub(crate) struct Model {
     /// Catalog keys of lines a verb displayed inline, whose sound the app plays.
     pub(crate) message_sounds: Vec<&'static str>,
 
-    pub(crate) spellbook: spellbook::SpellBookState,
-    /// The book's highest-rank view, rebuilt with every [`Self::spellbook`] push.
-    pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
-    /// The full known-spell set, a superset of [`Self::spellbook`], and the rank table the item tests walk.
-    pub(crate) known_spells: spellbook::KnownSpells,
     /// `DismissCompanion` and `SummonRandomCritter` asks, in call order, for the app.
     pub(crate) companion_intents: Vec<super::companion::CompanionIntent>,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
@@ -1598,9 +1593,6 @@ impl Model {
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
             message_sounds: Vec::new(),
-            spellbook: spellbook::SpellBookState::default(),
-            known_spells: spellbook::KnownSpells::default(),
-            spellbook_highest_rank: spellbook::HighestRankView::default(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
             macros_dirty: false,

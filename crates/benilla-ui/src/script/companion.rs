@@ -453,6 +453,7 @@ mod tests {
             }],
             ..SpellBookState::default()
         });
+        s.set_known_spells([458]);
         s.run("CastSpellByName('Brown Horse') CastSpellByID(458)")
             .unwrap();
         let calls = s.take_script_calls();

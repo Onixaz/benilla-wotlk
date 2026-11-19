@@ -17,10 +17,10 @@ use crate::ui_action::Spells;
 use crate::ui_script::VmMemo;
 use crate::ui_unit::UnitFeed;
 
-/// The book's weapon icons, which `GetSpellInfo` substitutes as `GetSpellTexture` does: the main
-/// hand's for the melee auto-attack and the ranged weapon's for a ranged shot, as the action bar's
-/// attack and ranged texture reads pick them, `None` without one.
-#[derive(Resource, Clone, Default, PartialEq)]
+/// The weapon faces `GetSpellInfo` substitutes as `GetSpellTexture` does: the main hand's for the
+/// melee auto-attack and the ranged weapon's for a ranged shot, as the action bar's attack and
+/// ranged texture reads pick them (`0x5a84d0`, `0x5a85e0`), `None` without one.
+#[derive(Clone, Default, PartialEq)]
 pub(crate) struct WeaponActionIcons {
     pub(crate) attack: Option<String>,
     pub(crate) ranged: Option<String>,
@@ -355,13 +355,7 @@ pub(crate) struct UiSpellInfoPlugin;
 
 impl Plugin for UiSpellInfoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WeaponActionIcons>().add_systems(
-            Update,
-            // After the book feed, whose weapon icons it copies.
-            feed_spell_info
-                .in_set(UnitFeed)
-                .after(crate::ui_spellbook::BookFeed),
-        );
+        app.add_systems(Update, feed_spell_info.in_set(UnitFeed));
     }
 }
 
@@ -404,10 +398,6 @@ pub(crate) fn seed_spell_info_for_vm(world: &World, script: &mut UiScript) {
             mods: world
                 .get_resource::<crate::spell::SpellModifiers>()
                 .cloned(),
-            icons: world
-                .get_resource::<WeaponActionIcons>()
-                .cloned()
-                .unwrap_or_default(),
             ..Default::default()
         },
     );
@@ -420,7 +410,7 @@ fn feed_spell_info(
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
     talents: Option<Res<crate::ui_talent::Talents>>,
     mods: Res<crate::spell::SpellModifiers>,
-    icons: Res<WeaponActionIcons>,
+    containers: Option<crate::ui_items::ContainerLive>,
     self_q: Query<(Entity, Ref<ObjectStore>), With<SelfPlayer>>,
     pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     index: Res<crate::net::GuidIndex>,
@@ -458,9 +448,14 @@ fn feed_spell_info(
     if reinstall || mods.is_changed() {
         snap.mods = Some(mods.clone());
     }
-    if reinstall || icons.is_changed() {
-        snap.icons = icons.clone();
-    }
+    let me = self_q.iter().next().map(|(_, s)| s);
+    snap.icons = match (me.as_deref(), containers.as_ref()) {
+        (Some(me), Some(c)) => WeaponActionIcons {
+            attack: Some(c.attack_texture(me, &spells.forms)),
+            ranged: c.ranged_texture(me),
+        },
+        _ => WeaponActionIcons::default(),
+    };
     // The units' motion moves every frame; their fields only when their stores do.
     let caster = |entity: Entity, store: &Ref<ObjectStore>, old: Option<Caster>, level: u32| {
         let unit = range_units.unit(entity)?;

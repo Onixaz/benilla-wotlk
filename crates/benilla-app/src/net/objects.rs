@@ -1753,6 +1753,12 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_bank::form_entered(world, form));
     }
+    // The level watch's book update, no re-sort (`0x6d66fd`), and each visible weapon's: the main
+    // hand's or the ranged slot's entry moved updates the book for its weapon face (`0x6e1f13`,
+    // `0x6e1f37`).
+    for _ in 0..u8::from(merged.level_moved) + merged.weapons_moved {
+        sc.ui.fire("SPELLS_CHANGED", Vec::new());
+    }
     if let Some((old, new)) = merged.pvp_flags {
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
@@ -2068,6 +2074,14 @@ fn merge_fields(
             {
                 merged.form = Some((e.new >> 24) as u8);
             }
+            merged.level_moved |= own && e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL);
+            if own
+                && [15, 17].into_iter().any(|slot| {
+                    e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
+                })
+            {
+                merged.weapons_moved += 1;
+            }
             if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
                 merged.quest_slots.push((e.index, e.old, e.new));
             }
@@ -2166,6 +2180,11 @@ struct Merged {
     died: bool,
     /// Our own shapeshift form byte, when it moved.
     form: Option<u8>,
+    /// Our own level moved (`0x6d66e0`).
+    level_moved: bool,
+    /// How many of our own main-hand and ranged visible items' entries moved (`0x6e1e10`, slots
+    /// 15 and 17).
+    weapons_moved: u8,
 }
 
 /// An item's entry moved (`0x707960`), on an item we own (`0x70799f`-`0x7079a5`): the old record dropped (`0x7079bb`), the new one asked with the record callback, run now when cached (`0x707a07`), then `QUEST_LOG_UPDATE` (`0x707a14`).

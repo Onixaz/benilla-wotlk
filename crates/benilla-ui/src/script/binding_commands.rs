@@ -146,8 +146,9 @@ pub(super) fn run_special(lua: &Lua, command: &str, down: bool) -> Option<mlua::
     match kind.to_ascii_uppercase().as_str() {
         "SPELL" => {
             if !down {
+                let book = super::spellbook::live_book();
                 let mut model = crate::script::model_mut_of(lua);
-                let spell = super::spellbook::resolve_spell_by_name(&model.spellbook, argument);
+                let spell = super::spellbook::resolve_spell_by_name(&book.book, argument);
                 if let Some(spell_id) = spell.map(|s| s.spell_id) {
                     let at = modified_target(&model);
                     model.script_calls.push(ScriptCall::CastSpell {

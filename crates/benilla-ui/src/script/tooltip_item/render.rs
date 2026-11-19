@@ -354,7 +354,8 @@ fn render_lines(
             .get("colorblindmode")
             .is_some_and(|c| crate::script::cvars::sstr_to_int(&c.value) != 0);
         // The known bits or a higher rank (`0x62b4a2`-`0x62b4ae`, `0x62b50d`-`0x62b51c`).
-        let knows = |id: u32| model.known_spells.known_or_higher(id);
+        let knows =
+            |id: u32| crate::script::read_live(|l| l.spell_known_or_higher(id)).unwrap_or(false);
         let known = v.required_spell != 0 && knows(v.required_spell);
         // The taught spell known to its learner, the player or the pet (`0x62b4a2`).
         let taught = v.taught.is_some_and(|(id, pet)| {

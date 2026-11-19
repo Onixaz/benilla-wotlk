@@ -59,6 +59,34 @@ struct Layout {
 }
 
 impl ContainerLive<'_, '_> {
+    /// The melee auto-attack's face at the call (`0x5a84d0`): the form's attack icon, `Spell-Reset`
+    /// while disarmed or empty-handed, else the main hand's icon.
+    pub(crate) fn attack_texture(
+        &self,
+        me: &crate::net::ObjectStore,
+        forms: &std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>,
+    ) -> String {
+        crate::ui_action::melee_auto_attack_icon(
+            me,
+            forms,
+            &self.objects,
+            &self.items,
+            self.icons.as_deref(),
+            &self.commands,
+        )
+    }
+
+    /// The ranged weapon's face at the call (`0x5a85e0`), `None` disarmed, thrown or empty.
+    pub(crate) fn ranged_texture(&self, me: &crate::net::ObjectStore) -> Option<String> {
+        crate::ui_action::ranged_weapon_icon(
+            me,
+            &self.objects,
+            &self.items,
+            self.icons.as_deref(),
+            &self.commands,
+        )
+    }
+
     /// The active player's fields, `None` with none held.
     fn me(&self) -> Option<&ObjectFields> {
         self.objects.player_object()

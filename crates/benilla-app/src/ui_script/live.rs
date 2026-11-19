@@ -85,6 +85,12 @@ pub(crate) struct LiveView<'w, 's> {
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
     /// The rune table, which only the handlers and the regen tick write.
     runes: Option<Res<'w, crate::ui_rune::Runes>>,
+    /// The rune costs and cost modifiers the cooldown read's rune leg takes (`0x807c37`).
+    rune_costs: Option<Res<'w, crate::ui_rune::RuneCosts>>,
+    spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    /// The player's book, which the book update builds (`0x53ca70`), and the rank chains.
+    book: Option<Res<'w, crate::ui_spellbook::SpellBook>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     /// The totem table and the tool search's inputs.
     totems: crate::ui_totem::TotemLive<'w, 's>,
     /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
@@ -1334,11 +1340,93 @@ impl LiveState for LiveView<'_, '_> {
         anchor: std::time::Instant,
         ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
-        let d = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
-        self.cooldowns
-            .get()?
+        let spells = self.spells.as_deref();
+        let d = spells.and_then(|s| s.catalog.get(spell_id));
+        let cooldowns = self.cooldowns.get()?;
+        let triple = cooldowns
             .info(spell_id, 0, d, std::time::Instant::now())
-            .ui_triple(anchor, ui_now)
+            .ui_triple(anchor, ui_now);
+        // The history read's rune leg (`0x807c37`).
+        let me = self.player_entity(self.self_guid.as_ref()?.0?);
+        let player = me.and_then(|e| self.stores.get(e).ok()).map(|s| &s.0);
+        let (Some(d), Some(spells), Some(runes), Some(costs), Some(mods), Some(player)) = (
+            d,
+            spells,
+            self.runes.as_deref(),
+            self.rune_costs.as_deref(),
+            self.spell_mods.as_deref(),
+            player,
+        ) else {
+            return triple;
+        };
+        let leg = crate::spell::cooldowns::RuneLeg {
+            runes: crate::spell::usable::RuneCheck {
+                state: &runes.state,
+                costs: &costs.0,
+                player,
+            },
+            catalog: &spells.catalog,
+            mods,
+        };
+        let now_ms = (ui_now * 1000.0).floor() as i64;
+        cooldowns.with_rune_leg(spell_id, d, triple, &leg, now_ms)
+    }
+
+    fn player_book(&self) -> Option<std::sync::Arc<benilla_ui::script::PlayerBook>> {
+        Some(self.book.as_ref()?.live.clone())
+    }
+
+    /// The known-spell bits (`0xbe6d88`), which the learn and removal handlers keep.
+    fn spell_known(&self, spell_id: u32) -> bool {
+        self.actions
+            .get()
+            .is_some_and(|a| a.spells.contains(&spell_id))
+    }
+
+    /// The known bits, else the higher-rank walk over our race and class's chains (`0x726160`).
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        let Some(actions) = self.actions.get() else {
+            return false;
+        };
+        if actions.spells.contains(&spell_id) {
+            return true;
+        }
+        let (Some(lines), Some(me)) = (self.skill_lines.as_deref(), self.player_fields()) else {
+            return false;
+        };
+        lines.catalog.higher_rank_known(
+            spell_id,
+            me.race_id as u8,
+            me.class_id as u8,
+            &actions.spells,
+        )
+    }
+
+    fn book_spell_texture(&self, spell_id: u32) -> Option<String> {
+        let spells = self.spells.as_deref()?;
+        let d = spells.catalog.get(spell_id)?;
+        let me = self
+            .player_entity(self.self_guid.as_ref()?.0?)
+            .and_then(|e| self.stores.get(e).ok());
+        let containers = self.containers.as_ref();
+        crate::ui_spellbook::book_texture(
+            d,
+            || Some(containers?.attack_texture(me?, &spells.forms)),
+            || containers?.ranged_texture(me?),
+        )
+    }
+
+    /// The selected test's form arm (`0x53d431`): a shapeshift aura into our current form.
+    /// Deviation: the open trade-skill window's arm (`0x53d3e5`-`0x53d40f`) is not built.
+    fn spell_selected(&self, spell_id: u32) -> bool {
+        let Some(d) = self.spells.as_deref().and_then(|s| s.catalog.get(spell_id)) else {
+            return false;
+        };
+        let Some(me) = self.unit(self.active_player().unwrap_or(0)) else {
+            return false;
+        };
+        let form = me.unit_shapeshift_form();
+        form != 0 && d.shapeshift_form == Some(u32::from(form))
     }
 
     fn spell_targeting(&self) -> benilla_ui::script::SpellTargetingLive {
@@ -2126,7 +2214,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 (pet, ..),
                 cast,
             ) = state.1;
-            let [(cast_pending, ..), (melee, ..), (repeat, ..), (targeting, ..), (casts, ..)] = cast;
+            let [(cast_pending, ..), (melee, ..), (repeat, ..), (targeting, ..), (casts, ..)] =
+                cast;
             let c = &mut view.cast;
             c.pending
                 .set(slot_fetch(world, cast_pending), own(true, cast_pending));

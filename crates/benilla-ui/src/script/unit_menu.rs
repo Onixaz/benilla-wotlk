@@ -119,14 +119,12 @@ fn flag_value(b: bool) -> Value {
     }
 }
 
-/// The spell's book slot is cooling down, as the spell cooldown read answers non-zero.
+/// The spell is cooling down, as the player's history read answers non-zero (`0x809000`).
 fn spell_cooling(model: &Model, spell: u32, now: f64) -> bool {
-    model
-        .spellbook
-        .slots
-        .iter()
-        .find(|s| spell != 0 && s.spell_id == spell)
-        .and_then(|s| s.cooldown)
+    let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+    (spell != 0)
+        .then(|| super::read_live(|l| l.spell_cooldown(spell, anchor, ui_now)).flatten())
+        .flatten()
         .is_some_and(|(start_ms, duration_ms, enabled)| {
             !enabled || start_ms as f64 / 1000.0 + f64::from(duration_ms) / 1000.0 > now
         })

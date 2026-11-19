@@ -503,6 +503,38 @@ pub trait LiveState {
         None
     }
 
+    /// The player's book as the last book update built it (`0x53ca70`); `None` with none lent.
+    fn player_book(&self) -> Option<std::sync::Arc<super::PlayerBook>> {
+        None
+    }
+
+    /// Whether the player knows `spell_id`, the known-spell bits (`0xbe6d88`, `0x7260e0`).
+    fn spell_known(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Whether the player knows `spell_id` or a higher rank of it (`0x7260e0`, `0x726160`).
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        self.spell_known(spell_id)
+    }
+
+    /// A player book spell's texture at the call (`0x53dc20`): the weapon faces for the melee
+    /// auto-attack and a ranged shot (`0x5a84d0`, `0x5a85e0`), else the record's icon.
+    fn book_spell_texture(&self, spell_id: u32) -> Option<String> {
+        super::spellbook::live_book()
+            .book
+            .named()
+            .find(|s| s.spell_id == spell_id)?
+            .texture
+            .clone()
+    }
+
+    /// A player book spell's selected test at the call (`0x53d350`): the open trade-skill line's
+    /// spell, or a shapeshift into the player's current form.
+    fn spell_selected(&self, _spell_id: u32) -> bool {
+        false
+    }
+
     /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` with nothing running.
     fn spell_cooldown(
         &self,
@@ -1584,7 +1616,35 @@ impl LiveState for TestView {
         _anchor: std::time::Instant,
         _ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
-        self.cooldowns.get(&spell_id).copied()
+        self.cooldowns
+            .get(&spell_id)
+            .copied()
+            .or_else(|| super::spellbook::stand_in_slot(spell_id).and_then(|s| s.cooldown))
+    }
+
+    fn spell_selected(&self, spell_id: u32) -> bool {
+        super::spellbook::stand_in_slot(spell_id).is_some_and(|s| s.current)
+    }
+
+    fn spell_known(&self, spell_id: u32) -> bool {
+        TEST_KNOWN.with(|k| k.borrow().0.contains(&spell_id))
+    }
+
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        TEST_KNOWN.with(|k| {
+            let (known, next) = &*k.borrow();
+            let mut cur = spell_id;
+            for _ in 0..32 {
+                if known.contains(&cur) {
+                    return true;
+                }
+                let Some(&n) = next.get(&cur) else {
+                    return false;
+                };
+                cur = n;
+            }
+            false
+        })
     }
 
     fn pet_bar(&self) -> Option<super::PetBarLive> {
@@ -1682,6 +1742,9 @@ thread_local! {
     /// The targeting cursor and the guids `SpellCanTargetUnit` passes, as every test view on this thread answers them.
     static TEST_TARGETING: std::cell::RefCell<(super::SpellTargetingLive, std::collections::HashSet<u64>)> =
         std::cell::RefCell::default();
+    /// The known spells with the rank table, as every test view on this thread answers them.
+    static TEST_KNOWN: std::cell::RefCell<(std::collections::HashSet<u32>, std::collections::HashMap<u32, u32>)> =
+        std::cell::RefCell::default();
     /// The view lent for the rest of the thread once a test moves the cursor with none up.
     static TEST_TARGETING_LOAN: std::cell::RefCell<Option<LiveLoan<TestView>>> = const { std::cell::RefCell::new(None) };
 }
@@ -1695,6 +1758,20 @@ pub(crate) trait TestTargeting {
     fn set_item_pick_armed(&mut self, armed: bool);
     /// The guids `SpellCanTargetUnit` passes while the cursor is up.
     fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>);
+}
+
+/// Answer `known` as the player's known spells on this thread, as [`set_test_book`] does.
+#[cfg(test)]
+pub(crate) fn set_test_known(known: impl IntoIterator<Item = u32>) {
+    sticky_targeting();
+    TEST_KNOWN.with(|k| k.borrow_mut().0 = known.into_iter().collect());
+}
+
+/// Answer `next` as the rank table the known test walks on this thread.
+#[cfg(test)]
+pub(crate) fn set_test_next_ranks(next: std::collections::HashMap<u32, u32>) {
+    sticky_targeting();
+    TEST_KNOWN.with(|k| k.borrow_mut().1 = next);
 }
 
 #[cfg(test)]

@@ -167,7 +167,10 @@ pub(super) fn spell_of(
         Some(sub) => format!("{name}({sub})"),
         None => name,
     };
-    Ok(resolve_spell_by_name(&model.spellbook, &query).map(|s| (s.spell_id, false)))
+    Ok(
+        resolve_spell_by_name(&super::spellbook::live_book().book, &query)
+            .map(|s| (s.spell_id, false)),
+    )
 }
 
 /// [`spell_of`] as the bindings index with it: the book's array is read past its spells too, so a
