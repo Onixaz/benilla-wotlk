@@ -269,17 +269,34 @@ impl Plugin for UiGuildBankPlugin {
     }
 }
 
-/// The banker setter with no banker (`0x5a4270`): `GUILDBANKFRAME_CLOSED` with the banker still set, then both bankers clear; queued for the caller's flush.
+/// The banker setter with no banker (`0x5a4270`): `GUILDBANKFRAME_CLOSED` with the banker still set, then the interact target's clear on it (`0x5a4291`), whose interaction close re-enters here while the banker held the target (`0x512fd1`), then both bankers clear; queued for the caller's flush.
 pub(crate) fn set_guild_banker_none(ui: &mut UiEvents) {
     ui.fire("GUILDBANKFRAME_CLOSED", Vec::new());
     ui.world(|world| {
-        if let Some(mut bank) = world.get_non_send_resource_mut::<GuildBankState>() {
-            bank.clear_banker();
+        if let Some(banker) = banker(world) {
+            crate::ui_session::clear_interact_target(world, banker);
         }
+        crate::ui_script::live::in_turn(world, |world| {
+            if let Some(mut bank) = world.get_non_send_resource_mut::<GuildBankState>() {
+                bank.clear_banker();
+            }
+        });
     });
 }
 
-/// The walk-away watchdog for the guild bank: past its leash or with its banker gone, the interaction close takes the guild bank's leg (`0x512fb4` -> `0x512fd1`), its event fired as it runs.
+/// The open guild banker (`0xc1dc10`).
+pub(crate) fn banker(world: &World) -> Option<u64> {
+    world.get_non_send_resource::<GuildBankState>()?.banker
+}
+
+/// The interaction close's guild bank leg (`0x512fd1`), its target already zeroed: the banker setter with no banker.
+pub(crate) fn guild_bank_leg(world: &mut World) {
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        set_guild_banker_none(&mut ui);
+    }
+}
+
+/// The walk-away watchdog for the guild bank: past its leash or with its banker gone, the interact target's clear (`0x51ff0c`) takes the guild bank's leg of the interaction close (`0x512fb4` -> `0x512fd1`), its event fired as it runs.
 fn close_guild_bank_out_of_range(
     bank: NonSend<GuildBankState>,
     index: Res<GuidIndex>,
@@ -292,8 +309,13 @@ fn close_guild_bank_out_of_range(
     };
     if npc_out_of_range(banker, &index, &self_q, &transforms) == Some(true) {
         debug!("ui_guild_bank: banker {banker:#x} out of range/gone — closing the interaction");
-        commands.queue(|world: &mut World| {
-            if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        commands.queue(move |world: &mut World| {
+            if world
+                .get_resource::<crate::ui_session::InteractTarget>()
+                .is_some_and(|t| t.0 == Some(banker))
+            {
+                crate::ui_session::clear_interact_target(world, banker);
+            } else if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
                 set_guild_banker_none(&mut ui);
             }
             crate::ui_script::live::fire_handler_events(world);

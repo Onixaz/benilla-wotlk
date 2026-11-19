@@ -174,8 +174,11 @@ impl InteractWindows<'_, '_> {
                 crate::ui_trainer::set_none(world);
                 crate::ui_script::live::fire_handler_events(world);
             }),
-            // The bank closes through its own leg, its events with it.
-            5 => {}
+            // The bank leg runs the banker setter's zero leg, its events with it (`0x512fa7`).
+            5 => self.queue.queue(|world: &mut World| {
+                crate::ui_bank::bank_leg(world);
+                crate::ui_script::live::fire_handler_events(world);
+            }),
             // The registrar leg runs its close, its event with it (`0x512ff1`).
             6 => self.queue.queue(|world: &mut World| {
                 crate::ui_petition::close_registrar_by_interaction(world);
@@ -207,17 +210,21 @@ impl InteractWindows<'_, '_> {
     }
 }
 
-/// A window's open with the interact target held by a window of [`InteractWindows`] past the gossip menu and the quest frame (`0x51fd1c` -> `0x512e60`): the first such window open closes, in the interaction close's order.
+/// The windows whose opens do not take the interact target yet (#1329): the auctioneer, the stable and the battlemaster.
+const UNTARGETED_WINDOWS: [usize; 3] = [8, 9, 11];
+
+/// A window's open with no interact target held (`0x51fd08`) while a window whose open does not take it yet is open: that window closes, as the setter's interaction close would close it (`0x51fd1c` -> `0x512e60`).
 pub(crate) fn close_target_holder(world: &mut World) {
+    if world
+        .get_resource::<InteractTarget>()
+        .is_some_and(|t| t.0.is_some())
+    {
+        return;
+    }
     let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
     let mut windows = state.get_mut(world);
-    let holder = windows
-        .npcs()
-        .iter()
-        .enumerate()
-        .skip(QUEST_WINDOW + 1)
-        .find(|&(i, n)| i != BANK_WINDOW && n.is_some())
-        .map(|(i, _)| i);
+    let npcs = windows.npcs();
+    let holder = UNTARGETED_WINDOWS.into_iter().find(|&i| npcs[i].is_some());
     if let Some(window) = holder {
         debug!("ui_session: window {window} holds the interact target — closing it");
         windows.close(window);
@@ -289,6 +296,13 @@ pub(crate) fn clear_interact_target(world: &mut World, guid: u64) {
     close_window_on(world, guid);
 }
 
+/// The interact target's clear on whatever it holds (`0x518d50` passed `0xbd07a8` itself): the interaction close always runs.
+pub(crate) fn clear_held_interact_target(world: &mut World) {
+    if let Some(held) = world.get_resource::<InteractTarget>().and_then(|t| t.0) {
+        clear_interact_target(world, held);
+    }
+}
+
 /// The interaction close's walk (`0x512e60`) for a target already zeroed: the first window of [`InteractWindows`] on `old` closes; the gossip's leg runs its zero set in the walk (`0x512ef6`).
 fn close_window_on(world: &mut World, old: u64) {
     // The reader's leg comes ahead of the gossip's (`0x512eb1`).
@@ -296,8 +310,17 @@ fn close_window_on(world: &mut World, old: u64) {
         return;
     }
     let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
+    let window = state
+        .get_mut(world)
+        .npcs()
+        .iter()
+        .position(|n| *n == Some(old));
+    // The guild bank's leg comes after the bank's (`0x512fd1`).
+    if window.is_none_or(|w| w > BANK_WINDOW) && crate::ui_guild_bank::banker(world) == Some(old) {
+        crate::ui_guild_bank::guild_bank_leg(world);
+        return;
+    }
     let mut windows = state.get_mut(world);
-    let window = windows.npcs().iter().position(|n| *n == Some(old));
     match window {
         Some(0) => {
             state.apply(world);
@@ -324,13 +347,18 @@ fn close_window_on(world: &mut World, old: u64) {
             crate::ui_petition::close_registrar_by_interaction(world);
             return;
         }
+        Some(BANK_WINDOW) => {
+            state.apply(world);
+            crate::ui_bank::bank_leg(world);
+            return;
+        }
         Some(10) => {
             state.apply(world);
             crate::ui_petition::close_vendor_by_interaction(world);
             return;
         }
-        Some(w) if w != BANK_WINDOW => windows.close(w),
-        _ => {}
+        Some(w) => windows.close(w),
+        None => {}
     }
     state.apply(world);
 }

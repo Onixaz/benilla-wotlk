@@ -1349,7 +1349,7 @@ impl LiveState for LiveView<'_, '_> {
         if me.player_money().unwrap_or(0) < self.bank_slot_cost(u32::from(slots) + 1) {
             return Some("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
         }
-        let guid = bank.interact_target().unwrap_or(0);
+        let guid = self.tabard.target().unwrap_or(0);
         debug!("bank: purchase next bag slot at {guid:#x}");
         let _ = self
             .net
@@ -1360,10 +1360,14 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     fn close_bank_interaction(&mut self) -> bool {
-        self.lent
-            .bank
-            .get_mut()
-            .is_some_and(|b| b.close_interaction())
+        let banker = self.lent.bank.get().and_then(|b| b.banker);
+        match self.tabard.target_mut() {
+            Some(t) if banker.is_some() && t.0 == banker => {
+                t.0 = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {

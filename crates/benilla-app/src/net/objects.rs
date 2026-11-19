@@ -1719,16 +1719,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j));
     }
-    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`), the bank's leg.
+    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`): the window on it closes.
     if merged.died {
-        sc.ui.world(move |world| {
-            let held = world
-                .get_non_send_resource::<crate::ui_bank::BankOpen>()
-                .is_some_and(|b| b.interact_target() == Some(guid));
-            if held {
-                crate::ui_bank::close_by_interaction(world);
-            }
-        });
+        sc.ui
+            .world(move |world| crate::ui_session::clear_interact_target(world, guid));
     }
     // The NPC-flag watch's quest leg (`0x71a104`-`0x71a133`): the questgiver bit lost on the open window's giver closes it through the giver's close, nothing owed.
     if let Some((old, new)) = merged.npc_flags {

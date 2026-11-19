@@ -678,8 +678,6 @@ pub(crate) fn set_item(world: &mut World, guid: u64, again: bool) {
     if cached != Some(true) {
         return;
     }
-    // The setter's close takes the bank's leg while the banker holds the target (`0x51fd1c` -> `0x512fa7`).
-    crate::ui_bank::close_by_interaction(world);
     crate::ui_session::set_interact_target(world, guid);
     fire(world, "ITEM_TEXT_BEGIN", Vec::new());
     // The draw or the read check runs once `ITEM_TEXT_BEGIN` has fired (`0x58a345`).

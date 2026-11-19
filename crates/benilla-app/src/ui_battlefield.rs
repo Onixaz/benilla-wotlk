@@ -816,6 +816,13 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
+/// The open banker (`0xbeb9a0`).
+fn bank_banker(world: &World) -> Option<u64> {
+    world
+        .get_non_send_resource::<crate::ui_bank::BankOpen>()?
+        .banker
+}
+
 /// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
@@ -834,12 +841,14 @@ pub(crate) fn leave_world(world: &mut World) {
         ui.write(UiScript::leave_battlefield_world);
     }
     // The interaction close zeroes the interact target ahead of its walk (`0x512e89`).
-    if let Some(mut t) = world.get_resource_mut::<crate::ui_session::InteractTarget>() {
-        t.0 = None;
-    }
+    let held = world
+        .get_resource_mut::<crate::ui_session::InteractTarget>()
+        .and_then(|mut t| t.0.take());
     crate::ui_stable::leave_world(world);
-    // The interaction close's bank leg, after the stable part.
-    crate::ui_bank::close_by_interaction(world);
+    // The interaction close's bank leg, after the stable part, on the banker holding the target (`0x512f8a`).
+    if held.is_some() && bank_banker(world) == held {
+        crate::ui_bank::bank_leg(world);
+    }
     // Its tabard leg (`0x51300e`).
     crate::ui_tabard::leave_world(world);
     // The registrar's part (`0x528d2d`) and the vendor's (`0x528d6e`).

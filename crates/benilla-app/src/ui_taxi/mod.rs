@@ -394,7 +394,6 @@ fn taxi_fares(
 }
 
 mod net;
-pub(crate) use net::shows_map;
 
 pub(crate) struct UiTaxiPlugin;
 

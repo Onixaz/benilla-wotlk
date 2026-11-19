@@ -16,15 +16,10 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::DestroyedOnDeath, on_destroyed_on_death)
         .net_handler(K::Disconnected, on_session_end);
     // Ahead of each window's own handler: the setter runs at the start of its open (`0x54970f` before `0x54972c`).
-    app.net_handler_first(K::GossipMenu, on_interact_target_taken)
-        .net_handler_first(K::QuestGreeting, on_interact_target_taken)
+    app.net_handler_first(K::QuestGreeting, on_interact_target_taken)
         .net_handler_first(K::QuestDetail, on_interact_target_taken)
         .net_handler_first(K::QuestProgress, on_interact_target_taken)
         .net_handler_first(K::QuestOffer, on_interact_target_taken)
-        .net_handler_first(K::VendorInventory, on_interact_target_taken)
-        .net_handler_first(K::TaxiNodesShown, on_interact_target_taken)
-        .net_handler_first(K::TabardVendorActivate, on_interact_target_taken)
-        .net_handler_first(K::PetitionShowList, on_interact_target_taken)
         .net_handler_first(K::AuctionHello, on_interact_target_taken)
         .net_handler_first(K::ListStabledPets, on_interact_target_taken)
         .net_handler_first(K::ShowMailbox, on_interact_target_taken)
@@ -40,25 +35,22 @@ fn held_as(index: Option<&GuidIndex>, stores: &Query<&ObjectStore>, guid: u64, m
         .is_some_and(|s| s.0.type_mask() & mask != 0)
 }
 
-/// A window's open takes the interact target (`0x51fce0`): gossip (`0x58b1b0`), the quest frame (`0x6d0240`, `0x6d0460`, `0x6d08f0`, `0x6d0ab0`), the vendor (`0x6defef`), the taxi map (`0x6d6050`), the trainer (`0x5940e0`), the tabard designer (`0x598e60`), the registrar and charter vendor (`0x599e00`, `0x5a22a0`), the auctioneer (`0x59f000`), the stable (`0x5a11a0`), the mailbox (`0x56dbc0`), the guild bank (`0x5a7250`), the battlemaster (`0x54e390`) and the trade window (`0x5873e0`); the setter's interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open. The mailbox open made in the client closes it through [`benilla_ui::script::UiScript::close_bank_interaction`]; the item-text open through [`crate::ui_bank::close_by_interaction`].
+/// A window's open takes the interact target (`0x51fce0`), whose interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open. The windows whose opens do not call the setter yet (#1329) run that leg here: the quest frame (`0x58c6cc`), the auctioneer (`0x59f008`), the stable (`0x5a11d9`), the mailbox (`0x56dbe2`), the battlemaster (`0x54e52e`) and the trade window (`0x587124`); the gossip, vendor, taxi, trainer, tabard, registrar, charter vendor, item text and guild bank opens call it themselves.
 fn on_interact_target_taken(
     In(ev): In<SessionEvent>,
     bank: NonSend<BankOpen>,
+    target: Res<crate::ui_session::InteractTarget>,
     quest: NonSend<QuestGiver>,
     index: Option<Res<GuidIndex>>,
     stores: Query<&ObjectStore>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     use benilla_protocol::messages::TradeStatus;
-    if !bank.is_open() {
+    if bank.banker.is_none() || target.0 != bank.banker {
         return;
     }
     let held = |guid, mask| held_as(index.as_deref(), &stores, guid, mask);
     let opens = match &ev {
-        // An empty list's refusal opens nothing (`0x6d9ad2`-`0x6d9af8`).
-        SessionEvent::VendorInventory { items, error, .. } => {
-            !items.is_empty() || *error == Some(0)
-        }
         SessionEvent::AuctionHello { enabled, .. } => *enabled,
         // The random battleground's list from a battlemaster takes it first (`0x54e509`-`0x54e52e`); a list for the PvP window sets no battlemaster (`0x54e55d`); a zero one closes without the setter (`0x5496d9`).
         SessionEvent::BattlefieldList(list) => {
@@ -77,22 +69,7 @@ fn on_interact_target_taken(
         SessionEvent::QuestGreeting(l) => held(l.npc, 0x2a),
         SessionEvent::QuestProgress(p) => held(p.npc, 0x2a),
         SessionEvent::QuestOffer(o) => held(o.npc, 0x2a),
-        SessionEvent::TaxiNodesShown { known_mask, .. } => {
-            // Fewer than two known nodes show `ERR_TAXINOPATHS` and leave the interact target (`0x6d61b5`-`0x6d61d1`).
-            let mask = known_mask.clone();
-            ui.world(move |world| {
-                if crate::ui_taxi::shows_map(world, &mask) {
-                    super::close_by_interaction(world);
-                }
-            });
-            return;
-        }
-        // The trainer list takes it from its own handler, for a new trainer only.
-        SessionEvent::GossipMenu(_)
-        | SessionEvent::TabardVendorActivate(_)
-        | SessionEvent::PetitionShowList(_)
-        | SessionEvent::ListStabledPets { .. }
-        | SessionEvent::ShowMailbox { .. } => true,
+        SessionEvent::ListStabledPets { .. } | SessionEvent::ShowMailbox { .. } => true,
         _ => false,
     };
     if opens {
@@ -128,10 +105,9 @@ fn on_show_bank(
     }
 }
 
-/// `SMSG_DESTROY_OBJECT`'s death byte on a unit above 0 health runs its death in the handler (`0x4d7661`-`0x4d7682`), whose interact-target clear with its guid (`0x7293bf`) takes the bank's leg on the banker.
+/// `SMSG_DESTROY_OBJECT`'s death byte on a unit above 0 health runs its death in the handler (`0x4d7661`-`0x4d7682`), whose interact-target clear with its guid (`0x7293bf`) closes the window on it.
 fn on_destroyed_on_death(
     In(ev): In<SessionEvent>,
-    bank: NonSend<BankOpen>,
     index: Option<Res<GuidIndex>>,
     stores: Query<&ObjectStore>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
@@ -144,8 +120,8 @@ fn on_destroyed_on_death(
         .and_then(|i| i.0.get(&guid))
         .and_then(|&e| stores.get(e).ok())
         .is_some_and(|s| s.0.is_unit() && s.0.unit_health().unwrap_or(0) > 0);
-    if alive && bank.interact_target() == Some(guid) {
-        ui.world(super::close_by_interaction);
+    if alive {
+        ui.world(move |world| crate::ui_session::clear_interact_target(world, guid));
     }
 }
 

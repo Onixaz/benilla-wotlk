@@ -109,6 +109,11 @@ impl TabardView<'_, '_> {
         self.target.as_deref_mut()
     }
 
+    /// The interact target (`0xbd07a8`).
+    pub(crate) fn target(&self) -> Option<u64> {
+        self.target.as_ref().and_then(|t| t.0)
+    }
+
     /// The vendor held, read by a system between its calls into Lua.
     pub(crate) fn vendor(&self) -> Option<u64> {
         self.open.as_ref().and_then(|o| o.vendor)
