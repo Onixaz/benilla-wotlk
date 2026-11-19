@@ -114,6 +114,8 @@ pub(crate) struct LiveView<'w, 's> {
     trainer: Option<crate::ui_trainer::TrainerLive<'w, 's>>,
     /// The charter windows and what their walks and sends read.
     petition: Option<crate::ui_petition::PetitionLive<'w, 's>>,
+    /// Every dressing-room pane's model and what a try-on reads.
+    pub(crate) dressup: crate::ui_dressup::DressUpLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1778,6 +1780,15 @@ impl LiveState for LiveView<'_, '_> {
 
     fn close_tabard(&mut self) -> u32 {
         self.tabard.close()
+    }
+
+    fn dress_up(
+        &mut self,
+        pane: benilla_ui::widget::FrameHandle,
+        intent: benilla_ui::script::DressUpIntent,
+    ) {
+        let waits = self.record_waits.as_deref_mut();
+        self.dressup.dress_up(pane.bits(), intent, waits);
     }
 
     fn barber(&self) -> Option<benilla_ui::script::BarberRead<'_>> {

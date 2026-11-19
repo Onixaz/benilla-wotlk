@@ -1979,4 +1979,278 @@ fn the_petition_vendor_opens_from_its_list_and_closes_inside_its_call() {
             "PETITION_VENDOR_CLOSED | petitems=2",
         ]
     );
+    assert!(
+        fired_in_call(&mut rig, "ClosePetitionVendor()", PETITION_EVENTS, verbs).is_empty(),
+        "the vendor's zero gates a second close"
+    );
+}
+
+/// `DressUpModel` edits its pane's model inside each verb's call: a cached record lands before the call returns, an uncached one sends `CMSG_ITEM_QUERY` inside the call and leaves the pane's callback (`0x5980fa`), which the answer's handler runs (`0x5980b0`); hiding the window keeps the model and empties only the booth.
+#[test]
+fn dressup_verbs_edit_the_pane_in_their_call_and_a_miss_lands_by_its_callback() {
+    use benilla_protocol::field::{FIELD_UNIT_BYTES_0, FIELD_UNIT_DISPLAYID};
+    // A human warrior's body, which the booth's look is built on.
+    let body = [
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_UNIT_DISPLAYID, 49),
+    ];
+    let Some(mut rig) = Rig::login(&body) else {
+        return;
+    };
+    let worn = |name: &str, display_info_id: u32, inventory_type: u32| {
+        Some(Box::new(benilla_protocol::ItemInfo {
+            display_info_id,
+            inventory_type,
+            ..crate::items::test_template(name)
+        }))
+    };
+    rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: 2000,
+            info: worn("Charz Chest", 7000, 5),
+        }],
+        2,
+    );
+    let rx = tap(&mut rig);
+    call(
+        &mut rig,
+        "ShowUIPanel(DressUpFrame) DressUpModel:SetUnit('player') DressUpModel:TryOn(2000)",
+    );
+    rig.run(1);
+    let pane = rig
+        .app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .shown_model_pane("DressUpModel")
+        .expect("the dressing room is shown")
+        .0
+        .bits();
+    let slot = |rig: &Rig, slot: usize| {
+        rig.app
+            .world()
+            .resource::<crate::ui_dressup::DressUpRooms>()
+            .worn_display(pane, slot)
+    };
+    assert_eq!(
+        slot(&rig, 4),
+        Some(7000),
+        "a cached record lands in the call"
+    );
+    while rx.try_recv().is_ok() {}
+
+    call(&mut rig, "DressUpModel:TryOn(3000)");
+    let asks: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::ItemQuery { entry, .. } => Some(entry),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asks, vec![3000], "the miss asks inside the call");
+    assert_eq!(slot(&rig, 0), None, "and lands nothing yet");
+    rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: 3000,
+            info: worn("Charz Helm", 8000, 1),
+        }],
+        1,
+    );
+    assert_eq!(
+        slot(&rig, 0),
+        Some(8000),
+        "the answer runs the pane's callback"
+    );
+    let look = rig
+        .app
+        .world()
+        .resource::<crate::portrait::DressUpPreview>()
+        .look
+        .expect("the shown pane draws its model");
+    assert_eq!(
+        (look.equipment[0].display_id, look.equipment[4].display_id),
+        (8000, 7000)
+    );
+
+    call(&mut rig, "HideUIPanel(DressUpFrame)");
+    rig.run(1);
+    assert_eq!(slot(&rig, 4), Some(7000), "a hidden pane keeps its model");
+    assert!(
+        rig.app
+            .world()
+            .resource::<crate::portrait::DressUpPreview>()
+            .look
+            .is_none(),
+        "and the booth draws none"
+    );
+}
+
+/// The stock popup showing `which`, `nil` with none (`StaticPopup.lua`'s own lookup).
+fn popup(rig: &mut Rig, which: &str) -> String {
+    eval(rig, &format!("StaticPopup_Visible(\"{which}\")"))
+}
+
+/// The stock `CONFIRM_BINDER` popup over the live reach: it shows from the handler's event, Cancel and Escape send nothing (there is no decline opcode), and its `OnUpdate` takes it down once `CheckBinderDist()` reads nil (`StaticPopup.lua:1329`).
+#[test]
+fn the_binder_popup_declines_silently_and_its_update_hides_it_out_of_reach() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![npc_at(NPC, 0x10000, NEAR)], 2);
+    let rx = tap(&mut rig);
+    rig.packets(vec![SessionEvent::BinderConfirm { binder: NPC }], 2);
+    let shown = popup(&mut rig, "CONFIRM_BINDER");
+    assert_ne!(shown, "nil", "the handler's event shows the popup");
+    call(&mut rig, &format!("StaticPopup_OnClick({shown}, 2)"));
+    assert_eq!(popup(&mut rig, "CONFIRM_BINDER"), "nil", "Cancel hides it");
+    rig.packets(vec![SessionEvent::BinderConfirm { binder: NPC }], 2);
+    call(&mut rig, "StaticPopup_EscapePressed()");
+    assert_eq!(popup(&mut rig, "CONFIRM_BINDER"), "nil", "Escape hides it");
+    assert!(
+        !rx.try_iter()
+            .any(|c| matches!(c, ClientCommand::BinderActivate { .. })),
+        "neither sends"
+    );
+
+    rig.packets(vec![SessionEvent::BinderConfirm { binder: NPC }], 2);
+    rig.run(3);
+    assert_ne!(
+        popup(&mut rig, "CONFIRM_BINDER"),
+        "nil",
+        "in reach, the update leaves it up"
+    );
+    rig.packets(vec![SessionEvent::ObjectDestroyed(NPC)], 3);
+    assert_eq!(
+        popup(&mut rig, "CONFIRM_BINDER"),
+        "nil",
+        "the innkeeper gone, the update takes it down"
+    );
+    assert!(
+        !rx.try_iter()
+            .any(|c| matches!(c, ClientCommand::BinderActivate { .. })),
+        "and sends nothing"
+    );
+}
+
+/// The stock `CONFIRM_TALENT_WIPE` popup: the cost goes to its money frame (`UIParent.lua:536`), Cancel and Escape send nothing, and its `OnUpdate` takes it down once `CheckTalentMasterDist()` reads nil (`StaticPopup.lua:1297`).
+#[test]
+fn the_talent_wipe_popup_shows_its_cost_declines_silently_and_hides_out_of_reach() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let ask = |cost| SessionEvent::TalentWipeConfirm { trainer: NPC, cost };
+    rig.packets(vec![npc_at(NPC, 0x10, NEAR)], 2);
+    let rx = tap(&mut rig);
+    rig.packets(vec![ask(15_000)], 2);
+    let shown = popup(&mut rig, "CONFIRM_TALENT_WIPE");
+    assert_ne!(shown, "nil");
+    assert_eq!(
+        (
+            eval(&mut rig, &format!("{shown}MoneyFrame:IsShown()")),
+            eval(&mut rig, &format!("{shown}MoneyFrameGoldButton:GetText()")),
+            eval(
+                &mut rig,
+                &format!("{shown}MoneyFrameSilverButton:GetText()")
+            ),
+        ),
+        ("1".into(), "1".into(), "50".into()),
+        "15000 copper on the coin row"
+    );
+    call(&mut rig, &format!("StaticPopup_OnClick({shown}, 2)"));
+    assert_eq!(
+        popup(&mut rig, "CONFIRM_TALENT_WIPE"),
+        "nil",
+        "Cancel hides it"
+    );
+    rig.packets(vec![ask(50_000)], 2);
+    let shown = popup(&mut rig, "CONFIRM_TALENT_WIPE");
+    assert_eq!(
+        eval(&mut rig, &format!("{shown}MoneyFrameGoldButton:GetText()")),
+        "5",
+        "a second question repaints the row"
+    );
+    call(&mut rig, "StaticPopup_EscapePressed()");
+    assert_eq!(
+        popup(&mut rig, "CONFIRM_TALENT_WIPE"),
+        "nil",
+        "Escape hides it"
+    );
+    assert!(
+        !rx.try_iter()
+            .any(|c| matches!(c, ClientCommand::TalentWipeConfirm { .. })),
+        "neither sends"
+    );
+
+    rig.packets(vec![ask(15_000)], 2);
+    rig.run(3);
+    assert_ne!(popup(&mut rig, "CONFIRM_TALENT_WIPE"), "nil", "in reach");
+    rig.packets(vec![SessionEvent::ObjectDestroyed(NPC)], 3);
+    assert_eq!(
+        popup(&mut rig, "CONFIRM_TALENT_WIPE"),
+        "nil",
+        "the trainer gone, the update takes it down"
+    );
+}
+
+/// The stock designer on `OPEN_TABARD_FRAME` (`TabardFrame.lua:25`): a guild master with our record cached sees it seeded and painted with Save enabled; Cancel hides the window.
+#[test]
+fn the_tabard_window_seeds_and_paints_for_a_guild_master() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    rig.packets(
+        vec![npc_at(NPC, 0x80000, NEAR), guild_record(7, "Probe Guild")],
+        2,
+    );
+    rig.packets(vec![SessionEvent::TabardVendorActivate(NPC)], 2);
+    assert_eq!(eval(&mut rig, "TabardFrame:IsShown()"), "1");
+    assert_eq!(
+        eval(&mut rig, "TabardFrameAcceptButton:IsEnabled()"),
+        "1",
+        "a master with a cached record can save"
+    );
+    assert_eq!(
+        eval(
+            &mut rig,
+            "TabardFrameGreetingText:GetText() == TABARDVENDORGREETING"
+        ),
+        "true"
+    );
+    let cell = eval(&mut rig, "TabardFrameEmblemTopLeft:GetTexture()");
+    assert!(
+        cell.contains("Emblem_03_") && cell.ends_with("_TU_U"),
+        "the seeded emblem 3 painted: {cell}"
+    );
+    call(&mut rig, "TabardFrameCancelButton:Click()");
+    rig.run(1);
+    assert_ne!(
+        eval(&mut rig, "TabardFrame:IsShown()"),
+        "1",
+        "Cancel hides it"
+    );
+}
+
+/// A member below rank 0 gets the no-guild greeting and no Save (`TabardFrame.lua:97`).
+#[test]
+fn the_tabard_window_refuses_a_non_master() {
+    let mut fields = guild_master();
+    fields.retain(|(f, _)| *f != benilla_protocol::field::FIELD_PLAYER_GUILDRANK);
+    fields.push((benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 3));
+    let Some(mut rig) = Rig::login(&fields) else {
+        return;
+    };
+    rig.packets(
+        vec![npc_at(NPC, 0x80000, NEAR), guild_record(7, "Probe Guild")],
+        2,
+    );
+    rig.packets(vec![SessionEvent::TabardVendorActivate(NPC)], 2);
+    assert_eq!(eval(&mut rig, "TabardFrame:IsShown()"), "1");
+    assert_ne!(eval(&mut rig, "TabardFrameAcceptButton:IsEnabled()"), "1");
+    assert_eq!(
+        eval(
+            &mut rig,
+            "TabardFrameGreetingText:GetText() == TABARDVENDORNOGUILDGREETING"
+        ),
+        "true"
+    );
 }

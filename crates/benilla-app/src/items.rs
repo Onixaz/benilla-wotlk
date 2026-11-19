@@ -492,6 +492,8 @@ pub(crate) enum RecordWait {
     Trainer,
     /// The petition vendor's, from a row's read (`0x5a1fb0` -> `0x5a1f30`).
     PetitionVendor,
+    /// A dressing-room pane's try-on, from its record read (`0x5980fa` -> `0x5980b0`).
+    DressUp(crate::ui_dressup::Pane),
     /// A callback the UI left inside a verb's call.
     Ui(benilla_ui::script::ItemRecordWait),
 }

@@ -739,7 +739,7 @@ pub trait LiveState {
         false
     }
 
-    /// `SaveTabard` (`0x6db320`): the first failing check's message key, else `MSG_SAVE_GUILD_EMBLEM` sent and the latch set; `None` with no player object.
+    /// The tabard save (`0x6db320`): the first failing check's message key, else `MSG_SAVE_GUILD_EMBLEM` sent and the latch set; `None` with no player object.
     fn save_tabard(&mut self, _design: [i32; 5]) -> Option<Result<(), &'static str>> {
         None
     }
@@ -751,6 +751,9 @@ pub trait LiveState {
 
     /// The seed's and a cycle's colours onto our body (`0x5993b0`).
     fn apply_guild_color(&mut self, _design: [i32; 5]) {}
+
+    /// A `DressUpModel` pane's own model edited inside its verb's call: undress (`0x597ba0`), re-dress from its unit (`0x5977e0`) or a try-on (`0x597fc0`), whose record miss asks inside the call and leaves the pane's callback (`0x5980fa`).
+    fn dress_up(&mut self, _pane: crate::widget::FrameHandle, _intent: super::DressUpIntent) {}
 
     /// The gossip globals at the call (`0xc00ef0`, `0xc00bf0`, `0xbfc968`, `0xc00be8`); `None` with no view.
     fn gossip(&self) -> Option<super::GossipRead<'_>> {
@@ -1386,6 +1389,17 @@ pub(crate) struct TestView {
     pub barber: Option<TestBarber>,
     pub barber_sent: Vec<[u32; 4]>,
     pub hair_tokens: Option<(String, String)>,
+    /// The dressing-room edits the verbs made, in call order.
+    pub dressup: Vec<(crate::widget::FrameHandle, super::DressUpIntent)>,
+    /// The charter, taxi and trainer acts the verbs made inside their calls, which this view
+    /// records and leaves to the test's seeded windows.
+    pub petition_acts: Vec<super::PetitionRequest>,
+    pub taxi_acts: Vec<super::TaxiAct>,
+    pub trainer_bought: Vec<u32>,
+    /// Whether a trainer is open, which `CloseTrainer`'s zero leg tests; `None` answers nothing.
+    pub trainer_is_open: Option<bool>,
+    /// The trainer zero legs run.
+    pub trainer_zeroes: u32,
 }
 
 /// The gossip globals a test view lends.
@@ -1444,6 +1458,37 @@ impl TestView {
 impl LiveState for TestView {
     fn item_tables(&self) -> Option<&super::ItemTables> {
         self.item_tables.as_ref()
+    }
+
+    fn dress_up(&mut self, pane: crate::widget::FrameHandle, intent: super::DressUpIntent) {
+        self.dressup.push((pane, intent));
+    }
+
+    fn petition_act(&mut self, act: super::PetitionRequest) -> Option<super::PetitionOutcome> {
+        // `HasFilledPetition`'s walk is a read; the test's vendor answers it.
+        if act != super::PetitionRequest::HasFilled {
+            self.petition_acts.push(act);
+        }
+        None
+    }
+
+    fn taxi_act(&mut self, act: super::TaxiAct) -> Option<super::TaxiOutcome> {
+        self.taxi_acts.push(act);
+        None
+    }
+
+    fn trainer_buy(&mut self, spell_id: u32) -> bool {
+        self.trainer_bought.push(spell_id);
+        true
+    }
+
+    fn trainer_open(&self) -> Option<bool> {
+        self.trainer_is_open
+    }
+
+    fn trainer_zero(&mut self) {
+        self.trainer_zeroes += 1;
+        self.trainer_is_open = self.trainer_is_open.map(|_| false);
     }
 
     fn guild_bank_open(&self) -> bool {

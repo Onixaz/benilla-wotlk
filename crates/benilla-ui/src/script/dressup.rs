@@ -1,50 +1,39 @@
-//! The dressing room: the `DressUpModel` verbs and the intent queue behind them and behind
-//! `SetUnit`/`RefreshUnit` on a dressing-room pane. The reference edits a clone of the unit's
-//! model; here the app composes the look from the intents in order, which matters: on a closed
-//! window `DressUpItemLink` resets, then tries on (`DressUpFrame.lua:2-10`).
+//! The dressing room: the `DressUpModel` verbs and `SetUnit`/`RefreshUnit` on a dressing-room
+//! pane, each editing the pane's own model inside its call through the lent view, as 12340's do
+//! (`0x597e90`, `0x597ed0`, `0x598830`). Order matters: on a closed window `DressUpItemLink`
+//! resets, then tries on (`DressUpFrame.lua:2-10`).
 
 use mlua::{Lua, Table, Value};
 
 use super::item_link::{reference_atoi, ItemLinkFields};
 use super::item_search::{find_item, ItemQuery};
 use super::object::frame_handle_of;
-use crate::widget::FrameKind;
+use crate::widget::{FrameHandle, FrameKind};
 
 /// Registry key of the `DressUpModel` method table, its own three; the rest come by the chain.
 pub(super) const REG_DRESSUPMODEL_METHODS: &str = "__benilla_dressupmodel_methods";
 
-/// One queued dressing-room intent, applied in order.
+/// One edit of a dressing-room pane's model.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DressUpIntent {
-    /// `SetUnit`, `RefreshUnit` and `Dress` (the Reset button): the reference's rebuild from the
-    /// unit, dropping every substitution.
+    /// `SetUnit`, `RefreshUnit` and `Dress` (the Reset button): the model rebuilt from the unit,
+    /// dropping every substitution (`0x5977e0`).
     Dress,
-    /// `Undress()`: bodyslots `0..0xb` cleared, worn and tried-on alike; the hands keep what they
-    /// hold.
+    /// `Undress()`: bodyslots `0..0xc` and both hand lanes cleared, worn and tried-on alike
+    /// (`0x597bc7`, `0x597bfa`, `0x597c35`).
     Undress,
     /// `TryOn(item)`: the item in its `InventoryType`'s slot, with no class, level or proficiency
     /// check, and the enchant ids a link names, the first with a visual glowing an item with no
-    /// visual of its own (`0x598830`).
+    /// visual of its own (`0x597fc0`).
     TryOn(u32, [i32; 4]),
-    /// The window was hidden, so the booth empties. The reference keeps its state while hidden,
-    /// but the next `DressUpItemLink` re-issues `SetUnit("player")`, so that state is never seen.
-    Close,
 }
 
-impl super::UiScript {
-    /// Drain the dressing room's intents, oldest first; the app applies them in order.
-    pub fn take_dressup_intents(&mut self) -> Vec<DressUpIntent> {
-        drain_field!(self, dressup_intents)
-    }
+/// The pane's model edited now through the lent view; with none lent, as a VM outside the app has, there is no model to edit.
+fn dress(pane: FrameHandle, intent: DressUpIntent) {
+    super::write_live(|l| l.dress_up(pane, intent));
 }
 
-fn queue(lua: &Lua, intent: DressUpIntent) {
-    crate::script::model_mut_of(lua)
-        .dressup_intents
-        .push(intent);
-}
-
-/// Queue the rebuild when `PlayerModel`'s `SetUnit`/`RefreshUnit` lands on a `DressUpModel`.
+/// `PlayerModel`'s `SetUnit`/`RefreshUnit` landing on a `DressUpModel` rebuilds its model.
 pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let is_dressup = lua
@@ -54,7 +43,7 @@ pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
         .frame(h)
         .is_some_and(|f| f.kind == FrameKind::DressUpModel);
     if is_dressup {
-        queue(lua, DressUpIntent::Dress);
+        dress(h, DressUpIntent::Dress);
     }
     Ok(())
 }
@@ -90,8 +79,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "Undress",
         lua.create_function(|lua, this: Table| {
-            frame_handle_of(lua, &this)?;
-            queue(lua, DressUpIntent::Undress);
+            dress(frame_handle_of(lua, &this)?, DressUpIntent::Undress);
             Ok(())
         })?,
     )?;
@@ -100,8 +88,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "Dress",
         lua.create_function(|lua, this: Table| {
-            frame_handle_of(lua, &this)?;
-            queue(lua, DressUpIntent::Dress);
+            dress(frame_handle_of(lua, &this)?, DressUpIntent::Dress);
             Ok(())
         })?,
     )?;
@@ -112,12 +99,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "TryOn",
         lua.create_function(|lua, (this, item): (Table, Value)| {
-            frame_handle_of(lua, &this)?;
+            let h = frame_handle_of(lua, &this)?;
             // `lua_isnumber` first, so a digit string is an id.
             if let Some(n) = lua.coerce_number(item.clone())? {
                 if let Ok(id) = u32::try_from(n.trunc() as i64) {
                     if id != 0 {
-                        queue(lua, DressUpIntent::TryOn(id, [0; 4]));
+                        dress(h, DressUpIntent::TryOn(id, [0; 4]));
                     }
                 }
                 return Ok(());
@@ -127,7 +114,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 _ => None,
             };
             match intent {
-                Some(intent) => queue(lua, intent),
+                Some(intent) => dress(h, intent),
                 None => crate::script::model_mut_of(lua)
                     .ui_errors
                     .push("ERR_NOT_EQUIPPABLE"),
@@ -195,10 +182,24 @@ mod tests {
     }
 
     /// Stock `DressUpItemLink` passes the link itself: a digit string is an id, a link its item's,
-    /// and nothing it can read answers ERR_NOT_EQUIPPABLE (`0x598830`).
+    /// and nothing it can read answers ERR_NOT_EQUIPPABLE (`0x598830`); each edit reaches the lent
+    /// view inside its own call, naming its pane.
     #[test]
-    fn the_verbs_queue_intents_in_order_and_try_on_reads_its_argument_like_the_client() {
+    fn the_verbs_edit_the_pane_in_their_call_and_try_on_reads_its_argument_like_the_client() {
         let mut s = room();
+        let mut loan = crate::script::live::lend_test(Default::default());
+        let mut edits = || {
+            loan.with_view_mut(|v| std::mem::take(&mut v.dressup))
+                .into_iter()
+                .map(|(_, i)| i)
+                .collect::<Vec<_>>()
+        };
+        s.run(r#"DM:TryOn(117)"#).unwrap();
+        assert_eq!(
+            edits(),
+            vec![DressUpIntent::TryOn(117, [0; 4])],
+            "the edit lands before the call returns"
+        );
         s.run(
             r#"
             DM:SetUnit("player")
@@ -215,7 +216,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            s.take_dressup_intents(),
+            edits(),
             vec![
                 DressUpIntent::Dress,
                 DressUpIntent::TryOn(117, [0; 4]),
@@ -231,10 +232,16 @@ mod tests {
             vec!["ERR_NOT_EQUIPPABLE"],
             "the nil argument"
         );
-        // The same two PlayerModel verbs on a paper-doll pane queue nothing.
+        // The same two PlayerModel verbs on a paper-doll pane edit nothing.
         s.run(r#"pm = CreateFrame("PlayerModel", "PMOnly", UIParent) pm:SetUnit("player") pm:RefreshUnit()"#)
             .unwrap();
-        assert!(s.take_dressup_intents().is_empty());
+        assert!(edits().is_empty());
+        // Two panes are two models: each edit names its own.
+        s.run(r#"dm2 = CreateFrame("DressUpModel", "DM2", UIParent) DM:Dress() DM2:Dress()"#)
+            .unwrap();
+        let panes: Vec<_> = loan.with_view_mut(|v| std::mem::take(&mut v.dressup));
+        assert_eq!(panes.len(), 2);
+        assert_ne!(panes[0].0, panes[1].0, "each pane is its own model");
         // Its yaw is its own facing, read by name like every other pane's.
         s.run("DM:SetRotation(0.61)").unwrap();
         assert!((s.model_pane_facing("DM") - 0.61).abs() < 1e-6);

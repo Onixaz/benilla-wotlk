@@ -580,6 +580,9 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
             .ui
             .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
         RecordWait::Merchant => sc.ui.world(crate::ui_merchant::record_callback),
+        RecordWait::DressUp(pane) => sc
+            .ui
+            .world(move |world| crate::ui_dressup::record_callback(world, entry, landed, pane)),
         RecordWait::Buyback => sc.ui.world(crate::ui_merchant::buyback_record_callback),
         // The trainer's callback fires on a found record (`0x593ca0`).
         RecordWait::Trainer => {

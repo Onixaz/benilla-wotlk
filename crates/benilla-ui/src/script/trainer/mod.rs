@@ -212,8 +212,10 @@ pub fn trainer_type_filter(script: &super::UiScript) -> u32 {
 }
 
 impl super::UiScript {
-    /// A test's trainer, read where no view is lent: a push builds the tree ([`build_groups`]) and
-    /// keeps the masks; one whose services or states moved re-runs the selection pick.
+    /// A test's trainer, which the verbs read where the lent view does not answer it: a push builds
+    /// the tree ([`build_groups`]) and keeps the masks; one whose services or states moved re-runs
+    /// the selection pick.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_trainer(&mut self, state: Option<TrainerState>) {
         let filter = type_filter(&self.model_ref());
         let mut model = self.model_mut();
@@ -241,25 +243,16 @@ impl super::UiScript {
     }
 
     /// A test's list reset (`0x596450`): every skill line expanded and passing the line filter.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn reset_trainer_list_state(&mut self) {
         if let Some(w) = self.model_mut().trainer.as_mut() {
             w.collapsed.clear();
             w.lines_off.clear();
         }
     }
-
-    /// Drain the spell ids `BuyTrainerService` queued where no view is lent.
-    pub fn take_trainer_buys(&mut self) -> Vec<u32> {
-        drain_field!(self, trainer_buys)
-    }
-
-    /// Whether `CloseTrainer` was called where no view is lent.
-    pub fn take_trainer_close(&mut self) -> bool {
-        drain_field!(self, trainer_close)
-    }
 }
 
-/// The window: the lent view's at the call, else a test's.
+/// The window: the lent view's at the call; with none, a test's, else none.
 fn with_window<R>(lua: &Lua, f: impl FnOnce(Option<&TrainerWindow>) -> R) -> R {
     let mut f = Some(f);
     if let Some(Some(r)) =
@@ -267,11 +260,19 @@ fn with_window<R>(lua: &Lua, f: impl FnOnce(Option<&TrainerWindow>) -> R) -> R {
     {
         return r;
     }
-    let model = read(lua);
-    (f.take().expect("once"))(model.trainer.as_ref())
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let model = read(lua);
+        (f.take().expect("once"))(model.trainer.as_ref())
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = lua;
+        (f.take().expect("once"))(None)
+    }
 }
 
-/// The window mutably inside the call: the lent view's, else a test's.
+/// The window mutably inside the call: the lent view's; with none, a test's, else none.
 fn with_window_mut<R>(lua: &Lua, f: impl FnOnce(Option<&mut TrainerWindow>) -> R) -> R {
     let mut f = Some(f);
     if let Some(Some(r)) =
@@ -279,8 +280,16 @@ fn with_window_mut<R>(lua: &Lua, f: impl FnOnce(Option<&mut TrainerWindow>) -> R
     {
         return r;
     }
-    let mut model = crate::script::model_mut_of(lua);
-    (f.take().expect("once"))(model.trainer.as_mut())
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        (f.take().expect("once"))(model.trainer.as_mut())
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = lua;
+        (f.take().expect("once"))(None)
+    }
 }
 
 /// One record: a header by group index, or a service by its position in
@@ -999,9 +1008,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .filter(|(_, s)| s.category == TrainerServiceCategory::Available)
                 .map(|(_, s)| s.spell_id);
             if let Some(spell_id) = buyable {
-                if super::live::write_live(|l| l.trainer_buy(spell_id)) != Some(true) {
-                    crate::script::model_mut_of(lua).trainer_buys.push(spell_id);
-                }
+                super::live::write_live(|l| l.trainer_buy(spell_id));
             }
             Ok(())
         })?,
@@ -1011,9 +1018,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseTrainer",
         lua.create_function(|lua, ()| {
-            match super::live::read_live(|l| l.trainer_open()).flatten() {
-                Some(open) => set_none(lua, open),
-                None => crate::script::model_mut_of(lua).trainer_close = true,
+            if let Some(open) = super::live::read_live(|l| l.trainer_open()).flatten() {
+                set_none(lua, open);
             }
             Ok(())
         })?,

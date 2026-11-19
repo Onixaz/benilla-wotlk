@@ -167,6 +167,12 @@ impl GuildCache {
         self.identity(guild_id)
     }
 
+    /// A guild's designed crest read with no ask; `None` for guild 0, no record or an undesigned crest.
+    pub(crate) fn cached_emblem(&self, guild_id: u32) -> Option<GuildEmblem> {
+        let emblem = self.identity(guild_id)?.emblem;
+        emblem.is_designed().then_some(emblem)
+    }
+
     /// The landed-identity counter the unit feeds watch.
     pub(crate) fn generation(&self) -> u64 {
         self.generation

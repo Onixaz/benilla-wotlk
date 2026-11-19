@@ -358,11 +358,11 @@ pub(crate) struct Model {
     pub(crate) guild_event_log: Vec<guild::GuildEventView>,
     /// Guild bank sends, queued for the app.
     pub(crate) guild_bank_requests: Vec<super::guild_bank::GuildBankRequest>,
-    /// The charter price and open petition, names resolved from caches as the reference does.
+    /// A test's charter window, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) petition: petition::PetitionState,
-    /// Charter calls (`BuyGuildCharter`, `SignPetition`, `TurnInGuildCharter`, …) queued.
-    pub(crate) petition_requests: Vec<petition::PetitionRequest>,
-    /// The arena registrar's petition vendor, as pushed.
+    /// A test's petition vendor, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) petition_vendor: petition::PetitionVendorState,
     /// The charter the petition vendor's button holds (`0xc0f7d8`), engine-side like the cursor.
     pub(crate) petition_button: Option<petition::PetitionButtonItem>,
@@ -798,15 +798,13 @@ pub(crate) struct Model {
     /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
-    /// A test's trainer window, its buys and close, read where no view is lent.
+    /// A test's trainer window, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) trainer: Option<trainer::TrainerWindow>,
-    pub(crate) trainer_buys: Vec<u32>,
-    pub(crate) trainer_close: bool,
 
-    /// The open taxi map, the `TakeTaxiNode` calls and whether `CloseTaxiMap` ran.
+    /// A test's taxi map, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) taxi: Option<taxi::TaxiUiState>,
-    pub(crate) taxi_takes: Vec<usize>,
-    pub(crate) taxi_close: bool,
 
     /// The open tradeskill window, its filters and repeat.
     pub(crate) trade_skill: tradeskill::TradeSkillModel,
@@ -1053,8 +1051,6 @@ pub(crate) struct Model {
     /// `ClearInspectPlayer` ran, after this many of [`Self::inspect_notifies`]: the app drops its
     /// inspect target there, keeping the call order.
     pub(crate) inspect_clear: Option<usize>,
-    /// `DressUpModel` `SetUnit`, `Dress`, `Undress` and `TryOn` calls, applied in call order.
-    pub(crate) dressup_intents: Vec<super::dressup::DressUpIntent>,
     /// Tabard designs per `TabardModel`, the app's preview five, the host facts and queued calls.
     pub(crate) tabard_designs: HashMap<crate::widget::FrameHandle, [i32; 5]>,
     pub(crate) tabard_preview: Option<[i32; 5]>,
@@ -1502,8 +1498,9 @@ impl Model {
             guild_requests: Vec::new(),
             guild_event_log: Vec::new(),
             guild_bank_requests: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             petition: petition::PetitionState::default(),
-            petition_requests: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             petition_vendor: Default::default(),
             petition_button: None,
             // Per window, as the stock dock differs: 1 and 2 are the dock, the rest undocked.
@@ -1704,12 +1701,10 @@ impl Model {
             repair_all: None,
             repair_mode: false,
             stable: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             trainer: None,
-            trainer_buys: Vec::new(),
-            trainer_close: false,
+            #[cfg(any(test, feature = "fixtures"))]
             taxi: None,
-            taxi_takes: Vec::new(),
-            taxi_close: false,
             trade_skill: Default::default(),
             lfg: Default::default(),
             calendar: Default::default(),
@@ -1877,7 +1872,6 @@ impl Model {
             inspect: None,
             inspect_notifies: Vec::new(),
             inspect_clear: None,
-            dressup_intents: Vec::new(),
             tabard_designs: HashMap::new(),
             tabard_preview: None,
             world_frame_made: false,

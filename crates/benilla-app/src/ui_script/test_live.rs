@@ -5,8 +5,9 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
-    CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetActionView, PetBarLive,
-    PetBookState, PetStats, PossessView, StableCallback, StableFamily, StableList, UiScript,
+    CompanionState, CompanionType, CompanionView, DressUpIntent, LiveLoan, LiveState,
+    PetActionView, PetBarLive, PetBookState, PetStats, PetitionRequest, PossessView,
+    StableCallback, StableFamily, StableList, TaxiAct, UiScript,
 };
 
 /// The death answers a test sets.
@@ -71,6 +72,8 @@ thread_local! {
     static DEATH: RefCell<DeathUiState> = RefCell::default();
     static SUMMON: RefCell<SummonConfirmUiState> = RefCell::default();
     static PET: RefCell<PetAnswers> = RefCell::default();
+    /// The writes the verbs made inside their calls, in call order.
+    static WRITES: RefCell<VerbWrites> = RefCell::default();
     /// The view lent for the rest of the thread once a pet answer is set.
     static STICKY: RefCell<Option<LiveLoan<View>>> = const { RefCell::new(None) };
 }
@@ -93,6 +96,58 @@ pub(crate) trait PetAnswersExt {
     fn set_pet_book(&mut self, book: PetBookState);
     /// What the pet verbs wrote inside their calls since the last take.
     fn take_pet_writes(&mut self) -> PetWrites;
+}
+
+/// The writes the verbs made inside their calls, as the live view receives them.
+#[derive(Default)]
+struct VerbWrites {
+    dressup: Vec<DressUpIntent>,
+    petition: Vec<PetitionRequest>,
+    taxi: Vec<TaxiAct>,
+    trainer_buys: Vec<u32>,
+}
+
+/// Record a bare VM's verb writes as the live view receives them, inside each verb's call; the
+/// windows a test seeds stay its own, as [`View`] answers none of them.
+pub(crate) trait VerbWritesExt {
+    /// Lend [`View`] for the rest of the test's thread, so every later write reaches it.
+    fn record_writes(&mut self);
+    /// Run `f` with [`View`] lent for its length only, its writes recorded.
+    fn with_writes<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R;
+    /// The dressing-room edits made since the last take, oldest first.
+    fn take_dressup_edits(&mut self) -> Vec<DressUpIntent>;
+    /// The charter acts made since the last take, oldest first.
+    fn take_petition_acts(&mut self) -> Vec<PetitionRequest>;
+    /// The taxi acts made since the last take, oldest first.
+    fn take_taxi_acts(&mut self) -> Vec<TaxiAct>;
+    /// The trainer buys sent since the last take, oldest first.
+    fn take_trainer_buys(&mut self) -> Vec<u32>;
+}
+
+impl VerbWritesExt for UiScript {
+    fn record_writes(&mut self) {
+        sticky(self);
+    }
+
+    fn with_writes<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_live(&mut View, f)
+    }
+
+    fn take_dressup_edits(&mut self) -> Vec<DressUpIntent> {
+        WRITES.with(|w| std::mem::take(&mut w.borrow_mut().dressup))
+    }
+
+    fn take_petition_acts(&mut self) -> Vec<PetitionRequest> {
+        WRITES.with(|w| std::mem::take(&mut w.borrow_mut().petition))
+    }
+
+    fn take_taxi_acts(&mut self) -> Vec<TaxiAct> {
+        WRITES.with(|w| std::mem::take(&mut w.borrow_mut().taxi))
+    }
+
+    fn take_trainer_buys(&mut self) -> Vec<u32> {
+        WRITES.with(|w| std::mem::take(&mut w.borrow_mut().trainer_buys))
+    }
 }
 
 /// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no other loan may be up when it is made.
@@ -176,6 +231,31 @@ pub(super) struct View;
 impl LiveState for View {
     fn unit_flags(&self, _: u64) -> Option<u32> {
         None
+    }
+
+    fn dress_up(&mut self, _pane: benilla_ui::widget::FrameHandle, intent: DressUpIntent) {
+        WRITES.with(|w| w.borrow_mut().dressup.push(intent));
+    }
+
+    fn petition_act(
+        &mut self,
+        act: PetitionRequest,
+    ) -> Option<benilla_ui::script::PetitionOutcome> {
+        // `HasFilledPetition`'s walk is a read; the test's vendor answers it.
+        if act != PetitionRequest::HasFilled {
+            WRITES.with(|w| w.borrow_mut().petition.push(act));
+        }
+        None
+    }
+
+    fn taxi_act(&mut self, act: TaxiAct) -> Option<benilla_ui::script::TaxiOutcome> {
+        WRITES.with(|w| w.borrow_mut().taxi.push(act));
+        None
+    }
+
+    fn trainer_buy(&mut self, spell_id: u32) -> bool {
+        WRITES.with(|w| w.borrow_mut().trainer_buys.push(spell_id));
+        true
     }
 
     fn unit_health(&self, _: u64) -> Option<u32> {

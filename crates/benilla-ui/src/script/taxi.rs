@@ -85,33 +85,32 @@ pub struct TaxiOutcome {
 }
 
 impl super::UiScript {
-    /// A test's taxi map, read where no view is lent.
+    /// A test's taxi map, which the verbs read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_taxi(&mut self, state: Option<TaxiUiState>) {
         set_field!(self, taxi, state);
     }
-
-    /// Drain the 1-based indices `TakeTaxiNode` queued where no view is lent.
-    pub fn take_taxi_node(&mut self) -> Vec<usize> {
-        drain_field!(self, taxi_takes)
-    }
-
-    /// Whether `CloseTaxiMap` was called where no view is lent.
-    pub fn take_taxi_close(&mut self) -> bool {
-        drain_field!(self, taxi_close)
-    }
 }
 
-/// The listed nodes: the lent view's at the call, else a test's.
+/// The listed nodes: the lent view's at the call; with none, a test's, else none.
 fn with_map<R>(lua: &Lua, f: impl FnOnce(Option<&TaxiUiState>) -> R) -> R {
     let mut f = Some(f);
     if let Some(Some(r)) = super::live::read_live(|l| l.taxi_map().map(|m| (f.take().unwrap())(m)))
     {
         return r;
     }
-    let model = lua
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model");
-    (f.take().unwrap())(model.taxi.as_ref())
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
+        (f.take().unwrap())(model.taxi.as_ref())
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = lua;
+        (f.take().unwrap())(None)
+    }
 }
 
 /// A node by 0-based slot.
@@ -129,17 +128,11 @@ fn bare_slot(lua: &Lua, v: Option<Value>) -> u32 {
     (binding_abi::coerced_number(lua, v) as i64 as i32 as u32).wrapping_sub(1)
 }
 
-/// Run `act` inside the call through the lent view; where none is lent, a test's queue takes it.
-fn taxi_act(lua: &Lua, act: TaxiAct) -> TaxiOutcome {
-    if let Some(Some(out)) = super::live::write_live(|l| l.taxi_act(act)) {
-        return out;
-    }
-    let mut model = crate::script::model_mut_of(lua);
-    match act {
-        TaxiAct::Take(slot) => model.taxi_takes.push(slot as usize + 1),
-        TaxiAct::Close => model.taxi_close = true,
-    }
-    TaxiOutcome::default()
+/// Run `act` inside the call through the lent view; with none lent there is no map to act on.
+fn taxi_act(act: TaxiAct) -> TaxiOutcome {
+    super::live::write_live(|l| l.taxi_act(act))
+        .flatten()
+        .unwrap_or_default()
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -245,7 +238,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "TakeTaxiNode",
         lua.create_function(|lua, v: Value| {
             let slot = slot_arg(lua, v, "Usage: TakeTaxiNode(slot)")?;
-            if let Some(key) = taxi_act(lua, TaxiAct::Take(slot)).error {
+            if let Some(key) = taxi_act(TaxiAct::Take(slot)).error {
                 super::ui_errors::show_now(lua, key);
             }
             Ok(())
@@ -257,7 +250,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CloseTaxiMap",
         lua.create_function(|lua, ()| {
-            for _ in 0..taxi_act(lua, TaxiAct::Close).closed {
+            for _ in 0..taxi_act(TaxiAct::Close).closed {
                 super::tick::fire_event_into(lua, "TAXIMAP_CLOSED", Vec::new());
             }
             Ok(())

@@ -116,7 +116,7 @@ const KEPT: &[(&str, &str)] = &[
     ),
     (
         "benilla_app::ui_dressup::sync_dressup_booth",
-        "rendering, no event: 12340's DressUpModel verbs edit the widget's own model in their call (0x597e90, 0x597ed0, 0x598830), an uncached item landing by its record's callback (0x5980b0), and the model frame draws it and its facing on every frame render (0x960240); nothing in Lua reads it back",
+        "rendering, no event: the DressUpModel verbs edit their pane's model inside their call through the live view, as 12340's do (0x597e90, 0x597ed0, 0x598830), a record miss asking in the call and landing by the pane's record callback (0x5980fa -> 0x5980b0); this system only mirrors the shown pane's model and facing into the booth, as the model frame draws them on every frame render (0x960240), reading the caches with no ask and writing no game state",
     ),
     (
         "benilla_app::ui_pet_doll::sync_pet_booth",

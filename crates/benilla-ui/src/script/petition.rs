@@ -174,12 +174,14 @@ pub struct PetitionOutcome {
 }
 
 impl super::UiScript {
-    /// Replace the charter snapshot; the app fires the four events and defers `PETITION_SHOW`.
+    /// A test's charter window, which the verbs read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_petition(&mut self, state: PetitionState) {
         set_field!(self, petition, state);
     }
 
-    /// Replace the petition vendor's snapshot; the app fires its three events.
+    /// A test's petition vendor, which the verbs read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_petition_vendor(&mut self, state: PetitionVendorState) {
         set_field!(self, petition_vendor, state);
     }
@@ -191,17 +193,6 @@ impl super::UiScript {
         // The app keeps the slot's lock at once, read by the bag verbs at the call.
         self.model_mut().petition_button = None;
         Some(held)
-    }
-
-    /// Take the charter intents queued since the last drain.
-    pub fn take_petition_requests(&mut self) -> Vec<PetitionRequest> {
-        drain_field!(self, petition_requests)
-    }
-
-    /// Queue one charter intent directly: the test seam.
-    #[cfg(test)]
-    pub fn queue_petition_request(&mut self, request: PetitionRequest) {
-        self.model_mut().petition_requests.push(request);
     }
 }
 
@@ -221,51 +212,62 @@ fn name_value(lua: &Lua, name: Option<&String>) -> mlua::Result<Value> {
     }
 }
 
-/// The charter window through the lent view at the call, else a test's.
+/// The charter window through the lent view at the call; with none, a test's, else none.
 fn with_petition<R>(lua: &Lua, f: impl FnOnce(&PetitionState) -> R) -> R {
     if let Some(Some(view)) = super::live::read_live(|l| l.petition_view()) {
         return f(&view);
     }
-    let model = lua
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data");
-    f(&model.petition)
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
+        f(&model.petition)
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = lua;
+        f(&PetitionState::default())
+    }
 }
 
-/// Whether a petition vendor is set (`0xc0f7c8`), through the lent view, else a test's.
+/// Whether a petition vendor is set (`0xc0f7c8`), through the lent view; with none, a test's, else none.
 fn vendor_open(lua: &Lua) -> bool {
     if let Some(Some(open)) = super::live::read_live(|l| l.petition_vendor_open()) {
         return open;
     }
+    test_vendor(lua, |v| v.open).unwrap_or(false)
+}
+
+/// A test's petition vendor, where the lent view does not answer it.
+#[cfg(any(test, feature = "fixtures"))]
+fn test_vendor<R>(lua: &Lua, f: impl FnOnce(&PetitionVendorState) -> R) -> Option<R> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    model.petition_vendor.open
+    Some(f(&model.petition_vendor))
 }
 
-/// Run `act` inside the call through the lent view, its steps after; where none is lent, a test's queue takes it.
+/// No test vendor outside a test.
+#[cfg(not(any(test, feature = "fixtures")))]
+fn test_vendor<R>(_: &Lua, _: impl FnOnce(&PetitionVendorState) -> R) -> Option<R> {
+    None
+}
+
+/// Run `act` inside the call through the lent view, its steps after; with none lent there is no charter state to act on.
 fn petition_act(lua: &Lua, act: PetitionRequest) -> PetitionOutcome {
-    if let Some(Some(out)) = super::live::write_live(|l| l.petition_act(act.clone())) {
-        for step in &out.steps {
-            match step {
-                PetitionStep::Fire(event) => {
-                    super::tick::fire_event_into(lua, event, Vec::new());
-                }
-                PetitionStep::Line(key, arg) => super::ui_errors::show_now_arg(lua, key, arg),
+    let Some(Some(out)) = super::live::write_live(|l| l.petition_act(act)) else {
+        return PetitionOutcome::default();
+    };
+    for step in &out.steps {
+        match step {
+            PetitionStep::Fire(event) => {
+                super::tick::fire_event_into(lua, event, Vec::new());
             }
+            PetitionStep::Line(key, arg) => super::ui_errors::show_now_arg(lua, key, arg),
         }
-        return out;
     }
-    let mut model = crate::script::model_mut_of(lua);
-    // A test's vendor closes once, as the vendor's own zero gates the second (`0x5a24f0`).
-    if act == PetitionRequest::CloseVendor {
-        if !model.petition_vendor.open {
-            return PetitionOutcome::default();
-        }
-        model.petition_vendor.open = false;
-    }
-    model.petition_requests.push(act);
-    PetitionOutcome::default()
+    out
 }
 
 /// Register the charter globals, which read the lent view at the call.
@@ -411,10 +413,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if let Some(Some(n)) = super::live::read_live(|l| l.petition_vendor_count()) {
                 return Ok(n as i64);
             }
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.petition_vendor.items.len() as i64)
+            Ok(test_vendor(lua, |v| v.items.len()).unwrap_or(0) as i64)
         })?,
     )?;
 
@@ -428,12 +427,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .wrapping_sub(1);
             let item = match super::live::write_live(|l| l.petition_item(index)) {
                 Some(Some(item)) => item,
-                _ => {
-                    let model = lua
-                        .app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data");
-                    model.petition_vendor.items.get(index as usize).cloned()
-                }
+                _ => test_vendor(lua, |v| v.items.get(index as usize).cloned()).flatten(),
             };
             let item = item.and_then(|i| Some((i.name?, i.texture?, i.cost)));
             let Some((name, texture, cost)) = item else {
@@ -527,10 +521,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(binding_abi::flag(out.filled));
             }
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(binding_abi::flag(model.petition_vendor.has_filled_petition))
+            Ok(binding_abi::flag(
+                test_vendor(lua, |v| v.has_filled_petition).unwrap_or(false),
+            ))
         })?,
     )?;
 
@@ -654,7 +647,18 @@ fn pack_color(r: f64, g: f64, b: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::UiScript;
+    use crate::script::live::{lend_test, TestView};
+    use crate::script::{LiveLoan, UiScript};
+
+    /// A view lent for the test that records the charter acts the verbs make inside their calls.
+    fn acts() -> LiveLoan<TestView> {
+        lend_test(TestView::default())
+    }
+
+    /// The acts recorded since the last take.
+    fn take(loan: &mut LiveLoan<TestView>) -> Vec<PetitionRequest> {
+        loan.with_view_mut(|v| std::mem::take(&mut v.petition_acts))
+    }
 
     fn record() -> PetitionRecordView {
         PetitionRecordView {
@@ -820,10 +824,11 @@ mod tests {
     #[test]
     fn sign_petition_defaults_its_wire_byte_to_one() {
         let mut s = UiScript::new().unwrap();
+        let mut loan = acts();
         s.run("SignPetition(); SignPetition(7); SignPetition(3.9)")
             .unwrap();
         assert_eq!(
-            s.take_petition_requests(),
+            take(&mut loan),
             vec![
                 PetitionRequest::Sign(1),
                 PetitionRequest::Sign(7),
@@ -837,6 +842,7 @@ mod tests {
     #[test]
     fn the_name_validator_gates_both_verbs_and_only_buy_reports_it() {
         let mut s = UiScript::new().unwrap();
+        let mut loan = acts();
         assert_eq!(
             s.eval::<Option<u32>>("return BuyGuildCharter(\"Legacy\")")
                 .unwrap(),
@@ -855,7 +861,7 @@ mod tests {
         );
         s.run("RenamePetition(\"  spaced  \")").unwrap();
         assert_eq!(
-            s.take_petition_requests(),
+            take(&mut loan),
             vec![
                 PetitionRequest::Buy("Legacy".into()),
                 PetitionRequest::NameRefused("ERR_NAME_NO_NAME"),
@@ -887,20 +893,19 @@ mod tests {
     #[test]
     fn get_tabard_info_is_an_intent_with_no_returns() {
         let mut s = UiScript::new().unwrap();
+        let mut loan = acts();
         assert_eq!(
             s.eval::<i64>("local n = function(...) return arg.n end return n(GetTabardInfo())")
                 .unwrap(),
             0
         );
-        assert_eq!(
-            s.take_petition_requests(),
-            vec![PetitionRequest::TabardInfo]
-        );
+        assert_eq!(take(&mut loan), vec![PetitionRequest::TabardInfo]);
     }
 
     #[test]
     fn the_vendor_answers_its_rows_and_packs_the_banner() {
         let mut s = UiScript::new().unwrap();
+        let mut loan = acts();
         s.set_petition_vendor(PetitionVendorState {
             open: true,
             items: vec![
@@ -926,7 +931,7 @@ mod tests {
         s.run("TurnInArenaPetition(2, 1, 0.5, 0, 7, 0, 0, 1, 3, 0.2, 0.2, 0.2) TurnInArenaPetition(3)")
             .unwrap();
         assert_eq!(
-            s.take_petition_requests(),
+            take(&mut loan),
             vec![
                 PetitionRequest::VendorBuy {
                     index: 0,
@@ -950,11 +955,12 @@ mod tests {
                 }),
             ]
         );
+        // Each close reaches the view inside its call; the vendor's own zero gates the second there (`0x5a24f0`).
         s.run("ClosePetitionVendor() ClosePetitionVendor()")
             .unwrap();
         assert_eq!(
-            s.take_petition_requests(),
-            vec![PetitionRequest::CloseVendor]
+            take(&mut loan),
+            vec![PetitionRequest::CloseVendor, PetitionRequest::CloseVendor]
         );
     }
 
@@ -1015,11 +1021,9 @@ mod tests {
     #[test]
     fn the_petition_button_takes_a_charter_and_turns_it_in() {
         let mut s = vendor_with_charters();
+        let mut loan = acts();
         s.run("TurnInPetition()").unwrap();
-        assert!(
-            s.take_petition_requests().is_empty(),
-            "an empty button sends nothing"
-        );
+        assert!(take(&mut loan).is_empty(), "an empty button sends nothing");
 
         s.run("PickupContainerItem(0, 1)").unwrap();
         s.model_mut().pending_events.clear();
@@ -1046,7 +1050,7 @@ mod tests {
 
         s.run("TurnInPetition()").unwrap();
         assert_eq!(
-            s.take_petition_requests(),
+            take(&mut loan),
             vec![PetitionRequest::VendorTurnIn { item: 0x71 }]
         );
     }
@@ -1056,6 +1060,7 @@ mod tests {
     #[test]
     fn the_petition_button_swaps_and_refuses_as_the_reference() {
         let mut s = vendor_with_charters();
+        let mut loan = acts();
         s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
             .unwrap();
         s.run("PickupContainerItem(0, 2); ClickPetitionButton()")
@@ -1068,7 +1073,7 @@ mod tests {
         assert!(locked(&s, 1) && locked(&s, 2));
         s.run("TurnInPetition()").unwrap();
         assert_eq!(
-            s.take_petition_requests(),
+            take(&mut loan),
             vec![PetitionRequest::VendorTurnIn { item: 0x72 }]
         );
 
@@ -1084,7 +1089,7 @@ mod tests {
         s.run("ClickPetitionButton()").unwrap();
         assert_eq!(held_slot(&s), Some(2));
         s.run("TurnInPetition()").unwrap();
-        assert!(s.take_petition_requests().is_empty());
+        assert!(take(&mut loan).is_empty());
         s.run("ClearCursor()").unwrap();
         assert!(!locked(&s, 2));
 
@@ -1099,6 +1104,7 @@ mod tests {
     #[test]
     fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
         let mut s = vendor_with_charters();
+        let mut loan = acts();
         assert_eq!(s.clear_petition_button(), None);
         s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
             .unwrap();
@@ -1132,6 +1138,6 @@ mod tests {
         s.run("PickupContainerItem(0, 1)").unwrap();
         assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
         s.run("TurnInPetition()").unwrap();
-        assert!(s.take_petition_requests().is_empty());
+        assert!(take(&mut loan).is_empty());
     }
 }

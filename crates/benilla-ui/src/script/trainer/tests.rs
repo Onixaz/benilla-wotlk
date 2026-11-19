@@ -402,22 +402,23 @@ fn the_skill_line_filter_hides_a_line_and_its_header() {
     );
 }
 
-/// The buy refuses any state byte but 0 (`0x594da0`).
+/// The buy refuses any state byte but 0 (`0x594da0`), and sends inside the call.
 #[test]
-fn buy_queues_an_available_services_spell_id_and_refuses_every_other_row() {
+fn buy_sends_an_available_services_spell_id_and_refuses_every_other_row() {
     let mut s = script_all();
+    let mut loan = crate::script::live::lend_test(Default::default());
+    let mut bought = || loan.with_view_mut(|v| std::mem::take(&mut v.trainer_bought));
     s.set_trainer(Some(trainer()));
     s.run("BuyTrainerService(2)").unwrap();
-    assert_eq!(s.take_trainer_buys(), vec![78]);
-    assert!(s.take_trainer_buys().is_empty(), "drained");
+    assert_eq!(bought(), vec![78]);
 
     s.run("BuyTrainerService(1)").unwrap();
-    assert!(s.take_trainer_buys().is_empty(), "a header is not buyable");
+    assert!(bought().is_empty(), "a header is not buyable");
 
     s.run("BuyTrainerService(3)").unwrap();
     s.run("BuyTrainerService(5)").unwrap();
     assert!(
-        s.take_trainer_buys().is_empty(),
+        bought().is_empty(),
         "only state byte 0, available, reaches the wire"
     );
 }
@@ -469,10 +470,13 @@ fn every_resort_picks_the_first_available_service() {
         "no available service is left, so array index 1, Heroic Strike, is picked"
     );
 
-    assert!(!s.take_trainer_close());
-    s.run("CloseTrainer()").unwrap();
-    assert!(s.take_trainer_close());
-    assert!(!s.take_trainer_close(), "drained");
+    // The close's zero leg runs inside the call on an open trainer, and once (`0x5940fa`).
+    let mut loan = crate::script::live::lend_test(crate::script::live::TestView {
+        trainer_is_open: Some(true),
+        ..Default::default()
+    });
+    s.run("CloseTrainer() CloseTrainer()").unwrap();
+    assert_eq!(loan.with_view_mut(|v| v.trainer_zeroes), 1);
 }
 
 #[test]

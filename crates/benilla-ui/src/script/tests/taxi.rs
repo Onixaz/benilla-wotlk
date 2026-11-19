@@ -5,8 +5,9 @@ use super::common::script;
 use crate::script::*;
 
 #[test]
-fn taxi_snapshot_surfaces_and_intents_drain() {
+fn taxi_snapshot_surfaces_and_acts_reach_the_view_in_their_call() {
     let mut s = script();
+    let mut loan = crate::script::live::lend_test(Default::default());
     s.set_screen_size(800.0, 600.0);
     s.set_taxi(Some(TaxiUiState {
         art: "Interface\\TaxiFrame\\TAXIMAP1".into(),
@@ -60,9 +61,11 @@ fn taxi_snapshot_surfaces_and_intents_drain() {
     )
     .unwrap();
 
-    assert_eq!(s.take_taxi_node(), vec![2]);
-    assert!(s.take_taxi_close());
-    assert!(!s.take_taxi_close(), "the close flag drains");
+    assert_eq!(
+        loan.with_view_mut(|v| std::mem::take(&mut v.taxi_acts)),
+        vec![TaxiAct::Take(1), TaxiAct::Close],
+        "the 0-based slot, then the close"
+    );
 
     s.resolve();
     assert!(
