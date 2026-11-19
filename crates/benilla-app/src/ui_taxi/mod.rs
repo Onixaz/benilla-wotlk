@@ -188,7 +188,7 @@ fn leave_for_the_flight(world: &mut World) {
     }
 }
 
-/// `CloseMap` (`0x590ba0`): with a flight master stored, the interact target cleared on it, whose
+/// The flight map's close (`0x590ba0`): with a flight master stored, the interact target cleared on it, whose
 /// interaction close runs this leg first when it held it (`0x590bb7` -> `0x512f58`), then the
 /// flight master zeroed (`0x590bc7`) and `TAXIMAP_CLOSED` fired.
 pub(crate) fn close_map(world: &mut World) {

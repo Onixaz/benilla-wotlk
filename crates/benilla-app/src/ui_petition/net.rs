@@ -182,7 +182,7 @@ fn on_show_signatures(In(ev): In<SessionEvent>, world: &mut World) {
     });
 }
 
-/// `SetSignatures` (`0x5cf650`): the signers stored, each name not cached asked with the window's callback; with none pending and a record held, `PETITION_SHOW`.
+/// The signer list's store (`0x5cf650`): the signers stored, each name not cached asked with the window's callback; with none pending and a record held, `PETITION_SHOW`.
 fn set_signatures(world: &mut World, signers: Vec<u64>, commands: &NetCommands) {
     world.resource_scope(|w, mut p: Mut<PetitionState>| {
         p.clear_signatures();

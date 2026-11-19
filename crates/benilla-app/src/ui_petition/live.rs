@@ -85,7 +85,7 @@ impl Walk<'_, '_, '_> {
         vec![step(lines::no_charter_line())]
     }
 
-    /// `TurnInArenaCharter` (`0x6dd680`): every charter's record asked with the arena callback; the first arena one (of the vendor's team size on a turn-in) is found, and a turn-in sends it with the vendor's banner or shows `ERR_NO_ARENA_CHARTER`.
+    /// The arena charter search and turn-in (`0x6dd680`): every charter's record asked with the arena callback; the first arena one (of the vendor's team size on a turn-in) is found, and a turn-in sends it with the vendor's banner or shows `ERR_NO_ARENA_CHARTER`.
     pub(super) fn turn_in_arena(
         &self,
         petition: &mut PetitionState,

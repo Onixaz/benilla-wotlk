@@ -134,7 +134,7 @@ impl NpcSession for StableOpen {
     }
 }
 
-/// `CloseStables` (`0x5a0f10`): with a master held, or `forced`, the interact target cleared on the master (`0x5a0f2c`), whose interaction close re-enters this through the stable leg while the master held it (`0x513065`), then the master zeroed and `PET_STABLE_CLOSED` fired (`0x5a0f4c`).
+/// The stable window's close (`0x5a0f10`): with a master held, or `forced`, the interact target cleared on the master (`0x5a0f2c`), whose interaction close re-enters this through the stable leg while the master held it (`0x513065`), then the master zeroed and `PET_STABLE_CLOSED` fired (`0x5a0f4c`).
 pub(crate) fn close_stables(world: &mut World, forced: bool) {
     let master = world.get_resource::<StableOpen>().and_then(|o| o.npc());
     if master.is_none() && !forced {

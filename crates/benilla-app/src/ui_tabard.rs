@@ -59,7 +59,7 @@ impl TabardDesign {
     }
 }
 
-/// `SaveTabard`'s checks in its order (`0x6db320`), each a message key: the ten range checks share one, a missing record is no guild, and the money check is the client's own `ERR_NOT_ENOUGH_MONEY` (`0x6db447`, message 0x28), not the server's.
+/// The tabard save's checks in their order (`0x6db320`), each a message key: the ten range checks share one, a missing record is no guild, and the money check is the client's own `ERR_NOT_ENOUGH_MONEY` (`0x6db447`, message 0x28), not the server's.
 pub(crate) fn preflight(
     design: [i32; 5],
     record: Option<[i32; 5]>,
@@ -135,7 +135,7 @@ impl TabardView<'_, '_> {
         self.open.as_ref().is_some_and(|o| o.save_pending)
     }
 
-    /// `SaveTabard` (`0x6db320`) with the player object held: the first failing check's key, else `MSG_SAVE_GUILD_EMBLEM` to the interact target, then the latch (`0x6db4cc`); `None` with no player object (`0x599430`).
+    /// The tabard save (`0x6db320`) with the player object held: the first failing check's key, else `MSG_SAVE_GUILD_EMBLEM` to the interact target, then the latch (`0x6db4cc`); `None` with no player object (`0x599430`).
     pub(crate) fn save(&mut self, design: [i32; 5]) -> Option<Result<(), &'static str>> {
         let me = self.me.single().ok()?;
         let record = self

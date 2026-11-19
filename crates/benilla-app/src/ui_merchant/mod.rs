@@ -100,7 +100,7 @@ impl Plugin for UiMerchantPlugin {
     }
 }
 
-/// `SetMerchant` (`0x584500`): every row's record callback cancelled (`0x584525`), the vendors tutorial (`0x584537`), the interact target taken, which closes the window holding it (`0x584540` -> `0x51fce0`), then the vendor and its rows stored, the pending count zeroed and `MERCHANT_SHOW` fired with no argument (`0x584596`).
+/// The vendor window's open (`0x584500`): every row's record callback cancelled (`0x584525`), the vendors tutorial (`0x584537`), the interact target taken, which closes the window holding it (`0x584540` -> `0x51fce0`), then the vendor and its rows stored, the pending count zeroed and `MERCHANT_SHOW` fired with no argument (`0x584596`).
 pub(crate) fn set_merchant(world: &mut World, vendor: u64, items: Vec<VendorItem>) {
     if let Some(mut waits) = world.get_non_send_resource_mut::<crate::items::RecordWaits>() {
         waits.cancel(|w| w == crate::items::RecordWait::Merchant);
@@ -154,7 +154,7 @@ pub(crate) fn close_by_interaction(world: &mut World) {
     }
 }
 
-/// `UpdateItemQuantity` (`0x5840e0`): for the open vendor, the first row on `slot` takes `count`, and `MERCHANT_UPDATE` fires whether or not a row matched (`0x58411b`, `0x584138`).
+/// The vendor row's count update (`0x5840e0`): for the open vendor, the first row on `slot` takes `count`, and `MERCHANT_UPDATE` fires whether or not a row matched (`0x58411b`, `0x584138`).
 pub(crate) fn update_item_quantity(world: &mut World, vendor: u64, slot: u32, count: u32) {
     let Some(mut m) = world.get_resource_mut::<MerchantOpen>() else {
         return;
@@ -170,7 +170,7 @@ pub(crate) fn update_item_quantity(world: &mut World, vendor: u64, slot: u32, co
     }
 }
 
-/// `RefreshList` (`0x5840c0`), the skill-rank and guild-id watches' leg (`0x6da602`, `0x6e1bf5`): `MERCHANT_UPDATE` with a vendor set.
+/// The vendor list's refresh (`0x5840c0`), the skill-rank and guild-id watches' leg (`0x6da602`, `0x6e1bf5`): `MERCHANT_UPDATE` with a vendor set.
 pub(crate) fn refresh(world: &mut World) {
     if world
         .get_resource::<MerchantOpen>()

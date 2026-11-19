@@ -588,7 +588,7 @@ impl TrainerLive<'_, '_> {
         None
     }
 
-    /// `TrainerBuySpell` (`0x594da0`): `CMSG_TRAINER_BUY_SPELL` naming the trainer, sent now.
+    /// The trainer's buy (`0x594da0`): `CMSG_TRAINER_BUY_SPELL` naming the trainer, sent now.
     pub(crate) fn buy(&self, spell_id: u32) {
         let trainer = self.open.trainer.unwrap_or(0);
         debug!("ui_trainer: buy service (trainer {trainer:#x}, spell {spell_id})");

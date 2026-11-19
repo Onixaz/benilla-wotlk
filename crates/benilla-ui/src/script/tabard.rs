@@ -193,7 +193,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `Save` (`0x599410`): `SaveTabard`'s checks, send and latch at the call; its first failing check's line, else `TABARD_SAVE_PENDING` inside the call (`0x6db4d3`).
+    // `Save` (`0x599410`): the tabard save's checks, send and latch (`0x6db320`) at the call; its first failing check's line, else `TABARD_SAVE_PENDING` inside the call (`0x6db4d3`).
     m.set(
         "Save",
         lua.create_function(|lua, this: Value| {

@@ -206,7 +206,7 @@ impl PetitionState {
         };
     }
 
-    /// `ClearSignatures` (`0x5cec60`): the name callbacks cancelled and the count zeroed.
+    /// The signer list's clear (`0x5cec60`): the name callbacks cancelled and the count zeroed.
     fn clear_signatures(&mut self) {
         self.pending.clear();
         self.signers.clear();
