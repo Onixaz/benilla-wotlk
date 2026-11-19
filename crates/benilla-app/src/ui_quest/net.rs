@@ -29,7 +29,6 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::QuestLogFull, on_log_full)
         .net_handler(K::QuestGiverInvalid, on_giver_invalid)
         .net_handler(K::QuestGiverFailed, on_giver_failed)
-        .net_handler(K::ItemTemplate, on_item)
         .net_handler(K::Disconnected, on_session_end)
         .net_handler(K::Connected, on_login)
         .net_handler(K::Worldport, on_worldport);
@@ -182,20 +181,6 @@ fn on_offer(
             quest_offer(o, q);
             true
         });
-    }
-}
-
-/// An item answer for a row of the open panel runs its callback (`0x58b8f0`); an unknown item fires nothing (`0x58b8f6`).
-fn on_item(In(ev): In<SessionEvent>, quest: NonSend<QuestGiver>, mut ui: ResMut<UiEvents>) {
-    let SessionEvent::ItemTemplate {
-        entry,
-        info: Some(_),
-    } = ev
-    else {
-        return;
-    };
-    if quest.view_lists_item(entry) {
-        ui.world(super::item_landed);
     }
 }
 

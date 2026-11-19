@@ -154,15 +154,6 @@ pub(crate) fn known_update(ui: &mut UiEvents) {
     });
 }
 
-/// A record landed, answered or denied: the callback a build left on it rebuilds and fires (`0x5b01d7`, `0x5b0260` -> `0x5b0660`).
-pub(crate) fn record_landed(ui: &mut UiEvents, entry: u32) {
-    ui.write(move |script: &mut UiScript| {
-        if script.currency_record_landed(entry) {
-            script.fire_event("CURRENCY_DISPLAY_UPDATE", vec![]);
-        }
-    });
-}
-
 /// Whether a player slot's change reaches the currency list: the backpack, keyring and token slots carry its handler (`0x5d9c5b`, `0x5d9cb9`, `0x5d9ce8`).
 pub(crate) fn watched_slot(slot: u8) -> bool {
     matches!(slot, 23..=38 | 86..=149)

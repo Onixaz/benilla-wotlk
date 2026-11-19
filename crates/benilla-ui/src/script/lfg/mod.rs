@@ -582,14 +582,6 @@ impl super::UiScript {
         );
     }
 
-    /// A reward item's template landed: the random-dungeon panel repaints (`0x552950`).
-    pub(crate) fn lfg_item_arrived(&mut self, item: u32) {
-        let waited = self.model_mut().lfg.reward_item_waits.remove(&item);
-        if waited {
-            self.fire_event("LFG_UPDATE_RANDOM_INFO", Vec::new());
-        }
-    }
-
     fn fire_all(&mut self, events: Vec<(&'static str, Vec<ScriptValue>)>) {
         for (event, args) in events {
             self.fire_event(event, args);

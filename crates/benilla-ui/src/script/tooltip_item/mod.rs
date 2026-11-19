@@ -13,13 +13,13 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::item_link::{item_hyperlink, reference_atoi, ItemLinkFields};
-use super::item_stats::{ask_item_record, item_record, item_tooltip_record};
+use super::item_stats::{ask_item_record, item_record, item_tooltip_record, wait_item_record};
 use super::item_summary::StatSummary;
 use super::object::frame_handle_of;
 use super::tooltip::{
     append_line, clear_content, fire_cleared, hide_tooltip, show_or_hide_empty, tip_mut,
 };
-use super::ItemTemplateView;
+use super::{ItemRecordWait, ItemTemplateView};
 
 mod names;
 mod render;
@@ -97,6 +97,9 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
     }
     let v = item_tooltip_record(lua, &model, item_id);
     if v.is_none() && item_id != 0 {
+        if let Some(h) = model.item_render.as_ref().map(wait::ItemRender::tooltip) {
+            wait_item_record(&mut model, item_id, ItemRecordWait::Tooltip(h));
+        }
         ask_item_record(&mut model, item_id);
         note_item_miss(&mut model, item_id);
     }
@@ -844,6 +847,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         .cloned()
                 })
             };
+            // The panel's row read first, its miss leaving the panel's callback (`0x62e71e` -> `0x58d26d`).
+            if let Some(it) = item.as_ref() {
+                let mut model = crate::script::model_mut_of(lua);
+                if item_record(&model, it.item_id).is_none() {
+                    wait_item_record(&mut model, it.item_id, ItemRecordWait::QuestItem);
+                }
+            }
             // The quest giver as requester (`0x62e754`).
             set_quest_item_view(lua, &this, item, Requester::Object)
         })?,

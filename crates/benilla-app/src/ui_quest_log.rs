@@ -167,12 +167,11 @@ mod net {
         app.net_handler(K::QuestTemplate, on_template)
             .net_handler(K::CreatureName, on_record)
             .net_handler(K::GameObjectInfo, on_record)
-            .net_handler(K::ItemTemplate, on_record)
             .net_handler(K::ServerUnixTime, on_server_time)
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    /// A creature, GameObject or item record a quest verb asked for landed: `QUEST_LOG_UPDATE` waits as a unique signal (`0x5de9fa`, `0x5dea2a`, `0x5dea49`).
+    /// A creature or GameObject record a quest verb asked for landed: `QUEST_LOG_UPDATE` waits as a unique signal (`0x5de9fa`, `0x5dea2a`); an item record's runs on the item cache's list.
     fn on_record(
         In(ev): In<SessionEvent>,
         mut asks: NonSendMut<QuestAsks>,
@@ -185,10 +184,6 @@ mod net {
                 ..
             } => QuestAsk::Creature(entry),
             SessionEvent::GameObjectInfo { entry, .. } => QuestAsk::GameObject(entry),
-            SessionEvent::ItemTemplate {
-                entry,
-                info: Some(_),
-            } => QuestAsk::Item(entry),
             _ => return,
         };
         if asks.landed(ask) {
