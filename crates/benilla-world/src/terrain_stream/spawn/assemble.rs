@@ -810,6 +810,18 @@ pub fn spawn_model_entities(
             active: false,
             parked_at: now,
         });
+        // On a mover `fade` is host-relative (`transform` is the prop's local placement), so the
+        // gate re-places the model-space sphere through the root each frame. Tested against the
+        // host-relative point, a transport's wheel parks with world rows frozen where the boat was.
+        if entity_hosted {
+            let scale = transform.scale.max_element();
+            commands
+                .entity(h.root)
+                .insert(crate::doodad_anim::MoverGate {
+                    center: local_center,
+                    radius: if scale > 0.0 { radius / scale } else { radius },
+                });
+        }
         // The lazy rig, only with skinnable parts: an emitter-only host never takes a slot.
         if !lazy_parts.is_empty() {
             commands.entity(h.root).insert(crate::doodad_anim::LazyRig {
