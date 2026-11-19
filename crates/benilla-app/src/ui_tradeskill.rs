@@ -134,12 +134,12 @@ impl Plugin for UiTradeSkillPlugin {
             .add_systems(
                 Update,
                 (
-                    // Opens after the press that cast the opener and before the feed, so the
-                    // window shows in the press's frame; the drain after the input pass, so a
-                    // Create click casts this frame.
+                    // Opens after the press that cast the opener and before the feeds, which read
+                    // the open book through the lent view, so the window shows in the press's
+                    // frame; the drain after the input pass, so a Create click casts this frame.
                     open_trade_skill
-                        .before(feed_trade_skill)
-                        .after(crate::ui_script::UiPress),
+                        .after(crate::ui_script::UiPress)
+                        .before(crate::ui_script::UiFeed),
                     feed_trade_skill.in_set(UnitFeed),
                     drain_trade_skill.in_set(UiDrain),
                 ),

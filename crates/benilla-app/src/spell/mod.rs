@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 
 use crate::char_select::ClientState;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 use benilla_world::schedule::WorldStage;
 
@@ -118,8 +118,11 @@ impl Plugin for SpellPlugin {
             .add_systems(
                 Update,
                 (
+                    // A move or jump from the last frame's input ends the cast before this frame's
+                    // press: the move came first, so a cast pressed now is not the one it ends.
                     inflight::local_self_cancel
-                        .in_set(UnitFeed)
+                        .after(WorldStage::Net)
+                        .before(crate::ui_script::UiPress)
                         .in_set(LocalCancel),
                     // Before the press too, whose casts read the cost inputs.
                     (mods::track_class_family, mods::track_cost_inputs)
@@ -127,17 +130,20 @@ impl Plugin for SpellPlugin {
                         .after(WorldStage::Net)
                         .before(crate::ui_script::UiPress)
                         .before(UnitFeed),
+                    // The cursor's picks, after every verb and drain that arms or ends the
+                    // targeting cursor and before the hover reads them in the input pass.
                     (
                         targeting::publish_picks_self,
                         targeting::publish_corpse_pick,
                         targeting::publish_unit_pick,
                     )
-                        .in_set(UiFeed),
-                    // The party slots and raid roster the party and raid words read, before
-                    // the feed's targeting push asks them.
+                        .after(crate::ui_script::UiDrain)
+                        .before(WorldStage::Input),
+                    // The party slots and raid roster the party and raid words read, after the
+                    // packets and before the UI's first VM holder.
                     group_relation::publish_group_roster
-                        .in_set(UiFeed)
-                        .before(UnitFeed),
+                        .after(WorldStage::Net)
+                        .before(crate::ui_script::UiPress),
                     // The item-target commit: after the input pass so a bag click binds the same
                     // frame; outside the target chain, as its clicks never reach the world.
                     targeting::commit_item_cast_on_pick.in_set(UiDrain),

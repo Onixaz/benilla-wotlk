@@ -691,7 +691,7 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
-    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, `PetitionState`): every VM holder reaches it
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, the bar's slots and usable bytes, the cast state, `Totems`, the selection, the place, the open trade skill, the macros' bound spells, `PendingItemOps`, `PetitionState`): every VM holder reaches it
     ///   through its lent view and runs on the main thread, so two VM holders fighting over it
     ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
@@ -723,6 +723,37 @@ pub(crate) mod schedule_tests {
             ("StableOpen", TypeId::of::<crate::ui_stable::StableOpen>),
             ("Cooldowns", TypeId::of::<crate::spell::Cooldowns>),
             ("PetBar", TypeId::of::<crate::ui_pet::PetBar>),
+            // What every loan owns besides the pet's words: the bar's slots and their usable
+            // bytes, and the player's cast state, which the verbs write inside their call.
+            ("ActionSlots", TypeId::of::<crate::ui_action::ActionSlots>),
+            (
+                "UsableCaches",
+                TypeId::of::<crate::ui_action::usable_cache::UsableCaches>,
+            ),
+            ("PendingCast", TypeId::of::<crate::spell::PendingCast>),
+            (
+                "QueuedMeleeSpell",
+                TypeId::of::<crate::spell::QueuedMeleeSpell>,
+            ),
+            (
+                "AutoRepeatActive",
+                TypeId::of::<crate::spell::AutoRepeatActive>,
+            ),
+            ("SpellTargeting", TypeId::of::<crate::spell::SpellTargeting>),
+            ("UnitCasts", TypeId::of::<crate::ui_cast::UnitCasts>),
+            // `DestroyTotem` clears a slot through the lent view.
+            ("Totems", TypeId::of::<crate::ui_totem::Totems>),
+            // The loan's slots a system owns by its `Owns`, as `Cooldowns`.
+            ("Selection", TypeId::of::<crate::target::Selection>),
+            ("PlayerPlace", TypeId::of::<crate::area::PlayerPlace>),
+            (
+                "TradeSkillOpen",
+                TypeId::of::<crate::ui_tradeskill::TradeSkillOpen>,
+            ),
+            (
+                "MacroBoundSpells",
+                TypeId::of::<crate::ui_macro::MacroBoundSpells>,
+            ),
             (
                 "PlayerActions",
                 TypeId::of::<crate::ui_action::PlayerActions>,

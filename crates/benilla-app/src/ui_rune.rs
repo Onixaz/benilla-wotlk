@@ -67,10 +67,10 @@ impl Plugin for UiRunePlugin {
             .add_systems(
                 Update,
                 // The player's update ticks the runes each frame (`0x728aa6`), after the packets and
-                // before the UI's tick, as the object update precedes the UI's in the frame.
+                // before the UI's first VM holder, as the object update precedes the UI's in the frame.
                 tick_runes
                     .after(benilla_world::schedule::WorldStage::Net)
-                    .before(crate::ui_script::UiInput),
+                    .before(crate::ui_script::UiPress),
             );
     }
 }
