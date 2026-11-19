@@ -775,16 +775,6 @@ fn drain_battlefield(
     }
 }
 
-/// A cross-map worldport leaves the world first (`0x528c30`).
-pub(crate) fn leave_world_on_worldport(
-    ports: Option<MessageReader<crate::net::WorldportMessage>>,
-    mut commands: Commands,
-) {
-    if ports.is_some_and(|mut p| p.read().filter(|w| w.needs_ack).count() > 0) {
-        commands.queue(leave_world);
-    }
-}
-
 /// The cascade's status request (`0x54cc40`), owed to the world entry that zeroes ahead of it.
 pub(crate) fn request_status_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
@@ -826,9 +816,10 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
+    crate::ui_item_text::leave_world(world);
     crate::ui_merchant::leave_world(world);
     crate::ui_pet::possess::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
@@ -1134,9 +1125,6 @@ impl Plugin for BattlefieldPlugin {
             .add_systems(
                 Update,
                 (
-                    leave_world_on_worldport
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::enter_world_on_self_create),
                     // Owed ahead of the world entry, which sends it after the mail query's.
                     request_status_on_world_enter
                         .in_set(UiFeed)

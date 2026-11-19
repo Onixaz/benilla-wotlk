@@ -342,6 +342,15 @@ fn on_worldport(
     {
         // Every streamed roster member is about to be purged; the reference deactivates each.
         crate::ui_party::net::roster_deactivated(&mut group, &b.index, &b.stores, &b.auras, &b.net);
+        // A new map's load closes the barber shop (`0x403ba2`), then its object manager teardown
+        // leaves the UI's world (`0x403ba7` -> `0x6e5090` -> `0x528c30`), ahead of the despawns.
+        if needs_ack {
+            b.commands.queue(|world: &mut World| {
+                crate::ui_barber::world_left(world);
+                crate::ui_script::live::fire_handler_events(world);
+                crate::ui_battlefield::leave_world(world);
+            });
+        }
         worldport(
             map_id,
             position,

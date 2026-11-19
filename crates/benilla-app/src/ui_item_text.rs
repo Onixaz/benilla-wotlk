@@ -9,7 +9,6 @@ use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, Objects};
 use crate::query_cache::QueryCache;
-use crate::ui_script::UiDrain;
 
 /// `ITEM_FIELD_FLAGS & 0x2`: the item was read once, so it shows with no read check.
 const ITEM_FIELD_FLAG_TRANSLATED: u32 = 0x2;
@@ -314,22 +313,13 @@ impl Plugin for UiItemTextPlugin {
         crate::query_cache::register::<LetterTexts>(app);
         app.init_resource::<ItemText>()
             .init_resource::<PageTexts>()
-            .init_resource::<LetterTexts>()
-            .add_systems(Update, leave_world_on_worldport.in_set(UiDrain));
+            .init_resource::<LetterTexts>();
     }
 }
 
-/// A cross-map worldport leaves the world (`0x528c30` -> `0x58a430`): the reader closes.
-fn leave_world_on_worldport(
-    ports: Option<MessageReader<crate::net::WorldportMessage>>,
-    mut commands: Commands,
-) {
-    if ports.is_some_and(|mut p| p.read().filter(|w| w.needs_ack).count() > 0) {
-        commands.queue(|world: &mut World| {
-            set_item(world, 0, false);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
+/// The world leave's reader part (`0x528ce2` -> `0x58a430`): the reader closes.
+pub(crate) fn leave_world(world: &mut World) {
+    set_item(world, 0, false);
 }
 
 /// The read call from a click or a use (`0x70c86d`, `0x708f60`), its events fired once it runs.

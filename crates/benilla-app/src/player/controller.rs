@@ -74,6 +74,8 @@ pub(super) fn control(
         // The one auto-move cell, follow or a Click to Move walk, which a knockback clears.
         ResMut<super::follow::FollowState>,
         ResMut<super::approach::Approach>,
+        // The stand-state setter's barber leg.
+        crate::ui_barber::BarberStand,
     ),
     mut commands: Commands,
     mut player: ResMut<Player>,
@@ -504,6 +506,7 @@ pub(super) fn control(
             &mut net.3,
             &mut net.10,
             &mut net.15,
+            &mut speed_capsule.14,
             moving,
             turned,
         );

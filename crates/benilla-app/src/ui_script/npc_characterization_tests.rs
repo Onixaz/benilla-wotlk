@@ -833,6 +833,110 @@ fn the_barber_closes_inside_the_cancel_and_from_the_display_watch() {
     );
 }
 
+/// `SMSG_STANDSTATE_UPDATE` reaches the stand-state setter in its handler (`0x73f57a` -> `0x6e2b30`): a chair keeps the shop open, any other new state closes it with `BARBER_SHOP_CLOSE` in the packet's turn, ahead of the next packet's line (`0x6e2bb6`); a sit closes it and stands us up (`0x52ea5f`).
+#[test]
+fn a_stand_state_update_closes_the_barber_in_its_turn() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let events = &["BARBER_SHOP_OPEN", "BARBER_SHOP_CLOSE", "UI_ERROR_MESSAGE"];
+    let verbs = &["barberinfo"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::EnableBarberShop,
+            SessionEvent::StandStateUpdate { state: 5 },
+            SessionEvent::BarberShopResult(2),
+            SessionEvent::StandStateUpdate { state: 0 },
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    let error = "UI_ERROR_MESSAGE You must be sitting in a barber chair";
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "BARBER_SHOP_OPEN | barberinfo=4".to_string(),
+            format!("{error} | barberinfo=4"),
+            "BARBER_SHOP_CLOSE | barberinfo=0".to_string(),
+            format!("{error} | barberinfo=0"),
+        ]
+    );
+    let rx = tap(&mut rig);
+    let seen = rig.packets(
+        vec![
+            SessionEvent::EnableBarberShop,
+            SessionEvent::StandStateUpdate { state: 1 },
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "BARBER_SHOP_OPEN | barberinfo=4".to_string(),
+            "BARBER_SHOP_CLOSE | barberinfo=0".to_string(),
+            format!("{error} | barberinfo=0"),
+        ]
+    );
+    let stands: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::StandStateChange { state } => Some(state),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stands, [0], "the close stood us up from the sit");
+}
+
+/// A new map's load closes the barber shop (`0x403ba2`), then its object manager's teardown leaves the UI's world, whose reader part closes the reader (`0x403ba7` -> `0x528ce2` -> `0x58a430`), twice as the reader still holds the interact target (`0x58a207` -> `0x512e60`), all in the worldport's turn ahead of the next packet's line; a login verify and our create again leave both open.
+#[test]
+fn a_new_map_closes_the_barber_then_the_reader_in_its_turn() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(plaque(false), 2);
+    let port = |needs_ack| SessionEvent::Worldport {
+        map_id: 1,
+        position: [16226.2, 16257.0, 13.2],
+        orientation: 0.0,
+        needs_ack,
+    };
+    let events = &["BARBER_SHOP_CLOSE", "ITEM_TEXT_CLOSED", "UI_ERROR_MESSAGE"];
+    let verbs = &["barberinfo", "ittext"];
+    rig.packets(
+        vec![
+            SessionEvent::GameObjectPageText { guid: PLAQUE },
+            SessionEvent::EnableBarberShop,
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            port(false),
+            super::characterization_tests::self_create(&[OBJECT_TYPE_PLAYER]),
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    let error = "UI_ERROR_MESSAGE You must be sitting in a barber chair";
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [format!("{error} | barberinfo=4 ittext=Page one")],
+        "a login verify leaves both open"
+    );
+    let seen = rig.packets(vec![port(true), SessionEvent::BarberShopResult(2)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "BARBER_SHOP_CLOSE | barberinfo=0 ittext=Page one".to_string(),
+            "ITEM_TEXT_CLOSED | barberinfo=0 ittext=".to_string(),
+            "ITEM_TEXT_CLOSED | barberinfo=0 ittext=".to_string(),
+            format!("{error} | barberinfo=0 ittext="),
+        ]
+    );
+}
+
 const GOSSIP_EVENTS: &[&str] = &["GOSSIP_SHOW", "GOSSIP_CLOSED"];
 
 /// `SMSG_GOSSIP_MESSAGE` for `npc` asking text `text_id`, with one option per label.

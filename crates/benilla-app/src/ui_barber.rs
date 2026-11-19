@@ -14,19 +14,17 @@ use benilla_formats::{BarberShopStyle, GameTableId};
 use benilla_ui::script::{BarberRead, BarberStyle, GlueCustomizeGrid};
 
 use crate::creature_anim::AnimDriver;
-use crate::net::{
-    ClientCommand, EnteredWorldMessage, NetCommands, ObjectStore, SelfPlayer, WorldportMessage,
-};
+use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::player::camera_view::BarberView;
 use crate::player::camera_zoom::ZoomLimit;
-use crate::player::{Player, StandStateRequest};
+use crate::player::StandStateRequest;
 use crate::ui_script::live::UiEvents;
 
 /// The barber's cape, the `ItemDisplayInfo` the chair puts in the tabard slot (`0x52fb2a`).
 pub(crate) const BARBER_CAPE_DISPLAY: u32 = 54559;
 
-/// The stand states of a chair, `UNIT_SITTINGCHAIRLOW` to `HIGH`: sitting in one keeps the shop
-/// open, any other state closes it (`0x6e2b30`).
+/// The stand states of a chair, `UNIT_SITTINGCHAIRLOW` to `HIGH`: setting one keeps the shop
+/// open, any other state closes it (`0x6e2ba3`).
 const CHAIR_STAND_STATES: std::ops::RangeInclusive<u8> = 4..=6;
 
 /// `BarberShopStyle.dbc`, every row in file order; absent, the shop opens with no styles.
@@ -49,10 +47,10 @@ pub(crate) struct BarberShop {
     /// The rows of our race and sex in file order and the grid the dials walk, set by the open.
     styles: Vec<BarberStyle>,
     grid: Option<GlueCustomizeGrid>,
-    /// The stand state the shop last saw, which leaving the chair moves.
-    stand: Option<u8>,
-    /// A close from `CancelBarberShop()` owes the view, the zoom floor and the stand-up, which [`watch_close`] runs.
-    owed_effects: bool,
+    /// A close inside a call or the stand-state setter owes the view and the zoom floor, which [`close_effects`] runs.
+    owed_view: bool,
+    /// A close from `CancelBarberShop()` owes the stand-up too; the setter stands up itself.
+    owed_stand: bool,
 }
 
 impl BarberShop {
@@ -60,28 +58,56 @@ impl BarberShop {
     fn close(&mut self) -> bool {
         std::mem::take(&mut self.open)
     }
+}
 
-    /// Whether a new stand state closes the shop: leaving the chair for any other state (`0x6e2b30`). The first sight after the open only records it.
-    fn watch(&mut self, stand: u8) -> bool {
-        if !self.open {
+/// The stand-state setter's barber leg (`0x6e2b30`), which the client's own change (`0x6dcb40`)
+/// and `SMSG_STANDSTATE_UPDATE` (`0x73f57a`) reach in their turn; our own field echo never does
+/// (`0x73f474`).
+#[derive(SystemParam)]
+pub(crate) struct BarberStand<'w> {
+    shop: Option<ResMut<'w, BarberShop>>,
+    body: Option<ResMut<'w, BarberBody>>,
+    ui: Option<ResMut<'w, UiEvents>>,
+}
+
+impl BarberStand<'_> {
+    /// A new client stand state (`0x6e2ba3`): any but a chair's closes an open shop (`0x6e2bb6`) and fires `BARBER_SHOP_CLOSE`; the close's stand-up (`0x52ea5f`) is the caller's. True when it closed.
+    pub(crate) fn stand_state_set(&mut self, state: u8) -> bool {
+        if CHAIR_STAND_STATES.contains(&state) {
             return false;
         }
-        self.stand
-            .replace(stand)
-            .is_some_and(|old| old != stand && !CHAIR_STAND_STATES.contains(&stand))
+        let Some(shop) = self.shop.as_mut() else {
+            return false;
+        };
+        if !shop.close() {
+            return false;
+        }
+        shop.owed_view = true;
+        if let Some(ui) = self.ui.as_mut() {
+            ui.fire("BARBER_SHOP_CLOSE", vec![]);
+        }
+        if let Some(b) = self.body.as_mut() {
+            **b = BarberBody::default();
+        }
+        true
     }
 }
 
-/// The close's side effects outside the shop: the view the chair left, the zoom floor, and the
-/// stand-up (`0x52ea2e`, `0x52ea4b`).
+/// The view the chair left and the zoom floor (`0x52ea2f`), owed by a close that had no camera at
+/// hand, and a cancel's stand-up (`0x52ea5f`), run before the camera seats the view.
 fn close_effects(
-    view: &mut MessageWriter<BarberView>,
-    zoom: &mut ZoomLimit,
-    stand: &mut MessageWriter<StandStateRequest>,
+    mut shop: ResMut<BarberShop>,
+    mut view: MessageWriter<BarberView>,
+    mut zoom: ResMut<ZoomLimit>,
+    mut stand: MessageWriter<StandStateRequest>,
 ) {
-    view.write(BarberView::Leave);
-    zoom.barber_floor = None;
-    stand.write(StandStateRequest { state: 0 });
+    if std::mem::take(&mut shop.owed_view) {
+        view.write(BarberView::Leave);
+        zoom.barber_floor = None;
+    }
+    if std::mem::take(&mut shop.owed_stand) {
+        stand.write(StandStateRequest { state: 0 });
+    }
 }
 
 /// Our look in dial order off `PLAYER_BYTES` and `PLAYER_BYTES_2`.
@@ -151,7 +177,7 @@ impl BarberLive<'_, '_> {
         }
     }
 
-    /// `CancelBarberShop()`'s close (`0x52e9f0`): the flag and our body put back in the call, the camera's and the stand-up's effects owed to [`watch_close`].
+    /// `CancelBarberShop()`'s close (`0x52e9f0`): the flag and our body put back in the call, the camera's and the stand-up's effects owed to [`close_effects`].
     pub(crate) fn close(&mut self) -> bool {
         let Some(shop) = self.shop.as_mut() else {
             return false;
@@ -159,7 +185,8 @@ impl BarberLive<'_, '_> {
         if !shop.close() {
             return false;
         }
-        shop.owed_effects = true;
+        shop.owed_view = true;
+        shop.owed_stand = true;
         if let Some(b) = self.body.as_mut() {
             **b = BarberBody::default();
         }
@@ -221,34 +248,9 @@ pub(crate) fn look_changed(world: &mut World, dial: usize, value: u8) {
     }
 }
 
-/// The close's other triggers: leaving the chair, a world change, and a cancel's owed effects.
-#[allow(clippy::too_many_arguments)]
-fn watch_close(
-    mut shop: ResMut<BarberShop>,
-    player: Res<Player>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut entered: MessageReader<EnteredWorldMessage>,
-    mut worldports: MessageReader<WorldportMessage>,
-    mut view: MessageWriter<BarberView>,
-    mut zoom: ResMut<ZoomLimit>,
-    mut stand: MessageWriter<StandStateRequest>,
-    mut queue: Commands,
-) {
-    if std::mem::take(&mut shop.owed_effects) {
-        close_effects(&mut view, &mut zoom, &mut stand);
-    }
-    // A world change closes it (`0x403b70`).
-    let world_changed = entered.read().count() + worldports.read().count() > 0;
-    let left = self_q.iter().next().is_some_and(|s| {
-        let state = player.committed_stand_state(s.0.unit_stand_state());
-        shop.watch(state)
-    });
-    if (world_changed || left) && shop.open {
-        queue.queue(|world: &mut World| {
-            close_in_turn(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
+/// The world change's close, ahead of the object manager's teardown (`0x403ba2`).
+pub(crate) fn world_left(world: &mut World) {
+    close_in_turn(world);
 }
 
 /// The barber shop's packet handlers.
@@ -315,7 +317,6 @@ mod net {
             });
         shop.skin_style = f.player_skin().unwrap_or(0);
         shop.open = true;
-        shop.stand = None;
         *body = BarberBody {
             open: true,
             preview: Some(self_look(store)),
@@ -371,7 +372,7 @@ impl Plugin for BarberUiPlugin {
             .init_resource::<BarberBody>()
             .add_systems(
                 Update,
-                watch_close
+                close_effects
                     .after(crate::net::apply_net_updates)
                     .in_set(BarberDrain),
             );
@@ -396,24 +397,38 @@ mod tests {
     }
 
     #[test]
-    fn sitting_down_in_the_chair_keeps_it_open_and_standing_up_closes_it() {
-        let mut s = BarberShop {
+    fn a_chair_keeps_it_open_and_any_other_stand_state_closes_it() {
+        let mut world = World::new();
+        world.insert_resource(BarberShop {
             open: true,
             ..Default::default()
-        };
-        // The open lands before the server seats us: standing, then the chair.
-        assert!(!s.watch(0));
-        assert!(!s.watch(5));
-        assert!(!s.watch(5));
-        assert!(!s.watch(4), "another chair height");
-        assert!(s.watch(0), "standing up");
-        let mut s = BarberShop {
+        });
+        world.insert_resource(BarberBody {
             open: true,
-            ..Default::default()
+            preview: Some([1; 5]),
+        });
+        world.init_resource::<UiEvents>();
+        let set = |world: &mut World, state: u8| {
+            world
+                .run_system_cached_with(
+                    |In(state): In<u8>, mut b: BarberStand| b.stand_state_set(state),
+                    state,
+                )
+                .unwrap()
         };
-        assert!(!s.watch(5));
-        assert!(s.watch(1), "sitting on the ground");
-        let mut s = BarberShop::default();
-        assert!(!s.watch(5) && !s.watch(0), "a closed shop watches nothing");
+        for chair in 4..=6 {
+            assert!(!set(&mut world, chair), "chair height {chair}");
+        }
+        assert!(world.resource::<UiEvents>().names().is_empty());
+        assert!(set(&mut world, 1), "sitting on the ground");
+        assert_eq!(
+            world.resource::<UiEvents>().names(),
+            vec!["BARBER_SHOP_CLOSE"]
+        );
+        assert!(world.resource::<BarberBody>() == &BarberBody::default());
+        let shop = world.resource::<BarberShop>();
+        assert!(!shop.open && shop.owed_view && !shop.owed_stand);
+        assert!(!set(&mut world, 0), "a closed shop closes once");
+        assert_eq!(world.resource::<UiEvents>().names().len(), 1);
     }
 }
