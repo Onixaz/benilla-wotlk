@@ -68,7 +68,7 @@ fn menu_in_call(lua: &Lua, verb: PetMenuVerb<'_>) -> bool {
         PetMenuOutcome::VehicleExit => crate::script::model_mut_of(lua)
             .vehicle_requests
             .push(super::VehicleRequest::Exit),
-        PetMenuOutcome::Refused(key) => crate::script::model_mut_of(lua).ui_errors.push(key),
+        PetMenuOutcome::Refused(key) => crate::script::ui_errors::show_now(lua, key),
     }
     true
 }

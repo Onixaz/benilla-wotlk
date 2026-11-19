@@ -305,8 +305,8 @@ pub(super) fn feed_actions(
         }
     }
 
-    // The engine's own by-key refusals (`ERR_PASSIVE_ABILITY`): `benilla_ui` cannot reach
-    // [`UiErrorKeys`], so it queues keys that show here, one frame late.
+    // The engine's chat-kind lines: its verbs fire their error and info lines inside the call
+    // (`0x5216f0`) and hand a chat line whole to the app, as the display adds a system line.
     let engine_keys = script.take_ui_errors();
     let engine_lines: Vec<Shown> = engine_keys
         .into_iter()
@@ -317,7 +317,7 @@ pub(super) fn feed_actions(
         })
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", engine_lines);
-    // The same with one `%s` (`ERR_MULTI_CAST_ACTION_TOTEM_S`).
+    // The same with one `%s` (`ERR_PETITION_SIGNED_S`).
     let engine_s: Vec<Shown> = script
         .take_ui_errors_s()
         .into_iter()

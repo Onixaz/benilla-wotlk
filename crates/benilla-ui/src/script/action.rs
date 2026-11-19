@@ -406,9 +406,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let in_binding = super::input_verbs::in_binding(lua);
             let mut model = crate::script::model_mut_of(lua);
             let mut changed = Vec::new();
-            if super::cursor::use_action_places(&mut model, action, in_binding, &mut changed) {
+            if let Some(refusal) =
+                super::cursor::use_action_places(&mut model, action, in_binding, &mut changed)
+            {
                 let grid = super::cursor::take_grid_edge(&mut model);
                 drop(model);
+                if let Some(line) = refusal {
+                    crate::script::ui_errors::show_line_now(lua, line);
+                }
                 super::action_slots::signal_all(lua, grid, changed);
                 return Ok(());
             }

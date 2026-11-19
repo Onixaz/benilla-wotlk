@@ -118,7 +118,9 @@ impl super::UiScript {
     }
 
     /// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`): the swap ends; `EQUIPMENT_SWAP_FINISHED`
-    /// carries whether it worked and the set's name, and a result of 4 adds the bags-full error.
+    /// carries whether it worked and the set's name, then a result of 4 fires `UI_ERROR_MESSAGE`
+    /// with the bags-full text itself, not through the message display, so it has no sound
+    /// (`0x5af7a6`, `0x5af7b6`).
     pub fn equipment_set_use_result(&mut self, result: u8) {
         let name = {
             let mut model = self.model_mut();
@@ -126,9 +128,6 @@ impl super::UiScript {
             mgr.swap_pending = false;
             let name = mgr.by_id(mgr.pending_set).map(|s| s.name.clone());
             mgr.pending_set = 0;
-            if result == 4 {
-                model.ui_errors.push("EQUIPMENT_MANAGER_BAGS_FULL");
-            }
             name
         };
         let name = name.map_or(super::ScriptValue::Nil, super::ScriptValue::Str);
@@ -136,6 +135,16 @@ impl super::UiScript {
             "EQUIPMENT_SWAP_FINISHED",
             vec![super::ScriptValue::Bool(result == 0), name],
         );
+        if result == 4 {
+            let text = self
+                .lua()
+                .globals()
+                .get::<Option<String>>("EQUIPMENT_MANAGER_BAGS_FULL")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            self.fire_event("UI_ERROR_MESSAGE", vec![super::ScriptValue::Str(text)]);
+        }
     }
 
     /// The sets as the client holds them, for the action bar's icons.
@@ -354,19 +363,24 @@ fn scrub_name(name: &str) -> Option<String> {
 /// swap, and the first other slot that would move warns once. A missing item warns once and leaves
 /// its slot. Queues the send and fires `EQUIPMENT_SWAP_PENDING`.
 fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
-    let warn_s = |model: &mut super::Model, key: &'static str| {
-        model.ui_errors_s.push((key, set.name.clone()));
+    // A warning shows where the walk meets it (`0x5216f0`), the model released around the call.
+    let warn_s = |model: super::ModelGuard<'_>, key: &'static str| {
+        drop(model);
+        crate::script::ui_errors::show_now_s(lua, key, set.name.clone());
+        super::model_mut_of(lua)
     };
     {
         let mut model = super::model_mut_of(lua);
         if !can_use(&model) {
             if !model.equipment_manager.swap_pending {
-                model.ui_errors.push("EQUIPMENT_MANAGER_IS_DISABLED");
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "EQUIPMENT_MANAGER_IS_DISABLED");
             }
             return false;
         }
         if model.cursor.is_some() {
-            model.ui_errors.push("SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW");
+            drop(model);
+            crate::script::ui_errors::show_now(lua, "SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW");
             return false;
         }
         let in_combat = model.unit("player").is_some_and(|u| u.in_combat);
@@ -378,7 +392,7 @@ fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
             if (in_combat && !weapon) || guid == IGNORED_SLOT {
                 let worn = equipped(&model, slot).map_or(0, |v| v.guid);
                 if in_combat && !combat_warned && guid != IGNORED_SLOT && guid != worn {
-                    warn_s(&mut model, "EQUIPMENT_MANAGER_COMBAT_SWAP");
+                    model = warn_s(model, "EQUIPMENT_MANAGER_COMBAT_SWAP");
                     combat_warned = true;
                 }
             } else if guid == 0 {
@@ -390,7 +404,7 @@ fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
                         *entry = (guid, bag, bag_slot);
                     }
                     None if !missing_warned => {
-                        warn_s(&mut model, "EQUIPMENT_MANAGER_MISSING_ITEM");
+                        model = warn_s(model, "EQUIPMENT_MANAGER_MISSING_ITEM");
                         missing_warned = true;
                     }
                     None => {}
@@ -1247,8 +1261,10 @@ mod tests {
         s.set_equipment_set_list(vec![set(2, "Dps", items)]);
         s.run(
             r#"
+            EQUIPMENT_MANAGER_MISSING_ITEM = "Missing from %s."
             seen = {}
             local f = CreateFrame("Frame")
+            f:RegisterEvent("UI_ERROR_MESSAGE")
             f:RegisterEvent("EQUIPMENT_SWAP_PENDING")
             f:RegisterEvent("EQUIPMENT_SWAP_FINISHED")
             f:SetScript("OnEvent", function(_, e, ok, name)
@@ -1276,19 +1292,21 @@ mod tests {
         );
         assert_eq!(wire[16], (IGNORED_SLOT, 0, 0), "missing: left as it is");
         assert_eq!(
-            s.take_ui_errors_s(),
+            s.take_shown_s(),
             vec![("EQUIPMENT_MANAGER_MISSING_ITEM", "Dps".to_string())]
         );
         s.equipment_set_use_result(0);
         assert_eq!(
             s.eval::<String>("return table.concat(seen, \",\")")
                 .unwrap(),
-            "EQUIPMENT_SWAP_PENDING:nil:nil,EQUIPMENT_SWAP_FINISHED:true:Dps"
+            "UI_ERROR_MESSAGE:Missing from Dps.:nil,EQUIPMENT_SWAP_PENDING:nil:nil,\
+             EQUIPMENT_SWAP_FINISHED:true:Dps",
+            "the warning fires where the walk meets the slot, before the use's own event"
         );
         assert_eq!(s.eval::<i64>("return CanUseEquipmentSets()").unwrap(), 1);
         s.set_cvar_host("equipmentManager", "0");
         s.run(r#"UseEquipmentSet("Dps")"#).unwrap();
-        assert_eq!(s.take_ui_errors(), vec!["EQUIPMENT_MANAGER_IS_DISABLED"]);
+        assert_eq!(s.take_shown(), vec!["EQUIPMENT_MANAGER_IS_DISABLED"]);
     }
 
     /// Delete and rename edit the list, and a set on an action slot wears through

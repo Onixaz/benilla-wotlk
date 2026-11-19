@@ -551,6 +551,9 @@ pub(crate) struct Model {
     pub(crate) equipment_manager: super::equipment_manager::EquipmentManager,
     /// Equipment set sends, for the app.
     pub(crate) equipment_set_requests: Vec<super::equipment_manager::EquipmentSetRequest>,
+    /// Every line the display showed, for the tests.
+    #[cfg(test)]
+    pub(crate) shown_lines: Vec<(&'static str, Option<String>)>,
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     /// The bonus offset a test or fixture pushed, with no view lent.
@@ -1587,6 +1590,8 @@ impl Model {
             currency_collapsed: HashMap::new(),
             equipment_manager: Default::default(),
             equipment_set_requests: Vec::new(),
+            #[cfg(test)]
+            shown_lines: Vec::new(),
             action_states: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             bonus_bar_offset: 0,

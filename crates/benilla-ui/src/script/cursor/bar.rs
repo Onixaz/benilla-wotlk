@@ -7,6 +7,7 @@ use mlua::Lua;
 
 use crate::script::action::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
 use crate::script::action_slots::{self, Word};
+use crate::script::ui_errors::Line;
 use crate::script::Model;
 
 use super::{queue_cursor_update, CursorAction, CursorPayload};
@@ -22,16 +23,20 @@ const TEMP_BAR: std::ops::RangeInclusive<u32> = 121..=132;
 /// (`ActionBarFrame.xml:12-38`). With a payload held it places instead; else the slot's action goes
 /// onto the cursor and the slot is removed, sent and signalled, which a locked bar refuses while
 /// the cursor keeps the action. The temporary bar's slots are refused. Returns whether to repaint;
-/// each slot written is pushed to `changed`.
-pub(super) fn pickup_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) -> bool {
+/// each slot written is pushed to `changed`; a place's refusal is handed back as [`place_action`]'s.
+pub(super) fn pickup_action(
+    model: &mut Model,
+    id: u32,
+    changed: &mut Vec<u32>,
+) -> Result<bool, Line> {
     if TEMP_BAR.contains(&id) {
-        return false;
+        return Ok(false);
     }
     if model.cursor.is_some() {
         return place_action(model, id, changed);
     }
     let Some(slot) = action_slots::word(model, id) else {
-        return false;
+        return Ok(false);
     };
     let payload = CursorAction {
         src_slot: id,
@@ -44,14 +49,19 @@ pub(super) fn pickup_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) 
         changed.push(id);
     }
     queue_cursor_update(model);
-    true
+    Ok(true)
 }
 
 /// `PlaceAction(id)`, the slot's `OnReceiveDrag` and `UseAction(id, 1)`'s place fork. An occupied
 /// slot's action hops onto the cursor with `id` as its source; an item stays in its bag, since a
 /// bar item is a reference, not a move. A locked bar refuses the write and the payload stays held.
-/// Returns whether to repaint; each slot written is pushed to `changed`.
-pub(crate) fn place_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) -> bool {
+/// Returns whether to repaint; each slot written is pushed to `changed`. A refusal with a line is
+/// handed back for the caller to show at once; nothing has changed by then.
+pub(crate) fn place_action(
+    model: &mut Model,
+    id: u32,
+    changed: &mut Vec<u32>,
+) -> Result<bool, Line> {
     // The two accept filters refuse with a bare return: nothing stored or sent, and the payload
     // stays held. An item needs an on-use spell or an equip slot, so a bag is placeable; a passive
     // spell (`Attributes & 0x40`) also raises errorId `0x9e` through the error display, where the
@@ -66,20 +76,21 @@ pub(crate) fn place_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) -
         let fits = spell.and_then(|s| crate::script::multicast::totem_fits(id, s));
         let on_totem = crate::script::multicast::action_category(id).is_some();
         if on_totem && fits != Some(true) {
-            crate::script::multicast::refuse_totem(model, id);
-            return false;
+            return match crate::script::multicast::totem_refusal(id) {
+                Some(line) => Err(line),
+                None => Ok(false),
+            };
         }
     }
     match &model.cursor {
-        Some(CursorPayload::Item(i)) if !i.bar_placeable => return false,
+        Some(CursorPayload::Item(i)) if !i.bar_placeable => return Ok(false),
         Some(CursorPayload::Spell(s)) if s.passive => {
-            model.ui_errors.push(PASSIVE_ON_BAR_ERROR);
-            return false;
+            return Err((PASSIVE_ON_BAR_ERROR, None));
         }
         _ => {}
     }
     let Some(held) = model.cursor.take() else {
-        return false;
+        return Ok(false);
     };
     let placeable = match &held {
         CursorPayload::Action(a) => Some((a.kind, a.action, a.texture.clone())),
@@ -104,13 +115,13 @@ pub(crate) fn place_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) -
     };
     let Some((kind, action, texture)) = placeable else {
         model.cursor = Some(held);
-        return false;
+        return Ok(false);
     };
     let displaced =
         action_slots::word(model, id).map(|d| (d, action_slots::texture(model, id, &|_| None)));
     if !action_slots::write(model, id, Some(Word { kind, action }), texture) {
         model.cursor = Some(held);
-        return false;
+        return Ok(false);
     }
     changed.push(id);
     model.cursor = displaced.map(|(d, texture)| {
@@ -122,18 +133,19 @@ pub(crate) fn place_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) -
         })
     });
     queue_cursor_update(model);
-    true
+    Ok(true)
 }
 
 /// `UseAction`'s place fork (`0x5abbe1`-`0x5abc2c`): a press outside a key binding, on a slot
 /// outside 121-132, with a spell, an item, a macro or a picked-up action held places it there
-/// instead of using the slot, refused or not. Whether the fork took the press.
+/// instead of using the slot, refused or not. Whether the fork took the press, with the place's
+/// refusal if it had one.
 pub(crate) fn use_action_places(
     model: &mut Model,
     id: u32,
     in_binding: bool,
     changed: &mut Vec<u32>,
-) -> bool {
+) -> Option<Option<Line>> {
     let held = matches!(
         model.cursor,
         Some(
@@ -145,10 +157,9 @@ pub(crate) fn use_action_places(
         )
     );
     if in_binding || TEMP_BAR.contains(&id) || !held {
-        return false;
+        return None;
     }
-    place_action(model, id, changed);
-    true
+    Some(place_action(model, id, changed).err())
 }
 
 /// Register `PickupAction` and `PlaceAction` as globals.
@@ -159,10 +170,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PickupAction",
         lua.create_function(|lua, id: u32| {
             let mut changed = Vec::new();
-            let (repaint, grid) = {
+            let (placed, grid) = {
                 let mut model = crate::script::model_mut_of(lua);
-                let repaint = pickup_action(&mut model, id, &mut changed);
-                (repaint, super::take_grid_edge(&mut model))
+                let placed = pickup_action(&mut model, id, &mut changed);
+                (placed, super::take_grid_edge(&mut model))
+            };
+            let repaint = match placed {
+                Ok(repaint) => repaint,
+                Err(line) => {
+                    crate::script::ui_errors::show_line_now(lua, line);
+                    false
+                }
             };
             action_slots::signal_all(lua, grid, changed);
             Ok(repaint)
@@ -172,10 +190,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PlaceAction",
         lua.create_function(|lua, id: u32| {
             let mut changed = Vec::new();
-            let (repaint, grid) = {
+            let (placed, grid) = {
                 let mut model = crate::script::model_mut_of(lua);
-                let repaint = place_action(&mut model, id, &mut changed);
-                (repaint, super::take_grid_edge(&mut model))
+                let placed = place_action(&mut model, id, &mut changed);
+                (placed, super::take_grid_edge(&mut model))
+            };
+            let repaint = match placed {
+                Ok(repaint) => repaint,
+                Err(line) => {
+                    crate::script::ui_errors::show_line_now(lua, line);
+                    false
+                }
             };
             action_slots::signal_all(lua, grid, changed);
             Ok(repaint)
@@ -397,7 +422,7 @@ mod tests {
             "a refused payload stays on the cursor — the reference never clears it"
         );
         assert!(
-            s.take_ui_errors().is_empty(),
+            s.take_shown().is_empty(),
             "the ITEM refusal is MUTE — only the SPELL arm raises an error; a \
              toast here would be ours, not the reference's"
         );
@@ -419,13 +444,28 @@ mod tests {
         assert!(s.take_action_sets().is_empty());
         assert!(matches!(s.cursor_payload(), Some(CursorPayload::Spell(_))));
         assert_eq!(
-            s.take_ui_errors(),
+            s.take_shown(),
             vec![super::PASSIVE_ON_BAR_ERROR],
             "the ref's errorId 0x9e toast — 'You can't put a passive ability in the action bar.'"
         );
         assert!(
-            s.take_ui_errors().is_empty(),
+            s.take_shown().is_empty(),
             "…and the queue drains, so the toast fires once per refusal"
+        );
+        // The refusal is raised while the verb holds the bar, and fires before it returns.
+        s.run(
+            "Log = {} local f = CreateFrame('Frame') f:RegisterEvent('UI_ERROR_MESSAGE') \
+             f:SetScript('OnEvent', function(_, _, t) Log[#Log + 1] = t end)",
+        )
+        .unwrap();
+        s.lua()
+            .globals()
+            .set(super::PASSIVE_ON_BAR_ERROR, "passive")
+            .unwrap();
+        s.run("PlaceAction(4) Log[#Log + 1] = 'after'").unwrap();
+        assert_eq!(
+            s.eval::<Vec<String>>("return Log").unwrap(),
+            ["passive", "after"]
         );
     }
 
@@ -442,7 +482,7 @@ mod tests {
 
         assert!(s.eval::<bool>("return PlaceAction(4)").unwrap());
         assert!(s.eval::<bool>("return HasAction(4)").unwrap());
-        assert!(s.take_ui_errors().is_empty());
+        assert!(s.take_shown().is_empty());
     }
 
     #[test]

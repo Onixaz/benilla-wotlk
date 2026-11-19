@@ -332,7 +332,10 @@ fn select_option(lua: &Lua, index: i32, code: Option<String>, confirmed: bool) {
         return;
     }
     if u64::from(opt.box_money) > model.money {
-        model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+        {
+            drop(model);
+            crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
+        }
         return;
     }
     let code = if opt.coded { code } else { None };
@@ -461,7 +464,7 @@ mod tests {
         s.model_mut().money = 499;
         s.run("SelectGossipOption(1, '1234', true)").unwrap();
         assert!(s.take_gossip_selects().is_empty());
-        assert_eq!(s.take_ui_errors(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+        assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
 
         s.model_mut().money = 500;
         s.run("SelectGossipOption(1, '1234', 1)").unwrap();

@@ -34,15 +34,11 @@ pub(crate) fn totem_fits(action: u32, spell: u32) -> Option<bool> {
 }
 
 /// `ERR_MULTI_CAST_ACTION_TOTEM_S` with the action's element name (`0x5ab24b`, `0x5ab98c`).
-pub(crate) fn refuse_totem(model: &mut Model, action: u32) {
-    let Some(category) = action_category(action) else {
-        return;
-    };
-    if let Some(name) = super::live::read_live(|l| l.totem_category_name(category)).flatten() {
-        model
-            .ui_errors_s
-            .push(("ERR_MULTI_CAST_ACTION_TOTEM_S", name));
-    }
+/// `None` off the pages or for an unnamed element.
+pub(crate) fn totem_refusal(action: u32) -> Option<super::ui_errors::Line> {
+    let category = action_category(action)?;
+    let name = super::live::read_live(|l| l.totem_category_name(category)).flatten()?;
+    Some(("ERR_MULTI_CAST_ACTION_TOTEM_S", Some(name)))
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -87,6 +83,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             // The slot remover for spell 0, else the slot write, each sent and signalled in the
             // call (`0x5ab8a0`).
+            let mut refusal = None;
             let written = match fits {
                 None => false,
                 Some(_) if spell == 0 => super::action_slots::write(&mut model, action, None, None),
@@ -104,11 +101,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     super::action_slots::write(&mut model, action, Some(word), texture)
                 }
                 Some(false) => {
-                    refuse_totem(&mut model, action);
+                    refusal = totem_refusal(action);
                     false
                 }
             };
             drop(model);
+            if let Some(line) = refusal {
+                super::ui_errors::show_line_now(lua, line);
+            }
             if written {
                 super::action_slots::signal(lua, action);
             }
@@ -230,7 +230,7 @@ mod tests {
             "earth is not fire"
         );
         assert_eq!(
-            s.take_ui_errors_s(),
+            s.take_shown_s(),
             vec![("ERR_MULTI_CAST_ACTION_TOTEM_S", "Fire Totem".to_string())]
         );
         s.run("SetMultiCastSpell(134, 0)").unwrap();
@@ -266,7 +266,7 @@ mod tests {
             "fire on earth"
         );
         assert_eq!(
-            s.take_ui_errors_s(),
+            s.take_shown_s(),
             vec![("ERR_MULTI_CAST_ACTION_TOTEM_S", "Earth Totem".to_string())]
         );
         assert!(
@@ -281,7 +281,7 @@ mod tests {
         // A main-bar slot takes the same spell as before.
         s.set_cursor_for_test(held(8071));
         assert!(s.eval::<bool>("return PlaceAction(5)").unwrap());
-        assert!(s.take_ui_errors_s().is_empty());
+        assert!(s.take_shown_s().is_empty());
     }
 
     #[test]
