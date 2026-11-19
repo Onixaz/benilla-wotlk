@@ -9,9 +9,9 @@ use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
     combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
     macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
-    reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade,
-    tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
-    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    reputation, session, simplehtml, skills, slider, social, spellbook, stable, trade, tradeskill,
+    unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject, MusicRequest, RegionData,
+    ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -800,11 +800,11 @@ pub(crate) struct Model {
 
     /// A test's trainer window, read where the lent view does not answer it.
     #[cfg(any(test, feature = "fixtures"))]
-    pub(crate) trainer: Option<trainer::TrainerWindow>,
+    pub(crate) trainer: Option<super::trainer::TrainerWindow>,
 
     /// A test's taxi map, read where the lent view does not answer it.
     #[cfg(any(test, feature = "fixtures"))]
-    pub(crate) taxi: Option<taxi::TaxiUiState>,
+    pub(crate) taxi: Option<super::taxi::TaxiUiState>,
 
     /// The open tradeskill window, its filters and repeat.
     pub(crate) trade_skill: tradeskill::TradeSkillModel,
