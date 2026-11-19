@@ -67,6 +67,8 @@ fn on_list(
     mut trainer_open: ResMut<TrainerOpen>,
     asked: Res<TrainerAsked>,
     gossip: Res<GossipState>,
+    me: Option<Res<crate::net::SelfGuid>>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::TrainerList {
         trainer,
@@ -76,7 +78,8 @@ fn on_list(
     } = ev
     {
         let expected = [asked.0, gossip.npc];
-        trainer_list(
+        let previous = trainer_open.trainer;
+        let opened = trainer_list(
             trainer,
             trainer_type,
             services,
@@ -84,7 +87,18 @@ fn on_list(
             &expected,
             &mut trainer_open,
         );
+        let me = me.and_then(|m| m.0);
+        if opened && takes_interact_target(previous, trainer, me) {
+            if let Some(mut ui) = ui {
+                ui.world(crate::ui_bank::close_by_interaction);
+            }
+        }
     }
+}
+
+/// The trainer setter takes the interact target (`0x594149`) for a new trainer only: the same one skips the whole setter (`0x5940fa`), and the active player skips the target call (`0x59413f`).
+fn takes_interact_target(previous: Option<u64>, trainer: u64, me: Option<u64>) -> bool {
+    trainer != 0 && previous != Some(trainer) && me != Some(trainer)
 }
 
 fn on_buy_succeeded(In(ev): In<SessionEvent>) {
@@ -127,16 +141,17 @@ fn trainer_list(
     greeting: String,
     expected: &[Option<u64>],
     trainer_open: &mut TrainerOpen,
-) {
+) -> bool {
     if !expected.contains(&Some(trainer)) {
         debug!("net: trainer list for {trainer:#x}, neither asked nor the gossip npc — dropped");
-        return;
+        return false;
     }
     debug!(
         "net: trainer {trainer:#x} (type {trainer_type}) listed {} services",
         services.len()
     );
     trainer_open.open(trainer, trainer_type, services, greeting);
+    true
 }
 
 /// `SMSG_TRAINER_BUY_SUCCEEDED`, logged only: the reference registers no handler for it (absent
@@ -168,5 +183,15 @@ mod tests {
         assert_eq!(open.trainer, Some(0x42), "the asked trainer");
         list(0x77, &[Some(0x42), Some(0x77)], &mut open);
         assert_eq!(open.trainer, Some(0x77), "the gossip npc");
+    }
+
+    /// A new trainer takes the interact target; the open one again, the active player, or none do not.
+    #[test]
+    fn only_a_new_trainer_takes_the_interact_target() {
+        assert!(takes_interact_target(None, 0x42, Some(0x7)));
+        assert!(takes_interact_target(Some(0x41), 0x42, Some(0x7)));
+        assert!(!takes_interact_target(Some(0x42), 0x42, Some(0x7)));
+        assert!(!takes_interact_target(None, 0x7, Some(0x7)));
+        assert!(!takes_interact_target(None, 0, None));
     }
 }

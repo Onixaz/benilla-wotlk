@@ -202,8 +202,8 @@ mod level_grant;
 mod lfg;
 pub(crate) mod live;
 pub use live::{
-    owner_write, read_live, shared_read, write_live, LiveLoan, LiveState, OwnerWrite, SharedRead,
-    ViewRef,
+    owner_write, read_live, shared_read, write_live, GlobalStrings, LiveLoan, LiveState,
+    OwnerWrite, SharedRead, ViewRef,
 };
 mod loot;
 mod loot_roll;
@@ -315,7 +315,6 @@ pub use auction::{
 pub use aura::AuraState;
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
-pub use bank::BankState;
 pub use barber::{BarberHost, BarberIntent, BarberStyle};
 pub use battlefield_positions::{BattlefieldFlagLive, BattlefieldPositionLive};
 pub use battlefield_queue::{
@@ -426,7 +425,8 @@ pub use item_scaling::{ScalingDistributionView, ScalingTables, ScalingValuesView
 pub use item_stats::equip_loc_token;
 pub use item_stats::{
     item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemLimitView,
-    ItemSetMember, ItemSetView, ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,
+    ItemRecordWait, ItemSetMember, ItemSetView, ItemSpellView, ItemTables, ItemTemplateView,
+    PlayerFields, PlayerReqState, RandomSuffixView, ReqFields,
 };
 pub use item_text::ItemTextState;
 pub use layout_cache::PlacedFrame;
@@ -1272,6 +1272,7 @@ impl UiScript {
     }
 
     fn host(lua: Lua) -> UiScript {
+        item_stats::clear_fixture_player();
         UiScript {
             lua,
             instructions: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),

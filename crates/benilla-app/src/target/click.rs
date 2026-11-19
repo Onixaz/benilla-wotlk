@@ -153,7 +153,8 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
-    _live: crate::ui_script::LendLive<
+    /// The lent view; the guild bank's talk writes through it between calls into Lua.
+    pub(crate) live: crate::ui_script::LendLive<
         'w,
         's,
         (
@@ -183,7 +184,6 @@ pub(crate) struct Feedback<'w> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     cast_errors: ResMut<'w, crate::ui_action::CastErrors>,
     mail: ResMut<'w, crate::ui_mail::MailOpen>,
-    guild_bank: ResMut<'w, crate::ui_guild_bank::GuildBankState>,
     item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
     // `CastErrors` borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
@@ -648,7 +648,12 @@ impl Dispatch<'_, '_> {
         if go_type == cursor_mode::GO_TYPE_GUILD_BANK {
             if in_reach {
                 debug!("right-click guild vault: {guid:#x}");
-                self.feedback.guild_bank.talk(guid, &self.seam.net);
+                let net = &self.seam.net;
+                self.service.live.with_guild_bank_mut(|bank| {
+                    if let Some(bank) = bank {
+                        bank.talk(guid, net);
+                    }
+                });
             } else {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
@@ -1007,7 +1012,12 @@ impl Dispatch<'_, '_> {
             }
             ServiceAction::TalkToGuildBanker => {
                 debug!("right-click interact: {guid:#x} (guild banker)");
-                self.feedback.guild_bank.talk(guid, &self.seam.net);
+                let net = &self.seam.net;
+                self.service.live.with_guild_bank_mut(|bank| {
+                    if let Some(bank) = bank {
+                        bank.talk(guid, net);
+                    }
+                });
             }
             ServiceAction::Silent(why) => {
                 debug!("right-click interact: {guid:#x} ({arm:?}) — silent: {why}");
@@ -2518,7 +2528,7 @@ mod tests {
         world.init_resource::<crate::ui_loot::LootState>();
         world.init_resource::<crate::ui_loot::LootLatch>();
         world.init_resource::<crate::ui_mail::MailOpen>();
-        world.init_resource::<crate::ui_guild_bank::GuildBankState>();
+        world.init_non_send_resource::<crate::ui_guild_bank::GuildBankState>();
         world.init_resource::<crate::ui_item_text::ItemTextOpen>();
         world.init_resource::<crate::ui_action::GoOpenerCasts>();
         world.init_resource::<Messages<crate::target::stone::MeetingStoneUse>>();

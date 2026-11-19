@@ -34,9 +34,32 @@ pub(super) fn played_now(model: &Model) -> i64 {
     })
 }
 
+/// `item`'s refund record read at the call; with no view answering, as an engine-free test runs, the record pushed into the model.
+fn record(model: &Model, item: u64) -> Option<RefundView> {
+    match super::read_live(|l| l.refund_record(item)).flatten() {
+        Some(live) => live,
+        None => model.refund_records.get(&item).cloned(),
+    }
+}
+
+/// A bound item's trade-window stamp read at the call; with no view answering, the stamp pushed into the model.
+fn trade_stamp(model: &Model, item: u64) -> Option<u32> {
+    match super::read_live(|l| l.bound_trade_stamp(item)).flatten() {
+        Some(live) => live,
+        None => model.bound_trade_stamps.get(&item).copied(),
+    }
+}
+
+/// The tooltip's refund block with no record on `item`: the ask, which the view makes only for a refundable purchase none is pending for (`0x62d57d`).
+pub(super) fn ask_if_unrecorded(model: &Model, item: u64) {
+    if record(model, item).is_none() {
+        super::write_live(|l| l.ask_refund_record(item));
+    }
+}
+
 /// The seconds left on `item`'s refund window, `None` with no record or a closed window.
 pub(super) fn seconds_left(model: &Model, item: u64) -> Option<i64> {
-    let record = model.refund_records.get(&item)?;
+    let record = record(model, item)?;
     let left = i64::from(record.played_at_purchase) - played_now(model) + REFUND_WINDOW_SECS;
     (left > 0).then_some(left)
 }
@@ -49,7 +72,7 @@ pub(super) fn bound_trade_open(model: &Model, item: u64) -> bool {
 
 /// The seconds left on a bound item's trade window, `None` when it has none or it closed.
 pub(super) fn bound_trade_left(model: &Model, item: u64) -> Option<i64> {
-    let stamp = *model.bound_trade_stamps.get(&item)?;
+    let stamp = trade_stamp(model, item)?;
     let left = i64::from(stamp) - played_now(model) + REFUND_WINDOW_SECS;
     (left > 0).then_some(left)
 }
@@ -60,18 +83,19 @@ fn held_at<'a>(model: &'a Model, bag: i64, slot: u32, equipped: bool) -> Option<
         let s = model.inventory_slots.get(slot as usize)?.as_ref()?;
         return Some(Held::Worn(slot, s));
     }
-    let s = model.containers.get(&bag)?.slots.get(&slot)?;
-    Some(Held::Bag(bag, slot, s))
+    let s = super::container::index_slot(model, bag, slot)?;
+    Some(Held::Bag(bag, slot, Box::new(s)))
 }
 
 /// The record a purchase verb reads: present, enchant-free and in its window, on an item no open
 /// loot window takes from (`0x5d8d80`).
-fn open_record<'a>(model: &'a Model, held: &Held<'_>) -> Option<(&'a RefundView, i64)> {
+fn open_record(model: &Model, held: &Held<'_>) -> Option<(RefundView, i64)> {
     if socket::has_enchantments(held) || held.guid() == model.loot_source {
         return None;
     }
-    let left = seconds_left(model, held.guid())?;
-    Some((model.refund_records.get(&held.guid())?, left))
+    let r = record(model, held.guid())?;
+    let left = i64::from(r.played_at_purchase) - played_now(model) + REFUND_WINDOW_SECS;
+    (left > 0).then_some((r, left))
 }
 
 fn args(lua: &Lua, bag: Value, slot: Value, usage: &'static str) -> mlua::Result<(i64, u32)> {
@@ -81,7 +105,7 @@ fn args(lua: &Lua, bag: Value, slot: Value, usage: &'static str) -> mlua::Result
 }
 
 impl super::UiScript {
-    /// Push one item's refund record, or drop it with `None`.
+    /// Push one item's refund record, or drop it with `None`: the record a call reads with no view lent.
     pub fn set_refund_record(&mut self, item: u64, record: Option<RefundView>) {
         let differs = self.model_ref().refund_records.get(&item) != record.as_ref();
         if differs {
@@ -93,7 +117,7 @@ impl super::UiScript {
         }
     }
 
-    /// Push the bound-but-tradeable items' create stamps.
+    /// Push the bound-but-tradeable items' create stamps: the stamps a call reads with no view lent.
     pub fn set_bound_trade_stamps(&mut self, stamps: std::collections::HashMap<u64, u32>) {
         set_field!(self, bound_trade_stamps, stamps);
     }
@@ -168,9 +192,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some((id, count)) = cost else {
                     return Ok(MultiValue::new());
                 };
-                let view = model.item_templates.get(&id).cloned();
+                let view = crate::script::item_stats::item_record(&model, id);
                 if view.is_none() {
-                    model.item_stat_asks.insert(id);
+                    crate::script::item_stats::ask_item_record(&mut model, id);
                 }
                 drop(model);
                 Ok(MultiValue::from_vec(vec![
@@ -181,7 +205,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Integer(i64::from(count)),
                     match &view {
                         Some(v) => {
-                            let level = crate::script::model_mut_of(lua).player_req.level;
+                            let level = crate::script::item_stats::player_level();
                             Value::String(lua.create_string(super::item_stats::item_link(
                                 id, &v.name, v.quality, level,
                             ))?)
@@ -205,7 +229,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let equipped = bool_or_default(Some(&equipped), false);
             let item = held_at(&model, bag, slot, equipped)
                 .map(|h| h.guid())
-                .filter(|g| model.refund_records.contains_key(g));
+                .filter(|&g| record(&model, g).is_some());
             match item {
                 Some(guid) if model.merchant.is_some() => model.refund_sends.push(guid),
                 _ => model.ui_errors.push("ERR_INTERNAL_BAG_ERROR"),

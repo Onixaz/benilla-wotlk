@@ -29,24 +29,22 @@ pub struct SocketInfo {
     pub(crate) gems: [u64; MAX_SOCKETS],
     /// The socketed item's enchant slots when last signalled, so a change re-signals the window.
     seen: Vec<EnchantView>,
-    /// Gem templates `GetExistingSocketInfo` asked for; one arriving re-signals the window, as the
-    /// reference's cache callback does (`0x5c44d0`).
-    awaiting: Vec<u32>,
 }
 
 /// An item the player holds, found by guid: its slot, as the lock and the tooltip address it.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) enum Held<'a> {
-    Bag(i64, u32, &'a ContainerSlot),
+    /// A bag slot, read off the World at the call.
+    Bag(i64, u32, Box<ContainerSlot>),
     Worn(u32, &'a InvSlotView),
 }
 
 impl<'a> Held<'a> {
     /// The Lua `(bag, slot)` the item's lock and events name.
     pub(super) fn position(&self) -> (i64, u32) {
-        match *self {
-            Held::Bag(bag, slot, _) => (bag, slot),
-            Held::Worn(id, _) => (EQUIPMENT_BAG, id),
+        match self {
+            Held::Bag(bag, slot, _) => (*bag, *slot),
+            Held::Worn(id, _) => (EQUIPMENT_BAG, *id),
         }
     }
 
@@ -57,7 +55,7 @@ impl<'a> Held<'a> {
         }
     }
 
-    pub(super) fn enchants(&self) -> &'a [EnchantView] {
+    pub(super) fn enchants(&self) -> &[EnchantView] {
         match self {
             Held::Bag(_, _, s) => &s.enchants,
             Held::Worn(_, s) => &s.enchants,
@@ -72,7 +70,7 @@ impl<'a> Held<'a> {
         }
     }
 
-    pub(super) fn link(&self) -> Option<&'a str> {
+    pub(super) fn link(&self) -> Option<&str> {
         match self {
             Held::Bag(_, _, s) => s.link.as_deref(),
             Held::Worn(_, s) => s.link.as_deref(),
@@ -116,12 +114,14 @@ pub(super) fn find(model: &Model, guid: u64) -> Option<Held<'_>> {
             return Some(Held::Worn(i as u32, s));
         }
     }
-    model.containers.iter().find_map(|(&bag, c)| {
-        c.slots
-            .iter()
-            .find(|(_, s)| s.guid == guid)
-            .map(|(&slot, s)| Held::Bag(bag, slot, s))
-    })
+    super::container::live_bags(model)
+        .into_iter()
+        .find_map(|(bag, c)| {
+            c.slots
+                .into_iter()
+                .find(|(_, s)| s.guid == guid)
+                .map(|(slot, s)| Held::Bag(bag, slot, Box::new(s)))
+        })
 }
 
 /// Whether the socketed item sits at `(bag, slot)`: it reads locked there (`0x5c4680`).
@@ -131,7 +131,7 @@ pub(super) fn holds_slot(model: &Model, bag: i64, slot: u32) -> bool {
 
 /// `GetNumSockets` (`0x7094e0`): the template's coloured sockets plus a prismatic enchant's.
 pub(super) fn num_sockets(model: &Model, held: &Held<'_>) -> u32 {
-    let colored = model.item_templates.get(&held.item_id()).map_or(0, |t| {
+    let colored = super::item_stats::item_record(model, held.item_id()).map_or(0, |t| {
         t.socket_colors.iter().filter(|&&c| c != 0).count() as u32
     });
     let prismatic = held
@@ -170,9 +170,8 @@ pub(super) fn set_item(model: &mut Model, guid: u64) {
     }
     let info = &mut model.socket_info;
     info.gems = [0; MAX_SOCKETS];
-    info.awaiting.clear();
     info.item = guid;
-    let stats = new.filter(|(_, id, _)| model.item_templates.contains_key(id));
+    let stats = new.filter(|&(_, id, _)| super::item_stats::item_record_cached(model, id));
     match stats {
         Some(((bag, slot), _, enchants)) => {
             model.socket_info.seen = enchants;
@@ -195,7 +194,8 @@ fn queue(model: &mut Model, event: &str) {
 /// its meta bit matches the socket's, else the reference's error shows. Returns whether it took.
 fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
     let item = model.socket_info.item;
-    let Some(socket_stats) = find(model, item).and_then(|h| model.item_templates.get(&h.item_id()))
+    let Some(socket_stats) =
+        find(model, item).and_then(|h| super::item_stats::item_record(model, h.item_id()))
     else {
         return false;
     };
@@ -207,7 +207,9 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
         queue(model, "SOCKET_INFO_UPDATE");
         return true;
     }
-    let Some(stats) = find(model, gem).and_then(|h| model.item_templates.get(&h.item_id())) else {
+    let Some(stats) =
+        find(model, gem).and_then(|h| super::item_stats::item_record(model, h.item_id()))
+    else {
         return false;
     };
     if stats.gem_properties == 0 {
@@ -256,17 +258,6 @@ pub(super) fn watch(model: &mut Model) {
     }
 }
 
-/// A template `GetExistingSocketInfo` waited on arrived: re-signal the window.
-pub(super) fn template_arrived(model: &mut Model, item_id: u32) {
-    let info = &mut model.socket_info;
-    if let Some(i) = info.awaiting.iter().position(|&id| id == item_id) {
-        info.awaiting.swap_remove(i);
-        if info.item != 0 {
-            queue(model, "SOCKET_INFO_UPDATE");
-        }
-    }
-}
-
 /// The worn gems' colour counts (`0x6de4d0`): meta, red, yellow and blue gems socketed in the worn items,
 /// a gem counting once per colour bit. A broken item (durability 0 and not wrapped) and one
 /// flagged `0x10` count none.
@@ -306,10 +297,9 @@ pub(super) fn item_id_by_name(model: &Model, name: &str) -> Option<u32> {
         .find(|s| s.item_id != 0 && s.name.as_deref().is_some_and(matches))
         .map(|s| s.item_id)
         .or_else(|| {
-            model
-                .containers
-                .values()
-                .flat_map(|c| c.slots.values())
+            super::container::live_bags(model)
+                .into_iter()
+                .flat_map(|(_, c)| c.slots.into_values())
                 .find(|s| {
                     s.item_id != 0
                         && s.link.is_some()
@@ -338,14 +328,12 @@ fn gem_template(model: &mut Model, i: usize, existing: bool) -> Option<(u32, Ite
         let gem = *model.socket_info.gems.get(i)?;
         find(model, gem)?.item_id()
     };
-    match model.item_templates.get(&id).cloned() {
+    match super::item_stats::item_record(model, id) {
         Some(t) => Some((id, t)),
         None => {
             if existing {
-                model.item_stat_asks.insert(id);
-                if !model.socket_info.awaiting.contains(&id) {
-                    model.socket_info.awaiting.push(id);
-                }
+                super::item_stats::wait_item_record(model, id, super::ItemRecordWait::Socket);
+                super::item_stats::ask_item_record(model, id);
             }
             None
         }
@@ -355,7 +343,7 @@ fn gem_template(model: &mut Model, i: usize, existing: bool) -> Option<(u32, Ite
 /// The socket item's template, which the socket fit reads.
 fn socket_stats(model: &Model) -> Option<ItemTemplateView> {
     find(model, model.socket_info.item)
-        .and_then(|h| model.item_templates.get(&h.item_id()).cloned())
+        .and_then(|h| super::item_stats::item_record(model, h.item_id()))
 }
 
 /// The three values of `GetExistingSocketInfo` and `GetNewSocketInfo`: name, texture, matches.
@@ -420,7 +408,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let Some(s) = u32::try_from(slot)
                 .ok()
-                .and_then(|slot| Some((slot, model.containers.get(&bag)?.slots.get(&slot)?)))
+                .and_then(|slot| Some((slot, super::container::index_slot(&model, bag, slot)?)))
             else {
                 return Ok(());
             };
@@ -428,7 +416,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if super::container::bag_slot_locked(&model, bag, slot, &s) {
                 return Ok(());
             }
-            let held = Held::Bag(bag, slot, &s);
+            let held = Held::Bag(bag, slot, Box::new(s.clone()));
             if num_sockets(&model, &held) == 0 {
                 return Ok(());
             }
@@ -481,7 +469,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (name, view) = {
                 let model = crate::script::model_mut_of(lua);
                 let held = find(&model, model.socket_info.item);
-                let view = held.and_then(|h| model.item_templates.get(&h.item_id()).cloned());
+                let view = held
+                    .as_ref()
+                    .and_then(|h| super::item_stats::item_record(&model, h.item_id()));
                 (held.and_then(|h| h.name()), view)
             };
             let Some(v) = view else {
@@ -561,7 +551,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(Value::Nil);
             };
             let gem = gem_template(&mut crate::script::model_mut_of(lua), i, true);
-            let level = crate::script::model_mut_of(lua).player_req.level;
+            let level = crate::script::item_stats::player_level();
             match gem {
                 Some((id, t)) => Ok(Value::String(lua.create_string(
                     super::item_stats::item_link(id, &t.name, t.quality, level),
@@ -608,10 +598,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let n = number_arg(lua, index, "Usage: ClickSocketButton(index)")?;
             let mut model = crate::script::model_mut_of(lua);
             let held = match &model.cursor {
-                Some(CursorPayload::Item(c)) => model
-                    .containers
-                    .get(&c.bag)
-                    .and_then(|b| b.slots.get(&c.slot))
+                Some(CursorPayload::Item(c)) => super::container::live_slot(&model, c.bag, c.slot)
                     .map(|s| s.guid)
                     .or_else(|| {
                         (c.bag == EQUIPMENT_BAG)

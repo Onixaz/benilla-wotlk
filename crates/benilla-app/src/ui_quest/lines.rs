@@ -16,11 +16,10 @@ use crate::ui_action::{
 use crate::ui_quest_log::QuestLog;
 use crate::ui_script::live::UiEvents;
 
-/// The turn-ins waiting on their quest's template (`0x6d1192`) and the reward item lines waiting on their item, each with its count (`0x6d103b`, `0x6d107c`).
+/// The turn-ins waiting on their quest's template (`0x6d1192`); a reward item line waits on [`crate::items::RecordWaits`].
 #[derive(Resource, Default)]
 pub(crate) struct TurnIns {
     quests: Vec<QuestComplete>,
-    items: Vec<(u32, u32)>,
 }
 
 impl TurnIns {
@@ -30,14 +29,13 @@ impl TurnIns {
     }
 
     #[cfg(test)]
-    pub(crate) fn waiting(&self) -> (usize, &[(u32, u32)]) {
-        (self.quests.len(), &self.items)
+    pub(crate) fn waiting(&self) -> usize {
+        self.quests.len()
     }
 }
 
 pub(super) fn register(app: &mut App) {
     app.init_resource::<TurnIns>()
-        .net_handler(SessionEventKind::ItemTemplate, on_item)
         .net_handler(SessionEventKind::Disconnected, on_session_end);
 }
 
@@ -46,27 +44,16 @@ fn on_session_end(In(_): In<SessionEvent>, mut turn_ins: ResMut<TurnIns>) {
     *turn_ins = TurnIns::default();
 }
 
-/// An item answer runs its waiting reward lines (`0x6cd8c0`); an unknown item prints nothing (`0x6cd8c6`).
-fn on_item(In(ev): In<SessionEvent>, mut turn_ins: ResMut<TurnIns>, mut ui: ResMut<UiEvents>) {
-    let SessionEvent::ItemTemplate { entry, info } = ev else {
-        return;
-    };
-    if !turn_ins.items.iter().any(|&(item, _)| item == entry) {
-        return;
-    }
-    let mut counts = Vec::new();
-    turn_ins.items.retain(|&(item, count)| {
-        if item == entry {
-            counts.push(count);
-        }
-        item != entry
-    });
-    let Some(info) = info else {
-        return;
-    };
-    let link = crate::ui_items::item_link(entry, &info.name, info.quality);
-    for count in counts {
-        show_in_turn(&mut ui, "ui_quest", reward_item_line(&link, count));
+/// A reward line's callback on its item's answer (`0x6cd8c0`); an unknown item prints nothing (`0x6cd8c6`).
+pub(crate) fn reward_landed(
+    ui: &mut UiEvents,
+    entry: u32,
+    info: Option<&benilla_protocol::ItemInfo>,
+    count: u32,
+) {
+    if let Some(info) = info {
+        let link = crate::ui_items::item_link(entry, &info.name, info.quality);
+        show_in_turn(ui, "ui_quest", reward_item_line(&link, count));
     }
 }
 
@@ -121,9 +108,8 @@ fn say(script: &mut UiScript, sink: &mut MessageSink, msg: UiError) {
 /// The turn-in's lines in 12340's order (`0x6d0e66`-`0x6d10b4`); whether the quest chains on, `None` with no template.
 fn turn_in_lines(
     In((c, chosen)): In<(QuestComplete, u32)>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     (quest_log, items, commands): (Res<QuestLog>, Res<Items>, Res<NetCommands>),
-    mut turn_ins: ResMut<TurnIns>,
     mut sink: MessageSink,
     mut center: Option<MessageWriter<crate::ui_unit::CombatTextEvent>>,
 ) -> Option<bool> {
@@ -204,7 +190,7 @@ fn turn_in_lines(
                 say(&mut script, &mut sink, reward_item_line(&link, count));
             }
             None if items.template_answered_unknown(item) => {}
-            None => turn_ins.items.push((item, count)),
+            None => live.wait_record(item, crate::items::RecordWait::QuestReward(count)),
         }
     }
     Some(chained)
@@ -311,6 +297,7 @@ mod tests {
             .init_resource::<crate::ui_quest_log::QuestLogMarks>()
             .init_non_send_resource::<crate::ui_quest_log::QuestExpiries>()
             .init_resource::<Items>()
+            .init_non_send_resource::<crate::items::RecordWaits>()
             .init_resource::<UiEvents>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
@@ -348,13 +335,27 @@ mod tests {
     }
 
     /// An item answer through its handler, with the lines it shows in turn.
+    /// The item answer's reward-line callbacks, as the object handler runs them.
     fn item_answer(app: &mut App, entry: u32, name: Option<&str>) {
-        let info = name.map(|n| Box::new(crate::items::test_template(n)));
+        let info = name.map(crate::items::test_template);
         let world = app.world_mut();
-        world
-            .run_system_cached_with(on_item, SessionEvent::ItemTemplate { entry, info })
-            .unwrap();
+        let waits = world
+            .non_send_resource_mut::<crate::items::RecordWaits>()
+            .take(entry);
+        for wait in waits {
+            if let crate::items::RecordWait::QuestReward(count) = wait {
+                let mut ui = world.resource_mut::<UiEvents>();
+                reward_landed(&mut ui, entry, info.as_ref(), count);
+            }
+        }
         crate::ui_script::live::fire_handler_events(world);
+    }
+
+    fn reward_waits(app: &App) -> Vec<(u32, crate::items::RecordWait)> {
+        app.world()
+            .non_send_resource::<crate::items::RecordWaits>()
+            .waiting()
+            .to_vec()
     }
 
     /// `0x6d0e10`'s order: the completion, the fanfare, the XP, the money, the talents, the template's rewards (a count past one says so, `0x6cd90d`), then the chosen reward, which the turn-in spends; an uncached item's line waits for its answer.
@@ -410,8 +411,8 @@ mod tests {
             0
         );
         assert_eq!(
-            app.world().resource::<TurnIns>().waiting(),
-            (0, &[(6_529, 3)][..])
+            reward_waits(&app),
+            [(6_529, crate::items::RecordWait::QuestReward(3))]
         );
         assert!(rx
             .try_iter()
@@ -421,7 +422,8 @@ mod tests {
             chat(&app)[6..],
             ["Received 3 of item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r."]
         );
-        assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
+        assert_eq!(app.world().resource::<TurnIns>().waiting(), 0);
+        assert!(reward_waits(&app).is_empty());
     }
 
     /// An unknown item's answer prints nothing (`0x6cd8c6`).
@@ -437,7 +439,8 @@ mod tests {
         }
         item_answer(&mut app, 9_999, None);
         assert_eq!(chat(&app), ["Kobold Camp Cleanup completed."]);
-        assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
+        assert_eq!(app.world().resource::<TurnIns>().waiting(), 0);
+        assert!(reward_waits(&app).is_empty());
     }
 
     /// With the template uncached the whole turn-in waits for its answer, the window too (`0x6d1192`); the answer runs it (`0x6d1175`).
@@ -460,7 +463,8 @@ mod tests {
         quest_landed(world, 7);
         assert_eq!(chat(&app), ["Kobold Camp Cleanup completed."]);
         assert!(!app.world().non_send_resource::<QuestGiver>().is_open());
-        assert_eq!(app.world().resource::<TurnIns>().waiting(), (0, &[][..]));
+        assert_eq!(app.world().resource::<TurnIns>().waiting(), 0);
+        assert!(reward_waits(&app).is_empty());
     }
 
     /// `0x6d10ca`: a chained turn-in leaves the window to the next quest's panel and still prints.

@@ -113,6 +113,9 @@ local VERBS = {
     { "qtitle", function() return GetTitleText() end },
     { "qdone", function() return IsQuestCompletable() end },
     { "qreward", function() return GetRewardMoney() end },
+    { "bankslots", function() return (GetNumBankSlots()) end },
+    { "bankcost", function() return GetBankSlotCost() end },
+    { "bankopen", function() return GetContainerFreeSlots(-1) ~= nil end },
     { "ws", function()
         local t = {}
         for i = 1, GetNumWorldStateUI() do t[#t + 1] = (select(3, GetWorldStateUIInfo(i))) end
@@ -121,6 +124,30 @@ local VERBS = {
     { "atstable", function() return IsAtStableMaster() end },
     { "stabled", function() return GetNumStablePets() end },
     { "stablesel", function() return GetSelectedStablePet() end },
+    { "greenrange", function() return GetQuestGreenRange() end },
+    { "cursize", function() return GetCurrencyListSize() end },
+    { "cur2", function() local n, _, _, _, _, c = GetCurrencyListInfo(2) return tostring(n) .. "x" .. tostring(c) end },
+    { "free0", function() return (GetContainerNumFreeSlots(0)) end },
+    { "cnt01", function() return (select(2, GetContainerItemInfo(0, 1))) end },
+    { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
+    { "lock02", function() return (select(3, GetContainerItemInfo(0, 2))) end },
+    { "lock05", function() return (select(3, GetContainerItemInfo(0, 5))) end },
+    { "lock11", function() return (select(3, GetContainerItemInfo(1, 1))) end },
+    { "lock12", function() return (select(3, GetContainerItemInfo(1, 2))) end },
+    { "slots1", function() return GetContainerNumSlots(1) end },
+    { "slots5", function() return GetContainerNumSlots(5) end },
+    { "name5", function() return GetBagName(5) end },
+    { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
+    { "gbtabs", function() return GetNumGuildBankTabs() end },
+    { "gbtab1", function() return (GetGuildBankTabInfo(1)) end },
+    { "gbtab2", function() return (GetGuildBankTabInfo(2)) end },
+    { "gbleft", function() return (select(6, GetGuildBankTabInfo(1))) end },
+    { "gbcount4", function() return (select(2, GetGuildBankItemInfo(1, 4))) end },
+    { "gbmoney", function() return GetGuildBankMoney() end },
+    { "gbwithdraw", function() return GetGuildBankWithdrawMoney() end },
+    { "gblog", function() return GetNumGuildBankTransactions(1) end },
+    { "gblogname", function() return (select(2, GetGuildBankTransaction(1, 1))) end },
+    { "gbtext", function() return GetGuildBankText(1) end },
 }
 local function answers()
     local verbs = {}
@@ -3334,6 +3361,8 @@ fn close_and_accept_finish_the_window_inside_their_call() {
              return fired .. '|' .. tostring(GetTitleText()) .. '|' .. tostring(UnitExists('questnpc'))"
         )
     };
+    // The giver held beside us, so the window's range guard keeps it open.
+    rig.packets(vec![npc_create(NPC, 0x2)], 1);
     for verb in ["CloseQuest", "AcceptQuest"] {
         let opened = rig.packets(vec![detail()], 1);
         assert_eq!(
@@ -3364,6 +3393,644 @@ fn close_and_accept_finish_the_window_inside_their_call() {
             "{verb}"
         );
     }
+}
+
+/// The banker's guid.
+const BANKER: u64 = 0xF130_0000_0200_0001;
+
+/// The banker as a stream create sends it, with `npc_flags`.
+fn banker_create(npc_flags: u32) -> SessionEvent {
+    npc_create(BANKER, npc_flags)
+}
+
+/// A creature as a stream create sends it, with `npc_flags`.
+fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
+    let pairs = vec![
+        (2, 0x9),
+        (FIELD_UNIT_HEALTH, 500),
+        (FIELD_UNIT_MAXHEALTH, 500),
+        (FIELD_UNIT_LEVEL, 30),
+        (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, npc_flags),
+    ];
+    SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Unit),
+    }
+}
+
+/// Our purchased bank bag slots, `PLAYER_BYTES_2` byte 2.
+fn bank_slots(n: u32) -> SessionEvent {
+    self_values(&[(benilla_protocol::field::FIELD_PLAYER_BYTES_2, n << 16)])
+}
+
+const BANK_EVENTS: &[&str] = &[
+    "BANKFRAME_OPENED",
+    "BANKFRAME_CLOSED",
+    "PLAYERBANKBAGSLOTS_CHANGED",
+    "UI_ERROR_MESSAGE",
+];
+
+/// `SMSG_SHOW_BANK` sets the banker and fires `BANKFRAME_OPENED` in its handler (`0x6e352a` -> `0x57b926`); the slot byte's watch fires `PLAYERBANKBAGSLOTS_CHANGED` whether a banker is open or not, its count read live (`0x57b8b0`, `0x57bab0`); a buy refusal shows in its handler's turn (`0x6e355d`).
+#[test]
+fn bank_open_slot_byte_and_refusal_fire_from_their_handlers() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let verbs = &["bankslots", "bankopen"];
+    // The byte moves with no bank open: the watch fires all the same.
+    let seen = rig.packets(vec![bank_slots(1)], 2);
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, verbs),
+        ["PLAYERBANKBAGSLOTS_CHANGED | bankslots=1 bankopen=false"]
+    );
+    let seen = rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+            bank_slots(2),
+            SessionEvent::BuyBankSlotResult { result: 1 },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, verbs),
+        [
+            "BANKFRAME_OPENED | bankslots=1 bankopen=true",
+            "PLAYERBANKBAGSLOTS_CHANGED | bankslots=2 bankopen=true",
+            "UI_ERROR_MESSAGE You can't afford that. | bankslots=2 bankopen=true",
+        ]
+    );
+    // The other packet order: the byte first, then the bank.
+    let seen = rig.packets(
+        vec![bank_slots(3), SessionEvent::ShowBank { banker: BANKER }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, verbs),
+        [
+            "PLAYERBANKBAGSLOTS_CHANGED | bankslots=3 bankopen=true",
+            "BANKFRAME_CLOSED | bankslots=3 bankopen=true",
+            "BANKFRAME_CLOSED | bankslots=3 bankopen=false",
+            "BANKFRAME_OPENED | bankslots=3 bankopen=true",
+        ],
+        "a second banker over an open bank closes it through the interaction close first; the stock frame's OnHide calls CloseBankFrame inside that fire, ahead of the observer"
+    );
+}
+
+/// `CloseBankFrame` fires `BANKFRAME_CLOSED` with the banker still set, then again from the interaction close's bank leg, then clears it, all inside its call (`0x57b9c0` -> `0x57b8d0`, `0x512fa7`).
+#[test]
+fn close_bank_frame_closes_inside_its_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    assert_eq!(fired(&seen, &["BANKFRAME_OPENED"]), ["BANKFRAME_OPENED"]);
+    let read = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local before = #(CHARZ_LOG or {}) CloseBankFrame() local t = {}              for i = before + 1, #(CHARZ_LOG or {}) do                if CHARZ_LOG[i]:find('BANKFRAME_CLOSED', 1, true) then t[#t + 1] = CHARZ_LOG[i]:match('bankopen=(%a+)') end end              return table.concat(t, ',') .. '|' .. tostring(GetContainerFreeSlots(-1) ~= nil)",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    // The stock `BankFrame` hears the first fire ahead of the observer and its `OnHide` calls `CloseBankFrame` again, which fires twice with the banker set and clears it; the outer call's second fire is gone with the interact target.
+    assert_eq!(read, "true,true,false|false");
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
+}
+
+/// `PurchaseSlot` (`0x57bbc0`): no banker, no control or seven slots send nothing and show nothing (`0x57bbeb`-`0x57bc10`); a coinage below the next row's price shows `ERR_BANKSLOT_INSUFFICIENT_FUNDS` inside the call (`0x57bc2a` -> `0x57bc2c`); a coinage at the price sends `CMSG_BUY_BANK_SLOT` naming the interact target, the banker (`0x57bc54`).
+#[test]
+fn purchase_slot_gates_refuses_and_sends_at_its_call() {
+    use benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                crate::net::ClientCommand::BuyBankSlot { guid } => Some(guid),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // The refusal lines the call logged before it returned, then the marker.
+    let call = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<String>(
+                "local before = #(CHARZ_LOG or {}) PurchaseSlot() local t = {} \
+                 for i = before + 1, #(CHARZ_LOG or {}) do \
+                   if CHARZ_LOG[i]:find('UI_ERROR_MESSAGE', 1, true) then \
+                     t[#t + 1] = CHARZ_LOG[i]:match('\t([^\t]*)\t') end end \
+                 t[#t + 1] = 'returned' return table.concat(t, '|')",
+            )
+        })
+        .expect("a VM")
+        .expect("the chunk runs")
+    };
+    let coinage = |c: u32| self_values(&[(FIELD_PLAYER_FIELD_COINAGE, c)]);
+    rig.packets(vec![bank_slots(1), coinage(1_000_000_000)], 2);
+    assert_eq!(call(&mut rig), "returned", "no banker");
+    assert!(sends(&rx).is_empty());
+
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let cost = rig_price(&rig, 1);
+    assert!(cost > 0, "the price row after one slot");
+    rig.packets(vec![coinage(cost - 1)], 2);
+    assert_eq!(
+        call(&mut rig),
+        "You can't afford that.|returned",
+        "one copper short: the line inside the call"
+    );
+    assert!(sends(&rx).is_empty());
+    rig.packets(vec![coinage(cost)], 2);
+    assert_eq!(call(&mut rig), "returned", "exactly the price");
+    assert_eq!(sends(&rx), [BANKER]);
+
+    // The stock `UIParent` closes every window on `PLAYER_CONTROL_LOST`, so the bank opens again with control lost.
+    rig.packets(
+        vec![control(false), SessionEvent::ShowBank { banker: BANKER }],
+        2,
+    );
+    assert_eq!(call(&mut rig), "returned", "no control, at the price");
+    assert!(sends(&rx).is_empty());
+    rig.packets(vec![control(true), bank_slots(7), coinage(0)], 2);
+    assert_eq!(call(&mut rig), "returned", "seven slots, even when short");
+    assert!(sends(&rx).is_empty());
+    rig.packets(vec![bank_slots(6), coinage(rig_price(&rig, 6))], 2);
+    assert_eq!(call(&mut rig), "returned", "the sixth row's price");
+    assert_eq!(sends(&rx), [BANKER]);
+}
+
+/// The next slot's price after `n` purchased, as the client's table holds it.
+fn rig_price(rig: &Rig, n: u8) -> u32 {
+    rig.app
+        .world()
+        .get_resource::<crate::ui_bank::BankPrices>()
+        .and_then(|p| p.0.next_slot_price(n))
+        .expect("BankBagSlotPrices.dbc")
+}
+
+/// Another window's open takes the interact target from the banker: the setter's interaction close fires `BANKFRAME_CLOSED` and clears the banker ahead of that window (`0x51fce0` -> `0x51fd1c` -> `0x512fa7`); a vendor's empty refusal opens nothing and leaves the bank open (`0x6d9ad2`-`0x6d9af8`).
+#[test]
+fn another_window_taking_the_interact_target_closes_the_bank() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let refusal = SessionEvent::VendorInventory {
+        vendor: BANKER + 1,
+        items: Vec::new(),
+        error: Some(2),
+    };
+    let seen = rig.packets(vec![refusal], 2);
+    assert!(fired(&seen, BANK_EVENTS).is_empty(), "nothing opened");
+    let seen = rig.packets(
+        vec![SessionEvent::VendorInventory {
+            vendor: BANKER + 1,
+            items: Vec::new(),
+            error: Some(0),
+        }],
+        2,
+    );
+    let order: Vec<String> = seen
+        .iter()
+        .filter(|s| ["BANKFRAME_CLOSED", "MERCHANT_SHOW"].contains(&s.event.as_str()))
+        .map(|s| s.event.clone())
+        .collect();
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("BANKFRAME_CLOSED"),
+        "the bank closes ahead of the vendor: {order:?}"
+    );
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
+    let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+    assert_eq!(
+        fired(&seen, &["BANKFRAME_OPENED", "BANKFRAME_CLOSED"]),
+        ["BANKFRAME_OPENED"],
+        "the next open finds no bank to close"
+    );
+    // A dialog that fires in its own handler: the setter runs at the start of its open, so the bank closes first (`0x58c5a0`).
+    let seen = rig.packets(
+        vec![
+            npc_create(BANKER + 2, 0),
+            SessionEvent::QuestDetail(benilla_protocol::messages::QuestDetails {
+                npc: BANKER + 2,
+                quest_id: QUEST,
+                title: "Charz".into(),
+                ..Default::default()
+            }),
+        ],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["BANKFRAME_CLOSED", "QUEST_DETAIL"])
+            .first()
+            .map(String::as_str),
+        Some("BANKFRAME_CLOSED")
+    );
+    assert_eq!(fired(&seen, &["QUEST_DETAIL"]).len(), 1);
+}
+
+/// A window opened on the banker itself keeps the interact target: the setter zeroes it before the bank's leg runs (`0x512e89`), so the bank's close finds no target and closes nothing else (`0x57b8f1`); the gossip menu then closes at the next bank open (`0x51fce0` -> `0x512ef6`).
+#[test]
+fn a_window_on_the_banker_itself_stays_open_after_the_bank_closes() {
+    use crate::ui_session::NpcSession;
+    use benilla_protocol::messages::GossipMenu;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let gossip_npc = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::ui_gossip::GossipState>()
+            .npc
+    };
+    rig.packets(
+        vec![
+            banker_create(0x20001),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let menu = SessionEvent::GossipMenu(GossipMenu {
+        npc: BANKER,
+        menu_id: 1,
+        text_id: 1,
+        options: Vec::new(),
+        quests: Vec::new(),
+    });
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let greeting = SessionEvent::NpcGreeting {
+        text_id: 1,
+        blocks: vec![benilla_protocol::messages::NpcTextBlock {
+            probability: 1.0,
+            male: "Charz".into(),
+            ..Default::default()
+        }],
+    };
+    let seen = rig.packets(vec![menu, greeting], 4);
+    assert_eq!(
+        fired(&seen, &["BANKFRAME_CLOSED", "GOSSIP_SHOW", "GOSSIP_CLOSED"]),
+        ["BANKFRAME_CLOSED", "BANKFRAME_CLOSED", "GOSSIP_SHOW"],
+        "the stock frame's OnHide closes the bank again inside the first fire"
+    );
+    assert_eq!(gossip_npc(&rig), Some(BANKER), "the menu keeps its state");
+    let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+    // Their order is the gossip feed's, #1279's.
+    let mut both = fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]);
+    both.sort();
+    assert_eq!(
+        both,
+        ["BANKFRAME_OPENED", "GOSSIP_CLOSED"],
+        "the bank's open closes the menu it finds"
+    );
+    assert_eq!(gossip_npc(&rig), None);
+    // A vendor on the banker: the same.
+    let seen = rig.packets(
+        vec![SessionEvent::VendorInventory {
+            vendor: BANKER,
+            items: Vec::new(),
+            error: Some(0),
+        }],
+        4,
+    );
+    assert_eq!(
+        fired(
+            &seen,
+            &["BANKFRAME_CLOSED", "MERCHANT_SHOW", "MERCHANT_CLOSED"]
+        ),
+        ["BANKFRAME_CLOSED", "BANKFRAME_CLOSED", "MERCHANT_SHOW"]
+    );
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::ui_merchant::MerchantOpen>()
+            .npc(),
+        Some(BANKER)
+    );
+}
+
+/// Only an open that reaches the setter closes the bank: a taxi map with one known node shows `ERR_TAXINOPATHS` instead (`0x6d61b5`-`0x6d61d1`); a quest panel from a giver not held opens without it (`0x58c5c7`); a guild bank list closes it only as the answer to a hello with no banker open (`0x5a76b3`-`0x5a772b`); the random battleground's list from a battlemaster takes it even for the PvP window (`0x54e509`-`0x54e52e`); a mailbox opened in the client takes it before `MAIL_SHOW` (`0x56da67`).
+#[test]
+fn only_an_open_reaching_the_setter_closes_the_bank() {
+    use benilla_protocol::messages::{BattlefieldList, GuildBankList, TaxiMask};
+    const CLOSED: &[&str] = &["BANKFRAME_CLOSED"];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let open = |rig: &mut Rig| {
+        rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+        assert!(rig
+            .app
+            .world()
+            .non_send_resource::<crate::ui_bank::BankOpen>()
+            .is_open());
+    };
+    let closes = |seen: &[Seen], before: &str| -> bool {
+        let order = fired(seen, &["BANKFRAME_CLOSED", before]);
+        order.first().map(String::as_str) == Some("BANKFRAME_CLOSED")
+    };
+    rig.packets(vec![banker_create(0x20000)], 2);
+    open(&mut rig);
+
+    let taxi = |nodes: &[u32]| {
+        let mut known_mask = TaxiMask::default();
+        for &n in nodes {
+            known_mask.set(n);
+        }
+        SessionEvent::TaxiNodesShown {
+            flightmaster: BANKER + 3,
+            nearest_node: 2,
+            known_mask,
+        }
+    };
+    let seen = rig.packets(vec![taxi(&[2])], 2);
+    assert!(
+        fired(&seen, CLOSED).is_empty(),
+        "one known node: no map, no setter"
+    );
+    assert_eq!(
+        fired(&seen, &["UI_ERROR_MESSAGE"]).len(),
+        1,
+        "ERR_TAXINOPATHS"
+    );
+    let seen = rig.packets(vec![taxi(&[2, 4])], 2);
+    assert!(
+        closes(&seen, "TAXIMAP_OPENED"),
+        "{:?}",
+        fired(&seen, &["BANKFRAME_CLOSED", "TAXIMAP_OPENED"])
+    );
+    open(&mut rig);
+
+    let greeting = |npc: u64| {
+        SessionEvent::QuestGreeting(benilla_protocol::messages::QuestGiverList {
+            npc,
+            ..Default::default()
+        })
+    };
+    let seen = rig.packets(vec![greeting(BANKER + 4)], 2);
+    assert!(fired(&seen, CLOSED).is_empty(), "a giver not held");
+    assert_eq!(fired(&seen, &["QUEST_GREETING"]).len(), 1);
+    let seen = rig.packets(vec![npc_create(BANKER + 4, 0), greeting(BANKER + 4)], 2);
+    assert!(closes(&seen, "QUEST_GREETING"));
+    open(&mut rig);
+
+    let list = || SessionEvent::GuildBankList(GuildBankList::default());
+    let seen = rig.packets(vec![list()], 2);
+    assert!(fired(&seen, CLOSED).is_empty(), "no hello: nothing opens");
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(BANKER + 5, &net);
+    }
+    let seen = rig.packets(vec![list()], 2);
+    assert!(
+        closes(&seen, "GUILDBANKFRAME_OPENED"),
+        "{:?}",
+        fired(&seen, &["BANKFRAME_CLOSED", "GUILDBANKFRAME_OPENED"])
+    );
+    open(&mut rig);
+    let seen = rig.packets(vec![list()], 2);
+    assert!(
+        fired(&seen, CLOSED).is_empty(),
+        "a list for the open guild bank opens nothing"
+    );
+
+    let bf = |from_anywhere: bool, bg_type: u32| {
+        SessionEvent::BattlefieldList(BattlefieldList {
+            battlemaster: BANKER + 6,
+            from_anywhere,
+            bg_type,
+            instances: vec![1],
+            ..Default::default()
+        })
+    };
+    let seen = rig.packets(vec![bf(true, 2)], 2);
+    assert!(fired(&seen, CLOSED).is_empty(), "a list for the PvP window");
+    let seen = rig.packets(vec![bf(true, benilla_ui::script::RANDOM_BATTLEGROUND)], 2);
+    assert!(closes(&seen, "NPC_PVPQUEUE_ANYWHERE"));
+    open(&mut rig);
+
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_mail::MailOpen>()
+        .click(BANKER + 7);
+    let seen = rig.packets(Vec::new(), 2);
+    assert!(
+        closes(&seen, "MAIL_SHOW"),
+        "{:?}",
+        fired(&seen, &["BANKFRAME_CLOSED", "MAIL_SHOW"])
+    );
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
+}
+
+/// The interact target's clears outside the windows close the open bank through its leg (`0x512fa7`): our own death (`0x6dc17a`), ahead of `PLAYER_DEAD`; the banker's death (`0x7293bf`); and a form without the NPC-interact bit (`0x6da1dc`), where a stance or a form with the bit keeps it.
+#[test]
+fn the_interact_target_clears_close_the_bank() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_2;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let open = |rig: &mut Rig| {
+        rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
+    };
+    let closed = |seen: &[Seen]| pin(seen, &["BANKFRAME_CLOSED", "PLAYER_DEAD"], &["bankopen"]);
+    rig.packets(vec![banker_create(0x20000)], 1);
+    open(&mut rig);
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 3);
+    assert_eq!(
+        closed(&seen),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+            "PLAYER_DEAD | bankopen=false",
+        ],
+        "our death: the stock OnHide closes it again inside the first fire"
+    );
+    rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 100)])], 2);
+    open(&mut rig);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BANKER,
+            fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 0)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        closed(&seen),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ],
+        "the banker's death"
+    );
+    let forms: Vec<(u32, u32)> = rig
+        .app
+        .world()
+        .get_resource::<crate::ui_action::Spells>()
+        .map(|s| s.forms.iter().map(|(&id, f)| (id, f.flags)).collect())
+        .unwrap_or_default();
+    let keeps = forms.iter().find(|(id, f)| *id < 256 && f & 0x9 != 0);
+    let clears = forms.iter().find(|(id, f)| *id < 256 && f & 0x9 == 0);
+    let (Some(&(keeps, _)), Some(&(clears, _))) = (keeps, clears) else {
+        panic!("SpellShapeshiftForm has a form of each kind: {forms:?}");
+    };
+    rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BANKER,
+            fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 500)]),
+        }],
+        1,
+    );
+    open(&mut rig);
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_BYTES_2, keeps << 24)])], 2);
+    assert!(closed(&seen).is_empty(), "form {keeps} keeps the bank");
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_BYTES_2, clears << 24)])], 2);
+    assert_eq!(
+        closed(&seen),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ],
+        "form {clears} clears the interact target"
+    );
+}
+
+/// `SMSG_DESTROY_OBJECT` with its death byte on the living banker closes the bank inside the destroy's handler (`0x4d7682` -> `0x7293bf`), ahead of the next packet's events; on a banker already at 0 health it runs no death.
+#[test]
+fn the_bankers_destroy_on_death_closes_the_bank_in_its_handler() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let events = &["BANKFRAME_CLOSED", "UI_ERROR_MESSAGE"];
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::DestroyedOnDeath(BANKER),
+            SessionEvent::ObjectDestroyed(BANKER),
+            SessionEvent::BuyBankSlotResult { result: 1 },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["bankopen"]),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+            "UI_ERROR_MESSAGE You can't afford that. | bankopen=false",
+        ]
+    );
+    // A banker destroyed at 0 health with no interaction held runs nothing more.
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+            SessionEvent::ObjectValues {
+                guid: BANKER,
+                fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 0)]),
+            },
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::DestroyedOnDeath(BANKER),
+            SessionEvent::ObjectDestroyed(BANKER),
+        ],
+        2,
+    );
+    assert!(pin(&seen, events, &[]).is_empty(), "{seen:?}");
+}
+
+/// The banker flag lost on the open bank's banker closes it from the NPC-flag watch (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED` with the banker set, again from the interaction close, then the banker clears.
+#[test]
+fn the_banker_flag_lost_closes_the_bank_from_the_flag_watch() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BANKER,
+            fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, 0)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK_EVENTS, &["bankopen"]),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ],
+        "the stock frame's OnHide closes it inside the first fire, as `CloseBankFrame` does"
+    );
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<crate::ui_bank::BankOpen>()
+        .is_open());
 }
 
 /// Brown Horse (458) rides creature 284, Bombay Cat (10673) summons creature 7385.
@@ -4762,5 +5429,1403 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
             "COMPANION_UPDATE | mounts=0 critters=1",
             "COMPANION_LEARNED | mounts=0 critters=1",
         ]
+    );
+}
+
+/// The requirement state is the active player's, read at the call: a level update's own events read the new level's green band (`0x5e28a1`) with no frame between.
+#[test]
+fn a_level_update_reads_the_new_level_in_its_own_events() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)]) else {
+        return;
+    };
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_LEVEL, 40)])], 2);
+    assert_eq!(
+        pin(&seen, &["UNIT_LEVEL", "PLAYER_LEVEL_UP"], &["greenrange"]),
+        vec!["UNIT_LEVEL player | greenrange=8"]
+    );
+}
+
+/// The currency list is built at 12340's triggers and its events fire from their handlers: the world entry's (`0x528299`) after `UPDATE_FACTION` (`0x528208`); the known-currencies watch's `KNOWN_CURRENCY_TYPES_UPDATE` (`0x6e5401` -> `0x5b0640`) with the row's record asked; that record's landing (`0x5b0260` -> `0x5b0660`); a token slot's (`0x5d991f`) and our token's count (`0x707832`), each read at its own event.
+#[test]
+fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1, FIELD_PLAYER_KNOWN_CURRENCIES,
+    };
+    const BADGE: u32 = 29434;
+    const BADGE_GUID: u64 = 0x4000_0000_0000_0300;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let login = fired(
+        &rig.take(),
+        &[
+            "PLAYER_ENTERING_WORLD",
+            "UPDATE_FACTION",
+            "CURRENCY_DISPLAY_UPDATE",
+        ],
+    );
+    assert_eq!(
+        login,
+        [
+            "UPDATE_FACTION",
+            "PLAYER_ENTERING_WORLD",
+            "UPDATE_FACTION",
+            "CURRENCY_DISPLAY_UPDATE"
+        ],
+        "the first UPDATE_FACTION is the pre-player faction packet's"
+    );
+    let bit = rig
+        .app
+        .world()
+        .resource::<crate::ui_currency::Currencies>()
+        .0
+        .types
+        .iter()
+        .find(|t| t.item_id == BADGE)
+        .map(|t| t.bit_index)
+        .expect("the badge's row");
+    let known = 1u64 << (bit - 1);
+    let events = &["KNOWN_CURRENCY_TYPES_UPDATE", "CURRENCY_DISPLAY_UPDATE"];
+    let verbs = &["cursize", "cur2"];
+    let seen = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_KNOWN_CURRENCIES, known as u32),
+            (FIELD_PLAYER_KNOWN_CURRENCIES + 1, (known >> 32) as u32),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["KNOWN_CURRENCY_TYPES_UPDATE | cursize=2 cur2=nilx0"],
+        "one watch for the pair; the record is not cached yet"
+    );
+    let mut badge = crate::items::test_template("Badge of Justice");
+    badge.class = 10;
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: BADGE,
+            info: Some(Box::new(badge)),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex0"]
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: BADGE_GUID,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 5),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[
+                (FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1, BADGE_GUID as u32),
+                (
+                    FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1 + 1,
+                    (BADGE_GUID >> 32) as u32,
+                ),
+            ]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex5"],
+        "one watch for the slot's two words"
+    );
+    // The token slot's watch updates our contents before the currency leg (`0x5d98e3`, `0x5d991f`).
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE"
+        ]
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: BADGE_GUID,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_STACK_COUNT, 7)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["CURRENCY_DISPLAY_UPDATE | cursize=2 cur2=Badge of Justicex7"]
+    );
+    // One update moving a packed token's count and enchants: the count handler's currency leg fires before the enchant handler runs (`0x707832`, `0x708bd0`), each handler's `BAG_UPDATE`s, our backpack, keyring and tokens (`0x5d7098`-`0x5d70ba`), in its turn (`0x707805`, `0x707fe4`).
+    const PACKED: u64 = 0x4000_0000_0000_0302;
+    let slot2 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 2;
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: PACKED,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (benilla_protocol::field::FIELD_ITEM_CONTAINED, ME as u32),
+                    (
+                        benilla_protocol::field::FIELD_ITEM_CONTAINED + 1,
+                        (ME >> 32) as u32,
+                    ),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(slot2, PACKED as u32), (slot2 + 1, (PACKED >> 32) as u32)]),
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: PACKED,
+            fields: ObjectFields::from_pairs(&[
+                (FIELD_ITEM_STACK_COUNT, 2),
+                (benilla_protocol::field::FIELD_ITEM_ENCHANTMENT_1_1, 1),
+            ]),
+        }],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE"
+        ]
+    );
+    // A pack slot's leg reads the old item's class inside the field handler, before the same frame's destroy of it (`0x5d97fd`).
+    const LOOSE: u64 = 0x4000_0000_0000_0301;
+    let pack = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: LOOSE,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, BADGE),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(pack, LOOSE as u32), (pack + 1, (LOOSE >> 32) as u32)]),
+        ],
+        2,
+    );
+    let seen = rig.packets(
+        vec![
+            self_values(&[(pack, 0), (pack + 1, 0)]),
+            SessionEvent::ObjectDestroyed(LOOSE),
+        ],
+        2,
+    );
+    assert_eq!(
+        fired(&seen, &["CURRENCY_DISPLAY_UPDATE"]),
+        ["CURRENCY_DISPLAY_UPDATE"],
+        "the old item is still held when its slot's handler runs"
+    );
+}
+
+/// The bag watches fire from the update's handler in field order, each read at its own event: a pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update (`0x5d9a87`, `0x5d9b16`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
+#[test]
+fn the_bag_watches_fire_from_the_update_in_field_order() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT,
+        FIELD_OBJECT_ENTRY, FIELD_PLAYER_BANK_BAG_SLOT_1, FIELD_PLAYER_BANK_SLOT_1,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const ARROWS: u64 = 0x4000_0000_0000_0400;
+    const POUCH: u64 = 0x4000_0000_0000_0401;
+    const SACK: u64 = 0x4000_0000_0000_0402;
+    const STONE: u64 = 0x4000_0000_0000_0403;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let item = |guid: u64, entry: u32, slots: Option<u32>| {
+        let mut pairs = vec![
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, ME as u32),
+            (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, 20),
+        ];
+        if let Some(n) = slots {
+            pairs.push((FIELD_CONTAINER_NUM_SLOTS, n));
+        }
+        let kind = if slots.is_some() {
+            ObjectType::Container
+        } else {
+            ObjectType::Item
+        };
+        SessionEvent::ItemCreate {
+            guid,
+            container: slots.is_some(),
+            fields: ObjectFields::from_pairs(&pairs).into_created(kind),
+        }
+    };
+    let slot = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let events = &[
+        "BAG_UPDATE",
+        "BAG_CLOSED",
+        "ITEM_LOCK_CHANGED",
+        "PLAYERBANKSLOTS_CHANGED",
+    ];
+    let verbs = &["free0", "cnt01", "lock01", "slots1"];
+
+    let seen = rig.packets(
+        vec![
+            item(ARROWS, 2512, None),
+            self_values(&slot(FIELD_PLAYER_PACK_SLOT_1, ARROWS)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "BAG_UPDATE 0 | free0=15 cnt01=20 lock01=nil slots1=0",
+            "BAG_UPDATE -2 | free0=15 cnt01=20 lock01=nil slots1=0",
+            "BAG_UPDATE -4 | free0=15 cnt01=20 lock01=nil slots1=0",
+        ],
+        "a pack slot's watch, read at its event"
+    );
+
+    // The move's send locks the item at its one held end (`0x706fe0`).
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+    })
+    .expect("a VM")
+    .expect("the move runs");
+    let seen = rig.packets(Vec::new(), 2);
+    let lock_events = &["ITEM_LOCK_CHANGED", "ITEM_LOCKED", "ITEM_UNLOCKED"];
+    let locks = pin(&seen, lock_events, &["lock01"]);
+    assert_eq!(
+        locks[locks.len().saturating_sub(2)..],
+        [
+            "ITEM_LOCK_CHANGED 0 1 | lock01=1",
+            "ITEM_LOCKED 0 1 | lock01=1"
+        ],
+        "the send's lock reads locked at its events: {locks:?}"
+    );
+    // Slot 1's watch unlocks its new item, none (`0x5d9863` -> `0x513770`), then our updates; slot 2's unlocks the arrows at their new place, then ours again.
+    let mut words = slot(FIELD_PLAYER_PACK_SLOT_1, 0).to_vec();
+    words.extend(slot(FIELD_PLAYER_PACK_SLOT_1 + 2, ARROWS));
+    let seen = rig.packets(vec![self_values(&words)], 2);
+    let moved: Vec<&str> = events.iter().chain(lock_events).copied().collect();
+    assert_eq!(
+        pin(&seen, &moved, &["free0", "lock02"]),
+        [
+            "BAG_UPDATE 0 | free0=15 lock02=1",
+            "BAG_UPDATE -2 | free0=15 lock02=1",
+            "BAG_UPDATE -4 | free0=15 lock02=1",
+            "ITEM_LOCK_CHANGED 0 2 | free0=15 lock02=nil",
+            "ITEM_UNLOCKED 0 2 | free0=15 lock02=nil",
+            "BAG_UPDATE 0 | free0=15 lock02=nil",
+            "BAG_UPDATE -2 | free0=15 lock02=nil",
+            "BAG_UPDATE -4 | free0=15 lock02=nil",
+        ],
+        "no event for the emptied slot; the arrows unlock where they landed"
+    );
+
+    // A bag in the first bag slot, then another over it.
+    let bag_slot = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19;
+    let seen = rig.packets(
+        vec![
+            item(POUCH, 828, Some(6)),
+            self_values(&slot(bag_slot, POUCH)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["slots1"]),
+        [
+            "BAG_UPDATE 0 | slots1=0",
+            "BAG_UPDATE -2 | slots1=0",
+            "BAG_UPDATE -4 | slots1=0",
+            "BAG_UPDATE 1 | slots1=6",
+        ],
+        "our contents update before the refresh watches the new bag (0x5d9bf9, 0x5d9bfe)"
+    );
+    let seen = rig.packets(
+        vec![
+            item(SACK, 4496, Some(8)),
+            self_values(&slot(bag_slot, SACK)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["slots1"]),
+        [
+            "BAG_UPDATE 0 | slots1=6",
+            "BAG_UPDATE -2 | slots1=6",
+            "BAG_UPDATE -4 | slots1=6",
+            "BAG_CLOSED 1 | slots1=6",
+            "BAG_UPDATE 1 | slots1=8",
+        ]
+    );
+
+    // The vault's first slot, then the first bank-bag slot.
+    let seen = rig.packets(
+        vec![
+            item(STONE, 6948, None),
+            self_values(&slot(FIELD_PLAYER_BANK_SLOT_1, STONE)),
+        ],
+        2,
+    );
+    assert_eq!(pin(&seen, events, &[]), ["PLAYERBANKSLOTS_CHANGED 1"]);
+    let seen = rig.packets(
+        vec![self_values(&slot(FIELD_PLAYER_BANK_BAG_SLOT_1, POUCH))],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &[]),
+        [
+            "PLAYERBANKSLOTS_CHANGED 29",
+            "BAG_UPDATE 0",
+            "BAG_UPDATE -2",
+            "BAG_UPDATE -4",
+            "BAG_UPDATE 5",
+        ]
+    );
+}
+
+/// An item set's tooltip block reads its row and the members' names at the call (`0x62ba3e`): an unanswered name is asked and the tooltip waits on it, and the name's answer renders the tooltip again from the handler (`0x62ba29`).
+#[test]
+fn an_item_sets_block_reads_its_row_and_names_at_the_call() {
+    const SET: u32 = 161;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (set_name, members) = {
+        let sets = rig.app.world().resource::<crate::ui_items::ItemSets>();
+        let row = sets.0.set(SET).expect("ItemSet.dbc's row 161");
+        (row.name.clone(), row.items.clone())
+    };
+    let piece = members[0];
+    let mut info = crate::items::test_template("Set Piece");
+    info.item_set = SET;
+    rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: piece,
+            info: Some(Box::new(info)),
+        }],
+        2,
+    );
+    let read = |rig: &mut Rig| -> String {
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval(
+                "local t = {} for i = 1, GameTooltip:NumLines() do                  t[#t + 1] = _G['GameTooltipTextLeft' .. i]:GetText() or '' end                  return table.concat(t, '|')",
+            )
+            .expect("the tooltip's lines")
+    };
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(&format!(
+            "GameTooltip:SetOwner(UIParent, 'ANCHOR_NONE') GameTooltip:SetHyperlink('item:{piece}')"
+        ))
+    })
+    .expect("a VM")
+    .expect("the hover runs");
+    let before = read(&mut rig);
+    assert!(before.contains(&set_name), "the set's row read: {before}");
+    assert!(!before.contains("Second Piece"), "{before}");
+    let seen = rig.packets(
+        vec![SessionEvent::ItemName {
+            entry: members[1],
+            name: Some(("Second Piece".into(), 5)),
+        }],
+        2,
+    );
+    let _ = seen;
+    let after = read(&mut rig);
+    assert!(
+        after.contains("Second Piece"),
+        "the name's answer renders the block again: {after}"
+    );
+}
+
+/// The inventory watch runs on the worn slots too (`0x6e51c5`-`0x6e51fb`): an equipped item unlocks at its new slot (`0x6dee39`) before the slot's `PLAYER_EQUIPMENT_CHANGED` (`0x6deea2`), an emptied slot fires it with the slot alone (`0x6dee81`); an owned item's entry change drops the old record (`0x7079bb`) and fires its container's `BAG_UPDATE` from the record callback, at once when cached (`0x707a07` -> `0x707949`), else when the record lands.
+#[test]
+fn a_worn_slot_and_an_entry_change_run_their_watches() {
+    use crate::pending_item_ops::PendingItemOps;
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const SWORD: u64 = 0x4000_0000_0000_0600;
+    const STONE: u64 = 0x4000_0000_0000_0601;
+    const SWORD_ENTRY: u32 = 25;
+    const OLD: u32 = 6948;
+    const CACHED: u32 = 4496;
+    const ASKED: u32 = 2589;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        [
+            (SWORD_ENTRY, "Worn Shortsword"),
+            (OLD, "Hearthstone"),
+            (CACHED, "Small Brown Pouch"),
+        ]
+        .into_iter()
+        .map(|(entry, name)| SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(crate::items::test_template(name))),
+        })
+        .collect(),
+        2,
+    );
+    let pair = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let item = |guid: u64, entry: u32| {
+        let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 1)];
+        pairs.extend(pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(pair(FIELD_ITEM_CONTAINED, ME));
+        SessionEvent::ItemCreate {
+            guid,
+            container: false,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+        }
+    };
+    let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+    rig.packets(
+        vec![
+            item(SWORD, SWORD_ENTRY),
+            item(STONE, OLD),
+            self_values(&pair(FIELD_PLAYER_PACK_SLOT_1, SWORD)),
+            self_values(&pair(FIELD_PLAYER_PACK_SLOT_1 + 2, STONE)),
+        ],
+        2,
+    );
+    rig.app
+        .world_mut()
+        .resource_mut::<PendingItemOps>()
+        .lock(SWORD);
+    let events = &[
+        "ITEM_LOCK_CHANGED",
+        "ITEM_UNLOCKED",
+        "PLAYER_EQUIPMENT_CHANGED",
+        "BAG_UPDATE",
+    ];
+    let mut words = pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15, SWORD).to_vec();
+    words.extend(pair(FIELD_PLAYER_PACK_SLOT_1, 0));
+    let seen = rig.packets(vec![self_values(&words)], 2);
+    assert_eq!(
+        pin(&seen, events, &[]),
+        [
+            "ITEM_LOCK_CHANGED 16",
+            "ITEM_UNLOCKED 16",
+            "PLAYER_EQUIPMENT_CHANGED 16 1",
+            "BAG_UPDATE 0",
+            "BAG_UPDATE -2",
+            "BAG_UPDATE -4",
+        ],
+        "the worn slot's watch runs first, in field order, and unlocks the item it now holds"
+    );
+    assert!(
+        !rig.app
+            .world()
+            .resource::<PendingItemOps>()
+            .is_locked(SWORD),
+        "the equipped item is unlocked"
+    );
+    let seen = rig.packets(vec![self_values(&pair(main_hand, 0))], 2);
+    assert_eq!(pin(&seen, events, &[]), ["PLAYER_EQUIPMENT_CHANGED 16"]);
+
+    // An entry change to a cached record: the callback at once, then the queued quest update.
+    let entry_events = &["BAG_UPDATE", "PLAYERBANKSLOTS_CHANGED", "QUEST_LOG_UPDATE"];
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: STONE,
+            fields: ObjectFields::from_pairs(&[(FIELD_OBJECT_ENTRY, CACHED)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, entry_events, &[]),
+        [
+            "BAG_UPDATE 0",
+            "BAG_UPDATE -2",
+            "BAG_UPDATE -4",
+            "QUEST_LOG_UPDATE"
+        ]
+    );
+    let items = rig.app.world().resource::<crate::items::Items>();
+    assert!(
+        items.template_cached(OLD).is_none(),
+        "the old record is dropped"
+    );
+    assert!(items.template_cached(CACHED).is_some());
+    // An entry change to an uncached record: the quest update now, the callback when it lands.
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: STONE,
+            fields: ObjectFields::from_pairs(&[(FIELD_OBJECT_ENTRY, ASKED)]),
+        }],
+        2,
+    );
+    assert_eq!(pin(&seen, entry_events, &[]), ["QUEST_LOG_UPDATE"]);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: ASKED,
+            info: Some(Box::new(crate::items::test_template("Red Woolen Bag"))),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["BAG_UPDATE"], &[]),
+        ["BAG_UPDATE 0", "BAG_UPDATE -2", "BAG_UPDATE -4"],
+        "the record callback runs when the record lands"
+    );
+}
+
+/// A watched bag's slot watch runs once per slot field (`0x5d9600`, registered per slot at `0x5d9af8`): a swap inside a bag unlocks each slot's new item before that slot's `BAG_UPDATE`; the count watch unlocks every stack of a stackable kind at its place (`0x7077c1` -> `0x754d90`); the enchant watch unlocks nothing and returns on a charter (`0x707f6b`); `BAG_OPEN` names the container (`0x5d7110`).
+#[test]
+fn a_bag_slot_count_and_enchant_watch_each_run_their_own_handler() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_CONTAINER_SLOT_1, FIELD_ITEM_CONTAINED,
+        FIELD_ITEM_ENCHANTMENT_1_1, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const SACK: u64 = 0x4000_0000_0000_0500;
+    const CLOTH: u64 = 0x4000_0000_0000_0501;
+    const HIDE: u64 = 0x4000_0000_0000_0502;
+    const ARROW_A: u64 = 0x4000_0000_0000_0503;
+    const ARROW_B: u64 = 0x4000_0000_0000_0504;
+    const CHARTER: u64 = 0x4000_0000_0000_0505;
+    const ARROW_ENTRY: u32 = 2512;
+    const CHARTER_ENTRY: u32 = 5863;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let mut arrows = crate::items::test_template("Rough Arrow");
+    arrows.stackable = 200;
+    let mut charter = crate::items::test_template("Guild Charter");
+    charter.flags = 0x2000;
+    rig.packets(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: ARROW_ENTRY,
+                info: Some(Box::new(arrows)),
+            },
+            SessionEvent::ItemTemplate {
+                entry: CHARTER_ENTRY,
+                info: Some(Box::new(charter)),
+            },
+        ],
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let item = |guid: u64, entry: u32, inside: u64, extra: &[(u16, u32)]| {
+        let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 20)];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, inside));
+        pairs.extend_from_slice(extra);
+        let bag = extra.iter().any(|&(f, _)| f == FIELD_CONTAINER_NUM_SLOTS);
+        SessionEvent::ItemCreate {
+            guid,
+            container: bag,
+            fields: ObjectFields::from_pairs(&pairs).into_created(if bag {
+                ObjectType::Container
+            } else {
+                ObjectType::Item
+            }),
+        }
+    };
+    let lock_events = &[
+        "BAG_UPDATE",
+        "BAG_OPEN",
+        "ITEM_LOCK_CHANGED",
+        "ITEM_LOCKED",
+        "ITEM_UNLOCKED",
+        "PLAYERBANKSLOTS_CHANGED",
+    ];
+    let mut sack = vec![(FIELD_CONTAINER_NUM_SLOTS, 8)];
+    sack.extend(guid_pair(FIELD_CONTAINER_SLOT_1, CLOTH));
+    sack.extend(guid_pair(FIELD_CONTAINER_SLOT_1 + 2, HIDE));
+    let mut pack = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19, SACK).to_vec();
+    pack.extend(guid_pair(FIELD_PLAYER_PACK_SLOT_1 + 2, ARROW_A));
+    pack.extend(guid_pair(FIELD_PLAYER_PACK_SLOT_1 + 4, CHARTER));
+    pack.extend(guid_pair(FIELD_PLAYER_PACK_SLOT_1 + 8, ARROW_B));
+    rig.packets(
+        vec![
+            item(SACK, 4496, ME, &sack),
+            item(CLOTH, 2589, SACK, &[]),
+            item(HIDE, 2318, SACK, &[]),
+            item(ARROW_A, ARROW_ENTRY, ME, &[]),
+            item(ARROW_B, ARROW_ENTRY, ME, &[]),
+            item(CHARTER, CHARTER_ENTRY, ME, &[]),
+            self_values(&pack),
+        ],
+        2,
+    );
+
+    // A swap inside the worn bag locks both items; the bag's two slot fields then run its slot watch twice, each unlocking its own new item.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(1, 1) PickupContainerItem(1, 2)")
+    })
+    .expect("a VM")
+    .expect("the swap runs");
+    let seen = rig.packets(Vec::new(), 2);
+    let locks = pin(&seen, lock_events, &["lock11", "lock12"]);
+    assert_eq!(
+        locks[locks.len().saturating_sub(4)..],
+        [
+            "ITEM_LOCK_CHANGED 1 1 | lock11=1 lock12=nil",
+            "ITEM_LOCKED 1 1 | lock11=1 lock12=nil",
+            "ITEM_LOCK_CHANGED 1 2 | lock11=1 lock12=1",
+            "ITEM_LOCKED 1 2 | lock11=1 lock12=1",
+        ]
+    );
+    let mut swap = guid_pair(FIELD_CONTAINER_SLOT_1, HIDE).to_vec();
+    swap.extend(guid_pair(FIELD_CONTAINER_SLOT_1 + 2, CLOTH));
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SACK,
+            fields: ObjectFields::from_pairs(&swap),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, lock_events, &["lock11", "lock12"]),
+        [
+            "ITEM_LOCK_CHANGED 1 1 | lock11=nil lock12=1",
+            "ITEM_UNLOCKED 1 1 | lock11=nil lock12=1",
+            "BAG_UPDATE 1 | lock11=nil lock12=1",
+            "ITEM_LOCK_CHANGED 1 2 | lock11=nil lock12=nil",
+            "ITEM_UNLOCKED 1 2 | lock11=nil lock12=nil",
+            "BAG_UPDATE 1 | lock11=nil lock12=nil",
+        ],
+        "one handler run per slot field, each unlock before its slot's update"
+    );
+
+    // A merge locks both arrow stacks; the count watch on one unlocks every stack of the kind in the search's order, each read at its own event.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 2) PickupContainerItem(0, 5)")
+    })
+    .expect("a VM")
+    .expect("the merge runs");
+    rig.packets(Vec::new(), 2);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: ARROW_B,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_STACK_COUNT, 40)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, lock_events, &["lock02", "lock05"]),
+        [
+            "ITEM_LOCK_CHANGED 0 2 | lock02=nil lock05=1",
+            "ITEM_UNLOCKED 0 2 | lock02=nil lock05=1",
+            "ITEM_LOCK_CHANGED 0 5 | lock02=nil lock05=nil",
+            "ITEM_UNLOCKED 0 5 | lock02=nil lock05=nil",
+            "BAG_UPDATE 0 | lock02=nil lock05=nil",
+            "BAG_UPDATE -2 | lock02=nil lock05=nil",
+            "BAG_UPDATE -4 | lock02=nil lock05=nil",
+        ]
+    );
+
+    // A locked stack's enchant change unlocks nothing and updates its bag; a charter's fires nothing at all.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 5) PickupContainerItem(0, 7)")
+    })
+    .expect("a VM")
+    .expect("the move runs");
+    rig.packets(Vec::new(), 2);
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ObjectValues {
+                guid: ARROW_B,
+                fields: ObjectFields::from_pairs(&[(FIELD_ITEM_ENCHANTMENT_1_1, 1)]),
+            },
+            SessionEvent::ObjectValues {
+                guid: CHARTER,
+                fields: ObjectFields::from_pairs(&[(FIELD_ITEM_ENCHANTMENT_1_1, 1)]),
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, lock_events, &["lock05"]),
+        [
+            "BAG_UPDATE 0 | lock05=1",
+            "BAG_UPDATE -2 | lock05=1",
+            "BAG_UPDATE -4 | lock05=1",
+        ],
+        "the stack stays locked; the charter's watch returns before any update"
+    );
+
+    // `SMSG_OPEN_CONTAINER`: our own guid is the backpack, the worn bag its id, anything else nothing.
+    let seen = rig.packets(
+        vec![
+            SessionEvent::OpenContainer { item: SACK },
+            SessionEvent::OpenContainer { item: ME },
+            SessionEvent::OpenContainer { item: CHARTER },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["BAG_OPEN"], &["slots1"]),
+        ["BAG_OPEN 1 | slots1=8", "BAG_OPEN 0 | slots1=8"]
+    );
+}
+
+/// A Lua bag index reads the watched-bag array (`0x5d6f20`): a bank bag answers only with a banker set (`0x5d6f34`-`0x5d6f3f`), and during a bank-bag slot's update the inventory watch's `PLAYERBANKSLOTS_CHANGED` (`0x6deed6`) still reads the old bag, as does the refresh's `BAG_CLOSED` (`0x5d9a87`), until the array takes the new one (`0x5d9a96`).
+#[test]
+fn a_bag_index_reads_the_watched_bag_behind_the_banker_gate() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_BANK_BAG_SLOT_1,
+    };
+    const POUCH: u64 = 0x4000_0000_0000_0601;
+    const SACK: u64 = 0x4000_0000_0000_0602;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let bag = |guid: u64, entry: u32, slots: u32| {
+        let mut pairs = vec![
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_CONTAINER_NUM_SLOTS, slots),
+        ];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+        SessionEvent::ItemCreate {
+            guid,
+            container: true,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Container),
+        }
+    };
+    let events = &[
+        "PLAYERBANKSLOTS_CHANGED",
+        "BAG_CLOSED",
+        "BAG_UPDATE",
+        "BANKFRAME_OPENED",
+    ];
+    let verbs = &["slots5"];
+    let seen = rig.packets(
+        vec![
+            bag(POUCH, 828, 6),
+            bag(SACK, 4496, 8),
+            self_values(&guid_pair(FIELD_PLAYER_BANK_BAG_SLOT_1, POUCH)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "PLAYERBANKSLOTS_CHANGED 29 | slots5=0",
+            "BAG_UPDATE 0 | slots5=0",
+            "BAG_UPDATE -2 | slots5=0",
+            "BAG_UPDATE -4 | slots5=0",
+            "BAG_UPDATE 5 | slots5=0",
+        ],
+        "no banker: the bank bag answers nothing"
+    );
+    let seen = rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, &["slots5", "name5"]),
+        ["BANKFRAME_OPENED | slots5=6 name5=nil"],
+        "a banker set: the watched pouch answers; its record is not cached"
+    );
+    let seen = rig.packets(
+        vec![self_values(&guid_pair(FIELD_PLAYER_BANK_BAG_SLOT_1, SACK))],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "PLAYERBANKSLOTS_CHANGED 29 | slots5=6",
+            "BAG_UPDATE 0 | slots5=6",
+            "BAG_UPDATE -2 | slots5=6",
+            "BAG_UPDATE -4 | slots5=6",
+            "BAG_CLOSED 5 | slots5=6",
+            "BAG_UPDATE 5 | slots5=8",
+        ],
+        "the old bag answers until the refresh takes the new one"
+    );
+}
+
+/// A refundable purchase's record is asked by the item's post-init, by the merchant list for one held before the player, and answered into the verbs at the call; the result's lines print from its handler (`0x70ae34`, `0x6d1760`, `0x6d1650`, `0x6d9b40`).
+#[test]
+fn a_refund_record_is_asked_read_at_the_call_and_its_result_prints_in_the_handler() {
+    use crate::net::ClientCommand;
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::{PurchaseCost, RefundRecord};
+    const BADGE_BOUGHT: u32 = 40_001;
+    const EARLY: u64 = 0x4000_0000_0000_0500;
+    const LATER: u64 = 0x4000_0000_0000_0501;
+    let item = |guid: u64| SessionEvent::ItemCreate {
+        guid,
+        container: false,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_OBJECT_ENTRY, BADGE_BOUGHT),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, ME as u32),
+            (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, 1),
+        ])
+        .into_created(ObjectType::Item),
+    };
+    let mut template = crate::items::test_template("Charz Purchase");
+    template.flags = 0x1000;
+    let template = SessionEvent::ItemTemplate {
+        entry: BADGE_BOUGHT,
+        info: Some(Box::new(template)),
+    };
+    let slot = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    // An item created ahead of our own create: its post-init has no player to ask for.
+    let Some(mut rig) = Rig::login_around(
+        vec![template, item(EARLY)],
+        &[
+            OBJECT_TYPE_PLAYER,
+            slot(FIELD_PLAYER_PACK_SLOT_1, EARLY)[0],
+            slot(FIELD_PLAYER_PACK_SLOT_1, EARLY)[1],
+        ],
+        Vec::new(),
+    ) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let asks = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<u64> {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::ItemRefundInfo { item } => Some(item),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(rig.now().verbs["refund01"], "nil");
+
+    // The merchant list asks the held purchase without a record, once.
+    let list = || SessionEvent::VendorInventory {
+        vendor: 0xF130_0000_0000_0042,
+        items: Vec::new(),
+        error: None,
+    };
+    rig.packets(vec![list()], 1);
+    assert_eq!(
+        asks(&rx),
+        [EARLY],
+        "the list asks the purchase held before the player"
+    );
+    rig.packets(vec![list()], 1);
+    assert!(
+        asks(&rx).is_empty(),
+        "the pending bit holds the second list"
+    );
+
+    // The record reads at the call, the frame its answer lands.
+    let record = RefundRecord {
+        cost: PurchaseCost {
+            honor: 2000,
+            ..Default::default()
+        },
+        played_at_purchase: 100,
+    };
+    rig.send(SessionEvent::ItemRefundInfo {
+        item: EARLY,
+        record,
+    });
+    rig.app.update();
+    assert_eq!(rig.live_now().verbs["refund01"], "2000");
+
+    // An item made with the player held asks from its post-init.
+    rig.packets(vec![item(LATER)], 1);
+    assert_eq!(asks(&rx), [LATER], "the post-init asks the new purchase");
+
+    // The result prints its lines in its handler, ahead of the next packet's events.
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ItemRefundResult {
+                item: EARLY,
+                result: 0,
+                cost: Some(record.cost),
+            },
+            SessionEvent::ObjectDestroyed(EARLY),
+        ],
+        2,
+    );
+    let lines: Vec<&str> = seen
+        .iter()
+        .filter(|s| s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.args.as_str())
+        .collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "the refund line and the honor line: {lines:?}"
+    );
+    assert!(lines[1].contains("2000"), "the honor refunded: {lines:?}");
+    assert_eq!(
+        rig.live_now().verbs["refund01"],
+        "nil",
+        "the record went with its item"
+    );
+}
+
+/// The bank's open takes the interact target from the vendor holding it (`0x57b909` -> `0x51fce0`): the vendor closes.
+#[test]
+fn the_banks_open_closes_the_vendor_holding_the_target() {
+    const VENDOR: u64 = 0xF130_0000_0200_0002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![banker_create(0x20000), npc_create(VENDOR, 0x80)], 1);
+    let row = benilla_protocol::messages::VendorItem {
+        slot: 1,
+        entry: 159,
+        display_id: 18084,
+        current_count: 0xFFFF_FFFF,
+        price: 5,
+        max_durability: 0,
+        buy_count: 1,
+        extended_cost: 0,
+    };
+    rig.packets(
+        vec![SessionEvent::VendorInventory {
+            vendor: VENDOR,
+            items: vec![row],
+            error: None,
+        }],
+        2,
+    );
+    let open = |rig: &App| {
+        use crate::ui_session::NpcSession;
+        rig.world()
+            .resource::<crate::ui_merchant::MerchantOpen>()
+            .npc()
+    };
+    assert_eq!(open(&rig.app), Some(VENDOR), "the vendor is open");
+    let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 3);
+    assert_eq!(open(&rig.app), None, "the bank's open closed the vendor");
+    let order = fired(&seen, &["MERCHANT_CLOSED", "BANKFRAME_OPENED"]);
+    assert!(
+        order.iter().any(|e| e == "MERCHANT_CLOSED"),
+        "the vendor's close fired: {order:?}"
+    );
+}
+
+/// The guild bank's handlers fire in 12340's turn with the verbs reading the bank at the call: the hello's list fires each tab row's `GUILDBANK_UPDATE_TABS` after that row and before the slots (`0x5a73f6`), then `GUILDBANKFRAME_OPENED` (`0x5a774c`); an open bank's list waits on an uncached record and fires `GUILDBANKBAGSLOTS_CHANGED` from its callback (`0x5a767c`, `0x5a47a0`), or at once with the record cached (`0x5a76c7`); the log waits on its names (`0x5a4a34`, `0x5a47d0`); the money, the withdrawal and the text fire from their handlers (`0x6d97ad`, `0x5a4ab0`, `0x5a4ae0`); the quit closes the bank (`0x6cc630`).
+#[test]
+fn the_guild_bank_fires_from_its_handlers_with_the_bank_read_at_the_call() {
+    use benilla_protocol::messages::{
+        guild_command, guild_command_error, guild_event, GuildBankList, GuildBankLog,
+        GuildBankLogEntry, GuildBankSlot, GuildBankTab, GuildCommandResult, GuildEventNotice,
+    };
+    const BANK: &[&str] = &[
+        "GUILDBANK_UPDATE_TABS",
+        "GUILDBANKFRAME_OPENED",
+        "GUILDBANKFRAME_CLOSED",
+        "GUILDBANKBAGSLOTS_CHANGED",
+        "GUILDBANKLOG_UPDATE",
+        "GUILDBANK_UPDATE_MONEY",
+        "GUILDBANK_UPDATE_WITHDRAWMONEY",
+        "GUILDBANK_UPDATE_TEXT",
+    ];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    // A guild banker held beside us, so the walk-away watchdog keeps it open.
+    const VAULT: u64 = BANKER + 9;
+    rig.packets(vec![npc_create(VAULT, 0x80_0000)], 2);
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(VAULT, &net);
+    }
+    let slot = |slot: u8, item_id: u32, count: u32| GuildBankSlot {
+        slot,
+        item_id,
+        count,
+        ..Default::default()
+    };
+    let template = |entry: u32| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template("Linen Cloth"))),
+    };
+    let list = |slots: Vec<GuildBankSlot>, tabs: Option<Vec<GuildBankTab>>| {
+        SessionEvent::GuildBankList(GuildBankList {
+            money: 1234,
+            tab: 0,
+            withdrawals_remaining: 5,
+            tabs,
+            slots,
+        })
+    };
+    let tab = |name: &str| GuildBankTab {
+        name: name.into(),
+        icon: "INV_Misc_Bag_10".into(),
+    };
+    // The hello's answer: each row's event after that row, the slots after both, then the open.
+    let seen = rig.packets(
+        vec![
+            template(2589),
+            list(vec![slot(3, 2589, 20)], Some(vec![tab("Mats"), tab("Ore")])),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            BANK,
+            &["gbtabs", "gbtab1", "gbtab2", "gbleft", "gbcount4", "gbmoney"]
+        ),
+        [
+            "GUILDBANK_UPDATE_TABS | gbtabs=2 gbtab1=Mats gbtab2=Tab2 gbleft=5 gbcount4=0 gbmoney=1234",
+            "GUILDBANK_UPDATE_TABS | gbtabs=2 gbtab1=Mats gbtab2=Ore gbleft=5 gbcount4=0 gbmoney=1234",
+            "GUILDBANKFRAME_OPENED | gbtabs=2 gbtab1=Mats gbtab2=Ore gbleft=5 gbcount4=20 gbmoney=1234",
+        ]
+    );
+    // An open bank's list with a record not cached waits for it; its landing fires the event.
+    let seen = rig.packets(vec![list(vec![slot(3, 4306, 7)], None)], 2);
+    assert!(fired(&seen, BANK).is_empty(), "{:?}", fired(&seen, BANK));
+    let seen = rig.packets(vec![template(4306)], 2);
+    assert_eq!(
+        pin(&seen, BANK, &["gbcount4"]),
+        ["GUILDBANKBAGSLOTS_CHANGED | gbcount4=7"]
+    );
+    // The record cached first, the list fires at once.
+    let seen = rig.packets(vec![list(vec![slot(3, 4306, 9)], None)], 2);
+    assert_eq!(
+        pin(&seen, BANK, &["gbcount4"]),
+        ["GUILDBANKBAGSLOTS_CHANGED | gbcount4=9"]
+    );
+    // The log waits on its row's name; the name's answer fires it.
+    const WRITER: u64 = 0x42;
+    let log = SessionEvent::GuildBankLog(GuildBankLog {
+        tab: 0,
+        entries: vec![GuildBankLogEntry {
+            kind: 1,
+            player: WRITER,
+            item_id: 4306,
+            count: 2,
+            ..Default::default()
+        }],
+    });
+    let seen = rig.packets(vec![log], 2);
+    assert!(fired(&seen, BANK).is_empty(), "{:?}", fired(&seen, BANK));
+    let name = SessionEvent::PlayerName {
+        guid: WRITER,
+        name: "Benilla".into(),
+        realm: String::new(),
+        race: 1,
+        gender: 0,
+        class: 1,
+        declensions: None,
+    };
+    let seen = rig.packets(vec![name], 2);
+    assert_eq!(
+        pin(&seen, BANK, &["gblog", "gblogname"]),
+        ["GUILDBANKLOG_UPDATE | gblog=1 gblogname=Benilla"]
+    );
+    // The withdrawal, the money and the text, each from its handler in wire order.
+    let money = SessionEvent::GuildEvent(GuildEventNotice {
+        event: guild_event::BANK_MONEY_SET,
+        params: vec!["0000000000002710".into()],
+        guid: None,
+    });
+    let seen = rig.packets(
+        vec![
+            SessionEvent::GuildBankWithdrawMoney { remaining: 500 },
+            money,
+            SessionEvent::GuildBankText {
+                tab: 0,
+                text: "hello".into(),
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, BANK, &["gbmoney", "gbwithdraw", "gbtext"]),
+        [
+            "GUILDBANK_UPDATE_WITHDRAWMONEY | gbmoney=1234 gbwithdraw=500 gbtext=",
+            "GUILDBANK_UPDATE_MONEY | gbmoney=10000 gbwithdraw=500 gbtext=",
+            "GUILDBANK_UPDATE_TEXT 1 | gbmoney=10000 gbwithdraw=500 gbtext=hello",
+        ]
+    );
+    // Leaving the guild closes the bank, and the stock window's hide calls `CloseGuildBankFrame`, which fires it again (`0x5a4500`); a list then has no banker and none asked: closed once more (`0x5a76ef`).
+    let quit = SessionEvent::GuildCommandResult(GuildCommandResult {
+        command: guild_command::QUIT,
+        name: "Benilla".into(),
+        result: guild_command_error::PLAYER_NO_MORE_IN_GUILD,
+    });
+    let seen = rig.packets(vec![quit, list(Vec::new(), None)], 2);
+    assert_eq!(
+        fired(&seen, BANK),
+        [
+            "GUILDBANKFRAME_CLOSED",
+            "GUILDBANKFRAME_CLOSED",
+            "GUILDBANKFRAME_CLOSED"
+        ]
+    );
+}
+
+/// One record's callbacks run in ask order across subsystems, as 12340 links every ask to the tail of the record's one list (`0x67ca82`, `0x67cab1`): our bag item's post-init (`0x70af17`) and an open guild bank's list (`0x5a7664`) wait on the same entry, and its answer runs them in the order they asked, the post-init's `BAG_UPDATE`s (`0x70ae0b`) and `GUILDBANKBAGSLOTS_CHANGED` (`0x5a47a0`) either way round; a verb's callback, the currency build's (`0x5b01d7`), joins the same list.
+#[test]
+fn one_records_callbacks_run_in_ask_order_across_subsystems() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_KNOWN_CURRENCIES, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::{GuildBankList, GuildBankSlot, GuildBankTab};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    const VAULT: u64 = BANKER + 9;
+    rig.packets(vec![npc_create(VAULT, 0x80_0000)], 2);
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(VAULT, &net);
+    }
+    let list = |entry: u32, tabs: Option<Vec<GuildBankTab>>| {
+        SessionEvent::GuildBankList(GuildBankList {
+            money: 0,
+            tab: 0,
+            withdrawals_remaining: 5,
+            tabs,
+            slots: vec![GuildBankSlot {
+                slot: 3,
+                item_id: entry,
+                count: 1,
+                ..Default::default()
+            }],
+        })
+    };
+    let template = |entry: u32| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template("Linen Cloth"))),
+    };
+    // Our backpack's slot `n` takes an item of `entry` whose record is not cached.
+    let bag_item = |guid: u64, entry: u32, n: u16| {
+        let slot = FIELD_PLAYER_PACK_SLOT_1 + 2 * n;
+        vec![
+            SessionEvent::ItemCreate {
+                guid,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, entry),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_CONTAINED, ME as u32),
+                    (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(slot, guid as u32), (slot + 1, (guid >> 32) as u32)]),
+        ]
+    };
+    let tab = GuildBankTab {
+        name: "Mats".into(),
+        icon: "INV_Misc_Bag_10".into(),
+    };
+    rig.packets(vec![template(2589), list(2589, Some(vec![tab]))], 2);
+    const EVENTS: &[&str] = &["BAG_UPDATE", "GUILDBANKBAGSLOTS_CHANGED"];
+    // The bag item asks first, then the bank's list.
+    rig.packets(bag_item(0x4000_0000_0000_0401, 4306, 3), 2);
+    let seen = rig.packets(vec![list(4306, None)], 2);
+    assert!(fired(&seen, EVENTS).iter().all(|e| e == "BAG_UPDATE"));
+    let seen = rig.packets(vec![template(4306)], 2);
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "GUILDBANKBAGSLOTS_CHANGED"
+        ],
+        "the post-init asked first"
+    );
+    // The bank's list asks first, then the bag item.
+    rig.packets(vec![list(2592, None)], 2);
+    rig.packets(bag_item(0x4000_0000_0000_0402, 2592, 4), 2);
+    let seen = rig.packets(vec![template(2592)], 2);
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "GUILDBANKBAGSLOTS_CHANGED",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE"
+        ],
+        "the bank's list asked first"
+    );
+    // A verb's callback joins the same list: the bag item asks, then the currency build inside the known-currencies watch (`0x5b01d7`).
+    const BADGE: u32 = 29434;
+    let bit = rig
+        .app
+        .world()
+        .resource::<crate::ui_currency::Currencies>()
+        .0
+        .types
+        .iter()
+        .find(|t| t.item_id == BADGE)
+        .map(|t| t.bit_index)
+        .expect("the badge's row");
+    let known = 1u64 << (bit - 1);
+    rig.packets(bag_item(0x4000_0000_0000_0403, BADGE, 5), 2);
+    rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_KNOWN_CURRENCIES, known as u32),
+            (FIELD_PLAYER_KNOWN_CURRENCIES + 1, (known >> 32) as u32),
+        ])],
+        2,
+    );
+    let seen = rig.packets(vec![template(BADGE)], 2);
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE"
+        ],
+        "the post-init asked before the build"
+    );
+}
+
+/// The walk-away watchdog closes a bank whose banker is gone through the interaction close, its events fired as it runs, ahead of the frame's input: `BANKFRAME_CLOSED` with the banker still set (`0x512fa7` -> `0x57b8e6`), and the guild bank's leg through the banker setter (`0x512fd1` -> `0x5a4270`).
+#[test]
+fn the_walk_away_watchdog_closes_both_banks_with_their_events() {
+    use benilla_protocol::messages::{GuildBankList, GuildBankTab};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![
+            banker_create(0x20000),
+            SessionEvent::ShowBank { banker: BANKER },
+        ],
+        2,
+    );
+    // A plain destroy runs no death: the watchdog finds the banker gone.
+    let seen = rig.packets(vec![SessionEvent::ObjectDestroyed(BANKER)], 2);
+    assert_eq!(
+        pin(&seen, &["BANKFRAME_CLOSED"], &["bankopen"]),
+        [
+            "BANKFRAME_CLOSED | bankopen=true",
+            "BANKFRAME_CLOSED | bankopen=false",
+        ]
+    );
+    const VAULT: u64 = BANKER + 9;
+    rig.packets(vec![npc_create(VAULT, 0x80_0000)], 2);
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(VAULT, &net);
+    }
+    let list = SessionEvent::GuildBankList(GuildBankList {
+        tabs: Some(vec![GuildBankTab {
+            name: "Mats".into(),
+            icon: String::new(),
+        }]),
+        ..Default::default()
+    });
+    let seen = rig.packets(vec![list], 2);
+    assert_eq!(fired(&seen, &["GUILDBANKFRAME_OPENED"]).len(), 1);
+    let seen = rig.packets(vec![SessionEvent::ObjectDestroyed(VAULT)], 2);
+    assert_eq!(
+        pin(&seen, &["GUILDBANKFRAME_CLOSED"], &["gbtabs"]),
+        [
+            "GUILDBANKFRAME_CLOSED | gbtabs=1",
+            "GUILDBANKFRAME_CLOSED | gbtabs=1",
+        ]
+    );
+}
+
+/// An item record is read from the item cache at each call (`0x67ca30`): a miss asks the cache once (`CMSG_ITEM_QUERY_SINGLE`) and answers nothing; the answer's handler stores it and runs the UI's callbacks on it, so a tooltip waiting on it repaints in the packet's frame, and the next `GetItemInfo` and `GetItemStats` read it with no feed between.
+#[test]
+fn an_item_record_reads_at_the_call_and_its_answer_repaints_from_the_handler() {
+    use crate::net::ClientCommand;
+    const CLOTH: u32 = 2589;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let eval = |rig: &mut Rig, chunk: &str| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(chunk))
+            .expect("a VM")
+            .expect("the chunk runs")
+    };
+    let info = r#"return tostring((GetItemInfo(2589)))"#;
+    assert_eq!(eval(&mut rig, info), "nil", "a miss answers nothing");
+    eval(
+        &mut rig,
+        r#"GameTooltip:SetOwner(UIParent, "ANCHOR_NONE") GameTooltip:SetHyperlink("item:2589") return tostring(GameTooltipTextLeft1:GetText())"#,
+    );
+    let asks: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::ItemQuery { entry, .. } => Some(entry),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asks, [CLOTH], "the misses ask once");
+    let mut cloth = crate::items::test_template("Linen Cloth");
+    cloth.stats = vec![(7, 10)];
+    rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: CLOTH,
+            info: Some(Box::new(cloth)),
+        }],
+        1,
+    );
+    assert_eq!(
+        eval(&mut rig, "return tostring(GameTooltipTextLeft1:GetText())"),
+        "Linen Cloth",
+        "the handler's callback repainted the waiting tooltip"
+    );
+    assert_eq!(eval(&mut rig, info), "Linen Cloth");
+    assert_eq!(
+        eval(
+            &mut rig,
+            r#"return tostring(GetItemStats("item:2589")["ITEM_MOD_STAMINA_SHORT"])"#
+        ),
+        "10",
+        "the stat lines read the record at the call"
     );
 }

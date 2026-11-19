@@ -9,7 +9,7 @@ use mlua::{Lua, Table};
 
 use crate::script::item_verbs::FLAG_UNIQUE_EQUIPPED;
 use crate::script::tooltip::{append_line, duration_text, plural_template};
-use crate::script::ItemTemplateView;
+use crate::script::{ItemTemplateView, ReqFields};
 use crate::strings::{fill, Arg};
 
 use super::names::*;
@@ -104,7 +104,6 @@ pub(super) struct Scaled {
 impl Scaled {
     /// The rows of `v` at its shown level; `None` for an item that does not scale.
     pub(super) fn of(
-        model: &crate::script::Model,
         v: &ItemTemplateView,
         flags: BuilderFlags,
         inst: Option<&ItemInstance>,
@@ -112,19 +111,22 @@ impl Scaled {
         if v.scaling_value == 0 {
             return None;
         }
-        let tables = &model.scaling;
-        let level = crate::script::item_scaling::shown_level(
-            v,
-            tables,
-            flags.minimum_level,
-            inst.map_or(0, |i| i.link_level),
-            inst.map_or(0, |i| i.requester_level),
-            model.player_req.level as i32,
-        );
-        Some(Self {
-            level,
-            distribution: tables.distributions.get(&v.scaling_distribution).copied(),
-            values: tables.values_at(level).copied(),
+        let player = crate::script::item_stats::player_level() as i32;
+        crate::script::item_stats::with_item_tables(|t| {
+            let tables = &t.scaling;
+            let level = crate::script::item_scaling::shown_level(
+                v,
+                tables,
+                flags.minimum_level,
+                inst.map_or(0, |i| i.link_level),
+                inst.map_or(0, |i| i.requester_level),
+                player,
+            );
+            Some(Self {
+                level,
+                distribution: tables.distributions.get(&v.scaling_distribution).copied(),
+                values: tables.values_at(level).copied(),
+            })
         })
     }
 }
@@ -246,7 +248,7 @@ pub(super) fn render_view(
     let h = crate::script::object::frame_handle_of(lua, this)?;
     let scaled = {
         let mut model = crate::script::model_mut_of(lua);
-        let scaled = Scaled::of(&model, v, flags, inst);
+        let scaled = Scaled::of(v, flags, inst);
         if let Ok(t) = crate::script::tooltip::tip_mut(&mut model, h) {
             t.item_guid = inst.map_or(0, |i| i.guid);
             t.item_link = inst.map_or_else(Default::default, |i| i.link);
@@ -380,17 +382,13 @@ fn render_lines(
         };
         // The player's PvP team and sex, which name a required honor rank (`0x6d6f00`).
         let player = model.unit("player").map(|u| (u.pvp_team, u.sex == 3));
-        // The set view (a miss records the ask) and the equipped ids the set block counts.
+        // The set view read at the call, its members' pending names waited on, and the equipped ids the set block counts.
         let set_view = (v.item_set != 0)
-            .then(|| {
-                let view = model.item_sets.get(&v.item_set).cloned();
-                if view.is_none() {
-                    model.item_set_asks.insert(v.item_set);
-                    super::note_set_miss(&mut model, v.item_set);
-                }
-                view
-            })
+            .then(|| crate::script::item_stats::item_set(lua, &model, v.item_set))
             .flatten();
+        for &id in set_view.iter().flat_map(|s| &s.pending) {
+            super::note_name_miss(&mut model, id);
+        }
         // The worn items' templates (slots 0..=18), which the set block counts by their own set id;
         // one still in flight is asked for and counts once it lands.
         let worn: Vec<WornPiece> = match &set_view {
@@ -404,25 +402,27 @@ fn render_lines(
                     .filter(|&id| id != 0)
                     .collect();
                 ids.into_iter()
-                    .filter_map(|id| match model.item_templates.get(&id) {
-                        Some(t) => Some(WornPiece {
-                            id,
-                            name: t.name.clone(),
-                            item_set: t.item_set,
-                            inventory_type: t.inventory_type,
-                        }),
-                        None => {
-                            model.item_stat_asks.insert(id);
-                            super::note_item_miss(&mut model, id);
-                            None
-                        }
-                    })
+                    .filter_map(
+                        |id| match crate::script::item_stats::item_record(&model, id) {
+                            Some(t) => Some(WornPiece {
+                                id,
+                                name: t.name,
+                                item_set: t.item_set,
+                                inventory_type: t.inventory_type,
+                            }),
+                            None => {
+                                crate::script::item_stats::ask_item_record(&mut model, id);
+                                super::note_item_miss(&mut model, id);
+                                None
+                            }
+                        },
+                    )
                     .collect()
             }
             None => Vec::new(),
         };
         (
-            model.player_req.clone(),
+            crate::script::item_stats::player_req(),
             known,
             taught,
             set_view,
@@ -557,7 +557,7 @@ fn render_lines(
         };
         let mut left_red = false;
         let mut right_red = false;
-        if let Some(&mask) = req.proficiency.get(&v.class) {
+        if let Some(mask) = req.proficiency(v.class) {
             if mask & (1 << v.subclass) == 0 {
                 let alt_ok =
                     v.class == 2 && v.proficiency_alt.is_some_and(|a| mask & (1 << a) != 0);
@@ -568,7 +568,7 @@ fn render_lines(
                 } else {
                     // A scaling plate or mail piece reads as the armor a flagged class may wear
                     // until it learns the heavier kind, unred (`0x6288b7`..`0x628974`).
-                    match scaling_armor_alternate(v, rows, req.class_flags, mask) {
+                    match scaling_armor_alternate(v, rows, req.class_flags(), mask) {
                         Some(alt) => {
                             if let Some(name) = v.scaling_armor_names[alt as usize - 2].as_deref() {
                                 ty = Some(name);
@@ -579,7 +579,7 @@ fn render_lines(
                 }
             }
         }
-        if v.inventory_type == 22 && !req.can_dual_wield {
+        if v.inventory_type == 22 && !req.can_dual_wield() {
             left_red = true;
         }
         match (slot, ty) {
@@ -808,9 +808,8 @@ fn render_lines(
             if let Some(name) = v.gem.as_ref().and_then(|g| g.enchant_name.clone()) {
                 let skill_ok = v.required_skill == 0
                     || req
-                        .skills
-                        .get(&v.required_skill)
-                        .is_some_and(|&have| have >= v.required_skill_rank);
+                        .skill(v.required_skill)
+                        .is_some_and(|have| have >= v.required_skill_rank);
                 let color = if destroy_gem {
                     GRAY
                 } else {
@@ -827,7 +826,7 @@ fn render_lines(
                 }
             }
         }
-        if req.class_id == 11
+        if req.class_id() == 11
             && v.class == 2
             && matches!(v.inventory_type, 13 | 17 | 21 | 22)
             && v.delay_ms != 0
@@ -879,7 +878,8 @@ fn render_lines(
             .map(|&(id, n)| crate::locale::class_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
-            let ok = req.class_id > 0 && v.allowable_class & (1 << (req.class_id - 1)) != 0;
+            let class_id = req.class_id();
+            let ok = class_id > 0 && v.allowable_class & (1 << (class_id - 1)) != 0;
             keyed(
                 "ITEM_CLASSES_ALLOWED",
                 &[Arg::S(&list.join(", "))],
@@ -898,7 +898,8 @@ fn render_lines(
             .map(|&(id, n)| crate::locale::race_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
-            let ok = req.race_id > 0 && v.allowable_race & (1 << (req.race_id - 1)) != 0;
+            let race_id = req.race_id();
+            let ok = race_id > 0 && v.allowable_race & (1 << (race_id - 1)) != 0;
             keyed(
                 "ITEM_RACES_ALLOWED",
                 &[Arg::S(&list.join(", "))],
@@ -911,7 +912,7 @@ fn render_lines(
     // range (`0x6277f0`, `ITEM_LEVEL_RANGE_CURRENT`); otherwise only a required level above 1.
     if let (Some(d), Some(s)) = (rows.0, scaled) {
         let required = v.required_level as i32;
-        let level = req.level as i32;
+        let level = req.level() as i32;
         keyed(
             "ITEM_LEVEL_RANGE_CURRENT",
             &[
@@ -926,7 +927,7 @@ fn render_lines(
         keyed(
             "ITEM_MIN_LEVEL",
             &[Arg::D(v.required_level.into())],
-            req_color(req.level >= v.required_level),
+            req_color(req.level() >= v.required_level),
             false,
         )?;
     }
@@ -1022,7 +1023,7 @@ fn render_lines(
             false,
         )?;
         let skill_met = set.required_skill == 0 || {
-            let have = req.skills.get(&set.required_skill).copied().unwrap_or(0);
+            let have = req.skill(set.required_skill).unwrap_or(0);
             have >= set.required_skill_rank
         };
         if let Some(skill) = &set.required_skill_name {
@@ -1130,6 +1131,7 @@ fn render_lines(
                 .enchants
                 .iter()
                 .any(|e| matches!(e.slot, 0 | 2 | 3 | 6));
+            crate::script::refund::ask_if_unrecorded(&model, inst.guid);
             let refund =
                 crate::script::refund::seconds_left(&model, inst.guid).filter(|_| !enchanted);
             let trade = inst
@@ -1179,7 +1181,7 @@ fn requirement_lines(
     keyed: &Keyed<'_>,
     add: &dyn Fn((String, [f32; 4])) -> mlua::Result<()>,
     v: &ItemTemplateView,
-    req: &crate::script::PlayerReqState,
+    req: &impl crate::script::ReqFields,
     facts: ReqFacts,
 ) -> mlua::Result<()> {
     let ReqFacts {
@@ -1189,7 +1191,7 @@ fn requirement_lines(
         player,
     } = facts;
     if v.required_skill != 0 {
-        let have = req.skills.get(&v.required_skill).copied();
+        let have = req.skill(v.required_skill);
         let color = req_color(have.is_some_and(|h| h >= v.required_skill_rank));
         // Flag `0x40000` prospects and `0x20000000` mills: their line only once the skill has a
         // value (`0x62b2a2`); every other item its skill line.
@@ -1233,7 +1235,7 @@ fn requirement_lines(
             crate::script::pvp::RankTitle { rank, team, female },
         );
         if let Some(title) = title {
-            let ok = req.honor_rank >= rank;
+            let ok = req.honor_rank() >= rank;
             keyed("ITEM_REQ_SKILL", &[Arg::S(&title)], req_color(ok), false)?;
         }
     }
@@ -1256,11 +1258,7 @@ fn requirement_lines(
     }
     if let Some(rep) = &v.required_rep_line {
         // Red below the required rank (`[+0x58]`); an unfed faction reads as unmet.
-        let rank = req
-            .rep_ranks
-            .get(&v.required_rep_faction)
-            .copied()
-            .unwrap_or(0);
+        let rank = req.rep_rank(v.required_rep_faction);
         add((
             rep.clone(),
             req_color(u32::from(rank) >= v.required_rep_rank),

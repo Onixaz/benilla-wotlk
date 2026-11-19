@@ -661,7 +661,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(Value::Nil);
             };
-            let player = i32::try_from(model.player_req.level).unwrap_or(0);
+            let player = i32::try_from(crate::script::item_stats::player_level()).unwrap_or(0);
             let level = e.level as i32;
             let color = quest_color(if level == -1 { player } else { level }, player);
             let link = format!("{color}|Hquest:{}:{level}|h[{}]|h|r", e.quest_id, e.title);
@@ -1113,10 +1113,13 @@ mod tests {
 
     #[test]
     fn the_link_and_completion_text_read_the_row() {
-        let s = script_with(1, |log| {
+        let mut s = script_with(1, |log| {
             log.entries[0].completion_text = "Return to Marshal.".into();
         });
-        s.model_mut().player_req.level = 29;
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 29,
+            ..Default::default()
+        });
         assert_eq!(
             s.eval::<String>("return GetQuestLink(1)").unwrap(),
             "|cffffff00|Hquest:1:29|h[Quest 1]|h|r"

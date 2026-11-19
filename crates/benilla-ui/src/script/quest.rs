@@ -451,8 +451,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     fn level(row: Option<&GossipQuestRow>) -> i32 {
         row.map_or(0, |r| r.level)
     }
-    fn trivial(row: Option<&GossipQuestRow>, model: &crate::script::Model) -> bool {
-        quest_is_trivial(level(row), model.player_req.level)
+    fn trivial(row: Option<&GossipQuestRow>) -> bool {
+        quest_is_trivial(level(row), crate::script::item_stats::player_level())
     }
     // `GetActiveTitle` (`0x58bed0`): the title, then `isComplete` as a boolean (the completion
     // test, `0x58bcb0`).
@@ -499,14 +499,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsActiveQuestTrivial",
         "Usage: IsActiveQuestTrivial(index)",
         true,
-        |_, row, model| one(flag(trivial(row, model))),
+        |_, row, _| one(flag(trivial(row))),
     )?;
     install_row(
         lua,
         "IsAvailableQuestTrivial",
         "Usage: IsAvailableQuestTrivial(index)",
         false,
-        |_, row, model| one(flag(trivial(row, model))),
+        |_, row, _| one(flag(trivial(row))),
     )?;
     // `GetAvailableQuestInfo` (`0x58dbc0`): isTrivial, isDaily (the `0x1000` flag) and
     // isRepeatable, each 1 or nil.
@@ -515,9 +515,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetAvailableQuestInfo",
         "Usage: GetAvailableQuestInfo(index)",
         false,
-        |_, row, model| {
+        |_, row, _| {
             Ok(MultiValue::from_vec(vec![
-                flag(trivial(row, model)),
+                flag(trivial(row)),
                 flag(row.is_some_and(|r| r.daily)),
                 flag(row.is_some_and(|r| r.repeatable)),
             ]))
@@ -570,6 +570,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     (it, verdict)
                 })
             };
+            // A row whose record is not cached leaves the panel's callback, one per call (`0x58d26d`).
+            if let Some((it, _)) = item.as_ref().filter(|(it, _)| it.name.is_none()) {
+                let mut model = crate::script::model_mut_of(lua);
+                super::item_stats::wait_item_record(
+                    &mut model,
+                    it.item_id,
+                    super::ItemRecordWait::QuestItem,
+                );
+            }
             let (name, texture, count, quality, usable) = match item {
                 Some((it, (quality, usable))) => (
                     it.name.unwrap_or_default(),
@@ -988,7 +997,10 @@ mod tests {
             ],
             ..Default::default()
         }));
-        s.model_mut().player_req.level = 10;
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 10,
+            ..Default::default()
+        });
         assert_eq!(
             s.eval::<String>("return GetGreetingText()").unwrap(),
             "What can I do for you?"

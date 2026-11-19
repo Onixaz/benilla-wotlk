@@ -8,6 +8,10 @@ description = "Engine-free WoW UI engine core: TOC and FrameXML parsing, templat
 [lints]
 workspace = true
 
+[features]
+# The stand-in player a test or a capture fixture sets (`UiScript::set_player_req_state`), never in the player build.
+fixtures = []
+
 [dependencies]
 roxmltree = "0.20"
 # The script host's Lua 5.1; `vendored` builds it from the workspace's `lua-src`.

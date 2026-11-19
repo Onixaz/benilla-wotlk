@@ -826,7 +826,7 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`) and stable (`0x528d5a`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
     crate::ui_pet::possess::leave_world(world);
@@ -840,18 +840,23 @@ pub(crate) fn leave_world(world: &mut World) {
         ui.write(UiScript::leave_battlefield_world);
     }
     crate::ui_stable::leave_world(world);
+    // The interaction close's bank leg, after the stable part.
+    crate::ui_bank::close_by_interaction(world);
     crate::ui_script::live::fire_handler_events(world);
 }
 
 /// Queue the battlefield's world entry (`0x54ca50`) for when the calling system's commands apply.
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
+        // The containers' part (`0x5281c7`), ahead of the battlefield's (`0x528230`).
+        crate::ui_items::watch::enter_world(world);
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");
         }
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
         crate::ui_stable::enter_world(world);
+        crate::ui_currency::enter_world(world);
         if world.contains_resource::<NetCommands>()
             && world.contains_resource::<StatusRequestOwed>()
         {

@@ -89,13 +89,15 @@ pub(super) fn seed_ui_fixture(
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsSelection,
+            crate::ui_script::OwnsActions,
+        )>,
     ),
     mut selection: crate::ui_script::OwnedMut<crate::target::Selection>,
     // A nested tuple, one param under Bevy's 16-param cap.
-    (mut actions, mut bank, mut exit, mut loading): (
-        ResMut<crate::ui_action::PlayerActions>,
-        ResMut<crate::ui_bank::BankOpen>,
+    (mut actions, mut exit, mut loading): (
+        crate::ui_script::OwnedMut<crate::ui_action::PlayerActions>,
         MessageWriter<AppExit>,
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
@@ -257,8 +259,7 @@ pub(super) fn seed_ui_fixture(
                 })
                 .collect();
             merchant.open(NPC_GUID, rows);
-            // The usable gate's player half, by hand: with no SelfPlayer in capture,
-            // `feed_player_req` never runs to overwrite it. A level-12 human warrior.
+            // The usable gate's player half: with no active player in capture, the fixture's level-12 human warrior stands in.
             if let Some(s) = script.as_mut() {
                 s.set_player_req_state(benilla_ui::script::PlayerReqState {
                     level: 12,
@@ -336,8 +337,7 @@ pub(super) fn seed_ui_fixture(
                 }));
         }
         UiFixture::Bank => {
-            // A pure banker and the vault, fed through the descriptor and caches that `feed_bank`
-            // and `ui_items` push into the VM as live wire data would.
+            // A pure banker and the vault, in the descriptor and caches the bank verbs read and `ui_items` pushes, as live wire data would.
             use benilla_protocol::messages::ObjectFields;
             names.insert_creature(
                 NPC_ENTRY,
@@ -434,8 +434,11 @@ pub(super) fn seed_ui_fixture(
                 crate::net::SelfPlayer,
                 crate::net::Guid(PLAYER_GUID),
             ));
-            // `feed_bank` then fires BANKFRAME_OPENED as a live SMSG_SHOW_BANK would.
-            bank.open(NPC_GUID);
+            // The banker set and `BANKFRAME_OPENED` fired as a live `SMSG_SHOW_BANK`'s handler does.
+            commands.queue(|world: &mut World| {
+                crate::ui_bank::open_bank(world, NPC_GUID);
+                crate::ui_script::live::fire_handler_events(world);
+            });
             // Opens bank bag 1 once its container feed lands (`GetContainerNumSlots(5) > 0`);
             // `BankFrameBag1`'s `GetID()` is 5, the container id its handler passes to `ToggleBag`.
             if let Some(s) = script.as_mut() {
@@ -1249,7 +1252,7 @@ pub(super) fn seed_ui_fixture(
             let Some(script) = script.as_mut() else {
                 return;
             };
-            actions.spells.extend([
+            actions.write().spells.extend([
                 // The auto-attack shows the equipped sword's icon, not the placeholder of spell 6603,
                 // in General (no skill line).
                 6603, // Attack

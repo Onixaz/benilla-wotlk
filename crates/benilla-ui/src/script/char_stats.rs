@@ -597,7 +597,7 @@ impl Model {
             }
             if KEYRING_INV_SLOTS.contains(&slot) {
                 let n = (slot - KEYRING_INV_SLOTS.start() + 1) as u32;
-                let keyring = self.containers.get(&KEYRING_CONTAINER)?;
+                let keyring = super::container::live_bag(self, KEYRING_CONTAINER)?;
                 return keyring.slots.get(&n).map(InvSlotView::from_container_slot);
             }
             return self.inventory_slots.get(slot)?.clone();
@@ -630,7 +630,7 @@ impl Model {
 
     fn bank_inv_slot(&self, slot: usize) -> Option<InvSlotView> {
         if BANK_INV_SLOTS.contains(&slot) {
-            let vault = self.containers.get(&BANK_CONTAINER)?;
+            let vault = super::container::live_bag(self, BANK_CONTAINER)?;
             let n = (slot - BANK_INV_SLOTS.start() + 1) as u32;
             return vault.slots.get(&n).map(InvSlotView::from_container_slot);
         }
@@ -1080,7 +1080,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let is_weapon = model.inventory_slots[17]
                 .as_ref()
                 .filter(|v| v.item_id != 0)
-                .and_then(|v| model.item_templates.get(&v.item_id))
+                .and_then(|v| super::item_stats::item_record(&model, v.item_id))
                 .is_some_and(|t| t.class == 2);
             Ok(is_weapon.then_some(1i64))
         })?,

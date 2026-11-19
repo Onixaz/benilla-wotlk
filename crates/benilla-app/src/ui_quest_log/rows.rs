@@ -54,6 +54,30 @@ impl QuestAsks {
     }
 }
 
+/// Where a quest verb's misses wait: the creature and GameObject caches' asks, and the item cache's callback list.
+pub(crate) type AskLists<'a> = (
+    Option<&'a mut QuestAsks>,
+    Option<&'a mut crate::items::RecordWaits>,
+);
+
+/// A verb's misses: an item record's leaves the log's callback at the tail of the record's list, one per miss (`0x5e4516`, `0x5e46e6`); the others wait on [`QuestAsks`].
+fn note_misses(misses: Vec<QuestAsk>, (asks, waits): AskLists<'_>) {
+    let (mut asks, mut waits) = (asks, waits);
+    for ask in misses {
+        match (ask, waits.as_deref_mut()) {
+            (QuestAsk::Item(item), Some(waits)) => {
+                waits.wait(item, crate::items::RecordWait::QuestLog, false)
+            }
+            (QuestAsk::Item(_), None) => {}
+            (ask, _) => {
+                if let Some(asks) = asks.as_deref_mut() {
+                    asks.asked(ask);
+                }
+            }
+        }
+    }
+}
+
 /// The rebuild's own state, main-thread state lent to a verb's call, so the rebuild also runs inside one (`0x5e6e00`).
 #[derive(Default)]
 pub(crate) struct RebuildMarks {
@@ -168,18 +192,14 @@ impl QuestRowLive<'_, '_> {
         slot: u8,
         get: &dyn Fn(&str) -> Option<String>,
         expiries: Option<&QuestExpiries>,
-        asks: Option<&mut QuestAsks>,
+        asks: AskLists<'_>,
     ) -> Option<Option<QuestLogEntryView>> {
         // The misses the build makes, noted for their answers once it returns.
         let misses = std::cell::RefCell::new(Vec::new());
         let row = self.build_row(quest_id, slot, get, expiries, &|a| {
             misses.borrow_mut().push(a)
         });
-        if let Some(asks) = asks {
-            for ask in misses.into_inner() {
-                asks.asked(ask);
-            }
-        }
+        note_misses(misses.into_inner(), asks);
         row
     }
 
@@ -312,15 +332,11 @@ impl QuestRowLive<'_, '_> {
         &self,
         quest_id: u32,
         slot: u8,
-        asks: Option<&mut QuestAsks>,
+        asks: AskLists<'_>,
     ) -> Option<Option<QuestLogDetail>> {
         let misses = std::cell::RefCell::new(Vec::new());
         let detail = self.build_detail(quest_id, slot, &|a| misses.borrow_mut().push(a));
-        if let Some(asks) = asks {
-            for ask in misses.into_inner() {
-                asks.asked(ask);
-            }
-        }
+        note_misses(misses.into_inner(), asks);
         detail
     }
 

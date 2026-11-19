@@ -98,11 +98,17 @@ fn an_instruction_budget_turns_a_runaway_loop_into_an_error() {
     assert_eq!(t.eval::<i64>("return BudgetOk").unwrap(), 500_500);
 }
 
-/// The hearth location's name, `""` before the packet; `StaticPopup.lua:1742` formats it.
+/// The hearth location's name, the `HOME_INN` text with no area row (`0x516b64`); `StaticPopup.lua:1742` formats it.
 #[test]
 fn get_bind_location_answers_the_pushed_name_and_never_nil() {
     let mut s = crate::script::UiScript::new().unwrap();
     assert_eq!(s.eval::<String>("return GetBindLocation()").unwrap(), "");
+    s.run(r#"HOME_INN = "Home Inn""#).unwrap();
+    assert_eq!(
+        s.eval::<String>("return GetBindLocation()").unwrap(),
+        "Home Inn",
+        "no bind area row reads the HOME_INN text"
+    );
     assert_eq!(
         s.eval::<String>("return type(GetBindLocation())").unwrap(),
         "string",

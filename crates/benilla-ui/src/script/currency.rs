@@ -10,7 +10,7 @@ use super::who_sort::sort_utf8i;
 /// Honor and arena points, counted from the player's fields, not a token slot (`0x5b0757`).
 const ARENA_POINTS_ITEM: u32 = 43307;
 const HONOR_POINTS_ITEM: u32 = 43308;
-/// The display list's capacity (`0xc1e960`, 95 entries of 24 bytes).
+/// The display list's capacity (95 entries of 24 bytes, indexed at `0x5b06dd`).
 const MAX_ENTRIES: usize = 95;
 
 /// One `CurrencyTypes.dbc` row.
@@ -50,13 +50,17 @@ pub struct CurrencyHoldings {
     pub items: std::collections::HashMap<u32, (Option<String>, Option<String>)>,
 }
 
-/// The categories' open flags, set only at a world entry from the character screen (`0x5afd90`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CurrencyFolds(std::collections::HashMap<u32, bool>);
+/// What a `ReloadUI` carries into the new VM, as these live outside the Lua state: the categories' open flags, set only at a world entry from the character screen (`0x5afd90`), the display list as its last build left it, and the records its builds still wait on.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CurrencyFolds {
+    collapsed: std::collections::HashMap<u32, bool>,
+    list: Vec<Entry>,
+    waiting: std::collections::HashSet<u32>,
+}
 
-/// One display-list entry.
+/// One display-list entry (24 bytes, indexed at `0x5b06dd`).
 #[derive(Clone, Debug, PartialEq)]
-struct Entry {
+pub(crate) struct Entry {
     name: Option<String>,
     item_id: u32,
     category_id: u32,
@@ -66,45 +70,57 @@ struct Entry {
 }
 
 impl super::UiScript {
-    /// Push both currency tables.
-    pub fn set_currency_catalog(&mut self, catalog: CurrencyCatalogView) {
-        set_field!(self, currency_catalog, catalog);
-    }
-
-    /// Push the player's currency holdings, `None` with no player.
-    pub fn set_currency_holdings(&mut self, holdings: Option<CurrencyHoldings>) {
-        set_field!(self, currency_holdings, holdings);
-    }
-
     /// Push the token slots' item views, slot 1 being player slot `0x76`; `None` with no player.
     pub fn set_token_slots(&mut self, slots: Option<super::ContainerState>) {
         set_field!(self, token_slots, slots);
     }
 
-    /// The item of each row the display list shows, whose record the build asks with its landing
-    /// callback (`0x5b01d7`, `0x5b0260`).
-    pub fn currency_listed_items(&self) -> Vec<u32> {
-        display_list(&self.model_ref())
-            .into_iter()
-            .filter(|e| !e.header)
-            .map(|e| e.item_id)
-            .collect()
+    /// The display list build (`0x5b0030`) over the live tables and our currencies, as each of 12340's triggers runs it before its event (`0x5b0640`, `0x5b0660`).
+    pub fn rebuild_currency_list(&mut self) {
+        build(&mut self.model_mut());
     }
 
-    /// Take the categories' open flags out of this VM, for a `ReloadUI`, which they outlive.
+    /// A record a build asked for landed, answered or denied: whether a build waited on it, so its callback rebuilds and fires `CURRENCY_DISPLAY_UPDATE` (`0x5b01d7`, `0x5b0260` -> `0x5b0660`).
+    pub fn currency_record_landed(&mut self, item_id: u32) -> bool {
+        let waited = self.model_mut().currency_waiting.remove(&item_id);
+        if waited {
+            self.rebuild_currency_list();
+        }
+        waited
+    }
+
+    /// Take what outlives a `ReloadUI` out of this VM.
     pub fn take_currency_folds(&mut self) -> CurrencyFolds {
-        CurrencyFolds(std::mem::take(&mut self.model_mut().currency_collapsed))
+        let mut model = self.model_mut();
+        CurrencyFolds {
+            collapsed: std::mem::take(&mut model.currency_collapsed),
+            list: std::mem::take(&mut model.currency_list),
+            waiting: std::mem::take(&mut model.currency_waiting),
+        }
     }
 
-    /// Put the flags taken from the previous VM back.
+    /// Put what was taken from the previous VM back.
     pub fn restore_currency_folds(&mut self, folds: CurrencyFolds) {
-        self.model_mut().currency_collapsed = folds.0;
+        let mut model = self.model_mut();
+        model.currency_collapsed = folds.collapsed;
+        model.currency_list = folds.list;
+        model.currency_waiting = folds.waiting;
     }
 }
 
 fn read(lua: &Lua) -> mlua::AppDataRef<'_, super::ModelCell> {
     lua.app_data_ref::<super::ModelCell>()
         .expect("model app_data")
+}
+
+/// The live currency tables through the lent view, `None` with none lent or before they load.
+fn with_catalog<R>(f: impl FnOnce(&CurrencyCatalogView) -> R) -> Option<R> {
+    super::read_live(|l| l.currency_catalog().map(f)).flatten()
+}
+
+/// Our currencies at the call, `None` with no active player.
+fn holdings() -> Option<CurrencyHoldings> {
+    super::read_live(|l| l.currency_holdings()).flatten()
 }
 
 /// A per-character CVar as an integer, 0 when unregistered.
@@ -124,14 +140,14 @@ fn cvar_bit(model: &super::Model, pair: &str, bit: i32) -> bool {
     }
 }
 
-fn known(model: &super::Model, bit: i32) -> bool {
-    let known = model.currency_holdings.as_ref().map_or(0, |h| h.known);
+fn known(h: Option<&CurrencyHoldings>, bit: i32) -> bool {
+    let known = h.map_or(0, |h| h.known);
     (1..=64).contains(&bit) && known & (1 << (bit - 1)) != 0
 }
 
 /// The categories in display order (`0x5afc40`): unflagged first, then by the UTF-8 sort (`0x5afc70`).
-fn sorted_categories(model: &super::Model) -> Vec<&CurrencyCategoryView> {
-    let mut cats: Vec<&CurrencyCategoryView> = model.currency_catalog.categories.iter().collect();
+fn sorted_categories(catalog: &CurrencyCatalogView) -> Vec<&CurrencyCategoryView> {
+    let mut cats: Vec<&CurrencyCategoryView> = catalog.categories.iter().collect();
     cats.sort_by(|a, b| {
         (a.flags & 1)
             .cmp(&(b.flags & 1))
@@ -141,15 +157,27 @@ fn sorted_categories(model: &super::Model) -> Vec<&CurrencyCategoryView> {
 }
 
 /// The display list build (`0x5b0030`): a header per category with a row to show, then, expanded,
-/// its known rows not marked unused, or under the last category every row marked unused.
-fn display_list(model: &super::Model) -> Vec<Entry> {
-    let cats = sorted_categories(model);
-    let types = &model.currency_catalog.types;
+/// its known rows not marked unused, or under the last category every row marked unused; each listed row's uncached record is asked for with the landing callback (`0x5b01d7`, `0x5b0260`).
+fn build(model: &mut super::Model) {
+    let h = holdings();
+    let list = with_catalog(|c| display_list(model, c, h.as_ref())).unwrap_or_default();
+    for e in list.iter().filter(|e| !e.header && e.name.is_none()) {
+        super::item_stats::wait_item_record(model, e.item_id, super::ItemRecordWait::Currency);
+        super::read_live(|l| l.ask_item_record(e.item_id));
+        model.currency_waiting.insert(e.item_id);
+    }
+    model.currency_list = list;
+}
+
+fn display_list(
+    model: &super::Model,
+    catalog: &CurrencyCatalogView,
+    h: Option<&CurrencyHoldings>,
+) -> Vec<Entry> {
+    let cats = sorted_categories(catalog);
+    let types = &catalog.types;
     let name_of = |item: u32| {
-        model
-            .currency_holdings
-            .as_ref()
-            .and_then(|h| h.items.get(&item))
+        h.and_then(|h| h.items.get(&item))
             .and_then(|(n, _)| n.clone())
     };
     let mut out = Vec::new();
@@ -158,7 +186,7 @@ fn display_list(model: &super::Model) -> Vec<Entry> {
         // The category's known-row test (`0x5afe30`): a known row of the category, or for the last
         // one any row marked unused, known or not.
         let has_known = types.iter().any(|t| {
-            (t.category_id == cat.id && known(model, t.bit_index))
+            (t.category_id == cat.id && known(h, t.bit_index))
                 || (last && cvar_bit(model, "currencyTokensUnused", t.bit_index))
         });
         if !has_known {
@@ -178,7 +206,7 @@ fn display_list(model: &super::Model) -> Vec<Entry> {
         }
         let mut rows: Vec<Entry> = types
             .iter()
-            .filter(|t| known(model, t.bit_index))
+            .filter(|t| known(h, t.bit_index))
             .filter(|t| {
                 let unused = cvar_bit(model, "currencyTokensUnused", t.bit_index);
                 if last {
@@ -210,8 +238,8 @@ fn display_list(model: &super::Model) -> Vec<Entry> {
 }
 
 /// A currency's count and kind (`0x5b0757`): arena 1, honor 2, a token 0; `None` with no player.
-fn count_of(model: &super::Model, item_id: u32) -> Option<(u32, u32)> {
-    let h = model.currency_holdings.as_ref()?;
+fn count_of(h: Option<&CurrencyHoldings>, item_id: u32) -> Option<(u32, u32)> {
+    let h = h?;
     Some(match item_id {
         ARENA_POINTS_ITEM => (h.arena, 1),
         HONOR_POINTS_ITEM => (h.honor, 2),
@@ -225,25 +253,28 @@ fn count_of(model: &super::Model, item_id: u32) -> Option<(u32, u32)> {
     })
 }
 
-fn icon_of(model: &super::Model, item_id: u32) -> Option<String> {
-    model
-        .currency_holdings
-        .as_ref()
-        .and_then(|h| h.items.get(&item_id))
+/// The cached record's icon, read at the call (`0x5b0859`).
+fn icon_of(h: Option<&CurrencyHoldings>, item_id: u32) -> Option<String> {
+    h.and_then(|h| h.items.get(&item_id))
         .and_then(|(_, icon)| icon.clone())
 }
 
 /// The `i`-th currency (0-based) in file order both known and watched (`0x5b0340`).
-fn backpack_currency(model: &super::Model, i: usize) -> Option<CurrencyTypeView> {
-    model
-        .currency_catalog
-        .types
-        .iter()
-        .filter(|t| {
-            known(model, t.bit_index) && cvar_bit(model, "currencyTokensBackpack", t.bit_index)
-        })
-        .nth(i)
-        .copied()
+fn backpack_currency(
+    model: &super::Model,
+    h: Option<&CurrencyHoldings>,
+    i: usize,
+) -> Option<CurrencyTypeView> {
+    with_catalog(|c| {
+        c.types
+            .iter()
+            .filter(|t| {
+                known(h, t.bit_index) && cvar_bit(model, "currencyTokensBackpack", t.bit_index)
+            })
+            .nth(i)
+            .copied()
+    })
+    .flatten()
 }
 
 /// A 1-based list index, `lua_isnumber` gated (`0x5b0680`), made 0-based.
@@ -255,29 +286,28 @@ fn index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64> {
 }
 
 /// The unused and backpack setters (`0x5b0440`, `0x5b0590`): a non-header row's bit set or cleared
-/// in the CVar pair, written with `%d` through the CVar store, never Lua's `SetCVar` (`0x5b04a4`).
+/// in the CVar pair, written with `%d` through the CVar store, never Lua's `SetCVar` (`0x5b04a4`); the verb rebuilds the list after (`0x5b09ff`, `0x5b0a6f`).
 fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
     let mut model = super::model_mut_of(lua);
-    let write = {
-        let list = display_list(&model);
-        let Some(entry) = usize::try_from(index).ok().and_then(|i| list.get(i)) else {
-            return;
-        };
+    let write = (|| {
+        let entry = usize::try_from(index)
+            .ok()
+            .and_then(|i| model.currency_list.get(i))?;
         if entry.header {
-            return;
+            return None;
         }
-        let Some(t) = model
-            .currency_catalog
-            .types
-            .iter()
-            .find(|t| t.item_id == entry.item_id)
-        else {
-            return;
-        };
-        let (name, bit) = match t.bit_index {
+        let item = entry.item_id;
+        let bit_index = with_catalog(|c| {
+            c.types
+                .iter()
+                .find(|t| t.item_id == item)
+                .map(|t| t.bit_index)
+        })
+        .flatten()?;
+        let (name, bit) = match bit_index {
             b @ 1..=32 => (format!("{pair}1"), b - 1),
             b @ 33..=64 => (format!("{pair}2"), b - 33),
-            _ => return,
+            _ => return None,
         };
         let old = cvar_int(&model, &name);
         let new = if on {
@@ -285,9 +315,12 @@ fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
         } else {
             old & !(1 << bit)
         };
-        (name, (new as i32).to_string())
-    };
-    super::cvars::set_from_engine(&mut model, &write.0, write.1);
+        Some((name, (new as i32).to_string()))
+    })();
+    if let Some((name, value)) = write {
+        super::cvars::set_from_engine(&mut model, &name, value);
+    }
+    build(&mut model);
 }
 
 /// The setters' two numbers, both tested first (`0x5b094a`, `0x5b0959`, `0x5b09c9`), truncated.
@@ -332,7 +365,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetCurrencyListSize() (`0x5afd10`).
     g.set(
         "GetCurrencyListSize",
-        lua.create_function(|lua, _: MultiValue| Ok(display_list(&read(lua)).len() as f64))?,
+        lua.create_function(|lua, _: MultiValue| Ok(read(lua).currency_list.len() as f64))?,
     )?;
 
     // GetCurrencyListInfo(index) (`0x5b0680`): name, isHeader, isExpanded, isUnused, isWatched,
@@ -342,24 +375,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let i = index_arg(lua, index, "Usage: GetCurrencyListInfo(index)")?;
             let model = read(lua);
-            let list = display_list(&model);
-            let Some(e) = usize::try_from(i).ok().and_then(|i| list.get(i)) else {
+            let Some(e) = usize::try_from(i)
+                .ok()
+                .and_then(|i| model.currency_list.get(i))
+            else {
                 return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 9)));
             };
-            // A header is unused when its category sorts last (`0x5b0518`), a row by its CVar bit.
-            let unused = if e.header {
-                sorted_categories(&model)
-                    .last()
-                    .is_some_and(|c| c.id == e.category_id)
-            } else {
-                model
-                    .currency_catalog
-                    .types
-                    .iter()
-                    .find(|t| t.item_id == e.item_id)
-                    .is_some_and(|t| cvar_bit(&model, "currencyTokensUnused", t.bit_index))
-            };
-            let (count, kind) = match (e.header, count_of(&model, e.item_id)) {
+            // A header is unused when its category sorts last (`0x5b0518`), a row by its CVar bit, both read at the call (`0x5b071c`).
+            let unused = with_catalog(|c| {
+                if e.header {
+                    sorted_categories(c)
+                        .last()
+                        .is_some_and(|last| last.id == e.category_id)
+                } else {
+                    c.types
+                        .iter()
+                        .find(|t| t.item_id == e.item_id)
+                        .is_some_and(|t| cvar_bit(&model, "currencyTokensUnused", t.bit_index))
+                }
+            })
+            .unwrap_or(false);
+            let h = holdings();
+            let (count, kind) = match (e.header, count_of(h.as_ref(), e.item_id)) {
                 (true, _) => (Value::Number(0.0), Value::Integer(0)),
                 (false, Some((n, k))) => {
                     (Value::Number(f64::from(n)), Value::Integer(i64::from(k)))
@@ -369,7 +406,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let icon = if e.header {
                 None
             } else {
-                icon_of(&model, e.item_id)
+                icon_of(h.as_ref(), e.item_id)
             };
             Ok(MultiValue::from_iter([
                 opt_str(lua, e.name.clone())?,
@@ -396,13 +433,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: ExpandCurrencyList(index,expand)",
             )?;
             let mut model = super::model_mut_of(lua);
-            let list = display_list(&model);
-            if let Some(e) = usize::try_from(i).ok().and_then(|i| list.get(i)) {
-                if e.header {
-                    let id = e.category_id;
-                    model.currency_collapsed.insert(id, !expand);
-                }
+            let header = usize::try_from(i)
+                .ok()
+                .and_then(|i| model.currency_list.get(i))
+                .filter(|e| e.header)
+                .map(|e| e.category_id);
+            if let Some(id) = header {
+                model.currency_collapsed.insert(id, !expand);
             }
+            // The rebuild after the setter (`0x5b098f`).
+            build(&mut model);
             Ok(())
         })?,
     )?;
@@ -435,27 +475,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let i = index_arg(lua, index, "Usage: GetBackpackCurrencyInfo(index)")?;
             let model = read(lua);
+            let h = holdings();
             let Some(t) = usize::try_from(i)
                 .ok()
-                .and_then(|i| backpack_currency(&model, i))
+                .and_then(|i| backpack_currency(&model, h.as_ref(), i))
             else {
                 return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 5)));
             };
             // An uncached item record answers five nils (`0x5b0b0d`).
-            let Some(name) = model
-                .currency_holdings
+            let Some(name) = h
                 .as_ref()
                 .and_then(|h| h.items.get(&t.item_id))
                 .and_then(|(n, _)| n.clone())
             else {
                 return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 5)));
             };
-            let (count, kind) = count_of(&model, t.item_id).unwrap_or((0, 0));
+            let (count, kind) = count_of(h.as_ref(), t.item_id).unwrap_or((0, 0));
             Ok(MultiValue::from_iter([
                 Value::String(lua.create_string(&name)?),
                 Value::Number(f64::from(count)),
                 Value::Number(f64::from(kind)),
-                opt_str(lua, icon_of(&model, t.item_id))?,
+                opt_str(lua, icon_of(h.as_ref(), t.item_id))?,
                 Value::Integer(i64::from(t.item_id)),
             ]))
         })?,
@@ -478,7 +518,7 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
                 let model = read(lua);
                 usize::try_from(i)
                     .ok()
-                    .and_then(|i| display_list(&model).get(i).cloned())
+                    .and_then(|i| model.currency_list.get(i))
                     .filter(|e| !e.header)
                     .map(|e| e.item_id)
             };
@@ -499,7 +539,7 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
                 let model = read(lua);
                 usize::try_from(i)
                     .ok()
-                    .and_then(|i| backpack_currency(&model, i))
+                    .and_then(|i| backpack_currency(&model, holdings().as_ref(), i))
                     .map(|t| t.item_id)
             };
             match item {
@@ -513,17 +553,11 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script::live::{LiveLoan, TestView};
     use crate::script::UiScript;
 
-    fn script() -> UiScript {
-        let mut s = UiScript::new().unwrap();
-        s.register_cvars([
-            ("currencyTokensUnused1", "0"),
-            ("currencyTokensUnused2", "0"),
-            ("currencyTokensBackpack1", "0"),
-            ("currencyTokensBackpack2", "0"),
-        ]);
-        s.set_currency_catalog(CurrencyCatalogView {
+    fn catalog() -> CurrencyCatalogView {
+        CurrencyCatalogView {
             types: vec![
                 CurrencyTypeView {
                     item_id: 43308,
@@ -563,7 +597,10 @@ mod tests {
                     name: "Player vs. Player".into(),
                 },
             ],
-        });
+        }
+    }
+
+    fn holdings() -> CurrencyHoldings {
         let items = [
             (43308, "Honor Points"),
             (29434, "Badge of Justice"),
@@ -580,14 +617,36 @@ mod tests {
             )
         })
         .collect();
-        s.set_currency_holdings(Some(CurrencyHoldings {
+        CurrencyHoldings {
             known: 1 | 2 | (1 << 39) | (1 << 4),
             tokens: vec![(29434, 12), (20560, 3)],
             honor: 1500,
             arena: 0,
             items,
-        }));
-        s
+        }
+    }
+
+    /// Lend the tables and `holdings` for the rest of the test.
+    fn lend(catalog: CurrencyCatalogView, holdings: CurrencyHoldings) -> LiveLoan<TestView> {
+        crate::script::live::lend_test(TestView {
+            currency_catalog: Some(catalog),
+            currency_holdings: Some(holdings),
+            ..Default::default()
+        })
+    }
+
+    /// The test VM with the tables and our currencies lent, its list built as a trigger builds it.
+    fn script() -> (UiScript, LiveLoan<TestView>) {
+        let loan = lend(catalog(), holdings());
+        let mut s = UiScript::new().unwrap();
+        s.register_cvars([
+            ("currencyTokensUnused1", "0"),
+            ("currencyTokensUnused2", "0"),
+            ("currencyTokensBackpack1", "0"),
+            ("currencyTokensBackpack2", "0"),
+        ]);
+        s.rebuild_currency_list();
+        (s, loan)
     }
 
     fn row(s: &UiScript, i: i64) -> (Option<String>, bool, bool, bool, bool, f64) {
@@ -601,7 +660,7 @@ mod tests {
     /// last, the honor count from the field and a token's from its slot.
     #[test]
     fn the_list_groups_known_rows_under_sorted_headers() {
-        let s = script();
+        let (s, _loan) = script();
         assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 6);
         assert_eq!(row(&s, 1).0.as_deref(), Some("Dungeon"));
         assert!(row(&s, 1).1, "a header");
@@ -628,24 +687,56 @@ mod tests {
         assert!(s.run("GetCurrencyListInfo()").is_err());
     }
 
-    /// The listed items are the shown rows, without the headers or a collapsed category's rows.
+    /// The build asks only a listed row's uncached record (`0x5b01ef`); its landing rebuilds once (`0x5b01d7` -> `0x5b0660`), a later landing of it nothing.
     #[test]
-    fn the_listed_items_are_the_shown_rows() {
-        let s = script();
-        let mut listed = s.currency_listed_items();
-        listed.sort_unstable();
-        assert_eq!(listed, [20560, 29434, 40752, 43308]);
+    fn the_build_asks_a_listed_rows_record_and_its_landing_rebuilds() {
+        let (mut s, loan) = script();
+        assert_eq!(
+            loan.with_view(|v| v.item_asks.borrow().clone()),
+            [40752],
+            "the uncached Dungeon row"
+        );
+        loan.with_view(|v| v.item_asks.borrow_mut().clear());
         s.run("ExpandCurrencyList(1, 0)").unwrap();
-        let mut listed = s.currency_listed_items();
-        listed.sort_unstable();
-        assert_eq!(listed, [20560, 43308], "the Dungeon rows are folded away");
+        assert!(
+            loan.with_view(|v| v.item_asks.borrow().is_empty()),
+            "a folded row is not listed, so not asked"
+        );
+        s.run("ExpandCurrencyList(1, 1)").unwrap();
+        let mut named = holdings();
+        named
+            .items
+            .insert(40752, (Some("Emblem of Heroism".into()), None));
+        let _named = lend(catalog(), named);
+        assert_eq!(row(&s, 3).0, None, "the list holds what its build read");
+        assert!(s.currency_record_landed(40752), "a build waited on it");
+        assert_eq!(row(&s, 2).0.as_deref(), Some("Badge of Justice"));
+        assert_eq!(row(&s, 3).0.as_deref(), Some("Emblem of Heroism"));
+        assert!(!s.currency_record_landed(40752), "its wait is over");
+        assert!(!s.currency_record_landed(2589), "never asked");
+    }
+
+    /// A count reads our currencies at the call, the list's names at its build.
+    #[test]
+    fn a_count_reads_the_call_and_a_name_the_build() {
+        let (s, _loan) = script();
+        let mut more = holdings();
+        more.tokens = vec![(29434, 40)];
+        more.items.insert(29434, (Some("Renamed".into()), None));
+        let _more = lend(catalog(), more);
+        assert_eq!(row(&s, 2).5, 40.0, "the count is live");
+        assert_eq!(
+            row(&s, 2).0.as_deref(),
+            Some("Badge of Justice"),
+            "the name is the build's"
+        );
     }
 
     /// Collapsing hides a header's rows; marking a row unused moves it under the last category
     /// and writes the CVar bit; a watched row reaches the backpack verbs.
     #[test]
     fn collapse_unused_and_backpack_marks() {
-        let s = script();
+        let (s, _loan) = script();
         s.run("ExpandCurrencyList(1, 0)").unwrap();
         assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 4);
         assert!(!row(&s, 1).2, "collapsed");
@@ -683,7 +774,7 @@ mod tests {
     /// and a word raise, `0.5` is off, a numeric string passes.
     #[test]
     fn the_setters_take_two_numbers_and_truncate_the_flag() {
-        let s = script();
+        let (s, _loan) = script();
         for (call, usage) in [
             (
                 "ExpandCurrencyList",
@@ -761,7 +852,7 @@ mod tests {
     /// bind line, and only `SetBackpackToken` prices the stack (`0x63097d`).
     #[test]
     fn a_held_token_builds_from_its_slot_without_the_bind_line() {
-        let mut s = script();
+        let (mut s, _loan) = script();
         with_token_tip(&mut s);
         s.run("SetCurrencyBackpack(2, 1)").unwrap();
         let mut slots = crate::script::ContainerState {
@@ -799,7 +890,7 @@ mod tests {
     /// source `[0xbfa8d8]` only while no loot is open (`0x627efd`); neither binding prices it.
     #[test]
     fn an_unheld_token_shows_the_bind_line_only_with_no_loot_open() {
-        let mut s = script();
+        let (mut s, _loan) = script();
         with_token_tip(&mut s);
         s.run("SetCurrencyBackpack(2, 1)").unwrap();
         s.set_token_slots(Some(crate::script::ContainerState {
@@ -824,7 +915,7 @@ mod tests {
     /// The tooltip methods' usage names the tooltip they were called on (`0xa26b00`, `0xa26b24`).
     #[test]
     fn a_tooltip_usage_names_its_own_frame() {
-        let s = script();
+        let (s, _loan) = script();
         s.run(r#"CreateFrame("GameTooltip", "CurrencyTip") Unnamed = CreateFrame("GameTooltip")"#)
             .unwrap();
         for (call, want) in [
@@ -851,7 +942,7 @@ mod tests {
     /// Marking a row writes the CVar pair without calling Lua's `SetCVar`, hooked or replaced.
     #[test]
     fn a_mark_writes_the_cvar_without_the_lua_setcvar() {
-        let s = script();
+        let (s, _loan) = script();
         s.run("Calls = 0 hooksecurefunc('SetCVar', function() Calls = Calls + 1 end)")
             .unwrap();
         s.run("SetCurrencyBackpack(2, 1) SetCurrencyUnused(2, 1)")
@@ -874,7 +965,7 @@ mod tests {
     /// A header reports unused only for the category that sorts last.
     #[test]
     fn only_the_last_category_header_is_unused() {
-        let s = script();
+        let (s, _loan) = script();
         s.run("SetCurrencyUnused(2, 1)").unwrap();
         let headers: Vec<(String, bool)> = (1..=7)
             .map(|i| row(&s, i))
@@ -894,7 +985,7 @@ mod tests {
     /// A watched token whose item record has not arrived answers five nils.
     #[test]
     fn an_uncached_watched_token_answers_nothing() {
-        let s = script();
+        let (s, _loan) = script();
         // Row 3 is the uncached token (bit 5).
         s.run("SetCurrencyBackpack(3, 1)").unwrap();
         assert_eq!(
@@ -913,15 +1004,15 @@ mod tests {
     /// Categories and the rows within one sort with accents folded: `É` sorts as `E`, before `Z`.
     #[test]
     fn categories_and_rows_fold_accents_when_sorting() {
-        let mut s = script();
-        let mut catalog = s.model_ref().currency_catalog.clone();
+        let (mut s, _loan) = script();
+        let mut catalog = catalog();
         catalog.categories[1].name = "Zone".into();
         catalog.categories[2].name = "Événements".into();
-        s.set_currency_catalog(catalog);
-        let mut holdings = s.model_ref().currency_holdings.clone().unwrap();
+        let mut holdings = holdings();
         holdings.items.get_mut(&43308).unwrap().0 = Some("Points".into());
         holdings.items.get_mut(&20560).unwrap().0 = Some("Écusson".into());
-        s.set_currency_holdings(Some(holdings));
+        let _renamed = lend(catalog, holdings);
+        s.rebuild_currency_list();
         let names: Vec<Option<String>> = (1..=6).map(|i| row(&s, i).0).collect();
         let want = [
             "Événements",
@@ -937,10 +1028,10 @@ mod tests {
     /// the character screen builds, has every category open.
     #[test]
     fn closed_categories_survive_a_reload_and_open_on_a_new_vm() {
-        let mut s = script();
+        let (mut s, _loan) = script();
         s.run("ExpandCurrencyList(1, 0)").unwrap();
         let carried = s.take_currency_folds();
-        let mut fresh = script();
+        let (mut fresh, _fresh_loan) = script();
         assert!(row(&fresh, 1).2, "a new VM starts open");
         fresh.restore_currency_folds(carried);
         assert!(!row(&fresh, 1).2, "the reload kept it closed");

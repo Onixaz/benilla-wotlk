@@ -167,12 +167,11 @@ mod net {
         app.net_handler(K::QuestTemplate, on_template)
             .net_handler(K::CreatureName, on_record)
             .net_handler(K::GameObjectInfo, on_record)
-            .net_handler(K::ItemTemplate, on_record)
             .net_handler(K::ServerUnixTime, on_server_time)
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    /// A creature, GameObject or item record a quest verb asked for landed: `QUEST_LOG_UPDATE` waits as a unique signal (`0x5de9fa`, `0x5dea2a`, `0x5dea49`).
+    /// A creature or GameObject record a quest verb asked for landed: `QUEST_LOG_UPDATE` waits as a unique signal (`0x5de9fa`, `0x5dea2a`); an item record's runs on the item cache's list.
     fn on_record(
         In(ev): In<SessionEvent>,
         mut asks: NonSendMut<QuestAsks>,
@@ -185,10 +184,6 @@ mod net {
                 ..
             } => QuestAsk::Creature(entry),
             SessionEvent::GameObjectInfo { entry, .. } => QuestAsk::GameObject(entry),
-            SessionEvent::ItemTemplate {
-                entry,
-                info: Some(_),
-            } => QuestAsk::Item(entry),
             _ => return,
         };
         if asks.landed(ask) {
@@ -1569,51 +1564,6 @@ mod tests {
             [783, 8, 12],
             "an empty slot filled, the same quest with its fail bit cleared and a slot swapping \
              quests; a kept quest, a kept failure and a cleared slot say nothing"
-        );
-    }
-
-    /// Idle feeds leave the caches others are gated on unmarked.
-    #[test]
-    fn idle_feeds_leave_the_shared_caches_unwritten() {
-        use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1;
-
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        let mut app = App::new();
-        app.insert_resource(NetCommands(tx));
-        app.init_resource::<crate::net::GuidIndex>()
-            .init_resource::<NameCache>()
-            .init_resource::<Items>()
-            .init_resource::<crate::ui_items::feed::FreshTemplates>()
-            .init_resource::<crate::world_state::WorldStates>()
-            .init_resource::<crate::ui_chat::ChatLog>()
-            .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_quest::lines::TurnIns>()
-            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>()
-            .init_resource::<QuestLog>()
-            .init_resource::<QuestLogMarks>()
-            .init_non_send_resource::<rows::RebuildMarks>()
-            .init_non_send_resource::<QuestExpiries>();
-        app.world_mut().spawn((
-            ObjectStore(ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, 7)])),
-            Guid(0x2A),
-            SelfPlayer,
-        ));
-        app.insert_non_send_resource(UiScript::new().unwrap());
-        app.init_resource::<crate::spell::SpellModifiers>()
-            .init_non_send_resource::<crate::ui_quest::QuestGiver>()
-            .init_resource::<crate::go_templates::GameObjectTemplates>();
-        // The item-stats and quest feeds share caches others are gated on: idle, they must not
-        // mark them.
-        app.add_systems(Update, crate::ui_items::feed::feed_item_stats);
-        app.update();
-        app.update();
-        let items_marked = app.world().resource_ref::<Items>().last_changed();
-        app.update();
-        app.update();
-        assert_eq!(
-            app.world().resource_ref::<Items>().last_changed(),
-            items_marked,
-            "an idle item feed leaves the cache unmarked"
         );
     }
 

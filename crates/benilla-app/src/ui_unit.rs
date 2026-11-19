@@ -195,12 +195,7 @@ impl Plugin for UiUnitPlugin {
         .add_systems(Update, drain_action_bar_toggles.in_set(UiDrain))
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
         .add_systems(Update, feed_known_languages.in_set(UnitFeed))
-        .add_systems(
-            Update,
-            feed_option_state
-                .in_set(UnitFeed)
-                .after(crate::ui_items::feed::feed_item_stats),
-        )
+        .add_systems(Update, feed_option_state.in_set(UnitFeed))
         // `load_exhaustion_rows` pushes into the VM, so it runs per VM; the rest are one-shots.
         .add_systems(
             Update,

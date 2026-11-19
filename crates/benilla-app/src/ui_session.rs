@@ -109,7 +109,7 @@ pub(crate) struct InteractWindows<'w, 's> {
     merchant: Option<ResMut<'w, crate::ui_merchant::MerchantOpen>>,
     taxi: Option<ResMut<'w, crate::ui_taxi::TaxiState>>,
     trainer: Option<ResMut<'w, crate::ui_trainer::TrainerOpen>>,
-    bank: Option<ResMut<'w, crate::ui_bank::BankOpen>>,
+    bank: Option<NonSend<'w, crate::ui_bank::BankOpen>>,
     registrar: Option<ResMut<'w, crate::ui_petition::GuildRegistrarState>>,
     tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
     auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
@@ -122,6 +122,9 @@ pub(crate) struct InteractWindows<'w, 's> {
 
 /// The quest window's place in [`InteractWindows`].
 const QUEST_WINDOW: usize = 1;
+
+/// The bank's place in [`InteractWindows`].
+const BANK_WINDOW: usize = 5;
 
 /// [`InteractWindows`]' count; the gossip menu is first.
 const INTERACT_WINDOWS: usize = 12;
@@ -138,7 +141,7 @@ impl InteractWindows<'_, '_> {
             npc(&self.merchant),
             npc(&self.taxi),
             npc(&self.trainer),
-            npc(&self.bank),
+            self.bank.as_ref().and_then(|b| b.banker),
             npc(&self.registrar),
             npc(&self.tabard),
             npc(&self.auction),
@@ -160,7 +163,8 @@ impl InteractWindows<'_, '_> {
             2 => close(&mut self.merchant),
             3 => close(&mut self.taxi),
             4 => close(&mut self.trainer),
-            5 => close(&mut self.bank),
+            // The bank closes through its own leg, its events with it.
+            5 => {}
             6 => close(&mut self.registrar),
             7 => close(&mut self.tabard),
             8 => close(&mut self.auction),
@@ -173,6 +177,24 @@ impl InteractWindows<'_, '_> {
             _ => close(&mut self.battlemaster),
         }
     }
+}
+
+/// A window's open with the interact target held by a window of [`InteractWindows`] past the gossip menu and the quest frame (`0x51fd1c` -> `0x512e60`): the first such window open closes, in the interaction close's order.
+pub(crate) fn close_target_holder(world: &mut World) {
+    let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
+    let mut windows = state.get_mut(world);
+    let holder = windows
+        .npcs()
+        .iter()
+        .enumerate()
+        .skip(QUEST_WINDOW + 1)
+        .find(|&(i, n)| i != BANK_WINDOW && n.is_some())
+        .map(|(i, _)| i);
+    if let Some(window) = holder {
+        debug!("ui_session: window {window} holds the interact target — closing it");
+        windows.close(window);
+    }
+    state.apply(world);
 }
 
 /// The interact slot's clear (`0x518d50`): a window closing on an NPC closes the first window, in
@@ -189,7 +211,8 @@ pub(crate) fn close_interaction(
         let (Some(npc), None) = (*was, is) else {
             continue;
         };
-        if window == 0 {
+        // The bank's closes run the interaction close themselves; one from a new window taking the target leaves that window open (`0x512e89`, `0x57b8f1`).
+        if window == 0 || window == BANK_WINDOW {
             continue;
         }
         if let Some(other) = now.iter().position(|n| *n == Some(npc)) {
@@ -198,6 +221,7 @@ pub(crate) fn close_interaction(
                 // The quest window's leg of the interaction close (`0x512f16`): 12340's close, `QUEST_FINISHED` with it.
                 commands.queue(crate::ui_quest::close_interaction);
             } else {
+                // No window can open on the banker while the bank holds the target: each open closes the bank first (`0x51fd1c` -> `0x512fa7`).
                 windows.close(other);
             }
         }
@@ -220,7 +244,7 @@ pub(crate) fn feed_interact_npc(
     taxi: Option<Res<crate::ui_taxi::TaxiState>>,
     // Trade's "npc" is the partner, a live player.
     trade: Option<Res<crate::ui_trade::TradeSession>>,
-    bank: Option<Res<crate::ui_bank::BankOpen>>,
+    bank: Option<NonSend<crate::ui_bank::BankOpen>>,
     auction: Option<Res<crate::ui_auction::AuctionOpen>>,
     // Not covered by the gossip arm: vmangos closes the gossip menu before it sends
     // `SMSG_PETITION_SHOWLIST` (`Player.cpp:12428-12431`).
@@ -243,7 +267,7 @@ pub(crate) fn feed_interact_npc(
         .or_else(|| trainer.and_then(|s| s.npc()))
         .or_else(|| taxi.and_then(|s| s.npc()))
         .or_else(|| trade.and_then(|s| s.npc()))
-        .or_else(|| bank.and_then(|s| s.npc()))
+        .or_else(|| bank.and_then(|s| s.banker))
         .or_else(|| auction.and_then(|s| s.npc()))
         .or_else(|| registrar.and_then(|s| s.npc()))
         .or_else(|| stable.and_then(|s| s.npc()))
@@ -547,11 +571,6 @@ mod tests {
         const EXCLUDED: &[(&str, &str)] = &[
             // Its icon is art, not a unit bake, and must not take a portrait window's token.
             ("MailOpen", "its window icon is art, not a unit bake"),
-            // The guild bank's window shows the guild's tabard (`GetGuildTabardFileNames`).
-            (
-                "GuildBankState",
-                "its window shows the guild tabard, not a unit bake",
-            ),
             // Reached from an open gossip menu, which stays open behind it and heads the chain;
             // unlike the registrar's, the server does not close it first.
             ("TalentWipeState", "rides the still-open gossip session"),

@@ -40,6 +40,21 @@ pub struct QuestTooltipRead {
 }
 
 impl super::UiScript {
+    /// Tooltip `h`'s callback on a found item record (`0x61de20`): it builds again for the quest it shows now, if any (`0x61de2d`).
+    pub(crate) fn quest_tooltip_callback(&mut self, h: FrameHandle) {
+        let quest_id = {
+            let mut model = self.model_mut();
+            model.quest_tooltip_waits.remove(&h);
+            tip_mut(&mut model, h).map_or(0, |t| t.quest_id)
+        };
+        if quest_id == 0 {
+            return;
+        }
+        if let Err(e) = rebuild(&self.lua, h, quest_id) {
+            self.push_error(e);
+        }
+    }
+
     /// A cache record landed (`0x61de20`, found): every tooltip whose build missed it builds again for the quest it shows.
     pub fn quest_record_landed(&mut self, record: QuestRecord) {
         let waiting: Vec<FrameHandle> = {
@@ -93,6 +108,16 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
             view: None,
             waits: vec![QuestRecord::Quest(quest_id)],
         });
+        // An item record's ask leaves the tooltip's callback on the item cache's list, one per build (`0x622984`).
+        for w in &waits {
+            if let QuestRecord::Item(item) = *w {
+                super::item_stats::wait_item_record(
+                    &mut model,
+                    item,
+                    super::ItemRecordWait::QuestTooltip(h),
+                );
+            }
+        }
         if !waits.is_empty() {
             model.quest_tooltip_waits.insert(h, waits);
         }

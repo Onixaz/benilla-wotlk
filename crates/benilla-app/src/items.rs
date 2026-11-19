@@ -458,8 +458,6 @@ pub(crate) struct Items {
     /// A `None` answer is the server's unknown entry, kept for the polling readers; a reader's own
     /// ask ([`Self::ask_template`]) asks it again.
     templates: QueryCache<u32, ItemInfo>,
-    /// Landed since the last [`Self::take_fresh`]; pushed to the UI unprompted.
-    fresh: Vec<u32>,
     /// The reference's pending item-expiration list (at player object `+0x1cc8`): `(guid, slot,
     /// seconds)` enchant updates for an item not yet held. The reference applies them when the item
     /// is set up, counting seconds from then; they live as long as the player, here the session.
@@ -467,7 +465,72 @@ pub(crate) struct Items {
     pending_enchant_times: Vec<(u64, u32, u32)>,
 }
 
+/// The item cache's callbacks still waiting on their record, every subsystem's on one list: 12340 links each ask's callback to the tail of its record's list (`0x67ca82`, `0x67cab1`, `0x67cb8b`), and the answer runs that list in order.
+#[derive(Default)]
+pub(crate) struct RecordWaits(Vec<(u32, RecordWait)>);
+
+/// A callback an ask left on an item record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecordWait {
+    /// An item's post-init (`0x70af17` -> `0x70ae90`).
+    PostInit(u64),
+    /// An item's entry watch (`0x7079cf` -> `0x7078e0`).
+    Entry(u64),
+    /// A quest log verb's miss (`0x5e4516`, `0x5e46e6` -> `0x5dea40`).
+    QuestLog,
+    /// A turn-in's reward line, with its count (`0x6d102c`, `0x6d106d` -> `0x6cd8c0`).
+    QuestReward(u32),
+    /// The guild bank's slots' or log's count (`0x5a7664` -> `0x5a47a0`, `0x5a489c` -> `0x5a47d0`).
+    GuildBank(crate::ui_guild_bank::Callback),
+    /// A callback the UI left inside a verb's call.
+    Ui(benilla_ui::script::ItemRecordWait),
+}
+
+impl RecordWaits {
+    /// `wait` on `entry`'s record, at the list's tail (`0x67cab1`); a `once` ask whose callback and argument already wait adds none (`0x67cae8`-`0x67cb16`).
+    pub(crate) fn wait(&mut self, entry: u32, wait: RecordWait, once: bool) {
+        if once && self.0.contains(&(entry, wait)) {
+            return;
+        }
+        self.0.push((entry, wait));
+    }
+
+    /// The callbacks waiting on `entry`'s record, in ask order, unlinked.
+    pub(crate) fn take(&mut self, entry: u32) -> Vec<RecordWait> {
+        let mut taken = Vec::new();
+        self.0.retain(|&(e, wait)| {
+            let hit = e == entry;
+            if hit {
+                taken.push(wait);
+            }
+            !hit
+        });
+        taken
+    }
+
+    /// Unlink every callback `cancel` names, on any record (`0x67a0f0`).
+    pub(crate) fn cancel(&mut self, cancel: impl Fn(RecordWait) -> bool) {
+        self.0.retain(|&(_, wait)| !cancel(wait));
+    }
+
+    /// The waits, in ask order.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> &[(u32, RecordWait)] {
+        &self.0
+    }
+
+    /// Disconnect: the asks in flight died with the socket.
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 impl Items {
+    /// The entry watch's drop of the old record (`0x7079bb`): the next read asks again.
+    pub(crate) fn evict_template(&mut self, entry: u32) {
+        self.templates.evict(entry);
+    }
+
     /// Queue an `SMSG_ITEM_ENCHANT_TIME_UPDATE` for an item not held. The caller has checked the
     /// active player resolves: the reference drops the update when none does.
     pub(crate) fn queue_enchant_time(&mut self, guid: u64, slot: u32, seconds: u32) {
@@ -542,9 +605,6 @@ impl Items {
 
     /// Record a template answer (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`); `None` = unknown entry.
     pub(crate) fn insert_template(&mut self, entry: u32, info: Option<ItemInfo>) {
-        if info.is_some() {
-            self.fresh.push(entry);
-        }
         // A negative answer moves the generation too: "still asking" to "answered unknown" is a
         // display transition for the cast-fail redisplay.
         self.templates.insert(entry, info);
@@ -554,25 +614,6 @@ impl Items {
     /// reference's cache-callback redisplay.
     pub(crate) fn template_epoch(&self) -> u64 {
         self.templates.generation()
-    }
-
-    /// Every entry with a cached template.
-    pub(crate) fn cached_template_ids(&self) -> Vec<u32> {
-        self.templates
-            .iter()
-            .filter_map(|(&id, t)| t.is_some().then_some(id))
-            .collect()
-    }
-
-    /// Whether a template landed since the last [`Self::take_fresh`]: read first, so an idle frame
-    /// leaves the cache unmarked for every reader gated on it.
-    pub(crate) fn has_fresh(&self) -> bool {
-        !self.fresh.is_empty()
-    }
-
-    /// Drain the entries whose template landed since the last drain.
-    pub(crate) fn take_fresh(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.fresh)
     }
 
     /// World enter: release the ask-once latch and keep what the cache learned. An ask is marked
@@ -937,15 +978,6 @@ mod tests {
 
         assert_eq!(c.enchant_deadline_ms(0), None, "never set");
         assert!(c.enchant_deadline_ms(11).is_some_and(|ms| ms <= 30_000));
-    }
-
-    #[test]
-    fn landed_templates_drain_as_fresh_once() {
-        let mut items = Items::default();
-        items.insert_template(117, Some(info("Tough Jerky")));
-        items.insert_template(9999, None);
-        assert_eq!(items.take_fresh(), vec![117]);
-        assert!(items.take_fresh().is_empty(), "a drain empties the queue");
     }
 
     /// The tooltip's open line waits for an unlocked instance; the click is the bare template bit,

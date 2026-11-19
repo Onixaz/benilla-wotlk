@@ -14,6 +14,7 @@ use bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 
+use crate::ui_bank::BankOpen;
 use crate::ui_quest::QuestGiver;
 use crate::ui_quest_log::rows::{QuestAsks, RebuildMarks};
 use crate::ui_quest_log::QuestExpiries;
@@ -43,6 +44,14 @@ pub(crate) struct LiveView<'w, 's> {
     quest_tooltip: crate::ui_quest_log::tooltip::QuestTooltipLive<'w, 's>,
     quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     net: Option<Res<'w, crate::net::NetCommands>>,
+    bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
+    item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
+    /// The enchant catalog a bound item's trade stamp tests for a binding enchant (`0x708b40`).
+    enchants: Option<Res<'w, crate::items::Enchants>>,
+    /// The item cache, a refund ask's template test (`0x62d580`).
+    items: Option<Res<'w, crate::items::Items>>,
+    /// The item records' callbacks, which a verb's ask joins in turn with every subsystem's.
+    record_waits: Option<NonSendMut<'w, crate::items::RecordWaits>>,
     /// The main-thread state a verb writes inside its call, filled by [`LendLive`].
     pub(crate) lent: Lent<'w>,
     companions: crate::ui_companion::CompanionLive<'w, 's>,
@@ -53,6 +62,12 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
     pub(crate) selection: Slot<'w, crate::target::Selection>,
     pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
+    /// The action bar's store: the spell book, the bar's slots and the equipment sets.
+    pub(crate) actions: Slot<'w, crate::ui_action::PlayerActions>,
+    /// The items a send locked (`item+0x314` bit 0), read into each slot's `locked`.
+    pub(crate) pending: Slot<'w, crate::pending_item_ops::PendingItemOps>,
+    /// The charter records a bag slot's charter reads.
+    pub(crate) petitions: Slot<'w, crate::ui_petition::PetitionState>,
     /// The wire, for the sends a verb makes inside its call.
     commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
@@ -65,8 +80,22 @@ pub(crate) struct LiveView<'w, 's> {
     summons: Option<Res<'w, crate::spell::SummonSlots>>,
     /// The active mover (`[0xca1238]`), the dismiss's controlled-vehicle test (`0x5d4744`).
     mover: Query<'w, 's, &'static crate::net::Guid, With<crate::net::ActiveMover>>,
-    /// `ChrClasses.dbc`, the pet book's token.
+    /// `ChrClasses.dbc`, the pet book's token and the requirement state's class flags.
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
+    /// The requirement state's proficiency masks, standings and faction table.
+    proficiencies: Option<Res<'w, crate::net::Proficiencies>>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
+    factions: Option<Res<'w, crate::target::Factions>>,
+    /// The currency tables, the item cache and the bag icons.
+    currency: crate::ui_currency::CurrencyLive<'w>,
+    /// The bags' objects, item cache and catalogs, read at the call.
+    containers: Option<crate::ui_items::ContainerLive<'w, 's>>,
+    /// `ItemSet.dbc`, the name cache and the bonuses' token inputs, read at the call.
+    item_sets: Option<crate::ui_items::ItemSetLive<'w, 's>>,
+    /// The item cache and the catalogs a record's names resolve through, read at the call.
+    item_records: Option<crate::ui_items::ItemRecordLive<'w, 's>>,
+    /// The caches a guild bank slot and log row resolve through at the call.
+    guild_bank: Option<crate::ui_guild_bank::BankCatalogs<'w>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -78,6 +107,9 @@ pub(crate) struct Lent<'w> {
     pub(crate) marks: LentSlot<'w, RebuildMarks>,
     pub(crate) expiries: LentSlot<'w, QuestExpiries>,
     pub(crate) giver: LentSlot<'w, QuestGiver>,
+    pub(crate) bank: LentSlot<'w, BankOpen>,
+    pub(crate) refunds: LentSlot<'w, crate::ui_socket::RefundRecords>,
+    pub(crate) guild_bank: LentSlot<'w, crate::ui_guild_bank::GuildBankState>,
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
@@ -87,6 +119,9 @@ pub(crate) mod lent {
     pub(crate) const MARKS: u8 = 4;
     pub(crate) const EXPIRIES: u8 = 8;
     pub(crate) const GIVER: u8 = 16;
+    pub(crate) const BANK: u8 = 32;
+    pub(crate) const REFUNDS: u8 = 64;
+    pub(crate) const GUILD_BANK: u8 = 128;
 }
 
 /// One kind of [`Lent`] state.
@@ -112,6 +147,13 @@ lendable!(QuestAsks, asks, lent::ASKS);
 lendable!(RebuildMarks, marks, lent::MARKS);
 lendable!(QuestExpiries, expiries, lent::EXPIRIES);
 lendable!(QuestGiver, giver, lent::GIVER);
+lendable!(BankOpen, bank, lent::BANK);
+lendable!(crate::ui_socket::RefundRecords, refunds, lent::REFUNDS);
+lendable!(
+    crate::ui_guild_bank::GuildBankState,
+    guild_bank,
+    lent::GUILD_BANK
+);
 
 /// One piece of [`Lent`] state: the borrow [`LendLive`] took, or the one its owner lends for the call in progress.
 pub(crate) struct LentSlot<'w, T: 'static> {
@@ -196,6 +238,16 @@ impl LiveView<'_, '_> {
         Some((fields.unit_race()?, fields.unit_class()?))
     }
 
+    /// The lent state a bag read takes.
+    fn container_lent(&self) -> crate::ui_items::ContainerLent<'_> {
+        crate::ui_items::ContainerLent {
+            cooldowns: self.cooldowns.get(),
+            pending: self.pending.get(),
+            petitions: self.petitions.get(),
+            banker: self.lent.bank.get().is_some_and(|b| b.banker.is_some()),
+        }
+    }
+
     /// A held player's PvP side (`0x54d074`).
     fn player_side(&self, guid: u64) -> Option<i8> {
         let entity = self.player_entity(guid)?;
@@ -268,6 +320,9 @@ pub(crate) trait Owns: 'static {
     const COOLDOWNS: bool = false;
     const SELECTION: bool = false;
     const PLACE: bool = false;
+    const ACTIONS: bool = false;
+    const PENDING: bool = false;
+    const PETITIONS: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
     const LENT: u8 = 0;
 }
@@ -279,6 +334,9 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const COOLDOWNS: bool = A::COOLDOWNS || B::COOLDOWNS;
     const SELECTION: bool = A::SELECTION || B::SELECTION;
     const PLACE: bool = A::PLACE || B::PLACE;
+    const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
+    const PENDING: bool = A::PENDING || B::PENDING;
+    const PETITIONS: bool = A::PETITIONS || B::PETITIONS;
     const LENT: u8 = A::LENT | B::LENT;
 }
 
@@ -292,6 +350,24 @@ impl Owns for OwnsPlace {
 pub(crate) struct OwnsSelection;
 impl Owns for OwnsSelection {
     const SELECTION: bool = true;
+}
+
+/// The system writes [`crate::ui_action::PlayerActions`].
+pub(crate) struct OwnsActions;
+impl Owns for OwnsActions {
+    const ACTIONS: bool = true;
+}
+
+/// The system writes [`crate::pending_item_ops::PendingItemOps`].
+pub(crate) struct OwnsPending;
+impl Owns for OwnsPending {
+    const PENDING: bool = true;
+}
+
+/// The system writes [`crate::ui_petition::PetitionState`].
+pub(crate) struct OwnsPetitions;
+impl Owns for OwnsPetitions {
+    const PETITIONS: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -713,10 +789,14 @@ impl LiveState for LiveView<'_, '_> {
         get: &dyn Fn(&str) -> Option<String>,
     ) -> Option<Option<benilla_ui::script::QuestLogEntryView>> {
         let Self {
-            quest_rows, lent, ..
+            quest_rows,
+            lent,
+            record_waits,
+            ..
         } = self;
         let Lent { asks, expiries, .. } = lent;
-        quest_rows.row(quest_id, slot, get, expiries.get(), asks.get_mut())
+        let lists = (asks.get_mut(), record_waits.as_deref_mut());
+        quest_rows.row(quest_id, slot, get, expiries.get(), lists)
     }
 
     fn quest_log_detail(
@@ -725,9 +805,13 @@ impl LiveState for LiveView<'_, '_> {
         slot: u8,
     ) -> Option<Option<benilla_ui::script::QuestLogDetail>> {
         let Self {
-            quest_rows, lent, ..
+            quest_rows,
+            lent,
+            record_waits,
+            ..
         } = self;
-        quest_rows.detail(quest_id, slot, lent.asks.get_mut())
+        let lists = (lent.asks.get_mut(), record_waits.as_deref_mut());
+        quest_rows.detail(quest_id, slot, lists)
     }
 
     fn daily_quests_completed(&self) -> Option<u32> {
@@ -1209,6 +1293,373 @@ impl LiveState for LiveView<'_, '_> {
             .info(spell_id, 0, d, std::time::Instant::now())
             .ui_triple(anchor, ui_now)
     }
+
+    fn banker(&self) -> Option<u64> {
+        self.lent.bank.get()?.banker
+    }
+
+    fn bank_bag_slots(&self) -> Option<u8> {
+        Some(
+            self.unit(self.active_player()?)?
+                .player_bank_bag_slots_purchased()
+                .unwrap_or(0),
+        )
+    }
+
+    fn bank_slot_cost(&self, slot: u32) -> u32 {
+        let row = u8::try_from(slot.saturating_sub(1)).unwrap_or(u8::MAX);
+        self.bank_prices
+            .as_ref()
+            .and_then(|p| p.0.next_slot_price(row))
+            .unwrap_or(0)
+    }
+
+    /// The active player, control, a banker and fewer than seven slots gate silently (`0x57bbe5`-`0x57bc10`); short of the price shows `ERR_BANKSLOT_INSUFFICIENT_FUNDS` (`0x57bc2a`); else `CMSG_BUY_BANK_SLOT` names the interact target (`0x57bc54`).
+    fn purchase_bank_slot(&self) -> Option<&'static str> {
+        let me = self.unit(self.active_player()?)?;
+        let bank = self.lent.bank.get()?;
+        bank.banker.filter(|_| self.has_control())?;
+        let slots = me.player_bank_bag_slots_purchased().unwrap_or(0);
+        if slots >= 7 {
+            return None;
+        }
+        if me.player_money().unwrap_or(0) < self.bank_slot_cost(u32::from(slots) + 1) {
+            return Some("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
+        }
+        let guid = bank.interact_target().unwrap_or(0);
+        debug!("bank: purchase next bag slot at {guid:#x}");
+        let _ = self
+            .net
+            .as_deref()?
+            .0
+            .send(crate::net::ClientCommand::BuyBankSlot { guid });
+        None
+    }
+
+    fn close_bank_interaction(&mut self) -> bool {
+        self.lent
+            .bank
+            .get_mut()
+            .is_some_and(|b| b.close_interaction())
+    }
+
+    fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {
+        self.item_tables.as_deref().map(|t| &t.tables)
+    }
+
+    fn item_set(
+        &self,
+        set_id: u32,
+        global: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::ItemSetView> {
+        let me = self.self_guid.as_ref().and_then(|s| s.0).and_then(|g| {
+            let &entity = self.index.as_ref()?.0.get(&g)?;
+            self.stores.get(entity).ok()
+        });
+        let known = self.actions.get().map(|a| &a.spells);
+        static NONE: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        self.item_sets.as_ref()?.view(
+            set_id,
+            me,
+            self.spells.as_deref(),
+            known.unwrap_or(&NONE),
+            global,
+        )
+    }
+
+    fn item_record(
+        &self,
+        id: u32,
+        tooltip: Option<benilla_ui::script::GlobalStrings<'_>>,
+    ) -> Option<Option<benilla_ui::script::ItemTemplateView>> {
+        let records = self.item_records.as_ref()?;
+        let me = self.self_guid.as_ref().and_then(|s| s.0).and_then(|g| {
+            let &entity = self.index.as_ref()?.0.get(&g)?;
+            self.stores.get(entity).ok()
+        });
+        let known = self.actions.get().map(|a| &a.spells);
+        static NONE: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        Some(records.view(
+            id,
+            me,
+            self.spells.as_deref(),
+            known.unwrap_or(&NONE),
+            tooltip,
+        ))
+    }
+
+    fn bind_location(&self) -> Option<String> {
+        self.item_records
+            .as_ref()?
+            .bind_location()
+            .map(str::to_string)
+    }
+
+    fn guild_bank_open(&self) -> bool {
+        self.lent.guild_bank.get().is_some_and(|b| b.is_open())
+    }
+
+    fn guild_bank_current_tab(&self) -> u8 {
+        self.lent.guild_bank.get().map_or(0, |b| b.current_tab())
+    }
+
+    fn set_guild_bank_current_tab(&mut self, tab: u8) {
+        if let Some(bank) = self.lent.guild_bank.get_mut() {
+            bank.set_current_tab(tab);
+        }
+    }
+
+    fn guild_bank_num_tabs(&self) -> u8 {
+        self.lent.guild_bank.get().map_or(0, |b| b.num_tabs())
+    }
+
+    fn guild_bank_tab(&self, tab: u8) -> Option<benilla_ui::script::GuildBankTabView> {
+        self.lent.guild_bank.get()?.tab_view(tab)
+    }
+
+    fn guild_bank_item(&self, tab: u8, slot: u8) -> Option<(u32, u32)> {
+        let s = self.lent.guild_bank.get()?.slot(tab, slot)?;
+        Some((s.item_id, s.count))
+    }
+
+    fn guild_bank_slot(&self, tab: u8, slot: u8) -> Option<benilla_ui::script::GuildBankSlotView> {
+        let s = self.lent.guild_bank.get()?.slot(tab, slot)?;
+        self.guild_bank
+            .as_ref()?
+            .slot_view(s, self.commands.as_deref()?)
+    }
+
+    fn guild_bank_texture(&self, tab: u8, slot: u8) -> Option<String> {
+        let s = self.lent.guild_bank.get()?.slot(tab, slot)?;
+        self.guild_bank.as_ref()?.texture(s.item_id)
+    }
+
+    fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
+        self.lent
+            .guild_bank
+            .get()
+            .is_some_and(|b| b.is_locked(tab, slot, item_id))
+    }
+
+    fn set_guild_bank_lock(&mut self, tab: u8, slot: u8, item_id: u32, locked: bool) {
+        if let Some(bank) = self.lent.guild_bank.get_mut() {
+            bank.set_lock(tab, slot, item_id, locked);
+        }
+    }
+
+    fn guild_bank_withdrawals(&self) -> i32 {
+        self.lent
+            .guild_bank
+            .get()
+            .map_or(0, |b| b.withdrawals_remaining())
+    }
+
+    fn guild_bank_money(&self) -> u64 {
+        self.lent.guild_bank.get().map_or(0, |b| b.money())
+    }
+
+    fn guild_bank_withdraw_money(&self) -> i32 {
+        self.lent.guild_bank.get().map_or(0, |b| b.withdraw_money())
+    }
+
+    fn guild_bank_log_len(&self, tab: u8) -> usize {
+        self.lent.guild_bank.get().map_or(0, |b| b.log_len(tab))
+    }
+
+    fn guild_bank_log(&self, tab: u8, index: u8) -> Option<benilla_ui::script::GuildBankLogView> {
+        let row = self.lent.guild_bank.get()?.log_row(tab, index)?;
+        Some(
+            self.guild_bank
+                .as_ref()?
+                .log_view(row, self.commands.as_deref()?),
+        )
+    }
+
+    fn clear_guild_banker(&mut self) {
+        if let Some(bank) = self.lent.guild_bank.get_mut() {
+            bank.clear_banker();
+        }
+    }
+
+    fn guild_bank_query_text(&mut self, tab: u8) -> bool {
+        let commands = self.commands.as_deref();
+        match (self.lent.guild_bank.get_mut(), commands) {
+            (Some(bank), Some(net)) => bank.query_text(tab, net),
+            _ => true,
+        }
+    }
+
+    fn player_fields(&self) -> Option<benilla_ui::script::PlayerFields> {
+        let me = self.unit(self.active_player()?)?;
+        Some(crate::ui_items::player_fields(me, self.classes.as_deref()))
+    }
+
+    fn player_skill(&self, skill: u32) -> Option<Option<u32>> {
+        let me = self.unit(self.active_player()?)?;
+        Some(crate::ui_items::player_skill(me, skill))
+    }
+
+    fn player_proficiency(&self, class: u32) -> Option<Option<u32>> {
+        self.unit(self.active_player()?)?;
+        Some(
+            self.proficiencies
+                .as_deref()
+                .and_then(|p| p.0.get(&class).copied()),
+        )
+    }
+
+    fn player_rep_rank(&self, faction: u32) -> Option<u8> {
+        let me = self.unit(self.active_player()?)?;
+        Some(crate::ui_items::player_rep_rank(
+            me,
+            self.reputations.as_deref(),
+            self.factions.as_deref(),
+            faction,
+        ))
+    }
+
+    fn player_can_dual_wield(&self) -> Option<bool> {
+        self.unit(self.active_player()?)?;
+        Some(crate::ui_items::can_dual_wield(
+            self.actions.get(),
+            self.spells.as_deref(),
+        ))
+    }
+
+    fn player_level(&self) -> Option<u32> {
+        let me = self.unit(self.active_player()?)?;
+        Some(me.unit_level().unwrap_or(0))
+    }
+
+    fn container(
+        &self,
+        bag: i64,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::ContainerState>> {
+        self.containers.as_ref()?.bag(
+            &self.container_lent(),
+            bag,
+            crate::ui_items::BagRead::Held,
+            (anchor, ui_now),
+        )
+    }
+
+    fn container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::ContainerSlot>> {
+        self.containers.as_ref()?.slot(
+            &self.container_lent(),
+            bag,
+            slot,
+            crate::ui_items::BagRead::Held,
+            (anchor, ui_now),
+        )
+    }
+
+    fn indexed_container(
+        &self,
+        bag: i64,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::ContainerState>> {
+        self.containers.as_ref()?.bag(
+            &self.container_lent(),
+            bag,
+            crate::ui_items::BagRead::Index,
+            (anchor, ui_now),
+        )
+    }
+
+    fn indexed_container_slot(
+        &self,
+        bag: i64,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::ContainerSlot>> {
+        self.containers.as_ref()?.slot(
+            &self.container_lent(),
+            bag,
+            slot,
+            crate::ui_items::BagRead::Index,
+            (anchor, ui_now),
+        )
+    }
+
+    fn has_key(&self) -> Option<bool> {
+        self.containers.as_ref()?.has_key()
+    }
+
+    fn currency_catalog(&self) -> Option<&benilla_ui::script::CurrencyCatalogView> {
+        self.currency.catalog()
+    }
+
+    fn currency_holdings(&self) -> Option<benilla_ui::script::CurrencyHoldings> {
+        let me = self.unit(self.active_player()?)?;
+        let index = self.index.as_ref()?;
+        Some(self.currency.holdings(me, |guid| {
+            let &entity = index.0.get(&guid)?;
+            Some(&self.stores.get(entity).ok()?.0)
+        }))
+    }
+
+    fn ask_item_record(&self, id: u32) {
+        self.currency.ask(id);
+    }
+
+    fn wait_item_record(&mut self, id: u32, wait: benilla_ui::script::ItemRecordWait) -> bool {
+        let Some(waits) = self.record_waits.as_mut() else {
+            return false;
+        };
+        waits.wait(id, crate::items::RecordWait::Ui(wait), wait.once());
+        true
+    }
+
+    fn clear_banker(&mut self) {
+        if let Some(b) = self.lent.bank.get_mut() {
+            b.clear();
+        }
+    }
+
+    fn refund_record(&self, item: u64) -> Option<Option<benilla_ui::script::RefundView>> {
+        let records = self.lent.refunds.get()?;
+        let held = self.index.as_ref()?.0.contains_key(&item);
+        Some(held.then(|| records.view(item)).flatten())
+    }
+
+    fn bound_trade_stamp(&self, item: u64) -> Option<Option<u32>> {
+        let index = self.index.as_ref()?;
+        let fields = index
+            .0
+            .get(&item)
+            .and_then(|&e| self.stores.get(e).ok())
+            .map(|s| &s.0);
+        let me = self.active_player();
+        Some(fields.and_then(|f| crate::ui_socket::trade_stamp(f, me, self.enchants.as_deref())))
+    }
+
+    fn ask_refund_record(&mut self, item: u64) {
+        let entry = self
+            .index
+            .as_ref()
+            .and_then(|i| i.0.get(&item))
+            .and_then(|&e| self.stores.get(e).ok())
+            .and_then(|s| s.0.object_entry());
+        let refundable = entry
+            .zip(self.items.as_deref())
+            .is_some_and(|(entry, items)| crate::ui_socket::refundable(items, entry));
+        let Some(commands) = self.commands.as_deref() else {
+            return;
+        };
+        if let (true, Some(records)) = (refundable, self.lent.refunds.get_mut()) {
+            records.ask(item, commands);
+        }
+    }
 }
 
 impl Lent<'_> {
@@ -1267,6 +1718,31 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
     }
 
+    /// `f` over the guild bank this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
+    pub(crate) fn with_guild_bank<R>(
+        &self,
+        f: impl FnOnce(Option<&crate::ui_guild_bank::GuildBankState>) -> R,
+    ) -> R {
+        self.loan.with_view(|v| f(v.lent.guild_bank.get()))
+    }
+
+    /// `f` over the guild bank this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
+    pub(crate) fn with_guild_bank_mut<R>(
+        &mut self,
+        f: impl FnOnce(Option<&mut crate::ui_guild_bank::GuildBankState>) -> R,
+    ) -> R {
+        self.loan.with_view_mut(|v| f(v.lent.guild_bank.get_mut()))
+    }
+
+    /// Leave `wait` on item `entry`'s record through the view this parameter borrows, between calls into Lua (`0x67cab1`).
+    pub(crate) fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
+        self.loan.with_view_mut(|v| {
+            if let Some(waits) = v.record_waits.as_mut() {
+                waits.wait(entry, wait, false);
+            }
+        });
+    }
+
     /// The overlay of `T`, set only inside [`Self::lending`].
     #[cfg(test)]
     pub(crate) fn overlay<T: Lendable>(&mut self) -> bool {
@@ -1294,8 +1770,16 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 /// A lendable resource's id, then the loan's and the owner's marks.
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// The lendable resources' ids: the history, the pet's words, the selection and the player's place.
-type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds);
+/// The lendable resources' ids: the history, the pet's words, the selection, the player's place, the action store, the item locks and the charter records.
+type SlotState = (
+    SlotIds,
+    SlotIds,
+    SlotIds,
+    SlotIds,
+    SlotIds,
+    SlotIds,
+    SlotIds,
+);
 
 /// Register `X` and its pair's marks.
 fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
@@ -1337,7 +1821,7 @@ unsafe fn slot_fetch<X: Resource>(
 }
 
 /// The [`Lent`] state's ids, in [`lent`] bit order.
-type LentIds = [ComponentId; 5];
+type LentIds = [ComponentId; 8];
 
 /// Register the [`Lent`] state's ids.
 fn lent_ids(world: &mut World) -> LentIds {
@@ -1348,6 +1832,9 @@ fn lent_ids(world: &mut World) -> LentIds {
         reg.register_non_send::<RebuildMarks>(),
         reg.register_non_send::<QuestExpiries>(),
         reg.register_non_send::<QuestGiver>(),
+        reg.register_non_send::<BankOpen>(),
+        reg.register_non_send::<crate::ui_socket::RefundRecords>(),
+        reg.register_non_send::<crate::ui_guild_bank::GuildBankState>(),
     ]
 }
 
@@ -1412,6 +1899,9 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 slot_ids::<crate::ui_pet::PetBar>(world),
                 slot_ids::<crate::target::Selection>(world),
                 slot_ids::<crate::area::PlayerPlace>(world),
+                slot_ids::<crate::ui_action::PlayerActions>(world),
+                slot_ids::<crate::pending_item_ops::PendingItemOps>(world),
+                slot_ids::<crate::ui_petition::PetitionState>(world),
             ),
             lent_ids(world),
         )
@@ -1434,13 +1924,23 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
         slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
         slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
-        let [signals, asks, marks, expiries, giver] = &state.2;
+        slot_access::<crate::ui_action::PlayerActions>(O::ACTIONS, state.1 .4, system_meta, set);
+        type Pending = crate::pending_item_ops::PendingItemOps;
+        slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
+        type Petitions = crate::ui_petition::PetitionState;
+        slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
+        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
         lent_access::<QuestAsks>(own, lent::ASKS, asks, meta, set, world);
         lent_access::<RebuildMarks>(own, lent::MARKS, marks, meta, set, world);
         lent_access::<QuestExpiries>(own, lent::EXPIRIES, expiries, meta, set, world);
         lent_access::<QuestGiver>(own, lent::GIVER, giver, meta, set, world);
+        lent_access::<BankOpen>(own, lent::BANK, bank, meta, set, world);
+        type Refunds = crate::ui_socket::RefundRecords;
+        lent_access::<Refunds>(own, lent::REFUNDS, refunds, meta, set, world);
+        type GuildBank = crate::ui_guild_bank::GuildBankState;
+        lent_access::<GuildBank>(own, lent::GUILD_BANK, guild_bank, meta, set, world);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -1484,7 +1984,15 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         // SAFETY: both registered in `init_access`.
         unsafe {
             let own = |owned: bool, id| owned.then_some((world, id));
-            let ((cd, ..), (bar, ..), (sel, ..), (place, ..)) = state.1;
+            let (
+                (cd, ..),
+                (bar, ..),
+                (sel, ..),
+                (place, ..),
+                (actions, ..),
+                (pending, ..),
+                (pet, ..),
+            ) = state.1;
             view.cooldowns
                 .set(slot_fetch(world, cd), own(O::COOLDOWNS, cd));
             view.pet_bar.set(slot_fetch(world, bar), own(true, bar));
@@ -1492,8 +2000,14 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, sel), own(O::SELECTION, sel));
             view.place
                 .set(slot_fetch(world, place), own(O::PLACE, place));
+            view.actions
+                .set(slot_fetch(world, actions), own(O::ACTIONS, actions));
+            view.pending
+                .set(slot_fetch(world, pending), own(O::PENDING, pending));
+            view.petitions
+                .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
         }
-        let [signals, asks, marks, expiries, giver] = state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
         // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
         view.lent = unsafe {
@@ -1503,6 +2017,9 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 marks: lent_fetch(own, lent::MARKS, marks, meta, world, tick),
                 expiries: lent_fetch(own, lent::EXPIRIES, expiries, meta, world, tick),
                 giver: lent_fetch(own, lent::GIVER, giver, meta, world, tick),
+                bank: lent_fetch(own, lent::BANK, bank, meta, world, tick),
+                refunds: lent_fetch(own, lent::REFUNDS, refunds, meta, world, tick),
+                guild_bank: lent_fetch(own, lent::GUILD_BANK, guild_bank, meta, world, tick),
             }
         };
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
@@ -1909,6 +2426,37 @@ mod tests {
             assert_eq!(benilla_ui::script::read_live(|_| ()), Some(()));
             assert_eq!(benilla_ui::script::write_live(|_| ()), Some(()));
         }));
+    }
+
+    /// The action store is lent like the history: a plain write beside a loan is refused (B0002), the owner's handle is admitted, and its write is the next read of the view in the same run.
+    #[test]
+    fn the_action_store_is_written_by_its_owner_and_read_through_the_view() {
+        use crate::ui_action::PlayerActions;
+        let refused = refusal(|_w: ResMut<PlayerActions>, _l: LendLive| {});
+        assert!(
+            refused.contains("B0002") && refused.contains("PlayerActions"),
+            "{refused}"
+        );
+        assert_eq!(
+            refusal(|_l: LendLive<OwnsActions>, _w: OwnedMut<PlayerActions>| {}),
+            ""
+        );
+        let mut world = World::new();
+        world.init_resource::<PlayerActions>();
+        let seen = world
+            .run_system_once(
+                |live: LendLive<OwnsActions>, mut a: OwnedMut<PlayerActions>| {
+                    let read = |live: &LendLive<OwnsActions>| {
+                        live.view().actions.get().map(|a| a.spells.contains(&54197))
+                    };
+                    let before = read(&live);
+                    a.write().spells.insert(54197);
+                    (before, read(&live))
+                },
+            )
+            .unwrap();
+        assert_eq!(seen, (Some(false), Some(true)));
+        assert!(world.resource_ref::<PlayerActions>().is_changed());
     }
 
     /// The owner's write is the next read of its view, inside the same run, and the view lent for that run is gone once it ends, on unwind too.

@@ -264,13 +264,11 @@ fn attach_refusal(model: &Model, item: &CursorItem) -> Option<&'static str> {
     if model.mail_lock_send_items {
         return Some("ERR_CLIENT_LOCKED_OUT");
     }
-    let Some(t) = model.item_templates.get(&item.item_id) else {
+    let Some(t) = crate::script::item_stats::item_record(model, item.item_id) else {
         return Some("ERR_ITEM_NOT_FOUND");
     };
-    let s = model
-        .containers
-        .get(&item.bag)
-        .and_then(|c| c.slots.get(&item.slot));
+    let s = super::container::live_slot(model, item.bag, item.slot);
+    let s = s.as_ref();
     if s.is_some_and(|s| s.already_bound) {
         if t.bonding == 4 {
             return Some("ERR_MAIL_QUEST_ITEM");
@@ -289,9 +287,7 @@ fn attach_refusal(model: &Model, item: &CursorItem) -> Option<&'static str> {
     // An equipped bag that still holds items.
     if t.container_slots > 0 && item.bag == cursor::EQUIPMENT_BAG {
         let equipped_bag = i64::from(item.slot) - 19;
-        if model
-            .containers
-            .get(&equipped_bag)
+        if super::container::live_bag(model, equipped_bag)
             .is_some_and(|c| c.slots.values().any(|s| s.item_id != 0))
         {
             return Some("ERR_MAIL_BAG");
@@ -339,13 +335,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
     if !model.mail_send_showing || !model.mail_mailbox {
         return false;
     }
-    let Some(s) = model
-        .containers
-        .get(&bag)
-        .and_then(|c| c.slots.get(&slot))
-        .filter(|s| s.item_id != 0)
-        .cloned()
-    else {
+    let Some(s) = super::container::index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
         return false;
     };
     add_item_to_outgoing(
@@ -1038,10 +1028,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some(it) = model.mail_send_items[i].clone() else {
                     continue;
                 };
-                let present = model
-                    .containers
-                    .get(&it.bag)
-                    .and_then(|c| c.slots.get(&it.slot))
+                let present = super::container::live_slot(&model, it.bag, it.slot)
                     .is_some_and(|s| s.item_id == it.item_id);
                 if !present {
                     model.ui_errors.push("ERR_ITEM_NOT_FOUND");
@@ -1142,9 +1129,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .expect("model app_data");
                 slot.and_then(|s| send_item(&model, s)).cloned().map(|it| {
                     let count = cursor::held_count(&model, &it);
-                    let inv_type = model
-                        .item_templates
-                        .get(&it.item_id)
+                    let inv_type = crate::script::item_stats::item_record(&model, it.item_id)
                         .map(|t| t.inventory_type);
                     (it, count, inv_type)
                 })

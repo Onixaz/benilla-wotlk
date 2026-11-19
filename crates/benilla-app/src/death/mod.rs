@@ -390,11 +390,12 @@ const UNIT_DYNFLAG_DEAD: u32 = 0x20;
 /// `PLAYER_FLAGS_GHOST`.
 const PLAYER_FLAGS_GHOST: u32 = 0x10;
 
-/// Our death (`0x729220`): the player's half derives the release timer unless the dead bit is set
-/// (`0x6dc0f0`), then the death anim refreshes the dead or alive signal (`0x7561e0`).
+/// Our death (`0x729220`): the player's half derives the release timer and clears the interact target unless the dead bit is set (`0x6dc0f0`), then the death anim refreshes the dead or alive signal (`0x7561e0`).
 fn on_death(fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
     if !dead_flag {
         cx.globals.update_repop_timer(fields, cx.now);
+        // The interact target's clear (`0x6dc17a` -> `0x512e60`), its bank leg (`0x512fa7`).
+        cx.ui.world(crate::ui_bank::close_by_interaction);
     }
     refresh_active_player(fields.unit_health().unwrap_or(0), cx.ui);
 }
@@ -1134,7 +1135,8 @@ mod tests {
         let dead = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 0)];
         assert_eq!(
             rig.changed(&dead, &[(FIELD_UNIT_HEALTH, 100, 0)]),
-            ["PLAYER_DEAD", "<clear cursor>"]
+            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the interact target's clear (the bank's leg) ahead of the death anim's signal"
         );
         assert_eq!(
             rig.globals.release_left_ms(10.0),

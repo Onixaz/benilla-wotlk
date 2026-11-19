@@ -305,7 +305,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             Ok(if u.level == 0 {
                 0
-            } else if level_reads_unknown(u, model.player_req.level) {
+            } else if level_reads_unknown(u, crate::script::item_stats::player_level()) {
                 -1
             } else {
                 i64::from(u.level)
@@ -349,11 +349,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // the table's first entry, 4.
     g.set(
         "GetQuestGreenRange",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(grey_band(model.player_req.level)))
+        lua.create_function(|_, ()| {
+            Ok(i64::from(grey_band(
+                crate::script::item_stats::player_level(),
+            )))
         })?,
     )?;
 
@@ -451,7 +450,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let player_level = model.player_req.level;
+            let player_level = crate::script::item_stats::player_level();
             Ok(flag(
                 unit.and_then(|u| model.unit(&u))
                     .is_some_and(|u| super::is_civilian_kill(u, player_level)),
@@ -489,11 +488,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: UnitIsTrivial("unit")"#,
             )?);
-            let player_level = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .player_req
-                .level;
+            let player_level = crate::script::item_stats::player_level();
             let hit = with_unit(lua, &token, false, |u| {
                 u.has_object && !u.is_player && unit_is_grey(player_level, u.level)
             })?;
@@ -1331,7 +1326,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let bank = |points: u8, on: u64| if on == target { points } else { 0 };
             let player = guid_of("player");
             let points = if unit != 0 && unit == player {
-                let class = model.player_req.class_id;
+                let class =
+                    crate::script::ReqFields::class_id(&crate::script::item_stats::player_req());
                 if class == CLASS_ROGUE || class == CLASS_DRUID {
                     bank(model.combo_points, model.combo_target)
                 } else {

@@ -42,9 +42,9 @@ impl super::UiScript {
     /// The player's value in a skill as the item-use checks read it (`0x51a250`), 0 for a skill
     /// not held; `None` until the requirement state is pushed.
     pub fn skill_value(&self, skill: u32) -> Option<u32> {
-        let model = self.model_ref();
-        let req = &model.player_req;
-        (req.level != 0).then(|| req.skills.get(&skill).copied().unwrap_or(0))
+        use crate::script::ReqFields;
+        let req = crate::script::item_stats::player_req();
+        (req.level() != 0).then(|| req.skill(skill).unwrap_or(0))
     }
 }
 

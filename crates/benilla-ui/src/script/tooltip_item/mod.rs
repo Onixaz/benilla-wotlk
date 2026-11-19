@@ -13,12 +13,13 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::item_link::{item_hyperlink, reference_atoi, ItemLinkFields};
+use super::item_stats::{ask_item_record, item_record, item_tooltip_record, wait_item_record};
 use super::item_summary::StatSummary;
 use super::object::frame_handle_of;
 use super::tooltip::{
     append_line, clear_content, fire_cleared, hide_tooltip, show_or_hide_empty, tip_mut,
 };
-use super::ItemTemplateView;
+use super::{ItemRecordWait, ItemTemplateView};
 
 mod names;
 mod render;
@@ -32,7 +33,7 @@ pub(super) use render::bind_key;
 pub(super) use render::Sell;
 use render::{render_view, BuilderFlags, Requester};
 use wait::{note_item_miss, retrieving};
-pub(crate) use wait::{note_set_miss, wrap_setters, ItemRender, ItemWait};
+pub(crate) use wait::{note_name_miss, wrap_setters, ItemRender, ItemWait};
 
 /// The body both compare bindings run: walk the slots the reference's mask table gives the
 /// `InventoryType`, skipping empty ones uncounted and ones whose worn item's class differs, until
@@ -58,10 +59,8 @@ fn compare_against_worn(
             else {
                 continue; // an empty slot is not counted
             };
-            let same_class = model
-                .item_templates
-                .get(&worn.item_id)
-                .is_some_and(|w| w.class == offered.class);
+            let same_class =
+                item_record(&model, worn.item_id).is_some_and(|w| w.class == offered.class);
             if !same_class {
                 continue;
             }
@@ -96,9 +95,12 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
             t.item_id = item_id;
         }
     }
-    let v = model.item_templates.get(&item_id).cloned();
+    let v = item_tooltip_record(lua, &model, item_id);
     if v.is_none() && item_id != 0 {
-        model.item_stat_asks.insert(item_id);
+        if let Some(h) = model.item_render.as_ref().map(wait::ItemRender::tooltip) {
+            wait_item_record(&mut model, item_id, ItemRecordWait::Tooltip(h));
+        }
+        ask_item_record(&mut model, item_id);
         note_item_miss(&mut model, item_id);
     }
     v
@@ -106,10 +108,14 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
 
 /// A link block's enchant lines: the enchant and gems in their slots, then the roll's five in
 /// slots 7..11, as the reference copies a block source's row.
-fn link_enchants(lua: &Lua, f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
-    let model = lua
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data");
+fn link_enchants(f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
+    crate::script::item_stats::with_item_tables(|t| link_enchants_in(t, f))
+}
+
+fn link_enchants_in(
+    model: &crate::script::ItemTables,
+    f: &ItemLinkFields,
+) -> Vec<crate::script::EnchantView> {
     let line = |slot: u8, id: i32| {
         let row = model.enchant_rows.get(&id.unsigned_abs())?;
         let mut e = row.line.clone()?;
@@ -142,35 +148,21 @@ fn link_enchants(lua: &Lua, f: &ItemLinkFields) -> Vec<crate::script::EnchantVie
 }
 
 /// A block source's instance (p6=1): its name and what its link names, no placeholder line.
-fn block_instance(lua: &Lua, name: Option<String>, link: Option<&str>) -> render::ItemInstance {
+fn block_instance(name: Option<String>, link: Option<&str>) -> render::ItemInstance {
     let link = link
         .and_then(ItemLinkFields::parse)
         .map_or_else(Default::default, |(_, f)| f);
     render::ItemInstance {
         name,
-        enchants: link_enchants(lua, &link),
+        enchants: link_enchants(&link),
         link,
         ..Default::default()
     }
 }
 
 /// The item's name with its roll's suffix (`0x706d70`).
-fn rolled_name(model: &crate::script::Model, lua: &Lua, name: &str, roll: i32) -> String {
-    let suffix = match roll {
-        1.. => model
-            .random_properties
-            .get(&(roll as u32))
-            .map(|r| r.suffix.clone())
-            .filter(|s| !s.is_empty()),
-        0 => None,
-        _ => Some(
-            model
-                .random_suffixes
-                .get(&roll.unsigned_abs())
-                .map(|r| r.name.clone())
-                .unwrap_or_default(),
-        ),
-    };
+fn rolled_name(lua: &Lua, name: &str, roll: i32) -> String {
+    let suffix = crate::script::item_stats::roll_suffix(roll);
     match (suffix, crate::strings::global(lua, "ITEM_SUFFIX_TEMPLATE")) {
         (Some(sfx), Some(t)) => crate::strings::fill(
             &t,
@@ -281,7 +273,7 @@ pub(super) fn render_token(
 ) -> mlua::Result<()> {
     let held = {
         let model = crate::script::model_mut_of(lua);
-        model.token_slots.as_ref().and_then(|c| {
+        crate::script::container::live_bag(&model, -4).and_then(|c| {
             (1..=c.num_slots)
                 .filter_map(|i| c.slots.get(&i))
                 .find(|s| s.item_id == item_id)
@@ -335,10 +327,7 @@ pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let equippable = model
-        .item_templates
-        .get(&item_id)
-        .is_some_and(|t| t.inventory_type != 0);
+    let equippable = item_record(&model, item_id).is_some_and(|t| t.inventory_type != 0);
     if equippable {
         for slot in 1..=19 {
             if let Some(s) = model
@@ -354,7 +343,7 @@ pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
         }
     }
     for bag in 0..=4 {
-        let Some(c) = model.containers.get(&bag) else {
+        let Some(c) = crate::script::container::live_bag(&model, bag) else {
             continue;
         };
         for slot in 1..=c.num_slots {
@@ -480,12 +469,7 @@ fn compare_slot(
     // An off-hand item against an empty off hand meets a worn two-hander.
     worn(OFF_HAND).map(|_| OFF_HAND).or_else(|| {
         worn(MAIN_HAND)
-            .filter(|id| {
-                model
-                    .item_templates
-                    .get(id)
-                    .is_some_and(|t| t.inventory_type == 17)
-            })
+            .filter(|&id| item_record(model, id).is_some_and(|t| t.inventory_type == 17))
             .map(|_| MAIN_HAND)
     })
 }
@@ -639,16 +623,11 @@ fn set_item_link(
     };
     match view_of(lua, id) {
         Some(v) => {
-            let name = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                rolled_name(&model, lua, &v.name, fields.random_property)
-            };
+            let name = rolled_name(lua, &v.name, fields.random_property);
             // The link block rides to the builder, so a scaling item shows the link's level.
             let inst = render::ItemInstance {
                 name: Some(name),
-                enchants: link_enchants(lua, &fields),
+                enchants: link_enchants(&fields),
                 link: fields,
                 link_level: fields.level,
                 ..Default::default()
@@ -682,13 +661,10 @@ fn add_compare_delta(
         let Ok((b_id, b_fields, b_level)) = tip_mut(&mut model, h).map(|t| shown(t)) else {
             return Ok(());
         };
-        match (
-            model.item_templates.get(&a_id),
-            model.item_templates.get(&b_id),
-        ) {
+        match (item_record(&model, a_id), item_record(&model, b_id)) {
             (Some(a), Some(b)) => Some(StatSummary::delta(
-                &StatSummary::of_at(&model, a, &a_fields, a_level),
-                &StatSummary::of_at(&model, b, &b_fields, b_level),
+                &StatSummary::of_at(&model, &a, &a_fields, a_level),
+                &StatSummary::of_at(&model, &b, &b_fields, b_level),
             )),
             _ => None,
         }
@@ -726,12 +702,18 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let (id, fields) = tip_mut(&mut model, h)
                     .map_or((0, ItemLinkFields::default()), |t| (t.item_id, t.item_link));
                 (id != 0).then(|| {
-                    let view = model.item_templates.get(&id);
-                    let name = view.map_or_else(String::new, |v| {
-                        rolled_name(&model, lua, &v.name, fields.random_property)
+                    let view = item_record(&model, id);
+                    let name = view.as_ref().map_or_else(String::new, |v| {
+                        rolled_name(lua, &v.name, fields.random_property)
                     });
                     let quality = view.map_or(1, |v| v.quality);
-                    (id, name, quality, fields, model.player_req.level)
+                    (
+                        id,
+                        name,
+                        quality,
+                        fields,
+                        crate::script::item_stats::player_level(),
+                    )
                 })
             };
             let Some((id, name, quality, fields, level)) = shown else {
@@ -865,6 +847,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         .cloned()
                 })
             };
+            // The panel's row read first, its miss leaving the panel's callback (`0x62e71e` -> `0x58d26d`).
+            if let Some(it) = item.as_ref() {
+                let mut model = crate::script::model_mut_of(lua);
+                if item_record(&model, it.item_id).is_none() {
+                    wait_item_record(&mut model, it.item_id, ItemRecordWait::QuestItem);
+                }
+            }
             // The quest giver as requester (`0x62e754`).
             set_quest_item_view(lua, &this, item, Requester::Object)
         })?,
@@ -1099,10 +1088,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (item_id, count, has_cd, inst, repair_cost) = {
                 let model = crate::script::model_mut_of(lua);
                 let cost = model.repair_costs.bags.get(&(bag, slot)).copied();
-                match model
-                    .containers
-                    .get(&bag)
-                    .and_then(|c| c.slots.get(&slot))
+                match crate::script::container::index_slot(&model, bag, slot)
                     .filter(|s| s.item_id != 0)
                 {
                     // The reference takes the p6=1 leg iff the cooldown query reports enable, start
@@ -1118,7 +1104,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             has_cd,
                             // p6 = 0 iff no cooldown runs; mid-cooldown the reference shows
                             // ITEM_COOLDOWN_TIME instead, which is not built.
-                            slot_instance(s, !has_cd),
+                            slot_instance(&s, !has_cd),
                             cost.unwrap_or(0),
                         )
                     }
@@ -1181,7 +1167,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
-                let inst = block_instance(lua, item.name.clone(), item.link.as_deref());
+                let inst = block_instance(item.name.clone(), item.link.as_deref());
                 // Ours is an item object (`0x62eff0`), theirs a block of its count (`0x62f1e0`).
                 let sell = if player_side {
                     Sell::Object {
@@ -1238,7 +1224,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             // line and shows a scaling item at a source unit's level.
             let inst = render::ItemInstance {
                 requester_level: source_level as i32,
-                ..block_instance(lua, row.name.clone(), row.link.as_deref())
+                ..block_instance(row.name.clone(), row.link.as_deref())
             };
             // The slot's count as the block's stack (`0x62e520`).
             let flags = BuilderFlags {
@@ -1271,14 +1257,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             else {
                 return Err(mlua::Error::runtime(BAD));
             };
-            let s = {
-                let model = crate::script::model_mut_of(lua);
-                let (tab, slot) = ((tab - 1.0) as i64, (slot - 1.0) as i64);
-                usize::try_from(tab)
-                    .ok()
-                    .zip(usize::try_from(slot).ok())
-                    .and_then(|(t, s)| model.guild_bank.slots.get(t)?.get(s)?.clone())
-            };
+            // The slot read at the call (`0x5a4c10`).
+            let (tab, slot) = ((tab - 1.0) as i64, (slot - 1.0) as i64);
+            let s = u8::try_from(tab)
+                .ok()
+                .zip(u8::try_from(slot).ok())
+                .and_then(|(t, s)| crate::script::read_live(|l| l.guild_bank_slot(t, s)).flatten());
             let Some(s) = s else {
                 return Ok(());
             };
@@ -1341,7 +1325,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            let inst = block_instance(lua, entry.name.clone(), entry.link.as_deref());
+            let inst = block_instance(entry.name.clone(), entry.link.as_deref());
             // A zero requester (`0x63018b`).
             let flags = BuilderFlags {
                 sell: Sell::Block {
@@ -1631,7 +1615,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the attachment's roll: no placeholder.
-            let inst = block_instance(lua, name, link.as_deref());
+            let inst = block_instance(name, link.as_deref());
             // The attachment's count as the block's stack and a zero requester (`0x62fbdb`).
             let flags = BuilderFlags {
                 sell: Sell::Block { stack, max: None },
@@ -1676,7 +1660,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the listing's roll: no placeholder.
-            let inst = block_instance(lua, name, link.as_deref());
+            let inst = block_instance(name, link.as_deref());
             // A listing skips the sell price (`0x62fcf0`).
             match view_of(lua, item_id) {
                 Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,

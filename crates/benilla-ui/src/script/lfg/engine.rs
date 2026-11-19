@@ -2,7 +2,7 @@
 //! returns the events it fires, in order, and the lines it shows.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::super::ScriptValue;
 use super::{
@@ -462,8 +462,6 @@ pub(crate) struct LfgModel {
     pub(crate) world: (i32, u32, u32),
     pub(crate) names: HashMap<u64, LfgName>,
     pub(crate) display_icons: HashMap<u32, String>,
-    /// Reward items whose templates the reward getters asked for.
-    pub(crate) reward_item_waits: HashSet<u32>,
     pub(crate) requests: Vec<LfgRequest>,
     /// The raid browser's search list.
     pub(crate) search: super::search::LfrSearch,

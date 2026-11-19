@@ -1,14 +1,14 @@
-//! The guild bank bindings, 12340's guild bank script table (registrar `0xacf8d0`). The app owns
-//! the wire and pushes a display-ready [`GuildBankView`] ([`UiScript::set_guild_bank`]); the engine
-//! keeps what the reference keeps beside it: the current tab, each slot's lock, and the cursor
-//! modes 11 (a bank item) and 12 (bank money). Each send is a [`GuildBankRequest`] the app drains,
-//! gates and answers ([`UiScript::take_guild_bank_requests`]).
+//! The guild bank bindings, 12340's guild bank script table (registrar `0xacf8d0`). The verbs read
+//! the bank the app keeps at the call ([`super::LiveState`]): the banker, the tabs, each slot and
+//! its lock, the money and the logs. The engine keeps the cursor modes 11 (a bank item) and 12
+//! (bank money); each send the app gates is a [`GuildBankRequest`] it drains
+//! ([`UiScript::take_guild_bank_requests`]).
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{flag, number_arg};
 use super::cursor::{self, CursorGuildBankItem, CursorMoney, CursorPayload};
-use super::Model;
+use super::{read_live, write_live, Model};
 
 /// The bank's tabs (six tab records, `0xc11458`).
 pub const GUILD_BANK_TABS: usize = 6;
@@ -80,7 +80,7 @@ pub struct GuildBankLogView {
     pub written_at: u32,
 }
 
-/// The guild bank as the app pushes it whole.
+/// A whole guild bank, as a test's live view holds it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GuildBankView {
     /// A guild banker is open (`0xc1dc10`).
@@ -97,7 +97,8 @@ pub struct GuildBankView {
 }
 
 impl GuildBankView {
-    fn slot(&self, tab: usize, slot: usize) -> Option<&GuildBankSlotView> {
+    /// Slot `(tab, slot)`, `None` when empty or unlisted.
+    pub fn slot(&self, tab: usize, slot: usize) -> Option<&GuildBankSlotView> {
         self.slots.get(tab)?.get(slot)?.as_ref()
     }
 }
@@ -153,50 +154,20 @@ pub enum GuildBankRequest {
     WithdrawMoney(u32),
     /// `QueryGuildBankLog(tab)`, 0-based, 6 the money log.
     QueryLog(u8),
-    /// `QueryGuildBankText(tab)`, 0-based: sent only for a stale tab, else answered at once.
-    QueryText(u8),
     /// `SetGuildBankText(tab, text)`.
     SetText {
         tab: u8,
         text: String,
     },
-    /// `CloseGuildBankFrame()`.
-    Close,
 }
 
 impl super::UiScript {
-    /// Push the guild bank. The app fires the events the reference fires around each change.
-    pub fn set_guild_bank(&mut self, view: GuildBankView) {
-        set_field!(self, guild_bank, view);
-    }
-
-    /// The current tab, 0-based (`0xc1dc0d`): the tab a guild event re-queries
-    /// and a right-clicked bag item goes to.
-    pub fn guild_bank_tab(&self) -> u8 {
-        self.model_ref().guild_bank_tab
-    }
-
-    /// A list rewrote `slots` of `tab`: each one's lock clears (`0x5a7250`), and a held bank item
-    /// from one of them drops (`0x5a74be`, `ClearCursor` then the slot's unlock).
-    pub fn guild_bank_slots_listed(&mut self, tab: u8, slots: &[u8]) {
-        let touches = |t: u8, s: u8| t == tab && slots.contains(&s);
-        let (held, locked) = {
-            let model = self.model_ref();
-            let held = matches!(&model.cursor, Some(CursorPayload::GuildBankItem(h)) if touches(h.tab, h.slot));
-            let locked = model
-                .guild_bank_locks
-                .iter()
-                .any(|&(t, s, _)| touches(t, s));
-            (held, locked)
-        };
-        if !held && !locked {
-            return;
+    /// The bank item the cursor holds as `(tab, slot, item)`: `GetCursorVirtualItem` (`0x5136e0`).
+    pub fn guild_bank_cursor_item(&self) -> Option<(u8, u8, u32)> {
+        match &self.model_ref().cursor {
+            Some(CursorPayload::GuildBankItem(h)) => Some((h.tab, h.slot, h.item_id)),
+            _ => None,
         }
-        let model = &mut *self.model_mut();
-        if held {
-            cursor::clear_cursor(model);
-        }
-        model.guild_bank_locks.retain(|&(t, s, _)| !touches(t, s));
     }
 
     /// The app sent a swap: the reference clears the cursor, unlocking a held bank item, and
@@ -218,28 +189,6 @@ impl super::UiScript {
         self.model_mut().ui_errors.push(error);
     }
 
-    /// The banker closed: a held bank item or bank money drops, as `ClearCursor` does.
-    pub fn guild_bank_closed(&mut self) {
-        let idle = {
-            let model = self.model_ref();
-            !matches!(
-                model.cursor,
-                Some(CursorPayload::GuildBankItem(_) | CursorPayload::GuildBankMoney(_))
-            ) && model.guild_bank_locks.is_empty()
-        };
-        if idle {
-            return;
-        }
-        let model = &mut *self.model_mut();
-        if matches!(
-            model.cursor,
-            Some(CursorPayload::GuildBankItem(_) | CursorPayload::GuildBankMoney(_))
-        ) {
-            cursor::clear_cursor(model);
-        }
-        model.guild_bank_locks.clear();
-    }
-
     /// Drain the queued sends.
     pub fn take_guild_bank_requests(&mut self) -> Vec<GuildBankRequest> {
         drain_field!(self, guild_bank_requests)
@@ -255,58 +204,86 @@ fn queue(model: &mut Model, event: &str) {
     model.pending_events.push((event.to_string(), Vec::new()));
 }
 
-/// The lock test (`0x5a4c40`): the slot is locked for this item.
-fn is_locked(model: &Model, tab: u8, slot: u8, item_id: u32) -> bool {
-    model.guild_bank_locks.contains(&(tab, slot, item_id))
-}
-
-/// The slot lock (`0x5137d0`): lock, then `GUILDBANK_ITEM_LOCK_CHANGED`.
-fn lock(model: &mut Model, tab: u8, slot: u8, item_id: u32) {
-    if !is_locked(model, tab, slot, item_id) {
-        model.guild_bank_locks.push((tab, slot, item_id));
+/// Fire the events this call queued since `mark`, in order and inside the call, as the cursor
+/// setter and the lock fire theirs (`0x520da7`, `0x5137f1`).
+fn fire_queued_since(lua: &Lua, mark: usize) {
+    let events = {
+        let mut model = crate::script::model_mut_of(lua);
+        if model.pending_events.len() > mark {
+            model.pending_events.split_off(mark)
+        } else {
+            Vec::new()
+        }
+    };
+    for (event, args) in events {
+        super::tick::fire_event_into(lua, &event, args);
     }
-    queue(model, "GUILDBANK_ITEM_LOCK_CHANGED");
 }
 
-/// `ClearCursor`'s mode-11 arm (`0x519280`): the held slot unlocks, with its event.
+/// Whether a guild banker is open (`0xc1dc10`), through the lent view.
+fn bank_open() -> bool {
+    read_live(|l| l.guild_bank_open()).unwrap_or(false)
+}
+
+/// The bought tabs (`0xc1dc0c`).
+fn num_tabs() -> u8 {
+    read_live(|l| l.guild_bank_num_tabs()).unwrap_or(0)
+}
+
+/// The current tab (`0xc1dc0d`).
+pub(super) fn current_tab() -> u8 {
+    read_live(|l| l.guild_bank_current_tab()).unwrap_or(0)
+}
+
+/// The bank's money (`0xc1dc20`).
+pub(super) fn bank_money() -> u64 {
+    read_live(|l| l.guild_bank_money()).unwrap_or(0)
+}
+
+/// The lock test (`0x5a4c40`): the slot is locked for this item.
+fn is_locked(tab: u8, slot: u8, item_id: u32) -> bool {
+    read_live(|l| l.guild_bank_locked(tab, slot, item_id)).unwrap_or(false)
+}
+
+/// `ClearCursor`'s mode-11 arm (`0x519406`): the held slot unlocks, with its event.
 pub(super) fn unlock_held(model: &mut Model, held: &CursorGuildBankItem) {
-    model
-        .guild_bank_locks
-        .retain(|&l| l != (held.tab, held.slot, held.item_id));
+    write_live(|l| l.set_guild_bank_lock(held.tab, held.slot, held.item_id, false));
     queue(model, "GUILDBANK_ITEM_LOCK_CHANGED");
 }
 
-/// Put a bank item on the cursor as the reference's virtual-item cursor set (`0x520d30`, kind 11,
-/// with the split) does.
-fn hold(model: &mut Model, tab: u8, slot: u8, split: Option<u32>) -> bool {
-    let Some(s) = model
-        .guild_bank
-        .slot(usize::from(tab), usize::from(slot))
-        .cloned()
-    else {
-        return false;
+/// Put a bank item on the cursor (`0x520d30`, kind 11, with the split), then lock its slot
+/// (`0x5a6372` -> `0x5137d0`): every event fires inside the call, the lock's last.
+fn hold(lua: &Lua, tab: u8, slot: u8, split: Option<u32>) {
+    let Some(s) = read_live(|l| l.guild_bank_slot(tab, slot)).flatten() else {
+        return;
     };
     if !crate::script::live::has_control() {
-        return false;
+        return;
     }
-    cursor::clear_cursor(model);
-    model.cursor = Some(CursorPayload::GuildBankItem(CursorGuildBankItem {
-        tab,
-        slot,
-        item_id: s.item_id,
-        texture: s.texture.clone(),
-        link: s.link.clone(),
-        split,
-    }));
-    cursor::queue_cursor_update(model);
-    lock(model, tab, slot, s.item_id);
-    true
+    let mark = {
+        let mut model = crate::script::model_mut_of(lua);
+        let mark = model.pending_events.len();
+        cursor::clear_cursor(&mut model);
+        model.cursor = Some(CursorPayload::GuildBankItem(CursorGuildBankItem {
+            tab,
+            slot,
+            item_id: s.item_id,
+            texture: s.texture.clone(),
+            link: s.link.clone(),
+            split,
+        }));
+        cursor::queue_cursor_update(&mut model);
+        mark
+    };
+    fire_queued_since(lua, mark);
+    write_live(|l| l.set_guild_bank_lock(tab, slot, s.item_id, true));
+    super::tick::fire_event_into(lua, "GUILDBANK_ITEM_LOCK_CHANGED", Vec::new());
 }
 
 /// `PickupContainerItem`'s mode-11 arm: a held bank item dropped on a bag slot. The reference
 /// clears the cursor whatever the app then sends (`0x5d7ff0`).
 pub(super) fn drop_on_bag_slot(model: &mut Model, held: CursorGuildBankItem, bag: i64, slot: u32) {
-    if model.guild_bank.open {
+    if bank_open() {
         model
             .guild_bank_requests
             .push(GuildBankRequest::WithdrawItem {
@@ -325,19 +302,15 @@ pub(super) fn drop_on_bag_slot(model: &mut Model, held: CursorGuildBankItem, bag
 /// `UseContainerItem`'s guild bank arm (`0x5d8650` calls the bank's auto-store `0x5a56b0`): with a
 /// banker open, the item goes to the current tab, slot `0xFF` for wherever it fits.
 pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool {
-    if !model.guild_bank.open {
+    if !bank_open() {
         return false;
     }
-    let occupied = model
-        .containers
-        .get(&bag)
-        .and_then(|c| c.slots.get(&slot))
-        .is_some_and(|s| s.item_id != 0);
+    let occupied = super::container::index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
     if occupied {
         model
             .guild_bank_requests
             .push(GuildBankRequest::DepositItem {
-                tab: model.guild_bank_tab,
+                tab: current_tab(),
                 slot: 0xFF,
                 bag,
                 bag_slot: slot,
@@ -427,19 +400,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, tab: Value| {
             let tab = index_arg(lua, tab, "Usage: SetCurrentTab(tab)")?;
             if usize::from(tab) < GUILD_BANK_TABS {
-                crate::script::model_mut_of(lua).guild_bank_tab = tab;
+                write_live(|l| l.set_guild_bank_current_tab(tab));
             }
             Ok(())
         })?,
     )?;
     g.set(
         "GetCurrentGuildBankTab",
-        lua.create_function(|lua, ()| Ok(i64::from(read!(lua).guild_bank_tab) + 1))?,
+        lua.create_function(|_, ()| Ok(i64::from(current_tab()) + 1))?,
     )?;
 
     g.set(
         "GetNumGuildBankTabs",
-        lua.create_function(|lua, ()| Ok(i64::from(read!(lua).guild_bank.num_tabs)))?,
+        lua.create_function(|_, ()| Ok(i64::from(num_tabs())))?,
     )?;
 
     // GetGuildBankItemInfo(tab, slot) (`0x5a6000`) → texture, count, locked; an empty or unlisted
@@ -450,8 +423,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             const USAGE: &str = "Usage: GetGuildBankItemInfo(tab, slot)";
             let tab = index_arg(lua, tab, USAGE)?;
             let slot = index_arg(lua, slot, USAGE)?;
-            let model = read!(lua);
-            let Some(s) = model.guild_bank.slot(usize::from(tab), usize::from(slot)) else {
+            let read = read_live(|l| {
+                let (item_id, count) = l.guild_bank_item(tab, slot)?;
+                let texture = l.guild_bank_texture(tab, slot);
+                Some((texture, count, l.guild_bank_locked(tab, slot, item_id)))
+            })
+            .flatten();
+            let Some((texture, count, locked)) = read else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     Value::Integer(0),
@@ -459,9 +437,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ]));
             };
             Ok(MultiValue::from_vec(vec![
-                str_or_nil(lua, s.texture.as_deref())?,
-                Value::Integer(i64::from(s.count)),
-                flag(is_locked(&model, tab, slot, s.item_id)),
+                str_or_nil(lua, texture.as_deref())?,
+                Value::Integer(i64::from(count)),
+                flag(locked),
             ]))
         })?,
     )?;
@@ -473,11 +451,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             const USAGE: &str = "Usage: GetGuildBankItemLink(tab, slot)";
             let tab = index_arg(lua, tab, USAGE)?;
             let slot = index_arg(lua, slot, USAGE)?;
-            let model = read!(lua);
-            match model
-                .guild_bank
-                .slot(usize::from(tab), usize::from(slot))
-                .and_then(|s| s.link.as_deref())
+            match read_live(|l| l.guild_bank_slot(tab, slot))
+                .flatten()
+                .and_then(|s| s.link)
             {
                 Some(link) => Ok(MultiValue::from_vec(vec![Value::String(
                     lua.create_string(link)?,
@@ -498,42 +474,44 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if usize::from(tab) >= GUILD_BANK_TABS || usize::from(slot) >= GUILD_BANK_TAB_SLOTS {
                 return Ok(());
             }
-            let mut model = crate::script::model_mut_of(lua);
-            match model.cursor.clone() {
-                Some(CursorPayload::Item(item)) => {
-                    if model.guild_bank.open {
-                        model
-                            .guild_bank_requests
-                            .push(GuildBankRequest::DepositItem {
+            let take = {
+                let mut model = crate::script::model_mut_of(lua);
+                match model.cursor.clone() {
+                    Some(CursorPayload::Item(item)) => {
+                        if bank_open() {
+                            model
+                                .guild_bank_requests
+                                .push(GuildBankRequest::DepositItem {
+                                    tab,
+                                    slot,
+                                    bag: item.bag,
+                                    bag_slot: item.slot,
+                                    split: item.count,
+                                });
+                        }
+                        false
+                    }
+                    Some(CursorPayload::GuildBankItem(held)) => {
+                        if bank_open() {
+                            model.guild_bank_requests.push(GuildBankRequest::MoveItem {
                                 tab,
                                 slot,
-                                bag: item.bag,
-                                bag_slot: item.slot,
-                                split: item.count,
+                                src_tab: held.tab,
+                                src_slot: held.slot,
+                                item_id: held.item_id,
+                                split: held.split,
                             });
-                    }
-                }
-                Some(CursorPayload::GuildBankItem(held)) => {
-                    if model.guild_bank.open {
-                        model.guild_bank_requests.push(GuildBankRequest::MoveItem {
-                            tab,
-                            slot,
-                            src_tab: held.tab,
-                            src_slot: held.slot,
-                            item_id: held.item_id,
-                            split: held.split,
-                        });
-                    }
-                }
-                _ => {
-                    let item_id = model
-                        .guild_bank
-                        .slot(usize::from(tab), usize::from(slot))
-                        .map(|s| s.item_id);
-                    if let Some(item_id) = item_id {
-                        if !is_locked(&model, tab, slot, item_id) {
-                            hold(&mut model, tab, slot, None);
                         }
+                        false
+                    }
+                    _ => true,
+                }
+            };
+            if take {
+                let item = read_live(|l| l.guild_bank_item(tab, slot)).flatten();
+                if let Some((item_id, _)) = item {
+                    if !is_locked(tab, slot, item_id) {
+                        hold(lua, tab, slot, None);
                     }
                 }
             }
@@ -549,18 +527,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             const USAGE: &str = "Usage: AutoStoreGuildBankItem(tab, slot)";
             let tab = index_arg(lua, tab, USAGE)?;
             let slot = index_arg(lua, slot, USAGE)?;
-            let mut model = crate::script::model_mut_of(lua);
-            if !model.guild_bank.open
+            if !bank_open()
                 || usize::from(tab) >= GUILD_BANK_TABS
                 || usize::from(slot) >= GUILD_BANK_TAB_SLOTS
             {
                 return Ok(());
             }
+            let mut model = crate::script::model_mut_of(lua);
             cursor::clear_cursor(&mut model);
-            let Some((item_id, count)) = model
-                .guild_bank
-                .slot(usize::from(tab), usize::from(slot))
-                .map(|s| (s.item_id, s.count))
+            let Some((item_id, count)) = read_live(|l| l.guild_bank_item(tab, slot)).flatten()
             else {
                 return Ok(());
             };
@@ -583,25 +558,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let tab = index_arg(lua, tab, USAGE)?;
             let slot = index_arg(lua, slot, USAGE)?;
             let amount = number_arg(lua, amount, USAGE)?;
-            let mut model = crate::script::model_mut_of(lua);
             if !crate::script::live::has_control()
                 || usize::from(tab) >= GUILD_BANK_TABS
                 || usize::from(slot) >= GUILD_BANK_TAB_SLOTS
             {
                 return Ok(());
             }
-            let Some(s) = model
-                .guild_bank
-                .slot(usize::from(tab), usize::from(slot))
-                .cloned()
-            else {
+            let Some(s) = read_live(|l| l.guild_bank_slot(tab, slot)).flatten() else {
                 return Ok(());
             };
-            if is_locked(&model, tab, slot, s.item_id) || amount < 1 || amount as u32 > s.max_stack
-            {
+            if is_locked(tab, slot, s.item_id) || amount < 1 || amount as u32 > s.max_stack {
                 return Ok(());
             }
-            hold(&mut model, tab, slot, Some(amount as u32));
+            hold(lua, tab, slot, Some(amount as u32));
             Ok(())
         })?,
     )?;
@@ -612,10 +581,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetGuildBankTabInfo",
         lua.create_function(|lua, tab: Value| {
             let tab = index_arg(lua, tab, "Usage: GetGuildBankTabInfo(tab)")?;
-            let model = read!(lua);
-            let bank = &model.guild_bank;
-            let row = (usize::from(tab) < GUILD_BANK_TABS && tab < bank.num_tabs)
-                .then(|| bank.tabs.get(usize::from(tab)))
+            let row = (usize::from(tab) < GUILD_BANK_TABS && tab < num_tabs())
+                .then(|| read_live(|l| l.guild_bank_tab(tab)).flatten())
                 .flatten();
             let Some(row) = row else {
                 return Ok(MultiValue::from_vec(vec![
@@ -632,16 +599,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     crate::strings::global(lua, "GUILDBANK_TAB_NUMBER").unwrap_or_default();
                 template.replacen("%d", &(u32::from(tab) + 1).to_string(), 1)
             } else {
-                row.name.clone()
+                row.name
             };
-            let (rights, withdrawals) = tab_rights(&model, tab);
+            let (rights, withdrawals) = tab_rights(&read!(lua), tab);
+            let remaining = read_live(|l| l.guild_bank_withdrawals()).unwrap_or(0);
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&name)?),
                 Value::String(lua.create_string(icon_path(&row.icon))?),
                 flag(rights & tab_right::VIEW != 0),
                 flag(rights & tab_right::DEPOSIT != 0),
                 Value::Integer(i64::from(withdrawals as i32)),
-                Value::Integer(i64::from(bank.withdrawals_remaining)),
+                Value::Integer(i64::from(remaining)),
             ]))
         })?,
     )?;
@@ -664,10 +632,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetGuildBankTabCost() (`0x5a6b20`): the next tab's price, nil once all six are bought.
     g.set(
         "GetGuildBankTabCost",
-        lua.create_function(|lua, ()| {
-            let model = read!(lua);
+        lua.create_function(|_, ()| {
             Ok(TAB_COSTS
-                .get(usize::from(model.guild_bank.num_tabs))
+                .get(usize::from(num_tabs()))
                 .map_or(Value::Nil, |&c| Value::Integer(i64::from(c))))
         })?,
     )?;
@@ -676,15 +643,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "BuyGuildBankTab",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if !crate::script::live::has_control() || !model.guild_bank.open {
+            if !crate::script::live::has_control() || !bank_open() {
                 return Ok(());
             }
-            let tab = model.guild_bank.num_tabs;
+            let tab = num_tabs();
             let Some(&cost) = TAB_COSTS.get(usize::from(tab)) else {
                 return Ok(());
             };
-            if u64::from(cost) > model.money + model.guild.bank_money {
+            let mut model = crate::script::model_mut_of(lua);
+            if u64::from(cost) > model.money + bank_money() {
                 model.ui_errors.push("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
                 return Ok(());
             }
@@ -746,13 +713,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PickupGuildBankMoney",
         lua.create_function(|lua, amount: Value| {
             let amount = number_arg(lua, amount, "Usage: PickupGuildBankMoney(amount)")? as u32;
-            let mut model = crate::script::model_mut_of(lua);
             if amount == 0
-                || u64::from(amount) > model.guild.bank_money
+                || u64::from(amount) > bank_money()
                 || !crate::script::live::has_control()
             {
                 return Ok(());
             }
+            let mut model = crate::script::model_mut_of(lua);
             cursor::clear_cursor(&mut model);
             model.cursor = Some(CursorPayload::GuildBankMoney(CursorMoney {
                 copper: amount,
@@ -762,11 +729,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // CloseGuildBankFrame() (`0x5a4500`), the banker setter with no banker (`0x5a4270`):
+    // `GUILDBANKFRAME_CLOSED` fires first, open or not, then both bankers clear.
     g.set(
         "CloseGuildBankFrame",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.guild_bank_requests.push(GuildBankRequest::Close);
+            super::tick::fire_event_into(lua, "GUILDBANKFRAME_CLOSED", Vec::new());
+            write_live(|l| l.clear_guild_banker());
             Ok(())
         })?,
     )?;
@@ -817,12 +786,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNumGuildBankTransactions",
         lua.create_function(|lua, tab: Value| {
             let tab = index_arg(lua, tab, "Usage: GetNumGuildBankTransactions(tab)")?;
-            let model = read!(lua);
-            Ok(model
-                .guild_bank
-                .logs
-                .get(usize::from(tab))
-                .map_or(0, |l| l.len() as i64))
+            Ok(read_live(|l| l.guild_bank_log_len(tab)).unwrap_or(0) as i64)
         })?,
     )?;
 
@@ -835,15 +799,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             const USAGE: &str = "Usage: GetGuildBankTransaction(tab, index)";
             let tab = index_arg(lua, tab, USAGE)?;
             let index = index_arg(lua, index, USAGE)?;
-            let model = read!(lua);
             let Some(row) = (usize::from(index) < GUILD_BANK_LOG_ROWS)
-                .then(|| {
-                    model
-                        .guild_bank
-                        .logs
-                        .get(usize::from(tab))?
-                        .get(usize::from(index))
-                })
+                .then(|| read_live(|l| l.guild_bank_log(tab, index)).flatten())
                 .flatten()
             else {
                 return Ok(MultiValue::new());
@@ -877,12 +834,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetNumGuildBankMoneyTransactions() (`0x5a45b0`).
     g.set(
         "GetNumGuildBankMoneyTransactions",
-        lua.create_function(|lua, ()| {
-            Ok(read!(lua)
-                .guild_bank
-                .logs
-                .get(GUILD_BANK_MONEY_LOG)
-                .map_or(0, |l| l.len() as i64))
+        lua.create_function(|_, ()| {
+            Ok(read_live(|l| l.guild_bank_log_len(GUILD_BANK_MONEY_LOG as u8)).unwrap_or(0) as i64)
         })?,
     )?;
 
@@ -892,12 +845,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetGuildBankMoneyTransaction",
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, index, "Usage: GetGuildBankMoneyTransaction(index)")?;
-            let model = read!(lua);
-            let Some(row) = model
-                .guild_bank
-                .logs
-                .get(GUILD_BANK_MONEY_LOG)
-                .and_then(|l| l.get(usize::from(index)))
+            let Some(row) =
+                read_live(|l| l.guild_bank_log(GUILD_BANK_MONEY_LOG as u8, index)).flatten()
             else {
                 return Ok(MultiValue::new());
             };
@@ -918,15 +867,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // QueryGuildBankText(tab) (`0x5a7110`); its usage text names `QueryGuildBankLog`.
+    // QueryGuildBankText(tab) (`0x5a7110` -> `0x5a5940`); its usage text names `QueryGuildBankLog`.
+    // A fresh text, or no banker, answers `GUILDBANK_UPDATE_TEXT` inside the call.
     g.set(
         "QueryGuildBankText",
         lua.create_function(|lua, tab: Value| {
             let tab = index_arg(lua, tab, "Usage: QueryGuildBankLog(tab)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .guild_bank_requests
-                .push(GuildBankRequest::QueryText(tab));
+            if write_live(|l| l.guild_bank_query_text(tab)).unwrap_or(true) {
+                super::tick::fire_event_into(
+                    lua,
+                    "GUILDBANK_UPDATE_TEXT",
+                    vec![super::ScriptValue::Int(i64::from(tab) + 1)],
+                );
+            }
             Ok(())
         })?,
     )?;
@@ -936,13 +889,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetGuildBankText",
         lua.create_function(|lua, tab: Value| {
             let tab = index_arg(lua, tab, "Usage: GetGuildBankText(tab)")?;
-            let model = read!(lua);
-            let bank = &model.guild_bank;
-            let text = (usize::from(tab) < GUILD_BANK_TABS && tab < bank.num_tabs)
-                .then(|| bank.tabs.get(usize::from(tab)))
+            let text = (usize::from(tab) < GUILD_BANK_TABS && tab < num_tabs())
+                .then(|| read_live(|l| l.guild_bank_tab(tab)).flatten())
                 .flatten()
-                .map(|t| t.text.as_str());
-            str_or_nil(lua, text)
+                .map(|t| t.text);
+            str_or_nil(lua, text.as_deref())
         })?,
     )?;
 
@@ -958,8 +909,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Number(n) => n.to_string(),
                 _ => return Err(mlua::Error::runtime(USAGE)),
             };
-            let mut model = crate::script::model_mut_of(lua);
-            if model.guild_bank.open && tab < model.guild_bank.num_tabs {
+            if bank_open() && tab < num_tabs() {
+                let mut model = crate::script::model_mut_of(lua);
                 model
                     .guild_bank_requests
                     .push(GuildBankRequest::SetText { tab, text });
@@ -996,7 +947,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.ui_errors.push(e.key());
                 return Ok(());
             }
-            if model.guild_bank.open && tab < model.guild_bank.num_tabs {
+            if bank_open() && tab < num_tabs() {
                 model
                     .guild_bank_requests
                     .push(GuildBankRequest::SetTabInfo { tab, name, icon });
@@ -1043,7 +994,8 @@ fn build_item_icons(model: &mut Model) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::{GuildRankInfo, GuildState, UiScript};
+    use crate::script::live::{lend_test, TestView};
+    use crate::script::{GuildRankInfo, GuildState, LiveLoan, UiScript};
 
     fn slot(item_id: u32, count: u32) -> Option<GuildBankSlotView> {
         Some(GuildBankSlotView {
@@ -1113,25 +1065,35 @@ mod tests {
                     ..Default::default()
                 },
             ],
-            bank_money: 50_000,
             ..Default::default()
         }
     }
 
-    fn vm() -> UiScript {
+    /// The bank lent as the live view, with control and 50000 copper in the bank.
+    fn lend_bank() -> LiveLoan<TestView> {
+        lend_test(TestView {
+            control: true,
+            guild_bank: bank(),
+            guild_bank_money: 50_000,
+            guild_bank_text_stale: vec![1],
+            ..Default::default()
+        })
+    }
+
+    fn vm() -> (UiScript, LiveLoan<TestView>) {
+        let bank = lend_bank();
         let mut s = UiScript::new().unwrap();
-        s.set_guild_bank(bank());
         s.set_guild(member(
             WITHDRAW_GOLD,
             100,
             [(0x7, 10), (0x1, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
         ));
-        s
+        (s, bank)
     }
 
     #[test]
     fn tab_info_reads_the_view_and_our_rank() {
-        let s = vm();
+        let (s, _bank) = vm();
         let row = s
             .eval::<(String, String, Option<i64>, Option<i64>, i64, i64)>(
                 "return GetGuildBankTabInfo(1)",
@@ -1185,7 +1147,7 @@ mod tests {
 
     #[test]
     fn item_info_and_links_read_the_listed_slots() {
-        let s = vm();
+        let (s, _bank) = vm();
         assert_eq!(
             s.eval::<(String, i64, Option<i64>)>("return GetGuildBankItemInfo(1, 3)")
                 .unwrap(),
@@ -1211,7 +1173,7 @@ mod tests {
 
     #[test]
     fn a_pickup_locks_the_slot_and_a_drop_on_another_asks_a_move() {
-        let mut s = vm();
+        let (mut s, _bank) = vm();
         s.run("PickupGuildBankItem(1, 3)").unwrap();
         assert!(s
             .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == 1")
@@ -1241,7 +1203,7 @@ mod tests {
 
     #[test]
     fn a_split_takes_one_to_the_stack_size() {
-        let mut s = vm();
+        let (mut s, _bank) = vm();
         s.run("SplitGuildBankItem(1, 98, 21)").unwrap();
         assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
         s.run("SplitGuildBankItem(1, 98, 5)").unwrap();
@@ -1261,21 +1223,9 @@ mod tests {
     }
 
     #[test]
-    fn a_relisted_slot_drops_the_held_item() {
-        let mut s = vm();
-        s.run("PickupGuildBankItem(1, 3)").unwrap();
-        s.guild_bank_slots_listed(0, &[5]);
-        assert!(s.eval::<bool>("return GetCursorInfo() ~= nil").unwrap());
-        s.guild_bank_slots_listed(0, &[2]);
-        assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
-        assert!(s
-            .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == nil")
-            .unwrap());
-    }
-
-    #[test]
     fn bank_money_rides_cursor_mode_12() {
-        let s = vm();
+        let (s, _bank) = vm();
+        assert_eq!(s.eval::<i64>("return GetGuildBankMoney()").unwrap(), 50_000);
         s.run("PickupGuildBankMoney(60000)").unwrap();
         assert!(
             s.eval::<bool>("return GetCursorInfo() == nil").unwrap(),
@@ -1294,7 +1244,7 @@ mod tests {
 
     #[test]
     fn money_and_tab_sends_queue_their_requests() {
-        let mut s = vm();
+        let (mut s, _bank) = vm();
         s.set_money(500);
         s.run("DepositGuildBankMoney(600)").unwrap();
         assert!(s.take_guild_bank_requests().is_empty());
@@ -1313,13 +1263,12 @@ mod tests {
             vec!["ERR_BANKSLOT_INSUFFICIENT_FUNDS"],
             "the third tab costs more than purse and bank"
         );
-        s.run("QueryGuildBankTab(2) QueryGuildBankTab(7) QueryGuildBankLog(7) QueryGuildBankText(1) SetGuildBankText(1, 'x') AutoStoreGuildBankItem(1, 3) CloseGuildBankFrame()").unwrap();
+        s.run("QueryGuildBankTab(2) QueryGuildBankTab(7) QueryGuildBankLog(7) SetGuildBankText(1, 'x') AutoStoreGuildBankItem(1, 3)").unwrap();
         assert_eq!(
             s.take_guild_bank_requests(),
             vec![
                 GuildBankRequest::QueryTab(1),
                 GuildBankRequest::QueryLog(6),
-                GuildBankRequest::QueryText(0),
                 GuildBankRequest::SetText {
                     tab: 0,
                     text: "x".into()
@@ -1330,14 +1279,61 @@ mod tests {
                     item_id: 2589,
                     count: 7
                 },
-                GuildBankRequest::Close,
             ]
         );
     }
 
+    /// The lock, the cursor and the text's events fire inside their verb's call, in 12340's order:
+    /// the clear's and the setter's `CURSOR_UPDATE` before the lock's (`0x519476`, `0x520da7`, `0x5137f1`); a stale
+    /// text sends and a fresh one answers at once (`0x5a5940`); `CloseGuildBankFrame` fires
+    /// `GUILDBANKFRAME_CLOSED` before the banker clears, open or not (`0x5a4270`).
+    #[test]
+    fn the_bank_verbs_fire_their_events_inside_the_call() {
+        let (s, bank) = vm();
+        s.run(
+            r#"
+            seen = {}
+            local f = CreateFrame("Frame")
+            for _, e in ipairs({"CURSOR_UPDATE", "GUILDBANK_ITEM_LOCK_CHANGED",
+                "GUILDBANK_UPDATE_TEXT", "GUILDBANKFRAME_CLOSED"}) do f:RegisterEvent(e) end
+            f:SetScript("OnEvent", function(_, e, a)
+                local _, _, locked = GetGuildBankItemInfo(1, 3)
+                seen[#seen + 1] = e .. ":" .. tostring(a) .. ":" .. tostring(locked)
+                    .. ":" .. tostring(GetNumGuildBankTabs())
+            end)
+            PickupGuildBankItem(1, 3)
+            calls = #seen
+            QueryGuildBankText(2)
+            QueryGuildBankText(1)
+            CloseGuildBankFrame()
+            CloseGuildBankFrame()
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.eval::<i64>("return calls").unwrap(),
+            3,
+            "inside the pickup"
+        );
+        let seen: Vec<String> = s.eval("return seen").unwrap();
+        assert_eq!(
+            seen,
+            [
+                "CURSOR_UPDATE:nil:nil:2",
+                "CURSOR_UPDATE:nil:nil:2",
+                "GUILDBANK_ITEM_LOCK_CHANGED:nil:1:2",
+                "GUILDBANK_UPDATE_TEXT:1:1:2",
+                "GUILDBANKFRAME_CLOSED:nil:1:2",
+                "GUILDBANKFRAME_CLOSED:nil:1:2",
+            ]
+        );
+        assert_eq!(bank.with_view(|v| v.guild_bank_text_sent.clone()), [1]);
+        assert!(!bank.with_view(|v| v.guild_bank.open), "the banker cleared");
+    }
+
     #[test]
     fn the_logs_read_with_their_ages() {
-        let s = vm();
+        let (s, _bank) = vm();
         assert_eq!(
             s.eval::<i64>("return GetNumGuildBankTransactions(1)")
                 .unwrap(),
@@ -1375,7 +1371,7 @@ mod tests {
 
     #[test]
     fn tabard_files_follow_the_tabard_or_are_nil() {
-        let mut s = vm();
+        let (mut s, _bank) = vm();
         assert_eq!(s.arity("GetGuildTabardFileNames()").unwrap(), 6);
         assert!(s
             .eval::<bool>("return GetGuildTabardFileNames() == nil")
@@ -1401,7 +1397,7 @@ mod tests {
 
     #[test]
     fn the_tab_icon_chooser_and_a_tab_rename() {
-        let mut s = vm();
+        let (mut s, _bank) = vm();
         s.set_macro_item_icon_source(Box::new(|| {
             vec![
                 "Interface\\Icons\\INV_Misc_QuestionMark".into(),

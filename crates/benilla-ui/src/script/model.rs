@@ -6,13 +6,12 @@ use crate::layout::{LayoutInput, LayoutSolver, Rect};
 use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
-    auction, backdrop, bank, bind_confirm, calendar, camera_view, char_stats, chat_window,
-    colorselect, combat_log, container, cursor, death, duel, follow, gossip, guild, inspect,
-    item_text, lfg, loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party,
-    petition, pvp, quest, quest_log, reputation, session, simplehtml, skills, slider, social,
-    spellbook, stable, taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot,
-    AuraState, FontObject, ItemTemplateView, MusicRequest, PlayerReqState, RegionData, ScriptValue,
-    SoundRequest, UnitState, UnitTokenParse,
+    auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
+    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
+    loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
+    quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
+    taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -357,12 +356,6 @@ pub(crate) struct Model {
     pub(crate) guild_requests: Vec<guild::GuildRequest>,
     /// The guild event log as the app pushes it, oldest first.
     pub(crate) guild_event_log: Vec<guild::GuildEventView>,
-    /// The guild bank as the app pushes it.
-    pub(crate) guild_bank: super::guild_bank::GuildBankView,
-    /// The current bank tab, 0-based (`0xc1dc0d`).
-    pub(crate) guild_bank_tab: u8,
-    /// Locked bank slots as `(tab, slot, item id)`, the reference's per-slot lock (`0x5a4c90`).
-    pub(crate) guild_bank_locks: Vec<(u8, u8, u32)>,
     /// Guild bank sends, queued for the app.
     pub(crate) guild_bank_requests: Vec<super::guild_bank::GuildBankRequest>,
     /// The charter price and open petition, names resolved from caches as the reference does.
@@ -549,10 +542,10 @@ pub(crate) struct Model {
     pub(crate) actions: HashMap<u32, ActionSlot>,
     /// The saved equipment sets by id, their names, which a set slot answers.
     pub(crate) equipment_sets: HashMap<u32, String>,
-    /// `CurrencyTypes.dbc` and `CurrencyCategory.dbc`.
-    pub(crate) currency_catalog: super::currency::CurrencyCatalogView,
-    /// The player's currencies, `None` with no player.
-    pub(crate) currency_holdings: Option<super::currency::CurrencyHoldings>,
+    /// The currency display list as its last build left it (`0x5b06dd`, its count zeroed at `0x5b0044`).
+    pub(crate) currency_list: Vec<super::currency::Entry>,
+    /// The items whose record a build asked for with its landing callback (`0x5b01d7`, `0x5b0260`).
+    pub(crate) currency_waiting: HashSet<u32>,
     /// The token slots, player slots `0x76..=0x95` as slots 1..=32; `None` with no player.
     pub(crate) token_slots: Option<container::ContainerState>,
     /// Each category's open flag, all open at a world entry from the character screen (`0x5afde2`).
@@ -574,6 +567,8 @@ pub(crate) struct Model {
     /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
     /// (the reference's error display), each a literal from its table (stride `0x14`).
     pub(crate) ui_errors: Vec<&'static str>,
+    /// Catalog keys of lines a verb displayed inline, whose sound the app plays.
+    pub(crate) message_sounds: Vec<&'static str>,
 
     pub(crate) spellbook: spellbook::SpellBookState,
     /// The book's highest-rank view, rebuilt with every [`Self::spellbook`] push.
@@ -828,11 +823,6 @@ pub(crate) struct Model {
     /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
-    /// The open bank's slot-purchase row and calls; its contents are bags -1 and 5..=11.
-    pub(crate) bank: Option<bank::BankState>,
-    pub(crate) bank_purchase: bool,
-    pub(crate) bank_close: bool,
-
     /// The open trainer, its buys, selection and close. The selection is a spell id, since
     /// filters, collapses and re-lists all move row numbers.
     pub(crate) trainer: Option<trainer::TrainerState>,
@@ -994,28 +984,23 @@ pub(crate) struct Model {
     pub(crate) quests_completed_queries: u32,
     /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`'s ids, which `GetQuestsCompleted` keys.
     pub(crate) quests_completed: Vec<u32>,
-    /// Item id to its tooltip view.
-    pub(crate) item_templates: HashMap<u32, ItemTemplateView>,
-    /// Item ids asked for and missing, for the app to answer.
+    /// A test's or a capture fixture's item records, read where the cache misses one.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) item_templates: HashMap<u32, super::ItemTemplateView>,
+    /// A test's record asks, made where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_stat_asks: HashSet<u32>,
-    /// Set id to its tooltip set block, and the misses asked for.
+    /// A test's record callbacks, left where no view is lent, in ask order.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) item_record_waits: Vec<(u32, super::ItemRecordWait)>,
+    /// A test's or a capture fixture's set blocks, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_sets: HashMap<u32, super::ItemSetView>,
-    pub(crate) item_set_asks: HashSet<u32>,
-    /// `ItemRandomProperties` id to its view, pushed whole at startup: a clicked tooltip cannot
-    /// repaint on a late answer. The reference reads its loaded store.
-    pub(crate) random_properties: HashMap<u32, super::RandomPropertyView>,
-    /// `ItemRandomSuffix.dbc`, what a negative random-property id takes.
-    pub(crate) random_suffixes: HashMap<u32, super::RandomSuffixView>,
-    /// `ScalingStatDistribution` and `ScalingStatValues`, pushed whole at startup.
-    pub(crate) scaling: super::ScalingTables,
-    /// `SpellItemEnchantment.dbc`, pushed whole at startup: a link names any row.
-    pub(crate) enchant_rows: HashMap<u32, super::EnchantRowView>,
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
     pub(crate) quest_tooltip_waits: HashMap<FrameHandle, Vec<super::QuestRecord>>,
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
-    pub(crate) player_req: PlayerReqState,
     /// Spell id to its tooltip view, and the misses asked for.
     pub(crate) spell_tooltips: HashMap<u32, super::SpellTooltipView>,
     pub(crate) spell_tooltip_asks: HashSet<u32>,
@@ -1179,7 +1164,8 @@ pub(crate) struct Model {
     /// pushes that carry it: corrected, never blanked. A per-login rebuild is unseen, as its verbs
     /// exist only in game, not at the glue screen.
     pub(crate) player_record: super::PlayerRecord,
-    /// `GetBindLocation()`, the bind point's area name: `""` before it lands, never nil.
+    /// A test's or a capture fixture's bind point name, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) bind_location: String,
     /// `GMTicketCategory.dbc` `(id, name)` rows in file order; the ids are wire values.
     pub(crate) gm_ticket_categories: Vec<(u32, String)>,
@@ -1537,9 +1523,6 @@ impl Model {
             guild_control: guild::GuildRankEdit::default(),
             guild_requests: Vec::new(),
             guild_event_log: Vec::new(),
-            guild_bank: Default::default(),
-            guild_bank_tab: 0,
-            guild_bank_locks: Vec::new(),
             guild_bank_requests: Vec::new(),
             petition: petition::PetitionState::default(),
             petition_requests: Vec::new(),
@@ -1625,8 +1608,8 @@ impl Model {
             keybinds: super::keybind::KeybindState::default(),
             actions: HashMap::new(),
             equipment_sets: HashMap::new(),
-            currency_catalog: Default::default(),
-            currency_holdings: None,
+            currency_list: Vec::new(),
+            currency_waiting: HashSet::new(),
             token_slots: None,
             currency_collapsed: HashMap::new(),
             equipment_manager: Default::default(),
@@ -1637,6 +1620,7 @@ impl Model {
             action_bar_page: 0,
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
+            message_sounds: Vec::new(),
             spellbook: spellbook::SpellBookState::default(),
             known_spells: spellbook::KnownSpells::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),
@@ -1755,9 +1739,6 @@ impl Model {
             repair_all: None,
             repair_mode: false,
             stable: Default::default(),
-            bank: None,
-            bank_purchase: false,
-            bank_close: false,
             trainer: None,
             trainer_buys: Vec::new(),
             trainer_selection: None,
@@ -1847,18 +1828,17 @@ impl Model {
             quest_poi: Default::default(),
             quests_completed_queries: 0,
             quests_completed: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             item_templates: HashMap::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             item_sets: HashMap::new(),
-            item_set_asks: HashSet::new(),
-            random_properties: HashMap::new(),
             hovered_link: None,
-            random_suffixes: HashMap::new(),
-            scaling: Default::default(),
-            enchant_rows: HashMap::new(),
             quest_tooltip_waits: HashMap::new(),
             item_setter_again: false,
+            #[cfg(any(test, feature = "fixtures"))]
             item_stat_asks: HashSet::new(),
-            player_req: PlayerReqState::default(),
+            #[cfg(any(test, feature = "fixtures"))]
+            item_record_waits: Vec::new(),
             spell_tooltips: HashMap::new(),
             spell_tooltip_asks: HashSet::new(),
             pet_spell_tooltips: HashMap::new(),
@@ -1885,6 +1865,7 @@ impl Model {
             screenshot_asks: 0,
             realm_name: String::new(),
             player_record: super::PlayerRecord::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             bind_location: String::new(),
             gm_ticket_categories: Vec::new(),
             gm_ticket_intents: Vec::new(),

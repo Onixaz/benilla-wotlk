@@ -186,6 +186,163 @@ pub struct PlayerReqState {
     pub class_flags: u32,
 }
 
+/// The fields of the active player a requirement gate reads in one go: none of them walks a table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayerFields {
+    pub level: u32,
+    pub class_id: u32,
+    pub race_id: u32,
+    pub honor_rank: u8,
+    pub pvp_medals: u32,
+    pub class_flags: u32,
+}
+
+/// What a requirement gate tests of the player, one field per read, as 12340's gates read the player object (`0x6dc3f0`).
+pub trait ReqFields {
+    fn level(&self) -> u32;
+    fn class_id(&self) -> u32;
+    fn race_id(&self) -> u32;
+    /// The value plus the permanent bonus in `skill`, `None` for a skill not held.
+    fn skill(&self, skill: u32) -> Option<u32>;
+    /// `SMSG_SET_PROFICIENCY`'s subclass mask for item class `class`, `None` for a class never sent.
+    fn proficiency(&self, class: u32) -> Option<u32>;
+    /// The reputation rank with `faction`, 0 hated … 7 exalted; 0 for an unknown faction.
+    fn rep_rank(&self, faction: u32) -> u8;
+    fn can_dual_wield(&self) -> bool;
+    fn honor_rank(&self) -> u8;
+    fn pvp_medals(&self) -> u32;
+    fn class_flags(&self) -> u32;
+}
+
+impl ReqFields for PlayerReqState {
+    fn level(&self) -> u32 {
+        self.level
+    }
+    fn class_id(&self) -> u32 {
+        self.class_id
+    }
+    fn race_id(&self) -> u32 {
+        self.race_id
+    }
+    fn skill(&self, skill: u32) -> Option<u32> {
+        self.skills.get(&skill).copied()
+    }
+    fn proficiency(&self, class: u32) -> Option<u32> {
+        self.proficiency.get(&class).copied()
+    }
+    fn rep_rank(&self, faction: u32) -> u8 {
+        self.rep_ranks.get(&faction).copied().unwrap_or(0)
+    }
+    fn can_dual_wield(&self) -> bool {
+        self.can_dual_wield
+    }
+    fn honor_rank(&self) -> u8 {
+        self.honor_rank
+    }
+    fn pvp_medals(&self) -> u32 {
+        self.pvp_medals
+    }
+    fn class_flags(&self) -> u32 {
+        self.class_flags
+    }
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+thread_local! {
+    /// The player `set_player_req_state` stands in with no active player: a test's or a capture fixture's, compiled out of the player build.
+    static FIXTURE_PLAYER: std::cell::RefCell<Option<PlayerReqState>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A new VM drops the stand-in an earlier one on this thread set.
+pub(crate) fn clear_fixture_player() {
+    #[cfg(any(test, feature = "fixtures"))]
+    FIXTURE_PLAYER.with(|f| *f.borrow_mut() = None);
+}
+
+/// `f` over the fixture's player, `None` with none set or in the player build.
+fn fixture<R>(f: impl FnOnce(&PlayerReqState) -> R) -> Option<R> {
+    #[cfg(any(test, feature = "fixtures"))]
+    return FIXTURE_PLAYER.with(|p| p.borrow().as_ref().map(f));
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = f;
+        None
+    }
+}
+
+/// The active player's requirement fields, each read live at the call; with no active player, the fixture's player or the default.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LiveReq;
+
+/// The active player's requirement fields through the lent view.
+pub(crate) fn player_req() -> LiveReq {
+    LiveReq
+}
+
+impl LiveReq {
+    fn read<R>(
+        live: impl FnOnce(&dyn super::LiveState) -> Option<R>,
+        stand_in: impl FnOnce(&PlayerReqState) -> R,
+    ) -> Option<R> {
+        super::read_live(live)
+            .flatten()
+            .or_else(|| fixture(stand_in))
+    }
+
+    fn fields(self) -> PlayerFields {
+        Self::read(
+            |l| l.player_fields(),
+            |r| PlayerFields {
+                level: r.level,
+                class_id: r.class_id,
+                race_id: r.race_id,
+                honor_rank: r.honor_rank,
+                pvp_medals: r.pvp_medals,
+                class_flags: r.class_flags,
+            },
+        )
+        .unwrap_or_default()
+    }
+}
+
+impl ReqFields for LiveReq {
+    fn level(&self) -> u32 {
+        player_level()
+    }
+    fn class_id(&self) -> u32 {
+        self.fields().class_id
+    }
+    fn race_id(&self) -> u32 {
+        self.fields().race_id
+    }
+    fn skill(&self, skill: u32) -> Option<u32> {
+        Self::read(|l| l.player_skill(skill), |r| r.skill(skill)).flatten()
+    }
+    fn proficiency(&self, class: u32) -> Option<u32> {
+        Self::read(|l| l.player_proficiency(class), |r| r.proficiency(class)).flatten()
+    }
+    fn rep_rank(&self, faction: u32) -> u8 {
+        Self::read(|l| l.player_rep_rank(faction), |r| r.rep_rank(faction)).unwrap_or(0)
+    }
+    fn can_dual_wield(&self) -> bool {
+        Self::read(|l| l.player_can_dual_wield(), |r| r.can_dual_wield).unwrap_or(false)
+    }
+    fn honor_rank(&self) -> u8 {
+        self.fields().honor_rank
+    }
+    fn pvp_medals(&self) -> u32 {
+        self.fields().pvp_medals
+    }
+    fn class_flags(&self) -> u32 {
+        self.fields().class_flags
+    }
+}
+
+/// The active player's level (`UNIT_FIELD_LEVEL`), read at the call.
+pub(crate) fn player_level() -> u32 {
+    LiveReq::read(|l| l.player_level(), |r| r.level).unwrap_or(0)
+}
+
 /// [`item_usable`] by item entry: entry 0 and a template not yet answered are usable, as the
 /// merchant getter skips an uncached record.
 pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
@@ -194,8 +351,8 @@ pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
 
 /// Medal `rank` is held: bit `rank - 1` of the medal field (`0x61dcb0`); a shift past the word
 /// wraps as the x86 `shl` does.
-pub(super) fn has_medal(req: &PlayerReqState, rank: u32) -> bool {
-    req.pvp_medals & 1u32.wrapping_shl(rank.wrapping_sub(1)) != 0
+pub(super) fn has_medal(req: &impl ReqFields, rank: u32) -> bool {
+    req.pvp_medals() & 1u32.wrapping_shl(rank.wrapping_sub(1)) != 0
 }
 
 /// [`item_use_refusal`] by item entry: entry 0 and a template not yet answered are refused nothing.
@@ -203,8 +360,8 @@ pub(super) fn item_use_refusal_by_id(model: &super::Model, item_id: u32) -> Opti
     if item_id == 0 {
         return None;
     }
-    let v = model.item_templates.get(&item_id)?;
-    item_use_refusal(v, &model.player_req, |id| {
+    let v = item_record(model, item_id)?;
+    item_use_refusal(&v, &player_req(), |id| {
         model.known_spells.known_or_higher(id)
     })
 }
@@ -218,7 +375,7 @@ pub(super) fn quest_item_quality_usable(
     quality: u32,
     usable: bool,
 ) -> (i64, bool) {
-    let quality = match model.item_templates.get(&item_id) {
+    let quality = match item_record(model, item_id) {
         Some(v) if v.inventory_type == 0 => -1,
         _ => i64::from(quality),
     };
@@ -232,7 +389,7 @@ pub(super) fn quest_item_quality_usable(
 /// An unpushed state (level 0) declines to judge, answering usable.
 pub fn item_usable(
     v: &ItemTemplateView,
-    req: &PlayerReqState,
+    req: &impl ReqFields,
     knows_spell: impl Fn(u32) -> bool,
 ) -> bool {
     item_use_refusal(v, req, knows_spell).is_none()
@@ -242,23 +399,26 @@ pub fn item_usable(
 /// for the proficiency leg, `ERR_CANT_USE_ITEM` (`0xa9`) for every other.
 pub fn item_use_refusal(
     v: &ItemTemplateView,
-    req: &PlayerReqState,
+    req: &impl ReqFields,
     knows_spell: impl Fn(u32) -> bool,
 ) -> Option<&'static str> {
     const CANT_USE: Option<&str> = Some("ERR_CANT_USE_ITEM");
-    if req.level == 0 {
+    let level = req.level();
+    if level == 0 {
         return None;
     }
-    if v.required_level > req.level {
+    if v.required_level > level {
         return CANT_USE;
     }
-    if req.class_id == 0 || v.allowable_class as u32 & (1 << (req.class_id - 1)) == 0 {
+    let class_id = req.class_id();
+    if class_id == 0 || v.allowable_class as u32 & (1 << (class_id - 1)) == 0 {
         return CANT_USE;
     }
-    if req.race_id == 0 || v.allowable_race as u32 & (1 << (req.race_id - 1)) == 0 {
+    let race_id = req.race_id();
+    if race_id == 0 || v.allowable_race as u32 & (1 << (race_id - 1)) == 0 {
         return CANT_USE;
     }
-    if let Some(&mask) = req.proficiency.get(&v.class) {
+    if let Some(mask) = req.proficiency(v.class) {
         if v.class < 17 && mask != 0 && mask & (1 << v.subclass) == 0 {
             return Some("ERR_PROFICIENCY_NEEDED");
         }
@@ -267,9 +427,8 @@ pub fn item_use_refusal(
     if v.required_skill != 0
         && v.flags & 0x2004_0000 == 0
         && req
-            .skills
-            .get(&v.required_skill)
-            .is_none_or(|&val| val < v.required_skill_rank)
+            .skill(v.required_skill)
+            .is_none_or(|val| val < v.required_skill_rank)
     {
         return CANT_USE;
     }
@@ -277,21 +436,16 @@ pub fn item_use_refusal(
     if v.required_spell != 0 && !knows_spell(v.required_spell) {
         return CANT_USE;
     }
-    if v.required_honor_rank != 0 && u32::from(req.honor_rank) < v.required_honor_rank {
+    if v.required_honor_rank != 0 && u32::from(req.honor_rank()) < v.required_honor_rank {
         return CANT_USE;
     }
     if v.required_city_rank != 0 && !has_medal(req, v.required_city_rank) {
         return CANT_USE;
     }
-    if v.required_rep_faction != 0 {
-        let rank = req
-            .rep_ranks
-            .get(&v.required_rep_faction)
-            .copied()
-            .unwrap_or(0);
-        if u32::from(rank) < v.required_rep_rank {
-            return CANT_USE;
-        }
+    if v.required_rep_faction != 0
+        && u32::from(req.rep_rank(v.required_rep_faction)) < v.required_rep_rank
+    {
+        return CANT_USE;
     }
     None
 }
@@ -310,6 +464,20 @@ pub struct ItemSetView {
     pub required_skill: u32,
     pub required_skill_rank: u32,
     pub required_skill_name: Option<String>,
+    /// The members whose name is still asked, which the tooltip's item callback waits on (`0x62ba29`).
+    pub pending: Vec<u32>,
+}
+
+/// The set block for `set_id` read at the call through the lent view; with none lent, a test's or a capture fixture's.
+pub(crate) fn item_set(lua: &mlua::Lua, model: &super::Model, set_id: u32) -> Option<ItemSetView> {
+    let global = |key: &str| crate::strings::global(lua, key);
+    let live = super::read_live(|l| l.item_set(set_id, &global));
+    #[cfg(any(test, feature = "fixtures"))]
+    if live.is_none() {
+        return model.item_sets.get(&set_id).cloned();
+    }
+    let _ = model;
+    live.flatten()
 }
 
 /// One `ItemSet.dbc` member: its id, and its name and slot type once its template is cached.
@@ -332,78 +500,207 @@ impl ItemSetMember {
     }
 }
 
+/// Item `id`'s record read from the item cache at the call through the lent view (`0x67ca30`), without the tooltip's lines and without an ask; a record the cache misses is a test's or a capture fixture's.
+pub(crate) fn item_record(model: &super::Model, id: u32) -> Option<ItemTemplateView> {
+    read_record(model, id, None)
+}
+
+/// [`item_record`] with the lines only the tooltip prints, built with the VM's strings: the trigger spells' `$`-text and the reputation requirement.
+pub(crate) fn item_tooltip_record(
+    lua: &mlua::Lua,
+    model: &super::Model,
+    id: u32,
+) -> Option<ItemTemplateView> {
+    let global = |key: &str| crate::strings::global(lua, key);
+    read_record(model, id, Some(&global))
+}
+
+/// Whether item `id`'s record is cached at the call.
+pub(crate) fn item_record_cached(model: &super::Model, id: u32) -> bool {
+    item_record(model, id).is_some()
+}
+
+fn read_record(
+    model: &super::Model,
+    id: u32,
+    tooltip: Option<super::GlobalStrings<'_>>,
+) -> Option<ItemTemplateView> {
+    if id == 0 {
+        return None;
+    }
+    let live = super::read_live(|l| l.item_record(id, tooltip))
+        .flatten()
+        .flatten();
+    #[cfg(any(test, feature = "fixtures"))]
+    if live.is_none() {
+        return model.item_templates.get(&id).cloned();
+    }
+    let _ = model;
+    live
+}
+
+/// The cache read's query of a missed record (`0x67ca30`), through the lent view; with none lent, a test's ask list.
+pub(crate) fn ask_item_record(model: &mut super::Model, id: u32) {
+    if id == 0 {
+        return;
+    }
+    let lent = super::read_live(|l| l.ask_item_record(id)).is_some();
+    #[cfg(any(test, feature = "fixtures"))]
+    if !lent {
+        model.item_stat_asks.insert(id);
+    }
+    let _ = (model, lent);
+}
+
+/// A callback the UI leaves on an item record it asked for, run in ask order with every other subsystem's when the record lands (`0x67ca30`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemRecordWait {
+    /// The currency list build's, once per record (`0x5b01d7`).
+    Currency,
+    /// The socket window's existing gem, one per ask (`0x5c5236`, `0x5c5402`).
+    Socket,
+    /// An item tooltip's, once per tooltip and record (`0x6278e5`).
+    Tooltip(crate::widget::FrameHandle),
+    /// A random dungeon reward's, one per ask (`0x557c8d`).
+    LfgReward,
+    /// A quest panel row's, one per `GetQuestItemInfo` or `SetQuestItem` ask (`0x58d26d`).
+    QuestItem,
+    /// A quest tooltip's, one per build (`0x622984`).
+    QuestTooltip(crate::widget::FrameHandle),
+}
+
+impl ItemRecordWait {
+    /// Whether a second ask with this callback and argument adds none (`0x67cae8`).
+    pub fn once(self) -> bool {
+        matches!(self, Self::Currency | Self::Tooltip(_))
+    }
+}
+
+/// Leave `wait` on item `id`'s record, through the lent view; with none lent, on a test's list.
+pub(crate) fn wait_item_record(model: &mut super::Model, id: u32, wait: ItemRecordWait) {
+    if id == 0 {
+        return;
+    }
+    let lent = super::write_live(|l| l.wait_item_record(id, wait)).unwrap_or(false);
+    #[cfg(any(test, feature = "fixtures"))]
+    if !lent && !(wait.once() && model.item_record_waits.contains(&(id, wait))) {
+        model.item_record_waits.push((id, wait));
+    }
+    let _ = (model, lent);
+}
+
 impl super::UiScript {
-    /// Stores or replaces an item's template view, clearing its ask.
+    /// One callback the UI left on item `item_id`'s record, answered or denied (`landed`): the currency list's rebuild and event (`0x5b0660`), the socket window's event (`0x5c44d0`), the tooltip's redraw (`0x626650`), the random dungeon panel's event (`0x552950`), the quest panel's (`0x58b8f0`) or the quest tooltip's rebuild (`0x61de20`); all but the currency list's run only on a found record (`0x5c44d3`, `0x552956`, `0x58b8f6`, `0x61de23`).
+    pub fn item_record_callback(&mut self, item_id: u32, landed: bool, wait: ItemRecordWait) {
+        match wait {
+            ItemRecordWait::Currency => {
+                if self.currency_record_landed(item_id) {
+                    self.fire_event("CURRENCY_DISPLAY_UPDATE", vec![]);
+                }
+            }
+            ItemRecordWait::Socket if landed => self.fire_event("SOCKET_INFO_UPDATE", vec![]),
+            ItemRecordWait::Tooltip(h) if landed => self.answer_item_wait(h, item_id),
+            ItemRecordWait::LfgReward if landed => {
+                self.fire_event("LFG_UPDATE_RANDOM_INFO", Vec::new())
+            }
+            ItemRecordWait::QuestItem if landed => self.fire_event("QUEST_ITEM_UPDATE", vec![]),
+            ItemRecordWait::QuestTooltip(h) if landed => self.quest_tooltip_callback(h),
+            _ => {}
+        }
+    }
+
+    /// A test's or a capture fixture's item record, read where the cache misses it; then the record's landing callbacks.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_item_template(&mut self, item_id: u32, view: ItemTemplateView) {
         {
             let mut model = self.model_mut();
             model.item_stat_asks.remove(&item_id);
             model.item_templates.insert(item_id, view);
         }
-        super::socket::template_arrived(&mut self.model_mut(), item_id);
-        self.answer_item_waits(|m| m.items.contains(&item_id));
-        self.lfg_item_arrived(item_id);
+        self.item_record_landed(item_id);
     }
 
-    /// Asks for the templates of `ids` the store lacks, for the trade-skill list,
-    /// whose link verbs never query: the reference has them cached before the list shows.
-    pub fn ask_item_templates(&mut self, ids: impl IntoIterator<Item = u32>) {
-        let mut model = self.model_mut();
-        for id in ids {
-            if id != 0 && !model.item_templates.contains_key(&id) {
-                model.item_stat_asks.insert(id);
-            }
+    /// Item `item_id`'s record landed where no view is lent: the callbacks a test left on it run in ask order.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn item_record_landed(&mut self, item_id: u32) {
+        let waits: Vec<ItemRecordWait> = {
+            let mut model = self.model_mut();
+            let mut taken = Vec::new();
+            model.item_record_waits.retain(|&(id, w)| {
+                if id == item_id {
+                    taken.push(w);
+                }
+                id != item_id
+            });
+            taken
+        };
+        for wait in waits {
+            self.item_record_callback(item_id, true, wait);
         }
     }
 
-    /// Drains the ids read or asked for that the store did not hold.
+    /// Drains a test's record asks, made where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn take_item_stat_asks(&mut self) -> Vec<u32> {
         drain_set!(self, item_stat_asks)
     }
 
-    /// Stores or replaces a set's view, re-pushed as member names resolve.
+    /// A test's or a capture fixture's set block, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_item_set(&mut self, set_id: u32, view: ItemSetView) {
-        {
-            let mut model = self.model_mut();
-            model.item_set_asks.remove(&set_id);
-            model.item_sets.insert(set_id, view);
-        }
-        self.answer_item_waits(|m| m.sets.contains(&set_id));
+        self.model_mut().item_sets.insert(set_id, view);
     }
 
-    /// Drains the set ids the renderer asked for that the store did not hold.
-    pub fn take_item_set_asks(&mut self) -> Vec<u32> {
-        drain_set!(self, item_set_asks)
+    /// An item name landed in the name cache (`SMSG_ITEM_NAME_QUERY_RESPONSE`): every tooltip whose set block waited on it renders again, as the set block's cache callback does (`0x62ba29`).
+    pub fn item_name_landed(&mut self, item_id: u32) {
+        self.answer_item_waits(|m| m.names.contains(&item_id));
     }
 
-    /// Pushes the whole `ItemRandomProperties` table once, at load: a clicked tooltip cannot
-    /// repaint on a late answer.
-    pub fn set_random_properties(
-        &mut self,
-        rows: std::collections::HashMap<u32, super::RandomPropertyView>,
-    ) {
-        set_field!(self, random_properties, rows);
-    }
-
-    /// Pushes the `ItemRandomSuffix` names once, at load.
-    pub fn set_random_suffixes(&mut self, rows: std::collections::HashMap<u32, RandomSuffixView>) {
-        set_field!(self, random_suffixes, rows);
-    }
-
-    /// Pushes the two scaling tables whole, once at load.
-    pub fn set_scaling_tables(&mut self, tables: super::ScalingTables) {
-        set_field!(self, scaling, tables);
-    }
-
-    /// Push `SpellItemEnchantment.dbc` whole: a link can name any row.
-    pub fn set_enchant_rows(&mut self, rows: std::collections::HashMap<u32, EnchantRowView>) {
-        set_field!(self, enchant_rows, rows);
-    }
-
-    /// Pushes the player state the red lines compare against.
+    /// The requirement state a call reads while the live view holds no active player: a test's or a capture fixture's player.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_player_req_state(&mut self, state: PlayerReqState) {
-        set_field!(self, player_req, state);
+        FIXTURE_PLAYER.with(|f| *f.borrow_mut() = Some(state));
     }
+}
+
+/// The client's loaded item tables, read in place at the call: `ItemRandomProperties`, `ItemRandomSuffix`, `SpellItemEnchantment` and the two scaling tables.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemTables {
+    pub random_properties: std::collections::HashMap<u32, super::RandomPropertyView>,
+    pub random_suffixes: std::collections::HashMap<u32, RandomSuffixView>,
+    pub enchant_rows: std::collections::HashMap<u32, EnchantRowView>,
+    pub scaling: super::ScalingTables,
+}
+
+/// `f` over the item tables through the lent view; empty tables with none lent.
+pub(crate) fn with_item_tables<R>(f: impl FnOnce(&ItemTables) -> R) -> R {
+    let mut f = Some(f);
+    let lent = super::read_live(|l| l.item_tables().map(|t| f.take().map(|f| f(t))))
+        .flatten()
+        .flatten();
+    match (lent, f) {
+        (Some(r), _) => r,
+        (None, Some(f)) => f(&ItemTables::default()),
+        (None, None) => unreachable!("the tables call runs once"),
+    }
+}
+
+/// A roll's name suffix (`0x706d70`): a positive id's non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.
+pub(crate) fn roll_suffix(roll: i32) -> Option<String> {
+    with_item_tables(|t| match roll {
+        1.. => t
+            .random_properties
+            .get(&(roll as u32))
+            .map(|r| r.suffix.clone())
+            .filter(|s| !s.is_empty()),
+        0 => None,
+        _ => Some(
+            t.random_suffixes
+                .get(&roll.unsigned_abs())
+                .map(|r| r.name.clone())
+                .unwrap_or_default(),
+        ),
+    })
 }
 
 /// One `ItemRandomSuffix` row.
@@ -528,25 +825,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 _ => 0,
             };
-            let Some((wearable, product)) = model
-                .item_templates
-                .get(&id)
-                .map(|v| (v.inventory_type != 0, v.recipe_creates))
+            let Some((wearable, product)) =
+                item_record(&model, id).map(|v| (v.inventory_type != 0, v.recipe_creates))
             else {
-                if id != 0 {
-                    model.item_stat_asks.insert(id);
-                }
+                ask_item_record(&mut model, id);
                 return Ok(super::binding_abi::flag(false));
             };
             if wearable || product == 0 {
                 return Ok(super::binding_abi::flag(wearable));
             }
-            let makes = model
-                .item_templates
-                .get(&product)
-                .map(|v| v.inventory_type != 0);
+            let makes = item_record(&model, product).map(|v| v.inventory_type != 0);
             if makes.is_none() {
-                model.item_stat_asks.insert(product);
+                ask_item_record(&mut model, product);
             }
             Ok(super::binding_abi::flag(makes == Some(true)))
         })?,
@@ -598,29 +888,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let (view, suffix, level) = {
                 let mut model = crate::script::model_mut_of(lua);
-                let v = model.item_templates.get(&item_id).cloned();
-                if v.is_none() && item_id != 0 {
-                    model.item_stat_asks.insert(item_id);
+                let v = item_record(&model, item_id);
+                if v.is_none() {
+                    ask_item_record(&mut model, item_id);
                 }
                 // The name takes the link's random property (`0x706d70`): a positive id's
                 // non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.
-                let rp = fields.random_property;
-                let suffix = match rp {
-                    1.. => model
-                        .random_properties
-                        .get(&(rp as u32))
-                        .map(|r| r.suffix.clone())
-                        .filter(|s| !s.is_empty()),
-                    0 => None,
-                    _ => Some(
-                        model
-                            .random_suffixes
-                            .get(&rp.unsigned_abs())
-                            .map(|r| r.name.clone())
-                            .unwrap_or_default(),
-                    ),
-                };
-                (v, suffix, model.player_req.level)
+                let suffix = roll_suffix(fields.random_property);
+                (v, suffix, player_level())
             };
             let Some(v) = view else {
                 return Ok(MultiValue::new());
@@ -665,6 +940,56 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{item_usable, ItemTemplateView, PlayerReqState};
     use crate::script::UiScript;
+
+    /// A record's UI callbacks keep their ask order; the socket window's, the random dungeon rewards' and the quest panel's add one per ask, the currency build's and a tooltip's one per record (`0x67cae8`), and the socket window's fires with the window closed (`0x5c44d0`).
+    #[test]
+    fn record_callbacks_keep_ask_order_and_once_flags() {
+        use super::{wait_item_record, ItemRecordWait as W};
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "LOG = {} local f = CreateFrame('Frame')              f:RegisterEvent('SOCKET_INFO_UPDATE') f:RegisterEvent('LFG_UPDATE_RANDOM_INFO') f:RegisterEvent('QUEST_ITEM_UPDATE') f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)",
+        )
+        .unwrap();
+        {
+            let mut model = s.model_mut();
+            let asks = [
+                W::Socket,
+                W::LfgReward,
+                W::QuestItem,
+                W::Socket,
+                W::Currency,
+                W::Currency,
+                W::QuestItem,
+            ];
+            for w in asks {
+                wait_item_record(&mut model, 7, w);
+            }
+            assert_eq!(
+                model.item_record_waits,
+                [
+                    (7, W::Socket),
+                    (7, W::LfgReward),
+                    (7, W::QuestItem),
+                    (7, W::Socket),
+                    (7, W::Currency),
+                    (7, W::QuestItem)
+                ]
+            );
+        }
+        s.set_item_template(7, ItemTemplateView::default());
+        let log: Vec<String> = s.eval("return LOG").unwrap();
+        assert_eq!(
+            log,
+            [
+                "SOCKET_INFO_UPDATE",
+                "LFG_UPDATE_RANDOM_INFO",
+                "QUEST_ITEM_UPDATE",
+                "SOCKET_INFO_UPDATE",
+                "QUEST_ITEM_UPDATE"
+            ]
+        );
+        assert!(s.model_ref().item_record_waits.is_empty());
+    }
 
     /// The proficiency leg writes message 8; every other leg writes `0xa9`.
     #[test]

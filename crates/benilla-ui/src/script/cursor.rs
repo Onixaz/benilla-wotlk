@@ -124,10 +124,7 @@ pub(super) fn held_count(model: &super::Model, item: &CursorItem) -> u32 {
     if let Some(n) = item.count {
         return n.max(1);
     }
-    model
-        .containers
-        .get(&item.bag)
-        .and_then(|c| c.slots.get(&item.slot))
+    super::container::live_slot(model, item.bag, item.slot)
         .filter(|s| s.item_id == item.item_id)
         .map_or(1, |s| s.count.max(1))
 }
@@ -353,7 +350,7 @@ pub(crate) fn split_container_item(model: &mut Model, bag: i64, slot: u32, count
     if model.cursor.is_some() || count < 1 {
         return false;
     }
-    let Some(s) = model.containers.get(&bag).and_then(|c| c.slots.get(&slot)) else {
+    let Some(s) = super::container::index_slot(model, bag, slot) else {
         return false;
     };
     if s.item_id == 0 || s.locked {
@@ -543,19 +540,21 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
             None => Vec::new(),
         },
         Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
-            super::action::ACTION_KIND_ITEM => match model.item_templates.get(&a.action) {
-                Some(t) => vec![
-                    str("item")?,
-                    int(a.action),
-                    str(&super::item_stats::item_link(
-                        a.action,
-                        &t.name,
-                        t.quality,
-                        model.player_req.level,
-                    ))?,
-                ],
-                None => Vec::new(),
-            },
+            super::action::ACTION_KIND_ITEM => {
+                match super::item_stats::item_record(model, a.action) {
+                    Some(t) => vec![
+                        str("item")?,
+                        int(a.action),
+                        str(&super::item_stats::item_link(
+                            a.action,
+                            &t.name,
+                            t.quality,
+                            crate::script::item_stats::player_level(),
+                        ))?,
+                    ],
+                    None => Vec::new(),
+                }
+            }
             super::action::ACTION_KIND_MACRO => vec![str("macro")?, int(a.action)],
             super::action::ACTION_KIND_SPELL => spell(a.action, None)?,
             _ => Vec::new(),

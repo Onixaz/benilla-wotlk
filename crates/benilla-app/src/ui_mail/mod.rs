@@ -23,7 +23,6 @@ use crate::entities::ItemDisplays;
 use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
-use crate::ui_items::{EquipError, EquipErrors};
 use crate::ui_script::{UiDrain, UiFeed};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
@@ -667,7 +666,6 @@ fn feed_mail(
     mut pending: ResMut<MailPending>,
     look: MailLookups,
     mut sink: crate::ui_action::MessageSink,
-    mut equip_errors: ResMut<EquipErrors>,
     time: Res<Time>,
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut memos: Local<crate::ui_script::VmMemo<MailMemos>>,
@@ -707,6 +705,8 @@ fn feed_mail(
     }
 
     if std::mem::take(&mut mail.open_requested) {
+        // The mailbox open takes the interact target before `MAIL_SHOW` (`0x56da67`).
+        script.close_bank_interaction();
         script.open_mailbox();
     }
     if std::mem::take(&mut mail.close_requested) {
@@ -744,12 +744,12 @@ fn feed_mail(
                 let line = crate::ui_action::keyed_line(&script, key);
                 crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
             }
-            MailEffect::EquipError(reason) => equip_errors.0.push(EquipError {
-                reason,
-                required_level: None,
-                // The result names no bag slot: 255 is the wire's "own array" sentinel.
-                bag_slot: 255,
-            }),
+            // The result names no bag, so the plain line.
+            MailEffect::EquipError(reason) => {
+                let key = crate::ui_items::equip_error_key(reason);
+                let line = crate::ui_action::keyed_line(&script, key);
+                crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
+            }
             MailEffect::Sent => script.mail_sent(),
             MailEffect::CloseInboxItem(index) => {
                 script.fire_event("CLOSE_INBOX_ITEM", vec![ScriptValue::Int(i64::from(index))]);

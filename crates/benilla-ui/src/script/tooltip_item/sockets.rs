@@ -152,10 +152,10 @@ fn requirement_line(
 /// The gem template's icon; a miss asks for it and records the running setter's wait.
 fn gem_icon(lua: &Lua, gem_item: u32) -> Option<String> {
     let mut model = crate::script::model_mut_of(lua);
-    match model.item_templates.get(&gem_item) {
-        Some(t) => t.icon.clone(),
+    match crate::script::item_stats::item_record(&model, gem_item) {
+        Some(t) => t.icon,
         None => {
-            model.item_stat_asks.insert(gem_item);
+            crate::script::item_stats::ask_item_record(&mut model, gem_item);
             super::note_item_miss(&mut model, gem_item);
             None
         }
@@ -191,15 +191,16 @@ pub(super) fn empty_socket(
 /// unmet enchant or prismatic skill and level requirement.
 /// An enchant's text (`0x577260`): a random suffix's `$i` takes its share of the seed, which an
 /// item object's points read the same off the field the server writes.
-fn suffix_line(lua: &Lua, inst: &ItemInstance, e: &crate::script::EnchantView) -> String {
+fn suffix_line(inst: &ItemInstance, e: &crate::script::EnchantView) -> String {
     let roll = inst.link.random_property;
     if roll >= 0 || !(7..=11).contains(&e.slot) || !e.name.contains("$i") {
         return e.name.clone();
     }
-    let value = crate::script::model_mut_of(lua)
-        .random_suffixes
-        .get(&roll.unsigned_abs())
-        .map_or(0, |r| r.value(usize::from(e.slot) - 7, inst.link.seed));
+    let value = crate::script::item_stats::with_item_tables(|t| {
+        t.random_suffixes
+            .get(&roll.unsigned_abs())
+            .map_or(0, |r| r.value(usize::from(e.slot) - 7, inst.link.seed))
+    });
     e.name.replace("$i", &value.to_string())
 }
 
@@ -219,16 +220,13 @@ pub(super) fn socket_lines(
         } else {
             crate::script::socket::equipped_gem_counts(&model)
         };
-        (counts, model.player_req.clone())
+        (counts, crate::script::item_stats::player_req())
     };
+    use crate::script::ReqFields;
     let skill_ok = |r: &crate::script::EnchantRequirementView| {
-        r.skill == 0
-            || req
-                .skills
-                .get(&r.skill)
-                .is_some_and(|&have| have >= r.skill_rank)
+        r.skill == 0 || req.skill(r.skill).is_some_and(|have| have >= r.skill_rank)
     };
-    let level_ok = |r: &crate::script::EnchantRequirementView| r.min_level <= req.level;
+    let level_ok = |r: &crate::script::EnchantRequirementView| r.min_level <= req.level();
     // A signable item's ids read as zero.
     let enchants = match v.flags & 0x2000 != 0 {
         true => &[][..],
@@ -333,7 +331,7 @@ pub(super) fn socket_lines(
                 Some(t) => t,
                 None => continue,
             },
-            None => suffix_line(lua, inst, e),
+            None => suffix_line(inst, e),
         };
         // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"`.
         if let Some(charges) = charges_phrase(e.charges, get) {

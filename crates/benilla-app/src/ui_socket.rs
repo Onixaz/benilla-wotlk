@@ -1,13 +1,12 @@
 //! The socketing and purchase-refund round trips. The VM's socketing engine and refund verbs
 //! ([`benilla_ui::script`]) queue sends; here they go out, `SMSG_SOCKET_GEMS_RESULT` writes the
-//! socketed item's enchants (`0x7081b0`), the refund records (`item+0x3d4`) are asked and kept,
-//! and `SMSG_ITEM_REFUND_RESULT` prints its lines (`0x6d9b40`).
+//! socketed item's enchants (`0x7081b0`), the refund records (`item+0x3d4`) are asked and kept for the verbs to read at the call, and `SMSG_ITEM_REFUND_RESULT` prints its lines in its handler (`0x6d9b40`).
 
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
-use benilla_protocol::field::{item_enchant_field, FIELD_ITEM_FLAGS};
+use benilla_protocol::field::item_enchant_field;
 use benilla_protocol::messages::{ObjectFields, PurchaseCost, RefundRecord};
 use benilla_protocol::{SessionEvent, SessionEventKind as K};
 use benilla_ui::script::{RefundView, UiScript};
@@ -16,33 +15,27 @@ use benilla_ui::strings::Arg;
 use crate::items::Items;
 use crate::net::{
     merge_store_fields, ClientCommand, FieldChanged, GuidIndex, NetCommands, NetHandlerApp,
-    ObjectStore, Objects, SelfGuid, SelfPlayer,
+    ObjectStore, Objects,
 };
 use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_chat::ChatLog;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::live::UiEvents;
+use crate::ui_script::UiDrain;
 
 /// The template flag that marks a purchase with a refund record (`template+0x18 & 0x1000`).
-const ITEM_FLAG_REFUNDABLE: u32 = 0x1000;
+pub(crate) const ITEM_FLAG_REFUNDABLE: u32 = 0x1000;
 /// `ITEM_FIELD_FLAGS & 0x100`: a bound item still in its trade window.
 const ITEM_FIELD_FLAG_BOP_TRADEABLE: u32 = 0x100;
-/// `ITEM_FIELD_CREATE_PLAYED_TIME`'s index.
-const FIELD_ITEM_CREATE_PLAYED_TIME: u16 = benilla_protocol::field::FIELD_ITEM_CREATE_PLAYED_TIME;
 /// The refund lines' currency caps (`0x6d9c4f`, `0x6d9cbf`).
 const HONOR_CAP: u32 = 75_000;
 const ARENA_CAP: u32 = 10_000;
 
-/// The refund records and their asks.
-#[derive(Resource, Default)]
+/// The refund records on the held items (`item+0x3d4`) and their asks; main-thread state the handlers write and a verb's call asks through ([`crate::ui_script::Lent`]).
+#[derive(Default)]
 pub(crate) struct RefundRecords {
     records: HashMap<u64, RefundRecord>,
-    /// The pending bit (`item+0x394 & 4`): asked and unanswered. A silent server leaves it set, so
-    /// the item is never asked again.
+    /// The pending bit (`item+0x394 & 4`): asked and unanswered; a silent server leaves it set, so the item is never asked again.
     asked: HashSet<u64>,
-    /// Items created since the last feed, whose templates decide whether to ask.
-    created: Vec<u64>,
-    /// Steps on every record change, so the feed re-pushes.
-    epoch: u64,
 }
 
 impl RefundRecords {
@@ -52,6 +45,33 @@ impl RefundRecords {
             .get(&item)
             .is_some_and(|r| window_open(r.played_at_purchase, played_now))
     }
+
+    /// The record on `item`, as the verbs read it.
+    pub(crate) fn view(&self, item: u64) -> Option<RefundView> {
+        self.records.get(&item).map(view_of)
+    }
+
+    /// Ask `item`'s record unless it holds one or is pending (`0x7089e0`, its callers' `+0x3d4` and `+0x394 & 4` tests): the pending bit is set with the send.
+    pub(crate) fn ask(&mut self, item: u64, commands: &NetCommands) {
+        if self.records.contains_key(&item) || !self.asked.insert(item) {
+            return;
+        }
+        debug!("ui_socket: ask refund record of {item:#x}");
+        let _ = commands.0.send(ClientCommand::ItemRefundInfo { item });
+    }
+
+    /// The item went (`0x70afc0`): its record and pending bit go with it.
+    fn forget(&mut self, item: u64) {
+        self.records.remove(&item);
+        self.asked.remove(&item);
+    }
+}
+
+/// Whether `entry`'s cached template is a refundable purchase (`template+0x18 & 0x1000`); `false` while it is uncached, as `0x707360` answers null.
+pub(crate) fn refundable(items: &Items, entry: u32) -> bool {
+    items
+        .template_cached(entry)
+        .is_some_and(|t| t.flags & ITEM_FLAG_REFUNDABLE != 0)
 }
 
 /// A two-hour played-time window from `stamp` is open (`stamp - played + 7200 > 0`).
@@ -79,32 +99,20 @@ pub(crate) struct SpellEnchantConfirm {
     pub(crate) raise: bool,
 }
 
-/// The refund results waiting for the VM's strings.
-#[derive(Resource, Default)]
-pub(crate) struct RefundResults(Vec<(u32, Option<PurchaseCost>)>);
-
 pub(crate) struct UiSocketPlugin;
 
 impl Plugin for UiSocketPlugin {
     fn build(&self, app: &mut App) {
         crate::item_names::register(app);
-        app.init_resource::<RefundRecords>()
+        app.init_non_send_resource::<RefundRecords>()
             .init_resource::<SpellEnchantConfirm>()
-            .init_resource::<RefundResults>()
             .net_handler(K::SocketGemsResult, on_socket_gems_result)
             .net_handler(K::ItemRefundInfo, on_refund_info)
             .net_handler(K::ItemRefundResult, on_refund_result)
-            .net_handler(K::ItemCreate, on_item_create)
-            .add_systems(
-                Update,
-                (
-                    drain_item_sends.in_set(UiDrain),
-                    // The refund results print with the VM's strings, so they wait for its frames.
-                    feed_refunds
-                        .in_set(UiFeed)
-                        .run_if(crate::ui_script::ingame_ui_up),
-                ),
-            );
+            .net_handler(K::VendorInventory, on_vendor_inventory)
+            .net_handler(K::ObjectDestroyed, on_object_destroyed)
+            .net_handler(K::Disconnected, on_session_end)
+            .add_systems(Update, drain_item_sends.in_set(UiDrain));
     }
 }
 
@@ -144,35 +152,86 @@ fn on_socket_gems_result(
 }
 
 /// `SMSG_ITEM_REFUND_INFO_RESPONSE` (`0x6d1650`): the record lands on a held item and clears its
-/// pending bit; one for an item not held is skipped whole.
+/// pending bit, and each cost item's record is asked (`0x6d172b`); one for an item not held is skipped whole.
 fn on_refund_info(
     In(ev): In<SessionEvent>,
     index: Res<GuidIndex>,
-    mut records: ResMut<RefundRecords>,
+    records: Option<NonSendMut<RefundRecords>>,
+    items: Res<Items>,
+    commands: Res<NetCommands>,
 ) {
     let SessionEvent::ItemRefundInfo { item, record } = ev else {
+        return;
+    };
+    let Some(mut records) = records else {
         return;
     };
     if !index.0.contains_key(&item) {
         return;
     }
     debug!("ui_socket: refund record for {item:#x}: {record:?}");
+    for &(id, _) in &record.cost.items {
+        if id != 0 {
+            let _ = items.template(id, 0, &commands);
+        }
+    }
     records.asked.remove(&item);
     records.records.insert(item, record);
-    records.epoch += 1;
 }
 
-fn on_refund_result(In(ev): In<SessionEvent>, mut results: ResMut<RefundResults>) {
-    if let SessionEvent::ItemRefundResult { item, result, cost } = ev {
-        debug!("ui_socket: refund of {item:#x} → {result}");
-        results.0.push((result, cost));
+/// `SMSG_ITEM_REFUND_RESULT` (`0x6d9b40`): its lines print in the handler, with the VM's strings.
+fn on_refund_result(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
+    let SessionEvent::ItemRefundResult { item, result, cost } = ev else {
+        return;
+    };
+    debug!("ui_socket: refund of {item:#x} → {result}");
+    ui.world(move |world| refund_result(world, result, cost));
+}
+
+/// `SMSG_LIST_INVENTORY`'s ask of every held refundable purchase without a record (`0x6d9ae1` -> `0x6d1760`): the worn and bag slots 0-18, the pack 23-38 and the four bags' contents.
+fn on_vendor_inventory(
+    In(ev): In<SessionEvent>,
+    objects: Objects,
+    items: Res<Items>,
+    records: Option<NonSendMut<RefundRecords>>,
+    commands: Res<NetCommands>,
+) {
+    if !matches!(ev, SessionEvent::VendorInventory { .. }) {
+        return;
+    }
+    let (Some(mut records), Some(me)) = (records, objects.player_object()) else {
+        return;
+    };
+    let mut held: Vec<u64> = (0..=18u8)
+        .filter_map(|slot| me.player_inv_slot(slot))
+        .chain((0..16u8).filter_map(|i| me.player_pack_slot(i)))
+        .collect();
+    for bag in (19..=22u8).filter_map(|slot| me.player_inv_slot(slot)) {
+        let Some(bag) = objects.object(bag) else {
+            continue;
+        };
+        let n = bag.container_num_slots().unwrap_or(0).min(36) as u8;
+        held.extend((0..n).filter_map(|j| bag.container_slot(j)));
+    }
+    for item in held.into_iter().filter(|&g| g != 0) {
+        let entry = objects.object(item).and_then(ObjectFields::object_entry);
+        if entry.is_some_and(|e| refundable(&items, e)) {
+            records.ask(item, &commands);
+        }
     }
 }
 
-/// An item's create (`0x70aa40`), where 12340 asks a refundable purchase's record.
-fn on_item_create(In(ev): In<SessionEvent>, mut records: ResMut<RefundRecords>) {
-    if let SessionEvent::ItemCreate { guid, .. } = ev {
-        records.created.push(guid);
+/// An item's destroy (`0x70afc0`): the record lives on the item object, so it goes with it.
+fn on_object_destroyed(In(ev): In<SessionEvent>, records: Option<NonSendMut<RefundRecords>>) {
+    if let (SessionEvent::ObjectDestroyed(guid), Some(mut records)) = (ev, records) {
+        records.forget(guid);
+    }
+}
+
+/// A session's end drops every item, and the records on them.
+fn on_session_end(In(_): In<SessionEvent>, records: Option<NonSendMut<RefundRecords>>) {
+    if let Some(mut records) = records {
+        *records = RefundRecords::default();
     }
 }
 
@@ -196,7 +255,7 @@ fn drain_item_sends(
 
 /// A bound item's trade-window stamp (`0x708b40`): the player's own, flagged `0x100`, with no
 /// binding enchant.
-fn trade_stamp(
+pub(crate) fn trade_stamp(
     fields: &ObjectFields,
     me: Option<u64>,
     enchants: Option<&crate::items::Enchants>,
@@ -212,126 +271,6 @@ fn trade_stamp(
     (!enchant_binds).then(|| fields.item_create_played_time().unwrap_or(0))
 }
 
-/// Ask each created refundable purchase's record, drop records and stamps whose items went, keep
-/// the trade stamps, push all of it to the VM, and print the refund results.
-#[allow(clippy::too_many_arguments)] // the param list is the input set
-fn feed_refunds(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut records: ResMut<RefundRecords>,
-    mut results: ResMut<RefundResults>,
-    mut field_edges: MessageReader<FieldChanged>,
-    objects: Objects,
-    items: Res<Items>,
-    self_guid: Res<SelfGuid>,
-    enchants: Option<Res<crate::items::Enchants>>,
-    commands: Res<NetCommands>,
-    player_q: Query<&ObjectStore, With<SelfPlayer>>,
-    io: (ResMut<ChatLog>, ResMut<UiErrorKeys>),
-    mut memo: Local<crate::ui_script::VmMemo<FeedMemo>>,
-) {
-    let Some(mut script) = script else {
-        field_edges.clear();
-        return;
-    };
-    let memo = memo.get(&script);
-    let me = self_guid.0;
-    let enchants = enchants.as_deref();
-    let records = &mut *records;
-    // The created items wait for their templates.
-    let created = std::mem::take(&mut records.created);
-    for guid in created {
-        let Some(fields) = objects.object(guid) else {
-            continue;
-        };
-        let Some(entry) = fields.object_entry() else {
-            continue;
-        };
-        let Some(template) = items.template_cached(entry) else {
-            records.created.push(guid);
-            continue;
-        };
-        memo.trade_dirty.insert(guid);
-        let refundable = template.flags & ITEM_FLAG_REFUNDABLE != 0;
-        if refundable
-            && fields.item_owner() == me
-            && !records.records.contains_key(&guid)
-            && records.asked.insert(guid)
-        {
-            debug!("ui_socket: ask refund record of {guid:#x}");
-            let _ = commands
-                .0
-                .send(ClientCommand::ItemRefundInfo { item: guid });
-        }
-    }
-    for e in field_edges.read() {
-        if matches!(e.index, FIELD_ITEM_FLAGS | FIELD_ITEM_CREATE_PLAYED_TIME)
-            && e.kind == benilla_protocol::messages::ObjectType::Item
-        {
-            memo.trade_dirty.insert(e.guid);
-        }
-    }
-    // A record goes with its item.
-    let before = records.records.len();
-    records.records.retain(|g, _| objects.object(*g).is_some());
-    records.asked.retain(|g| objects.object(*g).is_some());
-    if records.records.len() != before {
-        records.epoch += 1;
-    }
-    let mut trade_changed = false;
-    for guid in std::mem::take(&mut memo.trade_dirty) {
-        let stamp = objects
-            .object(guid)
-            .and_then(|f| trade_stamp(f, me, enchants));
-        trade_changed |= match stamp {
-            Some(s) => memo.trade.insert(guid, s) != Some(s),
-            None => memo.trade.remove(&guid).is_some(),
-        };
-    }
-    let before = memo.trade.len();
-    memo.trade.retain(|g, _| objects.object(*g).is_some());
-    trade_changed |= memo.trade.len() != before;
-    if trade_changed {
-        script.set_bound_trade_stamps(memo.trade.clone());
-    }
-    if memo.epoch != records.epoch {
-        memo.epoch = records.epoch;
-        for gone in memo
-            .pushed
-            .drain()
-            .filter(|g| !records.records.contains_key(g))
-            .collect::<Vec<_>>()
-        {
-            script.set_refund_record(gone, None);
-        }
-        for (&guid, r) in &records.records {
-            script.set_refund_record(guid, Some(view_of(r)));
-            memo.pushed.insert(guid);
-        }
-    }
-    let (mut chat, mut errors) = io;
-    let player = player_q.iter().next().map(|s| &s.0);
-    for (result, cost) in results.0.drain(..) {
-        refund_lines(
-            &script,
-            &items,
-            player,
-            result,
-            cost,
-            &mut chat,
-            &mut errors,
-        );
-    }
-}
-
-/// The feed's memory: the pushed records, the trade stamps, and the items to re-read.
-#[derive(Default)]
-pub(crate) struct FeedMemo {
-    epoch: u64,
-    pushed: HashSet<u64>,
-    trade: HashMap<u64, u32>,
-    trade_dirty: HashSet<u64>,
-}
-
 fn view_of(r: &RefundRecord) -> RefundView {
     RefundView {
         money: r.cost.money,
@@ -342,24 +281,64 @@ fn view_of(r: &RefundRecord) -> RefundView {
     }
 }
 
+/// The result's lines with the `World` lent (`0x6d9b40`): the VM's strings, the player's points and the cost items' cached names.
+fn refund_result(world: &mut World, result: u32, cost: Option<PurchaseCost>) {
+    let mut lines = Vec::new();
+    let mut errors = Vec::new();
+    let player = world
+        .resource::<crate::net::SelfGuid>()
+        .0
+        .and_then(|g| world.resource::<GuidIndex>().0.get(&g).copied())
+        .and_then(|e| world.get::<ObjectStore>(e))
+        .map(|s| s.0.clone());
+    let names: HashMap<u32, String> = cost
+        .as_ref()
+        .map(|c| {
+            let items = world.resource::<Items>();
+            c.items
+                .iter()
+                .filter_map(|&(id, _)| Some((id, items.template_cached(id)?.name.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    crate::ui_script::live::with_live_world(world, |script| {
+        refund_lines(
+            script,
+            &names,
+            player.as_ref(),
+            result,
+            cost,
+            &mut |t| lines.push(t),
+            &mut errors,
+        );
+    });
+    if let Some(mut chat) = world.get_resource_mut::<ChatLog>() {
+        for line in lines {
+            crate::ui_chat::away::push_system(&mut chat, line);
+        }
+    }
+    if let Some(mut keys) = world.get_resource_mut::<UiErrorKeys>() {
+        keys.0.extend(errors);
+    }
+}
+
 /// `SMSG_ITEM_REFUND_RESULT`'s lines (`0x6d9b40`): a refusal shows the bag-full or currency-full
 /// error, else `UNABLE_TO_REFUND_ITEM`; a success prints `ITEM_REFUND_MSG`, then the money, the
 /// honor and arena points (each capped at what fits), and each cost item, as system lines.
 fn refund_lines(
     script: &UiScript,
-    items: &Items,
+    names: &HashMap<u32, String>,
     player: Option<&ObjectFields>,
     result: u32,
     cost: Option<PurchaseCost>,
-    chat: &mut ChatLog,
-    errors: &mut UiErrorKeys,
+    line: &mut dyn FnMut(String),
+    errors: &mut Vec<UiError>,
 ) {
     let get = |key: &str| crate::ui_chat::combat::global_string(script, key);
-    let mut line = |text: String| crate::ui_chat::away::push_system(chat, text);
     let Some(cost) = cost.filter(|_| result == 0) else {
         match result {
-            10 => errors.0.push(UiError::key("ERR_INV_FULL")),
-            11 => errors.0.push(UiError::key("ERR_CURRENCY_FULL")),
+            10 => errors.push(UiError::key("ERR_INV_FULL")),
+            11 => errors.push(UiError::key("ERR_CURRENCY_FULL")),
             _ => {
                 if let Some(t) = get("UNABLE_TO_REFUND_ITEM") {
                     line(t);
@@ -413,9 +392,9 @@ fn refund_lines(
         if count == 0 {
             continue;
         }
-        let Some(t) = items.template_cached(id) else {
+        let Some(name) = names.get(&id) else {
             continue;
         };
-        line(refund(count, &t.name));
+        line(refund(count, name));
     }
 }
