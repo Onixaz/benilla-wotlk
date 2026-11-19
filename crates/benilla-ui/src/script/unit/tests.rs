@@ -2806,3 +2806,63 @@ fn tapped_by_all_threat_list_reads_its_dynamic_flag() {
     }
     assert!(s.run("UnitIsTappedByAllThreatList({})").is_err());
 }
+
+/// `"npc"` is the interact target read at the call (`0xbd07a8`): a window's show reads the NPC its open just took, found by guid among the snapshots, though the pushed `"npc"` snapshot still names the last window's; with no target held, or no view lent, the pushed one answers.
+#[test]
+fn the_npc_token_reads_the_interact_target_at_the_call() {
+    use crate::script::LiveState;
+    const OLD: u64 = 0xF130_0000_0000_0097;
+    const NEW: u64 = 0xF130_0000_0000_0036;
+    struct Target(Option<u64>);
+    impl LiveState for Target {
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+        fn has_control(&self) -> bool {
+            true
+        }
+        fn far_sight(&self) -> bool {
+            false
+        }
+        fn interact_target(&self) -> Option<u64> {
+            self.0
+        }
+    }
+    let named = |guid: u64, name: &str| UnitState {
+        exists: true,
+        guid,
+        name: Some(name.into()),
+        ..Default::default()
+    };
+    let mut s = UiScript::new().unwrap();
+    s.set_unit("npc", Some(named(OLD, "Brog Hamfist")));
+    s.set_unit("target", Some(named(NEW, "Corina Steele")));
+    let read = |s: &mut UiScript, held: Option<u64>| {
+        s.with_live(&mut Target(held), |s| {
+            s.eval::<(Option<String>, Option<String>)>(r#"return UnitName("npc"), UnitGUID("npc")"#)
+                .unwrap()
+        })
+    };
+    assert_eq!(
+        read(&mut s, Some(NEW)),
+        (
+            Some("Corina Steele".into()),
+            Some("0xF130000000000036".into())
+        ),
+        "the target the open just took, ahead of the snapshot's push"
+    );
+    assert_eq!(read(&mut s, None).0.as_deref(), Some("Brog Hamfist"));
+    assert_eq!(
+        s.eval::<Option<String>>(r#"return UnitName("npc")"#)
+            .unwrap()
+            .as_deref(),
+        Some("Brog Hamfist"),
+        "no view lent: the pushed snapshot"
+    );
+}

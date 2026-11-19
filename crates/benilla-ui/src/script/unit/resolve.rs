@@ -378,7 +378,10 @@ impl UnitGuids {
             UnitBase::Pet if self.player == 0 => 0,
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
-            UnitBase::Npc => self.npc,
+            // The interact target read at the call (`0xbd07a8`); the pushed guid while none is held, for the windows not on it yet (#1329).
+            UnitBase::Npc => read_live(|l| l.interact_target())
+                .flatten()
+                .unwrap_or(self.npc),
             // Deviation: the reference's party-pet lookup has no bound and reads past its
             // four-entry table, which is stale memory, not a mechanism; past it, nobody.
             UnitBase::PartyPet(row) => at(&self.party_pets, row),

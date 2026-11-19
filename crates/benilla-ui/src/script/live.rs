@@ -232,6 +232,11 @@ pub trait LiveState {
         None
     }
 
+    /// The interact target (`0xbd07a8`), the `"npc"` unit's guid; `None` with none held.
+    fn interact_target(&self) -> Option<u64> {
+        None
+    }
+
     /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
     fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
         None

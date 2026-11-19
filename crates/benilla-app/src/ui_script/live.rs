@@ -913,6 +913,10 @@ impl LiveState for LiveView<'_, '_> {
         self.lent.giver.get()?.quest_npc()
     }
 
+    fn interact_target(&self) -> Option<u64> {
+        self.tabard.target()
+    }
+
     fn quest_select(
         &mut self,
         select: benilla_ui::script::QuestSelect,

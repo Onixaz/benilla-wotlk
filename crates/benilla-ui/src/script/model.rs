@@ -1219,7 +1219,26 @@ impl Model {
         if token.eq_ignore_ascii_case("vehicle") {
             return self.vehicle_unit();
         }
+        if token.eq_ignore_ascii_case("npc") {
+            return self.npc_unit();
+        }
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
+    }
+
+    /// The `"npc"` unit by the interact target read at the call (`0xbd07a8`), as the getters look its object up; with none held, the windows whose opens do not take it yet (#1329) answer through the pushed snapshot.
+    fn npc_unit(&self) -> Option<&UnitState> {
+        let pushed = self.pushed_unit("npc");
+        let Some(guid) = super::live::read_live(|l| l.interact_target()).flatten() else {
+            return pushed;
+        };
+        pushed
+            .filter(|u| u.guid == guid)
+            .or_else(|| self.units_by_guid.get(&guid))
+            .or_else(|| {
+                self.units_by_lower
+                    .values()
+                    .find(|u| u.exists && u.guid == guid)
+            })
     }
 
     /// The focus's unit by guid, as the getters look its object up: the app's `focus` push while it
