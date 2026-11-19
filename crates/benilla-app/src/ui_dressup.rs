@@ -178,7 +178,7 @@ impl DressUpRoom {
         item: u32,
         visual: i32,
         cat: &DressUpCatalogs<'_>,
-        mut waits: Option<&mut RecordWaits>,
+        waits: Option<&mut RecordWaits>,
     ) {
         let Some(t) = cat.items.ask_template(item, 0, cat.commands) else {
             if let Some(w) = waits {
@@ -192,7 +192,7 @@ impl DressUpRoom {
         if t.inventory_type == 0 {
             let product = crate::ui_items::feed::recipe_creates(t, cat.spells);
             if product != 0 {
-                self.try_on(pane, product, [0; 4], cat, waits.as_deref_mut());
+                self.try_on(pane, product, [0; 4], cat, waits);
             }
             return;
         }

@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn sign_petition_defaults_its_wire_byte_to_one() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         let mut loan = acts();
         s.run("SignPetition(); SignPetition(7); SignPetition(3.9)")
             .unwrap();
@@ -841,7 +841,7 @@ mod tests {
     /// A refused name queues its message instead of a packet.
     #[test]
     fn the_name_validator_gates_both_verbs_and_only_buy_reports_it() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         let mut loan = acts();
         assert_eq!(
             s.eval::<Option<u32>>("return BuyGuildCharter(\"Legacy\")")
@@ -892,7 +892,7 @@ mod tests {
     /// `GetTabardInfo()` pushes nothing and queues the designer's opener.
     #[test]
     fn get_tabard_info_is_an_intent_with_no_returns() {
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         let mut loan = acts();
         assert_eq!(
             s.eval::<i64>("local n = function(...) return arg.n end return n(GetTabardInfo())")
@@ -1020,7 +1020,7 @@ mod tests {
     /// sends it with no banner (`0x5a2140`, `0x5a2600`).
     #[test]
     fn the_petition_button_takes_a_charter_and_turns_it_in() {
-        let mut s = vendor_with_charters();
+        let s = vendor_with_charters();
         let mut loan = acts();
         s.run("TurnInPetition()").unwrap();
         assert!(take(&mut loan).is_empty(), "an empty button sends nothing");
