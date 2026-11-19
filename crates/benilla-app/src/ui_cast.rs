@@ -72,6 +72,22 @@ pub(crate) enum CastBarEdge {
         remaining_ms: u32,
         total_ms: u32,
     },
+    /// The send's GCD start armed (`0x805d70`), after its `SENT`: the spellbook's cooldown
+    /// signals, then the usable update for an on-hold spell (`0x805ec3`, `0x805ed1`).
+    CooldownStart { on_hold: bool },
+    /// Our cast's start visuals or its finish ran the selection update (`0x53b480`).
+    Selection,
+    /// A plain signal a write inside the press raised, such as the auto-repeat spell's.
+    Signal(&'static str),
+}
+
+/// A press's signal joins its edges, in order with the send's and the cancel's.
+impl crate::ui_action::signals::SignalSink for PressSignals<'_, '_> {
+    fn signal(&mut self, event: &'static str) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Signal(event));
+        }
+    }
 }
 
 /// The edges presses made and not yet fired, shared by every ladder and cancel.
@@ -88,23 +104,44 @@ pub(crate) struct PressSignals<'w, 's> {
     // `Option`: a ladder runs in harnesses without the cast plugin, which signal nothing.
     edges: Option<ResMut<'w, PressEdges>>,
     casts: Option<crate::ui_script::OwnedMut<'w, UnitCasts>>,
+    /// The usable update a press runs in place.
+    usable: Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
     spells: Option<Res<'w, Spells>>,
     sent: Option<SentTarget<'w, 's>>,
     index: Option<Res<'w, GuidIndex>>,
 }
 
 impl PressSignals<'_, '_> {
-    /// `CMSG_CAST_SPELL` went out at `target`, or none.
+    /// `CMSG_CAST_SPELL` went out at `target`, or none: `UNIT_SPELLCAST_SENT` (`0x80b556`), then
+    /// the start visuals' selection update (`0x80b573`).
     pub(crate) fn sent(&mut self, spell_id: u32, target: Option<u64>) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Sent { spell_id, target });
+            edges.0.push(CastBarEdge::Selection);
         }
     }
 
-    /// Our running cast was cancelled here.
+    /// The send's GCD start armed: its signals after the send's events (`0x805ec3`, `0x805ed1`).
+    pub(crate) fn cooldown_start(&mut self, on_hold: bool) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::CooldownStart { on_hold });
+        }
+    }
+
+    /// The selection update a press runs in place: the targeting cursor's arm (`0x80d806`), or its
+    /// pending cast ended without a send (`0x806366`, `0x8054f0`).
+    pub(crate) fn selection(&mut self) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// Our running cast was cancelled here (`0x806200`): its end, then its finish's selection
+    /// update (`0x806366`, `0x8054f0`).
     pub(crate) fn cancelled(&mut self, caster: u64) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Cancelled { caster });
+            edges.0.push(CastBarEdge::Selection);
         }
     }
 
@@ -177,6 +214,16 @@ impl PressSignals<'_, '_> {
                         drop(casts);
                         script.fire_unit_event(caster, "UNIT_SPELLCAST_STOP", args);
                     }
+                }
+                CastBarEdge::Selection => crate::ui_action::signals::selection_now(script),
+                CastBarEdge::Signal(event) => script.fire_event(event, Vec::new()),
+                CastBarEdge::CooldownStart { on_hold } => {
+                    crate::ui_action::signals::cooldown_site_now(
+                        script,
+                        self.usable.as_mut(),
+                        on_hold,
+                        crate::ui_action::signals::Tail::None,
+                    );
                 }
                 // A press makes no other edge.
                 _ => {}
@@ -508,6 +555,16 @@ impl SentTarget<'_, '_> {
 /// Apply `edge` to its caster's cast state and queue its `UNIT_SPELLCAST_*` events, with the
 /// `World` lent between the events around it.
 pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
+    if let CastBarEdge::CooldownStart { on_hold } = edge {
+        if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+            crate::ui_action::signals::cooldown_site(
+                &mut ui,
+                on_hold,
+                crate::ui_action::signals::Tail::None,
+            );
+        }
+        return;
+    }
     let focus = focus_of(world);
     if let Err(e) = world.run_system_cached_with(edge_system, (edge, focus)) {
         warn!("ui_cast: a cast edge did not apply: {e}");
@@ -560,6 +617,10 @@ fn edge_system(
     let have_player = self_guid.0.is_some();
     let units = &mut *units;
     match edge {
+        // Run by `apply_edge` before this system.
+        CastBarEdge::CooldownStart { .. } => {}
+        CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
+        CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
         CastBarEdge::Sent { spell_id, target } => {
             ui.fire(
                 "UNIT_SPELLCAST_SENT",
@@ -1641,7 +1702,13 @@ mod tests {
                 |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
                  mut press: PressSignals| {
                     press.cancelled(ME);
-                    assert_eq!(press.pending(), [CastBarEdge::Cancelled { caster: ME }]);
+                    assert_eq!(
+                        press.pending(),
+                        [
+                            CastBarEdge::Cancelled { caster: ME },
+                            CastBarEdge::Selection
+                        ]
+                    );
                     press.fire(&mut script);
                     script
                         .eval::<String>("return table.concat(HELD, ' ')")

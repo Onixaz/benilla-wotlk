@@ -102,15 +102,6 @@ impl UsablePlaceFeed<'_> {
             Some(knows_cold_weather_flying),
         )
     }
-
-    /// A pet's place.
-    pub(crate) fn pet(&self) -> UsablePlace {
-        UsablePlace::of(
-            self.place.as_deref(),
-            self.map.as_deref().map(|m| m.0),
-            None,
-        )
-    }
 }
 
 /// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single

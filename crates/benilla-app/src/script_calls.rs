@@ -53,12 +53,12 @@ pub(crate) fn apply_script_calls(
                 appliers.p0().target_by_name(&name, exact, script);
             }
             ScriptCall::TargetNearest { mode, reverse } => {
-                appliers.p0().target_nearest(mode, reverse);
+                appliers.p0().target_nearest(mode, reverse, script);
             }
             ScriptCall::TargetLastTarget => appliers.p0().target_last_target(script),
             ScriptCall::ClearTarget => appliers.p0().clear_target(),
-            ScriptCall::AttackTarget => appliers.p7().attack_target(),
-            ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(),
+            ScriptCall::AttackTarget => appliers.p7().attack_target(script),
+            ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(script),
             ScriptCall::StartAttack {
                 unit: Some(unit),
                 exact,
@@ -67,14 +67,14 @@ pub(crate) fn apply_script_calls(
                 if appliers.p7().may_start() {
                     match named {
                         Some((entity, guid)) => {
-                            appliers.p0().select_for_attack(entity, guid);
-                            appliers.p7().swing_at_selection();
+                            appliers.p0().select_for_attack(entity, guid, script);
+                            appliers.p7().swing_at_selection(script);
                         }
                         None => appliers.p7().no_attack_target(),
                     }
                 }
             }
-            ScriptCall::StopAttack => appliers.p7().stop_attack(),
+            ScriptCall::StopAttack => appliers.p7().stop_attack(script),
             ScriptCall::Dismount => crate::ui_shapeshift::dismount(&mut appliers.p3()),
             ScriptCall::CancelShapeshiftForm => {
                 crate::ui_shapeshift::cancel_form(&mut appliers.p3());
@@ -100,13 +100,28 @@ pub(crate) fn apply_script_calls(
             ScriptCall::UseAction(press) => {
                 match crate::ui_action::use_action(&mut appliers.p4(), script, press) {
                     crate::ui_action::UseOutcome::Done => {}
-                    crate::ui_action::UseOutcome::Attack => appliers.p7().attack_target(),
+                    crate::ui_action::UseOutcome::Attack => appliers.p7().attack_target(script),
                     // A pet-action slot sends the pet bar's action, at no unit (`0x5ac000` →
                     // `0x5d4210`).
                     crate::ui_action::UseOutcome::PetAction(index) => {
-                        let out =
-                            pet_press(&mut appliers.p6(), script, |p| p.press_slot(index + 1));
+                        // The pet arm sends a word that holds anything, then runs the bar's
+                        // selection signal (`0x5abe32`).
+                        let held = appliers
+                            .p6()
+                            .bar
+                            .read()
+                            .spells
+                            .bar
+                            .get(index as usize)
+                            .is_some_and(|w| !w.is_empty());
+                        let out = pet_press(&mut appliers.p6(), script, |p, s| {
+                            p.press_slot(index + 1, s)
+                        });
                         cast_as_pet(&mut appliers.p3(), out);
+                        if held {
+                            appliers.p3().ladder.press.fire(script);
+                            script.fire_event("ACTIONBAR_UPDATE_STATE", Vec::new());
+                        }
                     }
                 }
             }
@@ -137,24 +152,24 @@ pub(crate) fn apply_script_calls(
                 appliers.p5().equip_item(script, bag, slot, dst);
             }
             ScriptCall::CastPetSpell { spell_id, on_self } => {
-                let out = pet_press(&mut appliers.p6(), script, |p| {
-                    crate::ui_pet_book::cast_pet_spell(p, spell_id, on_self)
+                let out = pet_press(&mut appliers.p6(), script, |p, s| {
+                    crate::ui_pet_book::cast_pet_spell(p, spell_id, on_self, s)
                 });
                 cast_as_pet(&mut appliers.p3(), out);
             }
             ScriptCall::PetAction(slot) => {
-                let out = pet_press(&mut appliers.p6(), script, |p| p.press_slot(slot));
+                let out = pet_press(&mut appliers.p6(), script, |p, s| p.press_slot(slot, s));
                 cast_as_pet(&mut appliers.p3(), out);
             }
             ScriptCall::PetOrder(packed) => {
-                let out = pet_press(&mut appliers.p6(), script, |p| p.order(packed));
+                let out = pet_press(&mut appliers.p6(), script, |p, s| p.order(packed, s));
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
         // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
         // picked and resumed before the next call reads the selection.
         if let Some(held) = appliers.p3().ladder.take_held() {
-            if appliers.p7().pick_for_cast(held) {
+            if appliers.p7().pick_for_cast(held, script) {
                 let mut cast = appliers.p3();
                 let ctx = cast.targeting.context();
                 cast.ladder.resume_after_pick(held, &ctx);
@@ -166,21 +181,25 @@ pub(crate) fn apply_script_calls(
     });
 }
 
-/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and the flush its cooldown start made (`0x805ec3`, `0x805eda`), fired as the press returns.
+/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), fired as the press returns.
 pub(crate) fn pet_press(
     press: &mut crate::ui_pet::PetPress,
     script: &mut UiScript,
-    f: impl FnOnce(&mut crate::ui_pet::PetPress) -> crate::ui_pet::PetCast,
+    f: impl FnOnce(
+        &mut crate::ui_pet::PetPress,
+        &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> crate::ui_pet::PetCast,
 ) -> crate::ui_pet::PetCast {
     let at = |press: &crate::ui_pet::PetPress| {
         let bar = press.bar.read();
         (bar.bar_signals, bar.cooldowns.generation)
     };
     let (signals, generation) = at(press);
-    let out = f(press);
+    // The press's writes signal into the VM it runs inside.
+    let out = f(press, script);
     let (now_signals, now_generation) = at(press);
     if now_generation != generation {
-        crate::ui_pet::pet_cooldown_flush_now(script);
+        press.fire_cooldown_start(script);
     }
     crate::ui_pet::fire_bar_signals(script, signals, now_signals);
     out

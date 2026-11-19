@@ -78,7 +78,6 @@ use crate::ui_quest_share::QuestSharePlugin;
 use crate::ui_quest_watch::UiQuestWatchPlugin;
 use crate::ui_saved::UiSavedPlugin;
 use crate::ui_script::UiScriptPlugin;
-use crate::ui_shapeshift::UiShapeshiftPlugin;
 use crate::ui_social::UiSocialPlugin;
 use crate::ui_socket::UiSocketPlugin;
 use crate::ui_spellbook::UiSpellbookPlugin;
@@ -233,7 +232,6 @@ impl PluginGroup for GamePlugins {
             .add(UiTalentWipePlugin)
             // The form list by the reference's admission and order; after UiActionPlugin (`Spells`)
             // and SpellPlugin (the cast tail).
-            .add(UiShapeshiftPlugin)
             // The companion lists; after UiSpellbookPlugin, whose feed it follows.
             .add(crate::ui_companion::UiCompanionPlugin)
             // The totem slots; after UiActionPlugin, whose `Spells` names each totem's icon.
@@ -876,8 +874,7 @@ pub(crate) mod schedule_tests {
     ///   `ground_deck_riders`), the booth billboards and the world camera's gate: a press's range,
     ///   facing and nearest-unit reads see a rider's pose or the camera a frame late at worst, as
     ///   the range compare's readers do;
-    /// - the range compare's readers (`ui_action::state::feed_action_state`,
-    ///   the targeting cursor and the object-click commit) against the writers of `Player` and
+    /// - the range compare's readers (the targeting cursor and the object-click commit) against the writers of `Player` and
     ///   `RemoteMotion` (`world_focus`'s focus publish and settle release,
     ///   `transport::compose_riders` and `ground_deck_riders`): the readers take the
     ///   movement flags of the caster (`Player::move_flags`) and its target

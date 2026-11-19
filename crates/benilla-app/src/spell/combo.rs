@@ -43,17 +43,21 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PetComboPoints, on_combo_points);
 }
 
-/// Both packets. The pet's is kept only for the pet the pet info holds (`0x5d36a0`).
+/// Both packets. The pet's is kept only for the pet the pet info holds (`0x5d36a0`); each bank's
+/// set runs the usable update (`0x5197a2`, `0x5d34cd`).
 fn on_combo_points(
     In(ev): In<SessionEvent>,
     mut combo: ResMut<ComboPoints>,
     pet_bar: Res<crate::ui_pet::PetBar>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
+    use crate::ui_action::usable_cache::{step, Pass};
     match ev {
         SessionEvent::ComboPoints { target, points } => {
             debug!("net: combo points {points} on {target:#x}");
             combo.player = Banked { target, points };
             combo.player_epoch += 1;
+            ui.world(step(Pass::Full));
         }
         SessionEvent::PetComboPoints {
             pet,
@@ -63,6 +67,7 @@ fn on_combo_points(
             debug!("net: pet combo points {points} on {target:#x}");
             combo.pet = Banked { target, points };
             combo.pet_epoch += 1;
+            ui.world(step(Pass::Full));
         }
         _ => {}
     }

@@ -569,12 +569,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetShapeshift",
         lua.create_function(|lua, (this, index): (Table, usize)| {
-            let (spell_id, name) = {
-                let model = crate::script::model_mut_of(lua);
-                match model.shapeshift_forms.get(index.saturating_sub(1)) {
-                    Some(f) => (f.view.spell_id, Some(f.view.name.clone())),
-                    None => return Ok(()),
-                }
+            let forms = super::shapeshift::forms(lua);
+            let (spell_id, name) = match forms.get(index.saturating_sub(1)) {
+                Some(f) => (f.view.spell_id, Some(f.view.name.clone())),
+                None => return Ok(()),
             };
             let opts = SpellRenderOpts {
                 brief: brief_tooltips(lua),

@@ -235,9 +235,7 @@ fn on_action_feedback(
 /// The pet history's start-cooldown refund (`0x804780`): the spellbook's flush when a record matched (`0x80476d`), then the pet bar's (`0x804792`).
 fn pet_refund_start(bar: &mut PetBar, spell: u32, ui: &mut crate::ui_script::live::UiEvents) {
     if bar.cooldowns.clear_gcd(spell, Instant::now()) {
-        // `UPDATE_SHAPESHIFT_COOLDOWN` between the two while the stance bar holds forms (`0x53bac5`) is #577's.
-        ui.fire("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
-        ui.fire("SPELL_UPDATE_COOLDOWN", Vec::new());
+        crate::ui_action::signals::spellbook(ui);
     }
     ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
 }

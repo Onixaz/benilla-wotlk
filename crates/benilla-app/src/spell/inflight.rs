@@ -231,8 +231,37 @@ impl ActiveChannel {
 /// The live auto-repeat spell, as the client keeps it: set at cast send for `AttributesEx2 & 0x20`,
 /// cleared by `SMSG_CANCEL_AUTO_REPEAT` and a matching cast failure. `IsAutoRepeatAction` and the
 /// button flash read it; the sticky `creature_anim::AutoRepeatArmed` is the idle gate.
+///
+/// The reference's auto-repeating spell (`0x800a00`). Its other cell, the auto-ranged spell, is
+/// set only by the auto-ranged-combat mode's idle handler (`0x6e2be0`), which is not built, so it
+/// stays empty and every write here signals: a new spell `START_AUTOREPEAT_SPELL`, the clear
+/// `STOP_AUTOREPEAT_SPELL` (`0x807560`), each fired in turn into the writer's sink.
 #[derive(Resource, Default)]
 pub(crate) struct AutoRepeatActive(pub Option<u32>);
+
+impl AutoRepeatActive {
+    /// Set the spell (`0x800a00`): a new one signals the start, the same one nothing.
+    pub(crate) fn set(
+        &mut self,
+        spell_id: u32,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
+        if self.0 == Some(spell_id) {
+            return;
+        }
+        self.0 = Some(spell_id);
+        sink.signal("START_AUTOREPEAT_SPELL");
+    }
+
+    /// Clear it (`0x807560`): a held spell signals the stop. Whether one was held.
+    pub(crate) fn clear(&mut self, sink: &mut dyn crate::ui_action::signals::SignalSink) -> bool {
+        let held = self.0.take().is_some();
+        if held {
+            sink.signal("STOP_AUTOREPEAT_SPELL");
+        }
+        held
+    }
+}
 
 /// The per-spell movement gates of the local self-cancel, tested. The move keybinds' dispatcher
 /// cancels on mask `0x10f0` (forward, back, strafe, autorun; not turn or pitch) and the jump verb
@@ -339,7 +368,13 @@ impl SelfCancel<'_, '_> {
             if *crate::net::CAST_TRACE {
                 info!("cast-trace: LOCAL auto-repeat self-cancel (esc), CMSG_CANCEL_AUTO_REPEAT_SPELL");
             }
-            crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, ecs, net);
+            crate::creature_anim::cancel_auto_repeat_local(
+                self_e,
+                auto_repeat,
+                ecs,
+                net,
+                &mut *press,
+            );
             false // the press is spent
         } else {
             esc

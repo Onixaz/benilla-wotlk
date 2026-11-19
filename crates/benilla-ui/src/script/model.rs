@@ -642,9 +642,10 @@ pub(crate) struct Model {
     pub(crate) tutorial_clears: u32,
     pub(crate) tutorial_resets: u32,
 
-    /// The stance bar's forms, in bar order.
+    /// The stand-in stance bar, in bar order, and form byte, for a VM with no live view.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
-    /// The player's raw shapeshift form byte, 0 unshifted or no player.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shapeshift_form_byte: u8,
     /// `GlyphProperties.dbc` and `GlyphSlot.dbc`.
     pub(crate) glyph_catalog: super::glyph::GlyphCatalogView,
@@ -1627,7 +1628,9 @@ impl Model {
             tutorial_triggers: Vec::new(),
             tutorial_clears: 0,
             tutorial_resets: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             shapeshift_forms: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             shapeshift_form_byte: 0,
             glyph_catalog: Default::default(),
             glyph_sockets: Default::default(),

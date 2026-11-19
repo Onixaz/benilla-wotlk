@@ -119,39 +119,37 @@ const EFFECT_ATTACK: u32 = 78;
 /// `SPELL_AURA_MOD_SHAPESHIFT`.
 const AURA_SHAPESHIFT: u32 = 36;
 
-impl<R: CallReads + ?Sized> Answers<'_, R> {
-    /// The active-spell test (`0x802cb0`) for the player: a critter summon while its creature is
-    /// out, a spell whose own cancelable aura (flag `0x10`) is up, or a mount while any `MOUNTED`
-    /// aura rides its creature.
-    fn is_active_spell(
-        &self,
-        spell_id: u32,
-        d: &benilla_formats::SpellDisplay,
-        now: &CastNow,
-    ) -> bool {
-        let kind = d.companion_kind(now.summons);
-        if d.active_icon.is_none() && kind.is_none() {
-            return false;
-        }
-        if kind == Some(benilla_formats::CompanionKind::Critter) {
-            let entry = now.critter.map(|g| ((g >> 24) & 0x0fff_ffff) as i32);
-            return entry == Some(d.effect_misc_value[0]);
-        }
-        let auras = || now.auras.into_iter().flat_map(|a| a.iter());
-        if auras().any(|a| {
-            a.spell_id == spell_id
-                && a.flags & benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE != 0
-        }) {
-            return true;
-        }
-        d.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
-            && auras().any(|a| {
-                self.tables.spells.catalog.get(a.spell_id).is_some_and(|m| {
-                    m.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
-                        && m.effect_misc_value[0] == d.effect_misc_value[0]
-                })
-            })
+/// The active-spell test (`0x802cb0`) for the player: a critter summon while its creature is out,
+/// a spell whose own cancelable aura (flag `0x10`) is up, or a mount while any `MOUNTED` aura rides
+/// its creature; a spell with no `ActiveIconID` that summons no companion is never active.
+pub(crate) fn active_spell(
+    spell_id: u32,
+    d: &benilla_formats::SpellDisplay,
+    now: &CastNow,
+    catalog: &benilla_formats::SpellCatalog,
+) -> bool {
+    let kind = d.companion_kind(now.summons);
+    if d.active_icon.is_none() && kind.is_none() {
+        return false;
     }
+    if kind == Some(benilla_formats::CompanionKind::Critter) {
+        let entry = now.critter.map(|g| ((g >> 24) & 0x0fff_ffff) as i32);
+        return entry == Some(d.effect_misc_value[0]);
+    }
+    let auras = || now.auras.into_iter().flat_map(|a| a.iter());
+    if auras().any(|a| {
+        a.spell_id == spell_id
+            && a.flags & benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE != 0
+    }) {
+        return true;
+    }
+    d.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
+        && auras().any(|a| {
+            catalog.get(a.spell_id).is_some_and(|m| {
+                m.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
+                    && m.effect_misc_value[0] == d.effect_misc_value[0]
+            })
+        })
 }
 
 impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
@@ -251,7 +249,7 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
 
     /// The current-spell test (`0x806030`): no row is nil; the pending cast; the auto-attack
     /// while attacking; a trade-skill opener while its line's book is open; a critter, mount or
-    /// shapeshift by [`Answers::is_active_spell`].
+    /// shapeshift by [`active_spell`].
     fn is_current_spell(&self, spell_id: u32) -> bool {
         let Some(d) = self.tables.spells.catalog.get(spell_id) else {
             return false;
@@ -280,7 +278,7 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
         {
             return false;
         }
-        self.is_active_spell(spell_id, d, &now)
+        active_spell(spell_id, d, &now, &self.tables.spells.catalog)
     }
 
     fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo> {

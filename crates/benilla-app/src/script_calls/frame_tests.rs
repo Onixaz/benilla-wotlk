@@ -141,8 +141,6 @@ enum Step {
     ScriptCalls,
     /// The world click's select.
     WorldSelect,
-    /// The action bar's state feed: `GetActionCooldown` and the cooldown events.
-    ActionState,
     /// The spellbook's feed: `GetSpellCooldown`.
     /// The pet bar's feed and its cooldown flush: `GetPetActionCooldown`.
     /// The VM's tick: the `OnUpdate` scripts and the cooldown widgets' update.
@@ -157,7 +155,6 @@ impl Step {
             Step::BindingDispatch => "::bindings::latch_and_dispatch",
             Step::ScriptCalls => "::script_calls::apply_script_calls",
             Step::WorldSelect => "::click::select_on_click",
-            Step::ActionState => "::state::feed_action_state",
             Step::Tick => "::extract::tick_script",
         }
     }
@@ -172,9 +169,6 @@ impl Step {
             Step::ScriptCalls => schedule.add_systems(super::apply_script_calls.in_set(self)),
             Step::WorldSelect => {
                 schedule.add_systems(crate::target::click::select_on_click.in_set(self))
-            }
-            Step::ActionState => {
-                schedule.add_systems(crate::ui_action::feed_action_state.in_set(self))
             }
             Step::Tick => schedule.add_systems(crate::ui_script::extract::tick_script.in_set(self)),
         };
@@ -711,7 +705,6 @@ fn a_bound_key_sends_one_cast_per_press() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -963,7 +956,6 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.water_in_the_backpack();
@@ -993,26 +985,12 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
 
 // ── B: #1215, the press before the frame's cooldown publication and its tick ───────────────────
 
-/// Every feed that publishes cooldowns runs after the press and before the tick, so a GCD a press
-/// arms reaches the frame's `OnUpdate` and its cooldown widgets: the action bar's and the forms';
-/// the pet bar's flush fires inside the press, the spellbook, the companions and the bags read
-/// the cooldowns at the call, and the runes' regen tick runs before the UI's tick as the player's
-/// update does (`0x728aa6`).
+/// No feed publishes cooldowns: the bar, the pet bar, the spellbook, the forms, the companions
+/// and the bags read them at the call and the presses fire their signals inside the press; the
+/// runes' regen tick runs before the UI's tick as the player's update does (`0x728aa6`).
 #[test]
-fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
+fn the_rune_regen_runs_before_the_tick() {
     let g = graph_or_skip!();
-    for feed in [Step::ActionState.suffix(), "::feed_shapeshift_bar"] {
-        for press in [Step::UiInput, Step::BindingDispatch, Step::ScriptCalls] {
-            assert!(
-                g.before(press.suffix(), feed),
-                "{press:?} runs before {feed}"
-            );
-        }
-        assert!(
-            g.before(feed, Step::Tick.suffix()),
-            "{feed} runs before the tick"
-        );
-    }
     assert!(g.before("::tick_runes", Step::Tick.suffix()));
 }
 
@@ -1025,7 +1003,6 @@ fn a_pressed_cast_shows_its_gcd_in_the_frame_of_the_press() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -1064,7 +1041,11 @@ fn a_pressed_cast_shows_its_gcd_on_the_spellbook_in_the_frame_of_the_press() {
     let log = rig.log();
     assert_eq!(
         in_frame(&log, 2),
-        ["OnUpdate action cold pet cold book swept"],
+        [
+            "ACTIONBAR_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_COOLDOWN",
+            "OnUpdate action swept pet cold book swept"
+        ],
         "{log:?}"
     );
 }
@@ -1106,7 +1087,6 @@ fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -1119,10 +1099,12 @@ fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
         in_frame(&log, 2).contains(&"ACTIONBAR_UPDATE_COOLDOWN".to_string()),
         "the press frame's handler sets the running cooldown again: {log:?}"
     );
-    let (start, duration): (f64, f64) = rig
-        .vm()
-        .eval("local s, d = GetActionCooldown(2) return s, d")
-        .expect("Nova's triple");
+    let (start, duration): (f64, f64) =
+        crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval("local s, d = GetActionCooldown(2) return s, d")
+                .expect("Nova's triple")
+        })
+        .expect("the VM");
     assert!(duration == 30.0, "Nova is running: {start} {duration}");
     let elapsed_ms = (NOW * 1000.0) as u32 - (start * 1000.0) as u32;
     let expected = benilla_ui::widget::CooldownState {

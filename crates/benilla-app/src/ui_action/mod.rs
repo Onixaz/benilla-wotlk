@@ -28,19 +28,12 @@ mod feed;
 mod feed_tests;
 mod net;
 mod ranks;
-mod state;
-// The press-frame tests run the state feed as a system of their own.
-#[cfg(test)]
-pub(crate) use state::feed_action_state;
+pub(crate) mod signals;
 pub(crate) mod toggle;
+pub(crate) mod usable_cache;
+#[cfg(test)]
+mod verb_tests;
 mod weapon_icon;
-
-/// Every feed that pushes cooldown triples runs `.before` this set: [`state::feed_action_state`]
-/// fires the cooldown events synchronously, so a triple pushed later goes unread until the next
-/// cooldown change. The pet list's flush, `ui_pet::bar::fire_pet_cooldown_events`, runs `.after`
-/// it on the same rule.
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CooldownEvents;
 
 /// The slot-identity feed ([`feed::feed_actions`]), which fires `ACTIONBAR_SLOT_CHANGED`. The
 /// spellbook feed runs `.before` it: the registrar `0x542030` re-sorts the book and fires
@@ -447,6 +440,7 @@ impl Plugin for UiActionPlugin {
         net::register(app);
         equipment_sets::register(app);
         app.init_resource::<PlayerActions>()
+            .init_resource::<usable_cache::UsableCaches>()
             .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
             .init_resource::<CastErrors>()
@@ -461,19 +455,14 @@ impl Plugin for UiActionPlugin {
                 Update,
                 (
                     // The feeds ride with the unit feed, before the VM ticks: the rank pass before
-                    // the identity feed that consumes its `dirty`, the state feed after it, so a
-                    // slot's rank fix and first state land the same frame. The drains follow the
-                    // input pass, in any order: a gesture fills only one of their queues.
+                    // the identity feed that consumes its `dirty`. The drains follow the input
+                    // pass, in any order: a gesture fills only one of their queues.
                     // The rank pass writes the store every lent view reads, so it runs ahead of every VM holder, after the packets that dirty it.
                     ranks::normalize_action_ranks
                         .in_set(ActionRanks)
                         .after(benilla_world::schedule::WorldStage::Net)
                         .before(crate::ui_script::UiPress),
                     feed::feed_actions.in_set(UnitFeed).in_set(SlotIdentityFeed),
-                    state::feed_action_state
-                        .in_set(UnitFeed)
-                        .in_set(CooldownEvents)
-                        .after(feed::feed_actions),
                     drain::drain_action_sets.in_set(UiDrain),
                     equipment_sets::drain_equipment_sets.in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.

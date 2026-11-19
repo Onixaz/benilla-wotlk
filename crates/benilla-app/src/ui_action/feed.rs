@@ -107,6 +107,8 @@ pub(super) fn feed_actions(
         Option<Res<crate::ui_items::ItemSubClasses>>,
         Option<Res<super::TempActionBar>>,
         crate::ui_script::LentRef<crate::ui_pet::PetBar>,
+        // The slot's usable bytes, recomputed as a slot change does (`0x5aa390`).
+        Option<super::usable_cache::UsableRun>,
     ),
     name_tables: FailNameTables,
     commands: Res<NetCommands>,
@@ -117,7 +119,7 @@ pub(super) fn feed_actions(
         return;
     };
     let (mut ui_error_keys, mut ui_error_texts, mut cast_fail_log) = ui_errors;
-    let (sub_classes, temp_bar, pet_bar) = bars;
+    let (sub_classes, temp_bar, pet_bar, mut usable) = bars;
     let temp_flags = temp_bar.map_or(0, |t| t.flags);
     // Cold Weather Flying, what `flyable` needs in Northrend (`0x7261b0`).
     script.set_knows_cold_weather_flying(action_store.read().spells.contains(&54197));
@@ -564,6 +566,10 @@ pub(super) fn feed_actions(
             memory.pushed.len()
         );
         for action in changed {
+            // The slot change recomputes its usable bytes with no event (`0x5aa390`).
+            if let (Some(usable), Ok(slot)) = (usable.as_mut(), u8::try_from(action - 1)) {
+                usable.fire(&mut script, super::usable_cache::Pass::Slot(slot));
+            }
             script.fire_event(
                 "ACTIONBAR_SLOT_CHANGED",
                 vec![ScriptValue::Int(i64::from(action))],
@@ -621,6 +627,10 @@ pub(super) fn feed_actions(
             };
             if changed {
                 script.set_action(action, Some(slot.clone()));
+                // An item's count recomputes its slot's usable bytes (`0x5aa5c0`).
+                if let (Some(usable), Ok(slot)) = (usable.as_mut(), u8::try_from(action - 1)) {
+                    usable.fire(&mut script, super::usable_cache::Pass::Slot(slot));
+                }
                 script.fire_event(
                     "ACTIONBAR_SLOT_CHANGED",
                     vec![ScriptValue::Int(i64::from(action))],

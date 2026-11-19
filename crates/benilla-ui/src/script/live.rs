@@ -535,6 +535,67 @@ pub trait LiveState {
         false
     }
 
+    /// `IsUsableAction`'s pair for the 1-based `action` off the bar's usable cache (`0x5a7e60`);
+    /// `None` without a view.
+    fn action_usable(&self, _action: u32) -> Option<(bool, bool)> {
+        None
+    }
+
+    /// `IsCurrentAction` for the 0-based bar `slot` at the call (`0x5aa240`); `None` without a view.
+    fn action_current(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsAutoRepeatAction` for the 0-based bar `slot` at the call (`0x5a9470`).
+    fn action_auto_repeat(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsActionInRange` for the 0-based bar `slot` at `target`, 0 for the locked target
+    /// (`0x5a94c0`): `Some(None)` where the check does not apply.
+    fn action_in_range(&self, _slot: u32, _target: u64) -> Option<Option<bool>> {
+        None
+    }
+
+    /// `ActionHasRange` for the 0-based bar `slot` (`0x5a95e0`).
+    fn action_has_range(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsAttackAction` for the 0-based bar `slot` (`0x5a96d0`).
+    fn action_attack(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsEquippedAction` for the 0-based bar `slot` (`0x5a88b0`).
+    fn action_equipped(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `GetActionCooldown` for the 0-based bar `slot` (`0x5a8e40`): `(start_ms, duration_ms,
+    /// enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`, `(0, 0, false)`
+    /// for a slot naming nothing; `None` without a view.
+    fn action_cooldown(
+        &self,
+        _slot: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        None
+    }
+
+    /// The stance bar as `GetShapeshiftFormInfo` reads it at the call (`0x53de90`): the cached list
+    /// in bar order, each entry's active test and icon read now, castable off its cache; `None`
+    /// without a view. The cooldown is read apart, as the spell's.
+    fn shapeshift_forms(&self) -> Option<Vec<super::ShapeshiftFormView>> {
+        None
+    }
+
+    /// The player's shapeshift form byte now, 0 unshifted; `None` without a view.
+    fn shapeshift_form_byte(&self) -> Option<u8> {
+        None
+    }
+
     /// The spell tooltip builder's view of `spell_id` at the call, against the player or with
     /// `alt_caster` its pet, its keyed cells filled through `get`; `None` without a row.
     fn spell_tooltip(

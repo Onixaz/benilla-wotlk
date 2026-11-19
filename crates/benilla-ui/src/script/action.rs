@@ -454,7 +454,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── Per-action state ──
-    // 1/nil booleans and `IsActionInRange`'s nil/0/1, which FrameXML tests with a plain `if`.
+    // 1/nil booleans and `IsActionInRange`'s nil/0/1, which FrameXML tests with a plain `if`. Each
+    // reads the bar at the call; with no view lent, the stand-in state a test or fixture pushed.
 
     fn state_flag(lua: &Lua, action: u32, pick: impl Fn(&ActionState) -> bool) -> Value {
         let model = lua
@@ -466,9 +467,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         }
     }
 
+    /// A slot flag read live for the 1-based `action`, else off the stand-in state.
+    fn live_flag(
+        lua: &Lua,
+        action: u32,
+        live: impl FnOnce(&dyn super::LiveState, u32) -> Option<bool>,
+        pick: impl Fn(&ActionState) -> bool,
+    ) -> Value {
+        let slot = action.wrapping_sub(1);
+        match super::read_live(|l| live(l, slot)).flatten() {
+            Some(on) => flag(on),
+            None => state_flag(lua, action, pick),
+        }
+    }
+
     g.set(
         "IsUsableAction",
         lua.create_function(|lua, action: u32| {
+            // The bar's usable cache (`0x5a7e60`), which only its update sites write.
+            if let Some((usable, no_power)) =
+                super::read_live(|l| l.action_usable(action)).flatten()
+            {
+                let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
+                return Ok((flag(usable), flag(no_power)));
+            }
             Ok((
                 state_flag(lua, action, |s| s.usable),
                 state_flag(lua, action, |s| s.not_enough_mana),
@@ -476,41 +498,71 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // IsActionInRange(slot [, unit]) (`0x5a9d50`): a token naming nobody, or none, asks at the
+    // locked target (`0x809610`).
     g.set(
         "IsActionInRange",
-        lua.create_function(|lua, action: u32| {
+        lua.create_function(|lua, (action, unit): (u32, Value)| {
+            let target = super::spell_info::range_unit(lua, &unit).unwrap_or(0);
+            let slot = action.wrapping_sub(1);
+            if let Some(near) = super::read_live(|l| l.action_in_range(slot, target)).flatten() {
+                return Ok(super::spell_info::range_answer(near));
+            }
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(
-                match model
+            Ok(super::spell_info::range_answer(
+                model
                     .action_states
                     .get(&action)
-                    .and_then(|s| s.state.in_range)
-                {
-                    Some(true) => Value::Integer(1),
-                    Some(false) => Value::Integer(0),
-                    None => Value::Nil,
-                },
-            )
+                    .and_then(|s| s.state.in_range),
+            ))
         })?,
     )?;
 
     g.set(
         "ActionHasRange",
-        lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.has_range)))?,
+        lua.create_function(|lua, action: u32| {
+            Ok(live_flag(
+                lua,
+                action,
+                |l, slot| l.action_has_range(slot),
+                |s| s.has_range,
+            ))
+        })?,
     )?;
     g.set(
         "IsCurrentAction",
-        lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.current)))?,
+        lua.create_function(|lua, action: u32| {
+            Ok(live_flag(
+                lua,
+                action,
+                |l, slot| l.action_current(slot),
+                |s| s.current,
+            ))
+        })?,
     )?;
     g.set(
         "IsAutoRepeatAction",
-        lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.auto_repeat)))?,
+        lua.create_function(|lua, action: u32| {
+            Ok(live_flag(
+                lua,
+                action,
+                |l, slot| l.action_auto_repeat(slot),
+                |s| s.auto_repeat,
+            ))
+        })?,
     )?;
     g.set(
         "IsAttackAction",
-        lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.is_attack)))?,
+        lua.create_function(|lua, action: u32| {
+            Ok(live_flag(
+                lua,
+                action,
+                |l, slot| l.action_attack(slot),
+                |s| s.is_attack,
+            ))
+        })?,
     )?;
     // From the slot, not the state map: the reference's answer depends only on the item template.
     g.set(
@@ -543,7 +595,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "IsEquippedAction",
-        lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.equipped)))?,
+        lua.create_function(|lua, action: u32| {
+            Ok(live_flag(
+                lua,
+                action,
+                |l, slot| l.action_equipped(slot),
+                |s| s.equipped,
+            ))
+        })?,
     )?;
 
     // GetActionCooldown(action) → start, duration, enable, in `GetTime` seconds. An absent or
@@ -556,6 +615,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
+            let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+            let live =
+                super::read_live(|l| l.action_cooldown(action.wrapping_sub(1), anchor, ui_now))
+                    .flatten();
+            if let Some((start_ms, duration_ms, enabled)) = live {
+                return Ok((
+                    start_ms as f64 / 1000.0,
+                    f64::from(duration_ms) / 1000.0,
+                    i32::from(enabled),
+                ));
+            }
             Ok(
                 match model.action_states.get(&action).and_then(|s| s.cooldown) {
                     Some((start, duration, enabled)) if start + duration > now || !enabled => {

@@ -547,6 +547,7 @@ pub(crate) fn tick_script(
             .map_or(0, |t| t.elapsed().as_micros())
     };
     script.epoch_trace_phase("tick");
+    let anchor = time.last_update().unwrap_or_else(std::time::Instant::now);
     {
         let _span = bevy::log::info_span!("ui_script: tick").entered();
         let resized = script.set_screen_size(w / s, if h > 0.0 { h / s } else { 768.0 });
@@ -558,12 +559,12 @@ pub(crate) fn tick_script(
                 super::manifest::on_screen_resized(&script);
             }
         }
-        script.tick(time.delta_secs());
+        // The VM's clock anchored at `Time<Real>`'s last update, whose deltas it accumulates;
+        // every `Instant` to `GetTime` conversion goes through this pair, never `Instant::now()`.
+        script.tick_anchored(time.delta_secs(), anchor);
     }
-    // The VM's clock anchored at `Time<Real>`'s last update, whose deltas it accumulates; every
-    // `Instant` to `GetTime` conversion goes through this pair, never `Instant::now()`.
     *ui_clock = super::UiClock {
-        anchor: time.last_update().unwrap_or_else(std::time::Instant::now),
+        anchor,
         ui_now: script.now(),
     };
     let us_tick = lap();

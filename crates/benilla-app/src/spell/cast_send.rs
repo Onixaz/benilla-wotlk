@@ -312,9 +312,14 @@ impl CastLadder<'_, '_> {
         }
         if let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) {
             let speed = cast_speed(self.objects.player_object());
-            self.cooldowns
+            let armed = self
+                .cooldowns
                 .write()
                 .start_gcd(spell_id, d, now, &self.spell_mods, speed);
+            // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
+            if armed {
+                self.press.cooldown_start(d.cooldown_on_event());
+            }
         }
         self.ground.write().clear();
     }
@@ -350,6 +355,7 @@ impl CastLadder<'_, '_> {
         }
         if self.ground.read().active() {
             self.ground.write().clear();
+            self.press.selection();
         }
         let candidates = cast_target::CastCandidates {
             selection: ctx.selection_guid,
@@ -438,6 +444,7 @@ impl CastLadder<'_, '_> {
             self.ground
                 .write()
                 .enter(spell_id, CastCommit::Pet { caster: pet }, word);
+            self.press.selection();
             return;
         }
         let target = target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit);
@@ -478,15 +485,29 @@ impl CastLadder<'_, '_> {
             if !world.contains_resource::<crate::ui_pet::PetBar>() {
                 return;
             }
-            world.resource_scope(|world, mut bar: Mut<crate::ui_pet::PetBar>| {
+            let armed = world.resource_scope(|world, mut bar: Mut<crate::ui_pet::PetBar>| {
                 bar.pending_cast = Some((spell_id, now + PET_PENDING_LIFE));
                 let d = world
                     .get_resource::<crate::ui_action::Spells>()
                     .and_then(|s| s.catalog.get(spell_id));
-                if let Some(d) = d {
-                    bar.cooldowns.start_gcd(spell_id, d, now, &mods, speed);
-                }
+                d.and_then(|d| {
+                    bar.cooldowns
+                        .start_gcd(spell_id, d, now, &mods, speed)
+                        .then(|| d.cooldown_on_event())
+                })
             });
+            // The pet's armed start: the spellbook's signals, the usable update when on hold, then
+            // the pet bar's (`0x805ec3`-`0x805eda`), fired as this send's commands apply.
+            if let Some(on_hold) = armed {
+                if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+                    crate::ui_action::signals::cooldown_site(
+                        &mut ui,
+                        on_hold,
+                        crate::ui_action::signals::Tail::Pet,
+                    );
+                }
+                crate::ui_script::live::fire_handler_events(world);
+            }
         });
     }
 
@@ -667,7 +688,13 @@ fn send_spell_cast(
     if def.is_some_and(|d| d.auto_repeat()) && auto_repeat.0 == Some(spell_id) {
         debug!("ui_action: cast {spell_id} re-pressed — auto-repeat toggles off");
         let self_e = self_player.single().ok().map(|(e, _)| e);
-        crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, ecs, commands);
+        crate::creature_anim::cancel_auto_repeat_local(
+            self_e,
+            auto_repeat,
+            ecs,
+            commands,
+            &mut *press,
+        );
         return;
     }
     if caster_dead_refusal(spell_id, def, ctx.rel.self_store, cast_errors) {
@@ -678,6 +705,8 @@ fn send_spell_cast(
     if ground.active() {
         debug!("ui_action: cast {spell_id} supersedes the targeting cursor");
         ground.clear();
+        // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
+        press.selection();
     }
     // A ranged shot's record does not guard. An on-next-swing spell (`Attributes & 0x404`) queues
     // on the melee slot ([`crate::spell::QueuedMeleeSpell`]) and does not guard either: the
@@ -865,6 +894,7 @@ fn send_spell_cast(
                         auto_repeat,
                         ecs,
                         commands,
+                        &mut *press,
                     );
                 }
             }
@@ -1067,6 +1097,8 @@ fn send_spell_cast(
         debug!("ui_action: cast {spell_id} awaits its click — targeting cursor up ({word:#06x})");
         ground.enter(spell_id, commit, word);
         ground.prelude_at_commit(prelude);
+        // The cursor's arm runs the selection update (`0x80d806`).
+        press.selection();
         return;
     }
     // The wand handoff: a new cast cancels the running repeat only when it carries
@@ -1082,7 +1114,13 @@ fn send_spell_cast(
                 .0
                 .send(ClientCommand::CancelCast { spell_id: cached });
             let self_e = self_player.single().ok().map(|(e, _)| e);
-            crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, ecs, commands);
+            crate::creature_anim::cancel_auto_repeat_local(
+                self_e,
+                auto_repeat,
+                ecs,
+                commands,
+                &mut *press,
+            );
         }
     }
     if let Some(d) = def {
@@ -1097,7 +1135,7 @@ fn send_spell_cast(
             if d.auto_repeat() {
                 ecs.entity(e).insert(crate::creature_anim::AutoRepeatArmed);
                 // The autorepeat key the button's checked state reads.
-                auto_repeat.0 = Some(spell_id);
+                auto_repeat.set(spell_id, &mut *press);
                 // The commit's StopAttack, gated only on the caster being the active player:
                 // starting a repeat ends the melee swing and its queued strike. This is where melee
                 // and auto-repeat are kept exclusive. It runs after the arm above, so it never
@@ -1186,6 +1224,7 @@ fn send_spell_cast(
                         sheath,
                         ecs,
                         commands,
+                        &mut *press,
                     );
                 }
             }
@@ -1197,7 +1236,11 @@ fn send_spell_cast(
             CastCommit::Pet { caster } => objects.object(caster),
             _ => ctx.rel.self_store.map(|s| &s.0),
         };
-        cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
+        let armed = cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
+        // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
+        if armed {
+            press.cooldown_start(d.cooldown_on_event());
+        }
     }
 }
 

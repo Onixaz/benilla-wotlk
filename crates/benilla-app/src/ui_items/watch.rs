@@ -179,6 +179,8 @@ fn unlock_items_of_type(world: &mut World, entry: u32, bank: bool) {
 
 /// `BAG_UPDATE` for a container's guid (`0x5d7070`): ours is the backpack, keyring and tokens (`0x5d7098`-`0x5d70ba`), a watched bag its id (`0x5d70ff`), anything else nothing.
 fn contents_update(world: &mut World, guid: u64) {
+    // The bar's refresh first (`0x5d7074`).
+    crate::ui_action::usable_cache::step(crate::ui_action::usable_cache::Pass::Bar)(world);
     let me = world
         .get_resource::<crate::net::SelfGuid>()
         .and_then(|s| s.0);
@@ -401,6 +403,26 @@ pub(crate) fn stack_changed(world: &mut World, item: u64) {
     }
     item_updated(world, item);
     character_item_updated(world, item);
+}
+
+/// An item's spell charges moved (`0x707880`): on an item we own, the bags' cooldown signal
+/// (`0x7078cb`).
+pub(crate) fn charges_changed(world: &mut World, item: u64) {
+    let ours = world
+        .run_system_cached_with(
+            |In(item): In<u64>, objects: Objects, self_guid: Option<Res<crate::net::SelfGuid>>| {
+                let me = self_guid.and_then(|s| s.0);
+                me.is_some() && objects.object(item).and_then(|f| f.item_owner()) == me
+            },
+            item,
+        )
+        .unwrap_or(false);
+    if let (true, Some(mut ui)) = (
+        ours,
+        world.get_resource_mut::<crate::ui_script::live::UiEvents>(),
+    ) {
+        ui.fire("BAG_UPDATE_COOLDOWN", Vec::new());
+    }
 }
 
 /// An item's enchants moved (`0x708bd0` -> `0x707f50`): a charter returns (`0x707f6b`), an unheld owner too (`0x707f9e`); on ours (`0x707fb8`), no unlock, its container's `BAG_UPDATE` (`0x707fe4`) and the character page's slot event (`0x707ff3`).

@@ -305,7 +305,8 @@ fn on_mover_edge(
 }
 
 /// The control update's UI half: only for our own unit (`0x71c98b`) it writes the control flag and,
-/// on a change, fires `PLAYER_CONTROL_GAINED` or `PLAYER_CONTROL_LOST` (`0x520fe0`).
+/// on a change, fires `PLAYER_CONTROL_GAINED` or `PLAYER_CONTROL_LOST`, then runs the usable
+/// update (`0x520fe0`).
 fn on_control_flag(
     In(ev): In<SessionEvent>,
     self_guid: Res<SelfGuid>,
@@ -325,6 +326,9 @@ fn on_control_flag(
         "PLAYER_CONTROL_LOST"
     };
     ui.fire(event, Vec::new());
+    ui.world(crate::ui_action::usable_cache::step(
+        crate::ui_action::usable_cache::Pass::Full,
+    ));
 }
 
 fn on_worldport(

@@ -206,8 +206,8 @@ pub(crate) struct CompanionInit<'w> {
     actions: Res<'w, crate::ui_action::PlayerActions>,
 }
 
-/// The active player's init (`0x6e7f50`), run as our object is created with its race and class: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`).
-pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: CompanionInit) {
+/// The active player's init (`0x6e7f50`), run as our object is created with its race, class and form byte: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the stance list among them, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`); shapeshifted, the usable update (`0x6e8059`), the selection update (`0x6e805e`), then `UPDATE_SHAPESHIFT_FORM` (`0x6e8074`).
+pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init: CompanionInit) {
     let CompanionInit {
         buffer,
         mut lists,
@@ -223,6 +223,20 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         actions,
     } = init;
     book.set_race_class(race, class);
+    {
+        use crate::ui_action::usable_cache::{edit_step, ListEdit};
+        ui.world(edit_step(ListEdit::Rebuild));
+    }
+    // Shapeshifted only (`0x6e8050`-`0x6e8057`).
+    let tail = move |ui: &mut UiEvents| {
+        if form != 0 {
+            ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            ));
+            crate::ui_action::signals::selection(ui);
+            ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+        }
+    };
     let mut update_book = |ui: &mut UiEvents| {
         let inputs = crate::ui_spellbook::BookInputs {
             known: &actions.spells,
@@ -240,6 +254,7 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
     ) else {
         *lists = CompanionLists::default();
         update_book(&mut ui);
+        tail(&mut ui);
         return;
     };
     let line_of = |id: u32| {
@@ -255,7 +270,9 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands,
         ui: &mut ui,
     };
-    for id in add_initial(&mut lists, known, &mut cx, update_book) {
+    let tutorial_ids = add_initial(&mut lists, known, &mut cx, update_book);
+    tail(&mut ui);
+    for id in tutorial_ids {
         if let Some(t) = tutorials.as_mut() {
             t.write(crate::tutorial::TutorialEvent::trigger(id));
         }

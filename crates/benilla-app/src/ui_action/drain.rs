@@ -58,9 +58,11 @@ pub(super) fn item_action_route(
 pub(crate) fn attack_nearest_probe(
     mut probe: MessageReader<crate::target::AttackNearestRequest>,
     mut press: AttackPress,
+    mut signals: crate::ui_action::signals::QueuedSignals,
 ) {
     if probe.read().last().is_some() && press.selection.read().guid.is_none() {
-        press.attack_target();
+        press.attack_target(&mut signals);
+        signals.flush(&mut press.seam.ecs);
     }
 }
 
@@ -81,8 +83,8 @@ impl AttackPress<'_, '_> {
     /// selection; a refusal ends the press. Then the toggle: attacking stops, else it starts at the
     /// validator's target. Only the start cancels auto-repeat, so stopping melee leaves Auto Shot
     /// running.
-    pub(crate) fn attack_target(&mut self) {
-        let Some(guid) = self.validate(None, true) else {
+    pub(crate) fn attack_target(&mut self, sink: &mut dyn crate::ui_action::signals::SignalSink) {
+        let Some(guid) = self.validate(None, true, sink) else {
             return;
         };
         let Self { pick, seam, .. } = self;
@@ -106,6 +108,7 @@ impl AttackPress<'_, '_> {
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
+            sink,
         );
     }
 
@@ -136,7 +139,10 @@ impl AttackPress<'_, '_> {
 
     /// `StartAttack`'s swing at the selection a named unit left, past the nearest-enemy pick
     /// (`0x72c2b0`).
-    pub(crate) fn swing_at_selection(&mut self) {
+    pub(crate) fn swing_at_selection(
+        &mut self,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let Self {
             pick,
             selection,
@@ -163,24 +169,25 @@ impl AttackPress<'_, '_> {
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
+            sink,
         );
     }
 
     /// `StartAttack()` with no unit: the press, unless already attacking.
-    pub(crate) fn start_attack(&mut self) {
+    pub(crate) fn start_attack(&mut self, sink: &mut dyn crate::ui_action::signals::SignalSink) {
         if !self.pick.engaged() {
-            self.attack_target();
+            self.attack_target(sink);
         }
     }
 
     /// `StopAttack()` (`0x51d0b0`): only while attacking.
-    pub(crate) fn stop_attack(&mut self) {
+    pub(crate) fn stop_attack(&mut self, sink: &mut dyn crate::ui_action::signals::SignalSink) {
         if self.pick.engaged() {
-            self.attack_target_off();
+            self.attack_target_off(sink);
         }
     }
 
-    fn attack_target_off(&mut self) {
+    fn attack_target_off(&mut self, sink: &mut dyn crate::ui_action::signals::SignalSink) {
         let Self { seam, .. } = self;
         let Ok(e) = seam.me.single() else {
             return;
@@ -194,19 +201,29 @@ impl AttackPress<'_, '_> {
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
+            sink,
         );
     }
 
     /// The cast attempt's attack pick for a spell press held there ([`crate::spell::HeldForPick`]):
     /// the validator alone, with no swing after it. Whether the cast goes on, at the unit the pick
     /// left selected.
-    pub(crate) fn pick_for_cast(&mut self, held: crate::spell::HeldCast) -> bool {
-        self.validate(held.passed, false).is_some()
+    pub(crate) fn pick_for_cast(
+        &mut self,
+        held: crate::spell::HeldCast,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> bool {
+        self.validate(held.passed, false, sink).is_some()
     }
 
     /// The attack validator: its actor checks, then its target pick. `check_range` is on for the
     /// Attack action (`0x72c2de`) and off for the cast attempt (`0x80d661`).
-    fn validate(&mut self, passed: Option<u64>, check_range: bool) -> Option<u64> {
+    fn validate(
+        &mut self,
+        passed: Option<u64>,
+        check_range: bool,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> Option<u64> {
         let mounted = self.mounted_gate();
         let Self {
             pick,
@@ -219,7 +236,14 @@ impl AttackPress<'_, '_> {
         if attack_actor_refusal(me, my_guid, mounted, ui_errors) {
             return None;
         }
-        pick.target(passed, &mut selection.write(), seam, ui_errors, check_range)
+        pick.target(
+            passed,
+            &mut selection.write(),
+            seam,
+            ui_errors,
+            check_range,
+            sink,
+        )
     }
 }
 

@@ -1583,6 +1583,7 @@ type EntryAndTarget<'w, 's> = (
     Commands<'w, 's>,
     Option<ResMut<'w, crate::net::EntryHold>>,
     Option<crate::ui_cast::TargetReread<'w, 's>>,
+    Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
 );
 
 fn feed_units(
@@ -1609,7 +1610,7 @@ fn feed_units(
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
     // The commands carry the world-enter cascade's death part. The new target's cast re-read rides
     // `PLAYER_TARGET_CHANGED`.
-    (entered_world, mut deferred, mut hold, mut target_cast): EntryAndTarget,
+    (entered_world, mut deferred, mut hold, mut target_cast, mut usable): EntryAndTarget,
 ) {
     let Some(mut script) = script else {
         return;
@@ -2114,6 +2115,11 @@ fn feed_units(
         if let (Some(target), Some(reread)) = (selection.guid, target_cast.as_mut()) {
             reread.reread(target);
         }
+        // The target set and clear run the usable update ahead of the event (`0x524f48`,
+        // `0x524316`).
+        if let Some(usable) = usable.as_mut() {
+            usable.fire(&mut script, crate::ui_action::usable_cache::Pass::Full);
+        }
         script.fire_event("PLAYER_TARGET_CHANGED", vec![]);
     }
 
@@ -2214,12 +2220,15 @@ fn feed_combo_points(
 }
 
 /// `SMSG_POWER_UPDATE` (`0x7236c0`): the unit's predicted power, which `UnitPower` reads until the
-/// field moves ([`benilla_protocol::ObjectFields::set_predicted_power`]). The reference signals
+/// field moves ([`benilla_protocol::ObjectFields::set_predicted_power`]); ours or our pet's moving
+/// runs the power-only usable update. The reference signals
 /// `UNIT_<POWER>` from here only at the maximum (`0x722ca9`); the feed's diff fires on any move.
 fn on_power_update(
     In(ev): In<benilla_protocol::SessionEvent>,
     index: Res<crate::net::GuidIndex>,
     mut stores: Query<&mut ObjectStore>,
+    self_guid: Option<Res<crate::net::SelfGuid>>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     let benilla_protocol::SessionEvent::PowerUpdate {
         guid,
@@ -2232,12 +2241,24 @@ fn on_power_update(
     let Some(mut store) = index.0.get(&guid).and_then(|&e| stores.get_mut(e).ok()) else {
         return;
     };
-    if store
+    if !store
         .bypass_change_detection()
         .0
         .set_predicted_power(power_type, value)
     {
-        store.set_changed();
+        return;
+    }
+    store.set_changed();
+    // Ours or our pet's moved: the power-only usable update (`0x722cd4` -> `0x53d1b0`).
+    let me = self_guid.and_then(|g| g.0);
+    let pet = me
+        .and_then(|g| index.0.get(&g))
+        .and_then(|&e| stores.get(e).ok())
+        .and_then(|s| s.0.unit_pet_guid());
+    if me == Some(guid) || pet == Some(guid) {
+        ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Power,
+        ));
     }
 }
 

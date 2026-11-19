@@ -207,8 +207,10 @@ fn fire(ui: &mut UiEvents, events: Vec<RuneEvent>) {
                 ui.fire("RUNE_TYPE_UPDATE", vec![ScriptValue::Int(i64::from(rune))])
             }
             RuneEvent::ActionBarCooldown => ui.fire("ACTIONBAR_UPDATE_COOLDOWN", vec![]),
-            // The action feed reads the table every frame and fires its own usable events.
-            RuneEvent::Usable => {}
+            // The usable update (`0x5ee047`, `0x5ee3c2`).
+            RuneEvent::Usable => ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            )),
         }
     }
 }

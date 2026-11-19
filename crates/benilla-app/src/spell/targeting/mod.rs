@@ -359,6 +359,8 @@ pub(crate) fn cancel_targeting_on_right_press(
     mut presses: MessageReader<WorldRightPress>,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
     mut targeting: ResMut<SpellTargeting>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+    mut ecs: Commands,
 ) {
     if !targeting.active() {
         // A press buffered while idle must not replay as a cancel once the mode turns on.
@@ -370,6 +372,11 @@ pub(crate) fn cancel_targeting_on_right_press(
     }
     debug!("ui_action: targeting cancelled (right-click)");
     targeting.clear();
+    // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
+    if let Some(mut ui) = ui {
+        crate::ui_action::signals::selection(&mut ui);
+        ecs.queue(crate::ui_script::live::fire_handler_events);
+    }
 }
 
 /// [`SpellTargeting::picks_self`] as the frame began, which the world pick reads
@@ -470,6 +477,7 @@ impl ScriptCursor<'_, '_> {
                     .cast_errors
                     .push_local(spell_id, super::validator::ERR_OUT_OF_RANGE);
                 self.ladder.ground.write().clear();
+                self.ladder.press.selection();
             }
         }
     }
@@ -477,7 +485,11 @@ impl ScriptCursor<'_, '_> {
     /// The ESC chain's `SpellStopTargeting()`: the targeting stop, word cleared, no packet.
     pub(crate) fn stop_targeting(&mut self) {
         debug!("ui_action: targeting cancelled (ESC chain)");
-        self.ladder.ground.write().clear();
+        if self.ladder.ground.read().active() {
+            self.ladder.ground.write().clear();
+            // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
+            self.ladder.press.selection();
+        }
     }
 
     /// `PlaceGlyphInSocket(index)` (`0x5b75a0` → the glyph click, `0x80c3e0`), judged by the VM: a
@@ -495,6 +507,7 @@ impl ScriptCursor<'_, '_> {
                 let shared = benilla_protocol::messages::wotlk_cast_fail_shared(reason);
                 self.ladder.cast_errors.push_local(spell_id, shared);
                 self.ladder.ground.write().clear();
+                self.ladder.press.selection();
             }
             // No 12340 spell carries the glyph bit beside another, so it is the whole word.
             benilla_ui::script::GlyphPlacement::Bind

@@ -151,8 +151,8 @@ impl CooldownInfo {
 
 /// One cooldown list, the client's spell history: the player's is this resource, the pet's is
 /// [`crate::ui_pet::PetBar::cooldowns`], which the pet bar, the pet book and the pet's
-/// `SMSG_SPELL_GO` leg read and write. Each list's edge feeds its own events: the player's
-/// `feed_action_state`, the pet's `ui_pet::bar::fire_pet_cooldown_events`.
+/// `SMSG_SPELL_GO` leg read and write. Each site that writes a list signals it
+/// ([`crate::ui_action::signals`]).
 #[derive(Resource, Default)]
 pub(crate) struct Cooldowns {
     records: Vec<Record>,
@@ -201,8 +201,8 @@ impl Cooldowns {
         self.generation.wrapping_add(self.expiry_epoch)
     }
 
-    /// An elapsed record awaits its prune. The feeds run before `feed_action_state`'s prune, so
-    /// on the frame a timer crosses zero the read changes a frame before [`Self::feed_epoch`].
+    /// An elapsed record awaits its prune: on the frame a timer crosses zero the read changes
+    /// before [`Self::feed_epoch`] does.
     #[cfg(test)]
     pub(crate) fn sweep_pending(&self, now: Instant) -> bool {
         self.records.iter().any(|r| {
@@ -410,6 +410,7 @@ impl Cooldowns {
     /// 0, then with op 21 applied and nothing armed for a zero result. A negative one arms nothing
     /// either, where the reference inserts a record no reader shows. `on_hold` is Attributes
     /// bit 25. `cast_speed` is the caster's `UNIT_MOD_CAST_SPEED`, which scales the standard GCD.
+    /// Answers whether it armed: an on-hold start runs the usable update only then (`0x805e42`).
     pub(crate) fn start_gcd(
         &mut self,
         spell_id: u32,
@@ -417,9 +418,9 @@ impl Cooldowns {
         now: Instant,
         mods: &SpellModifiers,
         cast_speed: f32,
-    ) {
+    ) -> bool {
         if spell.start_recovery_category == 0 && spell.start_recovery_ms == 0 {
-            return;
+            return false;
         }
         // The GCD start: op 21 before the zero-duration exit.
         let duration_ms = hasted_gcd(
@@ -428,7 +429,7 @@ impl Cooldowns {
             cast_speed,
         );
         if duration_ms <= 0 {
-            return;
+            return false;
         }
         if benilla_assets::trace::enabled() {
             benilla_assets::trace::line(
@@ -454,6 +455,7 @@ impl Cooldowns {
                 duration: Duration::from_millis(duration_ms as u64),
             },
         );
+        true
     }
 
     /// Clear the GCD of a spell's records on a failed cast and, when one matched, collect the history and answer true for the spellbook's flush (`0x804748`-`0x80476d`).
@@ -478,6 +480,11 @@ impl Cooldowns {
             self.bump();
         }
         touched
+    }
+
+    /// Whether any record names `spell_id`, which [`Self::clear_gcd`] would clear.
+    pub(crate) fn has_spell(&self, spell_id: u32) -> bool {
+        self.records.iter().any(|r| r.spell_id == spell_id)
     }
 
     /// `SMSG_COOLDOWN_EVENT` (force 0): an on-hold record's timers start now.

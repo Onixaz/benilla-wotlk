@@ -555,6 +555,7 @@ pub(super) fn target_named(
     commit: &mut SelectCommit,
     name: &str,
     exact: bool,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
     let query = name.trim();
     if query.is_empty() {
@@ -576,20 +577,20 @@ pub(super) fn target_named(
         .unwrap_or_default();
     if let Some(guid) = whole_name_in_group(&scan_params.names, &roster, Some(me), query) {
         info!("by-name: \"{query}\" -> the group's whole name, guid {guid:#x}");
-        return commit.target_if_valid(guid);
+        return commit.target_if_valid(guid, sink);
     }
     let visible = scan_params.resolve(query, NameSearch::AnyUnit, Filter::AcceptAll, mode);
     if let Some((entity, guid, _)) = visible.as_ref().filter(|(_, g, _)| *g != me) {
-        commit.commit(*entity, *guid);
+        commit.commit(*entity, *guid, sink);
         return false;
     }
     let held = |g: u64| commit.index.0.contains_key(&g);
     if let Some(guid) = unheld_group_match(&scan_params.names, &roster, held, query, mode) {
         info!("by-name: \"{query}\" -> group member guid {guid:#x}, not held");
-        return commit.target_if_valid(guid);
+        return commit.target_if_valid(guid, sink);
     }
     if let Some((entity, guid, _)) = visible {
-        commit.commit(entity, guid);
+        commit.commit(entity, guid, sink);
     }
     false
 }
@@ -602,6 +603,7 @@ pub(super) fn assist_named(
     commit: &mut SelectCommit,
     name: Option<&str>,
     how: &str,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
     let basis = match name {
         Some(name) => scan_params
@@ -619,7 +621,7 @@ pub(super) fn assist_named(
         return false;
     };
     // From here on this is `AssistUnit`'s tail too, one function as in the reference.
-    commit.assist(basis, how)
+    commit.assist(basis, how, sink)
 }
 
 /// `FollowUnit`'s subject (`0x5224c0`): the resolver's players-only pass with filter mode 3, the
@@ -770,7 +772,12 @@ impl SelectCommit<'_, '_> {
     /// other miss is silent and deselects nothing: a basis targeting nothing, or a stranger out of
     /// view. With `assistAttack` set, the tail then opens the swing on an attackable unit. True when
     /// an unheld guid was newly selected, which the caller sounds (`0x524eef`).
-    pub(super) fn assist(&mut self, basis: Entity, how: &str) -> bool {
+    pub(super) fn assist(
+        &mut self,
+        basis: Entity,
+        how: &str,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> bool {
         let Some(guid) = self
             .stores
             .get(basis)
@@ -784,7 +791,7 @@ impl SelectCommit<'_, '_> {
         let Some(entity) = self.index.0.get(&guid).copied() else {
             // An unheld guid: a group member or pet by guid alone, else a no-op; never attackable.
             info!("assist ({how}): the basis is targeting guid {guid:#x}, which is not held");
-            return self.target_if_valid(guid);
+            return self.target_if_valid(guid, sink);
         };
         info!("assist ({how}) -> the basis unit's target, guid {guid:#x}");
         // `engaged` and attackability are read before the selection: the selection set may re-point
@@ -799,12 +806,12 @@ impl SelectCommit<'_, '_> {
             super::party_of(self.group.as_deref()),
             me.and_then(|(_, store, _)| store),
         );
-        self.commit(entity, guid);
+        self.commit(entity, guid, sink);
         // The second leg. The swing start's attackability test is the caller's here, so a friendly
         // target is selected, not swung at.
         if self.assist_attack.0 && attackable {
             info!("assist ({how}): assistAttack is on -> opening the swing");
-            self.seam.start(guid, engaged, false);
+            self.seam.start(guid, engaged, false, sink);
         }
         false
     }
@@ -821,21 +828,29 @@ impl SelectCommit<'_, '_> {
     }
 
     /// The reference's select on a looted object, which tests `TYPEMASK_UNIT` first.
-    pub(crate) fn select_unit(&mut self, guid: u64) {
+    pub(crate) fn select_unit(
+        &mut self,
+        guid: u64,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let Some(&entity) = self.index.0.get(&guid) else {
             return;
         };
         if self.stores.get(entity).is_ok_and(ObjectStore::is_unit) {
-            self.commit(entity, guid);
+            self.commit(entity, guid, sink);
         }
     }
 
     /// The script verbs' select (`0x5259e0`): a held unit, else a group member or pet by guid alone;
     /// anything else is a no-op. True when an unheld guid was newly selected, which the caller
     /// sounds (`0x524eef`).
-    pub(super) fn target_if_valid(&mut self, guid: u64) -> bool {
+    pub(super) fn target_if_valid(
+        &mut self,
+        guid: u64,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> bool {
         if let Some(&entity) = self.index.0.get(&guid) {
-            self.commit(entity, guid);
+            self.commit(entity, guid, sink);
             return false;
         }
         let me = self.me.single().ok();
@@ -860,12 +875,18 @@ impl SelectCommit<'_, '_> {
             me.is_some_and(|(_, _, engaged)| engaged),
             me.map(|(g, _, _)| g.0),
             false,
+            sink,
         )
         .changed
     }
 
     /// Select a resolved guid, the reference's arm 1, through [`scan::commit`].
-    pub(super) fn commit(&mut self, entity: Entity, guid: u64) {
+    pub(super) fn commit(
+        &mut self,
+        entity: Entity,
+        guid: u64,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let me = self.me.single().ok();
         // The re-swing's gate is `StartAttack`'s on the new target: alive, then the attack check,
         // so a body is switched to and never swung at.
@@ -885,6 +906,7 @@ impl SelectCommit<'_, '_> {
             me.is_some_and(|(_, _, engaged)| engaged),
             me.map(|(g, _, _)| g.0),
             attackable,
+            sink,
         );
     }
 }

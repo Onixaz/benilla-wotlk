@@ -71,6 +71,10 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) petitions: Slot<'w, crate::ui_petition::PetitionState>,
     /// The open trade-skill book (`[0xc235a4]`), the current and selected tests' trade arm.
     pub(crate) trade: Slot<'w, crate::ui_tradeskill::TradeSkillOpen>,
+    /// The usable caches (`0x53cf10`), which every loan owns: a verb's site refreshes them.
+    pub(crate) usable: Slot<'w, crate::ui_action::usable_cache::UsableCaches>,
+    /// The macros' bound spells, a macro slot's spell (`0x5a89f0`), which the rebind owns.
+    pub(crate) bound: Slot<'w, crate::ui_macro::MacroBoundSpells>,
     /// The talent tables a talent link's rank reads.
     talents: Option<Res<'w, crate::ui_talent::Talents>>,
     /// The bind point and subclass names a spell tooltip reads.
@@ -181,6 +185,8 @@ pub(crate) struct Lent<'w> {
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
+mod actions;
+
 pub(crate) mod lent {
     pub(crate) const SIGNALS: u8 = 1;
     pub(crate) const ASKS: u8 = 2;
@@ -475,6 +481,7 @@ pub(crate) trait Owns: 'static {
     const PENDING: bool = false;
     const PETITIONS: bool = false;
     const TRADE: bool = false;
+    const MACROS: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
     const LENT: u8 = 0;
 }
@@ -490,6 +497,7 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const PENDING: bool = A::PENDING || B::PENDING;
     const PETITIONS: bool = A::PETITIONS || B::PETITIONS;
     const TRADE: bool = A::TRADE || B::TRADE;
+    const MACROS: bool = A::MACROS || B::MACROS;
     const LENT: u8 = A::LENT | B::LENT;
 }
 
@@ -527,6 +535,12 @@ impl Owns for OwnsPetitions {
 pub(crate) struct OwnsTradeSkill;
 impl Owns for OwnsTradeSkill {
     const TRADE: bool = true;
+}
+
+/// The system writes [`crate::ui_macro::MacroBoundSpells`].
+pub(crate) struct OwnsMacros;
+impl Owns for OwnsMacros {
+    const MACROS: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -661,11 +675,13 @@ unsafe impl<X: Resource> SystemParam for LentRef<'_, X> {
         &(id, loan, owner): &Self::State,
         _: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
-        _: &mut World,
+        world: &mut World,
     ) {
         let access = component_access_set.combined_access();
         if !access.has_resource_write(id) {
+            // Marked, so an owner's write registered after it is taken as its pair's.
             component_access_set.add_unfiltered_resource_read(id);
+            component_access_set.add_unfiltered_resource_read(lent_read_mark::<X>(world));
             return;
         }
         assert!(
@@ -695,6 +711,18 @@ unsafe impl<X: Resource> SystemParam for LentRef<'_, X> {
     }
 }
 
+/// Never inserted: read beside a [`LentRef`]'s read of `X`, which its counted borrow guards
+/// whatever the order the system's parameters register in, so an owner's write may follow it.
+struct LentReadMark<X>(PhantomData<fn() -> X>);
+impl<X: 'static> Resource for LentReadMark<X> {}
+
+/// The [`LentReadMark`] of `X`.
+fn lent_read_mark<X: Resource>(world: &mut World) -> ComponentId {
+    world
+        .components_registrator()
+        .register_resource::<LentReadMark<X>>()
+}
+
 /// Never inserted: read by a [`LendLive`] that owns `X`, so its [`OwnedMut`] knows its partner.
 struct LoanMark<X>(PhantomData<fn() -> X>);
 impl<X: 'static> Resource for LoanMark<X> {}
@@ -706,9 +734,8 @@ impl<X: 'static> Resource for OwnerMark<X> {}
 /// Register an owner's write of lendable `id`, one half of the pair a [`LendLive`] owning it and its [`OwnedMut`] make: an earlier access to it must be the partner's (`partner` marked, `mine` not), else it is refused (B0002) as `ResMut` refuses it.
 fn owned_access(
     name: &str,
-    id: ComponentId,
-    mine: ComponentId,
-    partner: ComponentId,
+    (id, mine, partner): SlotIds,
+    lent_read: ComponentId,
     set: &mut FilteredAccessSet,
 ) {
     let access = set.combined_access();
@@ -717,9 +744,11 @@ fn owned_access(
         "error[B0002]: {name} is lent or written twice in one system"
     );
     assert!(
-        !access.has_resource_read(id) || access.has_resource_read(partner),
+        !access.has_resource_read(id)
+            || access.has_resource_read(partner)
+            || access.has_resource_read(lent_read),
         "error[B0002]: {name} is borrowed beside its owner's lent view: read it through the view \
-         or a `LentRef` taken after the loan, and write it through `OwnedMut`"
+         or a `LentRef`, and write it through `OwnedMut`"
     );
     set.add_unfiltered_resource_write(id);
     set.add_unfiltered_resource_read(mine);
@@ -736,17 +765,17 @@ unsafe impl<X: Resource> SystemParam for OwnedMut<'_, X> {
     }
 
     fn init_access(
-        &(id, mine, partner): &Self::State,
+        &ids: &Self::State,
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
-        _: &mut World,
+        world: &mut World,
     ) {
-        // Beside its loan's access alone: the view reads through the same pointer, between writes.
+        // Beside its loan's access and counted reads alone: the view reads through the same
+        // pointer, between writes.
         owned_access(
             &format!("{} in {}", std::any::type_name::<X>(), system_meta.name()),
-            id,
-            mine,
-            partner,
+            ids,
+            lent_read_mark::<X>(world),
             component_access_set,
         );
     }
@@ -1444,8 +1473,12 @@ impl LiveState for LiveView<'_, '_> {
         let triple = cooldowns
             .info(spell_id, 0, d, std::time::Instant::now())
             .ui_triple(anchor, ui_now);
-        // The history read's rune leg (`0x807c37`).
-        let me = self.player_entity(self.self_guid.as_ref()?.0?);
+        // The history read's rune leg (`0x807c37`), which needs our player.
+        let me = self
+            .self_guid
+            .as_ref()
+            .and_then(|g| g.0)
+            .and_then(|g| self.player_entity(g));
         let player = me.and_then(|e| self.stores.get(e).ok()).map(|s| &s.0);
         let (Some(d), Some(spells), Some(runes), Some(costs), Some(mods), Some(player)) = (
             d,
@@ -1590,6 +1623,99 @@ impl LiveState for LiveView<'_, '_> {
             vctx.attack_target = pet.and_then(|e| units.attack_target(e));
         }
         build_view(spell_id, spells, &mut vctx)
+    }
+
+    /// The bar's usable cache (`0x5a7e60`): slot `action - 1` below 144, else nil, nil.
+    fn action_current(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_current(r))
+    }
+
+    fn action_auto_repeat(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_auto_repeat(r))
+    }
+
+    fn action_in_range(&self, slot: u32, target: u64) -> Option<Option<bool>> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_in_range(r, target))
+    }
+
+    fn action_has_range(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_has_range(r))
+    }
+
+    fn action_attack(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_attack(r))
+    }
+
+    fn action_equipped(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_equipped(r))
+    }
+
+    fn action_cooldown(
+        &self,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_cooldown(r, anchor, ui_now))
+    }
+
+    fn action_usable(&self, action: u32) -> Option<(bool, bool)> {
+        let caches = self.usable.get()?;
+        let cell = action
+            .checked_sub(1)
+            .and_then(|slot| caches.slots.get(slot as usize));
+        Some(cell.map_or((false, false), |c| c.pair()))
+    }
+
+    /// The stance list (`[0xbe8e2c]`) as `GetShapeshiftFormInfo` reads it (`0x53de90`): the active
+    /// test now (`0x802cb0`), castable when active or the cached bytes say so, the active icon
+    /// while active.
+    fn shapeshift_forms(&self) -> Option<Vec<benilla_ui::script::ShapeshiftFormView>> {
+        use crate::ui_spell_info::CallReads;
+        let caches = self.usable.get()?;
+        let spells = self.spells.as_deref()?;
+        let now = self.cast_now();
+        let player = self.me().is_some();
+        Some(
+            caches
+                .stances
+                .iter()
+                .filter_map(|entry| {
+                    let d = spells.catalog.get(entry.spell)?;
+                    let active = player
+                        && crate::ui_spell_info::active_spell(
+                            entry.spell,
+                            d,
+                            &now,
+                            &spells.catalog,
+                        );
+                    let texture = if active {
+                        d.active_icon.clone().or_else(|| d.icon.clone())
+                    } else {
+                        d.icon.clone()
+                    };
+                    Some(benilla_ui::script::ShapeshiftFormView {
+                        spell_id: entry.spell,
+                        texture,
+                        name: d.name.clone(),
+                        active,
+                        castable: active || entry.usable.ready(),
+                        cooldown: None,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn shapeshift_form_byte(&self) -> Option<u8> {
+        Some(self.me().map_or(0, |(_, s)| s.0.unit_shapeshift_form()))
     }
 
     fn with_spell_source(&self, f: &mut dyn FnMut(&dyn benilla_ui::script::SpellInfoSource)) {
@@ -2153,7 +2279,7 @@ type SlotIds = (ComponentId, ComponentId, ComponentId);
 
 /// The lendable resources' ids: the history, the pet's words, the selection, the player's place,
 /// the action store, the item locks, the charter records, the cast state's five ([`CastSlots`]),
-/// then the open trade-skill book.
+/// the open trade-skill book, then the usable caches.
 type SlotState = (
     SlotIds,
     SlotIds,
@@ -2163,6 +2289,8 @@ type SlotState = (
     SlotIds,
     SlotIds,
     [SlotIds; 5],
+    SlotIds,
+    SlotIds,
     SlotIds,
 );
 
@@ -2182,10 +2310,11 @@ fn slot_access<X: Resource>(
     (id, loan, owner): SlotIds,
     system: &SystemMeta,
     set: &mut FilteredAccessSet,
+    world: &mut World,
 ) {
     let name = &format!("{} in {}", std::any::type_name::<X>(), system.name());
     if owned {
-        owned_access(name, id, loan, owner, set);
+        owned_access(name, (id, loan, owner), lent_read_mark::<X>(world), set);
         return;
     }
     assert!(
@@ -2295,6 +2424,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                     slot_ids::<crate::ui_cast::UnitCasts>(world),
                 ],
                 slot_ids::<crate::ui_tradeskill::TradeSkillOpen>(world),
+                slot_ids::<crate::ui_action::usable_cache::UsableCaches>(world),
+                slot_ids::<crate::ui_macro::MacroBoundSpells>(world),
             ),
             lent_ids(world),
         )
@@ -2313,23 +2444,33 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             world,
         );
         let set = component_access_set;
-        slot_access::<crate::spell::Cooldowns>(O::COOLDOWNS, state.1 .0, system_meta, set);
-        slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
-        slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
-        slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
-        slot_access::<crate::ui_action::PlayerActions>(O::ACTIONS, state.1 .4, system_meta, set);
+        slot_access::<crate::spell::Cooldowns>(O::COOLDOWNS, state.1 .0, system_meta, set, world);
+        slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set, world);
+        slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set, world);
+        slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set, world);
+        slot_access::<crate::ui_action::PlayerActions>(
+            O::ACTIONS,
+            state.1 .4,
+            system_meta,
+            set,
+            world,
+        );
         type Pending = crate::pending_item_ops::PendingItemOps;
-        slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
+        slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set, world);
         type Petitions = crate::ui_petition::PetitionState;
-        slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
+        slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set, world);
         let [pending, melee, repeat, targeting, casts] = state.1 .7;
-        slot_access::<crate::spell::PendingCast>(true, pending, system_meta, set);
-        slot_access::<crate::spell::QueuedMeleeSpell>(true, melee, system_meta, set);
-        slot_access::<crate::spell::AutoRepeatActive>(true, repeat, system_meta, set);
-        slot_access::<crate::spell::SpellTargeting>(true, targeting, system_meta, set);
-        slot_access::<crate::ui_cast::UnitCasts>(true, casts, system_meta, set);
+        slot_access::<crate::spell::PendingCast>(true, pending, system_meta, set, world);
+        slot_access::<crate::spell::QueuedMeleeSpell>(true, melee, system_meta, set, world);
+        slot_access::<crate::spell::AutoRepeatActive>(true, repeat, system_meta, set, world);
+        slot_access::<crate::spell::SpellTargeting>(true, targeting, system_meta, set, world);
+        slot_access::<crate::ui_cast::UnitCasts>(true, casts, system_meta, set, world);
         type Trade = crate::ui_tradeskill::TradeSkillOpen;
-        slot_access::<Trade>(O::TRADE, state.1 .8, system_meta, set);
+        slot_access::<Trade>(O::TRADE, state.1 .8, system_meta, set, world);
+        type Usable = crate::ui_action::usable_cache::UsableCaches;
+        slot_access::<Usable>(true, state.1 .9, system_meta, set, world);
+        type Macros = crate::ui_macro::MacroBoundSpells;
+        slot_access::<Macros>(O::MACROS, state.1 .10, system_meta, set, world);
         let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
@@ -2395,6 +2536,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 (pet, ..),
                 cast,
                 (trade, ..),
+                (usable, ..),
+                (macros, ..),
             ) = state.1;
             let [(cast_pending, ..), (melee, ..), (repeat, ..), (targeting, ..), (casts, ..)] =
                 cast;
@@ -2423,6 +2566,10 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
             view.trade
                 .set(slot_fetch(world, trade), own(O::TRADE, trade));
+            view.usable
+                .set(slot_fetch(world, usable), own(true, usable));
+            view.bound
+                .set(slot_fetch(world, macros), own(O::MACROS, macros));
         }
         let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
@@ -2485,6 +2632,11 @@ pub(crate) enum LineArg {
 pub(crate) struct UiEvents(Vec<UiEvent>);
 
 impl UiEvents {
+    /// Nothing waits.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Fire `event` once the calling handler's changes have applied, before the next handler runs.
     pub(crate) fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
         self.0.push(UiEvent::Fire(event, args));
@@ -2542,12 +2694,6 @@ impl UiEvents {
                 UiEvent::CastEdge(_) => "<cast edge>",
             })
             .collect()
-    }
-
-    /// Whether nothing waits to fire.
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 

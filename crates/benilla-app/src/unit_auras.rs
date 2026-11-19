@@ -307,9 +307,23 @@ fn on_aura_update(
             commands.entity(entity).insert(auras);
         }
     }
-    // The reader's not-interruptible re-read for a watched caster (`0x72fd30`), after the apply.
+    // Our own effects that move usability, then the reader's usable update (`0x724a20`,
+    // `0x71ea1e`, `0x72fbfb`), then its not-interruptible re-read for a watched caster
+    // (`0x72fd30`), after the apply.
     let unit = update.unit;
     if let Some(ui) = ui.as_mut() {
+        let effects = moves.iter().flatten().filter(|(spell, _)| {
+            spells
+                .as_ref()
+                .and_then(|s| s.catalog.get(*spell))
+                .is_some_and(crate::ui_action::usable_cache::moves_usability)
+        });
+        for _ in effects {
+            ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            ));
+        }
+        ui.world(move |world| crate::ui_action::usable_cache::aura_read(world, unit, changed));
         ui.world(move |world| crate::ui_cast::auras_changed(world, unit, changed));
     }
     // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).

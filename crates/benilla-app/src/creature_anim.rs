@@ -187,8 +187,9 @@ pub(crate) fn cancel_auto_repeat_local(
     auto_repeat: &mut crate::spell::AutoRepeatActive,
     commands: &mut Commands,
     net: &crate::net::NetCommands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
-    if clear_auto_repeat(entity, auto_repeat, commands) {
+    if clear_auto_repeat(entity, auto_repeat, commands, sink) {
         let _ = net.0.send(crate::net::ClientCommand::CancelAutoRepeat);
     }
 }
@@ -199,12 +200,12 @@ pub(crate) fn clear_auto_repeat(
     entity: Option<Entity>,
     auto_repeat: &mut crate::spell::AutoRepeatActive,
     commands: &mut Commands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
-    if auto_repeat.0.is_none() {
-        // The reference's early-out: nothing running, nothing sent.
+    // The reference's early-out: nothing running, nothing sent.
+    if !auto_repeat.clear(sink) {
         return false;
     }
-    auto_repeat.0 = None;
     if let Some(e) = entity {
         commands
             .entity(e)
@@ -268,6 +269,7 @@ pub(crate) fn start_attack_local(
     sheath: &mut MessageWriter<SheathRequest>,
     commands: &mut Commands,
     net: &crate::net::NetCommands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     // Starting an attack stands you up, after the attackability check but before the range logic
     // and the already-attacking skip, so a re-issued or out-of-reach attack stands you too.
@@ -283,7 +285,7 @@ pub(crate) fn start_attack_local(
         state: 1,
         ceremony: false,
     });
-    cancel_auto_repeat_local(Some(entity), auto_repeat, commands, net);
+    cancel_auto_repeat_local(Some(entity), auto_repeat, commands, net, sink);
 }
 
 /// The Attack toggle, as in the reference (the Attack pseudo-spell): stop when attacking, else
@@ -298,6 +300,7 @@ pub(crate) fn toggle_attack_local(
     sheath: &mut MessageWriter<SheathRequest>,
     commands: &mut Commands,
     net: &crate::net::NetCommands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     if engaged {
         stop_attack_local(engaged, queued_melee, net);
@@ -311,6 +314,7 @@ pub(crate) fn toggle_attack_local(
             sheath,
             commands,
             net,
+            sink,
         );
     }
 }
@@ -356,10 +360,19 @@ impl AttackSeam<'_, '_> {
         self.stop_on_change.as_deref().is_some_and(|s| s.0)
     }
 
-    /// The auto-repeat cancel (`0x807560`).
-    pub(crate) fn cancel_auto_repeat(&mut self) {
+    /// The auto-repeat cancel (`0x807560`), its stop fired into `sink`.
+    pub(crate) fn cancel_auto_repeat(
+        &mut self,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let me = self.me.single().ok();
-        cancel_auto_repeat_local(me, &mut self.auto_repeat.write(), &mut self.ecs, &self.net);
+        cancel_auto_repeat_local(
+            me,
+            &mut self.auto_repeat.write(),
+            &mut self.ecs,
+            &self.net,
+            sink,
+        );
     }
 
     /// StopAttack.
@@ -367,8 +380,15 @@ impl AttackSeam<'_, '_> {
         stop_attack_local(engaged, &mut self.queued_melee.write(), &self.net);
     }
 
-    /// StartAttack; a no-op before our own entity streams in.
-    pub(crate) fn start(&mut self, target: u64, engaged: bool, stop_in_flight: bool) {
+    /// StartAttack; a no-op before our own entity streams in. Its auto-repeat cancel fires into
+    /// `sink`.
+    pub(crate) fn start(
+        &mut self,
+        target: u64,
+        engaged: bool,
+        stop_in_flight: bool,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let Ok(e) = self.me.single() else { return };
         start_attack_local(
             e,
@@ -379,6 +399,7 @@ impl AttackSeam<'_, '_> {
             &mut self.sheath,
             &mut self.ecs,
             &self.net,
+            sink,
         );
     }
 }
@@ -1375,6 +1396,7 @@ mod attack_stand_tests {
                     &mut sheath,
                     &mut commands,
                     &net,
+                    &mut Vec::new(),
                 );
             },
         );

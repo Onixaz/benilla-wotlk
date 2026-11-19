@@ -108,6 +108,8 @@ pub(crate) struct Scene<'w, 's> {
     control: ResMut<'w, super::ControlFlag>,
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     signals: NonSendMut<'w, crate::ui_script::live::UniqueSignals>,
+    /// The current target, whose aura state the usable update watches (`0x716810`).
+    selection: crate::ui_script::LentRef<'w, crate::target::Selection>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -187,6 +189,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             let me = (
                 fields.unit_race().unwrap_or(0),
                 fields.unit_class().unwrap_or(0),
+                fields.unit_shapeshift_form(),
             );
             sc.ui.world(move |world| {
                 if let Err(e) =
@@ -200,6 +203,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // edge (`0x71c9a0` -> `0x520fe0`) before the silent re-seed (`0x6e8160` -> `0x513880`).
         if sc.self_guid.0 == Some(guid) && !std::mem::replace(&mut sc.control.0, true) {
             sc.ui.fire("PLAYER_CONTROL_GAINED", Vec::new());
+            // The control change's usable update (`0x521007`).
+            sc.ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            ));
         }
         // The UI's world entry runs inside our create (`0x6e8186`).
         if sc.self_guid.0 == Some(guid) {
@@ -1646,7 +1653,7 @@ fn pet_number_watch(sc: &mut Scene, guid: u64) {
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
-    // The entry watch (`0x707960`), the count watch (`0x707720`), then the enchant watch (`0x708bd0`), each its own handler in field order.
+    // The entry watch (`0x707960`), the count watch (`0x707720`), the charges watch (`0x707880`), then the enchant watch (`0x708bd0`), each its own handler in field order.
     if let Some(old) = merged.item_entry {
         item_entry_watch(sc, guid, old);
     }
@@ -1655,6 +1662,11 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_items::watch::stack_changed(world, guid));
         item_quest_watch(sc, guid);
+    }
+    // The charges watch (`0x707880`), between the count's and the enchants' in field order.
+    if merged.item_charges {
+        sc.ui
+            .world(move |world| crate::ui_items::watch::charges_changed(world, guid));
     }
     if merged.item_enchants {
         sc.ui
@@ -1720,7 +1732,26 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             });
         }
     }
+    // The target's aura state (`0x716810`), and our pet's power, its predicted copy re-seeded
+    // (`0x722c50` -> `0x53d1b0`).
+    let target = sc.selection.get().and_then(|s| s.guid);
     if sc.self_guid.0 != Some(guid) {
+        if merged.aura_state_moved && target == Some(guid) {
+            sc.ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            ));
+        }
+        let our_pet = sc
+            .self_guid
+            .0
+            .and_then(|me| sc.index.0.get(&me))
+            .and_then(|&e| sc.stores.get(e).ok())
+            .and_then(|s| s.0.unit_pet_guid());
+        if merged.power_moved && our_pet == Some(guid) {
+            sc.ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Power,
+            ));
+        }
         return;
     }
     if merged.pet_moved {
@@ -1752,6 +1783,37 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if let Some(form) = merged.form {
         sc.ui
             .world(move |world| crate::ui_bank::form_entered(world, form));
+        // The form watch (`0x6da130`): a form entered with nothing tracked casts the first tracking
+        // spell the form admits, then the usable update, the selection update (`0x6da389`) and
+        // `UPDATE_SHAPESHIFT_FORM`.
+        if form != 0 {
+            sc.ui.world(move |world| track_in_form(world, form));
+        }
+        sc.ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Full,
+        ));
+        crate::ui_action::signals::selection(&mut sc.ui);
+        sc.ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+    }
+    // Our own fields' usable updates, the aura state's among them (`0x716810`).
+    for _ in 0..merged.usable_updates + u8::from(merged.aura_state_moved) {
+        sc.ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Full,
+        ));
+    }
+    // The override-spell watch's selection update after its usable update (`0x6d1c58`).
+    if merged.override_moved {
+        crate::ui_action::signals::selection(&mut sc.ui);
+    }
+    if merged.power_moved {
+        sc.ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Power,
+        ));
+    }
+    for _ in 0..merged.bar_updates {
+        sc.ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Bar,
+        ));
     }
     // The level watch's book update, no re-sort (`0x6d66fd`), and each visible weapon's: the main
     // hand's or the ranged slot's entry moved updates the book for its weapon face (`0x6e1f13`,
@@ -2075,6 +2137,20 @@ fn merge_fields(
                 merged.form = Some((e.new >> 24) as u8);
             }
             merged.level_moved |= own && e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL);
+            merged.usable_updates += usable_updates(&e, own);
+            merged.override_moved |= own
+                && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2)
+                && (e.old ^ e.new) & 0xffff != 0;
+            // Our visible items' entries (`0x6e1ec2`) and our ammo (`0x5e8413`) refresh the bar.
+            merged.bar_updates += u8::from(
+                own && ((0..19u8).any(|slot| {
+                    e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
+                }) || e.index == benilla_protocol::field::FIELD_PLAYER_AMMO_ID),
+            );
+            merged.aura_state_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_AURASTATE);
+            // A power field moving re-seeds the predicted copy (`0x7234d0` -> `0x722c50`).
+            merged.power_moved |=
+                (0..7u16).any(|ty| e.unit_field(benilla_protocol::field::FIELD_UNIT_POWER1 + ty));
             if own
                 && [15, 17].into_iter().any(|slot| {
                     e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
@@ -2092,6 +2168,9 @@ fn merge_fields(
             ) {
                 use benilla_protocol::field::{FIELD_CONTAINER_SLOT_1, FIELD_ITEM_ENCHANTMENT_1_1};
                 merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
+                merged.item_charges |= (benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES
+                    ..benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES + 5)
+                    .contains(&e.index);
                 if e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY {
                     merged.item_entry = Some(e.old);
                 }
@@ -2164,6 +2243,10 @@ struct Merged {
     npc_flags: Option<(u32, u32)>,
     /// An item's stack count moved (`0x707720`).
     item_stack: bool,
+    /// Our override spell id moved (`0x6d1c30`).
+    override_moved: bool,
+    /// An item's spell charges moved (`0x707880`).
+    item_charges: bool,
     /// An item's entry moved (`0x707960`), from this old entry.
     item_entry: Option<u32>,
     /// An item's enchant fields moved (`0x707f50`).
@@ -2185,6 +2268,76 @@ struct Merged {
     /// How many of our own main-hand and ranged visible items' entries moved (`0x6e1e10`, slots
     /// 15 and 17).
     weapons_moved: u8,
+    /// How many usable updates our own fields' watches run ([`usable_updates`]).
+    usable_updates: u8,
+    /// How many bar refreshes (`0x5aa470`) our own visible-item and ammo watches run.
+    bar_updates: u8,
+    /// A unit's `UNIT_FIELD_AURASTATE` moved (`0x716810`).
+    aura_state_moved: bool,
+    /// A unit's `UNIT_FIELD_POWER1..7` moved.
+    power_moved: bool,
+}
+
+/// The form watch's tracking leg (`0x6da130`): with nothing tracked, the first known tracking spell
+/// usable in `form` (bit `form - 1` of its `Stances`, `0x7fe850`) is cast.
+fn track_in_form(world: &mut World, form: u8) {
+    let bit = u64::from(form) - 1;
+    let allowed: std::collections::HashSet<u32> = {
+        let (Some(spells), Some(book)) = (
+            world.get_resource::<crate::ui_action::Spells>(),
+            world.get_resource::<crate::ui_spellbook::SpellBook>(),
+        ) else {
+            return;
+        };
+        book.live
+            .tracking
+            .iter()
+            .map(|t| t.spell_id)
+            .filter(|&id| {
+                spells.catalog.get(id).is_some_and(|d| {
+                    let mask = u64::from(d.stances) | (u64::from(d.stances_high) << 32);
+                    bit < 64 && mask & (1 << bit) != 0
+                })
+            })
+            .collect()
+    };
+    crate::ui_script::live::with_live_world(world, |script| {
+        script.track_in_form(|id| allowed.contains(&id));
+    });
+}
+
+/// The usable updates (`0x53cf10`) a field change on our own player runs, one per site: health
+/// (`0x73f44e`); the flags' combat, control and disarm bits (`0x728f9e`, `0x728fab`, `0x73c4ea`);
+/// the off-hand and ranged disarm bits of flags 2 (`0x73c756`, `0x73c7e3`); stealth among the
+/// vis flags (`0x73c8a4`); the player flags' `0x1800000` (`0x6e1217`); the override spells
+/// (`0x6d1c53`) and the no-reagent-cost words (`0x6cde10`).
+fn usable_updates(e: &FieldChanged, own: bool) -> u8 {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_FIELD_BYTES2, FIELD_PLAYER_FLAGS, FIELD_UNIT_BYTES_1, FIELD_UNIT_FLAGS,
+        FIELD_UNIT_FLAGS_2, FIELD_UNIT_HEALTH, UNIT_END,
+    };
+    if !own {
+        return 0;
+    }
+    let changed = e.old ^ e.new;
+    let bit = |mask: u32| u8::from(changed & mask != 0);
+    if e.unit_field(FIELD_UNIT_HEALTH) {
+        1
+    } else if e.unit_field(FIELD_UNIT_FLAGS) {
+        bit(0x01C2_0000) + bit(0x0008_0000) + bit(0x0020_0000)
+    } else if e.unit_field(FIELD_UNIT_FLAGS_2) {
+        bit(0x80) + bit(0x400)
+    } else if e.unit_field(FIELD_UNIT_BYTES_1) {
+        bit(0x2 << 16)
+    } else if e.unit_field(FIELD_PLAYER_FLAGS) {
+        bit(0x0180_0000)
+    } else if e.unit_field(FIELD_PLAYER_FIELD_BYTES2) {
+        bit(0xffff)
+    } else if (UNIT_END + 0x489..UNIT_END + 0x48c).contains(&e.index) && e.is_unit() {
+        1
+    } else {
+        0
+    }
 }
 
 /// An item's entry moved (`0x707960`), on an item we own (`0x70799f`-`0x7079a5`): the old record dropped (`0x7079bb`), the new one asked with the record callback, run now when cached (`0x707a07`), then `QUEST_LOG_UPDATE` (`0x707a14`).

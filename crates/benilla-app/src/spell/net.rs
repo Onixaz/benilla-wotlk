@@ -230,6 +230,15 @@ fn on_spell_learned(
             &l.net,
             &l.summons.0,
         );
+        // The registrar's stance and reactive lists (`0x542647`), past which a live learn signals
+        // `UPDATE_SHAPESHIFT_FORMS`.
+        if learner.is_some() {
+            use crate::ui_action::usable_cache::{edit_step, ListEdit};
+            l.ui.world(edit_step(ListEdit::Learn {
+                spell: spell_id,
+                replaces: None,
+            }));
+        }
         // The totem lists, and a live learn's refill (`0x542d33`, `0x542df1`).
         let display = l
             .spells
@@ -271,6 +280,11 @@ fn on_spell_removed(
         }
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut errors);
         unlearn_totem(&mut l.multicast, spell_id);
+        // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
+        if exists {
+            use crate::ui_action::usable_cache::{edit_step, ListEdit};
+            l.ui.world(edit_step(ListEdit::Remove(spell_id)));
+        }
         // The removal ends in the book update, a spell it held or not (`0x5401b8`).
         if exists {
             l.update_book(&LearnedInTab::default());
@@ -416,6 +430,13 @@ fn on_spell_superceded(
             }
         }
         if me.is_some() {
+            // The removal kept the old rank's stance entry (notify set, `0x542eb7`); the registrar
+            // replaces it in place (`0x54252d`).
+            use crate::ui_action::usable_cache::{edit_step, ListEdit};
+            l.ui.world(edit_step(ListEdit::Learn {
+                spell: new_spell_id,
+                replaces: Some(old_spell_id),
+            }));
             l.update_book(&flash);
         }
     }
@@ -454,15 +475,31 @@ fn on_cast_result(
         wire_reason,
     } = ev
     {
-        // `SMSG_CAST_FAILED` ends our cast through `0x808200` -> `0x7fecc0` with its reason.
-        if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
-            r.ui.cast_edge(CastBarEdge::Failed {
-                caster,
-                spell_id,
-                cast_count,
-                reason,
-            });
+        use crate::ui_action::signals::{cooldown_site, selection, spellbook, Tail};
+        let row = ladder
+            .spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(spell_id));
+        let on_event = row.is_some_and(|d| d.cooldown_on_event());
+        // The failure routine's error mapping (`0x808341`): a not-ready refusal with no argument
+        // releases an on-hold record, then signals (`0x807f6b`-`0x807fa4`).
+        let category = row.map_or(0, |d| d.category);
+        let not_ready_hold = !success
+            && reason == Some(0x3c)
+            && arg.unwrap_or(0) == 0
+            && ladder
+                .cooldowns
+                .read()
+                .has_on_hold_record(spell_id, 0, category);
+        if not_ready_hold {
+            ladder.cooldowns.write().clear_spell(spell_id);
         }
+        // Its start cooldown clear signals when a record matched (`0x80476d`); DONT_REPORT
+        // returns before it.
+        let start_cleared =
+            !success && reason != Some(0x17) && ladder.cooldowns.read().has_spell(spell_id);
+        // The routine's auto-repeat cancel (`0x8082d3`, `0x8083c6`), signalled in its place below.
+        let mut cancels: Vec<&'static str> = Vec::new();
         let chained = cast_result(
             (spell_id, cast_count, wire_reason.unwrap_or(0)),
             success,
@@ -481,7 +518,36 @@ fn on_cast_result(
             ladder.spells.as_deref(),
             &ladder.commands,
             r.play_seq.next(),
+            &mut cancels,
         );
+        // The routine's signals in its order: the hold's release, the auto-repeat cancel, the
+        // start cooldown's clear, then the cast's end through `0x7fecc0` and its finish's
+        // selection update (`0x808b7f`, `0x8055f9`, `0x8054f0`).
+        if not_ready_hold {
+            cooldown_site(&mut r.ui, true, Tail::Bags);
+        }
+        for event in cancels {
+            r.ui.fire(event, Vec::new());
+        }
+        if start_cleared {
+            spellbook(&mut r.ui);
+        }
+        if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
+            r.ui.cast_edge(CastBarEdge::Failed {
+                caster,
+                spell_id,
+                cast_count,
+                reason,
+            });
+            if cast_count != 0 {
+                selection(&mut r.ui);
+            }
+        }
+        // A failure other than not-ready of a cooldown-on-event spell drops its on-hold record,
+        // then signals (`0x809bd5`-`0x809c05`).
+        if !success && reason != Some(0x3c) && on_event {
+            cooldown_site(&mut r.ui, true, Tail::Bags);
+        }
         if let Some(next) = chained {
             let ctx = targeting.context();
             ladder.send(next, &ctx, CastCommit::Spell);
@@ -528,6 +594,7 @@ fn on_own_spell_go(
         ladder.spells.as_deref(),
         &ladder.commands,
         r.play_seq.next(),
+        &mut *r.ui,
     );
     if let Some(next) = chained {
         let ctx = targeting.context();
@@ -583,12 +650,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
     if !matches!(ev, SessionEvent::SpellGo { .. }) {
         return;
     }
-    let pet_generation = l.pet_bar.cooldowns.generation;
     on_spell_go_inner(ev, &mut l, &mut sc, &mut arm);
-    // The pet leg's insert flushes in the go (`0x80fe3b`, `0x80fe4b`).
-    if l.pet_bar.cooldowns.generation != pet_generation {
-        crate::ui_pet::pet_cooldown_flush(&mut l.ui);
-    }
 }
 
 fn on_spell_go_inner(ev: SessionEvent, l: &mut Lifecycle, sc: &mut Scene, arm: &mut SpellGoLoot) {
@@ -746,16 +808,20 @@ fn on_spell_failed(
                 &mut sc.commands,
                 &l.net,
                 &mut sounds,
+                &mut *l.ui,
             );
         }
         // Both handlers end the cast through `0x7fecc0` with the packet's reason (`0x809db3`,
-        // `0x806bb0`).
+        // `0x806bb0`), and finish ours with the selection update (`0x809dc1`, `0x806bbe`).
         l.ui.cast_edge(CastBarEdge::Failed {
             caster,
             spell_id,
             cast_count,
             reason,
         });
+        if l.self_guid.0 == Some(caster) && cast_count != 0 {
+            crate::ui_action::signals::selection(&mut l.ui);
+        }
         spell_failed_other(
             other,
             caster,
@@ -786,32 +852,45 @@ fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
             &l.self_guid,
             &l.index,
             &mut sc.commands,
+            &mut *l.ui,
         );
     }
 }
 
 /// The five cooldown packets, routed by the caster guid: `SMSG_SPELL_COOLDOWN` and
 /// `SMSG_COOLDOWN_CHEAT` through [`addressed_store`], the other three through
-/// [`pet_or_player_store`].
+/// [`pet_or_player_store`]. Each ends in the spellbook's cooldown signals and its list's own
+/// ([`crate::ui_action::signals`]).
 fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
+    use crate::ui_action::signals::{cooldown_site, Tail};
     let pet = |caster: u64| l.pet_bar.has_bar() && l.pet_bar.spells.pet_guid == caster;
-    // A packet addressed to the pet flushes its bar once, whatever it changed (`0x807039`, `0x802bd6`, `0x802c1e`, `0x804179`); the player is tested first (`0x806e0e`, `0x804122`).
-    let flush = match ev {
+    let me = |caster: u64| l.self_guid.0 == Some(caster);
+    // `(usable, tail)` of the site the packet reaches, or none.
+    let site = match ev {
+        // Ours or the pet's alone, the player tested first (`0x806e0e`, `0x80702e`-`0x807048`;
+        // `0x804122`, `0x80413f`-`0x804179`).
         SessionEvent::SpellCooldowns { caster, .. } | SessionEvent::CooldownCheat { caster } => {
-            l.self_guid.0 != Some(caster) && pet(caster)
+            if me(caster) {
+                Some((false, Tail::Bags))
+            } else if pet(caster) {
+                Some((false, Tail::Pet))
+            } else {
+                None
+            }
         }
+        // The modify (`0x802bc6`-`0x802bdc`) on any caster, the pet's list for the pet's guid.
         SessionEvent::CooldownEvent { caster, .. } | SessionEvent::ClearCooldown { caster, .. } => {
-            pet(caster)
+            Some((true, Tail::of_list(pet(caster))))
         }
-        // Spell 0 is skipped before the delay (`0x8040e4`).
+        // The delay (`0x802c0e`-`0x802c24`); spell 0 is skipped before it (`0x8040e4`).
         SessionEvent::ModifyCooldown {
             spell_id, caster, ..
-        } => spell_id != 0 && pet(caster),
-        _ => false,
+        } => (spell_id != 0).then(|| (true, Tail::of_list(pet(caster)))),
+        _ => None,
     };
     cooldown_packet(ev, &mut l);
-    if flush {
-        crate::ui_pet::pet_cooldown_flush(&mut l.ui);
+    if let Some((usable, tail)) = site {
+        cooldown_site(&mut l.ui, usable, tail);
     }
 }
 
@@ -877,6 +956,12 @@ fn on_item_cooldown(In(ev): In<SessionEvent>, mut l: Lifecycle, sc: Scene) {
     } = ev
     {
         item_cooldown(item_guid, spell_id, &l.index, &sc.stores, &mut l.cooldowns);
+        // Whether or not the item resolved (`0x80719d`, `0x8071a2`).
+        crate::ui_action::signals::cooldown_site(
+            &mut l.ui,
+            false,
+            crate::ui_action::signals::Tail::Bags,
+        );
     }
 }
 
@@ -932,31 +1017,36 @@ fn on_resume_cast_bar(In(ev): In<SessionEvent>, mut l: Lifecycle) {
 
 fn on_reset_ranged_combat_timer(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     if let SessionEvent::ResetRangedCombatTimer { time_ms } = ev {
-        reset_ranged_combat_timer(
+        let added = reset_ranged_combat_timer(
             time_ms,
             &l.actions,
             l.spells.as_deref(),
             &l.summons.0,
             &mut l.cooldowns,
         );
+        // The spellbook's cooldown signals after each record, inside the loop (`0x807364`).
+        for _ in 0..added {
+            crate::ui_action::signals::spellbook(&mut l.ui);
+        }
     }
 }
 
 /// `SMSG_RESET_RANGED_COMBAT_TIMER` (`0x8071c0`): every book spell with Attributes `0x2`, without
 /// AttributesEx2 `0x20000` and AttributesEx4 `0x10000000`, adds a record starting now with
-/// `time_ms` as its recovery and no category (`0x80734f`).
+/// `time_ms` as its recovery and no category (`0x80734f`). Answers how many it added.
 fn reset_ranged_combat_timer(
     time_ms: u32,
     actions: &PlayerActions,
     spells: Option<&Spells>,
     summons: &benilla_formats::SummonPropertiesCatalog,
     cooldowns: &mut Cooldowns,
-) {
+) -> usize {
     debug!("net: reset ranged combat timer — {time_ms} ms");
     let Some(spells) = spells else {
-        return;
+        return 0;
     };
     let now = Instant::now();
+    let mut added = 0;
     for &id in &actions.spells {
         let Some(d) = spells.catalog.get(id) else {
             continue;
@@ -966,8 +1056,10 @@ fn reset_ranged_combat_timer(
             && d.attributes_ex4 & 0x1000_0000 == 0
         {
             cooldowns.start_recovery(id, time_ms, now);
+            added += 1;
         }
     }
+    added
 }
 
 /// `SMSG_SPELL_FAILURE`'s own legs (`0x809c70`), on a streamed caster with a `Spell.dbc` row: the
@@ -985,6 +1077,7 @@ fn spell_failure(
     commands: &mut Commands,
     net: &crate::net::NetCommands,
     sounds: &mut MessageWriter<crate::net::ServerSoundMessage>,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     let Some(spells) = spells else {
         return;
@@ -1002,7 +1095,7 @@ fn spell_failure(
     }
     // The shared numbering of wire 0x34-0x36.
     if self_guid.0 == Some(caster) && matches!(reason, 0x2f..=0x31) {
-        crate::creature_anim::cancel_auto_repeat_local(Some(e), auto_repeat, commands, net);
+        crate::creature_anim::cancel_auto_repeat_local(Some(e), auto_repeat, commands, net, sink);
     }
 }
 
@@ -1344,6 +1437,7 @@ fn cast_result(
     spells: Option<&Spells>,
     net: &crate::net::NetCommands,
     seq: u64,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> Option<u32> {
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
     // Is this the reply to our outstanding cast? Read before either arm clears the guard: both
@@ -1376,7 +1470,13 @@ fn cast_result(
         }
         let self_e = self_guid.0.and_then(|g| index.0.get(&g)).copied();
         if auto_repeat.0 == Some(spell_id) && reason != Some(0x17) {
-            crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, commands, net);
+            crate::creature_anim::cancel_auto_repeat_local(
+                self_e,
+                auto_repeat,
+                commands,
+                net,
+                sink,
+            );
         }
         // Only the failure of the cast the bar shows (keyed to our `Casting`) red-fades it: a
         // pre-start rejection opened no bar, and a proc's failure names another spell.
@@ -1524,6 +1624,10 @@ fn spell_start(
         immunities,
         hidden,
     });
+    // Our cast's start visuals end in the selection update (`0x806961`, `0x805330`).
+    if self_guid.0 == Some(caster) && cast_count != 0 && !hidden {
+        crate::ui_action::signals::selection(ui);
+    }
     if self_guid.0 == Some(caster) && cast_time_ms > 0 {
         // The real cast time replaces the guard's send-time deadline, ranged casts included.
         pending.refine(cast_time_ms, Instant::now());
@@ -1786,6 +1890,7 @@ fn spell_go(
                     sheath,
                     commands,
                     net_commands,
+                    ui,
                 );
             }
         }
@@ -1827,6 +1932,13 @@ fn spell_go(
                 }
             }
         }
+        // The insert's signals, the usable update for an on-hold one (`0x80fa30`-`0x80fa40`,
+        // `0x80fc32`-`0x80fc42`).
+        crate::ui_action::signals::cooldown_site(
+            ui,
+            display.is_some_and(|d| d.cooldown_on_event()),
+            crate::ui_action::signals::Tail::Bags,
+        );
         if benilla_assets::trace::enabled() {
             if let Some(d) = display {
                 let (recovery_ms, category_ms) = spell_mods.spell_cooldowns(d, ranged_ms);
@@ -1850,9 +1962,13 @@ fn spell_go(
         pet_bar
             .cooldowns
             .start_spell(spell_id, d, 0, now, Some(spell_mods));
-        // The flush that follows fires off the list's generation, which the insert bumped:
-        // `ACTIONBAR_UPDATE_COOLDOWN`, `SPELL_UPDATE_COOLDOWN`, `PET_BAR_UPDATE_COOLDOWN`, and no
-        // `PET_BAR_UPDATE`.
+        // The pet's insert signals the same way, then the pet bar's (`0x80fe3b`-`0x80fe4b`), and
+        // no `PET_BAR_UPDATE`.
+        crate::ui_action::signals::cooldown_site(
+            ui,
+            d.cooldown_on_event(),
+            crate::ui_action::signals::Tail::Pet,
+        );
         if benilla_assets::trace::enabled() {
             let (recovery_ms, category_ms) = spell_mods.spell_cooldowns(d, 0);
             benilla_assets::trace::line(
@@ -1871,6 +1987,11 @@ fn spell_go(
     {
         cooldowns.collect(now);
         pet_bar.cooldowns.collect(now);
+    }
+    // Our cast's finish runs the selection update last, a hidden go aside (`0x80fe86`-`0x80fe9d`,
+    // `0x8054f0`).
+    if self_guid.0 == Some(caster) && cast_count != 0 && cast_flags & 1 == 0 {
+        crate::ui_action::signals::selection(ui);
     }
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
@@ -2039,6 +2160,7 @@ fn cancel_auto_repeat(
     self_guid: &SelfGuid,
     index: &GuidIndex,
     commands: &mut Commands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     let Some(&e) = index.0.get(&guid) else {
         debug!("net: cancel auto-repeat for {guid:#x}, not streamed — ignored");
@@ -2046,7 +2168,7 @@ fn cancel_auto_repeat(
     };
     debug!("net: cancel auto-repeat for {guid:#x}");
     if self_guid.0 == Some(guid) {
-        crate::creature_anim::clear_auto_repeat(Some(e), auto_repeat, commands);
+        crate::creature_anim::clear_auto_repeat(Some(e), auto_repeat, commands, sink);
     }
     crate::creature_anim::end_ranged_mode(e, commands);
 }
@@ -2277,6 +2399,7 @@ mod tests {
                             &self_guid,
                             &index,
                             &mut commands,
+                            &mut Vec::new(),
                         );
                     },
                 )
@@ -3166,6 +3289,7 @@ mod tests {
                             None,
                             &crate::net::NetCommands(tx.clone()),
                             1,
+                            &mut Vec::new(),
                         );
                     },
                 )
@@ -3709,6 +3833,7 @@ mod tests {
                             None,
                             &net,
                             1,
+                            &mut Vec::new(),
                         );
                     },
                 )
@@ -4156,6 +4281,7 @@ mod tests {
                             Some(&cat),
                             &net,
                             1,
+                            &mut Vec::new(),
                         )
                     },
                 )
@@ -4509,6 +4635,7 @@ mod tests {
                             Some(&spells),
                             &crate::net::NetCommands(tx.clone()),
                             1,
+                            &mut Vec::new(),
                         );
                     },
                 )
@@ -4591,6 +4718,7 @@ mod tests {
                             &mut commands,
                             &crate::net::NetCommands(tx.clone()),
                             &mut sounds,
+                            &mut Vec::new(),
                         );
                     },
                 )

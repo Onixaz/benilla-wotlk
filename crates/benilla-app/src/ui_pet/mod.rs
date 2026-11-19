@@ -56,7 +56,7 @@ pub(crate) struct PetBar {
     pub(crate) spells: PetSpells,
     /// The setter's cached guid `[0xc234d0]`, read only by its change test (`0x5d6903`) and never written by `SMSG_PET_GUIDS` (`0x5d6550`).
     pub(crate) cached: u64,
-    /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's GCD. Each mutation but the seed fires the flush where it lands ([`pet_cooldown_flush`]).
+    /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's GCD. Each mutation but the seed signals where it lands ([`crate::ui_action::signals`]).
     pub(crate) cooldowns: Cooldowns,
     /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test (`0x5d6a80`).
     pub(crate) attacking: bool,
@@ -134,20 +134,6 @@ impl PetBar {
             ..Default::default()
         };
     }
-}
-
-/// The pet's cooldown flush behind a mutation of its list: the spellbook's (`0x53bac0`), `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, then the pet's own `PET_BAR_UPDATE_COOLDOWN` (`0x5d3090`), as the go's insert (`0x80fe3b`, `0x80fe4b`) and the cooldown packet's (`0x80702e`, `0x807039`) call them.
-pub(crate) fn pet_cooldown_flush(ui: &mut crate::ui_script::live::UiEvents) {
-    ui.fire("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
-    ui.fire("SPELL_UPDATE_COOLDOWN", Vec::new());
-    ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
-}
-
-/// [`pet_cooldown_flush`] into the VM a press's applier holds, for the press's own insert (`0x805ec3`, `0x805eda`).
-pub(crate) fn pet_cooldown_flush_now(script: &mut benilla_ui::script::UiScript) {
-    script.fire_event("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
-    script.fire_event("SPELL_UPDATE_COOLDOWN", Vec::new());
-    script.fire_event("PET_BAR_UPDATE_COOLDOWN", Vec::new());
 }
 
 /// Fire the `PET_BAR_UPDATE`s a press raised since `before`, the bar's signal count then.

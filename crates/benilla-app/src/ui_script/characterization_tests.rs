@@ -1992,15 +1992,21 @@ fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     rig.packets(vec![flags(0), control(true), flags(taxi)], 1);
     assert_eq!(take_live(&rig), vec!["gained live=nil verb=nil"]);
     // The observer sees it too, inside the drain ahead of every feed, after the stock control
-    // handler registered before it and the flags packet's `UNIT_FLAGS` (`0x60c240`) ahead of both.
+    // handler registered before it and the flags packet's `UNIT_FLAGS` (`0x60c240`) ahead of both;
+    // the stock handler ends in the usable update (`0x52102a`).
     assert_eq!(
         pin(&ahead, &["CHARZ_HANDLER"], &["taxi"]),
         vec!["CHARZ_HANDLER lost | taxi=1"]
     );
-    let first: Vec<&str> = ahead.iter().take(3).map(|s| s.event.as_str()).collect();
+    let first: Vec<&str> = ahead.iter().take(4).map(|s| s.event.as_str()).collect();
     assert_eq!(
         first,
-        ["UNIT_FLAGS", "PLAYER_CONTROL_LOST", "CHARZ_HANDLER"]
+        [
+            "UNIT_FLAGS",
+            "PLAYER_CONTROL_LOST",
+            "SPELL_UPDATE_USABLE",
+            "CHARZ_HANDLER"
+        ]
     );
 }
 
