@@ -346,7 +346,6 @@ mod tests {
     use crate::ui_session::{close_interaction, feed_interact_npc};
     use crate::ui_taxi::TaxiState;
     use crate::ui_trainer::TrainerOpen;
-    use benilla_protocol::messages::TaxiMask;
 
     /// A `HIGHGUID_UNIT` guid, so the sessions treat it as an NPC.
     const NPC: u64 = 0xF130_0000_0000_0042;
@@ -382,9 +381,7 @@ mod tests {
         let mut app = interact_app();
         let mut prev = None;
 
-        app.world_mut()
-            .resource_mut::<TaxiState>()
-            .open(NPC, 2, TaxiMask(vec![0b10]));
+        app.world_mut().resource_mut::<TaxiState>().unit = Some(NPC);
         assert_eq!(step(&mut app, &mut prev), WindowVocal::Hello(NPC));
         assert_eq!(
             step(&mut app, &mut prev),
@@ -392,7 +389,7 @@ mod tests {
             "no repeat while open"
         );
 
-        app.world_mut().resource_mut::<TaxiState>().clear();
+        app.world_mut().resource_mut::<TaxiState>().unit = None;
         assert_eq!(step(&mut app, &mut prev), WindowVocal::Goodbye(NPC));
     }
 
@@ -407,14 +404,12 @@ mod tests {
         app.world_mut().resource_mut::<GossipState>().npc = Some(NPC);
         assert_eq!(step(&mut app, &mut prev), WindowVocal::Hello(NPC));
 
-        app.world_mut()
-            .resource_mut::<TaxiState>()
-            .open(NPC, 2, TaxiMask(vec![0b10]));
+        app.world_mut().resource_mut::<TaxiState>().unit = Some(NPC);
         assert_eq!(step(&mut app, &mut prev), WindowVocal::None);
 
         // `CloseTaxiMap()`: the interaction close takes the gossip with it this frame, and the
         // target reads clear on the next.
-        app.world_mut().resource_mut::<TaxiState>().clear();
+        app.world_mut().resource_mut::<TaxiState>().unit = None;
         let closing = step(&mut app, &mut prev);
         let cleared = step(&mut app, &mut prev);
         assert_eq!(app.world().resource::<GossipState>().npc, None);

@@ -1730,6 +1730,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 }
             });
         }
+        // Its taxi leg (`0x71a13b`-`0x71a16d`): the flight master bit lost on the open map's flight master.
+        if old & NPC_FLAG_FLIGHTMASTER != 0 && new & NPC_FLAG_FLIGHTMASTER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_resource::<crate::ui_taxi::TaxiState>()
+                    .is_some_and(|t| t.unit == Some(guid));
+                if open {
+                    crate::ui_taxi::close_map(world);
+                }
+            });
+        }
         // Its bank leg (`0x71a1a8`-`0x71a1db`): the banker bit lost on the open bank's banker.
         if old & NPC_FLAG_BANKER != 0 && new & NPC_FLAG_BANKER == 0 {
             sc.ui.world(move |world| {
@@ -2250,6 +2261,9 @@ fn merge_fields(
 
 /// `UNIT_NPC_FLAG_QUESTGIVER`, the bit the NPC-flag watch tests (`0x71a104`).
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
+
+/// `UNIT_NPC_FLAG_FLIGHTMASTER`, the bit the NPC-flag watch's taxi leg tests (`0x71a13b`).
+const NPC_FLAG_FLIGHTMASTER: u32 = 0x2000;
 
 /// `UNIT_NPC_FLAG_BANKER`, the bit the NPC-flag watch's bank leg tests (`0x71a1a8`).
 const NPC_FLAG_BANKER: u32 = 0x20000;

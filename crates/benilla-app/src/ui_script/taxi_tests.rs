@@ -1,5 +1,5 @@
-//! The stock taxi map (`TaxiFrame.xml`) fed a two-node snapshot shaped as `crate::ui_taxi`'s feed
-//! pushes it: `TAXIMAP_OPENED` shows it and builds the node buttons, a click takes the node, and
+//! The stock taxi map (`TaxiFrame.xml`) fed a two-node snapshot shaped as `crate::ui_taxi`'s setup
+//! lists it: `TAXIMAP_OPENED` shows it and builds the node buttons, a click takes the node, and
 //! `TAXIMAP_CLOSED` hides it.
 
 use benilla_ui::script::{ScriptValue, TaxiNodeType, TaxiUiNode, TaxiUiState, UiScript};
@@ -50,6 +50,7 @@ fn menu() -> TaxiUiState {
                 pos: (0.43, 0.33),
                 cost: 0,
                 routes: vec![],
+                num_routes: 0,
             },
             TaxiUiNode {
                 name: "Sentinel Hill, Westfall".into(),
@@ -57,6 +58,7 @@ fn menu() -> TaxiUiState {
                 pos: (0.41, 0.25),
                 cost: 110,
                 routes: vec![[0.43, 0.33, 0.41, 0.25]],
+                num_routes: 1,
             },
         ],
     }
@@ -121,6 +123,7 @@ fn no_single_hop_destination_posts_the_error_and_closes() {
             pos: (0.43, 0.33),
             cost: 0,
             routes: vec![],
+            num_routes: 0,
         }],
     }));
     seat_flight_master(&mut s, "Dungar Longdrink");

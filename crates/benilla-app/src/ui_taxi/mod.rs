@@ -1,65 +1,47 @@
-//! The taxi map's app side: [`TaxiState`] holds the `SMSG_SHOWTAXINODES` map and the one-shot
-//! replies, [`feed_taxi`] pushes the known nodes on the map the current node draws on with their
-//! routes (built in [`routing`]) and fires the map events, and [`drain_taxi`] sends the activate.
+//! The taxi map's app side: `SMSG_SHOWTAXINODES` runs the map's setup (`0x5932e0`) in its
+//! handler, which lists the known nodes on the map the current node draws on with their routes
+//! (built in [`routing`]) into [`TaxiState`], takes the interact target and fires
+//! `TAXIMAP_OPENED`. The verbs read that table through [`TaxiLive`] at their call, price a fare at
+//! the call (`0x591350`), and activate or close inside it (`0x5914b0`, `0x590ba0`).
 
 use benilla_protocol::messages::TaxiMask;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use benilla_ui::script::{TaxiUiState, UiScript};
+use benilla_ui::script::{TaxiAct, TaxiOutcome, TaxiUiState};
 
-use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
-use crate::ui_script::{UiDrain, UiFeed};
-use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
+use crate::ui_script::live::UiEvents;
+use crate::ui_session::NpcSession;
 
 mod routing;
-use routing::{
-    build_nodes, load_taxi_catalogs, taxi_error_key, TaxiCatalogs, TaxiFares, TaxiRouteCache,
-};
+pub(crate) use routing::ResolvedTaxiNode;
+use routing::{build_nodes, load_taxi_catalogs, TaxiCatalogs, TaxiFares};
 
-/// The open map, `SMSG_SHOWTAXINODES` as the wire gave it.
-pub(crate) struct TaxiOpen {
-    pub(crate) flightmaster: u64,
-    /// The node nearest the flight master, typed `Current`.
-    pub(crate) nearest_node: u32,
-    /// The known nodes: the only ones listed, and the only ones a route passes through.
+/// What the last setup listed: the current node, the mask it kept, the Lua face of each listed
+/// node and what its fare and activate read; it stays until the next setup or the world leave.
+pub(crate) struct TaxiTable {
+    pub(crate) current: u32,
     pub(crate) known: TaxiMask,
+    pub(crate) ui: TaxiUiState,
+    pub(crate) rows: Vec<ResolvedTaxiNode>,
 }
 
-/// The taxi session: the open map, plus the one-shot replies [`feed_taxi`] consumes.
+/// The taxi map's globals: the flight master it is open on and the last setup's table.
 #[derive(Resource, Default)]
 pub(crate) struct TaxiState {
-    pub(crate) open: Option<TaxiOpen>,
-    /// The last `SMSG_ACTIVATETAXIREPLY` code, for [`feed_taxi`] to show, or on `OK` to close the
-    /// map.
-    pub(crate) reply: Option<u32>,
-    /// A first-visit learn (`SMSG_NEW_TAXI_PATH`) for [`feed_taxi`] to announce.
-    pub(crate) discovered: bool,
-    /// A map refused for knowing fewer than two nodes, for [`feed_taxi`] to show
-    /// `ERR_TAXINOPATHS`.
-    pub(crate) no_paths: bool,
+    /// The flight master the map is open on, zeroed by the close (`0x590bc7`).
+    pub(crate) unit: Option<u64>,
+    /// The listed nodes (`0x593317` zeroes the count, `0x593771` fills it).
+    pub(crate) table: Option<TaxiTable>,
+    /// The last `SMSG_ACTIVATETAXIREPLY` code, which the taxi probe reads.
+    pub(crate) last_reply: Option<u32>,
 }
 
 impl TaxiState {
-    pub(crate) fn open(&mut self, flightmaster: u64, nearest_node: u32, known: TaxiMask) {
-        self.open = Some(TaxiOpen {
-            flightmaster,
-            nearest_node,
-            known,
-        });
-    }
-
-    /// A client-side close; the staged replies stay.
-    pub(crate) fn clear(&mut self) {
-        self.open = None;
-    }
-
-    /// The disconnect clear, staged replies included.
+    /// The disconnect clear.
     pub(crate) fn clear_session(&mut self) {
-        self.open = None;
-        self.reply = None;
-        self.discovered = false;
-        self.no_paths = false;
+        *self = Self::default();
     }
 }
 
@@ -72,156 +54,306 @@ pub(crate) struct FlightMasterStatus {
     pub(crate) known: bool,
 }
 
-/// The range guard closes the map, as the close button does, when the flight master is out of
-/// range or gone.
+/// The range guard's zero, its events fired by [`close_map`].
 impl NpcSession for TaxiState {
     fn npc(&self) -> Option<u64> {
-        self.open.as_ref().map(|o| o.flightmaster)
+        self.unit
     }
 
     fn close(&mut self) {
-        self.clear();
+        self.unit = None;
     }
 }
 
-/// Push the map into the VM and fire its events, show an activate refusal or close on `OK`, and
-/// announce a first-visit discovery.
-fn feed_taxi(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut state: ResMut<TaxiState>,
-    catalogs: Option<Res<TaxiCatalogs>>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    mut cache: ResMut<TaxiRouteCache>,
-    index: Res<GuidIndex>,
-    stores: Query<&ObjectStore>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    reactions: crate::target::ReactionInputs,
-    expansion: Res<crate::net::AccountExpansion>,
-    mut last: Local<crate::ui_script::VmMemo<Option<TaxiUiState>>>,
-    mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
-    mut sink: crate::ui_action::MessageSink,
-) {
-    let Some(mut script) = script else {
+/// The map's setup (`0x5932e0`): the same flight master again does nothing (`0x5932fc`); another
+/// closes the open map first (`0x593306`). The table is rebuilt, and with no node listed the map
+/// stays shut (`0x593734`); else the interact target is taken (`0x59374d`), the flight master
+/// stored, `TAXIMAP_OPENED` fired (`0x59378b`) and the Travel tutorial triggered (`0x593792`);
+/// with more than one node listed we stand up, dismount and leave a form the flight master
+/// cancels (`0x59379a`-`0x59380a`).
+pub(crate) fn setup_map(world: &mut World, unit: u64, current: u32, known: TaxiMask) {
+    let held = world.get_resource::<TaxiState>().and_then(|t| t.unit);
+    if held == Some(unit) {
         return;
-    };
-    let last = last.get(&script);
-    let last_name = last_name.get(&script);
-
-    // The activate reply: a refusal shows where its message row says; `OK` closes the map, as
-    // the reference's handler does for code 0.
-    if let Some(code) = state.reply.take() {
-        match taxi_error_key(code) {
-            Some(key) => {
-                let text = script
-                    .lua()
-                    .globals()
-                    .get::<String>(key)
-                    .unwrap_or_default();
-                if !text.is_empty() {
-                    crate::ui_action::show_messages(
-                        &mut script,
-                        &mut sink,
-                        "ui_taxi",
-                        [crate::ui_action::Shown::keyed(key, text)],
-                    );
-                }
-            }
-            None => state.open = None,
-        }
     }
-
-    // A map with fewer than two known nodes: message `0xc4` instead of the map (`0x6d61bb`).
-    if std::mem::take(&mut state.no_paths) {
-        let text = script
-            .lua()
-            .globals()
-            .get::<String>("ERR_TAXINOPATHS")
-            .unwrap_or_default();
-        if !text.is_empty() {
-            crate::ui_action::show_messages(
-                &mut script,
-                &mut sink,
-                "ui_taxi",
-                [crate::ui_action::Shown::keyed("ERR_TAXINOPATHS", text)],
-            );
-        }
+    if held.is_some() {
+        close_map(world);
     }
+    // The rest once the close's event has fired (`0x593317`).
+    crate::ui_script::live::in_turn(world, move |w| list_and_open(w, unit, current, &known));
+}
 
-    // The first-visit learn: the reference shows message `0xf2`, `ERR_NEWTAXIPATH`, whose row
-    // routes it to the yellow `UI_INFO_MESSAGE` and plays its `TaxiNodeDiscovered` sound kit; the
-    // catalog row carries both.
-    if std::mem::take(&mut state.discovered) {
-        let text = script
-            .lua()
-            .globals()
-            .get::<String>("ERR_NEWTAXIPATH")
-            .unwrap_or_default();
-        if !text.is_empty() {
-            crate::ui_action::show_messages(
-                &mut script,
-                &mut sink,
-                "ui_taxi",
-                [crate::ui_action::Shown::keyed("ERR_NEWTAXIPATH", text)],
-            );
-        }
+/// The setup past its close: the table rebuilt, then the open with any node listed.
+fn list_and_open(world: &mut World, unit: u64, current: u32, known: &TaxiMask) {
+    let table = build_table(world, current, known);
+    let listed = table.as_ref().map_or(0, |t| t.ui.nodes.len());
+    if let Some(mut state) = world.get_resource_mut::<TaxiState>() {
+        state.table = table;
     }
-
-    let Some(catalogs) = catalogs else {
+    if listed == 0 {
         return;
-    };
+    }
+    crate::ui_session::set_interact_target(world, unit);
+    crate::ui_script::live::in_turn(world, move |w| {
+        if let Some(mut state) = w.get_resource_mut::<TaxiState>() {
+            state.unit = Some(unit);
+        }
+        if let Some(mut ui) = w.get_resource_mut::<UiEvents>() {
+            ui.fire("TAXIMAP_OPENED", vec![]);
+        }
+        if let Some(mut asks) = w.get_resource_mut::<Messages<crate::tutorial::TutorialEvent>>() {
+            asks.write(crate::tutorial::TutorialEvent::trigger(
+                crate::tutorial::id::TRAVEL,
+            ));
+        }
+        if listed > 1 {
+            leave_for_the_flight(w);
+        }
+    });
+}
 
-    // The map is the one the current node draws on (`build_nodes`). The fares need the flight
-    // master and the player ([`taxi_fares`]); the player's faction group bars the other team's
-    // nodes from the route walk (`0x5926c0`).
-    let fresh = state.open.as_ref().and_then(|open| {
-        let flightmaster = index
-            .0
-            .get(&open.flightmaster)
-            .and_then(|&e| stores.get(e).ok());
-        let me = self_q.iter().next();
-        let fares = flightmaster
-            .zip(me)
-            .map(|(master, me)| taxi_fares(&reactions, master, me));
-        let catalog = reactions.factions.as_deref().map(|f| f.catalog());
-        let player_group = catalog
-            .zip(me.and_then(|me| me.0.unit_faction_template()))
-            .and_then(|(c, t)| c.template(t))
-            .map(|t| t.group_mask);
-        let (map_id, nodes, resolved) =
-            build_nodes(open, &catalogs, fares, player_group, expansion.0)?;
-        cache.0 = resolved;
-        Some(TaxiUiState {
+/// The listed table off the catalogs, the player's faction group (the walk's team check,
+/// `0x5926c0`) and the account's expansion (`0x59356c`); `None` with no catalogs or no map.
+fn build_table(world: &mut World, current: u32, known: &TaxiMask) -> Option<TaxiTable> {
+    let mut me = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
+    let template = me
+        .iter(world)
+        .next()
+        .and_then(|s| s.0.unit_faction_template());
+    let player_group = world
+        .get_resource::<crate::target::Factions>()
+        .map(|f| f.catalog())
+        .zip(template)
+        .and_then(|(c, t)| c.template(t))
+        .map(|t| t.group_mask);
+    let expansion = world
+        .get_resource::<crate::net::AccountExpansion>()
+        .map_or(0, |e| e.0);
+    let cat = world.get_resource::<TaxiCatalogs>()?;
+    let mut known = known.clone();
+    known.resize(cat.mask_words());
+    let (map_id, nodes, rows) = build_nodes(current, &known, cat, None, player_group, expansion)?;
+    Some(TaxiTable {
+        current,
+        known,
+        ui: TaxiUiState {
             art: format!("Interface\\TaxiFrame\\TAXIMAP{map_id}"),
             nodes,
-        })
-    });
-    if fresh.is_none() {
-        cache.0.clear();
+        },
+        rows,
+    })
+}
+
+/// The setup's tail with more than one node listed: a stand state but standing stands up
+/// (`0x5937dc`), a mount not ridden on a taxi dismounts (`0x5937f8` -> `0x7412e0`), and a form
+/// the flight master cancels, one without the stance bit or with bit `0x800`, is left (`0x5937ff`
+/// -> `0x721e70`, `0x726ce0`).
+fn leave_for_the_flight(world: &mut World) {
+    let mut me = world
+        .query_filtered::<(&ObjectStore, Option<&crate::unit_auras::UnitAuras>), With<SelfPlayer>>(
+        );
+    let Some((store, auras)) = me.iter(world).next() else {
+        return;
+    };
+    let echoed = store.0.unit_stand_state();
+    let mounted = store.0.unit_mount_display_id() > 0
+        && store.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0;
+    let form = store.0.unit_shapeshift_form();
+    let spells = world.get_resource::<crate::ui_action::Spells>();
+    let cancels = form != 0
+        && spells
+            .and_then(|s| s.forms.get(&u32::from(form)))
+            .is_some_and(|row| row.flags & 0x1 == 0 || row.flags & 0x800 != 0);
+    let form_auras = match (cancels, auras, spells) {
+        (true, Some(auras), Some(spells)) => {
+            crate::ui_shapeshift::form_auras(form, auras, &spells.catalog)
+        }
+        _ => Vec::new(),
+    };
+    let standing = world
+        .get_resource::<crate::player::Player>()
+        .map_or(echoed, |p| p.committed_stand_state(echoed))
+        == 0;
+    if let Some(net) = world.get_resource::<NetCommands>() {
+        if mounted {
+            let _ = net.0.send(ClientCommand::CancelMountAura);
+        }
+        for spell_id in form_auras {
+            let _ = net.0.send(ClientCommand::CancelAura { spell_id });
+        }
+    }
+    if !standing {
+        world.write_message(crate::player::StandStateRequest { state: 0 });
+    }
+}
+
+/// `CloseMap` (`0x590ba0`): with a flight master stored, the interact target cleared on it, whose
+/// interaction close runs this leg first when it held it (`0x590bb7` -> `0x512f58`), then the
+/// flight master zeroed (`0x590bc7`) and `TAXIMAP_CLOSED` fired.
+pub(crate) fn close_map(world: &mut World) {
+    let Some(unit) = world.get_resource::<TaxiState>().and_then(|t| t.unit) else {
+        return;
+    };
+    crate::ui_session::clear_interact_target(world, unit);
+    zero_and_fire(world);
+}
+
+/// The close's tail: zero, then `TAXIMAP_CLOSED`.
+fn zero_and_fire(world: &mut World) {
+    if let Some(mut t) = world.get_resource_mut::<TaxiState>() {
+        t.unit = None;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.fire("TAXIMAP_CLOSED", vec![]);
+    }
+}
+
+/// The interaction close's taxi leg with the interact target already zeroed (`0x512f58`): the close, whose own clear then finds no target.
+pub(crate) fn close_by_interaction(world: &mut World) {
+    if world
+        .get_resource::<TaxiState>()
+        .is_some_and(|t| t.unit.is_some())
+    {
+        zero_and_fire(world);
+    }
+}
+
+/// The world leave's taxi part (`0x528cf6` -> `0x591ac0`): the table freed (`0x591a10`), then the close.
+pub(crate) fn leave_world(world: &mut World) {
+    if let Some(mut t) = world.get_resource_mut::<TaxiState>() {
+        t.table = None;
+    }
+    close_map(world);
+}
+
+/// The range guard's close: a flight master out of the leash or gone closes the map through [`close_map`].
+fn close_out_of_range(
+    taxi: Res<TaxiState>,
+    index: Res<GuidIndex>,
+    self_q: Query<&Transform, With<SelfPlayer>>,
+    transforms: Query<&Transform>,
+    mut queue: Commands,
+) {
+    let Some(unit) = taxi.unit else {
+        return;
+    };
+    if crate::ui_session::npc_out_of_range(unit, &index, &self_q, &transforms) == Some(true) {
+        debug!("ui_taxi: flight master {unit:#x} out of range/gone — closing");
+        queue.queue(|world: &mut World| {
+            close_map(world);
+            crate::ui_script::live::fire_handler_events(world);
+        });
+    }
+}
+
+/// The taxi map the verbs read and act on at their call.
+#[derive(SystemParam)]
+pub(crate) struct TaxiLive<'w, 's> {
+    state: ResMut<'w, TaxiState>,
+    commands: Res<'w, NetCommands>,
+    index: Res<'w, GuidIndex>,
+    units: Query<'w, 's, &'static ObjectStore, Without<SelfPlayer>>,
+    me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    reactions: crate::target::ReactionInputs<'w>,
+}
+
+impl TaxiLive<'_, '_> {
+    /// The last setup's table.
+    pub(crate) fn map(&self) -> Option<&TaxiUiState> {
+        self.state.table.as_ref().map(|t| &t.ui)
     }
 
-    // The flight master's name is tracked so its landing re-fires `TAXIMAP_OPENED`, whose stock
-    // handler titles the map with `UnitName("npc")` (`TaxiFrame.lua:27`); the reference fires it
-    // only on open.
-    let flightmaster_name = state
-        .open
-        .as_ref()
-        .and_then(|open| names.resolve(open.flightmaster, &commands))
-        .map(str::to_string);
-    let name_changed = *last_name != flightmaster_name;
+    /// `TaxiNodeCost` (`0x591350`): 0 with no player or no flight master object; over a direct hop
+    /// its fare less the flight master's discount, else the walked fare at the reaction's tier.
+    pub(crate) fn cost(&self, slot: u32) -> i64 {
+        let (Some(me), Some(master)) = (
+            self.me.iter().next(),
+            self.state
+                .unit
+                .and_then(|u| self.index.0.get(&u))
+                .and_then(|&e| self.units.get(e).ok()),
+        ) else {
+            return 0;
+        };
+        let Some(row) = self
+            .state
+            .table
+            .as_ref()
+            .and_then(|t| t.rows.get(slot as usize))
+        else {
+            return 0;
+        };
+        row.fare(taxi_fares(&self.reactions, master, me))
+    }
 
-    if fresh != *last || (fresh.is_some() && name_changed) {
-        script.set_taxi(fresh.clone());
-        match (&*last, &fresh) {
-            // No arguments: the event's one fire site is a plain event signal.
-            (None, Some(_)) | (Some(_), Some(_)) => {
-                script.fire_event("TAXIMAP_OPENED", Vec::new());
+    /// `TakeTaxiNode` (`0x5914b0`) and `CloseTaxiMap` (`0x590ba0`) inside their call.
+    pub(crate) fn act(
+        &mut self,
+        act: TaxiAct,
+        target: Option<&mut crate::ui_session::InteractTarget>,
+    ) -> TaxiOutcome {
+        let mut out = TaxiOutcome::default();
+        match act {
+            TaxiAct::Take(slot) => {
+                let Some((current, row)) = self
+                    .state
+                    .table
+                    .as_ref()
+                    .and_then(|t| Some((t.current, t.rows.get(slot as usize)?.clone())))
+                else {
+                    return out;
+                };
+                let Some(money) = self.me.iter().next().map(|me| {
+                    // Mounted (`0x5914e1`); the client flag beside it spans a passenger's
+                    // dismount round trip, which benilla does not keep.
+                    let mounted = me.0.unit_mount_display_id() > 0;
+                    (mounted, me.0.player_money().unwrap_or(0))
+                }) else {
+                    return out;
+                };
+                if money.0 {
+                    out.error = Some("ERR_TAXIPLAYERALREADYMOUNTED");
+                    return out;
+                }
+                let guid = self.state.unit.unwrap_or(0);
+                let (src, dest) = (current, row.id);
+                if src == dest {
+                    out.error = Some("ERR_TAXISAMENODE");
+                } else if row.direct.is_some() {
+                    debug!("ui_taxi: activate {src} -> {dest}");
+                    let _ = self.commands.0.send(ClientCommand::ActivateTaxi {
+                        guid,
+                        source_node: src,
+                        dest_node: dest,
+                    });
+                } else if let Some(chain) = row.path {
+                    // The fare at the call against our coinage (`0x591569`).
+                    if self.cost(slot) as u32 <= money.1 {
+                        debug!("ui_taxi: activate express {chain:?}");
+                        let _ = self
+                            .commands
+                            .0
+                            .send(ClientCommand::ActivateTaxiExpress { guid, nodes: chain });
+                    } else {
+                        out.error = Some("ERR_TAXINOTENOUGHMONEY");
+                    }
+                } else {
+                    out.error = Some("ERR_TAXINOSUCHPATH");
+                }
             }
-            (Some(_), None) => script.fire_event("TAXIMAP_CLOSED", vec![]),
-            (None, None) => {}
+            TaxiAct::Close => {
+                let Some(unit) = self.state.unit else {
+                    return out;
+                };
+                out.closed = 1;
+                if let Some(t) = target.filter(|t| t.0 == Some(unit)) {
+                    t.0 = None;
+                    out.closed = 2;
+                }
+                self.state.unit = None;
+            }
         }
-        *last = fresh;
-        *last_name = flightmaster_name;
+        out
     }
 }
 
@@ -261,63 +393,6 @@ fn taxi_fares(
     }
 }
 
-/// Drain the Lua intents. `TakeTaxiNode(i)` sends `CMSG_ACTIVATETAXI` when a direct `TaxiPath` edge
-/// joins the current node and the target, as its one drawn segment shows, and otherwise
-/// `CMSG_ACTIVATETAXIEXPRESS` with the chain, as the reference's test decides; the
-/// `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
-fn drain_taxi(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut state: ResMut<TaxiState>,
-    cache: Res<TaxiRouteCache>,
-    catalogs: Option<Res<TaxiCatalogs>>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    for idx in script.take_taxi_node() {
-        let Some(open) = &state.open else { continue };
-        let Some(resolved) = idx.checked_sub(1).and_then(|i| cache.0.get(i)) else {
-            continue;
-        };
-        let chain = resolved.chain.as_slice();
-        let (Some(&src), Some(&dest)) = (chain.first(), chain.last()) else {
-            continue;
-        };
-        if src == dest {
-            debug!("ui_taxi: TakeTaxiNode({idx}) is the current node — ignored");
-            continue;
-        }
-        let direct = catalogs
-            .as_ref()
-            .is_some_and(|c| c.paths.between(src, dest).is_some());
-        if direct {
-            debug!(
-                "ui_taxi: activate {src} -> {dest} (direct edge, {} copper)",
-                resolved.cost
-            );
-            let _ = commands.0.send(ClientCommand::ActivateTaxi {
-                guid: open.flightmaster,
-                source_node: src,
-                dest_node: dest,
-            });
-        } else {
-            debug!(
-                "ui_taxi: activate express {chain:?} ({} copper)",
-                resolved.cost
-            );
-            let _ = commands.0.send(ClientCommand::ActivateTaxiExpress {
-                guid: open.flightmaster,
-                nodes: chain.to_vec(),
-            });
-        }
-    }
-    if script.take_taxi_close() {
-        debug!("ui_taxi: client-side close (no packet)");
-        state.clear();
-    }
-}
-
 mod net;
 pub(crate) use net::shows_map;
 
@@ -326,156 +401,17 @@ pub(crate) struct UiTaxiPlugin;
 impl Plugin for UiTaxiPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<TaxiState>()
-            .init_resource::<TaxiRouteCache>()
-            .add_systems(
-                Update,
-                (
-                    load_taxi_catalogs,
-                    // Range-close first so the clear fires `TAXIMAP_CLOSED` the same frame.
-                    close_npc_session_out_of_range::<TaxiState>.before(feed_taxi),
-                    feed_taxi.in_set(UiFeed),
-                    drain_taxi.in_set(UiDrain),
-                ),
-            );
+        app.init_resource::<TaxiState>().add_systems(
+            Update,
+            (
+                load_taxi_catalogs,
+                close_out_of_range
+                    .after(crate::net::apply_net_updates)
+                    .before(crate::ui_script::UiPress),
+            ),
+        );
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use benilla_protocol::field::FIELD_UNIT_FLAGS;
-    use benilla_protocol::ObjectFields;
-
-    /// The map's fares take the flight master's discount and the express leg sends the chain alone.
-    /// Honored makes 0.1, as no 3.3.5a field carries an honor rank: Sentinel Hill's direct 110
-    /// shows 99, and Thelsamar's route through Ironforge, 50 + 110, shows 144 and sends its three
-    /// nodes. With the flight master unresolved the fares show 0.
-    #[test]
-    fn the_map_shows_discounted_fares_and_the_express_sends_the_chain() {
-        use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
-        use bevy::ecs::system::RunSystemOnce;
-
-        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
-        const MASTER: u64 = 0xF130_0000_0000_0099;
-
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let catalogs = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
-        let (factions, template, reps) = crate::target::stormwind_fixture(&mut chain, 9000);
-
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let mut app = App::new();
-        app.init_resource::<TaxiState>()
-            .init_resource::<TaxiRouteCache>()
-            .init_resource::<GuidIndex>()
-            .init_resource::<NameCache>()
-            .init_resource::<crate::ui_chat::ChatLog>()
-            .init_resource::<crate::sound::MessageSounds>()
-            .insert_resource(NetCommands(tx))
-            .insert_resource(crate::net::AccountExpansion(2))
-            .insert_resource(catalogs)
-            .insert_resource(factions)
-            .insert_resource(reps)
-            .insert_non_send_resource(UiScript::new().unwrap());
-        app.world_mut().spawn((
-            SelfPlayer,
-            ObjectStore(ObjectFields::from_pairs(&[(
-                BYTES_0,
-                crate::target::HUMAN_WARRIOR,
-            )])),
-        ));
-        let master = app
-            .world_mut()
-            .spawn((
-                crate::net::Guid(MASTER),
-                ObjectStore(ObjectFields::from_pairs(&[
-                    (FIELD_UNIT_FACTIONTEMPLATE, template),
-                    (FIELD_UNIT_FLAGS, 0x1000),
-                ])),
-            ))
-            .id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(MASTER, master);
-        // At Stormwind (2), knowing Sentinel Hill (4), Ironforge (6) and Thelsamar (8).
-        app.world_mut()
-            .resource_mut::<TaxiState>()
-            .open(MASTER, 2, TaxiMask(vec![0b1010_1010]));
-
-        let node = |app: &mut App, name: &str| -> (i64, i64) {
-            app.world_mut()
-                .non_send_resource_mut::<UiScript>()
-                .eval(&format!(
-                    "for i = 1, NumTaxiNodes() do \
-                       if TaxiNodeName(i) == {name:?} then return i, TaxiNodeCost(i) end \
-                     end"
-                ))
-                .unwrap()
-        };
-        app.world_mut().run_system_once(feed_taxi).unwrap();
-        assert_eq!(node(&mut app, "Sentinel Hill, Westfall").1, 99);
-        assert_eq!(node(&mut app, "Ironforge, Dun Morogh").1, 45);
-        let (thelsamar, shown) = node(&mut app, "Thelsamar, Loch Modan");
-        assert_eq!(shown, 144);
-
-        app.world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .run(&format!("TakeTaxiNode({thelsamar})"))
-            .unwrap();
-        app.world_mut().run_system_once(drain_taxi).unwrap();
-        // The feed's name lookup queries the flight master; only the activates matter here.
-        let sent: Vec<_> = rx
-            .try_iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    ClientCommand::ActivateTaxi { .. } | ClientCommand::ActivateTaxiExpress { .. }
-                )
-            })
-            .collect();
-        assert!(
-            matches!(
-                sent.as_slice(),
-                [ClientCommand::ActivateTaxiExpress { nodes, .. }] if nodes == &[2, 6, 8]
-            ),
-            "the express carries the chain, got {sent:?}"
-        );
-
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .remove(&MASTER);
-        app.world_mut().run_system_once(feed_taxi).unwrap();
-        assert_eq!(node(&mut app, "Sentinel Hill, Westfall").1, 0);
-    }
-
-    #[test]
-    fn open_close_and_session_clear() {
-        let mut state = TaxiState::default();
-        assert_eq!(state.npc(), None);
-
-        state.open(0x42, 2, TaxiMask(vec![0xA]));
-        assert_eq!(state.npc(), Some(0x42));
-        assert_eq!(state.open.as_ref().unwrap().nearest_node, 2);
-
-        // A client-side close drops the map, nothing else.
-        state.reply = Some(3);
-        state.discovered = true;
-        NpcSession::close(&mut state);
-        assert_eq!(state.npc(), None);
-        assert_eq!(
-            state.reply,
-            Some(3),
-            "close leaves staged reply/discovery alone"
-        );
-
-        // Disconnect drops everything.
-        state.open(0x42, 2, TaxiMask::default());
-        state.clear_session();
-        assert_eq!(state.npc(), None);
-        assert_eq!(state.reply, None);
-        assert!(!state.discovered);
-    }
-}
+mod tests;

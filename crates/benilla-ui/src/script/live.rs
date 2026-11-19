@@ -778,6 +778,21 @@ pub trait LiveState {
         0
     }
 
+    /// The taxi map the last setup listed (`0x5932e0`), `Some(None)` with none; `None` where no view lends it.
+    fn taxi_map(&self) -> Option<Option<&super::TaxiUiState>> {
+        None
+    }
+
+    /// `TaxiNodeCost`'s fare at the call (`0x591350`) for a 0-based listed slot; `None` where no view lends it.
+    fn taxi_node_cost(&self, _slot: u32) -> Option<i64> {
+        None
+    }
+
+    /// A taxi verb's act inside its call; `None` where no view lends the map.
+    fn taxi_act(&mut self, _act: super::TaxiAct) -> Option<super::TaxiOutcome> {
+        None
+    }
+
     /// Our coinage at the call (`PLAYER_FIELD_COINAGE`), 0 with no player object; `None` where no view lends it.
     fn player_money(&self) -> Option<u64> {
         None

@@ -110,6 +110,8 @@ pub(crate) struct LiveView<'w, 's> {
     item_text: crate::ui_item_text::ItemTextLive<'w, 's>,
     /// The merchant globals and what its rows, costs and sends read.
     merchant: Option<crate::ui_merchant::MerchantLive<'w, 's>>,
+    /// The taxi map's globals and what its fares and activates read.
+    taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1833,6 +1835,22 @@ impl LiveState for LiveView<'_, '_> {
     ) -> Option<benilla_ui::script::MerchantOutcome> {
         let target = self.tabard.target_mut();
         Some(self.merchant.as_mut()?.act(act, target))
+    }
+
+    fn taxi_map(&self) -> Option<Option<&benilla_ui::script::TaxiUiState>> {
+        Some(self.taxi.as_ref()?.map())
+    }
+
+    fn taxi_node_cost(&self, slot: u32) -> Option<i64> {
+        Some(self.taxi.as_ref()?.cost(slot))
+    }
+
+    fn taxi_act(
+        &mut self,
+        act: benilla_ui::script::TaxiAct,
+    ) -> Option<benilla_ui::script::TaxiOutcome> {
+        let target = self.tabard.target_mut();
+        Some(self.taxi.as_mut()?.act(act, target))
     }
 
     fn close_gossip(&mut self) -> u32 {

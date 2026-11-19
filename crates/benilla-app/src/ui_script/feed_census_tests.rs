@@ -76,7 +76,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_spellbook::feed_spellbook",
     "benilla_app::ui_talent::feed_inspect_talents",
     "benilla_app::ui_talent::feed_talents",
-    "benilla_app::ui_taxi::feed_taxi",
     "benilla_app::ui_threat::feed_threat",
     "benilla_app::ui_title::feed_titles",
     "benilla_app::ui_tooltip::drive_mouseover_tooltip",

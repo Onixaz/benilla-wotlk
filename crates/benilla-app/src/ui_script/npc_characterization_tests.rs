@@ -1396,3 +1396,150 @@ fn the_merchant_sends_in_its_calls_and_its_watches_fire_from_the_handler() {
         .collect();
     assert_eq!(sent, vec![(NPC, 11, 4, 255)], "sent inside the call");
 }
+
+const TAXI_EVENTS: &[&str] = &[
+    "TAXIMAP_OPENED",
+    "TAXIMAP_CLOSED",
+    "GOSSIP_CLOSED",
+    "UI_ERROR_MESSAGE",
+    "UI_INFO_MESSAGE",
+];
+
+/// `SMSG_SHOWTAXINODES` for `master` at Stormwind (2) knowing Sentinel Hill (4), Ironforge (6) and Thelsamar (8).
+fn stormwind_nodes(master: u64) -> SessionEvent {
+    let mut known_mask = benilla_protocol::messages::TaxiMask::default();
+    for id in [2, 4, 6, 8] {
+        known_mask.set(id);
+    }
+    SessionEvent::TaxiNodesShown {
+        flightmaster: master,
+        nearest_node: 2,
+        known_mask,
+    }
+}
+
+/// The 1-based slot of the node named `name`, read at the call.
+fn taxi_slot(rig: &mut Rig, name: &str) -> String {
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(&format!(
+            "for i = 1, NumTaxiNodes() do if TaxiNodeName(i) == {name:?} then return tostring(i) end end return 'none'"
+        ))
+    })
+    .expect("a VM")
+    .expect("the chunk runs")
+}
+
+/// `SMSG_SHOWTAXINODES` runs the map's setup in its handler (`0x6d61e7` -> `0x5932e0`): the table listed, the interact target taken and `TAXIMAP_OPENED` fired in the packet's turn, ahead of the next packet's line (`0x59378b`), with `NumTaxiNodes` and `TaxiNodeCost` read at the call (`0x590710`, `0x591350`). `TakeTaxiNode` sends inside its call (`0x5914b0`): Sentinel Hill's direct hop, Thelsamar's chain once the coinage covers its fare, `ERR_TAXINOTENOUGHMONEY` before; `CloseTaxiMap` fires `TAXIMAP_CLOSED` twice inside its call, the flight master holding the interact target (`0x590bb7` -> `0x512f58`), and the table stays listed (`0x590bc7`).
+#[test]
+fn the_taxi_map_opens_from_its_handler_and_acts_inside_its_calls() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let rx = tap(&mut rig);
+    rig.packets(vec![npc_at(NPC, 0x2000, NEAR)], 2);
+    let verbs = &["taxin", "taxicost"];
+    let seen = rig.packets(
+        vec![stormwind_nodes(NPC), SessionEvent::BarberShopResult(2)],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, TAXI_EVENTS, verbs),
+        [
+            "TAXIMAP_OPENED | taxin=4 taxicost=110",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | taxin=4 taxicost=110",
+        ]
+    );
+    let _ = rx.try_iter().count();
+    let thelsamar = taxi_slot(&mut rig, "Thelsamar, Loch Modan");
+    let hill = taxi_slot(&mut rig, "Sentinel Hill, Westfall");
+    assert_eq!(
+        fired_in_call(
+            &mut rig,
+            &format!("TakeTaxiNode({thelsamar})"),
+            TAXI_EVENTS,
+            &[]
+        ),
+        ["UI_INFO_MESSAGE You don't have enough money!"],
+        "the refusal shows inside the call"
+    );
+    rig.packets(
+        vec![self_values(&[(
+            benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE,
+            1000,
+        )])],
+        1,
+    );
+    let _ = rx.try_iter().count();
+    call(
+        &mut rig,
+        &format!("TakeTaxiNode({thelsamar}) TakeTaxiNode({hill})"),
+    );
+    let sent: Vec<String> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::ActivateTaxiExpress { guid, nodes } => {
+                Some(format!("express {guid:#x} {nodes:?}"))
+            }
+            ClientCommand::ActivateTaxi {
+                guid,
+                source_node,
+                dest_node,
+            } => Some(format!("direct {guid:#x} {source_node}->{dest_node}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            format!("express {NPC:#x} [2, 6, 8]"),
+            format!("direct {NPC:#x} 2->4"),
+        ],
+        "sent inside the calls, in call order"
+    );
+    assert_eq!(
+        fired_in_call(&mut rig, "CloseTaxiMap()", TAXI_EVENTS, verbs),
+        [
+            "TAXIMAP_CLOSED | taxin=4 taxicost=0",
+            "TAXIMAP_CLOSED | taxin=4 taxicost=0",
+        ]
+    );
+    assert!(fired_in_call(&mut rig, "CloseTaxiMap()", TAXI_EVENTS, verbs).is_empty());
+}
+
+/// A second flight master's map closes the first through the setup's close (`0x593306`), `TAXIMAP_CLOSED` before `TAXIMAP_OPENED`; the same one again does nothing (`0x5932fc`); an `OK` activate reply closes the map in its turn (`0x6ceeb3`), and a refusal shows its line (`0x6ceea7`). Each close fires twice, the flight master holding the interact target (`0x590bb7` -> `0x512f58`).
+#[test]
+fn a_second_flight_master_closes_the_first_and_a_reply_closes_in_its_turn() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(
+        vec![npc_at(NPC, 0x2000, NEAR), npc_at(NPC2, 0x2000, NEAR)],
+        2,
+    );
+    let verbs = &["taxin"];
+    let seen = rig.packets(
+        vec![
+            stormwind_nodes(NPC),
+            stormwind_nodes(NPC),
+            stormwind_nodes(NPC2),
+            SessionEvent::ActivateTaxiReply { code: 3 },
+            SessionEvent::ActivateTaxiReply { code: 0 },
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, TAXI_EVENTS, verbs),
+        [
+            "TAXIMAP_OPENED | taxin=4",
+            "TAXIMAP_CLOSED | taxin=4",
+            "TAXIMAP_CLOSED | taxin=4",
+            "TAXIMAP_OPENED | taxin=4",
+            "UI_INFO_MESSAGE You don't have enough money! | taxin=4",
+            "TAXIMAP_CLOSED | taxin=4",
+            "TAXIMAP_CLOSED | taxin=4",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | taxin=4",
+        ]
+    );
+}

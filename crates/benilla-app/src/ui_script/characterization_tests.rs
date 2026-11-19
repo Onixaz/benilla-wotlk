@@ -164,6 +164,12 @@ local VERBS = {
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
     { "money", function() return GetMoney() end },
+    { "taxin", function() return NumTaxiNodes() end },
+    { "taxicost", function()
+        for i = 1, NumTaxiNodes() do
+            if TaxiNodeName(i) == "Sentinel Hill, Westfall" then return TaxiNodeCost(i) end
+        end
+    end },
 }
 local function answers()
     local verbs = {}

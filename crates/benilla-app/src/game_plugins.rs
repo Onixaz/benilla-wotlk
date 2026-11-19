@@ -1673,8 +1673,6 @@ pub(crate) mod schedule_tests {
          "per-frame paint and cost state, not a queue"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,
          "acts on the glue VM alone, which the lifecycle installs with its GlueXML loaded and seated, so there is no frameless window; its takes are the manager's own flags and outbox"),
-        ("ui_taxi/mod.rs", "feed_taxi", Because::PlayerRoundTrip,
-         "both packets follow talking to a flight master"),
         ("ui_trainer/mod.rs", "feed_trainer", Because::PlayerRoundTrip,
          "a refusal answers a Train click and a list answers a trainer gossip click; the edges ride `VmMemo`s"),
     ];
