@@ -282,6 +282,11 @@ pub(crate) fn set_interact_target(world: &mut World, guid: u64) {
         if let Some(mut t) = w.get_resource_mut::<InteractTarget>() {
             t.0 = Some(guid);
         }
+        if w.contains_non_send::<benilla_ui::script::UiScript>() {
+            if let Err(e) = w.run_system_cached_with(crate::ui_unit::push_npc_unit, guid) {
+                warn!("ui_session: the \"npc\" unit was not pushed: {e}");
+            }
+        }
     });
 }
 

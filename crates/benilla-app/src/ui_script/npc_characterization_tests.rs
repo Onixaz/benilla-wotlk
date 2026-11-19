@@ -1277,9 +1277,10 @@ fn the_merchant_fires_from_its_handlers_with_the_rows_read_at_the_call() {
         )],
         2,
     );
+    // The show reads the vendor the setter just stored (`0x60af67`).
     assert_eq!(
-        pin(&seen, MERCHANT_EVENTS, verbs),
-        vec!["MERCHANT_SHOW | merchantn=2"]
+        pin(&seen, MERCHANT_EVENTS, &["merchantn", "npc"]),
+        vec![format!("MERCHANT_SHOW | merchantn=2 npc=0x{NPC:016X}")]
     );
     let seen = rig.packets(
         vec![
@@ -1320,11 +1321,12 @@ fn the_merchant_fires_from_its_handlers_with_the_rows_read_at_the_call() {
     );
     assert_eq!(eval(&mut rig, "select(5, GetMerchantItemInfo(1))"), "0");
     let seen = rig.packets(vec![vendor_list(NPC2, vec![vendor_row(33, 1, 1)])], 2);
+    // The setter's walk runs with the target zeroed (`0x51fd1c`, `0x512e89`), then stores the next.
     assert_eq!(
-        pin(&seen, MERCHANT_EVENTS, verbs),
+        pin(&seen, MERCHANT_EVENTS, &["merchantn", "npc"]),
         vec![
-            "MERCHANT_CLOSED | merchantn=0",
-            "MERCHANT_SHOW | merchantn=1"
+            "MERCHANT_CLOSED | merchantn=0 npc=nil".to_string(),
+            format!("MERCHANT_SHOW | merchantn=1 npc=0x{NPC2:016X}")
         ]
     );
 }

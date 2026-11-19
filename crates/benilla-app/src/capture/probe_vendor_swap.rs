@@ -14,6 +14,8 @@
 //! 4. title: a second later the window still shows his name.
 //! 5. clear: `HideUIPanel(MerchantFrame)` (stock OnHide calls `CloseMerchant`); once the session
 //!    is gone `UnitExists("npc")` is nil.
+//! 6. closed: every `MERCHANT_CLOSED` since the swap, the swap's and the hide's, read `UnitName("npc")`
+//!    as nil inside the dispatch.
 //!
 //! The event readings are taken inside the event by a hook frame registered after the stock one,
 //! so a later `MERCHANT_UPDATE` repaint cannot mask what the open left. Non-combat, nothing bought
@@ -367,6 +369,23 @@ fn vendor_swap_probe(
                     } else {
                         info!("PROBE_VENDOR_SWAP: clear PASS — UnitExists(\"npc\") is nil");
                         probe.passes += 1;
+                    }
+                    // The close zeroes the interact target before its walk (`0x512e89`), so every
+                    // `MERCHANT_CLOSED`, the swap's and the hide's, reads `"npc"` as nobody.
+                    let log: Vec<String> =
+                        script.eval("return ProbeVendorSwapLog").unwrap_or_default();
+                    let closed: Vec<&String> = log
+                        .iter()
+                        .filter(|l| l.starts_with("MERCHANT_CLOSED|"))
+                        .collect();
+                    if !closed.is_empty()
+                        && closed.iter().all(|l| l.starts_with("MERCHANT_CLOSED|nil|"))
+                    {
+                        info!("PROBE_VENDOR_SWAP: closed PASS — {closed:?}");
+                        probe.passes += 1;
+                    } else {
+                        error!("PROBE_VENDOR_SWAP: closed FAIL — {log:?}");
+                        probe.fails += 1;
                     }
                     probe.phase = Phase::Done;
                 }

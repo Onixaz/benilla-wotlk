@@ -1572,6 +1572,47 @@ pub(crate) fn push_arena_units(
     }
 }
 
+/// The `"npc"` unit, pushed as the interact target is stored (`0x51fd26`) so the window's show handler reads the object it names (`0x60af67`); per-token pushes are #1289.
+pub(crate) fn push_npc_unit(
+    In(guid): In<u64>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    tables: SnapshotTables,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    index: Option<Res<crate::net::GuidIndex>>,
+    stores: Query<&ObjectStore>,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    factions: Option<Res<Factions>>,
+    reputations: Res<Reputations>,
+    group: Res<crate::ui_party::GroupState>,
+    instance: crate::ui_arena::ArenaInstance,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let held = held::HeldUnits {
+        names: &names,
+        commands: &commands,
+        factions: factions.as_deref(),
+        reputations: &reputations,
+        group: &group,
+        self_store: self_q.iter().next(),
+        classes: tables.classes(),
+        types: tables.types(&names),
+        loot_lists: tables.loot_lists(),
+        arena: instance.active(),
+    };
+    // An unheld guid leaves the last push: the getters' object lookup misses it either way.
+    if let Some(state) = index
+        .as_ref()
+        .and_then(|i| i.0.get(&guid))
+        .and_then(|&e| stores.get(e).ok())
+        .map(|store| held.state(store, guid))
+    {
+        script.set_unit("npc", Some(state));
+    }
+}
+
 /// The sources `feed_units` snapshots besides the selection: the `"npc"` and `"questnpc"` units,
 /// the encounter's `"bossN"` and the arena's `"arenaN"` and `"arenapetN"`.
 #[derive(bevy::ecs::system::SystemParam)]
