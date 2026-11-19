@@ -1,24 +1,15 @@
-//! The gossip bindings: the app pushes the open menu ([`UiScript::set_gossip`]), and
-//! `SelectGossipOption` and `CloseGossip` queue intents it drains.
-//!
-//! `GetGossipOptions()` returns flat `(text, type)` pairs, `type` the lowercase icon name the app
-//! maps from the wire icon. `SelectGossipOption(index, code, confirmed)` runs the client's checks
-//! before it queues a select (`0x58af10`): an unconfirmed option with box text fires
-//! `GOSSIP_CONFIRM`, a coded option without a code fires `GOSSIP_ENTER_CODE`, and box money past
-//! the purse shows `ERR_NOT_ENOUGH_MONEY`; the stock popups (`StaticPopup.lua`) call back with
-//! `confirmed` set.
-//!
-//! A menu is pushed only once its greeting (`SMSG_NPC_TEXT_UPDATE`) has arrived; until then the
-//! VM keeps its last menu, as the reference's frame keeps its last paint: its text setter returns
-//! on a cache miss without an event, and the greeting write and `GOSSIP_SHOW` share one success
-//! path (`0x58ac30`).
+//! The gossip bindings. Every verb reads the gossip globals at its call through the lent view
+//! ([`GossipRead`]): the greeting the last drawn text wrote (`0xc00ef0`), the options and quest rows
+//! the last `SMSG_GOSSIP_MESSAGE` read (`0xc00bf0`, `0xbfc968`) and the text-pending latch
+//! (`0xc00be8`). None of them test the NPC: a close leaves them as they were. `SelectGossipOption`,
+//! the two quest selects and `CloseGossip` send and close inside their call.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, flag, number_arg, optional_string};
 use super::ScriptValue;
 
-/// One gossip option; its 1-based index is its place in [`GossipMenu::options`].
+/// One gossip option; its 1-based index is its place in [`GossipRead::options`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GossipOptionView {
     /// The option's label.
@@ -49,46 +40,24 @@ pub struct GossipQuestRow {
     pub repeatable: bool,
 }
 
-/// One open gossip menu, pushed whole by the app.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct GossipMenu {
-    /// The NPC greeting, always resolved.
-    pub greeting: String,
-    /// Quest rows from the same packet.
-    pub quests: Vec<GossipQuestRow>,
-    pub options: Vec<GossipOptionView>,
-    /// `ForceGossip` (`0x58ab50`): the NPC's creature type flag `0x8000000`, which keeps the
-    /// stock frame from skipping a lone service option.
+/// The gossip globals at the call.
+#[derive(Clone, Copy, Debug)]
+pub struct GossipRead<'a> {
+    /// The last drawn greeting (`0xc00ef0`), empty before the first.
+    pub greeting: &'a str,
+    pub options: &'a [GossipOptionView],
+    pub quests: &'a [GossipQuestRow],
+    /// The text-pending latch (`0xc00be8`), under which `SelectGossipOption` does nothing.
+    pub pending: bool,
+    /// `ForceGossip` (`0x58ab50`): the held NPC's creature type flag `0x8000000`.
     pub force_gossip: bool,
+    /// Our coinage, which a select's box money is held against (`0x58afcd`).
+    pub money: u64,
 }
 
-impl super::UiScript {
-    /// Push (or clear, with `None`) the open gossip menu.
-    pub fn set_gossip(&mut self, menu: Option<GossipMenu>) {
-        set_field!(self, gossip, menu);
-    }
-
-    /// Whether the open menu's greeting query is out: the reference's latch (`0xc00be8`), under
-    /// which `SelectGossipOption` does nothing.
-    pub fn set_gossip_pending(&mut self, pending: bool) {
-        set_field!(self, gossip_pending, pending);
-    }
-
-    /// Drain the selects queued since the last call: the 1-based option position, and the code
-    /// for a coded option.
-    pub fn take_gossip_selects(&mut self) -> Vec<(u32, Option<String>)> {
-        drain_field!(self, gossip_selects)
-    }
-
-    /// Whether `CloseGossip` was called since the last drain; the close sends no packet.
-    pub fn take_gossip_close(&mut self) -> bool {
-        drain_field!(self, gossip_close)
-    }
-
-    /// Drain the queued 1-based whole-menu quest-row positions.
-    pub fn take_gossip_quest_selects(&mut self) -> Vec<u32> {
-        drain_field!(self, gossip_quest_selects)
-    }
+/// `f` over the gossip globals at the call; `None` with no view lent.
+fn read<R>(f: impl FnOnce(&GossipRead<'_>) -> R) -> Option<R> {
+    super::read_live(|l| l.gossip().map(|g| f(&g))).flatten()
 }
 
 /// The quest-trivial test (`0x58aba0`): a quest is grey when its level plus the player's grey
@@ -107,37 +76,26 @@ pub(super) fn quest_is_trivial(quest_level: i32, player_level: u32) -> bool {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // `0x58a900`: the greeting buffer as it is.
     g.set(
         "GetGossipText",
         lua.create_function(|lua, ()| {
-            let text = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.gossip.as_ref().map(|m| m.greeting.clone())
-            };
-            match text {
-                Some(t) => Ok(Value::String(lua.create_string(&t)?)),
-                None => Ok(Value::Nil),
-            }
+            let text = read(|g| g.greeting.to_owned()).unwrap_or_default();
+            lua.create_string(text)
         })?,
     )?;
 
+    // `0x58a9e0`: `(text, type)` per option.
     g.set(
         "GetGossipOptions",
         lua.create_function(|lua, ()| {
-            // Copy out under one short borrow; build the Lua values with none held.
-            let pairs: Vec<(String, String)> = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.gossip.as_ref().map_or_else(Vec::new, |m| {
-                    m.options
-                        .iter()
-                        .map(|o| (o.label.clone(), o.icon_type.clone()))
-                        .collect()
-                })
-            };
+            let pairs: Vec<(String, String)> = read(|g| {
+                g.options
+                    .iter()
+                    .map(|o| (o.label.clone(), o.icon_type.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
             let mut out: Vec<Value> = Vec::with_capacity(pairs.len() * 2);
             for (label, icon) in pairs {
                 out.push(Value::String(lua.create_string(&label)?));
@@ -147,38 +105,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The three counts (`0x58a920`, `0x58a960`, `0x58a9a0`); 0 with no menu.
-    fn install_count(lua: &Lua, name: &str, count: fn(&GossipMenu) -> usize) -> mlua::Result<()> {
+    // The three counts (`0x58a920`, `0x58a960`, `0x58a9a0`).
+    fn install_count(lua: &Lua, name: &str, count: fn(&GossipRead) -> usize) -> mlua::Result<()> {
         lua.globals().set(
             name,
-            lua.create_function(move |lua, ()| {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                Ok(model.gossip.as_ref().map_or(0, count) as i64)
-            })?,
+            lua.create_function(move |_, ()| Ok(read(count).unwrap_or(0) as i64))?,
         )
     }
-    install_count(lua, "GetNumGossipOptions", |m| m.options.len())?;
-    install_count(lua, "GetNumGossipAvailableQuests", |m| {
-        m.quests.iter().filter(|q| !q.active).count()
+    install_count(lua, "GetNumGossipOptions", |g| g.options.len())?;
+    install_count(lua, "GetNumGossipAvailableQuests", |g| {
+        g.quests.iter().filter(|q| !q.active).count()
     })?;
-    install_count(lua, "GetNumGossipActiveQuests", |m| {
-        m.quests.iter().filter(|q| q.active).count()
+    install_count(lua, "GetNumGossipActiveQuests", |g| {
+        g.quests.iter().filter(|q| q.active).count()
     })?;
 
-    // ForceGossip() (`0x58ab50`): a Lua boolean, false with no menu.
+    // ForceGossip() (`0x58ab50`): a Lua boolean, false with no NPC.
     g.set(
         "ForceGossip",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.gossip.as_ref().is_some_and(|m| m.force_gossip))
-        })?,
+        lua.create_function(|_, ()| Ok(read(|g| g.force_gossip).unwrap_or(false)))?,
     )?;
 
-    // SelectGossipOption(index [, code [, confirmed]]) (`0x58b590` → `0x58af10`).
+    // SelectGossipOption(index [, code [, confirmed]]) (`0x58b590` -> `0x58af10`).
     g.set(
         "SelectGossipOption",
         lua.create_function(|lua, args: MultiValue| {
@@ -195,11 +143,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `0x58aa40` -> `0x58a550`: each close fires `GOSSIP_CLOSED` inside the call; the interaction close re-enters it once while the NPC holds the interact target (`0x58a588` -> `0x512ef6`).
     g.set(
         "CloseGossip",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.gossip_close = true;
+            let closes = super::write_live(|l| l.close_gossip()).unwrap_or(0);
+            for _ in 0..closes {
+                super::tick::fire_event_into(lua, "GOSSIP_CLOSED", Vec::new());
+            }
             Ok(())
         })?,
     )?;
@@ -210,28 +161,31 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // isRepeatable)` (`0x58b3a0`), an active one `(title, level, isTrivial, isComplete)`
     // (`0x58b490`); the flags are 1 or nil.
     fn quest_rows(lua: &Lua, active: bool) -> mlua::Result<MultiValue> {
+        let rows: Vec<GossipQuestRow> = read(|g| {
+            g.quests
+                .iter()
+                .filter(|q| q.active == active)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+        let player_level = crate::script::item_stats::player_level();
         let rows: Vec<(String, i32, [bool; 3])> = {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let player_level = crate::script::item_stats::player_level();
-            model.gossip.as_ref().map_or_else(Vec::new, |m| {
-                m.quests
-                    .iter()
-                    .filter(|q| q.active == active)
-                    .map(|q| {
-                        let trivial = quest_is_trivial(q.level, player_level);
-                        let flags = if active {
-                            let complete =
-                                super::quest_log::quest_complete_at(lua, &model, q.quest_id);
-                            [trivial, complete, false]
-                        } else {
-                            [trivial, q.daily, q.repeatable]
-                        };
-                        (q.title.clone(), q.level, flags)
-                    })
-                    .collect()
-            })
+            rows.into_iter()
+                .map(|q| {
+                    let trivial = quest_is_trivial(q.level, player_level);
+                    let flags = if active {
+                        let complete = super::quest_log::quest_complete_at(lua, &model, q.quest_id);
+                        [trivial, complete, false]
+                    } else {
+                        [trivial, q.daily, q.repeatable]
+                    };
+                    (q.title, q.level, flags)
+                })
+                .collect()
         };
         let width = if active { 4 } else { 5 };
         let mut out = Vec::with_capacity(rows.len() * width);
@@ -252,27 +206,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| quest_rows(lua, true))?,
     )?;
 
-    // A select's index is 1-based within its own list, as `GossipFrame.lua` numbers the buttons;
-    // it maps back to the whole-menu position the app's queue holds.
-    fn select_quest(lua: &Lua, active: bool, index: i32) {
-        let whole = {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let nth = usize::try_from(index.wrapping_sub(1)).ok();
-            model.gossip.as_ref().zip(nth).and_then(|(m, nth)| {
-                m.quests
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, q)| q.active == active)
-                    .nth(nth)
-                    .map(|(n, _)| n as u32 + 1)
-            })
+    // A select's index is 1-based within its own list (`0x58b070`, `0x58b130`); the app sends for the row at its place in the whole menu, inside the call.
+    fn select_quest(active: bool, index: i32) {
+        let Some(nth) = usize::try_from(index.wrapping_sub(1)).ok() else {
+            return;
         };
+        let whole = read(|g| {
+            g.quests
+                .iter()
+                .enumerate()
+                .filter(|(_, q)| q.active == active)
+                .nth(nth)
+                .map(|(n, _)| n)
+        })
+        .flatten();
         if let Some(n) = whole {
-            crate::script::model_mut_of(lua)
-                .gossip_quest_selects
-                .push(n);
+            super::write_live(|l| l.select_gossip_quest(n));
         }
     }
 
@@ -280,7 +229,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SelectGossipAvailableQuest",
         lua.create_function(|lua, i: Value| {
             let i = number_arg(lua, i, "Usage: SelectGossipAvailableQuest(index)")?;
-            select_quest(lua, false, i);
+            select_quest(false, i);
             Ok(())
         })?,
     )?;
@@ -288,7 +237,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SelectGossipActiveQuest",
         lua.create_function(|lua, i: Value| {
             let i = number_arg(lua, i, "Usage: SelectGossipActiveQuest(index)")?;
-            select_quest(lua, true, i);
+            select_quest(true, i);
             Ok(())
         })?,
     )?;
@@ -299,17 +248,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// The select sender's checks, in its order (`0x58af10`): nothing while the greeting is pending
 /// or for an index outside the menu; an unconfirmed box text asks (`0x58af74`), a coded option
 /// with no code asks for one (`0x58afa5`), and box money past the purse refuses (`0x58afcd`).
-/// A sent select empties the menu's options and quests (`0x58a7b0`) and fires
-/// `GOSSIP_CONFIRM_CANCEL` (`0x58b051`); the greeting stays.
+/// A sent select empties the options and quests (`0x58a7b0`) and fires `GOSSIP_CONFIRM_CANCEL`
+/// (`0x58b051`), each inside the call; the greeting stays.
 fn select_option(lua: &Lua, index: i32, code: Option<String>, confirmed: bool) {
-    let mut model = crate::script::model_mut_of(lua);
-    if model.gossip_pending {
-        return;
-    }
     let Some(slot) = usize::try_from(index.wrapping_sub(1)).ok() else {
         return;
     };
-    let Some(opt) = model.gossip.as_ref().and_then(|m| m.options.get(slot)) else {
+    let Some(Some((opt, money))) = read(|g| {
+        (!g.pending)
+            .then(|| g.options.get(slot).map(|o| (o.clone(), g.money)))
+            .flatten()
+    }) else {
         return;
     };
     if let (Some(text), false) = (&opt.box_text, confirmed) {
@@ -318,38 +267,32 @@ fn select_option(lua: &Lua, index: i32, code: Option<String>, confirmed: bool) {
             ScriptValue::Str(text.clone()),
             ScriptValue::Int(i64::from(opt.box_money)),
         ];
-        model
-            .pending_events
-            .push(("GOSSIP_CONFIRM".to_string(), args));
+        super::tick::fire_event_into(lua, "GOSSIP_CONFIRM", args);
         return;
     }
     let code = code.filter(|c| !c.is_empty());
     if opt.coded && code.is_none() {
-        model.pending_events.push((
-            "GOSSIP_ENTER_CODE".to_string(),
+        super::tick::fire_event_into(
+            lua,
+            "GOSSIP_ENTER_CODE",
             vec![ScriptValue::Int(i64::from(index))],
-        ));
+        );
         return;
     }
-    if u64::from(opt.box_money) > model.money {
-        model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+    if u64::from(opt.box_money) > money {
+        super::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
         return;
     }
     let code = if opt.coded { code } else { None };
-    model.gossip_selects.push((index as u32, code));
-    if let Some(menu) = model.gossip.as_mut() {
-        menu.options.clear();
-        menu.quests.clear();
-    }
-    model
-        .pending_events
-        .push(("GOSSIP_CONFIRM_CANCEL".to_string(), Vec::new()));
+    super::write_live(|l| l.select_gossip_option(slot, code));
+    super::tick::fire_event_into(lua, "GOSSIP_CONFIRM_CANCEL", Vec::new());
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{quest_is_trivial, GossipMenu, GossipOptionView, GossipQuestRow};
-    use crate::script::{ScriptValue, UiScript};
+    use super::{quest_is_trivial, GossipOptionView, GossipQuestRow};
+    use crate::script::live::{TestGossip, TestView};
+    use crate::script::UiScript;
 
     fn option(label: &str, icon: &str) -> GossipOptionView {
         GossipOptionView {
@@ -359,128 +302,151 @@ mod tests {
         }
     }
 
-    fn menu() -> GossipMenu {
-        GossipMenu {
-            greeting: "Greetings, traveler.".into(),
-            quests: Vec::new(),
-            options: vec![
-                option("Let me browse your goods.", "vendor"),
-                option("I would like to sign the petition.", "gossip"),
-            ],
-            force_gossip: false,
+    fn view() -> TestView {
+        TestView {
+            gossip: Some(TestGossip {
+                greeting: "Greetings, traveler.".into(),
+                options: vec![
+                    option("Let me browse your goods.", "vendor"),
+                    option("I would like to sign the petition.", "gossip"),
+                ],
+                money: 1_000,
+                ..Default::default()
+            }),
+            ..Default::default()
         }
     }
 
-    fn fired(s: &UiScript) -> Vec<(String, Vec<ScriptValue>)> {
-        std::mem::take(&mut s.model_mut().pending_events)
+    /// A chunk that logs `events`' firings, each with its arguments, around `body`.
+    fn logged(events: &[&str], body: &str) -> String {
+        let reg: String = events
+            .iter()
+            .map(|e| format!("f:RegisterEvent('{e}') "))
+            .collect();
+        format!(
+            "local f = CreateFrame('Frame') local log = {{}} {reg} \
+             f:SetScript('OnEvent', function(_, e, ...) local t = {{e}}              for i = 1, select('#', ...) do t[#t + 1] = tostring((select(i, ...))) end              log[#log + 1] = table.concat(t, ' ') end) \
+             {body} f:UnregisterAllEvents() return table.concat(log, '|')"
+        )
     }
 
+    const EVENTS: &[&str] = &[
+        "GOSSIP_CONFIRM",
+        "GOSSIP_ENTER_CODE",
+        "GOSSIP_CONFIRM_CANCEL",
+        "GOSSIP_CLOSED",
+        "UI_ERROR_MESSAGE",
+    ];
+
     #[test]
-    fn gossip_snapshot_reads_and_selects_queue() {
+    fn the_verbs_read_the_globals_at_the_call_and_a_select_sends_in_it() {
         let mut s = UiScript::new().unwrap();
-        assert!(s.eval::<bool>("return GetGossipText() == nil").unwrap());
+        assert_eq!(s.eval::<String>("return GetGossipText()").unwrap(), "");
         assert_eq!(s.arity("GetGossipOptions()").unwrap(), 0);
-        assert_eq!(s.eval::<i64>("return GetNumGossipOptions()").unwrap(), 0);
-
-        s.set_gossip(Some(menu()));
+        let mut v = view();
+        let log = s.with_live(&mut v, |s| {
+            assert_eq!(
+                s.eval::<String>("return GetGossipText()").unwrap(),
+                "Greetings, traveler."
+            );
+            assert_eq!(s.eval::<i64>("return GetNumGossipOptions()").unwrap(), 2);
+            assert_eq!(s.arity("GetGossipOptions()").unwrap(), 4);
+            let (l1, t1) = s
+                .eval::<(String, String)>("return GetGossipOptions()")
+                .unwrap();
+            assert_eq!(
+                (l1.as_str(), t1.as_str()),
+                ("Let me browse your goods.", "vendor")
+            );
+            // A code on an uncoded option is dropped; the select empties the menu inside the call.
+            s.eval::<String>(&logged(
+                EVENTS,
+                "SelectGossipOption(2, 'unused-code') log[#log + 1] = GetNumGossipOptions() \
+                 SelectGossipOption(1)",
+            ))
+            .unwrap()
+        });
         assert_eq!(
-            s.eval::<String>("return GetGossipText()").unwrap(),
-            "Greetings, traveler."
+            log, "GOSSIP_CONFIRM_CANCEL|0",
+            "a spent menu sends nothing more"
         );
-        assert_eq!(s.eval::<i64>("return GetNumGossipOptions()").unwrap(), 2);
-        let (l1, t1, l2, t2) = s
-            .eval::<(String, String, String, String)>(
-                "local a,b,c,d = GetGossipOptions()\n\
-                 return a, b, c, d",
-            )
-            .unwrap();
-        assert_eq!(s.arity("GetGossipOptions()").unwrap(), 4);
-        assert_eq!(
-            (l1.as_str(), t1.as_str()),
-            ("Let me browse your goods.", "vendor")
-        );
-        assert_eq!(l2, "I would like to sign the petition.");
-        assert_eq!(t2, "gossip");
-
-        // A code on an uncoded option is dropped; the select empties the menu.
-        s.run("SelectGossipOption(2, 'unused-code')").unwrap();
-        assert_eq!(s.take_gossip_selects(), vec![(2, None)]);
-        assert_eq!(s.eval::<i64>("return GetNumGossipOptions()").unwrap(), 0);
-        assert_eq!(
-            s.eval::<String>("return GetGossipText()").unwrap(),
-            "Greetings, traveler.",
-            "the greeting stays"
-        );
-        let names: Vec<String> = fired(&s).into_iter().map(|(e, _)| e).collect();
-        assert_eq!(names, vec!["GOSSIP_CONFIRM_CANCEL"]);
-        s.run("SelectGossipOption(1)").unwrap();
-        assert!(s.take_gossip_selects().is_empty(), "a sent menu is spent");
-
-        assert!(!s.take_gossip_close());
-        s.run("CloseGossip()").unwrap();
-        assert!(s.take_gossip_close());
-        assert!(!s.take_gossip_close(), "drained");
+        let g = v.gossip.as_ref().unwrap();
+        assert_eq!(g.selects, vec![(1, None)]);
+        assert_eq!(g.greeting, "Greetings, traveler.", "the greeting stays");
     }
 
     #[test]
-    fn select_asks_for_confirmation_then_a_code_then_the_money() {
+    fn select_asks_for_confirmation_then_a_code_then_the_money_inside_its_call() {
         let mut s = UiScript::new().unwrap();
-        let mut m = menu();
-        m.options = vec![GossipOptionView {
+        let mut v = view();
+        let g = v.gossip.as_mut().unwrap();
+        g.options = vec![GossipOptionView {
             label: "Open the vault.".into(),
             icon_type: "gossip".into(),
             coded: true,
             box_text: Some("Are you sure?".into()),
             box_money: 500,
         }];
-        s.set_gossip(Some(m.clone()));
-
-        s.run("SelectGossipOption(1)").unwrap();
-        assert!(s.take_gossip_selects().is_empty());
+        g.money = 499;
+        let log = s.with_live(&mut v, |s| {
+            s.eval::<String>(&logged(
+                EVENTS,
+                "ERR_NOT_ENOUGH_MONEY = \"You don't have enough money.\"                  SelectGossipOption(1) SelectGossipOption(1, '', true) \
+                 SelectGossipOption(1, '1234', true)",
+            ))
+            .unwrap()
+        });
         assert_eq!(
-            fired(&s),
-            vec![(
-                "GOSSIP_CONFIRM".to_string(),
-                vec![
-                    ScriptValue::Int(1),
-                    ScriptValue::Str("Are you sure?".into()),
-                    ScriptValue::Int(500)
-                ]
-            )]
+            log,
+            "GOSSIP_CONFIRM 1 Are you sure? 500|GOSSIP_ENTER_CODE 1|UI_ERROR_MESSAGE You don't have enough money."
         );
-
-        // The stock popup's accept passes "" and true: the code is asked next.
-        s.run("SelectGossipOption(1, '', true)").unwrap();
-        assert!(s.take_gossip_selects().is_empty());
+        assert!(v.gossip.as_ref().unwrap().selects.is_empty());
+        v.gossip.as_mut().unwrap().money = 500;
+        s.with_live(&mut v, |s| {
+            s.run("SelectGossipOption(1, '1234', 1)").unwrap()
+        });
         assert_eq!(
-            fired(&s),
-            vec![("GOSSIP_ENTER_CODE".to_string(), vec![ScriptValue::Int(1)])]
+            v.gossip.as_ref().unwrap().selects,
+            vec![(0, Some("1234".into()))]
         );
-
-        // Too poor: refused with the error and no select.
-        s.model_mut().money = 499;
-        s.run("SelectGossipOption(1, '1234', true)").unwrap();
-        assert!(s.take_gossip_selects().is_empty());
-        assert_eq!(s.take_ui_errors(), vec!["ERR_NOT_ENOUGH_MONEY"]);
-
-        s.model_mut().money = 500;
-        s.run("SelectGossipOption(1, '1234', 1)").unwrap();
-        assert_eq!(s.take_gossip_selects(), vec![(1, Some("1234".into()))]);
     }
 
     #[test]
     fn select_is_refused_while_the_greeting_is_pending_or_out_of_range() {
         let mut s = UiScript::new().unwrap();
-        s.set_gossip(Some(menu()));
-        s.set_gossip_pending(true);
-        s.run("SelectGossipOption(1)").unwrap();
-        assert!(s.take_gossip_selects().is_empty());
-        s.set_gossip_pending(false);
-        s.run("SelectGossipOption(0) SelectGossipOption(3)")
-            .unwrap();
-        assert!(s.take_gossip_selects().is_empty());
-        assert!(fired(&s).is_empty());
-        assert!(s.run("SelectGossipOption()").is_err(), "Usage: raises");
+        let mut v = view();
+        v.gossip.as_mut().unwrap().pending = true;
+        let log = s.with_live(&mut v, |s| {
+            s.eval::<String>(&logged(EVENTS, "SelectGossipOption(1)"))
+                .unwrap()
+        });
+        assert_eq!(log, "");
+        v.gossip.as_mut().unwrap().pending = false;
+        let log = s.with_live(&mut v, |s| {
+            assert!(s.run("SelectGossipOption()").is_err(), "Usage: raises");
+            s.eval::<String>(&logged(
+                EVENTS,
+                "SelectGossipOption(0) SelectGossipOption(3)",
+            ))
+            .unwrap()
+        });
+        assert_eq!(log, "");
+        assert!(v.gossip.as_ref().unwrap().selects.is_empty());
+    }
+
+    #[test]
+    fn close_fires_once_per_close_inside_its_call() {
+        let mut s = UiScript::new().unwrap();
+        let mut v = view();
+        v.gossip.as_mut().unwrap().closes = 2;
+        let log = s.with_live(&mut v, |s| {
+            s.eval::<String>(&logged(
+                EVENTS,
+                "CloseGossip() log[#log + 1] = 'after' CloseGossip()",
+            ))
+            .unwrap()
+        });
+        assert_eq!(log, "GOSSIP_CLOSED|GOSSIP_CLOSED|after");
     }
 
     #[test]
@@ -489,9 +455,8 @@ mod tests {
         // No menu: `arg.n == 0`, not a nil.
         assert_eq!(s.arity("GetGossipAvailableQuests()").unwrap(), 0);
         assert_eq!(s.arity("GetGossipActiveQuests()").unwrap(), 0);
-
-        let mut m = menu();
-        m.quests = vec![
+        let mut v = view();
+        v.gossip.as_mut().unwrap().quests = vec![
             GossipQuestRow {
                 quest_id: 60,
                 title: "Report to Goldshire".into(),
@@ -514,7 +479,6 @@ mod tests {
                 ..Default::default()
             },
         ];
-        s.set_gossip(Some(m));
         s.set_player_req_state(crate::script::PlayerReqState {
             level: 10,
             ..Default::default()
@@ -529,43 +493,37 @@ mod tests {
             }],
             ..Default::default()
         });
-
-        assert_eq!(
-            s.eval::<i64>("return GetNumGossipAvailableQuests()")
-                .unwrap(),
-            2
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetNumGossipActiveQuests()").unwrap(),
-            1
-        );
-        // Five per available row: level 7 at 10 is not trivial (7 + 5 = 12).
-        assert_eq!(s.arity("GetGossipAvailableQuests()").unwrap(), 10);
-        assert!(s
-            .eval::<bool>(
-                "local t,l,triv,daily,rep, t2,l2,triv2,daily2,rep2 = GetGossipAvailableQuests()\n\
-                 return t == 'A Threat Within' and l == 7 and triv == nil and daily == 1\n\
-                    and rep == nil and t2 == 'Kobold Camp Cleanup' and l2 == 9 and daily2 == nil\n\
-                    and rep2 == 1"
-            )
-            .unwrap());
-        // Four per active row; the active row comes first in the menu but splits by icon.
-        assert_eq!(s.arity("GetGossipActiveQuests()").unwrap(), 4);
-        assert!(s
-            .eval::<bool>(
-                "local t,l,triv,done = GetGossipActiveQuests()\n\
-                 return t == 'Report to Goldshire' and l == 5 and triv == nil and done == 1"
-            )
-            .unwrap());
-
-        // Available #2 is the menu's third row.
-        s.run("SelectGossipAvailableQuest(2)").unwrap();
-        assert_eq!(s.take_gossip_quest_selects(), vec![3]);
-        s.run("SelectGossipActiveQuest(1)").unwrap();
-        assert_eq!(s.take_gossip_quest_selects(), vec![1]);
-        s.run("SelectGossipAvailableQuest(9) SelectGossipActiveQuest(0)")
-            .unwrap();
-        assert!(s.take_gossip_quest_selects().is_empty(), "drained");
+        s.with_live(&mut v, |s| {
+            assert_eq!(
+                s.eval::<i64>("return GetNumGossipAvailableQuests()")
+                    .unwrap(),
+                2
+            );
+            assert_eq!(s.eval::<i64>("return GetNumGossipActiveQuests()").unwrap(), 1);
+            // Five per available row: level 7 at 10 is not trivial (7 + 5 = 12).
+            assert_eq!(s.arity("GetGossipAvailableQuests()").unwrap(), 10);
+            assert!(s
+                .eval::<bool>(
+                    "local t,l,triv,daily,rep, t2,l2,triv2,daily2,rep2 = GetGossipAvailableQuests()\n\
+                     return t == 'A Threat Within' and l == 7 and triv == nil and daily == 1\n\
+                        and rep == nil and t2 == 'Kobold Camp Cleanup' and l2 == 9 and daily2 == nil\n\
+                        and rep2 == 1"
+                )
+                .unwrap());
+            assert_eq!(s.arity("GetGossipActiveQuests()").unwrap(), 4);
+            assert!(s
+                .eval::<bool>(
+                    "local t,l,triv,done = GetGossipActiveQuests()\n\
+                     return t == 'Report to Goldshire' and l == 5 and triv == nil and done == 1"
+                )
+                .unwrap());
+            // Available #2 is the menu's third row.
+            s.run("SelectGossipAvailableQuest(2) SelectGossipActiveQuest(1)")
+                .unwrap();
+            s.run("SelectGossipAvailableQuest(9) SelectGossipActiveQuest(0)")
+                .unwrap();
+        });
+        assert_eq!(v.gossip.as_ref().unwrap().quest_selects, vec![2, 0]);
     }
 
     #[test]
@@ -581,21 +539,11 @@ mod tests {
     }
 
     #[test]
-    fn force_gossip_reads_the_menu_flag() {
+    fn force_gossip_reads_the_flag_at_the_call() {
         let mut s = UiScript::new().unwrap();
         assert!(!s.eval::<bool>("return ForceGossip()").unwrap());
-        let mut m = menu();
-        m.force_gossip = true;
-        s.set_gossip(Some(m));
-        assert!(s.eval::<bool>("return ForceGossip()").unwrap());
-    }
-
-    #[test]
-    fn clearing_the_menu_empties_it() {
-        let mut s = UiScript::new().unwrap();
-        s.set_gossip(Some(menu()));
-        s.set_gossip(None);
-        assert!(s.eval::<bool>("return GetGossipText() == nil").unwrap());
-        assert_eq!(s.arity("GetGossipOptions()").unwrap(), 0);
+        let mut v = view();
+        v.gossip.as_mut().unwrap().force_gossip = true;
+        assert!(s.with_live(&mut v, |s| s.eval::<bool>("return ForceGossip()").unwrap()));
     }
 }

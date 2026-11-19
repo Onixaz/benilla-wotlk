@@ -161,7 +161,11 @@ impl InteractWindows<'_, '_> {
             }
         }
         match window {
-            0 => close(&mut self.gossip),
+            // The gossip leg runs the zero gossip set, its event with it (`0x512ef6`).
+            0 => self.queue.queue(|world: &mut World| {
+                crate::ui_gossip::set_npc(world, 0);
+                crate::ui_script::live::fire_handler_events(world);
+            }),
             1 => close(&mut self.quest),
             2 => close(&mut self.merchant),
             3 => close(&mut self.taxi),
@@ -241,7 +245,7 @@ pub(crate) fn close_interaction(
     *last = windows.npcs();
 }
 
-/// The interact target (`0xbd07a8`): a window's open sets it (`0x51fce0`), the interaction close zeroes it first (`0x512e89`). The tabard designer sets and clears it; the other windows still answer through [`InteractNpc`] (#1329).
+/// The interact target (`0xbd07a8`): a window's open sets it (`0x51fce0`), the interaction close zeroes it first (`0x512e89`). The tabard designer and the gossip set and clear it; the other windows still answer through [`InteractNpc`] (#1329).
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
 pub(crate) struct InteractTarget(pub(crate) Option<u64>);
 
@@ -253,19 +257,39 @@ pub(crate) fn set_interact_target(world: &mut World, guid: u64) {
     if let Some(old) = old {
         close_window_on(world, old);
     }
-    if let Some(mut t) = world.get_resource_mut::<InteractTarget>() {
-        t.0 = Some(guid);
-    }
+    // Stored once the close's events have fired (`0x51fd24`).
+    crate::ui_script::live::in_turn(world, move |w| {
+        if let Some(mut t) = w.get_resource_mut::<InteractTarget>() {
+            t.0 = Some(guid);
+        }
+    });
 }
 
-/// The interaction close's walk (`0x512e60`) for a target already zeroed: the first window of [`InteractWindows`] on `old` closes.
+/// The interact target's clear (`0x518d50`): a held target equal to `guid` runs the interaction close (`0x518db7` -> `0x512e60`), which zeroes it first (`0x512e89`).
+pub(crate) fn clear_interact_target(world: &mut World, guid: u64) {
+    let held = world.get_resource::<InteractTarget>().and_then(|t| t.0);
+    if held != Some(guid) {
+        return;
+    }
+    if let Some(mut t) = world.get_resource_mut::<InteractTarget>() {
+        t.0 = None;
+    }
+    close_window_on(world, guid);
+}
+
+/// The interaction close's walk (`0x512e60`) for a target already zeroed: the first window of [`InteractWindows`] on `old` closes; the gossip's leg runs its zero set in the walk (`0x512ef6`).
 fn close_window_on(world: &mut World, old: u64) {
     let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
     let mut windows = state.get_mut(world);
-    if let Some(window) = windows.npcs().iter().position(|n| *n == Some(old)) {
-        if window != BANK_WINDOW {
-            windows.close(window);
+    let window = windows.npcs().iter().position(|n| *n == Some(old));
+    match window {
+        Some(0) => {
+            state.apply(world);
+            crate::ui_gossip::set_npc(world, 0);
+            return;
         }
+        Some(w) if w != BANK_WINDOW => windows.close(w),
+        _ => {}
     }
     state.apply(world);
 }

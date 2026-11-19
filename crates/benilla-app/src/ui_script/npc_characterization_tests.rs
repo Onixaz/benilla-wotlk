@@ -832,3 +832,140 @@ fn the_barber_closes_inside_the_cancel_and_from_the_display_watch() {
         ]
     );
 }
+
+const GOSSIP_EVENTS: &[&str] = &["GOSSIP_SHOW", "GOSSIP_CLOSED"];
+
+/// `SMSG_GOSSIP_MESSAGE` for `npc` asking text `text_id`, with one option per label.
+fn gossip_menu(npc: u64, text_id: u32, labels: &[&str]) -> SessionEvent {
+    SessionEvent::GossipMenu(benilla_protocol::messages::GossipMenu {
+        npc,
+        menu_id: 1,
+        text_id,
+        options: labels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| benilla_protocol::messages::GossipOption {
+                index: i as u32,
+                icon: 0,
+                coded: false,
+                box_money: 0,
+                message: (*l).into(),
+                box_text: None,
+            })
+            .collect(),
+        quests: Vec::new(),
+    })
+}
+
+/// `SMSG_NPC_TEXT_UPDATE` answering `text_id` with one male line.
+fn npc_text(text_id: u32, line: &str) -> SessionEvent {
+    SessionEvent::NpcGreeting {
+        text_id,
+        blocks: vec![benilla_protocol::messages::NpcTextBlock {
+            probability: 1.0,
+            male: line.into(),
+            ..Default::default()
+        }],
+    }
+}
+
+/// A first-visit menu reads its options at the packet and holds the text draw: nothing fires and the old greeting stands (`0x58ac5e`); the answer draws and fires `GOSSIP_SHOW` bare (`0x58aaf1` -> `0x58aef6`). A cached text draws in the menu's own handler.
+#[test]
+fn gossip_show_fires_from_the_text_draw_with_the_menu_read_at_the_packet() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["gossiptext", "gossipopts"];
+    rig.packets(vec![npc_at(NPC, 1, NEAR)], 2);
+    let seen = rig.packets(vec![gossip_menu(NPC, 7, &["Browse"])], 2);
+    assert!(
+        pin(&seen, GOSSIP_EVENTS, verbs).is_empty(),
+        "the hold fires nothing"
+    );
+    let now = rig.live_now();
+    assert_eq!(
+        (
+            now.verbs["gossiptext"].as_str(),
+            now.verbs["gossipopts"].as_str()
+        ),
+        ("", "1")
+    );
+    let seen = rig.packets(vec![npc_text(7, "Well met.")], 2);
+    assert_eq!(
+        pin(&seen, GOSSIP_EVENTS, verbs),
+        ["GOSSIP_SHOW | gossiptext=Well met. gossipopts=1"]
+    );
+    let seen = rig.packets(vec![gossip_menu(NPC, 7, &["Browse", "Train"])], 2);
+    assert_eq!(
+        pin(&seen, GOSSIP_EVENTS, verbs),
+        ["GOSSIP_SHOW | gossiptext=Well met. gossipopts=2"],
+        "the same NPC again closes nothing (`0x58a56a`)"
+    );
+}
+
+/// `CloseGossip` fires `GOSSIP_CLOSED` twice inside its call while the NPC holds the interact target: the target's clear re-enters the zero set through the interaction close (`0x58a588` -> `0x512ef6`); the globals stay. A second close, and `SMSG_GOSSIP_COMPLETE` with nothing held, fire nothing; the packet on a held NPC runs the same two.
+#[test]
+fn close_gossip_fires_inside_its_call_through_the_interaction_close() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["gossiptext", "gossipopts"];
+    rig.packets(vec![npc_at(NPC, 1, NEAR)], 2);
+    rig.packets(
+        vec![gossip_menu(NPC, 7, &["Browse"]), npc_text(7, "Hi.")],
+        2,
+    );
+    let pinned = fired_in_call(&mut rig, "CloseGossip()", GOSSIP_EVENTS, verbs);
+    assert_eq!(
+        pinned,
+        [
+            "GOSSIP_CLOSED | gossiptext=Hi. gossipopts=1",
+            "GOSSIP_CLOSED | gossiptext=Hi. gossipopts=1"
+        ]
+    );
+    assert!(fired_in_call(&mut rig, "CloseGossip()", GOSSIP_EVENTS, &[]).is_empty());
+    let seen = rig.packets(vec![SessionEvent::GossipComplete], 2);
+    assert!(pin(&seen, GOSSIP_EVENTS, &[]).is_empty());
+    let seen = rig.packets(
+        vec![
+            gossip_menu(NPC, 7, &["Browse"]),
+            SessionEvent::GossipComplete,
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, GOSSIP_EVENTS, &[]),
+        ["GOSSIP_SHOW", "GOSSIP_CLOSED", "GOSSIP_CLOSED"]
+    );
+}
+
+/// A menu from another NPC takes the interact target, whose clear closes the held menu once in the walk (`0x58a5b4` -> `0x51fce0` -> `0x512ef6`), then draws: `GOSSIP_CLOSED` before `GOSSIP_SHOW`, in either text order.
+#[test]
+fn a_menu_from_another_npc_closes_the_held_one_through_the_target() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["gossiptext"];
+    rig.packets(vec![npc_at(NPC, 1, NEAR), npc_at(NPC2, 1, NEAR)], 2);
+    rig.packets(vec![gossip_menu(NPC, 7, &["A"]), npc_text(7, "One.")], 2);
+    let seen = rig.packets(vec![gossip_menu(NPC2, 8, &["B"]), npc_text(8, "Two.")], 2);
+    assert_eq!(
+        pin(&seen, GOSSIP_EVENTS, verbs),
+        [
+            "GOSSIP_CLOSED | gossiptext=One.",
+            "GOSSIP_SHOW | gossiptext=Two."
+        ]
+    );
+    // The cached text draws inside the menu's handler, after the close.
+    let seen = rig.packets(vec![gossip_menu(NPC, 7, &["A"])], 2);
+    assert_eq!(
+        pin(&seen, GOSSIP_EVENTS, verbs),
+        [
+            "GOSSIP_CLOSED | gossiptext=Two.",
+            "GOSSIP_SHOW | gossiptext=One."
+        ]
+    );
+}

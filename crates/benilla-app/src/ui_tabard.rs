@@ -104,6 +104,11 @@ pub(crate) struct TabardView<'w, 's> {
 }
 
 impl TabardView<'_, '_> {
+    /// The interact target, for a verb whose close clears it.
+    pub(crate) fn target_mut(&mut self) -> Option<&mut crate::ui_session::InteractTarget> {
+        self.target.as_deref_mut()
+    }
+
     /// The vendor held, read by a system between its calls into Lua.
     pub(crate) fn vendor(&self) -> Option<u64> {
         self.open.as_ref().and_then(|o| o.vendor)

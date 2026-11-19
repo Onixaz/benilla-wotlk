@@ -276,7 +276,7 @@ fn open_window(
     }
     // The gossip frame stays closed until the greeting's `CMSG_NPC_TEXT_QUERY` answers
     // (`ui_gossip`), so the greeting is part of open.
-    if gossip.npc == Some(guid) && gossip.greeting.is_some() {
+    if gossip.npc == Some(guid) && !gossip.text_pending() {
         return Some(Window::Gossip);
     }
     if giver.npc == Some(guid) && giver.view.is_some() {
@@ -288,7 +288,7 @@ fn open_window(
 fn service_probe(
     time: ProbeClock,
     mut probe: ResMut<ServiceProbe>,
-    mut gossip: ResMut<GossipState>,
+    mut queue: Commands,
     mut trainer: ResMut<TrainerOpen>,
     statuses: Res<QuestStatuses>,
     // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
@@ -310,6 +310,8 @@ fn service_probe(
         return; // not in-world yet
     }
     let now = time.elapsed_secs_f64();
+    // The gossip globals as the verbs read them, through the view this system lends.
+    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
 
     match probe.phase {
         Phase::Start => {
@@ -425,7 +427,7 @@ fn service_probe(
 
             // A stale window from the previous leg would answer this one's question. The
             // reference's own close sends no packet, so a local clear is the whole of it.
-            gossip.clear();
+            queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
 
@@ -508,7 +510,7 @@ fn service_probe(
                                 " ({} option(s), {} quest row(s), greeting {:?})",
                                 gossip.options.len(),
                                 gossip.quests.len(),
-                                gossip.greeting.as_deref().unwrap_or("")
+                                gossip.greeting.as_str()
                             ),
                             Window::Quest => format!(" ({quest_view:?})"),
                             Window::Trainer => format!(
@@ -541,7 +543,7 @@ fn service_probe(
                 None if now - since > WINDOW_TIMEOUT_SECS => {
                     // A gossip session latched with an unresolved greeting keeps the frame shut
                     // (`GossipState::resolve_greeting`'s "Missing gossip text!" path).
-                    let held = gossip.npc == Some(guid) && gossip.greeting.is_none();
+                    let held = gossip.npc == Some(guid) && gossip.text_pending();
                     error!(
                         "PROBE_SERVICE: FAIL ({}) — no {:?} window on {guid:#x} within \
                          {WINDOW_TIMEOUT_SECS}s of the send{}",
@@ -608,7 +610,7 @@ fn service_probe(
             };
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
-            gossip.clear();
+            queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
             merchant.clear();

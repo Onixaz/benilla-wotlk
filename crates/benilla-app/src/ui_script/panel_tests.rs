@@ -1,6 +1,7 @@
+use super::gossip_ui_tests::{gossip_loan, Menu};
 use benilla_ui::script::{
-    ExtractedQuad, GossipMenu, GossipOptionView, GossipQuestRow, MerchantItem, MerchantState,
-    QuadContent, SoundRequest, UiScript,
+    ExtractedQuad, GossipOptionView, GossipQuestRow, MerchantItem, MerchantState, QuadContent,
+    SoundRequest, UiScript,
 };
 
 /// Each test loads stock `UIParent.xml` first: its `ShowUIPanel`, `HideUIPanel` and
@@ -27,6 +28,7 @@ fn frame_rect(quads: &[ExtractedQuad], w: f32, h: f32) -> benilla_ui::layout::Re
 fn shipped_gossip_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
 
     s.resolve();
@@ -42,7 +44,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
         "left slot empty before any panel opens"
     );
 
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Greetings, traveler. How may I help you?".into(),
         quests: Vec::new(),
         options: vec![
@@ -58,7 +60,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
             },
         ],
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
@@ -160,12 +162,12 @@ fn shipped_gossip_frame_drives_end_to_end() {
     );
     s.mouse_button(cx, cy, "LeftButton", true);
     s.mouse_button(cx, cy, "LeftButton", false);
-    assert_eq!(s.take_gossip_selects(), vec![(1, None)]);
-    assert!(!s.take_gossip_close());
+    assert_eq!(loan.take_selects(), vec![(1, None)]);
+    assert!(!loan.take_close());
 
     // The close button hides the window; its OnHide calls `CloseGossip()` (`GossipFrame.xml`).
     s.run("GossipFrameCloseButton:Click()").unwrap();
-    assert!(s.take_gossip_close());
+    assert!(loan.take_close());
     assert!(!s.eval::<bool>("return GossipFrame:IsVisible()").unwrap());
     assert!(
         s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
@@ -180,8 +182,9 @@ fn shipped_gossip_frame_drives_end_to_end() {
 fn shipped_gossip_frame_renders_quest_rows_above_options() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
 
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "A word, traveler.".into(),
         quests: vec![
             GossipQuestRow {
@@ -203,7 +206,7 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
             ..Default::default()
         }],
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
@@ -285,9 +288,9 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
     // Button 3, the active quest, calls `SelectGossipActiveQuest(1)`, its place in the active list
     // (`GossipFrame.lua`); the binding maps it to menu position 1, the packet's order.
     s.run("GossipTitleButton3:Click()").unwrap();
-    assert_eq!(s.take_gossip_quest_selects(), vec![1]);
+    assert_eq!(loan.take_quest_selects(), vec![1]);
     assert!(
-        s.take_gossip_selects().is_empty(),
+        loan.take_selects().is_empty(),
         "a quest-row click never queues SelectGossipOption"
     );
 }
@@ -299,6 +302,7 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
 fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
 
     // Three options that wrap at the label's 275 px (`GossipFrame.xml`).
@@ -307,7 +311,7 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
         icon_type: "gossip".into(),
         ..Default::default()
     };
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Make your choice!".into(),
         quests: Vec::new(),
         options: vec![
@@ -325,7 +329,7 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
             ),
         ],
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
@@ -390,18 +394,19 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
 fn gossip_show_hide_plays_open_and_close_kits() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
 
     assert!(
         s.take_sounds().is_empty(),
         "no sound at load (never transitions)"
     );
 
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         options: Vec::new(),
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert_eq!(
@@ -423,8 +428,9 @@ fn gossip_show_hide_plays_open_and_close_kits() {
 fn shipped_panel_slot_replaces_gossip_with_merchant() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
 
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         // Two options: a lone non-gossip option is selected without opening the window
@@ -442,7 +448,7 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
             },
         ],
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
@@ -503,20 +509,21 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
 fn displacing_an_npc_window_ends_the_displaced_session() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
 
     // The vendor holds the left slot; drain what opening it queued.
     s.set_merchant(Some(MerchantState::default()));
     s.fire_event("MERCHANT_SHOW", vec![]);
     let _ = s.take_merchant_close();
-    let _ = s.take_gossip_close();
+    let _ = loan.take_close();
 
     // Gossip replaces the vendor; its OnHide calls `CloseMerchant()` (`MerchantFrame.lua`).
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         options: Vec::new(),
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
@@ -529,7 +536,7 @@ fn displacing_an_npc_window_ends_the_displaced_session() {
     s.fire_event("MERCHANT_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
-        s.take_gossip_close(),
+        loan.take_close(),
         "the vendor displacing gossip ends the gossip session (OnHide → CloseGossip)"
     );
 }
@@ -593,8 +600,9 @@ fn shipped_panel_slot_pushable_promotes_to_center() {
 fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
 
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Welcome to the bank of Ironforge!".into(),
         quests: Vec::new(),
         options: vec![GossipOptionView {
@@ -603,7 +611,7 @@ fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
             ..Default::default()
         }],
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
@@ -611,7 +619,7 @@ fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
         "no gossip window for a lone non-gossip option"
     );
     assert_eq!(
-        s.take_gossip_selects()
+        loan.take_selects()
             .iter()
             .map(|(i, _)| *i)
             .collect::<Vec<_>>(),
@@ -621,7 +629,7 @@ fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
 
     s.set_money(0);
     let _bank = super::test_ui::lend_bank(0, 0);
-    s.set_gossip(None);
+    loan.set(Menu::default());
     s.fire_event("GOSSIP_CLOSED", vec![]);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -639,6 +647,7 @@ fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
 fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
 
     // Eight options of about four lines each, far past the 334 px frame (`GossipFrame.xml`).
@@ -650,12 +659,12 @@ fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
         icon_type: "gossip".into(),
         ..Default::default()
     };
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Make your choice!".into(),
         quests: Vec::new(),
         options: (1..=8).map(long).collect(),
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
 
     let answer_measures = |s: &mut UiScript| {
@@ -764,6 +773,7 @@ fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
 fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    let mut loan = gossip_loan();
 
     s.run(
         r#"AddonPanel = CreateFrame("Frame", "AddonPanel", UIParent)
@@ -788,12 +798,12 @@ fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
 
     // A pushable-0 window arriving moves the addon's pushable-1 frame to center
     // (`UIParent.lua`); only two pushable-0 rows replace each other (`:729-732`).
-    s.set_gossip(Some(GossipMenu {
+    loan.set(Menu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
         options: Vec::new(),
         ..Default::default()
-    }));
+    });
     s.fire_event("GOSSIP_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(s.eval::<bool>("return GossipFrame:IsVisible()").unwrap());

@@ -4,9 +4,6 @@
 
 use benilla_ui::script::{ItemTextState, UiScript};
 
-#[path = "common/mod.rs"]
-mod common;
-
 const UI_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ui");
 
 /// The reader's dependency prefix, in the production order; the page's scroll frame inherits
@@ -385,70 +382,4 @@ fn the_reported_book_crest_draws_at_the_blps_own_size() {
             "each rank badge is its own 32x32 BLP, not a page-wide slab"
         );
     }
-}
-
-/// The reader's `UIPanelWindows` row (`{ area = "left", pushable = 0 }`, `UIParent.lua:20`) makes
-/// it and gossip left-slot rivals: showing one replaces the other in both orders, and each
-/// displaced window's OnHide ends its own session.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_quest_givers_gossip_displaces_the_open_reader() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    use benilla_ui::script::GossipMenu;
-
-    let mut s = UiScript::new().unwrap();
-    load_ui(&s);
-    // The stock gossip window, off the chain.
-    common::load_ui(&s, "Interface\\FrameXML\\GossipFrame.xml");
-
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
-    assert!(s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
-    assert!(
-        s.eval::<bool>("return GetLeftFrame():GetName() == 'ItemTextFrame'")
-            .unwrap(),
-        "the registered reader seats at the left slot, not a bare Show"
-    );
-    let _ = s.take_item_text_close();
-
-    s.set_gossip(Some(GossipMenu {
-        greeting: "What can I do for you?".into(),
-        quests: Vec::new(),
-        options: Vec::new(),
-        ..Default::default()
-    }));
-    s.fire_event("GOSSIP_SHOW", vec![]);
-    assert!(s.take_errors().is_empty());
-    assert!(
-        !s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap(),
-        "gossip replaced the note — the two-window stack (both drawn at 0,-104) cannot form"
-    );
-    assert!(s
-        .eval::<bool>("return GossipFrame:IsShown() and GetLeftFrame():GetName() == 'GossipFrame'")
-        .unwrap());
-    assert!(
-        s.take_item_text_close(),
-        "the displaced reader's OnHide ended the read session (CloseItemText)"
-    );
-    // The app's close must not disturb the gossip that displaced it.
-    s.set_item_text(None);
-    s.fire_event("ITEM_TEXT_CLOSED", vec![]);
-    assert!(s.eval::<bool>("return GossipFrame:IsShown()").unwrap());
-
-    // The reverse order: reading the note over an open gossip ends the gossip session.
-    let _ = s.take_gossip_close();
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
-    assert!(s.take_errors().is_empty());
-    assert!(
-        s.eval::<bool>("return ItemTextFrame:IsShown() and not GossipFrame:IsShown()")
-            .unwrap(),
-        "the reader replaces gossip the same way"
-    );
-    assert!(
-        s.take_gossip_close(),
-        "the displaced gossip's OnHide ended the gossip session (CloseGossip)"
-    );
 }

@@ -368,7 +368,7 @@ pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
 pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
-pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
+pub use gossip::{GossipOptionView, GossipQuestRow, GossipRead};
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
     LastOnline, UnitGuild, MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,

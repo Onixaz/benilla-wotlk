@@ -155,6 +155,8 @@ local VERBS = {
     { "cansave", function() return TabardModel and TabardModel:CanSaveTabardNow() end },
     { "barberinfo", function() return select("#", GetBarberShopStyleInfo(2)) end },
     { "barbercost", function() return GetBarberShopTotalCost() end },
+    { "gossiptext", function() return GetGossipText() end },
+    { "gossipopts", function() return GetNumGossipOptions() end },
 }
 local function answers()
     local verbs = {}
@@ -3725,13 +3727,10 @@ fn a_window_on_the_banker_itself_stays_open_after_the_bank_closes() {
     );
     assert_eq!(gossip_npc(&rig), Some(BANKER), "the menu keeps its state");
     let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
-    // Their order is the gossip feed's, #1279's.
-    let mut both = fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]);
-    both.sort();
     assert_eq!(
-        both,
-        ["BANKFRAME_OPENED", "GOSSIP_CLOSED"],
-        "the bank's open closes the menu it finds"
+        fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]),
+        ["GOSSIP_CLOSED", "BANKFRAME_OPENED"],
+        "the bank's setter closes the menu it finds before the bank opens (`0x57b909` -> `0x512ef6`)"
     );
     assert_eq!(gossip_npc(&rig), None);
     // A vendor on the banker: the same.

@@ -104,6 +104,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) tabard: crate::ui_tabard::TabardView<'w, 's>,
     /// The barber shop, our body's dials and the catalogs its verbs read.
     barber: crate::ui_barber::BarberLive<'w, 's>,
+    /// The gossip globals, the NPC's record and our coinage.
+    gossip: crate::ui_gossip::GossipView<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1758,6 +1760,24 @@ impl LiveState for LiveView<'_, '_> {
         self.barber.read()
     }
 
+    fn gossip(&self) -> Option<benilla_ui::script::GossipRead<'_>> {
+        self.gossip.read()
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        self.gossip.select_option(slot, code);
+    }
+
+    fn select_gossip_quest(&mut self, row: usize) {
+        self.gossip.select_quest(row);
+    }
+
+    fn close_gossip(&mut self) -> u32 {
+        use crate::ui_session::NpcSession;
+        let giver_held = self.lent.giver.get().and_then(|q| q.npc()).is_some();
+        self.gossip.close(self.tabard.target_mut(), giver_held)
+    }
+
     fn set_barber_dials(&mut self, dials: [u8; 5]) {
         self.barber.set_dials(dials);
     }
@@ -1831,6 +1851,14 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     /// `f` over the quest giver this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_giver<R>(&self, f: impl FnOnce(Option<&QuestGiver>) -> R) -> R {
         self.loan.with_view(|v| f(v.lent.giver.get()))
+    }
+
+    /// `f` over the gossip globals this parameter borrows, between calls into Lua.
+    pub(crate) fn with_gossip<R>(
+        &self,
+        f: impl FnOnce(Option<&crate::ui_gossip::GossipState>) -> R,
+    ) -> R {
+        self.loan.with_view(|v| f(v.gossip.state()))
     }
 
     /// Whether the quest giver changed since this parameter's system last ran.
@@ -2309,6 +2337,14 @@ pub(crate) fn lend_world<R>(
     // Lent until it drops, after `f`.
     let _loan = state.0.get_mut(held.world);
     f(script)
+}
+
+/// `step` in turn after the events queued so far, or now with no event queue.
+pub(crate) fn in_turn(world: &mut World, step: impl FnOnce(&mut World) + Send + Sync + 'static) {
+    match world.get_resource_mut::<UiEvents>() {
+        Some(mut ui) => ui.world(step),
+        None => step(world),
+    }
 }
 
 /// Fires what the handler that just ran queued, in its order, with the `World` lent; it runs after

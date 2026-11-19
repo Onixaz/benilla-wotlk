@@ -742,6 +742,22 @@ pub trait LiveState {
     /// The seed's and a cycle's colours onto our body (`0x5993b0`).
     fn apply_guild_color(&mut self, _design: [i32; 5]) {}
 
+    /// The gossip globals at the call (`0xc00ef0`, `0xc00bf0`, `0xbfc968`, `0xc00be8`); `None` with no view.
+    fn gossip(&self) -> Option<super::GossipRead<'_>> {
+        None
+    }
+
+    /// `CMSG_GOSSIP_SELECT_OPTION` for option `slot` (0-based) to the held NPC, then the menu emptied (`0x58b040`, `0x58b045`).
+    fn select_gossip_option(&mut self, _slot: usize, _code: Option<String>) {}
+
+    /// The questgiver send for quest row `row` (0-based, whole menu) to the held NPC (`0x58b070`, `0x58b130`).
+    fn select_gossip_quest(&mut self, _row: usize) {}
+
+    /// `CloseGossip`'s zero set (`0x58a550`): how many `GOSSIP_CLOSED`s it fires, 0 with no NPC held.
+    fn close_gossip(&mut self) -> u32 {
+        0
+    }
+
     /// The barber shop at the call: the open flag (`[0xbd19b8]`), our look, level and coinage, and our body's dials; `None` with no player object.
     fn barber(&self) -> Option<super::BarberRead<'_>> {
         None
@@ -1198,10 +1214,28 @@ pub(crate) struct TestView {
     pub item_record_reads: std::cell::RefCell<Vec<(u32, bool)>>,
     /// The bind point's area name.
     pub bind_location: std::cell::RefCell<Option<String>>,
+    /// The gossip globals, the selects and the closes a close fires.
+    pub gossip: Option<TestGossip>,
     /// The barber shop, the alter-appearance sends and our race's two tokens.
     pub barber: Option<TestBarber>,
     pub barber_sent: Vec<[u32; 4]>,
     pub hair_tokens: Option<(String, String)>,
+}
+
+/// The gossip globals a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestGossip {
+    pub greeting: String,
+    pub options: Vec<super::GossipOptionView>,
+    pub quests: Vec<super::GossipQuestRow>,
+    pub pending: bool,
+    pub force_gossip: bool,
+    pub money: u64,
+    pub selects: Vec<(usize, Option<String>)>,
+    pub quest_selects: Vec<usize>,
+    /// What the first close returns; later closes return 0.
+    pub closes: u32,
 }
 
 /// The barber shop a test view lends.
@@ -1409,6 +1443,38 @@ impl LiveState for TestView {
 
     fn tabard_guild_record(&self) -> Option<[i32; 5]> {
         self.tabard_record
+    }
+
+    fn gossip(&self) -> Option<super::GossipRead<'_>> {
+        let g = self.gossip.as_ref()?;
+        Some(super::GossipRead {
+            greeting: &g.greeting,
+            options: &g.options,
+            quests: &g.quests,
+            pending: g.pending,
+            force_gossip: g.force_gossip,
+            money: g.money,
+        })
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        if let Some(g) = self.gossip.as_mut() {
+            g.selects.push((slot, code));
+            g.options.clear();
+            g.quests.clear();
+        }
+    }
+
+    fn select_gossip_quest(&mut self, row: usize) {
+        if let Some(g) = self.gossip.as_mut() {
+            g.quest_selects.push(row);
+        }
+    }
+
+    fn close_gossip(&mut self) -> u32 {
+        self.gossip
+            .as_mut()
+            .map_or(0, |g| std::mem::take(&mut g.closes))
     }
 
     fn barber(&self) -> Option<super::BarberRead<'_>> {

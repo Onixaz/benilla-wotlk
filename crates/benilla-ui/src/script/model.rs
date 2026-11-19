@@ -7,10 +7,10 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
-    loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
-    quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
-    taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, item_text, lfg, loot,
+    loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp, quest,
+    quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi,
+    trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
     MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
@@ -775,16 +775,6 @@ pub(crate) struct Model {
     pub(crate) slider_drag: Option<slider::SliderDrag>,
     /// A ColorSelect wheel or value-bar drag, press to release.
     pub(crate) color_drag: Option<colorselect::ColorDrag>,
-
-    /// The open gossip menu, the `SelectGossipOption` calls (position, code) and whether
-    /// `CloseGossip` ran.
-    pub(crate) gossip: Option<gossip::GossipMenu>,
-    pub(crate) gossip_selects: Vec<(u32, Option<String>)>,
-    pub(crate) gossip_close: bool,
-    /// The open menu's greeting query is out: selects do nothing.
-    pub(crate) gossip_pending: bool,
-    /// `SelectGossipQuest` 1-based rows, each sent as `CMSG_QUESTGIVER_QUERY_QUEST` for its quest.
-    pub(crate) gossip_quest_selects: Vec<u32>,
 
     /// The open vendor's stock, the `BuyMerchantItem` calls and whether `CloseMerchant` ran.
     pub(crate) merchant: Option<merchant::MerchantState>,
@@ -1691,11 +1681,6 @@ impl Model {
             sizing: None,
             slider_drag: None,
             color_drag: None,
-            gossip: None,
-            gossip_selects: Vec::new(),
-            gossip_close: false,
-            gossip_pending: false,
-            gossip_quest_selects: Vec::new(),
             merchant: None,
             repair_all_cost: 0,
             repair_all_damaged: false,

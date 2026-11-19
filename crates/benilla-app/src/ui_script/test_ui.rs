@@ -448,22 +448,6 @@ pub(crate) fn read(req: &str) -> Option<Vec<u8>> {
     std::fs::read(dir.join(req)).ok()
 }
 
-/// Stock `GossipFrame.xml`'s dependencies in the production order, shared with `ui_gossip`'s feed
-/// tests. The greeting pane inherits `UIPanelScrollFrameTemplate`, and a missing template only
-/// warns, losing the scrollbar silently. Needs client data.
-pub(crate) const GOSSIP_UI: &[&str] = &[
-    r"Interface\FrameXML\GlobalStrings.lua",
-    r"Interface\FrameXML\BasicControls.xml",
-    r"Interface\FrameXML\Constants.lua",
-    r"Interface\FrameXML\UIParent.xml",
-    r"Interface\FrameXML\MoneyFrame.lua",
-    r"Interface\FrameXML\MoneyFrame.xml",
-    r"Interface\FrameXML\UIPanelTemplates.lua",
-    r"Interface\FrameXML\UIPanelTemplates.xml",
-    r"Interface\FrameXML\StaticPopup.xml",
-    "ScrollTemplates.xml",
-];
-
 /// What stock `LootFrame.xml` needs to load and behave. `GlobalStrings.lua` because a bare VM
 /// lacks what the app loads at setup (the master-loot menu reads `GROUP` and `GIVE_LOOT`),
 /// `ItemButtonTemplate.xml` because a missing template only warns, and `PartyFrame.xml` because

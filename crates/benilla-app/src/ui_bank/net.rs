@@ -102,20 +102,26 @@ fn on_interact_target_taken(
 
 fn on_show_bank(
     In(ev): In<SessionEvent>,
-    mut gossip: ResMut<GossipState>,
+    gossip: Res<GossipState>,
     mut quest: NonSendMut<QuestGiver>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::ShowBank { banker } = ev {
         // The setter's interaction close takes the window holding the target (`0x57b909` -> `0x51fce0`): the gossip menu with the quest frame on it, else the first other window open.
-        let gossip_held = gossip.npc.is_some();
-        let quest_closes = gossip_held && quest.is_open();
-        end_gossip(&mut gossip, &mut quest);
+        let gossip_held = gossip.npc;
+        let quest_closes = gossip_held.is_some() && quest.is_open();
+        if let Some(npc) = gossip_held {
+            // The gossip's leg of the walk with the target zeroed first fires `GOSSIP_CLOSED` once (`0x512ef6`).
+            ui.world(move |w| crate::ui_gossip::close_by_interaction(w, npc));
+            if quest_closes {
+                quest.clear();
+            }
+        }
         // The quest window's close fires its event in the handler's turn (`0x58cb98`).
         if quest_closes {
             ui.fire("QUEST_FINISHED", vec![]);
         }
-        if !gossip_held {
+        if gossip_held.is_none() {
             ui.world(crate::ui_session::close_target_holder);
         }
         ui.world(move |world| super::open_bank(world, banker));
@@ -156,25 +162,4 @@ fn on_buy_slot_result(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script:
 /// The bank window closes with the connection.
 fn on_session_end(In(_): In<SessionEvent>, mut bank: NonSendMut<BankOpen>) {
     bank.clear();
-}
-
-/// `SMSG_SHOW_BANK`, sent for `CMSG_BANKER_ACTIVATE` and unprompted for the gossip bank option: the new interact target closes the gossip menu on it (`0x51fce0` -> `0x512ef6`).
-fn end_gossip(gossip: &mut GossipState, quest: &mut QuestGiver) {
-    if gossip.npc.is_some() {
-        crate::ui_gossip::end_interaction(gossip, quest);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn show_bank_ends_the_gossip_interaction() {
-        let mut gossip = GossipState::default();
-        let mut quest = QuestGiver::default();
-        gossip.npc = Some(0x42);
-        end_gossip(&mut gossip, &mut quest);
-        assert_eq!(gossip.npc, None, "the gossip session ended with the menu");
-    }
 }
