@@ -37,7 +37,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_chat::feed::feed_chat",
     "benilla_app::ui_chat::feed::played_time_bridge",
     "benilla_app::ui_chat::net::feed_channel_roster_names",
-    "benilla_app::ui_dressup::feed_dressup",
     "benilla_app::ui_focus::feed_focus",
     "benilla_app::ui_follow::feed_follow",
     "benilla_app::ui_glyph::feed_glyphs",
@@ -122,6 +121,10 @@ const KEPT: &[(&str, &str)] = &[
     (
         "benilla_app::death::update_corpse_distance",
         "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
+    ),
+    (
+        "benilla_app::ui_dressup::sync_dressup_booth",
+        "rendering, no event: 12340's DressUpModel verbs edit the widget's own model in their call (0x597e90, 0x597ed0, 0x598830), an uncached item landing by its record's callback (0x5980b0), and the model frame draws it and its facing on every frame render (0x960240); nothing in Lua reads it back",
     ),
     (
         "benilla_app::ui_pet_doll::sync_pet_booth",

@@ -191,11 +191,12 @@ pub(crate) struct DressUpUiPlugin;
 impl Plugin for DressUpUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DressUpRoom>()
-            .add_systems(Update, feed_dressup.in_set(UiFeed));
+            .add_systems(Update, sync_dressup_booth.in_set(UiFeed));
     }
 }
 
-fn feed_dressup(
+/// The booth's render sync: 12340's `DressUpModel` verbs edit the widget's own model (`0x597e90`, `0x597ed0`, `0x598830`) and the model frame draws it on every frame render (`0x960240`); no game state, no event.
+fn sync_dressup_booth(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut room: ResMut<DressUpRoom>,
     mut preview: ResMut<DressUpPreview>,
@@ -300,7 +301,7 @@ fn player_look(
         hair_color: s.player_hair_color().unwrap_or(0),
         facial_hair: s.player_facial_hair().unwrap_or(0),
         equipment,
-        // `feed_dressup` stamps the crest in.
+        // `sync_dressup_booth` stamps the crest in.
         emblem: None,
     })
 }
