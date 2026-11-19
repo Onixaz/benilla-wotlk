@@ -32,6 +32,11 @@ pub struct PlacementHost {
 }
 
 impl PlacementHost {
+    /// The anim root, where a caller asks for a sequence ([`crate::doodad_anim::HostSequence`]).
+    pub fn root(&self) -> Entity {
+        self.root
+    }
+
     /// The anchor for `bone`; `None` when nothing this placement spawns rides it.
     pub fn anchor(&self, bone: u16) -> Option<Entity> {
         self.anchors

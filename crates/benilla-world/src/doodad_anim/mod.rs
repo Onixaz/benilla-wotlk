@@ -231,6 +231,27 @@ pub struct DoodadAnimHost {
     pub(crate) parked_at: f32,
 }
 
+/// A request on an anim host root to play this animation id in place of its loader-idle arm: a
+/// moving map object sets its ship state on every set-0 doodad (`0x7b45f0` -> `0x7b4170`, each
+/// prop's `0x832ab0` with variation -1). The caller resolves the id on the model; the next re-roll
+/// picks its variation and snaps to it, drawn or not.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HostSequence(pub u16);
+
+/// Re-arm each host whose requested sequence changed: its window expires now, so
+/// [`reroll_doodad_variation`] rolls the new id this frame.
+fn apply_host_sequence(
+    mut hosts: Query<(&HostSequence, &mut DoodadAnimHost), Changed<HostSequence>>,
+) {
+    for (seq, mut host) in &mut hosts {
+        if host.anim_id == Some(seq.0) {
+            continue; // already looping it: a repeat request does not restart the clip
+        }
+        host.anim_id = Some(seq.0);
+        host.window_hi = f32::NEG_INFINITY;
+    }
+}
+
 impl DoodadAnimHost {
     /// The armed clip's `(node, seek)` on the shared clock, `(now − armed_at) mod duration`. It
     /// answers while parked, but the reference fires no events for a doodad culled out of its
@@ -442,7 +463,11 @@ impl Plugin for DoodadAnimPlugin {
         // resumes the old variation for a frame.
         app.add_systems(
             PostUpdate,
-            (reroll_doodad_variation, gate_doodad_anim)
+            (
+                apply_host_sequence,
+                reroll_doodad_variation,
+                gate_doodad_anim,
+            )
                 .chain()
                 .before(AnimationSystems),
         );
@@ -740,6 +765,80 @@ mod tests {
                 AnimationPlayer::default(),
             ))
             .id()
+    }
+
+    /// A ship's state change re-arms its prop at once on the requested id, mid-window, and a
+    /// repeat of the same request leaves the running clip alone.
+    #[test]
+    fn a_host_sequence_request_rearms_the_prop_on_that_id() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.init_resource::<benilla_assets::AnimRng>();
+        app.add_systems(
+            Update,
+            (apply_host_sequence, reroll_doodad_variation).chain(),
+        );
+        // Stand (slot 0, node 1) and ShipMoving (slot 1, node 2), the paddle wheel's pair.
+        let mut a = anims(vec![seq_clip(0, 0, 1), seq_clip(163, 1, 2)], None, true);
+        a.clips[0].duration = 0.333;
+        a.clips[1].duration = 13.333;
+        let host = app
+            .world_mut()
+            .spawn((
+                DoodadAnimHost {
+                    meshes: Vec::new(),
+                    fade: crate::particles::EmitterFade::sphere(1.0, Vec3::ZERO),
+                    clip: None,
+                    armed_at: 0.0,
+                    // A gseq-only host: never armed until a sequence is asked for.
+                    window_hi: f32::NEG_INFINITY,
+                    anim_id: None,
+                    active: true,
+                    parked_at: 0.0,
+                },
+                a,
+                AnimationPlayer::default(),
+                HostSequence(0),
+            ))
+            .id();
+        app.update();
+        let armed = |app: &App| {
+            let h = app.world().entity(host).get::<DoodadAnimHost>().unwrap();
+            (h.anim_id, h.clip.map(|(n, _)| n), h.window_hi)
+        };
+        assert_eq!(armed(&app).0, Some(0));
+        assert_eq!(
+            armed(&app).1,
+            Some(AnimationNodeIndex::new(1)),
+            "Stand armed"
+        );
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(100));
+        app.world_mut().entity_mut(host).insert(HostSequence(163));
+        app.update();
+        let (id, node, window) = armed(&app);
+        assert_eq!(id, Some(163));
+        assert_eq!(
+            node,
+            Some(AnimationNodeIndex::new(2)),
+            "ShipMoving armed mid-window"
+        );
+        let player = app.world().entity(host).get::<AnimationPlayer>().unwrap();
+        assert!(player.is_playing_animation(AnimationNodeIndex::new(2)));
+
+        // The same request again, a second later: the 13 s loop keeps its window.
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(1000));
+        app.world_mut().entity_mut(host).insert(HostSequence(163));
+        app.update();
+        assert_eq!(
+            armed(&app).2,
+            window,
+            "a repeat request does not restart the clip"
+        );
     }
 
     #[test]

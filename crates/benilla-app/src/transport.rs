@@ -55,6 +55,7 @@ impl Plugin for TransportPlugin {
                     arm_transports,
                     reseek_ridden_transport_at_worldport,
                     tick_transports,
+                    drive_ship_props,
                     watch_ridden_transport_map,
                     refit_changed_collider_aabbs::<With<Transport>>,
                     compose_riders,
@@ -206,9 +207,21 @@ impl Transport {
                     pos,
                     heading: l.yaw,
                     moving,
+                    // A lift's props keep their own arm; only a ship path hands one out.
+                    sequence: benilla_formats::SHIP_STAND,
                 }
             }
         }
+    }
+
+    /// The ship state a boat hands its props this frame (`0x7134a0`), `None` for a lift or a boat
+    /// on another map's leg, where the reference returns before setting it.
+    fn ship_sequence(&self, anchor: &TransportAnchor, here: u32) -> Option<u16> {
+        let Drive::Taxi(t) = &self.drive else {
+            return None;
+        };
+        let sample = t.sample(self.cycle_ms(anchor));
+        (sample.map == here).then_some(sample.sequence)
     }
 
     /// The live sample for an anchor, the pose the tick writes this frame; for instruments.
@@ -416,6 +429,56 @@ fn tick_transports(
         }
         visibility.set_if_neq(Visibility::Inherited);
         write_deck_pose(&sample, &mut transform, position, rotation);
+    }
+}
+
+/// The anim roots of a WMO transport's set-0 props that author a ship sequence, recorded as the
+/// props spawn ([`crate::entities`]'s WMO prop lane).
+#[derive(Component, Default)]
+#[component(storage = "SparseSet")]
+pub(crate) struct ShipProps(pub(crate) Vec<Entity>);
+
+/// Hand each boat's ship state to its props: the reference sets it on every set-0 doodad of the
+/// world object when the state changes (`0x7134a0` -> `0x7b45f0`), each prop resolving the id
+/// through its `AnimationData.dbc` fallback (`0x832ab0` -> `0x826350`), so a prop that lacks the
+/// ship sequences plays Stand.
+fn drive_ship_props(
+    current_map: Option<Res<CurrentMap>>,
+    anim_data: Option<Res<crate::creature_anim::AnimData>>,
+    transports: Query<(&Transport, &TransportAnchor, &ShipProps)>,
+    mut hosts: Query<(
+        &benilla_assets::ModelAnimations,
+        Option<&mut benilla_world::doodad_anim::HostSequence>,
+    )>,
+    mut commands: Commands,
+) {
+    let Some(current_map) = current_map else {
+        return;
+    };
+    for (transport, anchor, props) in &transports {
+        let Some(sequence) = transport.ship_sequence(anchor, current_map.0) else {
+            continue;
+        };
+        for &root in &props.0 {
+            // Absent until the prop's spawn commands apply: next frame.
+            let Ok((anims, current)) = hosts.get_mut(root) else {
+                continue;
+            };
+            let id = match anim_data.as_deref() {
+                Some(data) => anims.resolve(sequence, &data.0).id,
+                None if anims.find(sequence).is_some() => sequence,
+                None => benilla_formats::SHIP_STAND,
+            };
+            let want = benilla_world::doodad_anim::HostSequence(id);
+            match current {
+                Some(mut c) => {
+                    c.set_if_neq(want);
+                }
+                None => {
+                    commands.entity(root).insert(want);
+                }
+            }
+        }
     }
 }
 
