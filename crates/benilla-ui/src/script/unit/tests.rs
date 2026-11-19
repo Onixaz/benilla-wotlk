@@ -2857,7 +2857,21 @@ fn the_npc_token_reads_the_interact_target_at_the_call() {
         ),
         "the target the open just took, ahead of the snapshot's push"
     );
-    assert_eq!(read(&mut s, None).0.as_deref(), Some("Brog Hamfist"));
+    // 12340 reads the zeroed target as nobody (`0x60af67`): the snapshot's last NPC is not the token's.
+    assert_eq!(
+        read(&mut s, None),
+        (None, None),
+        "no target held, no fallback window"
+    );
+    s.set_unit_guids(&UnitGuids {
+        npc: OLD,
+        ..Default::default()
+    });
+    assert_eq!(
+        read(&mut s, None).0.as_deref(),
+        Some("Brog Hamfist"),
+        "a window not on the target yet names its NPC through the fallback (#1329)"
+    );
     assert_eq!(
         s.eval::<Option<String>>(r#"return UnitName("npc")"#)
             .unwrap()

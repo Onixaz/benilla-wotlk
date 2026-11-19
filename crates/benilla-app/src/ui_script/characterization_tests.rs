@@ -161,6 +161,7 @@ local VERBS = {
     { "itpage", function() return ItemTextGetPage() end },
     { "itnext", function() return ItemTextHasNextPage() end },
     { "merchantn", function() return GetMerchantNumItems() end },
+    { "npc", function() return UnitGUID("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
     { "money", function() return GetMoney() end },

@@ -1225,11 +1225,16 @@ impl Model {
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
     }
 
-    /// The `"npc"` unit by the interact target read at the call (`0xbd07a8`), as the getters look its object up; with none held, the windows whose opens do not take it yet (#1329) answer through the pushed snapshot.
+    /// The `"npc"` unit by the interact target read at the call (`0xbd07a8`), as the getters look its object up; with none held, nil (`0x60af67`), but for the windows whose opens do not take it yet (#1329), named by the pushed fallback guid.
     fn npc_unit(&self) -> Option<&UnitState> {
         let pushed = self.pushed_unit("npc");
-        let Some(guid) = super::live::read_live(|l| l.interact_target()).flatten() else {
+        // No view lent (a bare harness): the pushed snapshot.
+        let Some(target) = super::live::read_live(|l| l.interact_target()) else {
             return pushed;
+        };
+        let Some(guid) = target else {
+            let fallback = self.unit_guids.npc;
+            return pushed.filter(|u| fallback != 0 && u.guid == fallback);
         };
         pushed
             .filter(|u| u.guid == guid)

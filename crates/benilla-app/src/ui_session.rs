@@ -22,6 +22,7 @@ impl Plugin for UiSessionPlugin {
         // Inside the net chain, after the apply pass that opens and swaps sessions and before the
         // facing chain: a `MERCHANT_SHOW` handler reads `UnitName("NPC")` the frame it opens.
         app.init_resource::<InteractNpc>()
+            .init_resource::<NpcTokenFallback>()
             .init_resource::<InteractTarget>()
             .add_systems(
                 Update,
@@ -264,7 +265,7 @@ pub(crate) fn close_interaction(
     *last = windows.npcs();
 }
 
-/// The interact target (`0xbd07a8`): a window's open sets it (`0x51fce0`), the interaction close zeroes it first (`0x512e89`). The tabard designer and the gossip set and clear it; the other windows still answer through [`InteractNpc`] (#1329).
+/// The interact target (`0xbd07a8`): a window's open sets it (`0x51fce0`), the interaction close zeroes it first (`0x512e89`). The windows whose opens do not take it yet (#1329) name the `"npc"` token through [`NpcTokenFallback`].
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
 pub(crate) struct InteractTarget(pub(crate) Option<u64>);
 
@@ -368,6 +369,10 @@ fn close_window_on(world: &mut World, old: u64) {
 #[derive(Resource, Default, PartialEq, Eq)]
 pub(crate) struct InteractNpc(pub(crate) Option<Entity>, pub(crate) Option<u64>);
 
+/// The `"npc"` token's guid while no interact target is held (`0xbd07a8` zero): the open window among those whose opens do not take the target yet (#1329), else 0, as 12340 reads nil.
+#[derive(Resource, Default, PartialEq, Eq)]
+pub(crate) struct NpcTokenFallback(pub(crate) u64);
+
 /// Collapse the portrait-bound sessions into [`InteractNpc`]: they are mutually exclusive, so the
 /// first open one in the chain wins. `Option<Res<_>>` lets a test mount it without every window.
 pub(crate) fn feed_interact_npc(
@@ -393,21 +398,32 @@ pub(crate) fn feed_interact_npc(
     battlemaster: Option<Res<crate::ui_battlefield::Battlefield>>,
     index: Option<Res<GuidIndex>>,
     mut out: ResMut<InteractNpc>,
+    fallback: Option<ResMut<NpcTokenFallback>>,
 ) {
+    let quest = quest.and_then(|s| s.npc());
+    let trade = trade.and_then(|s| s.npc());
+    let auction = auction.and_then(|s| s.npc());
+    let stable = stable.and_then(|s| s.npc());
+    let battlemaster = battlemaster.and_then(|s| s.npc());
     let guid = gossip
         .and_then(|s| s.npc())
-        .or_else(|| quest.and_then(|s| s.npc()))
+        .or(quest)
         .or_else(|| merchant.and_then(|s| s.npc()))
         .or_else(|| trainer.and_then(|s| s.npc()))
         .or_else(|| taxi.and_then(|s| s.npc()))
-        .or_else(|| trade.and_then(|s| s.npc()))
+        .or(trade)
         .or_else(|| bank.and_then(|s| s.banker))
-        .or_else(|| auction.and_then(|s| s.npc()))
+        .or(auction)
         .or_else(|| registrar.and_then(|s| s.npc()))
-        .or_else(|| stable.and_then(|s| s.npc()))
+        .or(stable)
         .or_else(|| tabard.and_then(|s| s.npc()))
         .or_else(|| petition_vendor.and_then(|s| s.npc()))
-        .or_else(|| battlemaster.and_then(|s| s.npc()));
+        .or(battlemaster);
+    // The windows that set the interact target answer the token through it alone; the rest, until their opens take it (#1329).
+    if let Some(mut fallback) = fallback {
+        let untargeted = quest.or(trade).or(auction).or(stable).or(battlemaster);
+        fallback.set_if_neq(NpcTokenFallback(untargeted.unwrap_or(0)));
+    }
     // Field 0 is the entity the booth bakes and the facing chain steers by; field 1 is the guid
     // `crate::ui_unit` names the token by, which holds even when the entity is not streamed.
     // Written only on a change: the unit feed's dirty gate reads `is_changed()` on it.

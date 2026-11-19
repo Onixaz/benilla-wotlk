@@ -25,7 +25,7 @@ pub struct UnitGuids {
     pub target: u64,
     /// The mouseover global, read only while it is a held unit.
     pub mouseover: u64,
-    /// The interaction NPC.
+    /// The `"npc"` guid while no interact target is held: a window whose open does not take the target yet (#1329), else 0.
     pub npc: u64,
     /// The focus `[0xbd07d0]`, which `FocusUnit` sets in the VM; a push keeps the VM's.
     pub focus: u64,
@@ -378,7 +378,7 @@ impl UnitGuids {
             UnitBase::Pet if self.player == 0 => 0,
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
-            // The interact target read at the call (`0xbd07a8`); the pushed guid while none is held, for the windows not on it yet (#1329).
+            // The interact target read at the call (`0x60af67`); with none held, the guid of a window not on it yet (#1329), else nobody.
             UnitBase::Npc => read_live(|l| l.interact_target())
                 .flatten()
                 .unwrap_or(self.npc),

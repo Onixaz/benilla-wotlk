@@ -1329,22 +1329,28 @@ fn the_merchant_fires_from_its_handlers_with_the_rows_read_at_the_call() {
     );
 }
 
-/// `CloseMerchant` closes inside its call: the vendor holds the interact target, whose clear runs the interaction close's merchant leg first, so `MERCHANT_CLOSED` fires twice (`0x584614` -> `0x512f3a`, `0x58463e`); a second call finds no vendor.
+/// `CloseMerchant` closes inside its call: the vendor holds the interact target, whose clear runs the interaction close's merchant leg first, so `MERCHANT_CLOSED` fires twice (`0x584614` -> `0x512f3a`, `0x58463e`), with `"npc"` already nobody; a second call finds no vendor.
 #[test]
 fn close_merchant_fires_twice_inside_its_call() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
     let _rx = tap(&mut rig);
-    let verbs = &["merchantn"];
+    let verbs = &["merchantn", "npc"];
     rig.packets(vec![npc_at(NPC, 0x80, NEAR)], 2);
     rig.packets(vec![vendor_list(NPC, vec![vendor_row(11, 1, 3)])], 2);
+    assert_eq!(
+        eval(&mut rig, r#"UnitGUID("npc")"#),
+        format!("0x{NPC:016X}"),
+        "the vendor holds the token while open"
+    );
+    // The clear zeroes the target before its walk (`0x512e89`), so the token reads nobody at both (`0x60af67`).
     let pinned = fired_in_call(&mut rig, "CloseMerchant()", MERCHANT_EVENTS, verbs);
     assert_eq!(
         pinned,
         vec![
-            "MERCHANT_CLOSED | merchantn=0",
-            "MERCHANT_CLOSED | merchantn=0"
+            "MERCHANT_CLOSED | merchantn=0 npc=nil",
+            "MERCHANT_CLOSED | merchantn=0 npc=nil"
         ]
     );
     let pinned = fired_in_call(&mut rig, "CloseMerchant()", MERCHANT_EVENTS, verbs);

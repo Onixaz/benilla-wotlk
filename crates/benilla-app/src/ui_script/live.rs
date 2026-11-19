@@ -2365,6 +2365,11 @@ pub(crate) fn quest_npc() -> Option<u64> {
     benilla_ui::script::read_live(|l| l.quest_npc()).flatten()
 }
 
+/// The interact target (`0xbd07a8`) through the view lent to the running system, `None` outside a lending system.
+pub(crate) fn interact_target() -> Option<Option<u64>> {
+    benilla_ui::script::read_live(|l| l.interact_target())
+}
+
 /// A handler's write to state the VM owns, run in turn with the events around it.
 type VmWrite = Box<dyn FnOnce(&mut UiScript) + Send + Sync>;
 

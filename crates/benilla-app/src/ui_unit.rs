@@ -741,6 +741,7 @@ pub(crate) struct UnitTokens<'w, 's> {
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
+    npc_fallback: Option<Res<'w, crate::ui_session::NpcTokenFallback>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
@@ -844,8 +845,13 @@ impl UnitTokens<'_, '_> {
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            // The interaction NPC's guid.
-            UnitBase::Npc => self.interact.as_ref()?.1,
+            // The interact target read through the lent view (`0x60af67`); with none held, a window not on it yet (#1329); outside a lending system, the open window.
+            UnitBase::Npc => match crate::ui_script::live::interact_target() {
+                Some(target) => {
+                    target.or_else(|| self.npc_fallback.as_ref().map(|f| f.0).filter(|&g| g != 0))
+                }
+                None => self.interact.as_ref()?.1,
+            },
             // The quest window's source (`0x6081b0`), read through the view lent to the call.
             UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
             // The encounter's slot (`0x5ed710`).

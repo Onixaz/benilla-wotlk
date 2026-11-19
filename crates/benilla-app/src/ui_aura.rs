@@ -391,7 +391,8 @@ struct AuraUnits<'w> {
     group: Option<Res<'w, crate::ui_party::GroupState>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
+    // The `"npc"` guid while no interact target is held; the target itself is read at the call.
+    npc: Option<Res<'w, crate::ui_session::NpcTokenFallback>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
 }
@@ -558,7 +559,7 @@ fn feed_auras(
                     h.mouseover(&units.hovered_go.as_deref().copied().unwrap_or_default())
                 })
                 .map_or(0, |(_, guid)| guid),
-            npc: units.interact.as_deref().and_then(|i| i.1).unwrap_or(0),
+            npc: units.npc.as_deref().map_or(0, |f| f.0),
             focus: focus_guid,
             // The player's transport while seated (`0x60ac87`).
             vehicle: seated
