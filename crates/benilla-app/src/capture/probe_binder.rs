@@ -163,12 +163,26 @@ fn vm_icon_type(script: &UiScript, pos: usize) -> String {
         .unwrap_or_default()
 }
 
-/// `BENILLA_GOSSIP_ICONS.binder` in the live VM, `""` when absent. The stock
-/// `GossipFrame.lua:123` builds the icon path from the type string and defines no such table.
-fn vm_binder_texture(script: &UiScript) -> String {
-    script
-        .eval::<String>("return (BENILLA_GOSSIP_ICONS and BENILLA_GOSSIP_ICONS.binder) or \"\"")
-        .unwrap_or_default()
+/// The icon texture the stock gossip frame drew beside the shown title button reading `label`,
+/// `""` when no button reads it: `GossipFrame.lua` sets it from the row's type string.
+fn vm_row_icon(script: &UiScript, label: &str) -> String {
+    let chunk = format!(
+        "for i = 1, NUMGOSSIPBUTTONS or 32 do \
+           local b = _G['GossipTitleButton' .. i] \
+           if b and b:IsShown() and b:GetText() == {label:?} then \
+             local t = _G[b:GetName() .. 'GossipIcon'] \
+             return (t and t:GetTexture()) or '' \
+           end \
+         end \
+         return ''"
+    );
+    script.eval::<String>(&chunk).unwrap_or_default()
+}
+
+/// Whether `texture` is the stock icon for gossip type `ty`, `Interface\GossipFrame\<Type>GossipIcon`.
+fn is_type_icon(texture: &str, ty: &str) -> bool {
+    let want = format!("interface\\gossipframe\\{ty}gossipicon");
+    texture.to_ascii_lowercase().replace('/', "\\") == want
 }
 
 /// The live VM's `GetBindLocation()`, the hearthstone's own answer.
@@ -278,7 +292,11 @@ fn binder_probe(
             let open = gossip.npc == Some(innkeeper) && !gossip.options.is_empty();
             // Wait for the feed's push as well as the parse: step 3 reads the icon type back out
             // of the VM, so the snapshot must already be there.
-            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2;
+            // The rows are drawn once the frame is shown (`GOSSIP_SHOW`), not when the menu reads.
+            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2
+                && script
+                    .eval::<bool>("return GossipFrame and GossipFrame:IsShown() and true or false")
+                    .unwrap_or(false);
             if open && pushed {
                 info!(
                     "PROBE_BINDER: PASS (2 menu) — {} option(s) open on {innkeeper:#x}: {}",
@@ -454,7 +472,7 @@ fn assert_icon_and_select(
         return;
     };
     let ty = vm_icon_type(script, pos + 1);
-    let texture = vm_binder_texture(script);
+    let texture = vm_row_icon(script, &opt.message);
     if ty == ICON_TYPE_REGRESSION {
         error!(
             "PROBE_BINDER: FAIL (3 icon) — the innkeeper's row {:?} (wire icon={ICON_INNKEEPER}) \
@@ -476,11 +494,10 @@ fn assert_icon_and_select(
         probe.phase = Phase::Done;
         return;
     }
-    if texture.is_empty() {
+    if !is_type_icon(&texture, ICON_TYPE_BINDER) {
         error!(
             "PROBE_BINDER: FAIL (3 icon) — the app maps the row to {ICON_TYPE_BINDER:?} but \
-             BENILLA_GOSSIP_ICONS.binder resolves to nothing in the live VM, so the row would \
-             still draw the fallback bubble"
+             the stock frame drew {texture:?} beside the row"
         );
         probe.fails += 1;
         probe.phase = Phase::Done;
@@ -488,7 +505,7 @@ fn assert_icon_and_select(
     }
     info!(
         "PROBE_BINDER: PASS (3 icon) — row {} {:?}: wire icon={ICON_INNKEEPER} index={} → type \
-         {ty:?}, BENILLA_GOSSIP_ICONS.binder = {texture:?}",
+         {ty:?}, the stock frame drew {texture:?}",
         pos + 1,
         opt.message,
         opt.index
