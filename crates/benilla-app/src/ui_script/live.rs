@@ -100,6 +100,8 @@ pub(crate) struct LiveView<'w, 's> {
     guild_bank: Option<crate::ui_guild_bank::BankCatalogs<'w>>,
     /// The tabard designer's vendor, save latch and our guild's record.
     pub(crate) tabard: crate::ui_tabard::TabardView<'w, 's>,
+    /// The barber shop, our body's dials and the catalogs its verbs read.
+    barber: crate::ui_barber::BarberLive<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1732,6 +1734,30 @@ impl LiveState for LiveView<'_, '_> {
 
     fn close_tabard(&mut self) -> u32 {
         self.tabard.close()
+    }
+
+    fn barber(&self) -> Option<benilla_ui::script::BarberRead<'_>> {
+        self.barber.read()
+    }
+
+    fn set_barber_dials(&mut self, dials: [u8; 5]) {
+        self.barber.set_dials(dials);
+    }
+
+    fn send_alter_appearance(&mut self, styles: [u32; 4]) {
+        self.barber.send(styles);
+    }
+
+    fn close_barber_shop(&mut self) -> bool {
+        self.barber.close()
+    }
+
+    fn hair_customization(&self) -> Option<&str> {
+        self.barber.hair_customization()
+    }
+
+    fn facial_hair_customization(&self) -> Option<&str> {
+        self.barber.facial_hair_customization()
     }
 
     fn apply_guild_color(&mut self, design: [i32; 5]) {

@@ -26,7 +26,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_action::state::fire_combat_edges",
     "benilla_app::ui_auction::feed_auction",
     "benilla_app::ui_aura::feed_auras",
-    "benilla_app::ui_barber::feed_barber",
     "benilla_app::ui_calendar::feed_calendar",
     "benilla_app::ui_cast::feed_cast_bar",
     "benilla_app::ui_char::feed_char",

@@ -737,6 +737,32 @@ pub trait LiveState {
     /// The seed's and a cycle's colours onto our body (`0x5993b0`).
     fn apply_guild_color(&mut self, _design: [i32; 5]) {}
 
+    /// The barber shop at the call: the open flag (`[0xbd19b8]`), our look, level and coinage, and our body's dials; `None` with no player object.
+    fn barber(&self) -> Option<super::BarberRead<'_>> {
+        None
+    }
+
+    /// Our body's barber dials, written by a step or a reset inside its call (`0x52fc80`, `0x52f7d0`).
+    fn set_barber_dials(&mut self, _dials: [u8; 5]) {}
+
+    /// `CMSG_ALTER_APPEARANCE` with the four style ids, sent inside the apply's call (`0x52eda0`).
+    fn send_alter_appearance(&mut self, _styles: [u32; 4]) {}
+
+    /// The shop's close (`0x52e9f0`): true when an open shop closed, for the caller to fire `BARBER_SHOP_CLOSE`.
+    fn close_barber_shop(&mut self) -> bool {
+        false
+    }
+
+    /// Our race row's hair token (`0x52e6d0`); `None` with no player object or row.
+    fn hair_customization(&self) -> Option<&str> {
+        None
+    }
+
+    /// Our race row's facial-hair token for our sex (`0x52e730`); `None` with no player object or row.
+    fn facial_hair_customization(&self) -> Option<&str> {
+        None
+    }
+
     /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
     fn item_set(
         &self,
@@ -1164,6 +1190,24 @@ pub(crate) struct TestView {
     pub item_record_reads: std::cell::RefCell<Vec<(u32, bool)>>,
     /// The bind point's area name.
     pub bind_location: std::cell::RefCell<Option<String>>,
+    /// The barber shop, the alter-appearance sends and our race's two tokens.
+    pub barber: Option<TestBarber>,
+    pub barber_sent: Vec<[u32; 4]>,
+    pub hair_tokens: Option<(String, String)>,
+}
+
+/// The barber shop a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestBarber {
+    pub open: bool,
+    pub class: u8,
+    pub base_cost: f32,
+    pub look: [u8; 5],
+    pub dials: [u8; 5],
+    pub styles: Vec<super::BarberStyle>,
+    pub grid: Option<super::GlueCustomizeGrid>,
+    pub money: u32,
 }
 
 #[cfg(test)]
@@ -1356,6 +1400,44 @@ impl LiveState for TestView {
 
     fn tabard_guild_record(&self) -> Option<[i32; 5]> {
         self.tabard_record
+    }
+
+    fn barber(&self) -> Option<super::BarberRead<'_>> {
+        let b = self.barber.as_ref()?;
+        Some(super::BarberRead {
+            open: b.open,
+            class: b.class,
+            base_cost: b.base_cost,
+            look: b.look,
+            dials: b.dials,
+            styles: &b.styles,
+            grid: b.grid.as_ref(),
+            money: b.money,
+        })
+    }
+
+    fn set_barber_dials(&mut self, dials: [u8; 5]) {
+        if let Some(b) = self.barber.as_mut() {
+            b.dials = dials;
+        }
+    }
+
+    fn send_alter_appearance(&mut self, styles: [u32; 4]) {
+        self.barber_sent.push(styles);
+    }
+
+    fn close_barber_shop(&mut self) -> bool {
+        self.barber
+            .as_mut()
+            .is_some_and(|b| std::mem::take(&mut b.open))
+    }
+
+    fn hair_customization(&self) -> Option<&str> {
+        self.hair_tokens.as_ref().map(|t| t.0.as_str())
+    }
+
+    fn facial_hair_customization(&self) -> Option<&str> {
+        self.hair_tokens.as_ref().map(|t| t.1.as_str())
     }
 
     fn tabard_save_pending(&self) -> bool {

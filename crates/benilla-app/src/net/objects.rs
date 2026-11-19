@@ -1649,7 +1649,9 @@ fn pet_number_watch(sc: &mut Scene, guid: u64) {
 
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
-    use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
+    use benilla_protocol::field::{
+        FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_DISPLAYID, FIELD_UNIT_FLAGS,
+    };
     // The entry watch (`0x707960`), the count watch (`0x707720`), then the enchant watch (`0x708bd0`), each its own handler in field order.
     if let Some(old) = merged.item_entry {
         item_entry_watch(sc, guid, old);
@@ -1754,7 +1756,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     let split = after.partition_point(|&(index, ..)| index < FIELD_PLAYER_FLAGS);
     let (unit, player) = after.split_at(split);
+    let split = unit.partition_point(|&(index, ..)| index < FIELD_UNIT_DISPLAYID);
+    let (unit, past_display) = unit.split_at(split);
     own_death_fields(sc, guid, unit);
+    // Our display id's watch (`0x716860`) closes an open barber shop, in field order.
+    if merged.display_moved {
+        sc.ui.world(crate::ui_barber::display_changed);
+    }
+    own_death_fields(sc, guid, past_display);
     if let Some(form) = merged.form {
         sc.ui
             .world(move |world| crate::ui_bank::form_entered(world, form));
@@ -1984,8 +1993,16 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             guild_stamp_watch(sc, guid, new);
             continue;
         }
-        // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
+        // Our look bytes' watches, by byte: skin (`0x6da870`), hair style (`0x6df530`), hair colour (`0x6da7f0`).
+        if index == benilla_protocol::field::FIELD_PLAYER_BYTES {
+            for (byte, dial) in [(0, 0), (2, 2), (3, 3)] {
+                look_watch(sc, old, new, byte, dial);
+            }
+            continue;
+        }
+        // The facial hair's watch (`0x6df620`), then the bank's on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
         if index == benilla_protocol::field::FIELD_PLAYER_BYTES_2 {
+            look_watch(sc, old, new, 0, 4);
             if (old >> 16) as u8 != (new >> 16) as u8 {
                 sc.ui.fire("PLAYERBANKBAGSLOTS_CHANGED", Vec::new());
             }
@@ -2012,6 +2029,17 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             &mut sc.ui,
         );
     }
+}
+
+/// One of our look bytes' watches: a moved byte lands on the barber body's dial and queues `BARBER_SHOP_APPEARANCE_APPLIED` (`0x52e4d0`).
+fn look_watch(sc: &mut Scene, old: u32, new: u32, byte: u32, dial: usize) {
+    let value = (new >> (byte * 8)) as u8;
+    if (old >> (byte * 8)) as u8 == value {
+        return;
+    }
+    sc.ui
+        .world(move |world| crate::ui_barber::look_changed(world, dial, value));
+    sc.signals.unique_signal("BARBER_SHOP_APPEARANCE_APPLIED");
 }
 
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
@@ -2059,6 +2087,8 @@ fn merge_fields(
     if let Ok(mut s) = stores.get_mut(entity) {
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            merged.display_moved |=
+                own && e.unit_field(benilla_protocol::field::FIELD_UNIT_DISPLAYID);
             if e.unit_field(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS) {
                 merged.npc_flags = Some((e.old, e.new));
             }
@@ -2137,6 +2167,7 @@ fn merge_fields(
             if own
                 && (crate::ui_honor::is_honor_watch(e.index)
                     || crate::ui_arena_team::is_team_info(e.index)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
@@ -2171,6 +2202,8 @@ const NPC_FLAG_GUILD_BANKER: u32 = 0x80_0000;
 #[derive(Default)]
 struct Merged {
     flags_moved: bool,
+    /// Our own `UNIT_FIELD_DISPLAYID` moved (`0x716860`).
+    display_moved: bool,
     /// Our own `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` moved (`0x6d1970`).
     pet_moved: bool,
     /// Our own `PLAYER_FARSIGHT` moved (`0x6e4fd0`).

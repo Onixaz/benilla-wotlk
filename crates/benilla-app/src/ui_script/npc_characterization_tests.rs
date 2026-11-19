@@ -756,3 +756,79 @@ fn the_save_names_the_interact_target_the_open_set() {
     let pinned = fired_in_call(&mut rig, "CloseTabardCreation()", TABARD_EVENTS, &[]);
     assert!(pinned.is_empty(), "the vendor was zeroed: {pinned:?}");
 }
+
+/// `SMSG_ENABLE_BARBER_SHOP` fires `BARBER_SHOP_OPEN` from its handler with the shop open at the event (`0x52fbac`), and a result before it shows its line first (`0x52e5b0`); our hair moving after the open lands on the body and queues `BARBER_SHOP_APPEARANCE_APPLIED` for the frame's flush (`0x6df530` -> `0x52e4d0`), after the open.
+#[test]
+fn the_barber_events_fire_from_their_handlers_in_wire_order() {
+    use benilla_protocol::field::FIELD_PLAYER_BYTES;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let events = &[
+        "BARBER_SHOP_OPEN",
+        "BARBER_SHOP_APPEARANCE_APPLIED",
+        "BARBER_SHOP_SUCCESS",
+        "UI_ERROR_MESSAGE",
+    ];
+    let verbs = &["barberinfo", "barbercost"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::BarberShopResult(1),
+            SessionEvent::EnableBarberShop,
+            self_values(&[(FIELD_PLAYER_BYTES, 2 << 16)]),
+            SessionEvent::BarberShopResult(0),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "UI_ERROR_MESSAGE You don't have enough money. | barberinfo=0 barbercost=0",
+            "BARBER_SHOP_OPEN | barberinfo=4 barbercost=0",
+            "BARBER_SHOP_SUCCESS | barberinfo=4 barbercost=0",
+            "BARBER_SHOP_APPEARANCE_APPLIED | barberinfo=4 barbercost=0",
+        ]
+    );
+}
+
+/// `CancelBarberShop` closes and fires `BARBER_SHOP_CLOSE` inside its call (`0x52ed80` -> `0x52e9f0`), the shop closed at the event; a second cancel fires nothing. A display change closes from our display id's watch in its turn (`0x716860`).
+#[test]
+fn the_barber_closes_inside_the_cancel_and_from_the_display_watch() {
+    use benilla_protocol::field::FIELD_UNIT_DISPLAYID;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![SessionEvent::EnableBarberShop], 2);
+    rig.take();
+    let shown = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local before = #CHARZ_LOG CancelBarberShop() local t = {} \
+             for i = before + 1, #CHARZ_LOG do t[#t + 1] = CHARZ_LOG[i]:match('^[^\t]*') end \
+             CancelBarberShop() t[#t + 1] = tostring(#CHARZ_LOG - before) .. ' ' .. select('#', GetBarberShopStyleInfo(2)) \
+             return table.concat(t, ' ')",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(shown, "BARBER_SHOP_CLOSE 1 0", "closed in the call, once");
+    rig.run(1);
+    rig.take();
+    let events = &["BARBER_SHOP_OPEN", "BARBER_SHOP_CLOSE", "UI_ERROR_MESSAGE"];
+    let verbs = &["barberinfo"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::EnableBarberShop,
+            self_values(&[(FIELD_UNIT_DISPLAYID, 4242)]),
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        [
+            "BARBER_SHOP_OPEN | barberinfo=4",
+            "BARBER_SHOP_CLOSE | barberinfo=0",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | barberinfo=0",
+        ]
+    );
+}

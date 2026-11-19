@@ -315,7 +315,7 @@ pub use auction::{
 pub use aura::AuraState;
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
-pub use barber::{BarberHost, BarberIntent, BarberStyle};
+pub use barber::{BarberRead, BarberStyle};
 pub use battlefield_positions::{BattlefieldFlagLive, BattlefieldPositionLive};
 pub use battlefield_queue::{
     BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,

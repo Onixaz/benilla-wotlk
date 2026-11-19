@@ -153,6 +153,8 @@ local VERBS = {
     { "gblogname", function() return (select(2, GetGuildBankTransaction(1, 1))) end },
     { "gbtext", function() return GetGuildBankText(1) end },
     { "cansave", function() return TabardModel and TabardModel:CanSaveTabardNow() end },
+    { "barberinfo", function() return select("#", GetBarberShopStyleInfo(2)) end },
+    { "barbercost", function() return GetBarberShopTotalCost() end },
 }
 local function answers()
     local verbs = {}
