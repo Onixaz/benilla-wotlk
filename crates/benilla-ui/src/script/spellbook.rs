@@ -674,13 +674,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     None => return Ok(MultiValue::new()),
                 }
             };
-            let source = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.spell_info.clone()
-            };
-            let current = source.is_some_and(|s| s.is_current_spell(spell_id));
+            let current =
+                super::spell_info::with_spell_source(lua, |s| s.is_current_spell(spell_id))
+                    == Some(true);
             Ok(MultiValue::from_vec(vec![if current {
                 Value::Integer(1)
             } else {

@@ -134,13 +134,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, pet)) = spell_or_zero(lua, &args, "IsAutoRepeatSpell")? else {
                 return Ok(MultiValue::new());
             };
-            let source = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_info
-                .clone();
-            let hit =
-                spell_id != 0 && !pet && source.is_some_and(|s| s.is_auto_repeat_spell(spell_id));
+            let hit = spell_id != 0
+                && !pet
+                && super::spell_info::with_spell_source(lua, |s| s.is_auto_repeat_spell(spell_id))
+                    == Some(true);
             Ok(MultiValue::from_vec(vec![flag(hit)]))
         })?,
     )?;

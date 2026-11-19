@@ -25,7 +25,7 @@ mod input;
 pub(crate) mod live;
 pub(crate) use live::{
     LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsPending, OwnsPetitions, OwnsPlace,
-    OwnsSelection,
+    OwnsSelection, OwnsTradeSkill,
 };
 #[cfg(test)]
 pub(crate) mod live_tests;

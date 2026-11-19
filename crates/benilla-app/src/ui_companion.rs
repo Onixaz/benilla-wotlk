@@ -185,7 +185,7 @@ fn tutorial_of(kind: CompanionKind) -> u32 {
 pub(crate) struct KnownSpellBuffer(pub(crate) Vec<u32>);
 
 /// No summon rows, before the catalog loads.
-static EMPTY_SUMMONS: std::sync::LazyLock<benilla_formats::SummonPropertiesCatalog> =
+pub(crate) static EMPTY_SUMMONS: std::sync::LazyLock<benilla_formats::SummonPropertiesCatalog> =
     std::sync::LazyLock::new(Default::default);
 
 /// What the active player's init reads to replay the buffer into the lists.

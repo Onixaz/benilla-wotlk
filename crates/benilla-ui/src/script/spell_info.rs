@@ -108,6 +108,28 @@ pub trait SpellInfoSource {
     }
 }
 
+/// `f` over the spell source at the call: the live view's, which reads the casters and the cast
+/// state as the call is made, else the one installed at load, which reads the tables alone.
+pub(super) fn with_spell_source<R>(
+    lua: &Lua,
+    f: impl FnOnce(&dyn SpellInfoSource) -> R,
+) -> Option<R> {
+    let mut f = Some(f);
+    let mut out = None;
+    super::read_live(|v| {
+        v.with_spell_source(&mut |s| out = f.take().map(|f| f(s)));
+    });
+    if out.is_some() {
+        return out;
+    }
+    let source = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .spell_info
+        .clone()?;
+    f.take().map(|f| f(&*source))
+}
+
 impl super::UiScript {
     /// Install the source `GetSpellInfo` reads.
     pub fn set_spell_info_source(&mut self, source: Rc<dyn SpellInfoSource>) {
@@ -234,12 +256,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell, pet)) = spell_of(lua, &args, "SpellHasRange")? else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
-            let source = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_info
-                .clone();
-            let has = source.is_some_and(|s| s.spell_has_range(spell, pet));
+            let has = with_spell_source(lua, |s| s.spell_has_range(spell, pet)) == Some(true);
             let out = if has { Value::Integer(1) } else { Value::Nil };
             Ok(MultiValue::from_vec(vec![out]))
         })?,
@@ -254,14 +271,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
             let target = range_unit(lua, &unit_arg(lua, &args)?);
-            let source = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_info
-                .clone();
-            let near = source
-                .zip(target)
-                .and_then(|(s, guid)| s.spell_in_range(spell, pet, guid));
+            let near = target
+                .and_then(|guid| with_spell_source(lua, |s| s.spell_in_range(spell, pet, guid)))
+                .flatten();
             Ok(MultiValue::from_vec(vec![range_answer(near)]))
         })?,
     )?;
@@ -281,19 +293,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, _)) = spell else {
                 return Ok(MultiValue::new());
             };
-            let (source, skills) = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                (model.spell_info.clone(), model.skills.entries.clone())
-            };
+            let skills = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .skills
+                .entries
+                .clone();
             let skill = |line: u32| {
                 skills
                     .iter()
                     .find(|e| e.skill_id == line)
                     .map_or((0, 0), |e| (e.value, e.max))
             };
-            let Some((name, trade)) = source.and_then(|s| s.spell_link(spell_id, &skill)) else {
+            let link = with_spell_source(lua, |s| s.spell_link(spell_id, &skill)).flatten();
+            let Some((name, trade)) = link else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil, Value::Nil]));
             };
             let link = format!("|cff71d5ff|Hspell:{spell_id}|h[{name}]|h|r");
@@ -325,13 +338,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, pet)) = spell else {
                 return Ok(MultiValue::new());
             };
-            let source = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.spell_info.clone()
-            };
-            let Some(info) = source.and_then(|s| s.spell_info(spell_id, pet)) else {
+            let Some(info) = with_spell_source(lua, |s| s.spell_info(spell_id, pet)).flatten()
+            else {
                 return Ok(MultiValue::new());
             };
             let text =

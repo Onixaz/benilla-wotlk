@@ -535,6 +535,10 @@ pub trait LiveState {
         false
     }
 
+    /// `f` over the spell source that reads the casters and the player's cast state at the call;
+    /// a view that has none leaves `f` uncalled, and the verb asks the source installed at load.
+    fn with_spell_source(&self, _f: &mut dyn FnMut(&dyn super::SpellInfoSource)) {}
+
     /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` with nothing running.
     fn spell_cooldown(
         &self,

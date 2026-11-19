@@ -126,12 +126,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsCurrentItem",
         lua.create_function(|lua, item: Value| {
-            let (id, source) = {
+            let id = {
                 let model = lua.app_data_ref::<ModelCell>().expect("model app_data");
-                (item_arg(lua, &model, &item)?, model.spell_info.clone())
+                item_arg(lua, &model, &item)?
             };
             Ok(flag(
-                id != 0 && source.is_some_and(|s| s.is_current_item(id)),
+                id != 0
+                    && super::spell_info::with_spell_source(lua, |s| s.is_current_item(id))
+                        == Some(true),
             ))
         })?,
     )?;

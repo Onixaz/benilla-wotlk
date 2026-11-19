@@ -69,6 +69,21 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) pending: Slot<'w, crate::pending_item_ops::PendingItemOps>,
     /// The charter records a bag slot's charter reads.
     pub(crate) petitions: Slot<'w, crate::ui_petition::PetitionState>,
+    /// The open trade-skill book (`[0xc235a4]`), the current and selected tests' trade arm.
+    pub(crate) trade: Slot<'w, crate::ui_tradeskill::TradeSkillOpen>,
+    /// The talent tables a talent link's rank reads.
+    talents: Option<Res<'w, crate::ui_talent::Talents>>,
+    /// Our auto-attack lock (`[player+0xa20]`) and auras, the current-spell test's reads.
+    engaged: Query<
+        'w,
+        's,
+        (),
+        (
+            With<crate::net::SelfPlayer>,
+            With<crate::creature_anim::Engaged>,
+        ),
+    >,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     /// The wire, for the sends a verb makes inside its call.
     commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
@@ -289,6 +304,12 @@ impl LiveView<'_, '_> {
         Some((fields.unit_race()?, fields.unit_class()?))
     }
 
+    /// Our player's entity and store.
+    fn me(&self) -> Option<(Entity, &crate::net::ObjectStore)> {
+        let entity = self.player_entity(self.self_guid.as_ref()?.0?)?;
+        Some((entity, self.stores.get(entity).ok()?))
+    }
+
     /// The lent state a bag read takes.
     fn container_lent(&self) -> crate::ui_items::ContainerLent<'_> {
         crate::ui_items::ContainerLent {
@@ -304,6 +325,73 @@ impl LiveView<'_, '_> {
         let entity = self.player_entity(guid)?;
         let race = self.stores.get(entity).ok()?.0.unit_race()?;
         Some(crate::ui_unit::race_pvp_team(race))
+    }
+}
+
+/// The spell answers' reads at the call: our player and pet off the object stores, the cast state
+/// off the lent slots.
+impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
+    fn caster(&self, pet: bool) -> Option<crate::ui_spell_info::Caster<'_>> {
+        let entity = if pet {
+            let guid = self.pet_bar.get()?.spells.pet_guid;
+            *self.index.as_ref()?.0.get(&guid).filter(|_| guid != 0)?
+        } else {
+            self.me()?.0
+        };
+        let store = self.stores.get(entity).ok()?;
+        let (unit, pos) = self.item_range.facts().at(entity)?;
+        Some(crate::ui_spell_info::Caster {
+            guid: store.0.object_guid()?,
+            pos,
+            store,
+            level: store.0.unit_level().unwrap_or(0),
+            unit,
+        })
+    }
+
+    fn mods(&self) -> Option<&crate::spell::SpellModifiers> {
+        self.spell_mods.as_deref()
+    }
+
+    fn weapon_icon(&self, ranged: bool) -> Option<String> {
+        let (containers, (_, me)) = (self.containers.as_ref()?, self.me()?);
+        if ranged {
+            containers.ranged_texture(me)
+        } else {
+            Some(containers.attack_texture(me, &self.spells.as_deref()?.forms))
+        }
+    }
+
+    fn cast_now(&self) -> crate::ui_spell_info::CastNow<'_> {
+        let mut now = crate::ui_spell_info::CastNow::none();
+        let me = self.me();
+        let store = me.map(|(_, s)| s);
+        let clock = std::time::Instant::now();
+        if let (Some(pending), Some(melee)) =
+            (self.cast.pending.get(), self.cast.queued_melee.get())
+        {
+            let casting = me.and_then(|(e, _)| self.casting.get(e).ok());
+            now.pending = crate::ui_spell_info::pending_spell(pending, melee, casting, clock);
+            now.item = pending.current_item(clock);
+        }
+        now.auto_repeat = self.cast.auto_repeat.get().and_then(|a| a.0);
+        now.attacking = !self.engaged.is_empty();
+        now.trade_line = self.trade.get().and_then(|t| t.line);
+        now.race_class = crate::spell::race_class(store);
+        now.critter = store.and_then(|s| s.0.unit_critter());
+        now.auras = me.and_then(|(e, _)| self.auras.get(e).ok());
+        now.guid = store.and_then(|s| s.0.object_guid()).unwrap_or(0);
+        if let Some(actions) = self.actions.get() {
+            now.known = &actions.spells;
+        }
+        if let Some(summons) = self.summons.as_deref() {
+            now.summons = &summons.0;
+        }
+        now
+    }
+
+    fn unit_facts(&self, guid: u64) -> Option<crate::spell::RangeFacts> {
+        self.item_range.facts().facts(guid)
     }
 }
 
@@ -384,6 +472,7 @@ pub(crate) trait Owns: 'static {
     const ACTIONS: bool = false;
     const PENDING: bool = false;
     const PETITIONS: bool = false;
+    const TRADE: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
     const LENT: u8 = 0;
 }
@@ -398,6 +487,7 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
     const PENDING: bool = A::PENDING || B::PENDING;
     const PETITIONS: bool = A::PETITIONS || B::PETITIONS;
+    const TRADE: bool = A::TRADE || B::TRADE;
     const LENT: u8 = A::LENT | B::LENT;
 }
 
@@ -429,6 +519,12 @@ impl Owns for OwnsPending {
 pub(crate) struct OwnsPetitions;
 impl Owns for OwnsPetitions {
     const PETITIONS: bool = true;
+}
+
+/// The system writes [`crate::ui_tradeskill::TradeSkillOpen`].
+pub(crate) struct OwnsTradeSkill;
+impl Owns for OwnsTradeSkill {
+    const TRADE: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -1416,8 +1512,8 @@ impl LiveState for LiveView<'_, '_> {
         )
     }
 
-    /// The selected test's form arm (`0x53d431`): a shapeshift aura into our current form.
-    /// Deviation: the open trade-skill window's arm (`0x53d3e5`-`0x53d40f`) is not built.
+    /// The selected test (`0x53d350`): a trade-skill opener whose line's book is open and not a
+    /// linked one (`0x53d3e5`-`0x53d412`), or a shapeshift aura into our current form (`0x53d431`).
     fn spell_selected(&self, spell_id: u32) -> bool {
         let Some(d) = self.spells.as_deref().and_then(|s| s.catalog.get(spell_id)) else {
             return false;
@@ -1425,8 +1521,32 @@ impl LiveState for LiveView<'_, '_> {
         let Some(me) = self.unit(self.active_player().unwrap_or(0)) else {
             return false;
         };
+        if d.effects[0] == benilla_formats::SPELL_EFFECT_TRADE_SKILL {
+            let (race, class) = (me.unit_race().unwrap_or(0), me.unit_class().unwrap_or(0));
+            let line = self
+                .skill_lines
+                .as_deref()
+                .and_then(|l| l.catalog.spell_to_line(spell_id, race, class));
+            if line.is_some() && line == self.trade.get().and_then(|t| t.line) {
+                return true;
+            }
+        }
         let form = me.unit_shapeshift_form();
         form != 0 && d.shapeshift_form == Some(u32::from(form))
+    }
+
+    fn with_spell_source(&self, f: &mut dyn FnMut(&dyn benilla_ui::script::SpellInfoSource)) {
+        let Some(spells) = self.spells.as_deref() else {
+            return;
+        };
+        f(&crate::ui_spell_info::Answers {
+            tables: crate::ui_spell_info::Tables {
+                spells,
+                skill_lines: self.skill_lines.as_deref().map(|l| &*l.catalog),
+                talents: self.talents.as_deref().map(|t| &*t.catalog),
+            },
+            reads: self,
+        });
     }
 
     fn spell_targeting(&self) -> benilla_ui::script::SpellTargetingLive {
@@ -1975,8 +2095,8 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
 /// The lendable resources' ids: the history, the pet's words, the selection, the player's place,
-/// the action store, the item locks, the charter records, then the cast state's five
-/// ([`CastSlots`]).
+/// the action store, the item locks, the charter records, the cast state's five ([`CastSlots`]),
+/// then the open trade-skill book.
 type SlotState = (
     SlotIds,
     SlotIds,
@@ -1986,6 +2106,7 @@ type SlotState = (
     SlotIds,
     SlotIds,
     [SlotIds; 5],
+    SlotIds,
 );
 
 /// Register `X` and its pair's marks.
@@ -2116,6 +2237,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                     slot_ids::<crate::spell::SpellTargeting>(world),
                     slot_ids::<crate::ui_cast::UnitCasts>(world),
                 ],
+                slot_ids::<crate::ui_tradeskill::TradeSkillOpen>(world),
             ),
             lent_ids(world),
         )
@@ -2149,6 +2271,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::spell::AutoRepeatActive>(true, repeat, system_meta, set);
         slot_access::<crate::spell::SpellTargeting>(true, targeting, system_meta, set);
         slot_access::<crate::ui_cast::UnitCasts>(true, casts, system_meta, set);
+        type Trade = crate::ui_tradeskill::TradeSkillOpen;
+        slot_access::<Trade>(O::TRADE, state.1 .8, system_meta, set);
         let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
@@ -2213,6 +2337,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 (pending, ..),
                 (pet, ..),
                 cast,
+                (trade, ..),
             ) = state.1;
             let [(cast_pending, ..), (melee, ..), (repeat, ..), (targeting, ..), (casts, ..)] =
                 cast;
@@ -2239,6 +2364,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, pending), own(O::PENDING, pending));
             view.petitions
                 .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
+            view.trade
+                .set(slot_fetch(world, trade), own(O::TRADE, trade));
         }
         let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);

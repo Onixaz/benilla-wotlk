@@ -81,7 +81,6 @@ use crate::ui_script::UiScriptPlugin;
 use crate::ui_shapeshift::UiShapeshiftPlugin;
 use crate::ui_social::UiSocialPlugin;
 use crate::ui_socket::UiSocketPlugin;
-use crate::ui_spell_info::UiSpellInfoPlugin;
 use crate::ui_spellbook::UiSpellbookPlugin;
 use crate::ui_stable::UiStablePlugin;
 use crate::ui_summon::UiSummonPlugin;
@@ -230,7 +229,6 @@ impl PluginGroup for GamePlugins {
             .add(UiSocketPlugin)
             .add(UiTitlePlugin)
             .add(UiCurrencyPlugin)
-            .add(UiSpellInfoPlugin)
             .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)
             // The form list by the reference's admission and order; after UiActionPlugin (`Spells`)
@@ -906,10 +904,6 @@ pub(crate) mod schedule_tests {
     /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
     ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
     ///   as the guild registrar's close beside it does.
-    /// - `ui_spell_info::feed_spell_info`, `GetSpellInfo`'s caster snapshot, is a range compare's
-    ///   reader against the same `Player` and `RemoteMotion` writers, and against
-    ///   `ui_pet::drain::pet_stop_on_old_target_clear` over `PetBar`: it reads the pet's guid,
-    ///   which that system never writes.
     /// - `ui_glyph::drain_glyph_removes`, an `.after(UiInput)` drain of the VM's own sends, against
     ///   `terrain_stream::collider::finish_colliders`, as the other such drains pair.
     ///
