@@ -7,8 +7,9 @@ use benilla_protocol::messages::{
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{set_guild_banker_none, BankSlot, Callback, GuildBankState, LogRow, Record};
+use super::{set_guild_banker_none, BankSlot, Callback, GuildBankState, LogRow};
 use crate::items::Items;
+use crate::items::{RecordWait, RecordWaits};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfPlayer};
 use crate::ui_guild::GuildState;
@@ -140,7 +141,9 @@ fn list_slots_from(
         }
         if asked {
             bank.slot_waits += 1;
-            bank.callbacks.push((Record::Item(entry), Callback::Slots));
+            if let Some(mut waits) = world.get_non_send_resource_mut::<RecordWaits>() {
+                waits.wait(entry, RecordWait::GuildBank(Callback::Slots), false);
+            }
         }
     }
     list_tail(world, tab);
@@ -181,50 +184,48 @@ fn list_tail(world: &mut World, tab: u8) {
     }
 }
 
-/// An item record landed: the guild bank's callbacks on it run in ask order (`0x5a47a0`, `0x5a47d0`).
-pub(crate) fn item_landed(world: &mut World, entry: u32) {
-    record_landed(world, Record::Item(entry));
-}
-
 /// A name answered: the log's callbacks on it run in ask order (`0x5a47d0`).
 pub(crate) fn name_landed(world: &mut World, guid: u64) {
-    record_landed(world, Record::Name(guid));
-}
-
-/// Each callback on `record`: its count at zero, or counted down to it, fires its event (`0x5a47a0`, `0x5a47d0`).
-fn record_landed(world: &mut World, record: Record) {
     let Some(mut bank) = bank_mut(world) else {
         return;
     };
-    let bank = &mut *bank;
-    if !bank.callbacks.iter().any(|&(r, _)| r == record) {
+    if !bank.name_callbacks.iter().any(|&(g, _)| g == guid) {
         return;
     }
-    let mut fired = Vec::new();
-    bank.callbacks.retain(|&(r, callback)| {
-        if r != record {
-            return true;
+    let mut taken = Vec::new();
+    bank.name_callbacks.retain(|&(g, callback)| {
+        if g == guid {
+            taken.push(callback);
         }
-        let waits = match callback {
-            Callback::Slots => &mut bank.slot_waits,
-            Callback::Log => &mut bank.log_waits,
-        };
-        if *waits == 0 || {
-            *waits -= 1;
-            *waits == 0
-        } {
-            fired.push(callback);
-        }
-        false
+        g != guid
     });
+    for callback in taken {
+        record_callback(world, callback);
+    }
+}
+
+/// One callback on a landed record: its count at zero, or counted down to it, fires its event (`0x5a47a0`, `0x5a47d0`).
+pub(crate) fn record_callback(world: &mut World, callback: Callback) {
+    let Some(mut bank) = bank_mut(world) else {
+        return;
+    };
+    let waits = match callback {
+        Callback::Slots => &mut bank.slot_waits,
+        Callback::Log => &mut bank.log_waits,
+    };
+    let fire = *waits == 0 || {
+        *waits -= 1;
+        *waits == 0
+    };
+    if !fire {
+        return;
+    }
     let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
         return;
     };
-    for callback in fired {
-        match callback {
-            Callback::Slots => ui.fire("GUILDBANKBAGSLOTS_CHANGED", Vec::new()),
-            Callback::Log => ui.fire("GUILDBANKLOG_UPDATE", Vec::new()),
-        }
+    match callback {
+        Callback::Slots => ui.fire("GUILDBANKBAGSLOTS_CHANGED", Vec::new()),
+        Callback::Log => ui.fire("GUILDBANKLOG_UPDATE", Vec::new()),
     }
 }
 
@@ -235,6 +236,7 @@ fn on_log(
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     mut ui: ResMut<UiEvents>,
+    mut waits: NonSendMut<RecordWaits>,
 ) {
     if let SessionEvent::GuildBankLog(log) = ev {
         let mut asks = |row: &benilla_protocol::messages::GuildBankLogEntry| {
@@ -242,7 +244,7 @@ fn on_log(
             let name = names.resolve(row.player, &commands).is_none();
             (item, name)
         };
-        apply_log(&mut state, log, super::unix_now(), &mut asks);
+        apply_log(&mut state, &mut waits, log, super::unix_now(), &mut asks);
         if state.banker.is_some() && state.log_waits == 0 {
             ui.fire("GUILDBANKLOG_UPDATE", Vec::new());
         }
@@ -252,6 +254,7 @@ fn on_log(
 /// `MSG_GUILD_BANK_LOG_QUERY`'s answer (`0x5a4800`): a count still waiting is zeroed and its callbacks cancelled (`0x5a4840`); each row's time is arrival less its age, an item row's record and every row's name asked (`0x5a49d9`, `0x5a4a2b`).
 fn apply_log(
     state: &mut GuildBankState,
+    waits: &mut RecordWaits,
     log: GuildBankLog,
     now: u32,
     asks: &mut dyn FnMut(&benilla_protocol::messages::GuildBankLogEntry) -> (bool, bool),
@@ -261,7 +264,8 @@ fn apply_log(
     }
     if state.log_waits != 0 && state.log_tab.is_some() {
         state.log_waits = 0;
-        state.callbacks.retain(|&(_, c)| c != Callback::Log);
+        state.name_callbacks.retain(|&(_, c)| c != Callback::Log);
+        waits.cancel(|w| w == RecordWait::GuildBank(Callback::Log));
     }
     state.log_tab = Some(log.tab);
     let mut rows = Vec::with_capacity(log.entries.len().min(25));
@@ -270,15 +274,11 @@ fn apply_log(
         let (item, name) = asks(&entry);
         if !money_row && item {
             state.log_waits += 1;
-            state
-                .callbacks
-                .push((Record::Item(entry.item_id), Callback::Log));
+            waits.wait(entry.item_id, RecordWait::GuildBank(Callback::Log), false);
         }
         if name {
             state.log_waits += 1;
-            state
-                .callbacks
-                .push((Record::Name(entry.player), Callback::Log));
+            state.name_callbacks.push((entry.player, Callback::Log));
         }
         rows.push(LogRow {
             written_at: now.wrapping_sub(entry.age),
@@ -461,6 +461,7 @@ mod tests {
     #[test]
     fn log_rows_keep_their_write_time_and_count_their_asks() {
         let mut state = GuildBankState::default();
+        let mut waits = RecordWaits::default();
         let entry = |kind, item_id, player| GuildBankLogEntry {
             kind,
             item_id,
@@ -474,20 +475,21 @@ mod tests {
             entries: vec![entry(4, 0, 7), entry(1, 2589, 8)],
         };
         // Every record a miss: the money row asks its name, the item row its item and name.
-        apply_log(&mut state, log, 1_000, &mut |_| (true, true));
+        apply_log(&mut state, &mut waits, log, 1_000, &mut |_| (true, true));
         assert_eq!(state.logs[0][0].written_at, 940);
         assert_eq!(state.log_waits, 3);
         assert_eq!(
-            state.callbacks,
-            [
-                (Record::Name(7), Callback::Log),
-                (Record::Item(2589), Callback::Log),
-                (Record::Name(8), Callback::Log),
-            ]
+            state.name_callbacks,
+            [(7, Callback::Log), (8, Callback::Log)]
+        );
+        assert_eq!(
+            waits.waiting(),
+            [(2589, RecordWait::GuildBank(Callback::Log))]
         );
         // A new log while they wait cancels them (`0x5a4840`).
         apply_log(
             &mut state,
+            &mut waits,
             GuildBankLog {
                 tab: 6,
                 entries: Vec::new(),
@@ -495,7 +497,8 @@ mod tests {
             1_000,
             &mut |_| (false, false),
         );
-        assert_eq!((state.log_waits, state.callbacks.len()), (0, 0));
+        assert_eq!((state.log_waits, state.name_callbacks.len()), (0, 0));
+        assert!(waits.waiting().is_empty());
     }
 
     #[test]

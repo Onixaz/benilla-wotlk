@@ -894,7 +894,7 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 
 /// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
 fn drain_death(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -999,7 +999,7 @@ fn drain_death(
             }
         };
         // The press's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script);
+        ladder.press.fire(&mut script, &mut live);
     }
 }
 

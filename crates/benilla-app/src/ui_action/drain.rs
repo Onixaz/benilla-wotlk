@@ -241,7 +241,7 @@ impl AttackPress<'_, '_> {
 /// mid-cast is the ladder's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -261,7 +261,7 @@ pub(super) fn drain_go_openers(
                 ladder.send_at_object(spell_id, &ctx, go_guid);
                 // The send's cast-bar edges, fired as it returns (`0x80b556`).
                 match script.as_deref_mut() {
-                    Some(script) => ladder.press.fire(script),
+                    Some(script) => ladder.press.fire(script, &mut live),
                     None => ladder.press.flush(&mut ladder.ecs),
                 }
             }
@@ -275,7 +275,7 @@ pub(super) fn drain_go_openers(
                     it.bag_index, it.slot, it.on_object
                 );
                 crate::ui_items::send_item_use(it, &ctx, &mut ladder, script, &mut gate, false);
-                ladder.press.fire(script);
+                ladder.press.fire(script, &mut live);
             }
         }
     }

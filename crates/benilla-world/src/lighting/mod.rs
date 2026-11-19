@@ -7,6 +7,7 @@ use benilla_assets::AssetSet;
 use benilla_formats::{LightCatalog, LiquidKind};
 
 mod blob; // off-world light blobs (portrait booths, body panes, glue scene)
+mod character_ambient; // the area's ambient multiplier on units
 mod daynight; // the sun, moon and day/night curves
 mod global_light; // the shared global-light storage buffer
 mod overrides; // the server's light overrides
@@ -14,6 +15,8 @@ mod prop_probes; // the interior-prop SH probe table
 mod resolve; // the per-frame time-of-day resolve and the interior-fog crossfade
 mod sh; // the model SH probe fold
 pub use blob::LightBlob;
+pub(crate) use character_ambient::unit_ambient;
+pub use character_ambient::CharacterAmbient;
 pub use global_light::{new_shared_light_buffer, LightRooms, SharedLightBuffer, WorldPointLight};
 pub use overrides::LightOverrides;
 pub use prop_probes::{PropProbeSlot, PropProbes, MAX_PROP_PROBES};
@@ -218,6 +221,7 @@ impl Plugin for LightingPlugin {
         // Readers of the resolve run after it.
         configure_lighting_sets(app);
         app.init_resource::<WowLighting>()
+            .init_resource::<CharacterAmbient>()
             .init_resource::<PropProbes>()
             .init_resource::<GameClock>()
             .init_resource::<WorldTime>()

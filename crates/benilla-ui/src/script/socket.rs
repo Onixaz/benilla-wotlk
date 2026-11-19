@@ -29,9 +29,6 @@ pub struct SocketInfo {
     pub(crate) gems: [u64; MAX_SOCKETS],
     /// The socketed item's enchant slots when last signalled, so a change re-signals the window.
     seen: Vec<EnchantView>,
-    /// Gem templates `GetExistingSocketInfo` asked for; one arriving re-signals the window, as the
-    /// reference's cache callback does (`0x5c44d0`).
-    awaiting: Vec<u32>,
 }
 
 /// An item the player holds, found by guid: its slot, as the lock and the tooltip address it.
@@ -173,7 +170,6 @@ pub(super) fn set_item(model: &mut Model, guid: u64) {
     }
     let info = &mut model.socket_info;
     info.gems = [0; MAX_SOCKETS];
-    info.awaiting.clear();
     info.item = guid;
     let stats = new.filter(|&(_, id, _)| super::item_stats::item_record_cached(model, id));
     match stats {
@@ -262,17 +258,6 @@ pub(super) fn watch(model: &mut Model) {
     }
 }
 
-/// A template `GetExistingSocketInfo` waited on arrived: re-signal the window.
-pub(super) fn template_arrived(model: &mut Model, item_id: u32) {
-    let info = &mut model.socket_info;
-    if let Some(i) = info.awaiting.iter().position(|&id| id == item_id) {
-        info.awaiting.swap_remove(i);
-        if info.item != 0 {
-            queue(model, "SOCKET_INFO_UPDATE");
-        }
-    }
-}
-
 /// The worn gems' colour counts (`0x6de4d0`): meta, red, yellow and blue gems socketed in the worn items,
 /// a gem counting once per colour bit. A broken item (durability 0 and not wrapped) and one
 /// flagged `0x10` count none.
@@ -347,10 +332,8 @@ fn gem_template(model: &mut Model, i: usize, existing: bool) -> Option<(u32, Ite
         Some(t) => Some((id, t)),
         None => {
             if existing {
+                super::item_stats::wait_item_record(model, id, super::ItemRecordWait::Socket);
                 super::item_stats::ask_item_record(model, id);
-                if !model.socket_info.awaiting.contains(&id) {
-                    model.socket_info.awaiting.push(id);
-                }
             }
             None
         }

@@ -31,7 +31,7 @@ fn feedable_pet(
 /// `PetFrame_OnClick`'s `DropItemOnUnit("pet")`, and a left click on the pet's model with an item
 /// held (in the world click's object leg, where the click still selects).
 pub(crate) fn drop_item_on_unit(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -96,7 +96,7 @@ pub(crate) fn drop_item_on_unit(
         debug!("DropItemOnUnit(\"pet\") — Feed Pet {spell_id} at item {item_guid:#x}");
         ladder.commit_targeted(spell_id, CastCommit::Spell, TargetedBind::Item(item_guid));
         // The send's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script);
+        ladder.press.fire(&mut script, &mut live);
         // `ClearCursor(1,1)`, on success only.
         script.clear_cursor_payload();
     }

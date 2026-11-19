@@ -552,7 +552,63 @@ pub(crate) fn ask_item_record(model: &mut super::Model, id: u32) {
     let _ = (model, lent);
 }
 
+/// A callback the UI leaves on an item record it asked for, run in ask order with every other subsystem's when the record lands (`0x67ca30`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemRecordWait {
+    /// The currency list build's, once per record (`0x5b01d7`).
+    Currency,
+    /// The socket window's existing gem, one per ask (`0x5c5236`, `0x5c5402`).
+    Socket,
+    /// An item tooltip's, once per tooltip and record (`0x6278e5`).
+    Tooltip(crate::widget::FrameHandle),
+    /// A random dungeon reward's, one per ask (`0x557c8d`).
+    LfgReward,
+    /// A quest panel row's, one per `GetQuestItemInfo` or `SetQuestItem` ask (`0x58d26d`).
+    QuestItem,
+    /// A quest tooltip's, one per build (`0x622984`).
+    QuestTooltip(crate::widget::FrameHandle),
+}
+
+impl ItemRecordWait {
+    /// Whether a second ask with this callback and argument adds none (`0x67cae8`).
+    pub fn once(self) -> bool {
+        matches!(self, Self::Currency | Self::Tooltip(_))
+    }
+}
+
+/// Leave `wait` on item `id`'s record, through the lent view; with none lent, on a test's list.
+pub(crate) fn wait_item_record(model: &mut super::Model, id: u32, wait: ItemRecordWait) {
+    if id == 0 {
+        return;
+    }
+    let lent = super::write_live(|l| l.wait_item_record(id, wait)).unwrap_or(false);
+    #[cfg(any(test, feature = "fixtures"))]
+    if !lent && !(wait.once() && model.item_record_waits.contains(&(id, wait))) {
+        model.item_record_waits.push((id, wait));
+    }
+    let _ = (model, lent);
+}
+
 impl super::UiScript {
+    /// One callback the UI left on item `item_id`'s record, answered or denied (`landed`): the currency list's rebuild and event (`0x5b0660`), the socket window's event (`0x5c44d0`), the tooltip's redraw (`0x626650`), the random dungeon panel's event (`0x552950`), the quest panel's (`0x58b8f0`) or the quest tooltip's rebuild (`0x61de20`); all but the currency list's run only on a found record (`0x5c44d3`, `0x552956`, `0x58b8f6`, `0x61de23`).
+    pub fn item_record_callback(&mut self, item_id: u32, landed: bool, wait: ItemRecordWait) {
+        match wait {
+            ItemRecordWait::Currency => {
+                if self.currency_record_landed(item_id) {
+                    self.fire_event("CURRENCY_DISPLAY_UPDATE", vec![]);
+                }
+            }
+            ItemRecordWait::Socket if landed => self.fire_event("SOCKET_INFO_UPDATE", vec![]),
+            ItemRecordWait::Tooltip(h) if landed => self.answer_item_wait(h, item_id),
+            ItemRecordWait::LfgReward if landed => {
+                self.fire_event("LFG_UPDATE_RANDOM_INFO", Vec::new())
+            }
+            ItemRecordWait::QuestItem if landed => self.fire_event("QUEST_ITEM_UPDATE", vec![]),
+            ItemRecordWait::QuestTooltip(h) if landed => self.quest_tooltip_callback(h),
+            _ => {}
+        }
+    }
+
     /// A test's or a capture fixture's item record, read where the cache misses it; then the record's landing callbacks.
     #[cfg(any(test, feature = "fixtures"))]
     pub fn set_item_template(&mut self, item_id: u32, view: ItemTemplateView) {
@@ -564,11 +620,23 @@ impl super::UiScript {
         self.item_record_landed(item_id);
     }
 
-    /// Item `item_id`'s record landed in the cache (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`): the callbacks the UI left on it run, the socket window's, every tooltip waiting on it, then the random dungeon rewards'.
+    /// Item `item_id`'s record landed where no view is lent: the callbacks a test left on it run in ask order.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn item_record_landed(&mut self, item_id: u32) {
-        super::socket::template_arrived(&mut self.model_mut(), item_id);
-        self.answer_item_waits(|m| m.items.contains(&item_id));
-        self.lfg_item_arrived(item_id);
+        let waits: Vec<ItemRecordWait> = {
+            let mut model = self.model_mut();
+            let mut taken = Vec::new();
+            model.item_record_waits.retain(|&(id, w)| {
+                if id == item_id {
+                    taken.push(w);
+                }
+                id != item_id
+            });
+            taken
+        };
+        for wait in waits {
+            self.item_record_callback(item_id, true, wait);
+        }
     }
 
     /// Drains a test's record asks, made where no view is lent.
@@ -872,6 +940,56 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{item_usable, ItemTemplateView, PlayerReqState};
     use crate::script::UiScript;
+
+    /// A record's UI callbacks keep their ask order; the socket window's, the random dungeon rewards' and the quest panel's add one per ask, the currency build's and a tooltip's one per record (`0x67cae8`), and the socket window's fires with the window closed (`0x5c44d0`).
+    #[test]
+    fn record_callbacks_keep_ask_order_and_once_flags() {
+        use super::{wait_item_record, ItemRecordWait as W};
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "LOG = {} local f = CreateFrame('Frame')              f:RegisterEvent('SOCKET_INFO_UPDATE') f:RegisterEvent('LFG_UPDATE_RANDOM_INFO') f:RegisterEvent('QUEST_ITEM_UPDATE') f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)",
+        )
+        .unwrap();
+        {
+            let mut model = s.model_mut();
+            let asks = [
+                W::Socket,
+                W::LfgReward,
+                W::QuestItem,
+                W::Socket,
+                W::Currency,
+                W::Currency,
+                W::QuestItem,
+            ];
+            for w in asks {
+                wait_item_record(&mut model, 7, w);
+            }
+            assert_eq!(
+                model.item_record_waits,
+                [
+                    (7, W::Socket),
+                    (7, W::LfgReward),
+                    (7, W::QuestItem),
+                    (7, W::Socket),
+                    (7, W::Currency),
+                    (7, W::QuestItem)
+                ]
+            );
+        }
+        s.set_item_template(7, ItemTemplateView::default());
+        let log: Vec<String> = s.eval("return LOG").unwrap();
+        assert_eq!(
+            log,
+            [
+                "SOCKET_INFO_UPDATE",
+                "LFG_UPDATE_RANDOM_INFO",
+                "QUEST_ITEM_UPDATE",
+                "SOCKET_INFO_UPDATE",
+                "QUEST_ITEM_UPDATE"
+            ]
+        );
+        assert!(s.model_ref().item_record_waits.is_empty());
+    }
 
     /// The proficiency leg writes message 8; every other leg writes `0xa9`.
     #[test]

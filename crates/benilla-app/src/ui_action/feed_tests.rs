@@ -372,8 +372,8 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
     );
 }
 
-/// A reagent refusal naming an item not yet cached shows nothing at first, then shows when the
-/// answer lands, through the cache callback (`0x808200`'s redisplay), and writes no log line.
+/// A reagent refusal naming an item not yet cached shows nothing at first and links its callback
+/// on the item's record (`0x8086d4` -> `0x7fea80`); the answer shows it, with no log line.
 #[test]
 fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
     use crate::ui_action::Spells;
@@ -399,7 +399,6 @@ fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
     })
     .init_resource::<Items>()
     .init_resource::<crate::net::GuidIndex>()
-    .init_resource::<super::CastFailsWaiting>()
     .init_resource::<crate::ui_chat::ChatLog>()
     .init_resource::<crate::sound::MessageSounds>()
     .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -415,6 +414,7 @@ fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
         )
         .unwrap();
     app.insert_non_send_resource(script);
+    app.insert_non_send_resource(crate::items::RecordWaits::default());
     let shown = |app: &App| {
         app.world()
             .non_send_resource::<UiScript>()
@@ -424,10 +424,21 @@ fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
 
     show_all(&mut app, [CastFail::local(SMELT_COPPER, 0x5c)]);
     assert_eq!(shown(&app), "", "the first pass waits on the record");
+    let waits = app
+        .world_mut()
+        .non_send_resource_mut::<crate::items::RecordWaits>()
+        .take(COPPER_ORE);
+    let redisplay = CastFail::local(SMELT_COPPER, 0x5c).requeued();
+    assert_eq!(
+        waits,
+        [crate::items::RecordWait::CastFailure(redisplay)],
+        "the line waits on the ore's record"
+    );
+    // The answer lands and runs the record's callbacks, as the item template handler does.
     app.world_mut()
         .resource_mut::<Items>()
         .insert_template(COPPER_ORE, Some(test_template("Copper Ore")));
-    super::template_landed(app.world_mut(), COPPER_ORE);
+    super::show_refusal(app.world_mut(), redisplay);
     assert_eq!(shown(&app), "Missing reagent: Copper Ore");
     let logged = app
         .world_mut()

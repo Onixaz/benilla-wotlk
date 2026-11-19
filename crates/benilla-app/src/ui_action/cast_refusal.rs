@@ -60,6 +60,26 @@ impl CastRefusals for Vec<CastFail> {
     }
 }
 
+/// Where a refusal that names an uncached item links its callback on the item's record, in ask
+/// order with every subsystem's: the caller's loan of the live view, which owns the list.
+pub(crate) trait WaitRecord {
+    fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait);
+}
+
+impl<O: crate::ui_script::live::Owns> WaitRecord for crate::ui_script::LendLive<'_, '_, O> {
+    fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
+        crate::ui_script::LendLive::wait_record(self, entry, wait);
+    }
+}
+
+/// A test's record of the links, for a rig with no loan.
+#[cfg(test)]
+impl WaitRecord for Vec<(u32, crate::items::RecordWait)> {
+    fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
+        self.push((entry, wait));
+    }
+}
+
 /// The DBC name tables the cast-fail argument arms read, each absent without game data. The
 /// shapeshift forms ride [`Spells`].
 #[derive(SystemParam)]
@@ -96,12 +116,6 @@ impl FailNameTables<'_> {
     }
 }
 
-/// Refusals waiting on an item record their line names (`0x78`, `0x5c`, `0x97`), by item entry:
-/// the reference's first pass shows nothing, and the cache callback shows the line when the
-/// answer lands ([`template_landed`]).
-#[derive(Resource, Default)]
-pub(crate) struct CastFailsWaiting(Vec<(u32, CastFail)>);
-
 /// The refusals shown, in order, for tests that run without the VM.
 #[derive(Resource, Default)]
 pub(crate) struct RefusalsSeen(pub(crate) Vec<CastFail>);
@@ -121,22 +135,29 @@ pub(crate) struct CastFailShow<'w, 's> {
     /// The combat log's line: `0x808200` calls the error display, then the log's spell-failure
     /// line (`0x751ad0`).
     log: Option<ResMut<'w, Messages<crate::combat_log::SpellCastFailedLog>>>,
-    waiting: Option<ResMut<'w, CastFailsWaiting>>,
 }
 
 impl CastFailShow<'_, '_> {
     /// Show `fail`'s line now, then log it; a line naming an item not yet cached waits for the
     /// answer.
-    pub(crate) fn show(&mut self, script: Option<&mut UiScript>, fail: CastFail) {
+    pub(crate) fn show(
+        &mut self,
+        script: Option<&mut UiScript>,
+        fail: CastFail,
+        records: &mut dyn WaitRecord,
+    ) {
         let Some(script) = script else {
             return;
         };
         let mut wait = None;
         let line = self.resolve(script, fail, &mut wait);
+        // The first pass shows nothing; the record's answer shows it (`0x808200`'s callbacks,
+        // linked each time).
         if let Some(entry) = wait {
-            if let Some(waiting) = self.waiting.as_mut() {
-                waiting.0.push((entry, fail.requeued()));
-            }
+            records.wait_record(
+                entry,
+                crate::items::RecordWait::CastFailure(fail.requeued()),
+            );
             return;
         }
         // The reason, its wire word and the resolved buffers, so a declined arm is readable from
@@ -319,29 +340,11 @@ pub(crate) fn show_refusal(world: &mut World, fail: CastFail) {
 
 fn show_refusal_now(
     In(fail): In<CastFail>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     show: Option<CastFailShow>,
 ) {
     if let Some(mut show) = show {
-        show.show(script.map(NonSendMut::into_inner), fail);
-    }
-}
-
-/// An item answer runs the refusals that waited on it, in order (the cache callback, `0x808200`'s
-/// redisplay); an unknown item names "UNKNOWN".
-pub(crate) fn template_landed(world: &mut World, entry: u32) {
-    let Some(mut waiting) = world.get_resource_mut::<CastFailsWaiting>() else {
-        return;
-    };
-    let mut landed = Vec::new();
-    waiting.0.retain(|&(e, fail)| {
-        if e == entry {
-            landed.push(fail);
-        }
-        e != entry
-    });
-    for fail in landed {
-        show_refusal(world, fail);
+        show.show(script.map(NonSendMut::into_inner), fail, &mut live);
     }
 }
 

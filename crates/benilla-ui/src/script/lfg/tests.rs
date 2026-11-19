@@ -323,6 +323,19 @@ fn player_info_builds_the_random_list_and_its_rewards() {
         "the name waits for the template"
     );
     assert_eq!(s.take_item_stat_asks(), [29434]);
+    // Each read of the uncached reward left its own callback (`0x557c8d`, no once flag); the record's answer runs both (`0x552950`).
+    s.eval::<()>("GetLFGDungeonRewardInfo(261, 1)").unwrap();
+    s.set_item_template(
+        29434,
+        crate::script::ItemTemplateView {
+            name: "Badge of Justice".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        log(&mut s),
+        ["LFG_UPDATE_RANDOM_INFO", "LFG_UPDATE_RANDOM_INFO"]
+    );
     let (lock, reason): (i32, i32) = s
         .eval(
             "local t = GetLFDChoiceLockedState() return t[202], select(2, GetLFDLockInfo(202, 1))",

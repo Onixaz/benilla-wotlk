@@ -80,7 +80,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SplineMoveMode, on_spline_move_mode)
         .net_handler(K::ForceSpeedChange, on_speed)
         .net_handler(K::SpeedChanged, on_speed)
-        .net_handler(K::FlightSplineSync, on_flight_spline_sync);
+        .net_handler(K::FlightSplineSync, on_flight_spline_sync)
+        .net_handler(K::Disconnected, on_session_end);
 }
 
 /// The streamed world as one parameter: the components, caches, lifecycle hooks and edges the
@@ -117,6 +118,8 @@ pub(crate) struct Scene<'w, 's> {
     /// The pet list whose head the pet number's handler compares (`0x72d041`).
     pets: Option<Res<'w, crate::ui_pet::PetList>>,
     items: ResMut<'w, Items>,
+    /// The item records' callbacks, in ask order across every subsystem.
+    record_waits: NonSendMut<'w, crate::items::RecordWaits>,
     go_templates: ResMut<'w, GameObjectTemplates>,
     death_net: ResMut<'w, crate::death::DeathNet>,
     death_globals: ResMut<'w, crate::death::DeathGlobals>,
@@ -490,40 +493,9 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             debug!("net: item template {entry} → {info:?}");
             let landed = info.is_some();
             sc.items.insert_template(entry, info);
-            crate::ui_currency::record_landed(&mut sc.ui, entry);
-            // The UI's callbacks on the record: the socket window's, the waiting tooltips' and the random dungeon rewards'.
-            if landed {
-                sc.ui.write(move |script| script.item_record_landed(entry));
-            }
-            sc.ui
-                .world(move |world| crate::ui_guild_bank::item_landed(world, entry));
-            // The spell-failure display's callback (`0x808200`): a refusal that named this item
-            // shows now, "UNKNOWN" for an unknown one.
-            sc.ui
-                .world(move |world| crate::ui_action::template_landed(world, entry));
-            // The bar's record callback (`0x5aadb0`): a found record runs the item update.
-            if landed {
-                sc.ui
-                    .world(move |world| crate::ui_action::slots::record_landed(world, entry));
-            }
-            // The callbacks that asked for this record, in ask order; each needs its item held and the record found (`0x70aeb6`, `0x70aebc`; `0x7078e7`).
-            for (item, callback) in sc.items.take_record_waiters(entry) {
-                let Some(fields) = sc.index.0.get(&item).and_then(|&e| sc.stores.get(e).ok())
-                else {
-                    continue;
-                };
-                let owner = fields.0.item_owner();
-                if sc.items.template_cached(entry).is_none() {
-                    continue;
-                }
-                match callback {
-                    crate::items::RecordWait::PostInit => {
-                        item_record_watch(&mut sc, item, (entry, owner));
-                    }
-                    crate::items::RecordWait::Entry => sc.ui.world(move |world| {
-                        crate::ui_items::watch::entry_record(world, item);
-                    }),
-                }
+            // The record's callbacks, in ask order across every subsystem that asked (`0x67ca30`); an item's needs it held and the record found (`0x70aeb6`, `0x70aebc`; `0x7078e7`).
+            for wait in sc.record_waits.take(entry) {
+                record_callback(&mut sc, entry, landed, wait);
             }
         }
         // The reference's item-time handler has two arms that share the item lookup
@@ -565,6 +537,61 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
         },
         _ => {}
     }
+}
+
+/// One callback on `entry`'s record, answered or denied (`landed`).
+fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items::RecordWait) {
+    use crate::items::RecordWait;
+    match wait {
+        RecordWait::PostInit(item) | RecordWait::Entry(item) => {
+            let Some(fields) = sc.index.0.get(&item).and_then(|&e| sc.stores.get(e).ok()) else {
+                return;
+            };
+            let owner = fields.0.item_owner();
+            if sc.items.template_cached(entry).is_none() {
+                return;
+            }
+            if wait == RecordWait::PostInit(item) {
+                item_record_watch(sc, item, (entry, owner));
+            } else {
+                sc.ui.world(move |world| {
+                    crate::ui_items::watch::entry_record(world, item);
+                });
+            }
+        }
+        // The quest log's queues `QUEST_LOG_UPDATE` on a found record (`0x5dea43`, `0x5dea49`).
+        RecordWait::QuestLog => {
+            if landed {
+                sc.signals.unique_signal("QUEST_LOG_UPDATE");
+            }
+        }
+        RecordWait::QuestReward(count) => {
+            let info = sc.items.template_cached(entry);
+            crate::ui_quest::lines::reward_landed(&mut sc.ui, entry, info, count);
+        }
+        RecordWait::GuildBank(callback) => sc
+            .ui
+            .world(move |world| crate::ui_guild_bank::record_callback(world, callback)),
+        RecordWait::Ui(wait) => sc
+            .ui
+            .write(move |script| script.item_record_callback(entry, landed, wait)),
+        // A found record runs the bar's item update.
+        RecordWait::ActionBar => {
+            if landed {
+                sc.ui
+                    .world(move |world| crate::ui_action::slots::record_landed(world, entry));
+            }
+        }
+        // An unknown item names "UNKNOWN".
+        RecordWait::CastFailure(fail) => sc
+            .ui
+            .world(move |world| crate::ui_action::show_refusal(world, fail)),
+    }
+}
+
+/// The disconnect: the asks in flight died with the socket, their callbacks with them.
+fn on_session_end(In(_): In<SessionEvent>, mut waits: NonSendMut<crate::items::RecordWaits>) {
+    waits.clear();
 }
 
 /// An `SMSG_UPDATE_OBJECT` movement block: ignored for the mover we control (`0x4d6de5`), else
@@ -2405,8 +2432,8 @@ fn item_entry_watch(sc: &mut Scene, guid: u64, old: u32) {
         sc.ui
             .world(move |world| crate::ui_items::watch::entry_record(world, guid));
     } else {
-        sc.items
-            .wait_record(entry, guid, crate::items::RecordWait::Entry);
+        sc.record_waits
+            .wait(entry, crate::items::RecordWait::Entry(guid), false);
     }
     sc.signals.unique_signal("QUEST_LOG_UPDATE");
 }
@@ -2451,8 +2478,8 @@ fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>))
     if sc.items.template(entry, guid, &sc.net).is_some() {
         item_record_watch(sc, guid, (entry, owner));
     } else {
-        sc.items
-            .wait_record(entry, guid, crate::items::RecordWait::PostInit);
+        sc.record_waits
+            .wait(entry, crate::items::RecordWait::PostInit(guid), false);
     }
 }
 

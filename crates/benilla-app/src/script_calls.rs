@@ -22,7 +22,7 @@ const MAX_NESTING: u8 = 8;
 /// made them and before the frame's feed, which publishes the cooldowns they arm.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 pub(crate) fn apply_script_calls(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<(
             (
@@ -119,7 +119,7 @@ pub(crate) fn apply_script_calls(
                         });
                         cast_as_pet(&mut appliers.p3(), out);
                         if held {
-                            appliers.p3().ladder.press.fire(script);
+                            appliers.p3().ladder.press.fire(script, &mut live);
                             script.fire_event("ACTIONBAR_UPDATE_STATE", Vec::new());
                         }
                     }
@@ -177,7 +177,7 @@ pub(crate) fn apply_script_calls(
         }
         // A press's cast-bar edges, fired as the call that made them returns (`0x80b556`,
         // `0x806200`); the cancel's share the ladder's queue.
-        appliers.p3().ladder.press.fire(script);
+        appliers.p3().ladder.press.fire(script, &mut live);
     });
 }
 

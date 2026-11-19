@@ -19,11 +19,9 @@ use benilla_assets::MapCatalogRes;
 use benilla_assets::{AssetSet, RenderConfig, WorldAssets};
 use benilla_formats::WdlFile;
 
-/// Chebyshev tile radius of the WDL ring. The shader keeps it a backdrop (near plane at
-/// `farclip − 33`, depth behind the detailed world), so it only fills what that leaves empty.
-/// Deviation: 5, not the reference's ±3-tile far walk, because hills out to its `horizonfarclip`
-/// (2112 yd, about 4 tiles) still rise above the horizon as silhouettes.
-const WDL_RADIUS: u32 = 5;
+// The ring is the reference's horizon walk (`0x7cc0b0`), `scale × farclip × 0.03` chunks around
+// the focus plus two tiles; the shader keeps it a backdrop (near plane at `farclip − 33`, depth
+// behind the detailed world) and ends it at the horizon's far plane, `scale × farclip`.
 
 /// New WDL tiles built per frame (545 vertices each), so a whole ring does not hitch a zone load.
 const WDL_LOADS_PER_FRAME: usize = 8;
@@ -121,6 +119,7 @@ fn stream_wdl(
     streamer: Option<ResMut<WdlStreamer>>,
     assets: Option<ResMut<WorldAssets>>,
     focus: Res<crate::terrain_stream::ViewFocus>,
+    view: Res<crate::view::ViewDistance>,
     camera: Query<&Transform, With<WorldCamera>>,
     current_map: Option<Res<CurrentMap>>,
     map_catalog: Option<Res<MapCatalogRes>>,
@@ -161,9 +160,11 @@ fn stream_wdl(
 
     // The detailed streamer's own view focus.
     let center = focus.resolve(camera.single().ok().map(|c| c.translation));
-    // The full window, the camera's own tile included (at a low view distance it is the near
+    // The full walk, the camera's own tile included (at a low view distance it is the near
     // horizon); the shader's near plane bounds the band, never the streamed set.
-    let desired = streamer.wdl.tiles_in_ring(center[0], center[1], WDL_RADIUS);
+    let desired = streamer
+        .wdl
+        .tiles_in_walk(center[0], center[1], view.horizon_walk_chunks());
 
     let stale: Vec<(u32, u32)> = streamer
         .loaded
@@ -177,11 +178,14 @@ fn stream_wdl(
         }
     }
 
-    let missing: Vec<(u32, u32)> = desired
+    // Nearest first, so the near horizon fills before the far one at the paced build rate.
+    let own = benilla_formats::world_to_tile(center[0], center[1]);
+    let mut missing: Vec<(u32, u32)> = desired
         .into_iter()
         .filter(|c| !streamer.loaded.contains_key(c))
-        .take(WDL_LOADS_PER_FRAME)
         .collect();
+    missing.sort_by_key(|&(tx, ty)| tx.abs_diff(own.0).max(ty.abs_diff(own.1)));
+    missing.truncate(WDL_LOADS_PER_FRAME);
     for coords in missing {
         let Some(tile) = streamer.wdl.tile_mesh(coords.0, coords.1) else {
             continue;
@@ -240,6 +244,21 @@ fn the_far_band_stays_a_depth_pushed_backdrop() {
         src.contains("out.depth = depth;") && src.contains("view_z_to_depth_ndc(-farclip)"),
         "wdl.wgsl: the far band no longer clamps its depth behind the far-clip wall — its overlap \
          now pokes THROUGH the detailed terrain (the reference's compressed far-band depth range)"
+    );
+}
+
+/// The band ends where the reference's horizon projection does, `scale × farclip`, read from the
+/// shared light's row 20.
+#[test]
+fn the_far_band_ends_at_the_horizon_far_plane() {
+    let src = benilla_assets::materials::WDL_WGSL;
+    assert!(
+        src.contains("let horizon_far = w.point_count.y;") && src.contains("eye_z > horizon_far"),
+        "wdl.wgsl: the far band no longer stops at the horizon's far plane (`0x791170`)"
+    );
+    assert!(
+        src.contains("_rows_6_19: array<vec4<f32>, 14>,"),
+        "wdl.wgsl: the light mirror no longer reaches row 20, so the horizon far reads garbage"
     );
 }
 

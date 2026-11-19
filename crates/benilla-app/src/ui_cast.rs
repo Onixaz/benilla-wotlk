@@ -227,7 +227,11 @@ impl PressSignals<'_, '_> {
     /// Fire the waiting edges into `script` now, in order: `SENT` with the target's name
     /// (`0x80b533`), and a cancel's `INTERRUPTED`, the unit's cast cleared, then `STOP`
     /// (`0x8066ce`, `0x7fee38`).
-    pub(crate) fn fire(&mut self, script: &mut UiScript) {
+    pub(crate) fn fire(
+        &mut self,
+        script: &mut UiScript,
+        records: &mut dyn crate::ui_action::WaitRecord,
+    ) {
         let mut edges = self.take();
         // A refusal or a line shows in its place among the rest.
         while let Some(at) = edges
@@ -243,7 +247,7 @@ impl PressSignals<'_, '_> {
                         seen.0.push(fail);
                     }
                     if let Some(show) = self.refusals.as_mut() {
-                        show.show(Some(script), fail);
+                        show.show(Some(script), fail, records);
                     }
                 }
                 Some(CastBarEdge::Line(line)) => {
@@ -1780,7 +1784,7 @@ mod tests {
         let after = app
             .world_mut()
             .run_system_once(
-                |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
                  mut press: PressSignals| {
                     press.cancelled(ME);
                     assert_eq!(
@@ -1790,7 +1794,7 @@ mod tests {
                             CastBarEdge::Selection
                         ]
                     );
-                    press.fire(&mut script);
+                    press.fire(&mut script, &mut live);
                     script
                         .eval::<String>("return table.concat(HELD, ' ')")
                         .unwrap()
@@ -1828,12 +1832,12 @@ mod tests {
         let seen = app
             .world_mut()
             .run_system_once(
-                |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
                  mut press: PressSignals| {
                     press.signal("SPELLS_CHANGED");
                     press.push_local(HEAL, 0x5f);
                     press.signal("ACTIONBAR_UPDATE_STATE");
-                    press.fire(&mut script);
+                    press.fire(&mut script, &mut live);
                     script
                         .eval::<String>("return table.concat(SEEN, ' ')")
                         .unwrap()
@@ -1861,12 +1865,12 @@ mod tests {
         let seen = app
             .world_mut()
             .run_system_once(
-                |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
                  mut press: PressSignals| {
                     press.signal("SPELLS_CHANGED");
                     press.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
                     press.signal("ACTIONBAR_UPDATE_STATE");
-                    press.fire(&mut script);
+                    press.fire(&mut script, &mut live);
                     script
                         .eval::<String>("return table.concat(SEEN, ' ')")
                         .unwrap()

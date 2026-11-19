@@ -222,8 +222,12 @@ fn reward_name(lua: &Lua, item: u32) -> String {
     if let Some(t) = crate::script::item_stats::item_record(&model, item) {
         return t.name;
     }
+    crate::script::item_stats::wait_item_record(
+        &mut model,
+        item,
+        crate::script::ItemRecordWait::LfgReward,
+    );
     crate::script::item_stats::ask_item_record(&mut model, item);
-    model.lfg.reward_item_waits.insert(item);
     String::new()
 }
 

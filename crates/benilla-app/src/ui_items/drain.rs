@@ -1454,7 +1454,7 @@ pub(super) fn drain_bind_confirm_answers(
 /// `ConfirmBindOnUse()`: re-issues the pending use through the cast ladder with `suppress` set.
 /// The pending state is one cell, taken on the first accept, so a doubled accept does nothing.
 pub(super) fn drain_bind_on_use_confirms(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -1484,7 +1484,7 @@ pub(super) fn drain_bind_on_use_confirms(
         true,
     );
     // The use's cast-bar edges, fired as it returns (`0x80b556`).
-    ladder.press.fire(&mut script);
+    ladder.press.fire(&mut script, &mut live);
 }
 
 #[cfg(test)]

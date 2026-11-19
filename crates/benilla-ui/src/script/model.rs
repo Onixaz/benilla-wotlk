@@ -975,6 +975,9 @@ pub(crate) struct Model {
     /// A test's record asks, made where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_stat_asks: HashSet<u32>,
+    /// A test's record callbacks, left where no view is lent, in ask order.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) item_record_waits: Vec<(u32, super::ItemRecordWait)>,
     /// A test's or a capture fixture's set blocks, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) item_sets: HashMap<u32, super::ItemSetView>,
@@ -1815,6 +1818,7 @@ impl Model {
             #[cfg(any(test, feature = "fixtures"))]
             item_stat_asks: HashSet::new(),
             #[cfg(any(test, feature = "fixtures"))]
+            item_record_waits: Vec::new(),
             spell_tooltips: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             pet_spell_tooltips: HashMap::new(),

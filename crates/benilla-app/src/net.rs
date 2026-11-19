@@ -113,6 +113,7 @@ impl Plugin for NetPlugin {
             .init_resource::<crate::names::NameCache>()
             .init_resource::<crate::go_templates::GameObjectTemplates>()
             .init_resource::<crate::items::Items>()
+            .init_non_send_resource::<crate::items::RecordWaits>()
             .init_resource::<crate::world_state::WorldStates>()
             .add_message::<TeleportMessage>()
             .add_message::<FieldChanged>()

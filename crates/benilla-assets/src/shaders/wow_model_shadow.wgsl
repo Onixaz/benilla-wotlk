@@ -42,7 +42,7 @@ struct ModelParams {
 
 // The shared light buffer, wow_model.wgsl's `WowLight`.
 struct WowLight {
-    light_ambient: vec4<f32>, // rgb ambient; w = Mod2x scale
+    light_ambient: vec4<f32>, // rgb ambient; w = the character ambient, a unit's ambient factor
     light_diffuse: vec4<f32>, // rgb sun diffuse; w = clamp-light flag (>0.5 ⇒ saturate)
     light_sun: vec4<f32>,     // xyz sun travel dir (to-light = −xyz); w = directional enable
     light_spec: vec4<f32>,    // terrain's specular (w = its shininess); unread here

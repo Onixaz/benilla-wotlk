@@ -6882,6 +6882,135 @@ fn the_guild_bank_fires_from_its_handlers_with_the_bank_read_at_the_call() {
     );
 }
 
+/// One record's callbacks run in ask order across subsystems, as 12340 links every ask to the tail of the record's one list (`0x67ca82`, `0x67cab1`): our bag item's post-init (`0x70af17`) and an open guild bank's list (`0x5a7664`) wait on the same entry, and its answer runs them in the order they asked, the post-init's `BAG_UPDATE`s (`0x70ae0b`) and `GUILDBANKBAGSLOTS_CHANGED` (`0x5a47a0`) either way round; a verb's callback, the currency build's (`0x5b01d7`), joins the same list.
+#[test]
+fn one_records_callbacks_run_in_ask_order_across_subsystems() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_KNOWN_CURRENCIES, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::{GuildBankList, GuildBankSlot, GuildBankTab};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    const VAULT: u64 = BANKER + 9;
+    rig.packets(vec![npc_create(VAULT, 0x80_0000)], 2);
+    {
+        let world = rig.app.world_mut();
+        let net = crate::net::NetCommands(world.resource::<crate::net::NetCommands>().0.clone());
+        world
+            .non_send_resource_mut::<crate::ui_guild_bank::GuildBankState>()
+            .talk(VAULT, &net);
+    }
+    let list = |entry: u32, tabs: Option<Vec<GuildBankTab>>| {
+        SessionEvent::GuildBankList(GuildBankList {
+            money: 0,
+            tab: 0,
+            withdrawals_remaining: 5,
+            tabs,
+            slots: vec![GuildBankSlot {
+                slot: 3,
+                item_id: entry,
+                count: 1,
+                ..Default::default()
+            }],
+        })
+    };
+    let template = |entry: u32| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template("Linen Cloth"))),
+    };
+    // Our backpack's slot `n` takes an item of `entry` whose record is not cached.
+    let bag_item = |guid: u64, entry: u32, n: u16| {
+        let slot = FIELD_PLAYER_PACK_SLOT_1 + 2 * n;
+        vec![
+            SessionEvent::ItemCreate {
+                guid,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, entry),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_CONTAINED, ME as u32),
+                    (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(slot, guid as u32), (slot + 1, (guid >> 32) as u32)]),
+        ]
+    };
+    let tab = GuildBankTab {
+        name: "Mats".into(),
+        icon: "INV_Misc_Bag_10".into(),
+    };
+    rig.packets(vec![template(2589), list(2589, Some(vec![tab]))], 2);
+    const EVENTS: &[&str] = &["BAG_UPDATE", "GUILDBANKBAGSLOTS_CHANGED"];
+    // The bag item asks first, then the bank's list.
+    rig.packets(bag_item(0x4000_0000_0000_0401, 4306, 3), 2);
+    let seen = rig.packets(vec![list(4306, None)], 2);
+    assert!(fired(&seen, EVENTS).iter().all(|e| e == "BAG_UPDATE"));
+    let seen = rig.packets(vec![template(4306)], 2);
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "GUILDBANKBAGSLOTS_CHANGED"
+        ],
+        "the post-init asked first"
+    );
+    // The bank's list asks first, then the bag item.
+    rig.packets(vec![list(2592, None)], 2);
+    rig.packets(bag_item(0x4000_0000_0000_0402, 2592, 4), 2);
+    let seen = rig.packets(vec![template(2592)], 2);
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "GUILDBANKBAGSLOTS_CHANGED",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE"
+        ],
+        "the bank's list asked first"
+    );
+    // A verb's callback joins the same list: the bag item asks, then the currency build inside the known-currencies watch (`0x5b01d7`).
+    const BADGE: u32 = 29434;
+    let bit = rig
+        .app
+        .world()
+        .resource::<crate::ui_currency::Currencies>()
+        .0
+        .types
+        .iter()
+        .find(|t| t.item_id == BADGE)
+        .map(|t| t.bit_index)
+        .expect("the badge's row");
+    let known = 1u64 << (bit - 1);
+    rig.packets(bag_item(0x4000_0000_0000_0403, BADGE, 5), 2);
+    rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_KNOWN_CURRENCIES, known as u32),
+            (FIELD_PLAYER_KNOWN_CURRENCIES + 1, (known >> 32) as u32),
+        ])],
+        2,
+    );
+    let seen = rig.packets(vec![template(BADGE)], 2);
+    assert_eq!(
+        fired(&seen, &["BAG_UPDATE", "CURRENCY_DISPLAY_UPDATE"]),
+        [
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "BAG_UPDATE",
+            "CURRENCY_DISPLAY_UPDATE"
+        ],
+        "the post-init asked before the build"
+    );
+}
+
 /// The walk-away watchdog closes a bank whose banker is gone through the interaction close, its events fired as it runs, ahead of the frame's input: `BANKFRAME_CLOSED` with the banker still set (`0x512fa7` -> `0x57b8e6`), and the guild bank's leg through the banker setter (`0x512fd1` -> `0x5a4270`).
 #[test]
 fn the_walk_away_watchdog_closes_both_banks_with_their_events() {

@@ -132,7 +132,7 @@ pub(crate) fn item_bind_verdict(
 /// `ReplaceEnchant` calls directly. An empty slot (the reference's null-item guard), a refusal or a
 /// confirm keeps the mode.
 pub(crate) fn commit_item_cast_on_pick(
-    (script, live): (
+    (script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -188,7 +188,7 @@ pub(crate) fn commit_item_cast_on_pick(
             ),
         }
         // The commit's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script);
+        ladder.press.fire(&mut script, &mut live);
     }
     // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
     // not.
@@ -231,7 +231,7 @@ pub(crate) fn commit_item_cast_on_pick(
                     crate::spell::CastCommit::Spell,
                     crate::spell::cast_send::TargetedBind::Item(item),
                 );
-                ladder.press.fire(&mut script);
+                ladder.press.fire(&mut script, &mut live);
             }
             continue;
         }
@@ -245,7 +245,7 @@ pub(crate) fn commit_item_cast_on_pick(
 
     for (item_guid, confirmed) in asks {
         // The last commit's cast-bar edges, fired before this pick's popup can run Lua.
-        ladder.press.fire(&mut script);
+        ladder.press.fire(&mut script, &mut live);
         let held = ladder.ground.read().pending_for(TargetingWants::Item);
         let Some((spell_id, commit)) = held else {
             continue; // a click raced a cancel
@@ -377,7 +377,7 @@ pub(crate) fn commit_item_cast_on_pick(
         );
     }
     // The commits' cast-bar edges, fired as they return (`0x80b556`).
-    ladder.press.fire(&mut script);
+    ladder.press.fire(&mut script, &mut live);
 }
 
 #[cfg(test)]

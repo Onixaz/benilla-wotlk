@@ -570,6 +570,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     (it, verdict)
                 })
             };
+            // A row whose record is not cached leaves the panel's callback, one per call (`0x58d26d`).
+            if let Some((it, _)) = item.as_ref().filter(|(it, _)| it.name.is_none()) {
+                let mut model = crate::script::model_mut_of(lua);
+                super::item_stats::wait_item_record(
+                    &mut model,
+                    it.item_id,
+                    super::ItemRecordWait::QuestItem,
+                );
+            }
             let (name, texture, count, quality, usable) = match item {
                 Some((it, (quality, usable))) => (
                     it.name.unwrap_or_default(),

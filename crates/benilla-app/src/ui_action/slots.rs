@@ -44,9 +44,39 @@ pub(crate) fn slot_changed(world: &mut World, slot: u8) {
     signal(world, u32::from(slot) + 1);
 }
 
-/// A slot set without its signal (`0x5aa390` silent): its usable bytes alone.
+/// A table put's slot set without its signal (`0x5aae80` with its ask flag): an item asks its record,
+/// a miss linking the bar's callback once (`0x5aaee6`-`0x5aaf0f`), then its usable bytes alone
+/// (`0x5aa390` silent).
 pub(crate) fn slot_set_silently(world: &mut World, slot: u8) {
+    ask_item_record(world, slot);
     usable_cache::step(Pass::Slot(slot))(world);
+}
+
+/// The slot's item record, asked; on a miss the bar's update waits on it ([`record_landed`]).
+fn ask_item_record(world: &mut World, slot: u8) {
+    let item = world
+        .get_resource::<ActionSlots>()
+        .and_then(|a| a.buttons.get(&slot))
+        .filter(|b| b.kind == ACTION_KIND_ITEM)
+        .map(|b| b.action);
+    let Some(item) = item else {
+        return;
+    };
+    let missing = match (
+        world.get_resource::<Items>(),
+        world.get_resource::<NetCommands>(),
+    ) {
+        (Some(items), Some(commands)) => {
+            items.template(item, 0, commands).is_none() && !items.template_answered_unknown(item)
+        }
+        _ => false,
+    };
+    if let (true, Some(mut waits)) = (
+        missing,
+        world.get_non_send_resource_mut::<crate::items::RecordWaits>(),
+    ) {
+        waits.wait(item, crate::items::RecordWait::ActionBar, true);
+    }
 }
 
 /// The whole bar's signal, 0, after a table's silent put.
@@ -241,8 +271,8 @@ pub(crate) fn update_item(world: &mut World, item: u32) {
     }
 }
 
-/// The bar's record callback (`0x5aadb0`), which a slot set without its signal registers for its
-/// item (`0x5aaf0f`): a landed record of an item the bar holds runs that item's update.
+/// The bar's record callback (`0x5aadb0`), which a table put's slot set links on its item's record
+/// (`0x5aaf0f`): a landed record of an item the bar holds runs that item's update.
 pub(crate) fn record_landed(world: &mut World, item: u32) {
     let on_bar = world.get_resource::<ActionSlots>().is_some_and(|a| {
         a.buttons

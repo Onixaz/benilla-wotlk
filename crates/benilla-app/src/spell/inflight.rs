@@ -679,7 +679,7 @@ mod tests {
                         if call == ScriptCall::SpellStopCasting {
                             cancel.stop_casting();
                             // The cancel's bar end, fired as the call returns (`0x806200`).
-                            cancel.press.fire(script);
+                            cancel.press.fire(script, &mut Vec::new());
                         }
                     });
                 })

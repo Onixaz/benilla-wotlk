@@ -794,7 +794,7 @@ fn feed_trade_skill(
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<(
             crate::ui_script::OwnsCooldowns,
@@ -818,7 +818,7 @@ fn drain_trade_skill(
         debug!("ui_tradeskill: DoTradeSkill({spell_id})");
         ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
         // The send's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script);
+        ladder.press.fire(&mut script, &mut live);
     }
 
     let self_entity = ladder.self_player.single().ok().map(|(e, _)| e);
@@ -832,7 +832,7 @@ fn drain_trade_skill(
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
-                    ladder.press.fire(&mut script);
+                    ladder.press.fire(&mut script, &mut live);
                 }
             }
             CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
