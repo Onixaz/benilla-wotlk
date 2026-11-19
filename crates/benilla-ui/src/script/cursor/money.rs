@@ -57,7 +57,7 @@ fn install_money(model: &mut Model, copper: u32) {
 pub(crate) fn pickup_player_money(model: &mut Model, copper: u32) -> bool {
     if copper == 0
         || !crate::script::live::has_control()
-        || u64::from(copper) > crate::script::live::money(&model)
+        || u64::from(copper) > crate::script::live::money(model)
     {
         return false;
     }
@@ -86,7 +86,7 @@ pub(crate) fn add_trade_money(model: &mut Model) -> bool {
     }
     let offer = model.trade.as_ref().map_or(0, |t| t.player.gold);
     let total = u64::from(offer) + u64::from(copper);
-    if total > crate::script::live::money(&model) {
+    if total > crate::script::live::money(model) {
         return false;
     }
     let total = total as u32;

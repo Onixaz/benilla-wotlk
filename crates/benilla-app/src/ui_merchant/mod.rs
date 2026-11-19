@@ -642,7 +642,7 @@ impl MerchantLive<'_, '_> {
     ) -> Option<MerchantItem> {
         match list {
             MerchantList::Items => {
-                let row = self.open.row_at(u32::try_from(index).ok()?)?.clone();
+                let row = *self.open.row_at(u32::try_from(index).ok()?)?;
                 if row.entry == 0 {
                     return None;
                 }
@@ -841,7 +841,7 @@ impl MerchantLive<'_, '_> {
                 let (Some(vendor), Some((me, me_guid))) = (self.open.vendor, me) else {
                     return out;
                 };
-                let Some(r) = self.open.row_at(row).cloned() else {
+                let Some(&r) = self.open.row_at(row) else {
                     return out;
                 };
                 let Some((bag_index, bag_slot)) = wire_pos(bag, slot) else {
