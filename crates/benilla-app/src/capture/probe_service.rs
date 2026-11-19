@@ -132,16 +132,17 @@ const LEGS: &[Leg] = &[
         want_arm: ServiceArm::Questgiver,
         want_window: Window::Quest,
     },
-    // The 3.3.5a world DB gives her GOSSIP too, so the click opens her menu and the stock frame
-    // selects its lone trainer option itself: `CMSG_GOSSIP_SELECT_OPTION`, then the trainer list.
+    // The 3.3.5a world DB gives her GOSSIP too, so the click opens her menu; her record carries
+    // the force-gossip type flag `0x8000000`, so `ForceGossip()` answers true (`0x58ab50` ->
+    // `0x715e1a`) and the stock frame keeps the menu rather than taking its lone trainer option.
     Leg {
-        name: "Alma Jainrose — GOSSIP|TRAINER, a lone trainer option",
+        name: "Alma Jainrose — GOSSIP|TRAINER, a forced menu",
         ident: Ident::Entry(812),
         map: 0,
         at: &[[-9237.78, -2041.65, 78.1678]],
         db_flags: 0x11,
         want_arm: ServiceArm::Gossip,
-        want_window: Window::Trainer,
+        want_window: Window::Gossip,
     },
 ];
 

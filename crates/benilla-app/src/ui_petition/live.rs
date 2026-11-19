@@ -161,6 +161,11 @@ impl PetitionLive<'_, '_> {
         &self.state
     }
 
+    /// The registrar held.
+    pub(crate) fn registrar(&self) -> Option<u64> {
+        self.registrar.registrar
+    }
+
     fn me_guid(&self) -> u64 {
         self.self_guid.0.unwrap_or(0)
     }

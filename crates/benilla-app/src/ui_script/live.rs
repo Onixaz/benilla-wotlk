@@ -2049,6 +2049,12 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
     }
 
+    /// The guild registrar held, read between calls into Lua.
+    pub(crate) fn registrar(&self) -> Option<u64> {
+        self.loan
+            .with_view(|v| v.petition.as_ref().and_then(|p| p.registrar()))
+    }
+
     /// `f` over the guild bank this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_guild_bank<R>(
         &self,

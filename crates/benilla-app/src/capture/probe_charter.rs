@@ -36,8 +36,6 @@ use crate::player::Player;
 use crate::target::cursor_mode::npc_flags;
 use crate::ui_gossip::GossipState;
 use crate::ui_items::{find_item, ItemSearch, PACK_SLOTS};
-use crate::ui_petition::GuildRegistrarState;
-use crate::ui_session::NpcSession;
 
 /// Aldwin Laughlin's spawn, the `.go xyz` target.
 const REGISTRAR_AT: [f32; 3] = [-8885.25, 614.395, 95.2576];
@@ -154,7 +152,7 @@ enum Phase {
         sent_at: f64,
     },
     /// Step 4: the charter row selected; waiting for `SMSG_PETITION_SHOWLIST` to reach
-    /// [`GuildRegistrarState`] and `GUILD_REGISTRAR_SHOW` to open the window.
+    /// the registrar held and `GUILD_REGISTRAR_SHOW` to open the window.
     Registrar {
         since: f64,
     },
@@ -344,7 +342,6 @@ fn probe_guild_name(prefix: &str) -> String {
 fn charter_probe(
     time: ProbeClock,
     mut probe: ResMut<CharterProbe>,
-    registrar: Res<GuildRegistrarState>,
     objects: Objects,
     items: Res<Items>,
     (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -558,7 +555,7 @@ fn charter_probe(
                 probe.phase = Phase::Done;
                 return;
             };
-            let parked = registrar.npc() == Some(npc);
+            let parked = live.registrar() == Some(npc);
             let visible = vm_visible(&script, "GuildRegistrarFrame");
             let cost = vm_charter_cost(&script);
             if parked && visible && cost == CHARTER_COST_COPPER {
@@ -605,12 +602,12 @@ fn charter_probe(
                     "registrar",
                     format!(
                         "no registrar window within {REGISTRAR_TIMEOUT_SECS}s of the select: \
-                         GuildRegistrarState npc={:?} (wanted {npc:#x}), \
+                         registrar npc={:?} (wanted {npc:#x}), \
                          GuildRegistrarFrame:IsVisible()={visible}, GetGuildCharterCost()={cost}. \
                          An SMSG_PETITION_SHOWLIST with no parse arm at all \
                          falls through to ServerPacket::Other — that is what this reading looks \
                          like. Lines seen: {:?}",
-                        registrar.npc(),
+                        live.registrar(),
                         probe_lines(&script)
                     ),
                 );
