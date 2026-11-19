@@ -304,13 +304,15 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
         let carried = me
             .map(|(_, s)| crate::ui_items::carried_counts(&s.0, self.objects))
             .unwrap_or_default();
-        let rune_check = self.runes.zip(self.rune_costs).zip(me).map(
-            |((runes, costs), (_, store))| usable::RuneCheck {
-                state: &runes.state,
-                costs: &costs.0,
-                player: &store.0,
-            },
-        );
+        let rune_check =
+            self.runes
+                .zip(self.rune_costs)
+                .zip(me)
+                .map(|((runes, costs), (_, store))| usable::RuneCheck {
+                    state: &runes.state,
+                    costs: &costs.0,
+                    player: &store.0,
+                });
         let auto_unshift = me.is_some_and(|(_, store)| {
             let form = u32::from(store.0.unit_shapeshift_form());
             let row = spells.forms.get(&form);
@@ -323,7 +325,10 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
             usable::UsablePlace::of(self.place, map, None),
         );
         let combo = self.world.combo.as_deref().map_or((0, 0), |c| {
-            (c.player.on(0, self.target_guid), c.pet.on(0, self.target_guid))
+            (
+                c.player.on(0, self.target_guid),
+                c.pet.on(0, self.target_guid),
+            )
         });
         Some(Reads {
             spells,
@@ -1143,14 +1148,17 @@ mod tests {
             ]
         };
         let mut world = world(vec![(FIREBALL, fireball)], &[FIREBALL], &fields(100));
-        world.resource_mut::<crate::ui_action::ActionSlots>().buttons.insert(
-            0,
-            benilla_protocol::messages::ActionButton {
-                slot: 0,
-                action: FIREBALL,
-                kind: ACTION_KIND_SPELL,
-            },
-        );
+        world
+            .resource_mut::<crate::ui_action::ActionSlots>()
+            .buttons
+            .insert(
+                0,
+                benilla_protocol::messages::ActionButton {
+                    slot: 0,
+                    action: FIREBALL,
+                    kind: ACTION_KIND_SPELL,
+                },
+            );
         step(Pass::Full)(&mut world);
         assert_eq!(
             fired(&mut world),

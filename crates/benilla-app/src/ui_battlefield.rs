@@ -850,7 +850,7 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
         // The bar's part (`0x5281b8`), then the containers' (`0x5281c7`), ahead of the
         // battlefield's (`0x528230`).
-        crate::ui_action::usable_cache::step(crate::ui_action::usable_cache::Pass::Bar)(world);
+        crate::ui_action::bonus::enter_world(world);
         crate::ui_items::watch::enter_world(world);
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");

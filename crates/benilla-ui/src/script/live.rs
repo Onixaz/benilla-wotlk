@@ -617,6 +617,21 @@ pub trait LiveState {
         None
     }
 
+    /// The temporary bar's owners (`[0xc1e5a0]`); `None` without a view.
+    fn temp_action_bar(&self) -> Option<u32> {
+        None
+    }
+
+    /// The bonus offset (`[0xc1e59c]`); `None` without a view.
+    fn bonus_bar_offset(&self) -> Option<u8> {
+        None
+    }
+
+    /// Whether the book holds Cold Weather Flying (`0x7261b0`); `None` without a view.
+    fn knows_cold_weather_flying(&self) -> Option<bool> {
+        None
+    }
+
     /// The slot write (`0x5aae80`, `0x5aaa90` for 0): the word stored, the slot's usable bytes
     /// recomputed and the slot sent (`0x5aa390`); `Some(false)` while the bar is locked
     /// (`0x5aaec1`, `0x5aaac2`), `None` without a view. The caller signals the slot.

@@ -8,6 +8,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
+use super::model::Model;
 
 /// The kind byte, bits 24-31 of the packed slot word (vmangos `Player.h:133`). Must match
 /// `benilla_protocol`'s `ACTION_KIND_*`; this crate has no protocol dependency.
@@ -128,13 +129,15 @@ impl super::UiScript {
         }
     }
 
-    /// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`): any pins
-    /// `GetActionBarPage` to 1 (`0x5a7fd0`), the pet's (`0x1`) hides the pet bar (`0x5d3720`).
+    /// The temporary bar's owners with no view lent: any pins `GetActionBarPage` to 1
+    /// (`0x5a7fd0`), the pet's (`0x1`) hides the pet bar (`0x5d3720`).
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_temp_action_bar(&mut self, flags: u32) {
         set_field!(self, temp_action_bar, flags);
     }
 
-    /// Push the current bonus-bar page offset (0 = the plain main bar; warrior stances 1..3).
+    /// The bonus offset with no view lent (0 the plain main bar; warrior stances 1..3).
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_bonus_bar_offset(&mut self, offset: u8) {
         set_field!(self, bonus_bar_offset, offset);
     }
@@ -178,6 +181,30 @@ pub(super) fn truthy_nonzero(v: &Value) -> bool {
 }
 
 /// Register the action globals.
+/// The temporary bar's owners `[0xc1e5a0]` at the call: the app's, or the stand-in.
+pub(crate) fn temp_action_bar(model: &Model) -> u32 {
+    super::live::read_live(|l| l.temp_action_bar())
+        .flatten()
+        .unwrap_or_else(|| stand_in_pages(model).0)
+}
+
+/// The bonus offset `[0xc1e59c]` at the call (`0x5a7f20`): the app's, or the stand-in.
+pub(crate) fn bonus_bar_offset(model: &Model) -> u8 {
+    super::live::read_live(|l| l.bonus_bar_offset())
+        .flatten()
+        .unwrap_or_else(|| stand_in_pages(model).1)
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+fn stand_in_pages(model: &Model) -> (u32, u8) {
+    (model.temp_action_bar, model.bonus_bar_offset)
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn stand_in_pages(_: &Model) -> (u32, u8) {
+    (0, 0)
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -417,7 +444,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(i64::from(model.bonus_bar_offset))
+            Ok(i64::from(bonus_bar_offset(&model)))
         })?,
     )?;
 
@@ -429,7 +456,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if model.temp_action_bar != 0 {
+            if temp_action_bar(&model) != 0 {
                 return Ok(1);
             }
             Ok(i64::from(model.action_bar_page) + 1)

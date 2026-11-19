@@ -14,6 +14,7 @@ use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
+pub(crate) mod bonus;
 pub(crate) mod cast_fail;
 mod drain;
 mod equipment_sets;
@@ -65,12 +66,16 @@ pub(crate) const ACTION_KIND_PET: u8 = 0x10;
 /// The first temporary bar slot (wire 120, `0x5ab800`), twelve long.
 pub(crate) const TEMP_BAR_FIRST_SLOT: u8 = 120;
 
-/// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`, `0x5a7c20`): bit `0x1` the
-/// pet's bar (`0x5d4ad0`). Any set pages the bonus bar to 5 (`0x5a83c0`) and pins
-/// `GetActionBarPage` to 1 (`0x5a7fd0`).
+/// The bar's pages, which the verbs read at the call ([`bonus`]).
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TempActionBar {
+    /// The temporary bar's owners `[0xc1e5a0]` (`0x5a7c20`): bit `0x1` the pet's bar
+    /// (`0x5d4ad0`), `0x2` a form's preset bar (`0x5abac0`), `0x4` the override bar (`0x5abb40`).
+    /// Any set pages the bonus bar to 5 (`0x5a83c0`) and pins `GetActionBarPage` to 1
+    /// (`0x5a7fd0`).
     pub(crate) flags: u32,
+    /// The bonus offset `[0xc1e59c]` the bonus update stores (`0x5a83c0`), `GetBonusBarOffset`.
+    pub(crate) bonus_offset: u8,
 }
 
 /// The pet bar's temporary-bar flag.

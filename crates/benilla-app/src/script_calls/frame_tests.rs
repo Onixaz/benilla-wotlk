@@ -372,7 +372,9 @@ impl Rig {
                     },
                 );
             }
-            world.resource_mut::<crate::ui_action::PlayerActions>().spells = [BOLT, NOVA].into();
+            world
+                .resource_mut::<crate::ui_action::PlayerActions>()
+                .spells = [BOLT, NOVA].into();
         }
         world
             .resource_mut::<crate::spell::Cooldowns>()

@@ -532,15 +532,12 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
         Some(CursorPayload::Merchant(m)) => vec![str("merchant")?, int(m.row + 1)],
         Some(CursorPayload::Macro(m)) => vec![str("macro")?, int(m.index)],
         // Mode 13 (`0x515200`): the set's name, nothing once the set is gone.
-        Some(CursorPayload::EquipmentSet(e)) => match model
-            .equipment_manager
-            .sets
-            .iter()
-            .find(|s| s.id == e.id)
-        {
-            Some(set) => vec![str("equipmentset")?, str(&set.name)?],
-            None => Vec::new(),
-        },
+        Some(CursorPayload::EquipmentSet(e)) => {
+            match model.equipment_manager.sets.iter().find(|s| s.id == e.id) {
+                Some(set) => vec![str("equipmentset")?, str(&set.name)?],
+                None => Vec::new(),
+            }
+        }
         Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
             super::action::ACTION_KIND_ITEM => {
                 match super::item_stats::item_record(model, a.action) {

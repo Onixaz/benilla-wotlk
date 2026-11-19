@@ -106,7 +106,8 @@ pub(crate) fn place_action(model: &mut Model, id: u32, changed: &mut Vec<u32>) -
         model.cursor = Some(held);
         return false;
     };
-    let displaced = action_slots::word(model, id).map(|d| (d, action_slots::texture(model, id, &|_| None)));
+    let displaced =
+        action_slots::word(model, id).map(|d| (d, action_slots::texture(model, id, &|_| None)));
     if !action_slots::write(model, id, Some(Word { kind, action }), texture) {
         model.cursor = Some(held);
         return false;

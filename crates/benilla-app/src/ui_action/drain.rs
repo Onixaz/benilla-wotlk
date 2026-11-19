@@ -7,7 +7,6 @@ use bevy::prelude::*;
 use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
 use benilla_ui::script::UiScript;
 
-
 use crate::spell::{cast_target, CastLadder};
 
 use super::{attack_actor_refusal, ActionSlots, UiErrorKeys, SPELL_ATTACK};
@@ -488,4 +487,3 @@ pub(crate) fn use_action(
     }
     UseOutcome::Done
 }
-

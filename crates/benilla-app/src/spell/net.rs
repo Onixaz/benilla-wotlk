@@ -189,10 +189,7 @@ fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
 
 /// Every session end returns to glue, whose next world entry zeroes the bar (`0x5a79d0`, via
 /// `0x52b550` from `0x405540`) before the login goes out; the lock lives on the player object.
-fn on_session_end(
-    In(ev): In<SessionEvent>,
-    mut slots: ResMut<crate::ui_action::ActionSlots>,
-) {
+fn on_session_end(In(ev): In<SessionEvent>, mut slots: ResMut<crate::ui_action::ActionSlots>) {
     if let SessionEvent::Disconnected { .. } = ev {
         clear_bar(&mut slots);
     }
@@ -4436,9 +4433,23 @@ mod tests {
         let net = NetCommands(tx);
         let mut actions = PlayerActions::default();
         let mut bar = crate::ui_action::ActionSlots::default();
-        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), false, (&actions, &mut bar), &net, &mut crate::ui_script::live::UiEvents::default());
+        action_buttons(
+            ACTION_BUTTONS_LOCK,
+            Vec::new(),
+            false,
+            (&actions, &mut bar),
+            &net,
+            &mut crate::ui_script::live::UiEvents::default(),
+        );
         assert!(!bar.locked, "no player, no lock");
-        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), true, (&actions, &mut bar), &net, &mut crate::ui_script::live::UiEvents::default());
+        action_buttons(
+            ACTION_BUTTONS_LOCK,
+            Vec::new(),
+            true,
+            (&actions, &mut bar),
+            &net,
+            &mut crate::ui_script::live::UiEvents::default(),
+        );
         bar.write_slot(5, 133, &net);
         assert!(bar.buttons.is_empty() && rx.try_iter().next().is_none());
 

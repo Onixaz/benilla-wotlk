@@ -1679,9 +1679,8 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     // The bag's slot watch (`0x5d9600`), once per slot field that moved, only on a bag the UI watches.
     for (j, old) in merged.bag_slots.clone() {
-        sc.ui.world(move |world| {
-            crate::ui_items::watch::bag_slot_changed(world, guid, j, old)
-        });
+        sc.ui
+            .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j, old));
     }
     // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`), the bank's leg.
     if merged.died {
@@ -1779,8 +1778,8 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             .and_then(|s| s.0.unit_critter())
             .unwrap_or(0);
         let (lo, hi) = merged.critter_old;
-        let old =
-            (u64::from(hi.unwrap_or((new >> 32) as u32)) << 32) | u64::from(lo.unwrap_or(new as u32));
+        let old = (u64::from(hi.unwrap_or((new >> 32) as u32)) << 32)
+            | u64::from(lo.unwrap_or(new as u32));
         for critter in [old, new] {
             let entry = crate::ui_companion::critter_entry(critter);
             sc.ui
@@ -1806,8 +1805,8 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_bank::form_entered(world, form));
         // The form watch (`0x6da130`): a form entered with nothing tracked casts the first tracking
-        // spell the form admits, then the usable update, the selection update (`0x6da389`) and
-        // `UPDATE_SHAPESHIFT_FORM`.
+        // spell the form admits, then the usable update, the selection update (`0x6da389`), the
+        // form's preset bar and the bonus update (`0x6da38e`) and `UPDATE_SHAPESHIFT_FORM`.
         if form != 0 {
             sc.ui.world(move |world| track_in_form(world, form));
         }
@@ -1815,6 +1814,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             crate::ui_action::usable_cache::Pass::Full,
         ));
         crate::ui_action::signals::selection(&mut sc.ui);
+        sc.ui.world(crate::ui_action::bonus::form_changed);
         sc.ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
     }
     // Our own fields' usable updates, the aura state's among them (`0x716810`).
@@ -1823,9 +1823,11 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             crate::ui_action::usable_cache::Pass::Full,
         ));
     }
-    // The override-spell watch's selection update after its usable update (`0x6d1c58`).
+    // The override-spell watch's selection update after its usable update (`0x6d1c58`), then the
+    // override bar and the bonus update (`0x6d1c5d`, `0x6d1c62`).
     if merged.override_moved {
         crate::ui_action::signals::selection(&mut sc.ui);
+        sc.ui.world(crate::ui_action::bonus::override_changed);
     }
     if merged.power_moved {
         sc.ui.world(crate::ui_action::usable_cache::step(

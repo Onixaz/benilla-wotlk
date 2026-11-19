@@ -79,6 +79,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) bound: Slot<'w, crate::ui_macro::MacroBoundSpells>,
     /// The usable walk's reads beside the player's own state (`0x80b5d0`).
     usable_world: crate::ui_action::usable_cache::UsableWorld<'w>,
+    /// The bar's pages: the temporary bar's owners and the bonus offset.
+    pages: Option<Res<'w, crate::ui_action::TempActionBar>>,
     /// The talent tables a talent link's rank reads.
     talents: Option<Res<'w, crate::ui_talent::Talents>>,
     /// The bind point and subclass names a spell tooltip reads.
@@ -1676,6 +1678,21 @@ impl LiveState for LiveView<'_, '_> {
 
     fn item_usable(&self, item_id: u32) -> Option<(bool, bool)> {
         Some(self.item_usable_now(item_id))
+    }
+
+    fn temp_action_bar(&self) -> Option<u32> {
+        Some(self.pages.as_deref().map_or(0, |p| p.flags))
+    }
+
+    fn bonus_bar_offset(&self) -> Option<u8> {
+        Some(self.pages.as_deref().map_or(0, |p| p.bonus_offset))
+    }
+
+    fn knows_cold_weather_flying(&self) -> Option<bool> {
+        Some(self.actions.get().is_some_and(|a| {
+            a.spells
+                .contains(&crate::spell::usable::COLD_WEATHER_FLYING)
+        }))
     }
 
     fn action_word(&self, slot: u32) -> Option<u32> {

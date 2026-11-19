@@ -162,7 +162,7 @@ fn a_ranged_button_pads_its_range_by_the_selected_target_alone() {
             flags: 0,
         };
         app.insert_resource(actions)
-        .init_resource::<PlayerActions>()
+            .init_resource::<PlayerActions>()
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())
             .insert_resource(Spells {
                 catalog: benilla_formats::SpellCatalog::from_displays(
@@ -277,7 +277,7 @@ fn a_melee_button_reaches_the_moving_bonus_while_both_units_run() {
             flags: 1,
         };
         app.insert_resource(actions)
-        .init_resource::<PlayerActions>()
+            .init_resource::<PlayerActions>()
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())
             .insert_resource(Spells {
                 catalog: benilla_formats::SpellCatalog::from_displays(
@@ -713,7 +713,7 @@ fn a_pet_action_slot_walks_with_the_pet_as_caster() {
             ..Default::default()
         };
         app.insert_resource(actions)
-        .init_resource::<PlayerActions>()
+            .init_resource::<PlayerActions>()
             .insert_resource(bar)
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())
             .insert_resource(Spells {
@@ -818,7 +818,16 @@ fn bar_app() -> App {
         benilla_formats::ItemDisplayCatalog::from_displays(displays),
     ));
     let reagent = SpellDisplay {
-        reagents: [(FOOD_ITEM, 2), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+        reagents: [
+            (FOOD_ITEM, 2),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+        ],
         ..Default::default()
     };
     let food = SpellDisplay {
@@ -830,14 +839,17 @@ fn bar_app() -> App {
             .into_iter()
             .collect(),
     );
-    app.world_mut().resource_mut::<crate::ui_action::ActionSlots>().buttons.insert(
-        1,
-        ActionButton {
-            slot: 1,
-            action: MUFFIN_SPELL,
-            kind: ACTION_KIND_SPELL,
-        },
-    );
+    app.world_mut()
+        .resource_mut::<crate::ui_action::ActionSlots>()
+        .buttons
+        .insert(
+            1,
+            ActionButton {
+                slot: 1,
+                action: MUFFIN_SPELL,
+                kind: ACTION_KIND_SPELL,
+            },
+        );
     app.init_resource::<super::usable_cache::UsableCaches>()
         .init_resource::<crate::ui_script::live::UiEvents>();
     app.insert_non_send_resource(UiScript::new().unwrap());
@@ -917,4 +929,27 @@ fn an_item_update_signals_its_slots_and_its_reagent_spells() {
     crate::ui_script::live::fire_handler_events(app.world_mut());
     let seen = live_eval::<Vec<i64>>(&mut app, "return Seen");
     assert_eq!(seen, [1, 2]);
+}
+
+/// The bar's pages read at the call: `GetBonusBarOffset` the stored offset (`0x5a7f20`), and
+/// `GetActionBarPage` pinned to 1 while the temporary bar has an owner (`0x5a7fd0`).
+#[test]
+fn the_bar_pages_read_the_stored_offset_and_owners_at_the_call() {
+    let mut app = bar_app();
+    let read = |app: &mut App| {
+        live_eval::<Vec<i64>>(app, "return { GetBonusBarOffset(), GetActionBarPage() }")
+    };
+    assert_eq!(read(&mut app), [0, 1]);
+    app.insert_resource(crate::ui_action::TempActionBar {
+        flags: 0,
+        bonus_offset: 3,
+    });
+    assert_eq!(read(&mut app), [3, 1]);
+    live_eval::<()>(&mut app, "ChangeActionBarPage(2)");
+    assert_eq!(read(&mut app), [3, 2]);
+    app.insert_resource(crate::ui_action::TempActionBar {
+        flags: crate::ui_action::TEMP_BAR_PET,
+        bonus_offset: 5,
+    });
+    assert_eq!(read(&mut app), [5, 1], "an owner pins the page");
 }

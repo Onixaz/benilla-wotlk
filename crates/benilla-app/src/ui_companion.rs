@@ -206,7 +206,7 @@ pub(crate) struct CompanionInit<'w> {
     actions: Res<'w, crate::ui_action::PlayerActions>,
 }
 
-/// The active player's init (`0x6e7f50`), run as our object is created with its race, class and form byte: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the stance list among them, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`); shapeshifted, the usable update (`0x6e8059`), the selection update (`0x6e805e`), then `UPDATE_SHAPESHIFT_FORM` (`0x6e8074`).
+/// The active player's init (`0x6e7f50`), run as our object is created with its race, class and form byte: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the stance list among them, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`); shapeshifted, the usable update (`0x6e8059`), the selection update (`0x6e805e`), the form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`), then `UPDATE_SHAPESHIFT_FORM` (`0x6e8074`).
 pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init: CompanionInit) {
     let CompanionInit {
         buffer,
@@ -227,15 +227,22 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
         use crate::ui_action::usable_cache::{edit_step, ListEdit};
         ui.world(edit_step(ListEdit::Rebuild));
     }
-    // Shapeshifted only (`0x6e8050`-`0x6e8057`).
+    // Shapeshifted only (`0x6e8050`-`0x6e8057`): a form row that is no stance; a form the table
+    // lacks is none.
+    let shifted = spells
+        .as_deref()
+        .and_then(|s| s.forms.get(&u32::from(form)))
+        .is_some_and(|row| crate::spell::validator::is_shapeshifted(form, row.flags));
     // The stored action table goes on the bar (`0x6e8000`-`0x6e8046`), then the shapeshifted tail.
     let tail = move |ui: &mut UiEvents| {
         ui.world(crate::spell::net::put_action_table);
-        if form != 0 {
+        if shifted {
             ui.world(crate::ui_action::usable_cache::step(
                 crate::ui_action::usable_cache::Pass::Full,
             ));
             crate::ui_action::signals::selection(ui);
+            // The form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`).
+            ui.world(crate::ui_action::bonus::form_changed);
             ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
         }
     };

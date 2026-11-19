@@ -109,7 +109,8 @@ pub(crate) fn refill(
             if let Some(&spell) = list.first() {
                 let packed = spell | (u32::from(ACTION_KIND_SPELL) << 24);
                 for slot in (FIRST_TOTEM_SLOT + i as u8..FIRST_TOTEM_SLOT + 12).step_by(4) {
-                    if !actions.buttons.contains_key(&slot) && actions.write_slot(slot, packed, net) {
+                    if !actions.buttons.contains_key(&slot) && actions.write_slot(slot, packed, net)
+                    {
                         written.push(slot);
                     }
                 }

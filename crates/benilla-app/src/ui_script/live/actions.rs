@@ -123,10 +123,11 @@ impl<'w, 's> LiveView<'w, 's> {
                 }
             }
         }
-        let Some(spell) = use_spell
-            .map(|u| u.spell_id)
-            .filter(|&id| self.spells.as_deref().is_some_and(|s| s.catalog.get(id).is_some()))
-        else {
+        let Some(spell) = use_spell.map(|u| u.spell_id).filter(|&id| {
+            self.spells
+                .as_deref()
+                .is_some_and(|s| s.catalog.get(id).is_some())
+        }) else {
             return (true, false);
         };
         self.usable_reads(|r| r.spell_usable(spell, false).pair())
@@ -136,10 +137,7 @@ impl<'w, 's> LiveView<'w, 's> {
     /// The 0-based bar `slot` through the resolvers.
     pub(super) fn resolve_slot(&self, slot: u32) -> Option<Resolved> {
         let bar = self.slots.get()?;
-        let Some(button) = u8::try_from(slot)
-            .ok()
-            .and_then(|s| bar.buttons.get(&s))
-        else {
+        let Some(button) = u8::try_from(slot).ok().and_then(|s| bar.buttons.get(&s)) else {
             return Some(Resolved::default());
         };
         let mut out = Resolved {
@@ -367,10 +365,7 @@ impl<'w, 's> LiveView<'w, 's> {
     pub(super) fn slot_icon(&self, slot: u32) -> Option<Option<benilla_ui::script::ActionIcon>> {
         use benilla_ui::script::ActionIcon;
         let bar = self.slots.get()?;
-        let Some(button) = u8::try_from(slot)
-            .ok()
-            .and_then(|s| bar.buttons.get(&s))
-        else {
+        let Some(button) = u8::try_from(slot).ok().and_then(|s| bar.buttons.get(&s)) else {
             return Some(None);
         };
         let containers = self.containers.as_ref()?;
@@ -420,23 +415,23 @@ impl<'w, 's> LiveView<'w, 's> {
         };
         let spells = self.spells.as_deref();
         if r.item != 0 {
-            return crate::ui_action::slots::item_count(me, objects, items, commands, spells, r.item);
+            return crate::ui_action::slots::item_count(
+                me, objects, items, commands, spells, r.item,
+            );
         }
         if r.spell == 0 || r.pet {
             return 0;
         }
-        spells
-            .and_then(|s| s.catalog.get(r.spell))
-            .map_or(0, |d| {
-                crate::ui_action::slots::reagent_uses(d, |id| {
-                    crate::ui_items::count_of(
-                        &me.0,
-                        objects,
-                        id,
-                        crate::ui_items::InventoryScope::DEFAULT,
-                    )
-                })
+        spells.and_then(|s| s.catalog.get(r.spell)).map_or(0, |d| {
+            crate::ui_action::slots::reagent_uses(d, |id| {
+                crate::ui_items::count_of(
+                    &me.0,
+                    objects,
+                    id,
+                    crate::ui_items::InventoryScope::DEFAULT,
+                )
             })
+        })
     }
 
     /// `IsConsumableAction` (`0x5a9360`): an item that is ammo, thrown or used up by its charges,

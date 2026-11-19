@@ -88,10 +88,7 @@ fn has_reagents(d: &benilla_formats::SpellDisplay) -> bool {
 
 /// A spell's reagent uses (`0x801770`): the fewest casts any reagent's carried count allows, 0
 /// with no reagent.
-pub(crate) fn reagent_uses(
-    d: &benilla_formats::SpellDisplay,
-    carried: impl Fn(u32) -> u32,
-) -> u32 {
+pub(crate) fn reagent_uses(d: &benilla_formats::SpellDisplay, carried: impl Fn(u32) -> u32) -> u32 {
     d.reagents
         .iter()
         .filter(|&&(id, n)| id != 0 && n > 0)
@@ -134,7 +131,9 @@ pub(crate) fn item_count(
     if !has_reagents(d) {
         return count;
     }
-    reagent_uses(d, |id| count_of(&store.0, objects, id, InventoryScope::DEFAULT))
+    reagent_uses(d, |id| {
+        count_of(&store.0, objects, id, InventoryScope::DEFAULT)
+    })
 }
 
 /// The slots one item's update touches (`0x5aa5c0`), and the used-up slots that turn into the
@@ -377,9 +376,9 @@ pub(crate) fn critter_changed(world: &mut World, critter: u32) {
                                 let row = u32::try_from(d.effect_misc_value_b[0]).ok();
                                 row.and_then(|r| summons.0.slot(r)).is_some()
                                     && (0..3).any(|i| {
-                                    d.effects[i] == EFFECT_SUMMON
-                                        && d.effect_misc_value[i] == critter as i32
-                                })
+                                        d.effects[i] == EFFECT_SUMMON
+                                            && d.effect_misc_value[i] == critter as i32
+                                    })
                             })
                     })
                     .map(|b| b.slot)

@@ -22,10 +22,7 @@ pub(super) fn normalize_action_ranks(
     mut bar: ResMut<ActionSlots>,
     skill_lines: Option<Res<SkillLines>>,
     commands: Res<NetCommands>,
-    (mut ui, mut ecs): (
-        Option<ResMut<crate::ui_script::live::UiEvents>>,
-        Commands,
-    ),
+    (mut ui, mut ecs): (Option<ResMut<crate::ui_script::live::UiEvents>>, Commands),
 ) {
     let Some(skill_lines) = skill_lines else {
         return;

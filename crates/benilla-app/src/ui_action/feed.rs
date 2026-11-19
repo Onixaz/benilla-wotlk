@@ -1,5 +1,4 @@
-//! [`feed_actions`] drains the UI error queues and feeds the stance page (`GetBonusBarOffset`: the
-//! form's `SpellShapeshiftForm.dbc` BonusActionBar column).
+//! [`feed_actions`] drains the UI error queues.
 
 use bevy::prelude::*;
 
@@ -11,14 +10,8 @@ use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 use super::errors::{first_missing_totem, first_short_reagent, mount_result_key};
 use super::{
     cast_fail, show_messages, ui_error_text, CastErrors, MessageSink, MountErrors, PetTameFailures,
-    PlayerActions, Shown, Spells, UiError, UiErrorKeys, UiErrorTexts,
+    Shown, Spells, UiError, UiErrorKeys, UiErrorTexts,
 };
-
-/// The feed's memory of the stance page it last pushed.
-#[derive(Default)]
-pub(super) struct FeedMemory {
-    bonus_offset: u8,
-}
 
 /// The DBC name tables the cast-fail argument arms read, as one parameter to stay within Bevy's
 /// parameter limit; each is absent without game data. The shapeshift forms ride [`Spells`].
@@ -58,11 +51,7 @@ impl FailNameTables<'_> {
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_actions(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    action_store: crate::ui_script::LentRef<PlayerActions>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut cast_errors: ResMut<CastErrors>,
     mut mount_errors: ResMut<MountErrors>,
     mut pet_tame_failures: ResMut<PetTameFailures>,
@@ -77,28 +66,15 @@ pub(super) fn feed_actions(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: crate::net::Objects,
     items: Res<Items>,
-    // With the temporary bar's owners.
-    bars: (
-        Option<Res<crate::ui_items::ItemSubClasses>>,
-        Option<Res<super::TempActionBar>>,
-    ),
+    sub_classes: Option<Res<crate::ui_items::ItemSubClasses>>,
     name_tables: FailNameTables,
     commands: Res<NetCommands>,
-    mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
     mut sink: MessageSink,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let (mut ui_error_keys, mut ui_error_texts, mut cast_fail_log) = ui_errors;
-    let (sub_classes, temp_bar) = bars;
-    let temp_flags = temp_bar.map_or(0, |t| t.flags);
-    // Cold Weather Flying, what `flyable` needs in Northrend (`0x7261b0`).
-    let knows = action_store
-        .get()
-        .is_some_and(|a| a.spells.contains(&54197));
-    script.set_knows_cold_weather_flying(knows);
-    let memory = memory.get(&script);
 
     // Cast failures become error lines through [`cast_fail`], all resolved before any event fires.
     // The drain owns the arms that need our bags or the item cache: `0x78` and `0x5c` name the
@@ -362,31 +338,4 @@ pub(super) fn feed_actions(
         })
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", unknown_lines);
-
-    let store = self_q.iter().next();
-
-    // Stance page: the temporary bar's 5 while it has an owner, else our form's bonus bar offset,
-    // with `UPDATE_BONUS_ACTIONBAR` on change and `ACTIONBAR_PAGE_CHANGED` first when leaving 5
-    // (`0x5a83c0`).
-    let form = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
-    let offset = if temp_flags != 0 {
-        5
-    } else {
-        spells
-            .as_ref()
-            .and_then(|s| s.forms.get(&u32::from(form)))
-            .map(|f| f.bonus_bar)
-            .unwrap_or(0) as u8
-    };
-    script.set_temp_action_bar(temp_flags);
-    if offset != memory.bonus_offset {
-        debug!("ui_action: bonus bar offset {} (form {form})", offset);
-        let left_temp = memory.bonus_offset == 5;
-        memory.bonus_offset = offset;
-        script.set_bonus_bar_offset(offset);
-        if left_temp {
-            script.fire_event("ACTIONBAR_PAGE_CHANGED", vec![]);
-        }
-        script.fire_event("UPDATE_BONUS_ACTIONBAR", vec![]);
-    }
 }

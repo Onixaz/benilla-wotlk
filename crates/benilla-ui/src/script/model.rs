@@ -10,8 +10,8 @@ use super::{
     combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
     loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
     quest, quest_log, reputation, session, simplehtml, skills, slider, social, stable, taxi, trade,
-    tradeskill, trainer, unit_menu, weapon_enchant, AuraState, FontObject,
-    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    tradeskill, trainer, unit_menu, weapon_enchant, AuraState, FontObject, MusicRequest,
+    RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -553,8 +553,11 @@ pub(crate) struct Model {
     pub(crate) equipment_set_requests: Vec<super::equipment_manager::EquipmentSetRequest>,
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
+    /// The bonus offset a test or fixture pushed, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) bonus_bar_offset: u8,
-    /// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`).
+    /// The temporary bar's owners a test or fixture pushed, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) temp_action_bar: u32,
     /// The main bar's page, 0-based (`[0xc1e598]`): `GetActionBarPage` answers it plus one.
     pub(crate) action_bar_page: u8,
@@ -1166,7 +1169,8 @@ pub(crate) struct Model {
     pub(crate) click_button: Option<String>,
     /// The player state `SecureCmdOptionParse`'s conditions read beside the unit snapshots.
     pub(crate) option_state: super::OptionState,
-    /// `flyable`'s Northrend training, from the spell book.
+    /// `flyable`'s Northrend training a test or fixture pushed, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) knows_cold_weather_flying: bool,
     /// What the macro conditions `equipped` and `worn` read.
     pub(crate) equipped_for_macros: super::EquippedForMacros,
@@ -1584,7 +1588,9 @@ impl Model {
             equipment_manager: Default::default(),
             equipment_set_requests: Vec::new(),
             action_states: HashMap::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             bonus_bar_offset: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             temp_action_bar: 0,
             action_bar_page: 0,
             #[cfg(any(test, feature = "fixtures"))]
@@ -1838,6 +1844,7 @@ impl Model {
             modifier_keys: 0,
             click_button: None,
             option_state: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             knows_cold_weather_flying: false,
             equipped_for_macros: Default::default(),
             autocomplete_contacts: Default::default(),

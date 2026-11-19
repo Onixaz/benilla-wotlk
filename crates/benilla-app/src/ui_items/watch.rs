@@ -349,8 +349,8 @@ pub(crate) fn bag_slot_changed(
         return;
     };
     let (lo, hi) = old;
-    let old = (u64::from(hi.unwrap_or((new >> 32) as u32)) << 32)
-        | u64::from(lo.unwrap_or(new as u32));
+    let old =
+        (u64::from(hi.unwrap_or((new >> 32) as u32)) << 32) | u64::from(lo.unwrap_or(new as u32));
     if old != new {
         bar_item(world, old);
         bar_item(world, new);
