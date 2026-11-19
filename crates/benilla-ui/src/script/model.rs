@@ -8,7 +8,7 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
     combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
-    macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
+    macros, mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
     reputation, session, simplehtml, skills, slider, social, spellbook, stable, trade, tradeskill,
     unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject, MusicRequest, RegionData,
     ScriptValue, SoundRequest, UnitState, UnitTokenParse,
@@ -776,23 +776,37 @@ pub(crate) struct Model {
     /// A ColorSelect wheel or value-bar drag, press to release.
     pub(crate) color_drag: Option<colorselect::ColorDrag>,
 
-    /// The open vendor's stock, the `BuyMerchantItem` calls and whether `CloseMerchant` ran.
-    pub(crate) merchant: Option<merchant::MerchantState>,
-    /// `GetRepairAllCost`'s total; 0 unless a repairer is open.
+    /// A test's vendor, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) merchant: Option<super::merchant::MerchantState>,
+    /// A test's `GetRepairAllCost` total, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) repair_all_cost: u32,
-    /// `GetRepairAllCost`'s second return: a swept item is damaged.
+    /// A test's `GetRepairAllCost` second return: a swept item is damaged.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) repair_all_damaged: bool,
-    /// The repair costs `SetInventoryItem` and `SetBagItem` return.
-    pub(crate) repair_costs: merchant::RepairCosts,
+    /// A test's repair costs `SetInventoryItem` and `SetBagItem` return.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) repair_costs: super::merchant::RepairCosts,
+    /// A test's `BuyMerchantItem` `(row, count)` calls where no view is lent, the row 1-based.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_buys: Vec<(u32, u32)>,
-    /// The held `(bag, slot)` when `PickupMerchantItem` sells, sent as `CMSG_SELL_ITEM`.
+    /// A test's held `(bag, slot)` sold by `PickupMerchantItem` where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_cursor_sells: Vec<(i64, u32)>,
-    /// A held vendor row dropped in a bag, `(bag, slot, 1-based row)`, for `CMSG_BUY_ITEM_IN_SLOT`.
+    /// A test's held vendor row dropped in a bag, `(bag, slot, 1-based row)`, where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_slot_buys: Vec<(i64, u32, u32)>,
+    /// A test's `CloseMerchant` where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_close: bool,
-    /// `BuybackItem` 1-based slots, the `RepairAllItems` flag and repair mode (`InRepairMode`).
+    /// A test's `BuybackItem` 1-based slots where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_buybacks: Vec<u32>,
+    /// A test's `RepairAllItems` guild-bank flag where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) repair_all: Option<bool>,
+    /// Repair mode (`InRepairMode`): a bag or equipment click repairs the item.
     pub(crate) repair_mode: bool,
 
     /// The stable selection.
@@ -1689,15 +1703,25 @@ impl Model {
             sizing: None,
             slider_drag: None,
             color_drag: None,
+            #[cfg(any(test, feature = "fixtures"))]
             merchant: None,
+            #[cfg(any(test, feature = "fixtures"))]
             repair_all_cost: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             repair_all_damaged: false,
+            #[cfg(any(test, feature = "fixtures"))]
             repair_costs: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_buys: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_cursor_sells: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_slot_buys: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_close: false,
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_buybacks: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             repair_all: None,
             repair_mode: false,
             stable: Default::default(),

@@ -248,21 +248,37 @@ fn close_legs(model: &mut super::Model) {
 
 /// Whether a vendor is set at the call (`0xbfa3e8`).
 pub(crate) fn merchant_open(model: &super::Model) -> bool {
-    super::live::read_live(|l| l.merchant_open())
-        .flatten()
-        .unwrap_or_else(|| model.merchant.is_some())
+    if let Some(Some(open)) = super::live::read_live(|l| l.merchant_open()) {
+        return open;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.merchant.is_some()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        false
+    }
 }
 
 /// The count of `list` at the call: the vendor's rows (`0xbfa3f0`) or the sorted buyback slots, 0 with no vendor (`0x5843f0`).
 fn merchant_len(model: &super::Model, list: MerchantList) -> usize {
-    super::live::read_live(|l| l.merchant_len(list))
-        .flatten()
-        .unwrap_or_else(|| {
-            model.merchant.as_ref().map_or(0, |m| match list {
-                MerchantList::Items => m.items.len(),
-                MerchantList::Buyback => m.buyback.len(),
-            })
+    if let Some(Some(len)) = super::live::read_live(|l| l.merchant_len(list)) {
+        return len;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.merchant.as_ref().map_or(0, |m| match list {
+            MerchantList::Items => m.items.len(),
+            MerchantList::Buyback => m.buyback.len(),
         })
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        0
+    }
 }
 
 /// Row `index` (0-based) of `list` resolved at the call; `ask` leaves the merchant's record callback on a vendor row's miss, as `GetMerchantItemInfo`'s record read does (`0x584680`).
@@ -272,16 +288,22 @@ pub(crate) fn merchant_row(
     index: usize,
     ask: bool,
 ) -> Option<MerchantItem> {
-    match super::live::write_live(|l| l.merchant_row(list, index, ask)) {
-        Some(Some(row)) => row,
-        _ => {
-            let m = model.merchant.as_ref()?;
-            match list {
-                MerchantList::Items => m.items.get(index),
-                MerchantList::Buyback => m.buyback.get(index),
-            }
-            .cloned()
+    if let Some(Some(row)) = super::live::write_live(|l| l.merchant_row(list, index, ask)) {
+        return row;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let m = model.merchant.as_ref()?;
+        match list {
+            MerchantList::Items => m.items.get(index),
+            MerchantList::Buyback => m.buyback.get(index),
         }
+        .cloned()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        None
     }
 }
 
@@ -294,37 +316,63 @@ pub(crate) fn first_vendor_row_of(model: &super::Model, item_id: u32) -> Option<
 
 /// Whether the vendor's unit is held with the repair bit (`0x5845b0`).
 pub(crate) fn can_repair(model: &super::Model) -> bool {
-    super::live::read_live(|l| l.can_merchant_repair())
-        .flatten()
-        .unwrap_or_else(|| model.merchant.as_ref().is_some_and(|m| m.can_repair))
+    if let Some(Some(can)) = super::live::read_live(|l| l.can_merchant_repair()) {
+        return can;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.merchant.as_ref().is_some_and(|m| m.can_repair)
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        false
+    }
 }
 
 /// `GetRepairAllCost`'s sweep at the call (`0x585990`): `None` with no repairer or no player.
 fn repair_all_cost(model: &super::Model) -> Option<(u32, bool)> {
-    match super::live::read_live(|l| l.repair_all_cost()) {
-        Some(Some(answer)) => answer,
-        _ => can_repair(model).then_some((model.repair_all_cost, model.repair_all_damaged)),
+    if let Some(Some(answer)) = super::live::read_live(|l| l.repair_all_cost()) {
+        return answer;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        can_repair(model).then_some((model.repair_all_cost, model.repair_all_damaged))
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        None
     }
 }
 
 /// An item's repair cost at the call, after the vendor's discount (`0x584b20`); 0 for none.
 pub(crate) fn repair_cost(model: &super::Model, at: RepairAt) -> u32 {
-    match super::live::read_live(|l| l.repair_cost(at)) {
-        Some(Some(cost)) => cost,
-        _ => match at {
+    if let Some(Some(cost)) = super::live::read_live(|l| l.repair_cost(at)) {
+        return cost;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        match at {
             RepairAt::Worn(slot) => model.repair_costs.equipped.get(&slot),
             RepairAt::Bag(bag, slot) => model.repair_costs.bags.get(&(bag, slot)),
         }
         .copied()
-        .unwrap_or(0),
+        .unwrap_or(0)
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = (model, at);
+        0
     }
 }
 
-/// Run `act` inside the call through the lent view; where none is lent, a test's queue takes it.
+/// Run `act` inside the call through the lent view; where none is lent, a test's queue takes it and the player build does nothing.
 pub(crate) fn merchant_act(model: &mut super::Model, act: MerchantAct) -> MerchantOutcome {
     if let Some(Some(outcome)) = super::live::write_live(|l| l.merchant_act(act)) {
         return outcome;
     }
+    #[cfg(any(test, feature = "fixtures"))]
     match act {
         MerchantAct::Buy { row, count } => model.merchant_buys.push((row + 1, count)),
         MerchantAct::Buyback { index } => model.merchant_buybacks.push(index + 1),
@@ -335,6 +383,8 @@ pub(crate) fn merchant_act(model: &mut super::Model, act: MerchantAct) -> Mercha
         }
         MerchantAct::Close => model.merchant_close = true,
     }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    let _ = (model, act);
     MerchantOutcome::default()
 }
 
