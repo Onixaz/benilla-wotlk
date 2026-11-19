@@ -2,151 +2,125 @@
 //! window, and the verbs that found a guild or an arena team.
 //!
 //! `SMSG_PETITION_SHOWLIST` (`0x6d69f0`) opens the guild registrar for an NPC that is both a
-//! petitioner and a tabard designer, and the petition vendor for any other; both are NPC sessions
-//! that close on a walk-away. The petition window is bound to a charter item with no NPC, so
-//! walking away leaves it open.
+//! petitioner and a tabard designer, and the petition vendor for any other; both take the interact
+//! target. The petition window is bound to a charter item with no NPC, so walking away leaves it
+//! open. Its handlers fire the events in their turn and the verbs read and act at the call.
 //!
 //! `SMSG_PETITION_SHOW_SIGNATURES` carries no text: the name and requirement come from
-//! `SMSG_PETITION_QUERY_RESPONSE`, the signer names from the name cache. It answers our request
-//! and delivers an offer alike; only `owner` tells them apart.
+//! `SMSG_PETITION_QUERY_RESPONSE`, the signer names from the name cache; `PETITION_SHOW` waits for
+//! the record and every signer name (`0x5cea60`, `0x5cebf0`, `0x5cf650`).
 
-use benilla_protocol::messages::{
-    petition_result, PetitionQueryResponse, PetitionRename, PetitionShowList,
-    PetitionShowListEntry, PetitionShowSignatures, PetitionSignResults,
-};
+use benilla_protocol::messages::PetitionShowListEntry;
+use benilla_ui::script::ArenaBannerChoice;
 use bevy::prelude::*;
 
-use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::query_cache::QueryCache;
-use crate::ui_script::{UiDrain, UiFeed};
-use crate::ui_session::NpcSession;
+use crate::ui_script::live::UiEvents;
 
-mod feed;
 mod lines;
+mod live;
+mod net;
 
-/// The open registrar, apart from [`PetitionState`] so the walk-away guard closes only it.
+pub(crate) use live::{ActContext, PetitionLive};
+
+/// The registrar (`0xc0e570`) and its charter row (`0xc0e558`), which outlives the close until the world entry (`0x599dd0`).
 #[derive(Resource, Default)]
 pub(crate) struct GuildRegistrarState {
-    open: Option<Registrar>,
-}
-
-#[derive(Clone, Debug)]
-struct Registrar {
-    /// What `BuyGuildCharter` addresses (`0xc0e570`).
-    npc: u64,
-    /// Price in copper, unsigned.
-    cost: u32,
-    /// The charter row's index, the bought record's `muid` (`0x59a116`).
-    index: u32,
+    registrar: Option<u64>,
+    row: PetitionShowListEntry,
 }
 
 /// The `UNIT_NPC_FLAGS` bits that make a showlist's NPC the guild registrar, both of them
-/// (`0x6d6aaf`); an NPC with fewer opens the petition vendor.
+/// (`0x6d6ab7`); an NPC with fewer opens the petition vendor.
 const REGISTRAR_NPC_FLAGS: u32 = crate::target::cursor_mode::npc_flags::PETITIONER
     | crate::target::cursor_mode::npc_flags::TABARDDESIGNER;
 
-impl GuildRegistrarState {
-    /// The registrar setter (`0x599e00`): the first row is the registrar's charter.
-    fn open(&mut self, list: &PetitionShowList) {
-        let first = list.entries.first().cloned().unwrap_or_default();
-        self.open = Some(Registrar {
-            npc: list.npc,
-            cost: first.charter_cost,
-            index: first.index,
-        });
-    }
-
-    /// The charter row's index, `CMSG_PETITION_BUY`'s `muid`.
-    fn index(&self) -> u32 {
-        self.open.as_ref().map_or(0, |r| r.index)
-    }
-
-    /// `GetGuildCharterCost()`: 0 with no registrar open.
-    fn cost(&self) -> u32 {
-        self.open.as_ref().map_or(0, |r| r.cost)
-    }
-}
-
-impl NpcSession for GuildRegistrarState {
+impl crate::ui_session::NpcSession for GuildRegistrarState {
     fn npc(&self) -> Option<u64> {
-        self.open.as_ref().map(|r| r.npc)
+        self.registrar
     }
 
+    /// The zero alone; its event fires from [`close_registrar`].
     fn close(&mut self) {
-        self.open = None;
+        self.registrar = None;
     }
 }
 
-/// The arena registrar's session (`0xc0f7c8`): its charter rows, up to ten (`0x5a22f0`).
-#[derive(Resource, Default)]
+/// The arena registrar's vendor (`0xc0f7c8`), its rows (`0xc0f6d8`, at most ten, `0x5a22f0`), the banner a turn-in sends and the arena walk's mode (`0xc0f7e8`..).
+#[derive(Resource)]
 pub(crate) struct PetitionVendorState {
-    npc: Option<u64>,
-    items: Vec<PetitionShowListEntry>,
-    /// The VM closed it itself and fired `PETITION_VENDOR_CLOSED` already.
-    closed_by_vm: bool,
-    /// The petition list show fires `PETITION_VENDOR_UPDATE` with a vendor (`0x5a22e8`).
-    update: bool,
+    vendor: Option<u64>,
+    rows: Vec<PetitionShowListEntry>,
+    banner: ArenaBannerChoice,
+    /// The arena walk's last mode, which its record callback runs again (`0x6dd630`).
+    turn_in: bool,
 }
 
-/// The rows a vendor keeps (`0x5a2305`).
+impl Default for PetitionVendorState {
+    fn default() -> Self {
+        Self {
+            vendor: None,
+            rows: Vec::new(),
+            banner: live::unset_banner(),
+            turn_in: false,
+        }
+    }
+}
+
+/// The rows a vendor keeps (`0x5a22eb`).
 const VENDOR_ROWS: usize = 10;
 
-impl PetitionVendorState {
-    fn open(&mut self, list: PetitionShowList) {
-        self.npc = Some(list.npc);
-        self.items = list.entries;
-        self.items.truncate(VENDOR_ROWS);
-        self.update = true;
-    }
-
-    pub(crate) fn rows(&self) -> &[PetitionShowListEntry] {
-        &self.items
-    }
-}
-
-impl NpcSession for PetitionVendorState {
+impl crate::ui_session::NpcSession for PetitionVendorState {
     fn npc(&self) -> Option<u64> {
-        self.npc
+        self.vendor
     }
 
+    /// The zero alone; its event fires from [`close_vendor`].
     fn close(&mut self) {
-        self.npc = None;
+        self.vendor = None;
     }
 }
 
-/// The open charter and the petition-record cache.
+/// A callback a petition record's ask left (`0x5cec20`, `0x6dd360`, `0x6dd630`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wait {
+    /// The open petition's, which holds the record and may fire `PETITION_SHOW` (`0x5cea60`).
+    Open,
+    /// The guild charter turn-in's, which runs the turn-in again (`0x6dd3a0`).
+    GuildTurnIn,
+    /// The arena walk's, which runs it again and fires `PETITION_VENDOR_UPDATE` on a find.
+    ArenaTurnIn,
+}
+
+/// The petition window (`0xc22b20`..) and the petition-record cache.
 #[derive(Resource, Default)]
 pub(crate) struct PetitionState {
-    open: Option<OpenCharter>,
+    /// The petition's guid, the charter item every verb in the family takes.
+    petition: Option<u64>,
+    /// The packet's owner (`0xc22b28`).
+    owner: u64,
+    /// The id the record callback compares (`0xc22b30`), zeroed by a close.
+    petition_id: u32,
+    /// Our sign went out (`0xc22b34`): a close sends no decline.
+    signed: bool,
+    /// The signers in wire order (`0xc22b44`, counted by `0xc22b38`).
+    signers: Vec<u64>,
+    /// The signer names asked with the window's callback, one per ask (`0xc22b3c`).
+    pending: Vec<u64>,
+    /// A record is held for the open petition (`0xc22b40`).
+    held: bool,
     /// The record cache by petition id, asked once through [`QueryCache`].
     records: QueryCache<u32, Record>,
-    /// Set while our sign is outstanding. A close's decline leg is gated on it, so closing while
-    /// our own signature is in flight sends no decline.
-    signing: bool,
-    /// Lines composed at apply time, shown by the feed, which holds the `script` handle.
-    lines: Vec<lines::Line>,
-    /// A rename patched a record: `PETITION_SHOW` fires whether or not a charter is shown.
-    show_owed: bool,
-}
-
-/// The charter the petition window is showing.
-#[derive(Clone, Debug)]
-struct OpenCharter {
-    /// The charter item's guid, the handle every verb in the family takes.
-    item: u64,
-    /// The packet's owner; the originator's name and the close's decline test read it.
-    owner: u64,
-    petition_id: u32,
-    /// In wire order; names resolve at feed time, so a late name repaints without a packet.
-    signers: Vec<u64>,
+    /// The record callbacks still waiting, in ask order.
+    waits: Vec<(u32, Wait)>,
 }
 
 /// One petition's record, from `SMSG_PETITION_QUERY_RESPONSE`.
 #[derive(Clone, Debug, Default)]
 struct Record {
-    /// The record's owner (`+0x8`), not the packet's: `GetPetitionInfo`'s `isOriginator`
-    /// compares against it, as does `CanSignPetition`'s owner refusal.
+    /// The record's owner (`+0x8`), not the packet's: `GetPetitionInfo`'s `isOriginator`, the
+    /// close's decline and `CanSignPetition` compare against it.
     owner: u64,
     /// The proposed guild or team's name.
     name: String,
@@ -156,6 +130,9 @@ struct Record {
     max_signatures: i32,
     /// 0 a guild charter, 1 an arena one (`+0x13bc`).
     static_type: u32,
+    /// The level window `OfferPetition` checks a target against (`0x5cf220`), 0 for none.
+    min_level: u32,
+    max_level: u32,
 }
 
 /// An arena charter's `static_type`.
@@ -168,19 +145,30 @@ impl crate::query_cache::AskOnce for PetitionState {
 }
 
 impl PetitionState {
-    /// `SMSG_PETITION_SHOW_SIGNATURES`: open this charter and ask for its record once.
-    fn show(&mut self, sigs: PetitionShowSignatures, commands: &NetCommands) {
-        let petition_id = sigs.petition_id;
-        self.open = Some(OpenCharter {
-            item: sigs.item,
-            owner: sigs.owner,
-            petition_id,
-            signers: sigs.signatures.into_iter().map(|s| s.signer).collect(),
-        });
-        self.request_record(petition_id, sigs.item, commands);
+    /// The record the window holds, `GetPetitionInfo`'s (`0xc22b40`).
+    fn held_record(&self) -> Option<&Record> {
+        self.held
+            .then(|| self.records.get(self.petition_id))
+            .flatten()
     }
 
-    /// Ask once per petition id; the feed's next rebuild reads the answer.
+    /// A record read with a callback: the cached record, else `None` with `wait` linked and the record asked once.
+    fn record_or_wait(
+        &mut self,
+        id: u32,
+        item: u64,
+        wait: Wait,
+        commands: &NetCommands,
+    ) -> Option<&Record> {
+        if self.records.get(id).is_none() {
+            self.waits.push((id, wait));
+            self.request_record(id, item, commands);
+            return None;
+        }
+        self.records.get(id)
+    }
+
+    /// Ask once per petition id.
     fn request_record(&self, petition_id: u32, item: u64, commands: &NetCommands) {
         self.records.get_or_ask(petition_id, || {
             let _ = commands
@@ -189,19 +177,39 @@ impl PetitionState {
         });
     }
 
-    /// `SMSG_PETITION_QUERY_RESPONSE`: fill the cache.
-    fn apply_record(&mut self, response: PetitionQueryResponse) {
-        self.records.insert(
-            response.petition_id,
-            Some(Record {
-                owner: response.owner,
-                name: response.name,
-                body_text: response.body_text,
-                min_signatures: response.min_signatures as i32,
-                max_signatures: response.max_signatures as i32,
-                static_type: response.static_type,
-            }),
-        );
+    /// The close leg of the window's setter (`0x5ceef0`): with a petition open, the decline unless our sign went out, no record is held or we own it (`0x5cef0d`-`0x5cef36`), the signers cleared (`0x5cef8b`) and the guids zeroed; true when it closed one, for the caller to fire `PETITION_CLOSED`.
+    fn close_open(&mut self, me: u64, commands: &NetCommands) -> bool {
+        let Some(item) = self.petition else {
+            return false;
+        };
+        let owned = self.held_record().is_some_and(|r| r.owner == me);
+        if !self.signed && self.held && !owned {
+            let _ = commands.0.send(ClientCommand::PetitionDecline { item });
+        }
+        self.clear_signatures();
+        self.petition = None;
+        self.owner = 0;
+        true
+    }
+
+    /// The store leg of the setter (`0x5cefb6`): the guids and id, the record held or asked with the window's callback, the latch cleared.
+    fn store(&mut self, petition: Option<u64>, id: u32, owner: u64, commands: &NetCommands) {
+        self.petition = petition;
+        self.owner = owner;
+        self.petition_id = id;
+        self.signed = false;
+        self.held = match petition {
+            Some(item) => self
+                .record_or_wait(id, item, Wait::Open, commands)
+                .is_some(),
+            None => false,
+        };
+    }
+
+    /// `ClearSignatures` (`0x5cec60`): the name callbacks cancelled and the count zeroed.
+    fn clear_signatures(&mut self) {
+        self.pending.clear();
+        self.signers.clear();
     }
 
     /// The charter tooltip's line 3, the guild name and its master: the hover asks for the record,
@@ -210,7 +218,7 @@ impl PetitionState {
         &self,
         petition_id: u32,
         item: u64,
-        names: &NameCache,
+        names: &crate::names::NameCache,
         commands: &NetCommands,
     ) -> Option<benilla_ui::script::PetitionSlotView> {
         if petition_id == 0 {
@@ -218,92 +226,147 @@ impl PetitionState {
         }
         self.request_record(petition_id, item, commands);
         let rec = self.records.get(petition_id)?;
-        let (is_charter, title, owner_guid) = (rec.static_type <= 1, rec.name.clone(), rec.owner);
         Some(benilla_ui::script::PetitionSlotView {
-            is_charter,
-            title,
-            owner: names.resolve(owner_guid, commands).map(str::to_string),
-        })
-    }
-
-    /// The owner's half of a sign: append the signer, as the reference does, since no fresh list
-    /// comes. Returns the name if cached, the condition for `ERR_PETITION_SIGNED_S`.
-    fn append_signer(
-        &mut self,
-        item: u64,
-        signer: u64,
-        names: &NameCache,
-        commands: &NetCommands,
-    ) -> Option<String> {
-        let open = self.open.as_mut().filter(|o| o.item == item)?;
-        if !open.signers.contains(&signer) {
-            open.signers.push(signer);
-        }
-        names.resolve(signer, commands).map(str::to_string)
-    }
-
-    /// The `MSG_PETITION_DECLINE` `ClosePetition()` sends, only when a petition is open, no sign of
-    /// ours is in flight, a record is cached, and we are not the owner. The reference reads that
-    /// owner off the cached record; this reads the packet's.
-    fn decline_on_close(&mut self, me: u64, commands: &NetCommands) {
-        let Some(open) = self.open.as_ref() else {
-            return;
-        };
-        if self.signing || !self.records.answered(open.petition_id) || open.owner == me {
-            return;
-        }
-        let _ = commands
-            .0
-            .send(ClientCommand::PetitionDecline { item: open.item });
-    }
-
-    /// The local half of `ClosePetition()`; the decline, if any, is `decline_on_close`.
-    fn close(&mut self) {
-        self.open = None;
-    }
-
-    /// The session end, with no decline. The record cache stays: it is keyed by the server's
-    /// petition id, and the world-enter release re-arms its asks.
-    fn clear_session(&mut self) {
-        self.open = None;
-        self.signing = false;
-        self.lines.clear();
-    }
-
-    /// What `SignPetition`, `OfferPetition` and `RenamePetition` address.
-    fn open_item(&self) -> Option<u64> {
-        self.open.as_ref().map(|o| o.item)
-    }
-
-    /// The open charter's team size for `CMSG_OFFER_PETITION` (`0x5cf3a4`): an arena record's
-    /// `min_signatures + 1`, 0 for any other.
-    fn offer_team_size(&self) -> u32 {
-        self.open
-            .as_ref()
-            .and_then(|o| self.records.get(o.petition_id))
-            .filter(|r| r.static_type == STATIC_TYPE_ARENA)
-            .map_or(0, |r| (r.min_signatures + 1) as u32)
-    }
-
-    /// An arena charter whose record is cached and, for a turn-in of `team_size`, whose requirement
-    /// is `team_size − 1` (the turn-in lookup, `0x6dd680`); the item's record is asked once on the
-    /// way.
-    pub(crate) fn is_arena_charter(
-        &self,
-        petition_id: u32,
-        item: u64,
-        team_size: Option<u32>,
-        commands: &NetCommands,
-    ) -> bool {
-        self.request_record(petition_id, item, commands);
-        self.records.get(petition_id).is_some_and(|r| {
-            r.static_type == STATIC_TYPE_ARENA
-                && team_size.is_none_or(|n| r.min_signatures + 1 == n as i32)
+            is_charter: rec.static_type <= 1,
+            title: rec.name.clone(),
+            owner: names.resolve(rec.owner, commands).map(str::to_string),
         })
     }
 }
 
-/// The two resources, the registrar's walk-away guard, and the feed and drain.
+/// Fire a walk's steps in the handler's turn.
+fn fire_steps(world: &mut World, steps: Vec<benilla_ui::script::PetitionStep>) {
+    use benilla_ui::script::{PetitionArg, PetitionStep};
+    let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
+        return;
+    };
+    for s in steps {
+        match s {
+            PetitionStep::Fire(event) => ui.fire(event, vec![]),
+            PetitionStep::Line(key, arg) => {
+                let line = match arg {
+                    PetitionArg::None => crate::ui_action::UiError::key(key),
+                    PetitionArg::S(s) => crate::ui_action::UiError::s(key, s),
+                    PetitionArg::D(d) => {
+                        crate::ui_action::UiError::args(key, vec![crate::ui_action::FillArg::D(d)])
+                    }
+                };
+                crate::ui_action::show_in_turn(&mut ui, "ui_petition", line);
+            }
+        }
+    }
+}
+
+/// The registrar's close (`0x599e90`): the interact target cleared on it, whose interaction close runs the registrar leg first when it held it (`0x512ff1`), then the zero and `GUILD_REGISTRAR_CLOSED`.
+pub(crate) fn close_registrar(world: &mut World) {
+    let Some(npc) = world
+        .get_resource::<GuildRegistrarState>()
+        .and_then(|r| r.registrar)
+    else {
+        return;
+    };
+    crate::ui_session::clear_interact_target(world, npc);
+    zero_registrar(world);
+}
+
+/// The interaction close's registrar leg with the target already zeroed (`0x512ff1`).
+pub(crate) fn close_registrar_by_interaction(world: &mut World) {
+    if world
+        .get_resource::<GuildRegistrarState>()
+        .is_some_and(|r| r.registrar.is_some())
+    {
+        zero_registrar(world);
+    }
+}
+
+fn zero_registrar(world: &mut World) {
+    if let Some(mut r) = world.get_resource_mut::<GuildRegistrarState>() {
+        r.registrar = None;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.fire("GUILD_REGISTRAR_CLOSED", vec![]);
+    }
+}
+
+/// The vendor's close (`0x5a2880`): as the registrar's, through the vendor leg (`0x513083`).
+pub(crate) fn close_vendor(world: &mut World) {
+    let Some(npc) = world
+        .get_resource::<PetitionVendorState>()
+        .and_then(|v| v.vendor)
+    else {
+        return;
+    };
+    crate::ui_session::clear_interact_target(world, npc);
+    zero_vendor(world);
+}
+
+/// The interaction close's vendor leg with the target already zeroed (`0x513083`).
+pub(crate) fn close_vendor_by_interaction(world: &mut World) {
+    if world
+        .get_resource::<PetitionVendorState>()
+        .is_some_and(|v| v.vendor.is_some())
+    {
+        zero_vendor(world);
+    }
+}
+
+fn zero_vendor(world: &mut World) {
+    if let Some(mut v) = world.get_resource_mut::<PetitionVendorState>() {
+        v.vendor = None;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.fire("PETITION_VENDOR_CLOSED", vec![]);
+    }
+}
+
+/// The world entry's charter parts: the registrar's row (`0x528217` -> `0x599dd0`), the window's globals (`0x528221` -> `0x5cf580`) and the vendor's count and button (`0x528258` -> `0x5a1f50`), none firing.
+pub(crate) fn enter_world(world: &mut World) {
+    if let Some(mut r) = world.get_resource_mut::<GuildRegistrarState>() {
+        r.row = PetitionShowListEntry::default();
+    }
+    if let Some(mut p) = world.get_resource_mut::<PetitionState>() {
+        p.petition = None;
+        p.owner = 0;
+        p.petition_id = 0;
+        p.signers.clear();
+        p.pending.clear();
+        p.held = false;
+    }
+    if let Some(mut v) = world.get_resource_mut::<PetitionVendorState>() {
+        v.rows.clear();
+    }
+    net::forget_button(world);
+}
+
+/// The range guard: a registrar or vendor out of the leash or gone closes through its close.
+fn close_out_of_range(
+    registrar: Res<GuildRegistrarState>,
+    vendor: Res<PetitionVendorState>,
+    index: Res<crate::net::GuidIndex>,
+    self_q: Query<&Transform, With<crate::net::SelfPlayer>>,
+    transforms: Query<&Transform>,
+    mut queue: Commands,
+) {
+    let gone = |npc: Option<u64>| {
+        npc.is_some_and(|n| {
+            crate::ui_session::npc_out_of_range(n, &index, &self_q, &transforms) == Some(true)
+        })
+    };
+    if gone(registrar.registrar) {
+        queue.queue(|world: &mut World| {
+            close_registrar(world);
+            crate::ui_script::live::fire_handler_events(world);
+        });
+    }
+    if gone(vendor.vendor) {
+        queue.queue(|world: &mut World| {
+            close_vendor(world);
+            crate::ui_script::live::fire_handler_events(world);
+        });
+    }
+}
+
+/// The three resources, the handlers and the range guard.
 pub(crate) struct UiPetitionPlugin;
 
 impl Plugin for UiPetitionPlugin {
@@ -315,503 +378,12 @@ impl Plugin for UiPetitionPlugin {
             .init_resource::<PetitionState>()
             .add_systems(
                 Update,
-                (
-                    // Before the feed, so a walk-away fires GUILD_REGISTRAR_CLOSED the same frame.
-                    crate::ui_session::close_npc_session_out_of_range::<GuildRegistrarState>
-                        .before(feed::feed_petition),
-                    crate::ui_session::close_npc_session_out_of_range::<PetitionVendorState>
-                        .before(feed::feed_petition),
-                    feed::feed_petition.in_set(UiFeed),
-                    feed::drain_petition.in_set(UiDrain),
-                ),
+                close_out_of_range
+                    .after(crate::net::apply_net_updates)
+                    .before(crate::ui_script::UiPress),
             );
-    }
-}
-
-/// The inbound arms, one per packet. None fires an event or prints: lines queue on
-/// [`PetitionState::lines`] for the feed, since a packet handler has no `script` handle.
-pub(crate) mod net {
-    use super::*;
-    use benilla_protocol::{SessionEvent, SessionEventKind};
-
-    use crate::net::NetHandlerApp;
-
-    use crate::net::{GuidIndex, ObjectStore, SelfGuid};
-    use crate::ui_social::SocialState;
-
-    pub(super) fn register(app: &mut App) {
-        use SessionEventKind as K;
-        app.net_handler(K::PetitionShowList, on_show_list)
-            .net_handler(K::PetitionShowSignatures, on_show_signatures)
-            .net_handler(K::PetitionQueryResponse, on_query_response)
-            .net_handler(K::PetitionSignResults, on_sign_results)
-            .net_handler(K::TurnInPetitionResults, on_turn_in_results)
-            .net_handler(K::PetitionDeclined, on_declined)
-            .net_handler(K::PetitionRenamed, on_renamed)
-            .net_handler(K::Disconnected, on_session_end);
-    }
-
-    /// The charter and the registrar end with the session, or the next login shows the old charter
-    /// and closing it sends a decline; the walk-away guard has no self player to measure from.
-    fn on_session_end(
-        In(_): In<SessionEvent>,
-        mut petition: ResMut<PetitionState>,
-        mut registrar: ResMut<GuildRegistrarState>,
-        mut vendor: ResMut<PetitionVendorState>,
-    ) {
-        petition.clear_session();
-        registrar.close();
-        vendor.close();
-    }
-
-    /// The flags gate reads the live NPC; an unstreamed guid fails, as the client's resolve does.
-    fn on_show_list(
-        In(ev): In<SessionEvent>,
-        mut registrar: ResMut<GuildRegistrarState>,
-        mut vendor: ResMut<PetitionVendorState>,
-        index: Res<GuidIndex>,
-        stores: Query<&ObjectStore>,
-    ) {
-        if let SessionEvent::PetitionShowList(list) = ev {
-            let flags = index
-                .0
-                .get(&list.npc)
-                .and_then(|e| stores.get(*e).ok())
-                .map(|s| s.0.unit_npc_flags());
-            show_list(&mut registrar, &mut vendor, list, flags);
-        }
-    }
-
-    /// The ignore list is consulted before anything else.
-    fn on_show_signatures(
-        In(ev): In<SessionEvent>,
-        mut petition: ResMut<PetitionState>,
-        social: Res<SocialState>,
-        commands: Res<NetCommands>,
-    ) {
-        if let SessionEvent::PetitionShowSignatures(sigs) = ev {
-            let ignored = social.is_ignored(sigs.owner);
-            show_signatures(&mut petition, sigs, ignored, &commands);
-        }
-    }
-
-    fn on_query_response(In(ev): In<SessionEvent>, mut petition: ResMut<PetitionState>) {
-        if let SessionEvent::PetitionQueryResponse(response) = ev {
-            query_response(&mut petition, response);
-        }
-    }
-
-    fn on_sign_results(
-        In(ev): In<SessionEvent>,
-        mut petition: ResMut<PetitionState>,
-        names: Res<NameCache>,
-        self_guid: Res<SelfGuid>,
-        commands: Res<NetCommands>,
-    ) {
-        if let SessionEvent::PetitionSignResults(results) = ev {
-            sign_results(
-                &mut petition,
-                &names,
-                self_guid.0.unwrap_or(0),
-                results,
-                &commands,
-            );
-        }
-    }
-
-    fn on_turn_in_results(
-        In(ev): In<SessionEvent>,
-        mut petition: ResMut<PetitionState>,
-        mut registrar: ResMut<GuildRegistrarState>,
-    ) {
-        if let SessionEvent::TurnInPetitionResults { result } = ev {
-            turn_in_results(&mut petition, &mut registrar, result);
-        }
-    }
-
-    fn on_declined(
-        In(ev): In<SessionEvent>,
-        mut petition: ResMut<PetitionState>,
-        names: Res<NameCache>,
-    ) {
-        if let SessionEvent::PetitionDeclined { player } = ev {
-            declined(&mut petition, &names, player);
-        }
-    }
-
-    fn on_renamed(
-        In(ev): In<SessionEvent>,
-        mut petition: ResMut<PetitionState>,
-        objects: crate::net::Objects,
-        items: Res<crate::items::Items>,
-    ) {
-        if let SessionEvent::PetitionRenamed(rename) = ev {
-            // A streamed item with the charter flag, bit 13 (`0x6dd2d4`), names its petition in
-            // enchantment slot 0 (`0x6dd2de`).
-            let petition_id = objects
-                .object(rename.item)
-                .filter(|f| {
-                    f.object_entry()
-                        .and_then(|e| items.template_cached(e))
-                        .is_some_and(|t| {
-                            t.flags & benilla_protocol::messages::ITEM_FLAG_CHARTER != 0
-                        })
-                })
-                .and_then(|f| f.item_enchant(0))
-                .map(|id| id as u32);
-            renamed(&mut petition, rename, petition_id);
-        }
-    }
-
-    /// `SMSG_PETITION_SHOWLIST` (`0x6d69f0`); `npc_flags` is the NPC's live `UNIT_NPC_FLAGS`. An
-    /// NPC that does not resolve as a unit drops the list.
-    pub(crate) fn show_list(
-        registrar: &mut GuildRegistrarState,
-        vendor: &mut PetitionVendorState,
-        list: PetitionShowList,
-        npc_flags: Option<u32>,
-    ) {
-        let Some(flags) = npc_flags else {
-            debug!(
-                "ui_petition: showlist from unstreamed {:#x} — dropped",
-                list.npc
-            );
-            return;
-        };
-        if flags & REGISTRAR_NPC_FLAGS == REGISTRAR_NPC_FLAGS {
-            registrar.open(&list);
-        } else {
-            vendor.open(list);
-        }
-    }
-
-    /// `SMSG_PETITION_SHOW_SIGNATURES`: our charter or one offered to us. An ignored owner
-    /// suppresses the whole update, silently.
-    pub(crate) fn show_signatures(
-        petition: &mut PetitionState,
-        sigs: PetitionShowSignatures,
-        owner_ignored: bool,
-        commands: &NetCommands,
-    ) {
-        if owner_ignored {
-            debug!(
-                "ui_petition: charter from ignored owner {:#x} — whole update dropped",
-                sigs.owner
-            );
-            return;
-        }
-        petition.show(sigs, commands);
-    }
-
-    /// `SMSG_PETITION_QUERY_RESPONSE`: the record cache fill.
-    pub(crate) fn query_response(petition: &mut PetitionState, response: PetitionQueryResponse) {
-        petition.apply_record(response);
-    }
-
-    /// `SMSG_PETITION_SIGN_RESULTS`: signer and owner get identical copies, told apart by the
-    /// player guid. Another's signature is appended, result unread; ours prints its line, clears
-    /// the latch, and on success closes the window.
-    pub(crate) fn sign_results(
-        petition: &mut PetitionState,
-        names: &NameCache,
-        self_guid: u64,
-        results: PetitionSignResults,
-        commands: &NetCommands,
-    ) {
-        if results.player != self_guid {
-            let cached = petition.append_signer(results.item, results.player, names, commands);
-            if let Some(name) = cached {
-                petition.lines.push(lines::signed_by_other(&name));
-            }
-            return;
-        }
-        petition.signing = false;
-        if let Some(line) = lines::my_sign_line(results.result) {
-            petition.lines.push(line);
-        }
-        if results.result == petition_result::OK {
-            petition.close();
-        }
-    }
-
-    /// `SMSG_TURN_IN_PETITION_RESULTS`: success prints nothing and closes the registrar (the
-    /// reference fires `GUILD_REGISTRAR_CLOSED`); only the two refusals print, both red.
-    pub(crate) fn turn_in_results(
-        petition: &mut PetitionState,
-        registrar: &mut GuildRegistrarState,
-        result: u32,
-    ) {
-        if result == petition_result::OK {
-            // The server destroyed the charter, so the item-bound window closes too.
-            petition.close();
-            registrar.close();
-            return;
-        }
-        if let Some(line) = lines::turn_in_line(result) {
-            petition.lines.push(line);
-        }
-    }
-
-    /// `MSG_PETITION_DECLINE` inbound: a line only if the decliner's name is already cached, with
-    /// no query or retry, so this arm takes no command channel.
-    pub(crate) fn declined(petition: &mut PetitionState, names: &NameCache, player: u64) {
-        if let Some(name) = names.peek(player) {
-            let line = lines::declined_line(name);
-            petition.lines.push(line);
-        }
-    }
-
-    /// `MSG_PETITION_RENAME` inbound: the echo's name overwrites the charter's cached record, open
-    /// or not, with no re-query, then `PETITION_SHOW` fires (`0x6dd333`, `0x6dd33f`). An empty
-    /// name (`0x6dd292`), an item naming no petition, or an uncached record (`0x6dd31d`) does
-    /// nothing.
-    pub(crate) fn renamed(
-        petition: &mut PetitionState,
-        rename: PetitionRename,
-        petition_id: Option<u32>,
-    ) {
-        if rename.name.is_empty() {
-            return;
-        }
-        let Some(record) = petition_id.and_then(|id| petition.records.get_mut(id)) else {
-            return;
-        };
-        record.name = rename.name;
-        petition.show_owed = true;
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use benilla_protocol::messages::PetitionSignature;
-    use crossbeam_channel::unbounded;
-
-    fn commands() -> (NetCommands, crossbeam_channel::Receiver<ClientCommand>) {
-        let (tx, rx) = unbounded();
-        (NetCommands(tx), rx)
-    }
-
-    fn show_list(npc: u64, rows: &[u32]) -> PetitionShowList {
-        PetitionShowList {
-            npc,
-            entries: rows
-                .iter()
-                .enumerate()
-                .map(|(i, cost)| PetitionShowListEntry {
-                    index: i as u32 + 1,
-                    charter_entry: 5863,
-                    charter_display_id: 16161,
-                    charter_cost: *cost,
-                    charter_type: 0,
-                    required_signatures: 9,
-                })
-                .collect(),
-        }
-    }
-
-    /// The open charter's cached title, `GetPetitionInfo`'s second return.
-    fn open_title(p: &PetitionState) -> Option<&str> {
-        let open = p.open.as_ref()?;
-        p.records.get(open.petition_id).map(|r| r.name.as_str())
-    }
-
-    fn signatures(item: u64, owner: u64, id: u32, signers: &[u64]) -> PetitionShowSignatures {
-        PetitionShowSignatures {
-            item,
-            owner,
-            petition_id: id,
-            signatures: signers
-                .iter()
-                .map(|s| PetitionSignature {
-                    signer: *s,
-                    unknown: 0,
-                })
-                .collect(),
-        }
-    }
-
-    /// Both flags open the guild registrar on the first row; any fewer the petition vendor.
-    #[test]
-    fn the_showlist_picks_the_registrar_or_the_vendor_by_npc_flags() {
-        let mut r = GuildRegistrarState::default();
-        let mut v = PetitionVendorState::default();
-        net::show_list(
-            &mut r,
-            &mut v,
-            show_list(0x2a1f, &[1000]),
-            Some(REGISTRAR_NPC_FLAGS),
-        );
-        assert_eq!((r.npc(), r.cost(), r.index()), (Some(0x2a1f), 1000, 1));
-        assert_eq!(v.npc(), None);
-
-        let mut r = GuildRegistrarState::default();
-        net::show_list(
-            &mut r,
-            &mut v,
-            show_list(0x77, &[800_000, 1_200_000, 2_000_000]),
-            Some(crate::target::cursor_mode::npc_flags::PETITIONER),
-        );
-        assert_eq!(r.npc(), None);
-        assert_eq!((v.npc(), v.rows().len()), (Some(0x77), 3));
-
-        let mut v = PetitionVendorState::default();
-        net::show_list(&mut r, &mut v, show_list(0x78, &[1]), None);
-        assert_eq!(
-            (r.npc(), v.npc()),
-            (None, None),
-            "an unstreamed NPC drops the list"
-        );
-    }
-
-    #[test]
-    fn walking_away_from_the_registrar_leaves_an_open_charter_alone() {
-        let (commands, _rx) = commands();
-        let mut registrar = GuildRegistrarState::default();
-        let mut petition = PetitionState::default();
-        registrar.open(&show_list(0x2a1f, &[1000]));
-        petition.show(signatures(0x99, 0xaa, 7, &[0xbb]), &commands);
-
-        registrar.close();
-        assert_eq!(registrar.npc(), None);
-        assert_eq!(
-            petition.open_item(),
-            Some(0x99),
-            "the charter window is item-bound and survives the walk-away"
-        );
-    }
-
-    #[test]
-    fn the_record_query_is_asked_once_per_petition() {
-        let (commands, rx) = commands();
-        let mut petition = PetitionState::default();
-        petition.show(signatures(0x99, 0xaa, 7, &[]), &commands);
-        petition.show(signatures(0x99, 0xaa, 7, &[0xbb]), &commands);
-        let sent: Vec<_> = rx.try_iter().collect();
-        assert_eq!(
-            sent.len(),
-            1,
-            "one query for two opens of the same petition"
-        );
-        assert!(matches!(
-            sent[0],
-            ClientCommand::PetitionQuery {
-                petition_id: 7,
-                item: 0x99
-            }
-        ));
-
-        // The answer landing does not re-arm the ask.
-        petition.apply_record(PetitionQueryResponse {
-            petition_id: 7,
-            name: "Legacy".into(),
-            min_signatures: 9,
-            ..Default::default()
-        });
-        petition.show(signatures(0x99, 0xaa, 7, &[0xbb, 0xcc]), &commands);
-        assert!(rx.try_iter().next().is_none(), "still no second query");
-        assert_eq!(open_title(&petition), Some("Legacy"));
-    }
-
-    #[test]
-    fn a_rename_echo_patches_the_cached_record() {
-        let (commands, _rx) = commands();
-        let mut petition = PetitionState::default();
-        petition.show(signatures(0x99, 0xaa, 7, &[]), &commands);
-        petition.apply_record(PetitionQueryResponse {
-            petition_id: 7,
-            name: "First".into(),
-            min_signatures: 9,
-            ..Default::default()
-        });
-        net::renamed(
-            &mut petition,
-            PetitionRename {
-                item: 0x99,
-                name: "Second".into(),
-            },
-            Some(7),
-        );
-        assert_eq!(open_title(&petition), Some("Second"));
-        assert!(
-            std::mem::take(&mut petition.show_owed),
-            "PETITION_SHOW is owed"
-        );
-
-        // An empty name, an item with no petition and an uncached record change nothing.
-        for (name, id) in [("", Some(7)), ("Wrong", None), ("Wrong", Some(8))] {
-            net::renamed(
-                &mut petition,
-                PetitionRename {
-                    item: 0x99,
-                    name: name.into(),
-                },
-                id,
-            );
-        }
-        assert_eq!(open_title(&petition), Some("Second"));
-        assert!(!petition.show_owed);
-        assert!(!petition.records.answered(8), "no record is invented");
-    }
-
-    /// A charter in the bags that is not open still takes its rename (`0x6dd31d`).
-    #[test]
-    fn a_rename_patches_a_cached_charter_that_is_not_open() {
-        let mut petition = PetitionState::default();
-        petition.apply_record(PetitionQueryResponse {
-            petition_id: 9,
-            name: "Old".into(),
-            min_signatures: 9,
-            ..Default::default()
-        });
-        net::renamed(
-            &mut petition,
-            PetitionRename {
-                item: 0x55,
-                name: "New".into(),
-            },
-            Some(9),
-        );
-        assert_eq!(
-            petition.records.get(9).map(|r| r.name.as_str()),
-            Some("New")
-        );
-        assert!(petition.show_owed);
-    }
-
-    /// Through the real registration: a new login's VM never runs the old one's `OnHide`.
-    #[test]
-    fn the_session_end_closes_the_charter_and_forgets_the_sign() {
-        let (commands, _rx) = commands();
-        let mut app = App::new();
-        app.add_plugins(UiPetitionPlugin);
-        {
-            let mut petition = app.world_mut().resource_mut::<PetitionState>();
-            petition.show(signatures(0x99, 0xaa, 7, &[0xbb]), &commands);
-            petition.signing = true;
-        }
-        app.world_mut()
-            .resource_mut::<GuildRegistrarState>()
-            .open(&show_list(0x2a1f, &[1000]));
-
-        crate::net::handlers::dispatch(
-            app.world_mut(),
-            vec![benilla_protocol::SessionEvent::Disconnected {
-                reason: "socket".into(),
-                end: benilla_protocol::SessionEnd::Lost,
-            }],
-        );
-
-        assert_eq!(app.world().resource::<GuildRegistrarState>().npc(), None);
-        let petition = app.world().resource::<PetitionState>();
-        assert_eq!(
-            petition.open_item(),
-            None,
-            "no charter carried into the next login"
-        );
-        assert!(
-            !petition.signing,
-            "no sign of the old session still in flight"
-        );
-    }
-}
+mod tests;

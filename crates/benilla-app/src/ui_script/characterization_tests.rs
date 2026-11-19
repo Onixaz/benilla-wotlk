@@ -167,6 +167,10 @@ local VERBS = {
     { "trainn", function() return GetNumTrainerServices() end },
     { "trainsel", function() return GetTrainerSelectionIndex() end },
     { "taxin", function() return NumTaxiNodes() end },
+    { "charter", function() return GetGuildCharterCost() end },
+    { "petnames", function() return GetNumPetitionNames() end },
+    { "pettitle", function() local _, t = GetPetitionInfo() return t end },
+    { "petitems", function() return GetNumPetitionItems() end },
     { "taxicost", function()
         for i = 1, NumTaxiNodes() do
             if TaxiNodeName(i) == "Sentinel Hill, Westfall" then return TaxiNodeCost(i) end

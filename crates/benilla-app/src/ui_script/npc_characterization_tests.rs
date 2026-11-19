@@ -1693,3 +1693,228 @@ fn a_second_trainer_closes_the_first_and_a_lost_flag_closes_in_its_turn() {
         "each close runs the stock frame's own CloseTrainer inside its event; the visible count          outlives the zero"
     );
 }
+
+const PETITION_EVENTS: &[&str] = &[
+    "GUILD_REGISTRAR_SHOW",
+    "GUILD_REGISTRAR_CLOSED",
+    "PETITION_SHOW",
+    "PETITION_CLOSED",
+    "PETITION_VENDOR_SHOW",
+    "PETITION_VENDOR_UPDATE",
+    "PETITION_VENDOR_CLOSED",
+    "UI_ERROR_MESSAGE",
+];
+
+/// A showlist row costing `cost`.
+fn charter_row(
+    index: u32,
+    cost: u32,
+    charter_type: u32,
+) -> benilla_protocol::messages::PetitionShowListEntry {
+    benilla_protocol::messages::PetitionShowListEntry {
+        index,
+        charter_entry: 5863,
+        charter_display_id: 16161,
+        charter_cost: cost,
+        charter_type,
+        required_signatures: 9,
+    }
+}
+
+fn show_list(
+    npc: u64,
+    rows: Vec<benilla_protocol::messages::PetitionShowListEntry>,
+) -> SessionEvent {
+    SessionEvent::PetitionShowList(benilla_protocol::messages::PetitionShowList {
+        npc,
+        entries: rows,
+    })
+}
+
+/// The petitioner and tabard designer flags (`0x6d6ab7`).
+const REGISTRAR_FLAGS: u32 = 0x40000 | 0x80000;
+
+/// `SMSG_PETITION_SHOWLIST` sets the registrar in its handler (`0x6d6ab7` -> `0x599e00`): the interact target taken, `GUILD_REGISTRAR_SHOW` in the packet's turn, ahead of the next packet's line; a second registrar's list closes the first through the target's interaction close (`0x51fd1c` -> `0x512ff1`). `CloseGuildRegistrar` fires `GUILD_REGISTRAR_CLOSED` twice inside its call, the registrar holding the target (`0x599f00` -> `0x512ff1`), and `GetGuildCharterCost` reads the row kept past the close (`0x599f40`).
+#[test]
+fn the_registrar_opens_from_its_list_and_closes_inside_its_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(
+        vec![
+            npc_at(NPC, REGISTRAR_FLAGS, NEAR),
+            npc_at(NPC2, REGISTRAR_FLAGS, NEAR),
+        ],
+        2,
+    );
+    let verbs = &["charter"];
+    let seen = rig.packets(
+        vec![
+            show_list(NPC, vec![charter_row(1, 1000, 0)]),
+            SessionEvent::BarberShopResult(2),
+            show_list(NPC2, vec![charter_row(1, 2000, 0)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, PETITION_EVENTS, verbs),
+        [
+            "GUILD_REGISTRAR_SHOW | charter=1000",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | charter=1000",
+            "GUILD_REGISTRAR_CLOSED | charter=1000",
+            "GUILD_REGISTRAR_SHOW | charter=2000",
+        ]
+    );
+    assert_eq!(
+        fired_in_call(&mut rig, "CloseGuildRegistrar()", PETITION_EVENTS, verbs),
+        [
+            "GUILD_REGISTRAR_CLOSED | charter=2000",
+            "GUILD_REGISTRAR_CLOSED | charter=2000",
+        ]
+    );
+    assert!(fired_in_call(&mut rig, "CloseGuildRegistrar()", PETITION_EVENTS, verbs).is_empty());
+}
+
+/// A charter's signatures.
+fn signatures(item: u64, owner: u64, id: u32, signers: &[u64]) -> SessionEvent {
+    SessionEvent::PetitionShowSignatures(benilla_protocol::messages::PetitionShowSignatures {
+        item,
+        owner,
+        petition_id: id,
+        signatures: signers
+            .iter()
+            .map(|&signer| benilla_protocol::messages::PetitionSignature { signer, unknown: 0 })
+            .collect(),
+    })
+}
+
+fn petition_record(id: u32, owner: u64, name: &str) -> SessionEvent {
+    SessionEvent::PetitionQueryResponse(benilla_protocol::messages::PetitionQueryResponse {
+        petition_id: id,
+        owner,
+        name: name.into(),
+        min_signatures: 9,
+        max_signatures: 9,
+        ..Default::default()
+    })
+}
+
+fn player_name(guid: u64, name: &str) -> SessionEvent {
+    SessionEvent::PlayerName {
+        guid,
+        name: name.into(),
+        realm: String::new(),
+        race: 1,
+        class: 1,
+        gender: 0,
+        declensions: None,
+    }
+}
+
+/// `SMSG_PETITION_SHOW_SIGNATURES` stores the petition and its signers in its handler (`0x6d6d20` -> `0x5ceef0`, `0x5cf650`): `PETITION_SHOW` waits for the record (`0x5cea60`) and the last signer name (`0x5cebf0`), then fires in that answer's turn, ahead of the next packet's line. Our sign's success shows its line and fires `PETITION_CLOSED` with the window left as it is (`0x6cf036`, `0x6cf047`); the stock frame's close then runs `ClosePetition`, which declines nothing once our sign went out (`0x5cef0d`).
+#[test]
+fn the_petition_shows_once_its_record_and_names_land_and_a_sign_closes_in_its_turn() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const ITEM: u64 = 0x4000_0000_0000_0099;
+    const OWNER: u64 = 0x21;
+    const SIGNER: u64 = 0x22;
+    let rx = tap(&mut rig);
+    let verbs = &["petnames", "pettitle"];
+    let seen = rig.packets(
+        vec![
+            signatures(ITEM, OWNER, 7, &[SIGNER]),
+            petition_record(7, OWNER, "Legacy"),
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, PETITION_EVENTS, verbs),
+        ["UI_ERROR_MESSAGE You must be sitting in a barber chair | petnames=1 pettitle=Legacy"],
+        "the signer's name is still pending"
+    );
+    let seen = rig.packets(
+        vec![
+            player_name(SIGNER, "Signer"),
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, PETITION_EVENTS, verbs),
+        [
+            "PETITION_SHOW | petnames=1 pettitle=Legacy",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | petnames=1 pettitle=Legacy",
+        ]
+    );
+    let _ = rx.try_iter().count();
+    call(&mut rig, "SignPetition()");
+    let seen = rig.packets(
+        vec![SessionEvent::PetitionSignResults(
+            benilla_protocol::messages::PetitionSignResults {
+                item: ITEM,
+                player: super::characterization_tests::ME,
+                result: 0,
+            },
+        )],
+        2,
+    );
+    let closes = pin(&seen, PETITION_EVENTS, verbs);
+    assert_eq!(
+        closes.first().map(String::as_str),
+        Some("PETITION_CLOSED | petnames=0 pettitle=nil"),
+        "{closes:?}"
+    );
+    let sent: Vec<String> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::PetitionSign { item, byte } => Some(format!("sign {item:#x} {byte}")),
+            ClientCommand::PetitionDecline { item } => Some(format!("decline {item:#x}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        [format!("sign {ITEM:#x} 1")],
+        "no decline after our sign"
+    );
+}
+
+/// `SMSG_PETITION_SHOWLIST` shows the vendor's list in its handler (`0x5a22a0`): the target taken, `PETITION_VENDOR_UPDATE` then `PETITION_VENDOR_SHOW` in the packet's turn; `ClosePetitionVendor` fires `PETITION_VENDOR_CLOSED` twice inside its call (`0x5a24f0` -> `0x513083`), and `GetNumPetitionItems` keeps the count past the close (`0x5a1f70`).
+#[test]
+fn the_petition_vendor_opens_from_its_list_and_closes_inside_its_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(vec![npc_at(NPC, 0x40000, NEAR)], 2);
+    let verbs = &["petitems"];
+    let seen = rig.packets(
+        vec![
+            show_list(
+                NPC,
+                vec![charter_row(1, 800_000, 1), charter_row(2, 1_200_000, 1)],
+            ),
+            SessionEvent::BarberShopResult(2),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, PETITION_EVENTS, verbs),
+        [
+            "PETITION_VENDOR_UPDATE | petitems=0",
+            "PETITION_VENDOR_SHOW | petitems=2",
+            "UI_ERROR_MESSAGE You must be sitting in a barber chair | petitems=2",
+        ]
+    );
+    assert_eq!(
+        fired_in_call(&mut rig, "ClosePetitionVendor()", PETITION_EVENTS, verbs),
+        [
+            "PETITION_VENDOR_CLOSED | petitems=2",
+            "PETITION_VENDOR_CLOSED | petitems=2",
+        ]
+    );
+}

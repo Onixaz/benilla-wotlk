@@ -33,6 +33,39 @@ pub(crate) fn show_now(lua: &Lua, key: &'static str) {
     super::tick::fire_event_into(lua, event, vec![super::ScriptValue::Str(text)]);
 }
 
+/// [`show_now`] for a line with one argument: a red or yellow line fills and fires inside the call; a chat line queues for the frame's sink (#1306).
+pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionArg) {
+    use super::PetitionArg;
+    let text_arg = match arg {
+        PetitionArg::None => return show_now(lua, key),
+        PetitionArg::S(s) => crate::strings::Arg::S(s),
+        PetitionArg::D(d) => crate::strings::Arg::D(*d),
+    };
+    let event = match crate::messages::kind_of(key) {
+        crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
+        crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
+        crate::messages::MsgKind::Chat => {
+            let mut model = crate::script::model_mut_of(lua);
+            match arg {
+                PetitionArg::S(s) => model.ui_errors_s.push((key, s.clone())),
+                _ => model.ui_errors_s.push((key, String::new())),
+            }
+            return;
+        }
+    };
+    if crate::messages::by_key(key).is_some() {
+        crate::script::model_mut_of(lua).message_sounds.push(key);
+    }
+    let Some(text) = lua.globals().get::<Option<String>>(key).ok().flatten() else {
+        return;
+    };
+    let text = crate::strings::fill(&text, &[text_arg]);
+    if text.is_empty() {
+        return;
+    }
+    super::tick::fire_event_into(lua, event, vec![super::ScriptValue::Str(text)]);
+}
+
 /// Register the error-display globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(

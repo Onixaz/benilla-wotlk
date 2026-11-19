@@ -571,12 +571,7 @@ fn set_none(lua: &Lua, open: bool) {
 type Getter = fn(&Lua, Option<(usize, &TrainerService)>) -> mlua::Result<Value>;
 
 /// Register a getter over the service at its 1-based index argument, read at the call.
-fn getter(
-    lua: &Lua,
-    name: &str,
-    usage: &'static str,
-    f: Getter,
-) -> mlua::Result<()> {
+fn getter(lua: &Lua, name: &str, usage: &'static str, f: Getter) -> mlua::Result<()> {
     lua.globals().set(
         name,
         lua.create_function(move |lua, index: Value| {

@@ -793,6 +793,31 @@ pub trait LiveState {
         None
     }
 
+    /// The charter window and the registrar's row at the call (`0xc22b20`.., `0xc0e558`); `None` where no view lends them.
+    fn petition_view(&self) -> Option<super::PetitionState> {
+        None
+    }
+
+    /// Whether a petition vendor is set (`0xc0f7c8`); `None` where no view lends it.
+    fn petition_vendor_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The vendor's row count (`0xc0f7d0`); `None` where no view lends it.
+    fn petition_vendor_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// Vendor row `index` (0-based) at the call, a miss asked with the vendor's record callback (`0x5a1f30`); `Some(None)` off the rows, `None` where no view lends it.
+    fn petition_item(&mut self, _index: u32) -> Option<Option<super::PetitionVendorItem>> {
+        None
+    }
+
+    /// A charter verb's act inside its call; `None` where no view lends the charter windows.
+    fn petition_act(&mut self, _act: super::PetitionRequest) -> Option<super::PetitionOutcome> {
+        None
+    }
+
     /// The trainer window the list handler built (`0x596450`), `Some(None)` with none; `None` where no view lends it.
     fn trainer(&self) -> Option<Option<&super::TrainerWindow>> {
         None

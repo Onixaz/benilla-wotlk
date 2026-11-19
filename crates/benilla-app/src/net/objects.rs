@@ -584,6 +584,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
                 sc.ui.fire("TRAINER_DESCRIPTION_UPDATE", Vec::new());
             }
         }
+        // The petition vendor's callback fires on a found record (`0x5a1f30`).
+        RecordWait::PetitionVendor => {
+            if landed {
+                sc.ui.fire("PETITION_VENDOR_UPDATE", Vec::new());
+            }
+        }
         RecordWait::Ui(wait) => sc
             .ui
             .write(move |script| script.item_record_callback(entry, landed, wait)),

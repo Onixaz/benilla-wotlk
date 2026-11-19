@@ -128,6 +128,10 @@ pub enum PetitionRequest {
     ClosePetition,
     /// A name [`validate_guild_name`] refused, with the GlobalStrings key to show; no packet.
     NameRefused(&'static str),
+    /// `RenamePetition`'s refused name: shown only with a petition open (`0x5cf491`).
+    RenameRefused(&'static str),
+    /// `HasFilledPetition()`: the arena charter walk without a turn-in (`0x5a2820`).
+    HasFilled,
     /// `BuyPetition(index, name)` at a petition vendor, the row 0-based, after the validator.
     VendorBuy { index: u32, name: String },
     /// `TurnInPetition()`: the item the petition button holds, with an all-ones banner.
@@ -136,6 +140,37 @@ pub enum PetitionRequest {
     VendorTurnInArena(ArenaBannerChoice),
     /// `ClosePetitionVendor()`: the vendor's interaction ends.
     CloseVendor,
+}
+
+/// The event the registrar's close fires, from `CloseGuildRegistrar` and `GetTabardInfo` inside their call (`0x599f00`, `0x59a1f0`).
+pub const GUILD_REGISTRAR_CLOSED_EVENT: &str = "GUILD_REGISTRAR_CLOSED";
+
+/// The event the vendor's close fires, from `ClosePetitionVendor` inside its call (`0x5a24f0`).
+pub const PETITION_VENDOR_CLOSED_EVENT: &str = "PETITION_VENDOR_CLOSED";
+
+/// A charter verb's step inside its call, in the order 12340 takes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PetitionStep {
+    /// An event fired inside the call.
+    Fire(&'static str),
+    /// A message line shown inside the call, with its argument.
+    Line(&'static str, PetitionArg),
+}
+
+/// A charter line's one argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PetitionArg {
+    None,
+    S(String),
+    D(i64),
+}
+
+/// What a charter verb did inside its call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PetitionOutcome {
+    pub steps: Vec<PetitionStep>,
+    /// The arena charter walk's answer (`0x6dd680`), `HasFilledPetition`'s.
+    pub filled: bool,
 }
 
 impl super::UiScript {
@@ -163,22 +198,6 @@ impl super::UiScript {
         drain_field!(self, petition_requests)
     }
 
-    /// Drop the queued close intents, returning how many. Firing `PETITION_CLOSED` runs `OnHide`,
-    /// whose `ClosePetition()` queues a close; on a switch to a newly offered charter that close
-    /// would shut the new window and decline it on the wire. A user's close survives, as the feed
-    /// runs `before(UiInput)` and a click's `OnHide` queues after this.
-    pub fn drop_petition_close_intents(&mut self) -> usize {
-        let requests = &mut self.model_mut().petition_requests;
-        let before = requests.len();
-        requests.retain(|r| {
-            !matches!(
-                r,
-                PetitionRequest::CloseRegistrar | PetitionRequest::ClosePetition
-            )
-        });
-        before - requests.len()
-    }
-
     /// Queue one charter intent directly: the test seam.
     #[cfg(test)]
     pub fn queue_petition_request(&mut self, request: PetitionRequest) {
@@ -202,20 +221,64 @@ fn name_value(lua: &Lua, name: Option<&String>) -> mlua::Result<Value> {
     }
 }
 
-/// Register the charter globals against the snapshot store.
+/// The charter window through the lent view at the call, else a test's.
+fn with_petition<R>(lua: &Lua, f: impl FnOnce(&PetitionState) -> R) -> R {
+    if let Some(Some(view)) = super::live::read_live(|l| l.petition_view()) {
+        return f(&view);
+    }
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    f(&model.petition)
+}
+
+/// Whether a petition vendor is set (`0xc0f7c8`), through the lent view, else a test's.
+fn vendor_open(lua: &Lua) -> bool {
+    if let Some(Some(open)) = super::live::read_live(|l| l.petition_vendor_open()) {
+        return open;
+    }
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model.petition_vendor.open
+}
+
+/// Run `act` inside the call through the lent view, its steps after; where none is lent, a test's queue takes it.
+fn petition_act(lua: &Lua, act: PetitionRequest) -> PetitionOutcome {
+    if let Some(Some(out)) = super::live::write_live(|l| l.petition_act(act.clone())) {
+        for step in &out.steps {
+            match step {
+                PetitionStep::Fire(event) => {
+                    super::tick::fire_event_into(lua, event, Vec::new());
+                }
+                PetitionStep::Line(key, arg) => super::ui_errors::show_now_arg(lua, key, arg),
+            }
+        }
+        return out;
+    }
+    let mut model = crate::script::model_mut_of(lua);
+    // A test's vendor closes once, as the vendor's own zero gates the second (`0x5a24f0`).
+    if act == PetitionRequest::CloseVendor {
+        if !model.petition_vendor.open {
+            return PetitionOutcome::default();
+        }
+        model.petition_vendor.open = false;
+    }
+    model.petition_requests.push(act);
+    PetitionOutcome::default()
+}
+
+/// Register the charter globals, which read the lent view at the call.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // ── The petition window ──────────────────────────────────────────────────────────────────
     // GetPetitionInfo() (`0x5cece0`): seven values on both legs, in the order `PetitionFrame.lua`
-    // destructures them; with no record, `nil, nil, nil, 0, nil, nil, 0`.
+    // destructures them; with no record held (`0xc22b40`), `nil, nil, nil, 0, nil, nil, 0`.
     g.set(
         "GetPetitionInfo",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let Some(r) = model.petition.record.as_ref() else {
+            let Some(r) = with_petition(lua, |p| p.record.clone()) else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     Value::Nil,
@@ -241,12 +304,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetNumPetitionNames() (`0x5ceac0`): signatures only, never the owner.
     g.set(
         "GetNumPetitionNames",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.petition.signers.len() as i64)
-        })?,
+        lua.create_function(|lua, ()| Ok(with_petition(lua, |p| p.signers.len() as i64)))?,
     )?;
 
     // GetPetitionNameInfo(index) (`0x5cee30`): 1-based, one value on every leg. The bound test is
@@ -254,17 +312,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetPetitionNameInfo",
         lua.create_function(|lua, index: i64| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let Some(name) = usize::try_from(index)
-                .ok()
-                .and_then(|i| i.checked_sub(1))
-                .and_then(|i| model.petition.signers.get(i))
-            else {
-                return Ok(Value::Nil);
-            };
-            name_value(lua, name.as_ref())
+            let name = with_petition(lua, |p| {
+                usize::try_from(index)
+                    .ok()
+                    .and_then(|i| i.checked_sub(1))
+                    .and_then(|i| p.signers.get(i).cloned())
+            });
+            match name {
+                Some(name) => name_value(lua, name.as_ref()),
+                None => Ok(Value::Nil),
+            }
         })?,
     )?;
 
@@ -273,28 +330,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `isOriginator` branch is what hides the button.
     g.set(
         "CanSignPetition",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(binding_abi::flag(model.petition.can_sign))
-        })?,
+        lua.create_function(|lua, ()| Ok(binding_abi::flag(with_petition(lua, |p| p.can_sign))))?,
     )?;
 
     // ── The registrar window ─────────────────────────────────────────────────────────────────
-    // GetGuildCharterCost() (`0x599f40`): copper, unsigned, 0 before any showlist.
+    // GetGuildCharterCost() (`0x599f40`): the registrar row's copper, unsigned, kept past the close
+    // until the world entry (`0x599dd0`).
     g.set(
         "GetGuildCharterCost",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.petition.charter_cost))
-        })?,
+        lua.create_function(|lua, ()| Ok(with_petition(lua, |p| i64::from(p.charter_cost))))?,
     )?;
 
-    // ── The verbs ────────────────────────────────────────────────────────────────────────────
-    // The five that carry and push nothing; none may touch the snapshot, which the server owns.
+    // ── The verbs, each acting inside its call ───────────────────────────────────────────────
     // `GetTabardInfo`'s stock caller is commented out (`GuildRegistrarFrame.xml:190`).
     for (global, request) in [
         ("TurnInGuildCharter", PetitionRequest::TurnIn),
@@ -302,12 +349,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         ("GetTabardInfo", PetitionRequest::TabardInfo),
         ("OfferPetition", PetitionRequest::Offer),
         ("ClosePetition", PetitionRequest::ClosePetition),
+        ("ClosePetitionVendor", PetitionRequest::CloseVendor),
     ] {
         g.set(
             global,
             lua.create_function(move |lua, ()| {
-                let mut model = crate::script::model_mut_of(lua);
-                model.petition_requests.push(request.clone());
+                petition_act(lua, request.clone());
                 Ok(())
             })?,
         )?;
@@ -318,56 +365,52 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SignPetition",
         lua.create_function(|lua, n: Option<f64>| {
-            let mut model = crate::script::model_mut_of(lua);
             // `trunc` toward zero, then narrowed the way the `Put8` does.
             let byte = n.map_or(1i8, |v| v.trunc() as i64 as i8);
-            model.petition_requests.push(PetitionRequest::Sign(byte));
+            petition_act(lua, PetitionRequest::Sign(byte));
             Ok(())
         })?,
     )?;
 
     // BuyGuildCharter(guildName) (`0x59a130`) returns 1 or nil for name validity, not for a send:
-    // it runs the shared validator, and the action behind it (`0x59a050`) refuses silently.
+    // it runs the shared validator, and the action behind it (`0x59a050`) refuses on its own.
     g.set(
         "BuyGuildCharter",
-        lua.create_function(|lua, name: String| {
-            let mut model = crate::script::model_mut_of(lua);
-            match validate_guild_name(&name) {
-                Ok(()) => {
-                    model.petition_requests.push(PetitionRequest::Buy(name));
-                    Ok(Value::Integer(1))
-                }
-                Err(key) => {
-                    model
-                        .petition_requests
-                        .push(PetitionRequest::NameRefused(key));
-                    Ok(Value::Nil)
-                }
+        lua.create_function(|lua, name: String| match validate_guild_name(&name) {
+            Ok(()) => {
+                petition_act(lua, PetitionRequest::Buy(name));
+                Ok(Value::Integer(1))
+            }
+            Err(key) => {
+                petition_act(lua, PetitionRequest::NameRefused(key));
+                Ok(Value::Nil)
             }
         })?,
     )?;
 
-    // RenamePetition(name) (`0x5cf450`): zero values, the same validator, silent beyond its
-    // message. A bad argument raises mlua's coercion error; the reference's usage string is
-    // `Usage(RenamePetition("name")`, unbalanced.
+    // RenamePetition(name) (`0x5cf450`): zero values; nothing with no petition open, else the same
+    // validator, silent beyond its message. A bad argument raises mlua's coercion error; the
+    // reference's usage string is `Usage(RenamePetition("name")`, unbalanced.
     g.set(
         "RenamePetition",
         lua.create_function(|lua, name: String| {
-            let mut model = crate::script::model_mut_of(lua);
-            match validate_guild_name(&name) {
-                Ok(()) => model.petition_requests.push(PetitionRequest::Rename(name)),
-                Err(key) => model
-                    .petition_requests
-                    .push(PetitionRequest::NameRefused(key)),
-            }
+            let act = match validate_guild_name(&name) {
+                Ok(()) => PetitionRequest::Rename(name),
+                Err(key) => PetitionRequest::RenameRefused(key),
+            };
+            petition_act(lua, act);
             Ok(())
         })?,
     )?;
 
     // ── The petition vendor ──────────────────────────────────────────────────────────────────
+    // GetNumPetitionItems() (`0x5a1f70`): the last list's count, kept past the close.
     g.set(
         "GetNumPetitionItems",
         lua.create_function(|lua, ()| {
+            if let Some(Some(n)) = super::live::read_live(|l| l.petition_vendor_count()) {
+                return Ok(n as i64);
+            }
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -376,21 +419,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetPetitionItemInfo(index) (`0x5a1fb0`): name, texture, cost; `nil, nil, 0` off the rows or
-    // while the item is uncached.
+    // while the item is uncached, whose ask leaves the vendor's record callback (`0x5a1f30`).
     g.set(
         "GetPetitionItemInfo",
         lua.create_function(|lua, index: Value| {
             let index = (binding_abi::number_arg(lua, index, "Usage: GetPetitionItemInfo(index)")?
                 as u32)
                 .wrapping_sub(1);
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let item = model
-                .petition_vendor
-                .items
-                .get(index as usize)
-                .and_then(|i| Some((i.name.as_ref()?, i.texture.as_ref()?, i.cost)));
+            let item = match super::live::write_live(|l| l.petition_item(index)) {
+                Some(Some(item)) => item,
+                _ => {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model.petition_vendor.items.get(index as usize).cloned()
+                }
+            };
+            let item = item.and_then(|i| Some((i.name?, i.texture?, i.cost)));
             let Some((name, texture, cost)) = item else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
@@ -399,8 +444,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ]));
             };
             Ok(MultiValue::from_vec(vec![
-                Value::String(lua.create_string(name)?),
-                Value::String(lua.create_string(texture)?),
+                Value::String(lua.create_string(&name)?),
+                Value::String(lua.create_string(&texture)?),
                 Value::Number(f64::from(cost)),
             ]))
         })?,
@@ -413,18 +458,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let usage = "Usage: BuyPetition(index, name)";
             let index = (binding_abi::number_arg(lua, index, usage)? as u32).wrapping_sub(1);
             let name = binding_abi::string_arg(lua, name, usage)?;
-            let mut model = crate::script::model_mut_of(lua);
             match validate_guild_name(&name) {
                 Ok(()) => {
-                    model
-                        .petition_requests
-                        .push(PetitionRequest::VendorBuy { index, name });
+                    petition_act(lua, PetitionRequest::VendorBuy { index, name });
                     Ok(Value::Integer(1))
                 }
                 Err(key) => {
-                    model
-                        .petition_requests
-                        .push(PetitionRequest::NameRefused(key));
+                    petition_act(lua, PetitionRequest::NameRefused(key));
                     Ok(Value::Nil)
                 }
             }
@@ -448,10 +488,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .iter()
                 .map(|v| lua.coerce_number(v.clone()).ok().flatten())
                 .collect();
-            let mut model = crate::script::model_mut_of(lua);
-            if !model.petition_vendor.open {
-                return Ok(());
-            }
             let banner = if numbers.iter().all(Option::is_some) {
                 let v: Vec<f64> = numbers.into_iter().flatten().collect();
                 let color = |at: usize| pack_color(v[at], v[at + 1], v[at + 2]);
@@ -473,39 +509,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     border_color: u32::MAX,
                 }
             };
-            model
-                .petition_requests
-                .push(PetitionRequest::VendorTurnInArena(banner));
+            if super::live::read_live(|_| ()).is_none() && !vendor_open(lua) {
+                return Ok(());
+            }
+            petition_act(lua, PetitionRequest::VendorTurnInArena(banner));
             Ok(())
         })?,
     )?;
 
-    // HasFilledPetition() (`0x5a2820`): 1 or nil.
+    // HasFilledPetition() (`0x5a2820`): the arena charter walk without a turn-in, 1 or nil, with
+    // or without a vendor.
     g.set(
         "HasFilledPetition",
         lua.create_function(|lua, ()| {
+            if let Some(Some(out)) =
+                super::live::write_live(|l| l.petition_act(PetitionRequest::HasFilled))
+            {
+                return Ok(binding_abi::flag(out.filled));
+            }
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(binding_abi::flag(model.petition_vendor.has_filled_petition))
-        })?,
-    )?;
-
-    // ClosePetitionVendor() (`0x5a24f0`): with a vendor open, it closes and fires
-    // `PETITION_VENDOR_CLOSED`.
-    g.set(
-        "ClosePetitionVendor",
-        lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if !model.petition_vendor.open {
-                return Ok(());
-            }
-            model.petition_vendor.open = false;
-            model
-                .pending_events
-                .push(("PETITION_VENDOR_CLOSED".to_string(), Vec::new()));
-            model.petition_requests.push(PetitionRequest::CloseVendor);
-            Ok(())
         })?,
     )?;
 
@@ -514,14 +539,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TurnInPetition",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if !model.petition_vendor.open {
-                return Ok(());
-            }
-            if let Some(held) = model.petition_button {
-                model
-                    .petition_requests
-                    .push(PetitionRequest::VendorTurnIn { item: held.item });
+            let held = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .petition_button;
+            if let Some(held) = held {
+                if super::live::read_live(|_| ()).is_none() && !vendor_open(lua) {
+                    return Ok(());
+                }
+                petition_act(lua, PetitionRequest::VendorTurnIn { item: held.item });
             }
             Ok(())
         })?,
@@ -532,7 +558,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClickPetitionButton",
         lua.create_function(|lua, ()| {
-            click_petition_button(&mut crate::script::model_mut_of(lua));
+            let open = vendor_open(lua);
+            click_petition_button(&mut crate::script::model_mut_of(lua), open);
             Ok(())
         })?,
     )?;
@@ -552,9 +579,9 @@ pub(super) fn holds_slot(model: &super::Model, bag: i64, slot: u32) -> bool {
 /// The button's click (`0x5a2140`): no vendor, or a cursor item without the petition flag, does
 /// nothing. An empty cursor empties the button; either way the cursor clears without unlocking
 /// its item (`ClearCursor(0, 1)`) and the previous item goes back onto it.
-fn click_petition_button(model: &mut super::Model) {
+fn click_petition_button(model: &mut super::Model, vendor_open: bool) {
     use super::cursor::{CursorItem, CursorPayload};
-    if !model.petition_vendor.open {
+    if !vendor_open {
         return;
     }
     let previous = model.petition_button;
@@ -833,7 +860,7 @@ mod tests {
                 PetitionRequest::Buy("Legacy".into()),
                 PetitionRequest::NameRefused("ERR_NAME_NO_NAME"),
                 PetitionRequest::Rename("Legacy".into()),
-                PetitionRequest::NameRefused("ERR_NAME_INVALID_SPACE"),
+                PetitionRequest::RenameRefused("ERR_NAME_INVALID_SPACE"),
             ]
         );
     }
@@ -1106,30 +1133,5 @@ mod tests {
         assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
         s.run("TurnInPetition()").unwrap();
         assert!(s.take_petition_requests().is_empty());
-    }
-
-    #[test]
-    fn dropping_close_intents_leaves_the_other_verbs_untouched() {
-        let mut s = UiScript::new().unwrap();
-        s.run(
-            r#"
-            SignPetition()
-            ClosePetition()
-            BuyGuildCharter("Legacy")
-            CloseGuildRegistrar()
-            OfferPetition()
-        "#,
-        )
-        .unwrap();
-        assert_eq!(s.drop_petition_close_intents(), 2);
-        assert_eq!(
-            s.take_petition_requests(),
-            vec![
-                PetitionRequest::Sign(1),
-                PetitionRequest::Buy("Legacy".into()),
-                PetitionRequest::Offer,
-            ],
-        );
-        assert_eq!(s.drop_petition_close_intents(), 0);
     }
 }

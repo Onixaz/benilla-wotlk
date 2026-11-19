@@ -251,23 +251,8 @@ impl InventoryScope {
     };
 }
 
-/// The reference's inventory walk: one ascending pass over the player's slot array, recursing into
-/// each container as it is passed, `scope` gating the sections. `visit` gets the wire
-/// `(bag_index, slot)` and the guid, and returns `Some` to stop. The order is the reference's and
-/// load-bearing: equipment 0-18, each bag slot 19-22 then its contents, backpack 23-38, bank 39-66,
-/// each bank bag 67-73 then its contents, keyring. The first carried item (the backpack and the
-/// bags' contents) `pick` accepts, by guid: the arena charter turn-in's scan (`0x6dd680`).
-pub(crate) fn find_carried(
-    store: &ObjectFields,
-    objects: &Objects,
-    mut pick: impl FnMut(u64) -> bool,
-) -> Option<u64> {
-    walk_inventory(store, objects, InventoryScope::CARRIED, |_, _, guid| {
-        pick(guid).then_some(guid)
-    })
-}
-
-/// [`find_carried`] with the item's Lua `(bag, slot)`, the backpack as bag 0; equipped bags
+/// The first carried item (the backpack and the bags' contents) `pick` accepts, with the item's
+/// Lua `(bag, slot)`, the backpack as bag 0, in the inventory walk's order; equipped bags
 /// themselves are skipped.
 pub(crate) fn find_carried_at(
     store: &ObjectFields,
@@ -289,6 +274,11 @@ pub(crate) fn find_carried_at(
     )
 }
 
+/// The reference's inventory walk: one ascending pass over the player's slot array, recursing into
+/// each container as it is passed, `scope` gating the sections. `visit` gets the wire
+/// `(bag_index, slot)` and the guid, and returns `Some` to stop. The order is the reference's and
+/// load-bearing: equipment 0-18, each bag slot 19-22 then its contents, backpack 23-38, bank 39-66,
+/// each bank bag 67-73 then its contents, keyring.
 fn walk_inventory<T>(
     store: &ObjectFields,
     objects: &Objects,

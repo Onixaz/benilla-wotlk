@@ -66,8 +66,6 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) actions: Slot<'w, crate::ui_action::PlayerActions>,
     /// The items a send locked (`item+0x314` bit 0), read into each slot's `locked`.
     pub(crate) pending: Slot<'w, crate::pending_item_ops::PendingItemOps>,
-    /// The charter records a bag slot's charter reads.
-    pub(crate) petitions: Slot<'w, crate::ui_petition::PetitionState>,
     /// The wire, for the sends a verb makes inside its call.
     commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
@@ -114,6 +112,8 @@ pub(crate) struct LiveView<'w, 's> {
     taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
     /// The trainer window and what its gates, descriptions and buys read.
     trainer: Option<crate::ui_trainer::TrainerLive<'w, 's>>,
+    /// The charter windows and what their walks and sends read.
+    petition: Option<crate::ui_petition::PetitionLive<'w, 's>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -268,7 +268,7 @@ impl LiveView<'_, '_> {
         crate::ui_items::ContainerLent {
             cooldowns: self.cooldowns.get(),
             pending: self.pending.get(),
-            petitions: self.petitions.get(),
+            petitions: self.petition.as_ref().map(|p| p.records()),
             banker: self.lent.bank.get().is_some_and(|b| b.banker.is_some()),
         }
     }
@@ -347,7 +347,6 @@ pub(crate) trait Owns: 'static {
     const PLACE: bool = false;
     const ACTIONS: bool = false;
     const PENDING: bool = false;
-    const PETITIONS: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
     const LENT: u16 = 0;
 }
@@ -361,7 +360,6 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const PLACE: bool = A::PLACE || B::PLACE;
     const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
     const PENDING: bool = A::PENDING || B::PENDING;
-    const PETITIONS: bool = A::PETITIONS || B::PETITIONS;
     const LENT: u16 = A::LENT | B::LENT;
 }
 
@@ -387,12 +385,6 @@ impl Owns for OwnsActions {
 pub(crate) struct OwnsPending;
 impl Owns for OwnsPending {
     const PENDING: bool = true;
-}
-
-/// The system writes [`crate::ui_petition::PetitionState`].
-pub(crate) struct OwnsPetitions;
-impl Owns for OwnsPetitions {
-    const PETITIONS: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -1855,6 +1847,41 @@ impl LiveState for LiveView<'_, '_> {
         Some(self.taxi.as_mut()?.act(act, target))
     }
 
+    fn petition_view(&self) -> Option<benilla_ui::script::PetitionState> {
+        Some(self.petition.as_ref()?.view())
+    }
+
+    fn petition_vendor_open(&self) -> Option<bool> {
+        Some(self.petition.as_ref()?.vendor_open())
+    }
+
+    fn petition_vendor_count(&self) -> Option<usize> {
+        Some(self.petition.as_ref()?.vendor_count())
+    }
+
+    fn petition_item(
+        &mut self,
+        index: u32,
+    ) -> Option<Option<benilla_ui::script::PetitionVendorItem>> {
+        let waits = self.record_waits.as_deref_mut();
+        Some(self.petition.as_ref()?.item(index, waits))
+    }
+
+    fn petition_act(
+        &mut self,
+        act: benilla_ui::script::PetitionRequest,
+    ) -> Option<benilla_ui::script::PetitionOutcome> {
+        let target = self.selection.get().and_then(|s| s.guid);
+        let designer = self.tabard.vendor();
+        let interact = self.tabard.target_mut();
+        let cx = crate::ui_petition::ActContext {
+            target,
+            designer,
+            interact,
+        };
+        Some(self.petition.as_mut()?.act(act, cx))
+    }
+
     fn trainer(&self) -> Option<Option<&benilla_ui::script::TrainerWindow>> {
         Some(Some(self.trainer.as_ref()?.window()))
     }
@@ -2074,16 +2101,8 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 /// A lendable resource's id, then the loan's and the owner's marks.
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// The lendable resources' ids: the history, the pet's words, the selection, the player's place, the action store, the item locks and the charter records.
-type SlotState = (
-    SlotIds,
-    SlotIds,
-    SlotIds,
-    SlotIds,
-    SlotIds,
-    SlotIds,
-    SlotIds,
-);
+/// The lendable resources' ids: the history, the pet's words, the selection, the player's place, the action store and the item locks.
+type SlotState = (SlotIds, SlotIds, SlotIds, SlotIds, SlotIds, SlotIds);
 
 /// Register `X` and its pair's marks.
 fn slot_ids<X: Resource>(world: &mut World) -> SlotIds {
@@ -2206,7 +2225,6 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 slot_ids::<crate::area::PlayerPlace>(world),
                 slot_ids::<crate::ui_action::PlayerActions>(world),
                 slot_ids::<crate::pending_item_ops::PendingItemOps>(world),
-                slot_ids::<crate::ui_petition::PetitionState>(world),
             ),
             lent_ids(world),
         )
@@ -2232,8 +2250,6 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         slot_access::<crate::ui_action::PlayerActions>(O::ACTIONS, state.1 .4, system_meta, set);
         type Pending = crate::pending_item_ops::PendingItemOps;
         slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
-        type Petitions = crate::ui_petition::PetitionState;
-        slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
         let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank, spirit] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
@@ -2291,15 +2307,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         // SAFETY: both registered in `init_access`.
         unsafe {
             let own = |owned: bool, id| owned.then_some((world, id));
-            let (
-                (cd, ..),
-                (bar, ..),
-                (sel, ..),
-                (place, ..),
-                (actions, ..),
-                (pending, ..),
-                (pet, ..),
-            ) = state.1;
+            let ((cd, ..), (bar, ..), (sel, ..), (place, ..), (actions, ..), (pending, ..)) =
+                state.1;
             view.cooldowns
                 .set(slot_fetch(world, cd), own(O::COOLDOWNS, cd));
             view.pet_bar.set(slot_fetch(world, bar), own(true, bar));
@@ -2311,8 +2320,6 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, actions), own(O::ACTIONS, actions));
             view.pending
                 .set(slot_fetch(world, pending), own(O::PENDING, pending));
-            view.petitions
-                .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
         }
         let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank, spirit] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);

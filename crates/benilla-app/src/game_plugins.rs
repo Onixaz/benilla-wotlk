@@ -695,7 +695,7 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
-    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, `PetitionState`): every VM holder reaches it
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, the charter windows): every VM holder reaches it
     ///   through its lent view and runs on the main thread, so two VM holders fighting over it
     ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
@@ -736,9 +736,18 @@ pub(crate) mod schedule_tests {
                 "PendingItemOps",
                 TypeId::of::<crate::pending_item_ops::PendingItemOps>,
             ),
+            // The charter windows, which their verbs read and write at the call.
             (
                 "PetitionState",
                 TypeId::of::<crate::ui_petition::PetitionState>,
+            ),
+            (
+                "GuildRegistrarState",
+                TypeId::of::<crate::ui_petition::GuildRegistrarState>,
+            ),
+            (
+                "PetitionVendorState",
+                TypeId::of::<crate::ui_petition::PetitionVendorState>,
             ),
         ];
         const CACHES: &[ClassRow] = &[
@@ -903,9 +912,8 @@ pub(crate) mod schedule_tests {
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
-    /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
-    ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
-    ///   as the guild registrar's close beside it does.
+    /// - `ui_petition::close_out_of_range` against the motion and booth writers of `Transform`:
+    ///   it reads the registrar's and vendor's positions once per frame to close on a walk-away.
     /// - `ui_spell_info::feed_spell_info`, `GetSpellInfo`'s caster snapshot, is a range compare's
     ///   reader against the same `Player` and `RemoteMotion` writers, and against
     ///   `ui_pet::drain::pet_stop_on_old_target_clear` over `PetBar`: it reads the pet's guid,
@@ -1665,8 +1673,6 @@ pub(crate) mod schedule_tests {
          "`take_macros_dirty` is raised only by the macro window's Lua"),
         ("ui_mail/mod.rs", "feed_mail", Because::SelfHealing,
          "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
-        ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
-         "every line answers a charter action of ours; the window edges ride the `fed` memo"),
         ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
          "runs in the progress packet's handler turn, as 12340's handler shows its line (`0x6d82e9`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_script/extract/mod.rs", "paint_script", Because::Deliberate,

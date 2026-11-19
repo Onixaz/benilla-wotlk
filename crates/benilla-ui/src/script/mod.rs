@@ -383,8 +383,10 @@ pub use macro_options::{EquippedForMacros, EquippedRow, OptionState};
 pub use mirror_timer::{MirrorTimer, MIRROR_TIMER_TOKENS};
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
-    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionButtonItem,
-    PetitionRecordView, PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
+    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionArg, PetitionButtonItem,
+    PetitionOutcome, PetitionRecordView, PetitionRequest, PetitionState, PetitionStep,
+    PetitionVendorItem, PetitionVendorState, GUILD_REGISTRAR_CLOSED_EVENT,
+    PETITION_VENDOR_CLOSED_EVENT,
 };
 pub use tabard::{emblem_mask_path, EMBLEM_MASK_TOKEN, TABARD_COUNTS, TABARD_CREATION_COST};
 pub use tooltip_quest::{QuestRecord, QuestTooltipRead, QuestTooltipView};

@@ -842,6 +842,9 @@ pub(crate) fn leave_world(world: &mut World) {
     crate::ui_bank::close_by_interaction(world);
     // Its tabard leg (`0x51300e`).
     crate::ui_tabard::leave_world(world);
+    // The registrar's part (`0x528d2d`) and the vendor's (`0x528d6e`).
+    crate::ui_petition::close_registrar(world);
+    crate::ui_petition::close_vendor(world);
     crate::ui_script::live::fire_handler_events(world);
 }
 
@@ -852,6 +855,8 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         crate::ui_items::watch::enter_world(world);
         // The merchant's (`0x5281ea`).
         crate::ui_merchant::enter_world(world);
+        // The registrar's, the petition window's and the vendor's (`0x528217`, `0x528221`, `0x528258`).
+        crate::ui_petition::enter_world(world);
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");
         }

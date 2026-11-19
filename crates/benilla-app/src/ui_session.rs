@@ -62,14 +62,6 @@ fn leash_sq(npc: u64) -> f32 {
 /// `14.0²`, the leash for a session latched onto a player.
 const PLAYER_LEASH_SQ: f32 = 196.0;
 
-/// Whether an open NPC window switched to a different NPC (`Some(a)` to `Some(b)`). Stock
-/// `ShowUIPanel` returns early for a visible frame (`UIParent.lua:650`), so the client fires
-/// `*_CLOSED` then `*_SHOW`, both sounds; each feed does the same, then consumes the close intent
-/// its own `*_CLOSED` queued so the drain does not wipe the new session.
-pub(crate) fn npc_switched(prev: Option<u64>, now: Option<u64>) -> bool {
-    matches!((prev, now), (Some(a), Some(b)) if a != b)
-}
-
 /// Whether `npc` is out of the leash or gone; `None` with no self player to measure from.
 pub(crate) fn npc_out_of_range(
     npc: u64,
@@ -184,7 +176,11 @@ impl InteractWindows<'_, '_> {
             }),
             // The bank closes through its own leg, its events with it.
             5 => {}
-            6 => close(&mut self.registrar),
+            // The registrar leg runs its close, its event with it (`0x512ff1`).
+            6 => self.queue.queue(|world: &mut World| {
+                crate::ui_petition::close_registrar_by_interaction(world);
+                crate::ui_script::live::fire_handler_events(world);
+            }),
             7 => {
                 let vendor = self.tabard.as_deref().and_then(|t| t.npc());
                 if vendor.is_some() {
@@ -201,7 +197,11 @@ impl InteractWindows<'_, '_> {
                     self.queue.queue(crate::ui_stable::fire_closed);
                 }
             }
-            10 => close(&mut self.petition_vendor),
+            // The vendor leg runs its close, its event with it (`0x513083`).
+            10 => self.queue.queue(|world: &mut World| {
+                crate::ui_petition::close_vendor_by_interaction(world);
+                crate::ui_script::live::fire_handler_events(world);
+            }),
             _ => close(&mut self.battlemaster),
         }
     }
@@ -317,6 +317,16 @@ fn close_window_on(world: &mut World, old: u64) {
         Some(4) => {
             state.apply(world);
             crate::ui_trainer::set_none(world);
+            return;
+        }
+        Some(6) => {
+            state.apply(world);
+            crate::ui_petition::close_registrar_by_interaction(world);
+            return;
+        }
+        Some(10) => {
+            state.apply(world);
+            crate::ui_petition::close_vendor_by_interaction(world);
             return;
         }
         Some(w) if w != BANK_WINDOW => windows.close(w),
