@@ -289,7 +289,7 @@ enum WalkKind {
     Arena,
 }
 
-/// A record callback's walk again, its steps in its turn; the arena one fires `PETITION_VENDOR_UPDATE` on a find (`0x6dd669`).
+/// A record callback's walk again, its steps in its turn; the arena one fires `PETITION_VENDOR_UPDATE` on a find (`0x6dd66a`).
 fn run_walk(world: &mut World, kind: WalkKind) {
     match world.run_system_cached_with(walk_system, kind) {
         Ok(steps) => super::fire_steps(world, steps),
