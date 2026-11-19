@@ -181,11 +181,12 @@ fn interaction_already_open_on(target: u64, interact: &crate::ui_session::Intera
 
 /// The refusals and openers the dispatchers raise.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct Feedback<'w> {
+pub(crate) struct Feedback<'w, 's> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     cast_errors: ResMut<'w, crate::ui_action::CastErrors>,
     mail: ResMut<'w, crate::ui_mail::MailOpen>,
-    item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
+    /// The read call's queue, which runs it with the world once the click returns.
+    queue: Commands<'w, 's>,
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
     // `CastErrors` borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
     openers: ResMut<'w, crate::ui_action::GoOpenerCasts>,
@@ -197,7 +198,7 @@ pub(crate) struct Feedback<'w> {
     arrival_attack: MessageWriter<'w, ArrivalAttack>,
 }
 
-impl Feedback<'_> {
+impl Feedback<'_, '_> {
     /// Whether a walk started; the leash's refusal says `ERR_AUTOFOLLOW_TOO_FAR`.
     fn walked(&mut self, started: Result<(), crate::player::Refused>) -> bool {
         match started {
@@ -241,7 +242,7 @@ pub(crate) struct Dispatch<'w, 's> {
     >,
     places: Query<'w, 's, &'static Transform>,
     service: ServiceArms<'w, 's>,
-    feedback: Feedback<'w>,
+    feedback: Feedback<'w, 's>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
     // The auto-dismount CVars (`0x71b0c0`) for the mounted attack gate.
@@ -660,16 +661,13 @@ impl Dispatch<'_, '_> {
             }
             return;
         }
-        // TEXT (type 9) opens locally (`(goGuid, 0)`; vmangos' `Use` has no type-9 case); a
-        // re-click closes it, and the page is read at paint time.
+        // TEXT (type 9) runs the read call with flag 0 locally, so a re-click closes it (`0x70c850`).
         if go_type == cursor_mode::GO_TYPE_TEXT {
             if !in_reach {
                 self.walk_to_object(entity, guid, go_type, walk);
-            } else if self.feedback.item_text.toggle_closed(guid) {
-                debug!("right-click text gameobject: re-click closes {guid:#x}");
             } else {
                 debug!("right-click text gameobject: read {guid:#x}");
-                self.feedback.item_text.open_pages(guid);
+                crate::ui_item_text::read_from_click(&mut self.feedback.queue, guid);
             }
             return;
         }
@@ -2526,7 +2524,7 @@ mod tests {
         world.init_resource::<crate::ui_loot::LootLatch>();
         world.init_resource::<crate::ui_mail::MailOpen>();
         world.init_non_send_resource::<crate::ui_guild_bank::GuildBankState>();
-        world.init_resource::<crate::ui_item_text::ItemTextOpen>();
+        world.init_resource::<crate::ui_item_text::ItemText>();
         world.init_resource::<crate::ui_action::GoOpenerCasts>();
         world.init_resource::<Messages<crate::target::stone::MeetingStoneUse>>();
         world.init_resource::<crate::player::Approach>();

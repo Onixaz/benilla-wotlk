@@ -1219,7 +1219,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 690, 682),
+        ("Update", 681, 673),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1645,10 +1645,6 @@ pub(crate) mod schedule_tests {
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,
          "the token is latched only by Lua's `NotifyInspect`, and the diffs ride a `VmMemo`"),
-        ("ui_item_text.rs", "drain_item_text", Because::FilledByVm,
-         "page turns and close are Lua intents"),
-        ("ui_item_text.rs", "feed_item_text", Because::MemoLatched,
-         "`told` is a `VmMemo` inside the session (a fresh VM re-begins), and the open is a player click"),
         ("ui_items/drain.rs", "drain_bind_confirm_answers", Because::FilledByVm,
          "`take_pending_equip_answers` is a VM-owned queue filled by Lua's `EquipPendingItem`/`CancelPendingEquip`"),
         ("ui_items/drain.rs", "drain_container_destroys", Because::FilledByVm,

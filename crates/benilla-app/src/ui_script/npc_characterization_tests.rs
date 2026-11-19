@@ -969,3 +969,150 @@ fn a_menu_from_another_npc_closes_the_held_one_through_the_target() {
         ]
     );
 }
+
+const ITEM_TEXT_EVENTS: &[&str] = &["ITEM_TEXT_BEGIN", "ITEM_TEXT_READY", "ITEM_TEXT_CLOSED"];
+
+/// A text GameObject (type 9) whose template reads page 100.
+const PLAQUE: u64 = 0xF110_0000_0BEE_0001;
+
+/// The plaque's create, its type-9 record on page 100, and pages 100 and 101 unless `uncached`.
+fn plaque(uncached: bool) -> Vec<SessionEvent> {
+    let mut data = [0i32; 24];
+    data[0] = 100;
+    let mut events = vec![
+        SessionEvent::ObjectCreate {
+            guid: PLAQUE,
+            kind: EntityKind::GameObject,
+            display_id: None,
+            position: NEAR,
+            orientation: 0.0,
+            scale: 1.0,
+            speeds: None,
+            mover: None,
+            transport_progress: None,
+            transport: None,
+            spline: None,
+            vehicle: None,
+            attack_target: None,
+            spawned: true,
+            fields: ObjectFields::from_pairs(&[
+                (2, 0x21),
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, 0xBEE),
+            ])
+            .into_created(ObjectType::GameObject),
+        },
+        SessionEvent::GameObjectInfo {
+            entry: 0xBEE,
+            type_id: 9,
+            display_id: 0,
+            name: "Plaque".into(),
+            data,
+        },
+    ];
+    if !uncached {
+        events.extend(pages());
+    }
+    events
+}
+
+/// Pages 100 and 101, the chain's end.
+fn pages() -> Vec<SessionEvent> {
+    vec![
+        SessionEvent::PageText {
+            page_id: 100,
+            text: "Page one".into(),
+            next_page_id: 101,
+        },
+        SessionEvent::PageText {
+            page_id: 101,
+            text: "Page two".into(),
+            next_page_id: 0,
+        },
+    ]
+}
+
+/// `SMSG_GAMEOBJECT_PAGETEXT` runs the read call in its handler (`0x70be73` -> `0x58a1a0`): `ITEM_TEXT_BEGIN`, then the draw's `ITEM_TEXT_READY` with the text set (`0x58a345`, `0x589e90`). `ItemTextNextPage` and `ItemTextPrevPage` step and draw inside their calls (`0x58a187`); `CloseItemText` fires `ITEM_TEXT_CLOSED` twice inside its call, the interact target's clear re-entering the read call (`0x58a207` -> `0x512ecf`).
+#[test]
+fn the_reader_opens_from_its_handler_and_turns_and_closes_inside_its_calls() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["ittext", "itpage", "itnext"];
+    rig.packets(plaque(false), 2);
+    let seen = rig.packets(vec![SessionEvent::GameObjectPageText { guid: PLAQUE }], 2);
+    assert_eq!(
+        pin(&seen, ITEM_TEXT_EVENTS, verbs),
+        [
+            "ITEM_TEXT_BEGIN | ittext= itpage=1 itnext=nil",
+            "ITEM_TEXT_READY | ittext=Page one itpage=1 itnext=1"
+        ]
+    );
+    assert_eq!(
+        fired_in_call(&mut rig, "ItemTextNextPage()", ITEM_TEXT_EVENTS, verbs),
+        ["ITEM_TEXT_READY | ittext=Page two itpage=2 itnext=nil"]
+    );
+    assert!(
+        fired_in_call(&mut rig, "ItemTextNextPage()", ITEM_TEXT_EVENTS, verbs).is_empty(),
+        "the last page has no next"
+    );
+    assert_eq!(
+        fired_in_call(&mut rig, "ItemTextPrevPage()", ITEM_TEXT_EVENTS, verbs),
+        ["ITEM_TEXT_READY | ittext=Page one itpage=1 itnext=1"]
+    );
+    assert_eq!(
+        fired_in_call(&mut rig, "CloseItemText()", ITEM_TEXT_EVENTS, verbs),
+        [
+            "ITEM_TEXT_CLOSED | ittext= itpage=1 itnext=nil",
+            "ITEM_TEXT_CLOSED | ittext= itpage=1 itnext=nil"
+        ]
+    );
+    assert!(
+        fired_in_call(&mut rig, "CloseItemText()", ITEM_TEXT_EVENTS, &[]).is_empty(),
+        "no reader, nothing to close"
+    );
+}
+
+/// A page not cached holds the read call: nothing fires until the page's answer runs the reader's callback, which re-runs the read call (`0x58a450`), `ITEM_TEXT_BEGIN` then `ITEM_TEXT_READY` in that handler. The same object again closes it through the interact target, whose leg empties the reader before both `ITEM_TEXT_CLOSED`s (`0x58a1cd` -> `0x512ecf`, `0x58a1de`).
+#[test]
+fn an_uncached_page_opens_from_its_answer_and_a_reread_closes() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["ittext"];
+    rig.packets(plaque(true), 2);
+    let seen = rig.packets(vec![SessionEvent::GameObjectPageText { guid: PLAQUE }], 2);
+    assert!(
+        pin(&seen, ITEM_TEXT_EVENTS, verbs).is_empty(),
+        "held on the page"
+    );
+    let mut answer = pages();
+    answer.push(SessionEvent::GameObjectPageText { guid: PLAQUE });
+    let seen = rig.packets(answer, 2);
+    assert_eq!(
+        pin(&seen, ITEM_TEXT_EVENTS, verbs),
+        [
+            "ITEM_TEXT_BEGIN | ittext=",
+            "ITEM_TEXT_READY | ittext=Page one",
+            "ITEM_TEXT_CLOSED | ittext=",
+            "ITEM_TEXT_CLOSED | ittext="
+        ]
+    );
+}
+
+/// Only an item's disable has a reader leg (`0x70b036` -> `0x58a1a0`): a read GameObject's destroy leaves the reader open.
+#[test]
+fn a_read_gameobject_leaving_leaves_the_reader_open() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(plaque(false), 2);
+    rig.packets(vec![SessionEvent::GameObjectPageText { guid: PLAQUE }], 2);
+    let seen = rig.packets(vec![SessionEvent::ObjectDestroyed(PLAQUE)], 2);
+    assert!(
+        pin(&seen, ITEM_TEXT_EVENTS, &[]).is_empty(),
+        "a GameObject's disable has no reader leg"
+    );
+}

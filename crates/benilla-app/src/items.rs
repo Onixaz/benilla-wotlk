@@ -482,6 +482,8 @@ pub(crate) enum RecordWait {
     QuestReward(u32),
     /// The guild bank's slots' or log's count (`0x5a7664` -> `0x5a47a0`, `0x5a489c` -> `0x5a47d0`).
     GuildBank(crate::ui_guild_bank::Callback),
+    /// The item-text reader's, from its page-id call (`0x707180` -> `0x58a450`).
+    ItemText(u64),
     /// A callback the UI left inside a verb's call.
     Ui(benilla_ui::script::ItemRecordWait),
 }

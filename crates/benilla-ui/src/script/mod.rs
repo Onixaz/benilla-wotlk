@@ -425,7 +425,7 @@ pub use item_stats::{
     ItemRecordWait, ItemSetMember, ItemSetView, ItemSpellView, ItemTables, ItemTemplateView,
     PlayerFields, PlayerReqState, RandomSuffixView, ReqFields,
 };
-pub use item_text::ItemTextState;
+pub use item_text::ItemTextRead;
 pub use layout_cache::PlacedFrame;
 pub use lfg::{
     EncounterView, LfgBootView, LfgCatalogView, LfgCompletionRewardView, LfgDungeonRewardView,

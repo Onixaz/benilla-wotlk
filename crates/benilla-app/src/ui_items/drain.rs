@@ -153,7 +153,8 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     self_q: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     merchant: Res<'w, crate::ui_merchant::MerchantOpen>,
     equip_sound: MessageWriter<'w, crate::sound::AutoEquipSound>,
-    item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
+    /// The read call's queue, which runs it with the world once the use returns.
+    queue: Commands<'w, 's>,
     targeting: crate::spell::cast_target::CastTargeting<'w, 's>,
     pending_items: crate::ui_script::OwnedMut<'w, PendingItemOps>,
     // The loot latch the open arm sets, so `SMSG_LOOT_RESPONSE` admits an item loot.
@@ -348,7 +349,7 @@ impl ScriptItemUse<'_, '_> {
             self_q,
             merchant,
             equip_sound,
-            item_text,
+            queue,
             targeting,
             pending_items,
             loot_latch,
@@ -523,33 +524,10 @@ impl ScriptItemUse<'_, '_> {
                 return;
             }
         }
-        // A book, a template with `PageText`, opens the reader with no packet. It precedes the open
-        // arm, the inverse of the tooltip: an item both readable and lootable shows
-        // `<Right Click to Open>` and reads on click.
-        if let Some(c) = clicked.filter(|c| c.page_text != 0) {
-            if item_text.toggle_closed(c.guid) {
-                debug!("ui_items: re-click closes the book {:#x}", c.guid);
-            } else {
-                debug!(
-                    "ui_items: read book {:#x} (page {}, lua bag {bag} slot {slot})",
-                    c.guid, c.page_text
-                );
-                item_text.open_pages(c.guid);
-            }
-            return;
-        }
-        // A letter copied from mail (`ITEM_FIELD_FLAGS & 0x200`) opens the reader with no packet,
-        // its text asked by item guid (`0x58a1a0`).
-        if let Some(c) = clicked.filter(|c| c.has_text) {
-            if item_text.toggle_closed(c.guid) {
-                debug!("ui_items: re-click closes the letter {:#x}", c.guid);
-            } else {
-                debug!(
-                    "ui_items: read letter {:#x} (lua bag {bag} slot {slot})",
-                    c.guid
-                );
-                item_text.open_letter(c.guid);
-            }
+        // A book (a template with `PageText`) or a copied letter (`ITEM_FIELD_FLAGS & 0x200`) runs the read call with flag 0, so the open one closes, with no packet (`0x708f60`). It precedes the open arm, the inverse of the tooltip: an item both readable and lootable shows `<Right Click to Open>` and reads on click.
+        if let Some(c) = clicked.filter(|c| c.page_text != 0 || c.has_text) {
+            debug!("ui_items: read {:#x} (lua bag {bag} slot {slot})", c.guid);
+            crate::ui_item_text::read_from_click(queue, c.guid);
             return;
         }
         // A lootable template sends `CMSG_OPEN_ITEM`, which the server answers with a loot window
@@ -956,7 +934,7 @@ mod tests {
             .add_message::<crate::creature_anim::SheathRequest>()
             .init_resource::<crate::ui_merchant::MerchantOpen>()
             .init_non_send_resource::<crate::ui_bank::BankOpen>()
-            .init_resource::<crate::ui_item_text::ItemTextOpen>()
+            .init_resource::<crate::ui_item_text::ItemText>()
             .init_resource::<PendingItemOps>()
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
@@ -1980,7 +1958,7 @@ mod bind_confirm_tests {
             .add_message::<crate::creature_anim::SheathRequest>()
             .init_resource::<crate::ui_merchant::MerchantOpen>()
             .init_non_send_resource::<crate::ui_bank::BankOpen>()
-            .init_resource::<crate::ui_item_text::ItemTextOpen>()
+            .init_resource::<crate::ui_item_text::ItemText>()
             .init_resource::<PendingItemOps>()
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()

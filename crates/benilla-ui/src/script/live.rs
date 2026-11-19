@@ -758,6 +758,26 @@ pub trait LiveState {
         0
     }
 
+    /// The item-text reader at the call (`0xbfc948`, `0xbfc940`, `0xbfaa00`); `None` with no view.
+    fn item_text(&self) -> Option<super::ItemTextRead> {
+        None
+    }
+
+    /// `ItemTextGetCreator` (`0x58a480`): the read item's creator name, a miss asked with the reader's callback left on it.
+    fn item_text_creator(&mut self) -> Option<String> {
+        None
+    }
+
+    /// A page step and its redraw (`0x58a110`, `0x58a150` -> `0x589e90`): whether the redraw fired `ITEM_TEXT_READY`.
+    fn item_text_turn(&mut self, _next: bool) -> bool {
+        false
+    }
+
+    /// `CloseItemText` (`0x58a400`): how many `ITEM_TEXT_CLOSED`s it fires, 0 with no reader.
+    fn close_item_text(&mut self) -> u32 {
+        0
+    }
+
     /// The barber shop at the call: the open flag (`[0xbd19b8]`), our look, level and coinage, and our body's dials; `None` with no player object.
     fn barber(&self) -> Option<super::BarberRead<'_>> {
         None
@@ -1216,6 +1236,8 @@ pub(crate) struct TestView {
     pub bind_location: std::cell::RefCell<Option<String>>,
     /// The gossip globals, the selects and the closes a close fires.
     pub gossip: Option<TestGossip>,
+    /// The item-text reader.
+    pub item_text: Option<TestItemText>,
     /// The barber shop, the alter-appearance sends and our race's two tokens.
     pub barber: Option<TestBarber>,
     pub barber_sent: Vec<[u32; 4]>,
@@ -1236,6 +1258,19 @@ pub(crate) struct TestGossip {
     pub quest_selects: Vec<usize>,
     /// What the first close returns; later closes return 0.
     pub closes: u32,
+}
+
+/// The item-text reader a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestItemText {
+    pub read: super::ItemTextRead,
+    pub creator: Option<String>,
+    /// What the first close returns; later closes return 0.
+    pub closes: u32,
+    /// Whether a turn's redraw fires, and the turns made, `true` for next.
+    pub turn_ready: bool,
+    pub turns: Vec<bool>,
 }
 
 /// The barber shop a test view lends.
@@ -1475,6 +1510,27 @@ impl LiveState for TestView {
         self.gossip
             .as_mut()
             .map_or(0, |g| std::mem::take(&mut g.closes))
+    }
+
+    fn item_text(&self) -> Option<super::ItemTextRead> {
+        self.item_text.as_ref().map(|t| t.read.clone())
+    }
+
+    fn item_text_creator(&mut self) -> Option<String> {
+        self.item_text.as_ref()?.creator.clone()
+    }
+
+    fn item_text_turn(&mut self, next: bool) -> bool {
+        self.item_text.as_mut().is_some_and(|t| {
+            t.turns.push(next);
+            t.turn_ready
+        })
+    }
+
+    fn close_item_text(&mut self) -> u32 {
+        self.item_text
+            .as_mut()
+            .map_or(0, |t| std::mem::take(&mut t.closes))
     }
 
     fn barber(&self) -> Option<super::BarberRead<'_>> {

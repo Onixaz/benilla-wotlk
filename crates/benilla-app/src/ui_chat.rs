@@ -29,7 +29,7 @@ pub(crate) mod idle;
 mod input;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
 mod language;
-pub(crate) use language::{feed_language_skills, load_language_words, ChatLanguages};
+pub(crate) use language::{language_skill, ChatLanguages};
 /// `LoggingChat`/`LoggingCombat`: the two log files `/chatlog` and `/combatlog` toggle.
 pub(crate) mod logging;
 mod net;

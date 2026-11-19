@@ -7,10 +7,10 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, guild, inspect, item_text, lfg, loot,
-    loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp, quest,
-    quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi,
-    trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
+    macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
+    reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade,
+    tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
     MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
@@ -858,10 +858,6 @@ pub(crate) struct Model {
     /// The message of the day, `KBSystem_GetMOTD`.
     pub(crate) kb_motd: String,
 
-    /// The item-text reader: the pushed page, then the close and page-turn calls.
-    pub(crate) item_text: Option<item_text::ItemTextState>,
-    pub(crate) item_text_close: bool,
-    pub(crate) item_text_page_turns: Vec<i32>,
     /// The inbox, rows 1-based, kept past the window's close as the reference's inbox is.
     pub(crate) mail: mail::MailState,
     /// A mailbox is open.
@@ -1723,9 +1719,6 @@ impl Model {
             opt_out_of_loot: false,
             ui_time_offset: 0,
             kb_motd: String::new(),
-            item_text: None,
-            item_text_close: false,
-            item_text_page_turns: Vec::new(),
             mail: mail::MailState::default(),
             mail_mailbox: false,
             mail_commands: Vec::new(),

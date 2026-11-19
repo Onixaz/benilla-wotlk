@@ -157,6 +157,9 @@ local VERBS = {
     { "barbercost", function() return GetBarberShopTotalCost() end },
     { "gossiptext", function() return GetGossipText() end },
     { "gossipopts", function() return GetNumGossipOptions() end },
+    { "ittext", function() return ItemTextGetText() end },
+    { "itpage", function() return ItemTextGetPage() end },
+    { "itnext", function() return ItemTextHasNextPage() end },
 }
 local function answers()
     local verbs = {}

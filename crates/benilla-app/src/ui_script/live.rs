@@ -106,6 +106,8 @@ pub(crate) struct LiveView<'w, 's> {
     barber: crate::ui_barber::BarberLive<'w, 's>,
     /// The gossip globals, the NPC's record and our coinage.
     gossip: crate::ui_gossip::GossipView<'w, 's>,
+    /// The item-text reader's globals and what its draw reads.
+    item_text: crate::ui_item_text::ItemTextLive<'w, 's>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1770,6 +1772,22 @@ impl LiveState for LiveView<'_, '_> {
 
     fn select_gossip_quest(&mut self, row: usize) {
         self.gossip.select_quest(row);
+    }
+
+    fn item_text(&self) -> Option<benilla_ui::script::ItemTextRead> {
+        self.item_text.read()
+    }
+
+    fn item_text_creator(&mut self) -> Option<String> {
+        self.item_text.creator()
+    }
+
+    fn item_text_turn(&mut self, next: bool) -> bool {
+        self.item_text.turn(next, self.actions.get())
+    }
+
+    fn close_item_text(&mut self) -> u32 {
+        self.item_text.close(self.tabard.target_mut())
     }
 
     fn close_gossip(&mut self) -> u32 {

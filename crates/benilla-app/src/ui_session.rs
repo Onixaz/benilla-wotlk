@@ -279,6 +279,10 @@ pub(crate) fn clear_interact_target(world: &mut World, guid: u64) {
 
 /// The interaction close's walk (`0x512e60`) for a target already zeroed: the first window of [`InteractWindows`] on `old` closes; the gossip's leg runs its zero set in the walk (`0x512ef6`).
 fn close_window_on(world: &mut World, old: u64) {
+    // The reader's leg comes ahead of the gossip's (`0x512eb1`).
+    if crate::ui_item_text::close_by_interaction(world, old) {
+        return;
+    }
     let mut state = bevy::ecs::system::SystemState::<InteractWindows>::new(world);
     let mut windows = state.get_mut(world);
     let window = windows.npcs().iter().position(|n| *n == Some(old));

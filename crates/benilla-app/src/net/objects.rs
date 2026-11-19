@@ -573,6 +573,9 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::GuildBank(callback) => sc
             .ui
             .world(move |world| crate::ui_guild_bank::record_callback(world, callback)),
+        RecordWait::ItemText(item) => sc
+            .ui
+            .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
         RecordWait::Ui(wait) => sc
             .ui
             .write(move |script| script.item_record_callback(entry, landed, wait)),
@@ -759,6 +762,8 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
 fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectDestroyed(guid) = ev {
         item_disable_watch(&mut sc, guid);
+        sc.ui
+            .world(move |world| crate::ui_item_text::item_disabled(world, guid));
         // The item's lock goes with its object.
         sc.ui.world(move |world| {
             if let Some(mut locks) =
@@ -784,6 +789,8 @@ fn on_objects_removed(In(ev): In<SessionEvent>, mut sc: Scene) {
         guids.retain(|&g| sc.self_guid.0 != Some(g));
         for &guid in &guids {
             item_disable_watch(&mut sc, guid);
+            sc.ui
+                .world(move |world| crate::ui_item_text::item_disabled(world, guid));
             let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
             crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         }
@@ -868,6 +875,8 @@ fn on_gameobject_info(In(ev): In<SessionEvent>, mut sc: Scene) {
             &data,
             &mut sc.go_templates,
         );
+        sc.ui
+            .world(move |world| crate::ui_item_text::go_template_landed(world, entry));
     }
 }
 
