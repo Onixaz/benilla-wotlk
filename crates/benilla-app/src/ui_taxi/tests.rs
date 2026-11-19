@@ -9,7 +9,6 @@ const MASTER: u64 = 0xF130_0000_0000_0099;
 /// Thelsamar (8), the player Honored with it; `None` without the install.
 fn stormwind() -> Option<(World, crossbeam_channel::Receiver<ClientCommand>)> {
     use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
-    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
     let data = benilla_formats::wow_data_or_skip!(None);
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let catalogs = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
@@ -26,10 +25,9 @@ fn stormwind() -> Option<(World, crossbeam_channel::Receiver<ClientCommand>)> {
     world.insert_resource(reps);
     world.spawn((
         SelfPlayer,
-        ObjectStore(ObjectFields::from_pairs(&[(
-            BYTES_0,
-            crate::target::HUMAN_WARRIOR,
-        )])),
+        ObjectStore(ObjectFields::from_pairs(
+            &crate::target::human_warrior_fields(),
+        )),
     ));
     let master = world
         .spawn((
@@ -119,6 +117,9 @@ fn take_taxi_node_refuses_or_sends_inside_its_call() {
         take(&mut world, thelsamar),
         Some("ERR_TAXIPLAYERALREADYMOUNTED")
     );
+    // A mount held for passengers is not mounted (`0x5914ea`): the flight goes.
+    me.single_mut(&mut world).unwrap().0.hold_mount(2402);
+    assert_eq!(take(&mut world, thelsamar), None);
     let sent: Vec<_> = rx
         .try_iter()
         .filter(|c| matches!(c, ClientCommand::ActivateTaxiExpress { .. }))
@@ -126,8 +127,49 @@ fn take_taxi_node_refuses_or_sends_inside_its_call() {
     assert!(
         matches!(
             sent.as_slice(),
-            [ClientCommand::ActivateTaxiExpress { guid: MASTER, nodes }] if nodes == &[2, 6, 8]
+            [
+                ClientCommand::ActivateTaxiExpress { guid: MASTER, nodes: a },
+                ClientCommand::ActivateTaxiExpress { guid: MASTER, nodes: b },
+            ] if a == &[2, 6, 8] && b == &[2, 6, 8]
         ),
-        "one express, the chain alone: {sent:?}"
+        "the chain alone, once on foot and once held: {sent:?}"
     );
+}
+
+/// The setup's tail and `TakeTaxiNode` read one mounted test (`0x5937e1`-`0x5937ea`,
+/// `0x5914e1`-`0x5914ea`): a mount held for passengers is left alone, a ridden one dismounts.
+#[test]
+fn the_setup_leaves_a_mount_held_for_passengers() {
+    let Some((mut world, rx)) = stormwind() else {
+        return;
+    };
+    let mut me = world.query_filtered::<&mut ObjectStore, With<SelfPlayer>>();
+    me.single_mut(&mut world)
+        .unwrap()
+        .0
+        .merge(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID,
+            2402,
+        )]));
+    me.single_mut(&mut world).unwrap().0.hold_mount(2402);
+    close_map(&mut world);
+    let _ = rx.try_iter().count();
+    setup_map(&mut world, MASTER, 2, TaxiMask(vec![0b1010_1010]));
+    assert_eq!(world.resource::<TaxiState>().unit, Some(MASTER), "opened");
+    let dismounts = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+        rx.try_iter()
+            .filter(|c| matches!(c, ClientCommand::CancelMountAura))
+            .count()
+    };
+    assert_eq!(dismounts(&rx), 0, "held: no dismount");
+    me.single_mut(&mut world)
+        .unwrap()
+        .0
+        .merge(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID,
+            2410,
+        )]));
+    close_map(&mut world);
+    setup_map(&mut world, MASTER, 2, TaxiMask(vec![0b1010_1010]));
+    assert_eq!(dismounts(&rx), 1, "ridden: one dismount");
 }

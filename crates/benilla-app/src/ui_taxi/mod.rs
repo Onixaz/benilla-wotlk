@@ -145,7 +145,8 @@ fn build_table(world: &mut World, current: u32, known: &TaxiMask) -> Option<Taxi
 }
 
 /// The setup's tail with more than one node listed: a stand state but standing stands up
-/// (`0x5937dc`), a mount not ridden on a taxi dismounts (`0x5937f8` -> `0x7412e0`), and a form
+/// (`0x5937dc`), a mount not held for passengers (`0x5937e1`-`0x5937ea`) dismounts unless on a taxi
+/// (`0x5937f8` -> `0x7412e0`), and a form
 /// the flight master cancels, one without the stance bit or with bit `0x800`, is left (`0x5937ff`
 /// -> `0x721e70`, `0x726ce0`).
 fn leave_for_the_flight(world: &mut World) {
@@ -156,7 +157,7 @@ fn leave_for_the_flight(world: &mut World) {
         return;
     };
     let echoed = store.0.unit_stand_state();
-    let mounted = store.0.unit_mount_display_id() > 0
+    let mounted = store.0.unit_is_mounted()
         && store.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0;
     let form = store.0.unit_shapeshift_form();
     let spells = world.get_resource::<crate::ui_action::Spells>();
@@ -284,10 +285,8 @@ impl TaxiLive<'_, '_> {
                     return out;
                 };
                 let Some(money) = self.me.iter().next().map(|me| {
-                    // Mounted (`0x5914e1`); the client flag beside it spans a passenger's
-                    // dismount round trip, which benilla does not keep.
-                    let mounted = me.0.unit_mount_display_id() > 0;
-                    (mounted, me.0.player_money().unwrap_or(0))
+                    // Mounted, a mount held for passengers not (`0x5914e1`-`0x5914ea`).
+                    (me.0.unit_is_mounted(), me.0.player_money().unwrap_or(0))
                 }) else {
                     return out;
                 };

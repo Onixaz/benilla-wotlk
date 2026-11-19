@@ -226,11 +226,9 @@ pub(crate) fn end_ranged_mode(entity: Entity, commands: &mut Commands) {
         .try_remove::<(AutoRepeatArmed, NockedAmmo, NockLatch)>();
 }
 
-/// The dismount ahead of a mounted swing, loot or use (`0x7412e0`): nothing on foot or on a taxi.
+/// The dismount ahead of a mounted swing, loot or use (`0x51a230`, `0x7412e0`): nothing on foot, held for passengers or on a taxi.
 pub(crate) fn dismount_first(own: &crate::net::ObjectStore, net: &crate::net::NetCommands) {
-    if own.0.unit_mount_display_id() > 0
-        && own.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0
-    {
+    if own.0.unit_is_mounted() && own.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0 {
         debug!("dismounts first (CMSG_CANCEL_MOUNT_AURA)");
         let _ = net.0.send(crate::net::ClientCommand::CancelMountAura);
     }

@@ -101,6 +101,8 @@ pub(crate) struct Scene<'w, 's> {
     remote: Query<'w, 's, &'static mut RemoteMotion>,
     modes: Query<'w, 's, &'static mut UnitMoveModes>,
     riders: Query<'w, 's, &'static mut crate::transport::TransportRider>,
+    /// The seated passengers, whose vehicle holds its mount through a dismount (`0x74046f`).
+    seated: Query<'w, 's, &'static crate::vehicle::Passenger>,
     speeds: Query<'w, 's, &'static mut UnitSpeeds>,
     field_changes: MessageWriter<'w, FieldChanged>,
     speed_changes: MessageWriter<'w, SpeedChangeMessage>,
@@ -180,6 +182,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 guid,
                 fields,
                 own,
+                Some(&sc.seated),
             );
             pet_token_watch(&mut sc, guid, &merged);
             own_flags_watch(&mut sc, guid, merged);
@@ -760,6 +763,7 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
                     guid,
                     fields,
                     own,
+                    Some(&sc.seated),
                 );
                 pet_token_watch(&mut sc, guid, &merged);
                 own_flags_watch(&mut sc, guid, merged);
@@ -1131,7 +1135,7 @@ fn item_create(
 ) {
     debug!("net: item create {guid:#x} (container: {container})");
     if let Some(&e) = index.0.get(&guid) {
-        merge_fields(commands, stores, edges, e, guid, fields, false);
+        merge_fields(commands, stores, edges, e, guid, fields, false, None);
     } else {
         let e = crate::items::spawn_item(commands, index, guid, fields, container);
         // Replay the enchant times queued while it was not held, as of now.
@@ -2195,13 +2199,18 @@ fn merge_fields(
     guid: u64,
     delta: ObjectFields,
     own: bool,
+    seated: Option<&Query<&crate::vehicle::Passenger>>,
 ) -> Merged {
     use benilla_protocol::field::{
         FIELD_PLAYER_FLAGS, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH,
     };
     let mut merged = Merged::default();
     if let Ok(mut s) = stores.get_mut(entity) {
+        let copy = s.0.unit_mount_copy();
+        let mut mount_zeroed = false;
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
+            mount_zeroed |=
+                e.unit_field(benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID) && e.new == 0;
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
             merged.display_moved |=
                 own && e.unit_field(benilla_protocol::field::FIELD_UNIT_DISPLAYID);
@@ -2298,6 +2307,10 @@ fn merge_fields(
             }
             edges.write(e);
         });
+        // The mount field's zero while passengers ride holds the copy (`0x74046f`).
+        if mount_zeroed && seated.is_some_and(|q| q.iter().any(|p| p.vehicle == guid)) {
+            s.0.hold_mount(copy);
+        }
     } else {
         warn!(
             "net: values delta for {guid:#x} found no store on its entity — seeding from the delta"
