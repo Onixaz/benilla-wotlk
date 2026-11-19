@@ -119,12 +119,7 @@ pub(crate) struct UiGossipPlugin;
 impl Plugin for UiGossipPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<GossipState>().add_systems(
-            Update,
-            close_out_of_range
-                .after(crate::net::apply_net_updates)
-                .before(crate::ui_script::UiPress),
-        );
+        app.init_resource::<GossipState>();
     }
 }
 
@@ -328,34 +323,6 @@ pub(crate) fn seed_drawn(world: &mut World, menu: WireMenu, greeting: String) {
     crate::ui_script::live::fire_handler_events(world);
 }
 
-/// The range guard's close: an NPC out of the leash or gone closes the gossip through the interaction close, its target cleared first, so `GOSSIP_CLOSED` fires once.
-fn close_out_of_range(
-    gossip: Res<GossipState>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let Some(npc) = gossip.npc else { return };
-    if crate::ui_session::npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_gossip: NPC {npc:#x} out of range/gone — closing");
-        queue.queue(move |world: &mut World| {
-            close_by_interaction(world, npc);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
-}
-
-/// The interaction close's gossip leg with the target zeroed first (`0x512e89`, `0x512ef6`).
-pub(crate) fn close_by_interaction(world: &mut World, npc: u64) {
-    if let Some(mut t) = world.get_resource_mut::<crate::ui_session::InteractTarget>() {
-        if t.0 == Some(npc) {
-            t.0 = None;
-        }
-    }
-    set_npc(world, 0);
-}
-
 /// The gossip globals the verbs read and write at their call.
 #[derive(SystemParam)]
 pub(crate) struct GossipView<'w, 's> {
@@ -368,6 +335,11 @@ pub(crate) struct GossipView<'w, 's> {
 }
 
 impl GossipView<'_, '_> {
+    /// The NPC the gossip menu is open on (`0xc016f0`).
+    pub(crate) fn npc(&self) -> Option<u64> {
+        self.gossip.as_deref().and_then(|g| g.npc)
+    }
+
     /// The globals, read by a system between its calls into Lua.
     pub(crate) fn state(&self) -> Option<&GossipState> {
         self.gossip.as_deref()
@@ -452,12 +424,10 @@ impl GossipView<'_, '_> {
             return 0;
         };
         g.menu_id = 0;
-        match target {
-            Some(t) if !giver_held && t.0 == Some(npc) => {
-                t.0 = None;
-                2
-            }
-            _ => 1,
+        if !giver_held && target.is_some_and(|t| t.clear_in_call(npc)) {
+            2
+        } else {
+            1
         }
     }
 }

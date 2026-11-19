@@ -147,8 +147,6 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) talk: Commands<'w, 's>,
     /// Bit 6 sends through the cache the proximity poll writes, so the two agree on the healer.
     pub(crate) spirit: NonSendMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
-    /// The NPC whose window is open, checked before the ladder.
-    pub(crate) interact: Res<'w, crate::ui_session::InteractNpc>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
     /// The lent view; the guild bank's talk writes through it between calls into Lua.
@@ -171,12 +169,10 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) player_vehicles: crate::vehicle::PlayerVehicles<'w, 's>,
 }
 
-/// The re-click gate, before the ladder: a right-click on the NPC whose window is open does
-/// nothing, no packet, no error, no gesture. The reference arms that NPC only from window openers,
-/// never on the click, the set [`crate::ui_session::feed_interact_npc`] collapses (less the mailbox
-/// and text reader).
-fn interaction_already_open_on(target: u64, interact: &crate::ui_session::InteractNpc) -> bool {
-    interact.1 == Some(target)
+/// The re-click gate, before the ladder: a right-click on the interact target does nothing, no
+/// packet, no error, no gesture; only a window's open sets it (`0x51fce0`), never the click.
+fn interaction_already_open_on(target: u64, interact: Option<u64>) -> bool {
+    interact == Some(target)
 }
 
 /// The refusals and openers the dispatchers raise.
@@ -184,7 +180,6 @@ fn interaction_already_open_on(target: u64, interact: &crate::ui_session::Intera
 pub(crate) struct Feedback<'w, 's> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     cast_errors: ResMut<'w, crate::ui_action::CastErrors>,
-    mail: ResMut<'w, crate::ui_mail::MailOpen>,
     /// The read call's queue, which runs it with the world once the click returns.
     queue: Commands<'w, 's>,
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
@@ -639,7 +634,10 @@ impl Dispatch<'_, '_> {
         if go_type == cursor_mode::GO_TYPE_MAILBOX {
             if in_reach {
                 debug!("right-click mailbox: open mail window {guid:#x}");
-                self.feedback.mail.click(guid);
+                self.feedback.queue.queue(move |w: &mut World| {
+                    crate::ui_mail::talk_to_mailbox(w, guid);
+                    crate::ui_script::live::fire_handler_events(w);
+                });
             } else {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
@@ -907,7 +905,7 @@ impl Dispatch<'_, '_> {
         }
         // The reference's own `UNIT_NPC_FLAGS` ladder, not the cursor kind, which the cursor
         // classifier projects lossily; the re-click gate comes first.
-        if interaction_already_open_on(guid, &self.service.interact) {
+        if interaction_already_open_on(guid, self.service.live.interact_target().0) {
             debug!("right-click interact: {guid:#x} — its window is already open, nothing sent");
             return;
         }
@@ -1009,7 +1007,10 @@ impl Dispatch<'_, '_> {
             }
             ServiceAction::OpenMailbox => {
                 debug!("right-click interact: {guid:#x} (mailbox NPC — mail window, no packet)");
-                self.feedback.mail.click(guid);
+                self.feedback.queue.queue(move |w: &mut World| {
+                    crate::ui_mail::talk_to_mailbox(w, guid);
+                    crate::ui_script::live::fire_handler_events(w);
+                });
             }
             ServiceAction::TalkToGuildBanker => {
                 debug!("right-click interact: {guid:#x} (guild banker)");
@@ -2340,72 +2341,46 @@ mod tests {
         }
     }
 
-    /// The re-click gate through the real [`crate::ui_session::feed_interact_npc`]: nothing arms
-    /// it before a window opens, a window arms its own NPC, and a close disarms it.
+    /// The re-click gate through the real interact target: nothing arms it before a window's open
+    /// sets it (`0x51fce0`), the set arms its own NPC, and the clear disarms it (`0x518d50`).
     #[test]
     fn the_reclick_gate_fires_only_while_that_npc_s_window_is_open() {
-        use crate::ui_session::{feed_interact_npc, InteractNpc};
-        use bevy::ecs::system::RunSystemOnce;
+        use crate::ui_session::InteractTarget;
 
         const NPC: u64 = 0xF130_0000_0000_0042;
         const OTHER: u64 = 0xF130_0000_0000_0043;
 
-        let armed = |seed: &dyn Fn(&mut World)| {
-            let mut world = World::new();
-            world.init_resource::<InteractNpc>();
-            seed(&mut world);
-            world.run_system_once(feed_interact_npc).unwrap();
-            world.remove_resource::<InteractNpc>().unwrap()
-        };
+        let mut world = World::new();
+        world.init_resource::<InteractTarget>();
+        world.init_resource::<crate::ui_session::InteractRange>();
 
         // Nothing open: a first click on any NPC reaches the ladder.
-        let idle = armed(&|_| {});
-        assert!(!interaction_already_open_on(NPC, &idle));
-        assert!(!interaction_already_open_on(OTHER, &idle));
+        assert!(!interaction_already_open_on(
+            NPC,
+            world.resource::<InteractTarget>().0
+        ));
+        assert!(!interaction_already_open_on(
+            OTHER,
+            world.resource::<InteractTarget>().0
+        ));
 
-        // One opener per family (a menu, a quest panel, a specialized window) arms its own NPC.
-        let with_gossip = armed(&|w| {
-            let mut g = crate::ui_gossip::GossipState::default();
-            g.npc = Some(NPC);
-            w.insert_resource(g);
-        });
-        let with_quest = armed(&|w| {
-            let mut q = crate::ui_quest::QuestGiver::default();
-            q.npc = Some(NPC);
-            w.insert_non_send_resource(q);
-        });
-        let with_trainer = armed(&|w| {
-            let mut t = crate::ui_trainer::TrainerOpen::default();
-            t.open(NPC, 0, Vec::new(), String::new());
-            w.insert_resource(t);
-        });
-        for (what, armed) in [
-            ("gossip", &with_gossip),
-            ("quest", &with_quest),
-            ("trainer", &with_trainer),
-        ] {
-            assert_eq!(armed.1, Some(NPC), "{what} did not arm the npc token");
-            // A re-click on that NPC is eaten...
-            assert!(
-                interaction_already_open_on(NPC, armed),
-                "{what}: the re-click was not suppressed"
-            );
-            // ...but a click on another NPC is not.
-            assert!(
-                !interaction_already_open_on(OTHER, armed),
-                "{what}: the gate ate a click on a different NPC"
-            );
-        }
+        // A window's open arms its own NPC: a re-click on it is eaten, one on another is not.
+        crate::ui_session::set_interact_target(&mut world, NPC);
+        assert!(interaction_already_open_on(
+            NPC,
+            world.resource::<InteractTarget>().0
+        ));
+        assert!(!interaction_already_open_on(
+            OTHER,
+            world.resource::<InteractTarget>().0
+        ));
 
-        // Closing the window disarms it, as the reference's zeroes the pair.
-        let closed = armed(&|w| {
-            let mut t = crate::ui_trainer::TrainerOpen::default();
-            t.open(NPC, 0, Vec::new(), String::new());
-            t.clear();
-            w.insert_resource(t);
-        });
-        assert_eq!(closed.1, None);
-        assert!(!interaction_already_open_on(NPC, &closed));
+        // The close's clear disarms it.
+        crate::ui_session::clear_interact_target(&mut world, NPC);
+        assert!(!interaction_already_open_on(
+            NPC,
+            world.resource::<InteractTarget>().0
+        ));
     }
 
     /// A corpse and a refused `NOT_SELECTABLE` unit reach `select_on_click`'s `_` arm with no
@@ -2523,7 +2498,7 @@ mod tests {
         world.init_resource::<crate::ui_binder::BinderState>();
         world.init_resource::<crate::death::DeathNet>();
         world.init_non_send_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();
-        world.init_resource::<crate::ui_session::InteractNpc>();
+        world.init_resource::<crate::ui_session::InteractTarget>();
         world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.init_resource::<crate::ui_action::CastErrors>();
         world.init_resource::<crate::ui_loot::LootState>();

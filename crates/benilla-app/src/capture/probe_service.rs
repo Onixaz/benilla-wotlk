@@ -36,7 +36,6 @@ use crate::ui_gossip::GossipState;
 use benilla_ui::script::UiScript;
 
 use crate::ui_quest::{QuestGiver, QuestStatuses};
-use crate::ui_session::InteractNpc;
 
 /// How wide to look around a `.go` landing: the reference's service reach,
 /// [`crate::target::SERVICE_RANGE_SQ`] (5.5556 yd). Past it the cursor goes gray, the click sends
@@ -49,9 +48,9 @@ const SCAN_TIMEOUT_SECS: f64 = 20.0;
 /// How long a leg waits for its window after the opcode goes out; a terrain load starves the
 /// observer, not the wire.
 const WINDOW_TIMEOUT_SECS: f64 = 20.0;
-/// How long the re-click gate's latch may lag its window. `feed_interact_npc` runs after the net
-/// apply, so the token arms on the window's own frame; the poll covers a starved observer and
-/// reports the lag.
+/// How long the re-click gate's latch may lag its window. The window's open sets the interact
+/// target in its handler, so it arms on the window's own frame; the poll covers a starved observer
+/// and reports the lag.
 const GATE_TIMEOUT_SECS: f64 = 3.0;
 
 /// The vendor fork's NPC: Brother Danil (entry 152), `npc_flags` 4, vendor only, so no other arm
@@ -295,9 +294,6 @@ fn service_probe(
     mut probe: ResMut<ServiceProbe>,
     mut queue: Commands,
     statuses: Res<QuestStatuses>,
-    // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
-    // window and only by one.
-    interact: Res<InteractNpc>,
     // The vendor fork: the VM the held-cursor leg picks up in, and what turns a (bag, slot) into
     // the item guid; the merchant window is read through the view.
     (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -309,6 +305,8 @@ fn service_probe(
     net: Res<NetCommands>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    // The interact target, what the re-click gate reads: armed by a window and only by one.
+    let interact_target = live.interact_target().0;
     if self_player.is_empty() {
         return; // not in-world yet
     }
@@ -436,12 +434,12 @@ fn service_probe(
 
             // The first click must get through: nothing is open, and the reference arms only from
             // window openers, so the gate must read disarmed at the send.
-            if interact.1.is_some() {
+            if interact_target.is_some() {
                 error!(
                     "PROBE_SERVICE: FAIL ({}) — the npc token is armed on {:#x} BEFORE the send; \
                      the re-click gate would eat first clicks{note}",
                     leg.name,
-                    interact.1.unwrap_or(0)
+                    interact_target.unwrap_or(0)
                 );
                 probe.fails += 1;
                 next(&mut probe, &net, i, now);
@@ -569,7 +567,7 @@ fn service_probe(
         }
         Phase::Gate { i, since, guid } => {
             let leg = &LEGS[i];
-            if interact.1 == Some(guid) {
+            if interact_target == Some(guid) {
                 info!(
                     "PROBE_SERVICE: PASS ({}) — re-click gate armed on {guid:#x} {:.0} ms after \
                      the window: a second right-click sends nothing",
@@ -583,7 +581,7 @@ fn service_probe(
                     "PROBE_SERVICE: FAIL ({}) — the window has been open on {guid:#x} for \
                      {GATE_TIMEOUT_SECS}s and the npc token still reads {:?}; the re-click gate \
                      cannot fire and every re-click re-sends",
-                    leg.name, interact.1
+                    leg.name, interact_target
                 );
                 probe.fails += 1;
                 next(&mut probe, &net, i, now);

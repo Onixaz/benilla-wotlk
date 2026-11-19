@@ -74,11 +74,7 @@ impl Plugin for UiCalendarPlugin {
                         .after(calendar_enter_world)
                         .after(crate::ui_social::feed_social)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)
-                        .after(
-                            crate::ui_session::close_npc_session_out_of_range::<
-                                crate::ui_mail::MailOpen,
-                            >,
-                        )
+                        .after(crate::ui_session::update_interact_target)
                         .before(crate::ui_unit::EnterWorldFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
                 ),

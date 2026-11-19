@@ -3,9 +3,7 @@
 use benilla_protocol::messages::bank_slot_result;
 use bevy::prelude::*;
 
-use crate::net::{GuidIndex, SelfPlayer};
 use crate::ui_script::live::UiEvents;
-use crate::ui_session::npc_out_of_range;
 
 /// `BankBagSlotPrices.dbc`, the client's own slot prices; absent, the purchase row shows 0 and
 /// the server still charges its own price.
@@ -43,11 +41,7 @@ pub(crate) struct UiBankPlugin;
 impl Plugin for UiBankPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_non_send_resource::<BankOpen>().add_systems(
-            Update,
-            // Range-close ahead of the press, as the walk-away watchdog runs before input.
-            close_bank_out_of_range.before(crate::ui_script::UiPress),
-        );
+        app.init_non_send_resource::<BankOpen>();
     }
 }
 
@@ -133,27 +127,6 @@ pub(crate) fn set_banker_none(world: &mut World) {
 fn clear_banker(world: &mut World) {
     if let Some(mut bank) = world.get_non_send_resource_mut::<BankOpen>() {
         bank.clear();
-    }
-}
-
-/// The walk-away watchdog for the bank: past its leash or with its banker gone, the interaction closes (`0x512e60`), its events fired as it runs.
-fn close_bank_out_of_range(
-    bank: NonSend<BankOpen>,
-    target: Res<crate::ui_session::InteractTarget>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut commands: Commands,
-) {
-    let Some(banker) = bank.banker.filter(|b| target.0 == Some(*b)) else {
-        return;
-    };
-    if npc_out_of_range(banker, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_bank: banker {banker:#x} out of range/gone — closing the interaction");
-        commands.queue(|world: &mut World| {
-            close_by_interaction(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
     }
 }
 

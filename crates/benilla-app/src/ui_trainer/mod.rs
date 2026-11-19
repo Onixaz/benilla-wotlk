@@ -22,7 +22,7 @@ use crate::items::Items;
 use crate::names::NameCache;
 use benilla_protocol::messages::PLAYER_SKILL_SLOTS;
 
-use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
+use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_script::live::UiEvents;
 use crate::ui_session::NpcSession;
@@ -99,13 +99,7 @@ impl Plugin for UiTrainerPlugin {
         app.init_resource::<TrainerOpen>()
             .init_resource::<TrainerAsked>()
             .init_resource::<UnlearnedSpells>()
-            .init_resource::<TrainerTooltipSubjects>()
-            .add_systems(
-                Update,
-                close_out_of_range
-                    .after(crate::net::apply_net_updates)
-                    .before(crate::ui_script::UiPress),
-            );
+            .init_resource::<TrainerTooltipSubjects>();
     }
 }
 
@@ -452,26 +446,6 @@ pub(crate) fn leave_world(world: &mut World) {
     set_none(world);
 }
 
-/// The range guard's close: a trainer out of the leash or gone closes through [`set_none`].
-fn close_out_of_range(
-    open: Res<TrainerOpen>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let Some(trainer) = open.trainer else {
-        return;
-    };
-    if crate::ui_session::npc_out_of_range(trainer, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_trainer: trainer {trainer:#x} out of range/gone — closing");
-        queue.queue(|world: &mut World| {
-            set_none(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
-}
-
 /// The range guard and the interaction walk read the trainer open on.
 impl NpcSession for TrainerOpen {
     fn npc(&self) -> Option<u64> {
@@ -633,13 +607,7 @@ impl TrainerLive<'_, '_> {
         let Some(trainer) = self.open.trainer else {
             return false;
         };
-        match target.filter(|t| t.0 == Some(trainer)) {
-            Some(t) => {
-                t.0 = None;
-                true
-            }
-            None => false,
-        }
+        target.is_some_and(|t| t.clear_in_call(trainer))
     }
 
     /// The setter's zero (`0x59411b`).

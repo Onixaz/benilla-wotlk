@@ -338,34 +338,6 @@ pub(crate) fn enter_world(world: &mut World) {
     net::forget_button(world);
 }
 
-/// The range guard: a registrar or vendor out of the leash or gone closes through its close.
-fn close_out_of_range(
-    registrar: Res<GuildRegistrarState>,
-    vendor: Res<PetitionVendorState>,
-    index: Res<crate::net::GuidIndex>,
-    self_q: Query<&Transform, With<crate::net::SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let gone = |npc: Option<u64>| {
-        npc.is_some_and(|n| {
-            crate::ui_session::npc_out_of_range(n, &index, &self_q, &transforms) == Some(true)
-        })
-    };
-    if gone(registrar.registrar) {
-        queue.queue(|world: &mut World| {
-            close_registrar(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
-    if gone(vendor.vendor) {
-        queue.queue(|world: &mut World| {
-            close_vendor(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
-}
-
 /// The three resources, the handlers and the range guard.
 pub(crate) struct UiPetitionPlugin;
 
@@ -375,13 +347,7 @@ impl Plugin for UiPetitionPlugin {
         crate::query_cache::register::<PetitionState>(app);
         app.init_resource::<GuildRegistrarState>()
             .init_resource::<PetitionVendorState>()
-            .init_resource::<PetitionState>()
-            .add_systems(
-                Update,
-                close_out_of_range
-                    .after(crate::net::apply_net_updates)
-                    .before(crate::ui_script::UiPress),
-            );
+            .init_resource::<PetitionState>();
     }
 }
 

@@ -400,7 +400,7 @@ pub(crate) const GO_TYPE_CHAIR: i32 = 7;
 /// `GAMEOBJECT_TYPE_BARBER_CHAIR` (32): a chair (`0x70c7f0` builds on the chair's `0x70c6a0`), so
 /// its reach is the chair's 3.0 yd.
 pub(crate) const GO_TYPE_BARBER_CHAIR: i32 = 32;
-pub(super) fn go_interact_range_sq(type_id: i32) -> f32 {
+pub(crate) fn go_interact_range_sq(type_id: i32) -> f32 {
     match type_id {
         GO_TYPE_FISHINGNODE => 100.0 * 100.0,
         // Measured to the object; the reference and vmangos (`GameObject.cpp:2231-2236`) measure to

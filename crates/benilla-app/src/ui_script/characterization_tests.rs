@@ -6856,3 +6856,194 @@ fn an_item_record_reads_at_the_call_and_its_answer_repaints_from_the_handler() {
         "the stat lines read the record at the call"
     );
 }
+
+/// Each window whose open now takes the interact target closes the vendor holding it inside that open, `MERCHANT_CLOSED` ahead of its own show: the quest frame (`0x58c6cc`), the auctioneer (`0x59f008`), the stable (`0x5a11d9`), the mailbox (`0x56dbe2`), the battlemaster (`0x54970f`) and the trade window (`0x5874cb` -> `0x587124`); the vendor's next open then closes that window in turn through its leg of the interaction close (`0x512e60`).
+#[test]
+fn every_window_open_takes_the_interact_target_from_the_vendor_holding_it() {
+    use benilla_protocol::messages::{BattlefieldList, QuestGiverList, TradeStatus};
+    const VENDOR: u64 = BANKER + 0x10;
+    const NEW: u64 = BANKER + 0x11;
+    const PARTNER: u64 = 0x0000_0000_0000_0777;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(vec![npc_create(VENDOR, 0), npc_create(NEW, 0)], 2);
+    let vendor = || SessionEvent::VendorInventory {
+        vendor: VENDOR,
+        items: Vec::new(),
+        error: Some(0),
+    };
+    let target = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::ui_session::InteractTarget>()
+            .0
+    };
+    type Open = fn(&World) -> bool;
+    let opens: [(&str, SessionEvent, &str, u64, Open); 6] = [
+        (
+            "quest",
+            SessionEvent::QuestGreeting(QuestGiverList {
+                npc: NEW,
+                ..Default::default()
+            }),
+            "QUEST_GREETING",
+            NEW,
+            |w| {
+                w.non_send_resource::<crate::ui_quest::QuestGiver>()
+                    .is_open()
+            },
+        ),
+        (
+            "auction",
+            SessionEvent::AuctionHello {
+                auctioneer: NEW,
+                house_id: 1,
+                enabled: true,
+            },
+            "AUCTION_HOUSE_SHOW",
+            NEW,
+            |w| {
+                w.resource::<crate::ui_auction::AuctionOpen>()
+                    .auctioneer
+                    .is_some()
+            },
+        ),
+        (
+            "stable",
+            SessionEvent::ListStabledPets {
+                npc: NEW,
+                num_stable_slots: 0,
+                pets: Vec::new(),
+            },
+            "PET_STABLE_SHOW",
+            NEW,
+            |w| {
+                use crate::ui_session::NpcSession;
+                w.resource::<crate::ui_stable::StableOpen>().npc().is_some()
+            },
+        ),
+        (
+            "mailbox",
+            SessionEvent::ShowMailbox { mailbox: NEW },
+            "MAIL_SHOW",
+            NEW,
+            |w| w.resource::<crate::ui_mail::MailOpen>().mailbox.is_some(),
+        ),
+        (
+            "battlemaster",
+            SessionEvent::BattlefieldList(BattlefieldList {
+                battlemaster: NEW,
+                bg_type: 2,
+                ..Default::default()
+            }),
+            "BATTLEFIELDS_SHOW",
+            NEW,
+            |w| {
+                w.resource::<crate::ui_battlefield::Battlefield>()
+                    .battlemaster()
+                    .is_some()
+            },
+        ),
+        (
+            "trade",
+            SessionEvent::TradeStatus {
+                status: TradeStatus::OpenWindow { trade_id: 1 },
+            },
+            "TRADE_SHOW",
+            PARTNER,
+            |w| w.resource::<crate::ui_trade::TradeSession>().is_open(),
+        ),
+    ];
+    for (what, open, show, holder, is_open) in opens {
+        rig.packets(vec![vendor()], 2);
+        assert_eq!(target(&rig), Some(VENDOR), "{what}: the vendor holds it");
+        if what == "trade" {
+            rig.app
+                .world_mut()
+                .resource_mut::<crate::ui_trade::TradeSession>()
+                .begin(PARTNER);
+        }
+        let seen = rig.packets(vec![open], 3);
+        let order = fired(&seen, &["MERCHANT_CLOSED", show]);
+        assert_eq!(
+            order.first().map(String::as_str),
+            Some("MERCHANT_CLOSED"),
+            "{what}: the vendor closes inside the open, ahead of its show: {order:?}"
+        );
+        assert_eq!(
+            fired(&seen, &["MERCHANT_CLOSED"]).len(),
+            1,
+            "{what}: one close, from its leg"
+        );
+        assert_eq!(target(&rig), Some(holder), "{what} holds the target");
+        assert!(is_open(rig.app.world()), "{what} opened");
+        // The vendor's next open takes it back through the window's own leg.
+        rig.packets(vec![vendor()], 2);
+        assert!(
+            !is_open(rig.app.world()),
+            "{what}: the vendor's open closed it"
+        );
+        assert_eq!(target(&rig), Some(VENDOR));
+    }
+}
+
+/// The quest frame's set-current takes the interact target even from the giver holding it, so a creature's greeting then details at the same NPC fire `QUEST_FINISHED` between (`0x58c6cc` -> `0x51fd1c` -> `0x512f1a`); a GameObject giver already holding it skips the set, and fires none (`0x58c6a9`-`0x58c6c6`).
+#[test]
+fn a_creature_givers_next_panel_finishes_the_last_and_a_gameobjects_does_not() {
+    use benilla_protocol::messages::{QuestDetails, QuestGiverList};
+    const GIVER: u64 = BANKER + 0x20;
+    const BOARD: u64 = 0xF110_0000_0300_0021;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let board = SessionEvent::ObjectCreate {
+        guid: BOARD,
+        kind: EntityKind::GameObject,
+        display_id: None,
+        position: [-8949.0, -130.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT.
+        fields: ObjectFields::from_pairs(&[(2, 0x21)]).into_created(ObjectType::GameObject),
+    };
+    rig.packets(vec![npc_create(GIVER, 0), board], 2);
+    for (giver, finishes) in [(GIVER, 1), (BOARD, 0)] {
+        let greeting = SessionEvent::QuestGreeting(QuestGiverList {
+            npc: giver,
+            ..Default::default()
+        });
+        rig.packets(vec![greeting], 2);
+        let detail = SessionEvent::QuestDetail(QuestDetails {
+            npc: giver,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        });
+        let seen = rig.packets(vec![detail], 2);
+        assert_eq!(
+            fired(&seen, &["QUEST_FINISHED", "QUEST_DETAIL"]),
+            [vec!["QUEST_FINISHED"; finishes], vec!["QUEST_DETAIL"]].concat(),
+            "giver {giver:#x}"
+        );
+        assert_eq!(
+            rig.app
+                .world()
+                .resource::<crate::ui_session::InteractTarget>()
+                .0,
+            Some(giver)
+        );
+    }
+}

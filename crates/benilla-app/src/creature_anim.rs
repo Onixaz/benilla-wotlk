@@ -909,12 +909,6 @@ pub(crate) struct AnimDriver {
     /// The movement flags the base was last armed for: the reference has no per-one-shot latch,
     /// so a root landing with a cast one-shot (Ice Block) still lets the base overwrite bone 0.
     gait_flags: u32,
-    /// Whether the unit was the interact NPC last frame: the interact-NPC setter re-picks its base
-    /// on open and on clear, so a flip cuts a one-shot.
-    interacting: bool,
-    /// Whether the interaction in `interacting` (or the one just cleared) targets a player, whose
-    /// open and clear skip the re-pick (the PLAYER typemask bit).
-    interact_player: bool,
     /// The clear's re-pick runs while the reference's interact-NPC global still names the NPC, so
     /// it picks Stand; the global is zeroed after. The state returns at the next re-pick: the Stand
     /// window's end, a movement-flag edge, or leaving Gait.
@@ -1079,8 +1073,6 @@ impl Default for AnimDriver {
             mode: Mode::Gait,
             gait: None,
             gait_flags: 0,
-            interacting: false,
-            interact_player: false,
             interact_hold: false,
             base_lock: driver::play::BaseAnimLock::default(),
             sheath_cur: None,

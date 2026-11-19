@@ -16,7 +16,7 @@ use benilla_ui::script::{
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
-use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, Objects, SelfPlayer};
+use crate::net::{ClientCommand, Guid, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_items::{item_link, slot_guid, wire_pos};
 use crate::ui_script::live::UiEvents;
 use crate::ui_session::NpcSession;
@@ -96,12 +96,7 @@ pub(crate) struct UiMerchantPlugin;
 impl Plugin for UiMerchantPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<MerchantOpen>().add_systems(
-            Update,
-            close_out_of_range
-                .after(crate::net::apply_net_updates)
-                .before(crate::ui_script::UiPress),
-        );
+        app.init_resource::<MerchantOpen>();
     }
 }
 
@@ -244,26 +239,6 @@ fn sort_buyback(world: &mut World) {
         .unwrap_or_default();
     if let Some(mut m) = world.get_resource_mut::<MerchantOpen>() {
         m.buyback = order;
-    }
-}
-
-/// The range guard's close: a vendor out of the leash or gone closes the window through [`close_merchant`].
-fn close_out_of_range(
-    merchant: Res<MerchantOpen>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let Some(vendor) = merchant.vendor else {
-        return;
-    };
-    if crate::ui_session::npc_out_of_range(vendor, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_merchant: vendor {vendor:#x} out of range/gone — closing");
-        queue.queue(|world: &mut World| {
-            close_merchant(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
     }
 }
 
@@ -871,8 +846,7 @@ impl MerchantLive<'_, '_> {
                     return out;
                 };
                 out.closed = 1;
-                if let Some(t) = target.filter(|t| t.0 == Some(vendor)) {
-                    t.0 = None;
+                if target.is_some_and(|t| t.clear_in_call(vendor)) {
                     out.closed = 2;
                 }
                 self.open.vendor = None;

@@ -105,7 +105,7 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) mouseover: u64,
     pub(super) npc: u64,
     pub(super) focus: u64,
-    /// The interact target (`0xbd07a8`), walked beside `npc` so the token's unit and its target hop are held; `npc` itself stays the fallback the resolver reads with none held.
+    /// The interact target (`0xbd07a8`), walked beside `npc` so the token's unit and its target hop are held.
     pub(super) interact: u64,
     /// `vehicle`'s guid, 0 when the player is not seated.
     pub(super) vehicle: u64,

@@ -543,6 +543,11 @@ pub trait LiveState {
         false
     }
 
+    /// The interact target's clear on `guid` inside the call (`0x518d50` with 0): the target zeroed when it held `guid`, whether it did; the caller runs its window's leg.
+    fn clear_interact_target(&mut self, _guid: u64) -> bool {
+        false
+    }
+
     /// The banker cleared, the banker setter's tail with no banker (`0x57b8f9`).
     fn clear_banker(&mut self) {}
 

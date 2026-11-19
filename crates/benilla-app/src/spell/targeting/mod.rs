@@ -835,14 +835,14 @@ mod tests {
     /// selection; with no window open it names no unit and the cast ends with "Out of range.".
     #[test]
     fn spell_target_unit_binds_the_interaction_npc() {
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
 
         let (mut world, rx, ally) = unit_world(10.0);
         world
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(ALLY, ally);
-        world.insert_resource(InteractNpc(Some(ally), Some(ALLY)));
+        world.insert_resource(InteractTarget::holding(ALLY));
         arm(&mut world, HEAL, 0x0002);
         spell_target_unit(&mut world, "npc");
         assert!(matches!(
@@ -860,7 +860,7 @@ mod tests {
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(ALLY, ally);
-        world.init_resource::<InteractNpc>();
+        world.init_resource::<InteractTarget>();
         arm(&mut world, HEAL, 0x0002);
         spell_target_unit(&mut world, "npc");
         assert!(rx.try_recv().is_err(), "no window, no send");

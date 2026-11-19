@@ -114,6 +114,11 @@ impl TabardView<'_, '_> {
         self.target.as_ref().and_then(|t| t.0)
     }
 
+    /// Whether the interact target moved since the reading system last ran.
+    pub(crate) fn target_changed(&self) -> bool {
+        self.target.as_ref().is_some_and(|t| t.is_changed())
+    }
+
     /// The vendor held, read by a system between its calls into Lua.
     pub(crate) fn vendor(&self) -> Option<u64> {
         self.open.as_ref().and_then(|o| o.vendor)
@@ -164,12 +169,14 @@ impl TabardView<'_, '_> {
         if let Some(d) = self.design.as_mut() {
             d.purchase = false;
         }
-        match self.target.as_mut() {
-            Some(t) if t.0 == Some(vendor) => {
-                t.0 = None;
-                2
-            }
-            _ => 1,
+        if self
+            .target
+            .as_mut()
+            .is_some_and(|t| t.clear_in_call(vendor))
+        {
+            2
+        } else {
+            1
         }
     }
 
@@ -184,40 +191,13 @@ impl TabardView<'_, '_> {
     }
 }
 
-/// The designer's close from the interaction close (`0x512e60` -> `0x51300e`): its interact target already cleared, so `CLOSE_TABARD_FRAME` fires once, in turn once the closing system's commands apply.
-pub(crate) fn fire_closed(world: &mut World) {
-    if let Some(mut d) = world.get_resource_mut::<TabardDesign>() {
-        d.purchase = false;
-    }
-    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
-        ui.fire("CLOSE_TABARD_FRAME", vec![]);
-    }
-    crate::ui_script::live::fire_handler_events(world);
-}
-
-/// The interaction range guard's close: a vendor out of the leash or gone closes the designer through the interaction close, its target cleared first, so `CLOSE_TABARD_FRAME` fires once.
-fn close_out_of_range(
-    mut open: ResMut<TabardOpen>,
-    mut target: ResMut<crate::ui_session::InteractTarget>,
-    index: Res<crate::net::GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let Some(npc) = open.vendor else { return };
-    if crate::ui_session::npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true)
-        && open.close()
-    {
-        if target.0 == Some(npc) {
-            target.0 = None;
-        }
-        debug!("ui_tabard: tabard vendor {npc:#x} out of range/gone — closed");
-        queue.queue(fire_closed);
-    }
-}
-
-/// The world leave's interaction close (`0x528dce` -> `0x512e60`): a held vendor closes through the tabard leg, its target cleared first, so `CLOSE_TABARD_FRAME` fires once.
+/// The world leave's interaction close (`0x528dce` -> `0x512e60`): a held vendor closes through the tabard leg.
 pub(crate) fn leave_world(world: &mut World) {
+    close_by_interaction(world);
+}
+
+/// The interaction close's tabard leg (`0x51300e` -> `0x598ec0`), its target already zeroed: a held vendor closes, the purchase off and `CLOSE_TABARD_FRAME` fired once.
+pub(crate) fn close_by_interaction(world: &mut World) {
     let held = world
         .get_resource_mut::<TabardOpen>()
         .is_some_and(|mut o| o.close());
@@ -339,15 +319,7 @@ impl Plugin for TabardUiPlugin {
         net::register(app);
         app.init_resource::<TabardOpen>()
             .init_resource::<TabardDesign>()
-            .add_systems(
-                Update,
-                (
-                    close_out_of_range
-                        .after(crate::ui_script::UiDrain)
-                        .before(benilla_world::schedule::WorldStage::Input),
-                    sync_tabard_booth.in_set(UiFeed),
-                ),
-            );
+            .add_systems(Update, sync_tabard_booth.in_set(UiFeed));
     }
 }
 

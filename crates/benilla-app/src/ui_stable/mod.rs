@@ -12,7 +12,7 @@ use crate::net::{ClientCommand, NetCommands, SelfPlayer};
 use crate::ui_pet_stats::PetFamilyTables;
 use crate::ui_script::live::UiEvents;
 use crate::ui_script::UiDrain;
-use crate::ui_session::{npc_out_of_range, NpcSession};
+use crate::ui_session::NpcSession;
 use crate::unit_auras::UnitAuras;
 
 mod net;
@@ -28,10 +28,6 @@ impl Plugin for UiStablePlugin {
         app.init_resource::<StableOpen>().add_systems(
             Update,
             (
-                // The range guard, after the drains and before the world update.
-                close_out_of_range
-                    .after(UiDrain)
-                    .before(benilla_world::schedule::WorldStage::Input),
                 // After the VM ticks: the selection is written by a click in `UiPress` and by `PetStable_Update`'s re-pick (`PetStable.lua:48-63`) inside the handlers' events, so an earlier read shows the previous pet for a frame.
                 feed_stable_booth
                     .in_set(UiDrain)
@@ -72,15 +68,6 @@ impl StableOpen {
     /// The close (`0x5a0f10`, the verb's `0x5a1996`): the master cleared; whether one was held.
     pub(crate) fn close(&mut self) -> bool {
         std::mem::take(&mut self.master) != 0
-    }
-
-    /// The interaction close first (`0x5a0f2c`, `0x5a1174`), whose stable arm fires `PET_STABLE_CLOSED` (`0x5a0f4c`), then the caller's: two with one held, else `forced` alone; a held master is always the interact target, as every target change closes the stable first (`0x518d67`, `0x51fd1c`).
-    pub(crate) fn close_through_target(&mut self, forced: bool) -> usize {
-        if self.close() {
-            2
-        } else {
-            usize::from(forced)
-        }
     }
 
     /// The world entry's reset (`0x5a0ec0`).
@@ -147,51 +134,49 @@ impl NpcSession for StableOpen {
     }
 }
 
-/// The close's event (`0x5a0f4c`), fired in turn once the closing system's commands apply.
-pub(crate) fn fire_closed(world: &mut World) {
+/// `CloseStables` (`0x5a0f10`): with a master held, or `forced`, the interact target cleared on the master (`0x5a0f2c`), whose interaction close re-enters this through the stable leg while the master held it (`0x513065`), then the master zeroed and `PET_STABLE_CLOSED` fired (`0x5a0f4c`).
+pub(crate) fn close_stables(world: &mut World, forced: bool) {
+    let master = world.get_resource::<StableOpen>().and_then(|o| o.npc());
+    if master.is_none() && !forced {
+        return;
+    }
+    if let Some(master) = master {
+        crate::ui_session::clear_interact_target(world, master);
+    }
+    if let Some(mut open) = world.get_resource_mut::<StableOpen>() {
+        open.close();
+    }
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.fire("PET_STABLE_CLOSED", vec![]);
     }
-    crate::ui_script::live::fire_handler_events(world);
 }
 
-/// The interaction range guard's close (`0x513065`): a master out of the leash or gone closes the stable, its interact target already cleared, so `PET_STABLE_CLOSED` fires once.
-fn close_out_of_range(
-    mut open: ResMut<StableOpen>,
-    index: Res<crate::net::GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let Some(npc) = open.npc() else { return };
-    if npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true) && open.close() {
-        debug!("ui_stable: stable master {npc:#x} out of range/gone — closed");
-        queue.queue(fire_closed);
-    }
+/// The interaction close's stable leg (`0x513065`), its target already zeroed: the close with a master held.
+pub(crate) fn close_by_interaction(world: &mut World) {
+    close_stables(world, false);
 }
 
 /// The forced close an open-stable aura's removal runs (`0x71ea25`): `PET_STABLE_CLOSED` fired held or not, twice with a master held.
 pub(crate) fn close_forced(world: &mut World) {
-    close_and_fire(world, true);
+    close_stables(world, true);
 }
 
 /// The world leave's stable part (`0x528d5a`, `0x5a1160`): a held master closes, firing `PET_STABLE_CLOSED` twice.
 pub(crate) fn leave_world(world: &mut World) {
-    close_and_fire(world, false);
+    close_stables(world, false);
 }
 
-/// [`StableOpen::close_through_target`] with its events queued in turn.
-fn close_and_fire(world: &mut World, forced: bool) {
-    let fired = world
-        .get_resource_mut::<StableOpen>()
-        .map_or(usize::from(forced), |mut open| {
-            open.close_through_target(forced)
-        });
-    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
-        for _ in 0..fired {
-            ui.fire("PET_STABLE_CLOSED", vec![]);
-        }
+/// `MSG_LIST_STABLED_PETS`' master (`0x5a11b9`-`0x5a11ed`): another master than the held one takes the interact target, whose interaction close takes the window bound to the old one, then is stored.
+pub(crate) fn set_master(world: &mut World, npc: u64) {
+    if world.get_resource::<StableOpen>().and_then(|o| o.npc()) == Some(npc) {
+        return;
     }
+    crate::ui_session::set_interact_target(world, npc);
+    crate::ui_script::live::in_turn(world, move |w| {
+        if let Some(mut open) = w.get_resource_mut::<StableOpen>() {
+            open.master = npc;
+        }
+    });
 }
 
 /// The UI world entry's stable reset (`0x528244`): the globals and the selection zeroed.

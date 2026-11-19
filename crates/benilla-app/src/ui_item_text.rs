@@ -857,12 +857,10 @@ impl ItemTextLive<'_, '_> {
             return 0;
         }
         t.reset(0);
-        match target {
-            Some(target) if target.0 == Some(held) => {
-                target.0 = None;
-                2
-            }
-            _ => 1,
+        if target.is_some_and(|target| target.clear_in_call(held)) {
+            2
+        } else {
+            1
         }
     }
 }

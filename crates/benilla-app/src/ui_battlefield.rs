@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use benilla_assets::{AssetSet, LockRecover, MapCatalogRes, WorldAssets};
 use benilla_formats::{BattlemasterCatalog, MapCatalog};
 use benilla_protocol::messages::{
-    BattlefieldList, BattlefieldMgrNotice, BattlefieldStatus, GroupJoinedBattleground,
+    BattlefieldMgrNotice, BattlefieldStatus, GroupJoinedBattleground,
 };
 use benilla_ui::script::{
     BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldQueueSlot,
@@ -337,8 +337,6 @@ pub(crate) struct WorldPvp(WorldPvpQueue);
 pub(crate) struct Battlefield {
     /// The battlemaster the VM's session names, for the walk-away close.
     battlemaster: Option<u64>,
-    /// The walk-away closed the session; the VM's half follows on the drain.
-    closed: bool,
     /// Joined (`true`) or left guids awaiting a name (`0x54a530`, `0x54a5c0`).
     players: Vec<(u64, bool)>,
 }
@@ -348,10 +346,10 @@ pub(crate) struct Battlefield {
 pub(crate) struct StatusRequestOwed(bool);
 
 impl Battlefield {
-    pub(crate) fn apply_list(&mut self, list: &BattlefieldList) {
-        if list.battlemaster != 0 && (!list.from_anywhere || list.bg_type == RANDOM_BATTLEGROUND) {
-            self.battlemaster = Some(list.battlemaster);
-        } else if !list.from_anywhere {
+    fn apply(&mut self, battlemaster: u64, from_anywhere: bool, bg_type: u32) {
+        if battlemaster != 0 && (!from_anywhere || bg_type == RANDOM_BATTLEGROUND) {
+            self.battlemaster = Some(battlemaster);
+        } else if !from_anywhere {
             self.battlemaster = None;
         }
     }
@@ -368,9 +366,17 @@ impl NpcSession for Battlefield {
     }
 
     fn close(&mut self) {
-        if self.battlemaster.take().is_some() {
-            self.closed = true;
-        }
+        self.battlemaster = None;
+    }
+}
+
+/// The interaction close's battlemaster leg (`0x51309f` -> `0x5496d0` with none), its target already zeroed: `BATTLEFIELDS_CLOSED` and the battlemaster dropped (`0x5496e1`, `0x5496f5`).
+pub(crate) fn close_by_interaction(world: &mut World) {
+    if let Some(mut state) = world.get_resource_mut::<Battlefield>() {
+        state.battlemaster = None;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.write(UiScript::close_battlemaster);
     }
 }
 
@@ -706,10 +712,6 @@ fn drain_battlefield(
     let Some(mut script) = script else {
         return;
     };
-    // The interaction close's battlemaster arm clears it and signals BATTLEFIELDS_CLOSED (`0x51309f` -> `0x5496e1`).
-    if std::mem::take(&mut state.closed) {
-        script.close_battlemaster();
-    }
     let send = |c| {
         let _ = commands.0.send(c);
     };
@@ -840,11 +842,11 @@ pub(crate) fn leave_world(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.write(UiScript::leave_battlefield_world);
     }
-    // The interaction close zeroes the interact target ahead of its walk (`0x512e89`).
+    crate::ui_stable::leave_world(world);
+    // The interaction close zeroes the interact target ahead of its walk (`0x528dce` -> `0x512e89`).
     let held = world
         .get_resource_mut::<crate::ui_session::InteractTarget>()
-        .and_then(|mut t| t.0.take());
-    crate::ui_stable::leave_world(world);
+        .and_then(|mut t| t.close_interaction());
     // The interaction close's bank leg, after the stable part, on the banker holding the target (`0x512f8a`).
     if held.is_some() && bank_banker(world) == held {
         crate::ui_bank::bank_leg(world);
@@ -1005,11 +1007,25 @@ mod net {
     }
 
     /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`): written into the VM in turn, then its source's event.
-    fn on_list(In(ev): In<SessionEvent>, mut state: ResMut<Battlefield>, mut ui: ResMut<UiEvents>) {
+    fn on_list(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
         let SessionEvent::BattlefieldList(list) = ev else {
             return;
         };
-        state.apply_list(&list);
+        // A battlemaster's list takes the interact target ahead of its event: the random battleground's (`0x54e52e`), else the battlemaster setter's (`0x54970f`).
+        let takes = list.battlemaster != 0
+            && (list.bg_type == benilla_ui::script::RANDOM_BATTLEGROUND || !list.from_anywhere);
+        if takes {
+            let battlemaster = list.battlemaster;
+            ui.world(move |w| crate::ui_session::set_interact_target(w, battlemaster));
+        }
+        // Stored in turn after the set, whose interaction close may take this battlemaster's own window first.
+        let (battlemaster, from_anywhere, bg_type) =
+            (list.battlemaster, list.from_anywhere, list.bg_type);
+        ui.world(move |w| {
+            if let Some(mut state) = w.get_resource_mut::<Battlefield>() {
+                state.apply(battlemaster, from_anywhere, bg_type);
+            }
+        });
         let push = BattlefieldListPush {
             battlemaster: list.battlemaster,
             from_anywhere: list.from_anywhere,
@@ -1146,8 +1162,6 @@ impl Plugin for BattlefieldPlugin {
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(crate::ui_unit::EnterWorldFeed),
-                    crate::ui_session::close_npc_session_out_of_range::<Battlefield>
-                        .before(drain_battlefield),
                     drain_battlefield.in_set(UiDrain),
                 ),
             );

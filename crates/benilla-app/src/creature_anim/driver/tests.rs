@@ -146,6 +146,7 @@ fn app() -> App {
     app.init_resource::<Time>();
     app.init_resource::<NextStep>();
     app.add_systems(bevy::app::First, step_clock);
+    app.add_message::<crate::ui_session::InteractCue>();
     app.add_message::<SwingMessage>()
         .add_message::<crate::creature_anim::SwingImpact>()
         .add_message::<crate::creature_anim::DefenseAnim>()
@@ -3286,7 +3287,7 @@ fn spawn_vendor(app: &mut App) -> (Entity, Vec<AnimationNodeIndex>) {
 fn the_interaction_face_me_shuffles_its_feet_for_the_whole_turn() {
     let mut app = app();
     app.init_resource::<crate::net::GuidIndex>()
-        .init_resource::<crate::ui_session::InteractNpc>();
+        .init_resource::<crate::ui_session::InteractTarget>();
     app.add_systems(
         Update,
         crate::net::drive_display_facing.before(drive_animations),
@@ -3324,9 +3325,14 @@ fn the_interaction_face_me_shuffles_its_feet_for_the_whole_turn() {
     assert_eq!(peak, 0.0, "and no shuffle to be seen");
 
     // Open its window. 256 ms covers the ease (ten pumps, ~160 ms) and the 250 ms blend-in.
+    const VENDOR: u64 = 0xF130_0000_0000_0042;
     app.world_mut()
-        .resource_mut::<crate::ui_session::InteractNpc>()
-        .0 = Some(npc);
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(VENDOR, npc);
+    app.world_mut()
+        .resource_mut::<crate::ui_session::InteractTarget>()
+        .0 = Some(VENDOR);
     let (peak, held) = run(&mut app, 256, 11);
     assert!(held, "the whole turn is ShuffleLeft, got {:?}", gait(&app));
     assert!(
@@ -3357,7 +3363,7 @@ fn the_interaction_face_me_shuffles_its_feet_for_the_whole_turn() {
 
     // Closing it swings the vendor back to its wire facing, shuffling the other way.
     app.world_mut()
-        .resource_mut::<crate::ui_session::InteractNpc>()
+        .resource_mut::<crate::ui_session::InteractTarget>()
         .0 = None;
     let (peak, held) = run(&mut app, 256, 12);
     assert!(held, "the swing back is ShuffleRight, got {:?}", gait(&app));
@@ -4433,7 +4439,6 @@ mod emote_state {
     use crate::creature_anim::Mode;
     use crate::net::ObjectStore;
     use crate::sound::EmoteSounds;
-    use crate::ui_session::InteractNpc;
     use benilla_formats::EmoteSoundCatalog;
 
     /// Emote states: 28 plays AnimID 234 and yields to interaction (`0x2000`); 29 plays 235 and
@@ -4507,7 +4512,9 @@ mod emote_state {
 
     fn app_with_rows() -> App {
         let mut app = app();
-        app.init_resource::<InteractNpc>();
+        app.init_resource::<crate::ui_session::InteractTarget>()
+            .init_resource::<crate::ui_session::InteractRange>()
+            .init_resource::<crate::net::GuidIndex>();
         app.insert_resource(EmoteSounds(
             EmoteSoundCatalog::default()
                 .with_row(YIELDING, 234, 0x2000)
@@ -4539,8 +4546,19 @@ mod emote_state {
     const CREATURE: u64 = 0xF130_0000_0000_0042;
     const PLAYER: u64 = 0x42;
 
+    /// The interact target's set on `npc` under `guid`, or its clear: the re-pick is the setter's and the clear's own call (`0x51fdaf`, `0x518db0`).
     fn interact_guid(app: &mut App, npc: Option<Entity>, guid: u64) {
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc(npc, npc.map(|_| guid));
+        let world = app.world_mut();
+        match npc {
+            Some(npc) => {
+                world
+                    .resource_mut::<crate::net::GuidIndex>()
+                    .0
+                    .insert(guid, npc);
+                crate::ui_session::set_interact_target(world, guid);
+            }
+            None => crate::ui_session::clear_held_interact_target(world),
+        }
         app.update();
     }
 

@@ -16,11 +16,10 @@ use benilla_ui::script::{
 use crate::entities::ItemDisplays;
 use crate::items::Items;
 use crate::names::NameCache;
-use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, Objects, SelfPlayer};
+use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_guild::GuildState;
 use crate::ui_script::live::UiEvents;
 use crate::ui_script::UiDrain;
-use crate::ui_session::npc_out_of_range;
 
 mod net;
 
@@ -258,13 +257,9 @@ impl Plugin for UiGuildBankPlugin {
         net::register(app);
         app.init_non_send_resource::<GuildBankState>().add_systems(
             Update,
-            (
-                // Range-close ahead of the press, as the walk-away watchdog runs before input.
-                close_guild_bank_out_of_range.before(crate::ui_script::UiPress),
-                drain_guild_bank
-                    .in_set(UiDrain)
-                    .after(crate::ui_guild::GuildDrain),
-            ),
+            drain_guild_bank
+                .in_set(UiDrain)
+                .after(crate::ui_guild::GuildDrain),
         );
     }
 }
@@ -293,33 +288,6 @@ pub(crate) fn banker(world: &World) -> Option<u64> {
 pub(crate) fn guild_bank_leg(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         set_guild_banker_none(&mut ui);
-    }
-}
-
-/// The walk-away watchdog for the guild bank: past its leash or with its banker gone, the interact target's clear (`0x51ff0c`) takes the guild bank's leg of the interaction close (`0x512fb4` -> `0x512fd1`), its event fired as it runs.
-fn close_guild_bank_out_of_range(
-    bank: NonSend<GuildBankState>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut commands: Commands,
-) {
-    let Some(banker) = bank.banker else {
-        return;
-    };
-    if npc_out_of_range(banker, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_guild_bank: banker {banker:#x} out of range/gone — closing the interaction");
-        commands.queue(move |world: &mut World| {
-            if world
-                .get_resource::<crate::ui_session::InteractTarget>()
-                .is_some_and(|t| t.0 == Some(banker))
-            {
-                crate::ui_session::clear_interact_target(world, banker);
-            } else if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
-                set_guild_banker_none(&mut ui);
-            }
-            crate::ui_script::live::fire_handler_events(world);
-        });
     }
 }
 

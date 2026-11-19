@@ -339,8 +339,7 @@ impl PetitionLive<'_, '_> {
                 let Some(vendor) = self.vendor.vendor.take() else {
                     return out;
                 };
-                if let Some(t) = cx.interact.filter(|t| t.0 == Some(vendor)) {
-                    t.0 = None;
+                if cx.interact.is_some_and(|t| t.clear_in_call(vendor)) {
                     out.steps.push(PetitionStep::Fire(
                         benilla_ui::script::PETITION_VENDOR_CLOSED_EVENT,
                     ));
@@ -412,8 +411,7 @@ impl PetitionLive<'_, '_> {
             return Vec::new();
         };
         let mut steps = Vec::new();
-        if let Some(t) = interact.filter(|t| t.0 == Some(npc)) {
-            t.0 = None;
+        if interact.is_some_and(|t| t.clear_in_call(npc)) {
             steps.push(PetitionStep::Fire(
                 benilla_ui::script::GUILD_REGISTRAR_CLOSED_EVENT,
             ));

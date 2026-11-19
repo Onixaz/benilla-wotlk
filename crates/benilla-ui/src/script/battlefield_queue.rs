@@ -518,11 +518,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
 
-    // Fires `BATTLEFIELDS_CLOSED` and drops the battlemaster (`0x549b40`).
+    // Fires `BATTLEFIELDS_CLOSED`, clears the interact target on the battlemaster, whose interaction close fires it again while the battlemaster held it (`0x549b60` -> `0x51309f` -> `0x5496e1`), and drops the battlemaster (`0x549b40`).
     g.set(
         "CloseBattlefield",
         lua.create_function(|lua, ()| {
             super::tick::fire_event_into(lua, "BATTLEFIELDS_CLOSED", Vec::new());
+            let held = crate::script::model_mut_of(lua).battlefield.battlemaster;
+            if held != 0 && super::write_live(|l| l.clear_interact_target(held)).unwrap_or(false) {
+                super::tick::fire_event_into(lua, "BATTLEFIELDS_CLOSED", Vec::new());
+            }
             let mut model = crate::script::model_mut_of(lua);
             model.battlefield.battlemaster = 0;
             model.battlefield.closes += 1;

@@ -232,16 +232,7 @@ impl Plugin for UiQuestPlugin {
         app.init_non_send_resource::<QuestGiver>()
             .init_resource::<QuestStatuses>()
             .init_resource::<TrivialQuestTracking>()
-            .add_systems(
-                Update,
-                (
-                    // The range guard before the input pass; the drain after it, so a click goes out the same frame.
-                    close_quest_out_of_range
-                        .before(crate::ui_script::UiPress)
-                        .before(crate::ui_unit::UnitFeed),
-                    read_trivial_tracking.in_set(UiDrain),
-                ),
-            );
+            .add_systems(Update, read_trivial_tracking.in_set(UiDrain));
     }
 }
 
@@ -512,6 +503,23 @@ pub(crate) fn publish_panel(world: &mut World) {
     });
 }
 
+/// The set-current's interact target (`0x58c5bb`-`0x58c6cc`): a giver held as an item, unit or GameObject (`0x58c5c7`, `0x58c5d0`) takes it, unless it is a GameObject already holding it (`0x58c6a9`-`0x58c6c6`).
+pub(crate) fn take_interact_target(world: &mut World, npc: u64) {
+    /// `TYPEMASK_ITEM | TYPEMASK_UNIT | TYPEMASK_GAMEOBJECT`.
+    const GIVER_TYPES: u32 = 0x2a;
+    let held = world
+        .get_resource::<GuidIndex>()
+        .and_then(|i| i.0.get(&npc).copied())
+        .and_then(|e| world.get::<crate::net::ObjectStore>(e))
+        .is_some_and(|s| s.0.type_mask() & GIVER_TYPES != 0);
+    let target = world
+        .get_resource::<crate::ui_session::InteractTarget>()
+        .and_then(|t| t.0);
+    if held && !(benilla_protocol::guid::is_gameobject(npc) && target == Some(npc)) {
+        crate::ui_session::set_interact_target(world, npc);
+    }
+}
+
 /// The questgiver window's close (`0x58ca70`): nothing with no giver (`0x58ca85`); a decline owed to a player in view (`0x58ca91`-`0x58cb1f`); unless `keep_open`, the giver zeroed and `QUEST_FINISHED` fired (`0x58cb6b`, `0x58cb98`). The panel's text stays, as the publisher's globals do.
 pub(crate) fn giver_finished(world: &mut World, keep_open: bool, quest: u32, decline: bool) {
     let Some(giver) = world.get_non_send_resource::<QuestGiver>() else {
@@ -537,6 +545,13 @@ pub(crate) fn giver_finished(world: &mut World, keep_open: bool, quest: u32, dec
         return;
     }
     world.non_send_resource_mut::<QuestGiver>().clear();
+    // With no gossip menu held, the interact target is cleared on the old giver (`0x58cb83`-`0x58cb8a`).
+    let gossip_held = world
+        .get_resource::<crate::ui_gossip::GossipState>()
+        .is_some_and(|g| g.npc.is_some());
+    if !gossip_held {
+        crate::ui_session::clear_interact_target(world, npc);
+    }
     crate::ui_script::live::with_live_world(world, |script| {
         script.fire_event("QUEST_FINISHED", vec![]);
     });
@@ -545,22 +560,6 @@ pub(crate) fn giver_finished(world: &mut World, keep_open: bool, quest: u32, dec
 /// The interaction close's quest leg (`0x512f16`): the walk-away and every other window's close end the quest window with a decline owed (`0x512f1a`).
 pub(crate) fn close_interaction(world: &mut World) {
     giver_finished(world, false, 0, true);
-}
-
-/// The range guard (`0x512e60`'s watchdog) for the quest window: a walk-away or a despawned giver closes it, applied at the sync point before the input pass.
-pub(crate) fn close_quest_out_of_range(
-    giver: NonSend<QuestGiver>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut commands: Commands,
-) {
-    let out = giver.npc().is_some_and(|npc| {
-        crate::ui_session::npc_out_of_range(npc, &index, &self_q, &transforms) == Some(true)
-    });
-    if out {
-        commands.queue(close_interaction);
-    }
 }
 
 /// The close's decline owed to a sharing player (`0x58cadc`-`0x58cb09`): to the inform guid when set, else the source, naming the open quest. The player test is the guid's shape; the reference's also needs the sharer in view, which the range guard ensures.
@@ -742,7 +741,7 @@ pub(crate) fn act(
             });
             giver.acted = true;
             // The send, the giver zeroed, `QUEST_FINISHED` in the call (`0x58cdc5`, `0x58cded`).
-            // With no gossip held, 12340 clears the interact target here (`0x58cdb7`, `0x58cde4` -> `0x518d50`); the giver's clear frees [`crate::ui_session::InteractNpc`], whose clear plays the goodbye and re-picks the base animation.
+            // With no gossip held, the caller clears the interact target on the giver (`0x58cdb7`, `0x58cde4` -> `0x518d50`).
             giver.clear();
             QuestActOutcome {
                 finished: true,
@@ -1261,29 +1260,28 @@ mod tests {
     const SHARER: u64 = 0x0000_0000_0000_002A; // HIGHGUID_PLAYER: a zero high word
     const NPC: u64 = 0xF130_0000_0000_0007; // HIGHGUID_UNIT
 
-    /// `AcceptQuest` clears the interact target unless a gossip menu holds one (`0x58cdb7`, `0x58cde4` -> `0x518d50`): the giver's clear frees [`crate::ui_session::InteractNpc`], which the goodbye and the base re-pick read, and a gossip menu on the NPC keeps it.
+    /// `AcceptQuest` clears the interact target inside its call unless a gossip menu holds one (`0x58cdb7`, `0x58cde4` -> `0x518d50`), and a gossip menu on the NPC keeps it.
     #[test]
     fn accept_clears_the_interact_target_unless_a_gossip_menu_holds_it() {
         use crate::ui_gossip::GossipState;
-        use crate::ui_session::{feed_interact_npc, InteractNpc};
+        use crate::ui_session::InteractTarget;
         for gossip in [None, Some(NPC)] {
             let (mut app, _) = drain_world(NPC, Some(0), 0, "");
-            app.init_resource::<InteractNpc>()
-                .init_resource::<GossipState>()
-                .add_systems(Update, feed_interact_npc);
+            app.insert_resource(InteractTarget::holding(NPC))
+                .init_resource::<GossipState>();
             app.world_mut().resource_mut::<GossipState>().npc = gossip;
-            app.update();
-            assert_eq!(app.world().resource::<InteractNpc>().1, Some(NPC));
+            let mut at_call = None;
             crate::ui_script::live::with_live_world(app.world_mut(), |s| {
-                s.run("AcceptQuest()").unwrap()
+                s.run("AcceptQuest()").unwrap();
+                at_call = crate::ui_script::live::interact_target();
             });
             assert!(!app.world().non_send_resource::<QuestGiver>().is_open());
-            app.update();
             assert_eq!(
-                app.world().resource::<InteractNpc>().1,
+                app.world().resource::<InteractTarget>().0,
                 gossip,
                 "the target clears only with no gossip menu on it"
             );
+            let _ = at_call;
         }
     }
 

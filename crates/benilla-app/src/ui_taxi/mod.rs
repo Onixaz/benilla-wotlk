@@ -226,26 +226,6 @@ pub(crate) fn leave_world(world: &mut World) {
     close_map(world);
 }
 
-/// The range guard's close: a flight master out of the leash or gone closes the map through [`close_map`].
-fn close_out_of_range(
-    taxi: Res<TaxiState>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut queue: Commands,
-) {
-    let Some(unit) = taxi.unit else {
-        return;
-    };
-    if crate::ui_session::npc_out_of_range(unit, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_taxi: flight master {unit:#x} out of range/gone — closing");
-        queue.queue(|world: &mut World| {
-            close_map(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
-    }
-}
-
 /// The taxi map the verbs read and act on at their call.
 #[derive(SystemParam)]
 pub(crate) struct TaxiLive<'w, 's> {
@@ -346,8 +326,7 @@ impl TaxiLive<'_, '_> {
                     return out;
                 };
                 out.closed = 1;
-                if let Some(t) = target.filter(|t| t.0 == Some(unit)) {
-                    t.0 = None;
+                if target.is_some_and(|t| t.clear_in_call(unit)) {
                     out.closed = 2;
                 }
                 self.state.unit = None;
@@ -400,15 +379,8 @@ pub(crate) struct UiTaxiPlugin;
 impl Plugin for UiTaxiPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<TaxiState>().add_systems(
-            Update,
-            (
-                load_taxi_catalogs,
-                close_out_of_range
-                    .after(crate::net::apply_net_updates)
-                    .before(crate::ui_script::UiPress),
-            ),
-        );
+        app.init_resource::<TaxiState>()
+            .add_systems(Update, load_taxi_catalogs);
     }
 }
 

@@ -206,12 +206,11 @@ fn auction_probe(
     time: ProbeClock,
     mut probe: ResMut<AuctionProbe>,
     auction: Res<AuctionOpen>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
     net: Res<NetCommands>,
-    interact: Res<crate::ui_session::InteractNpc>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Ok(store) = self_player.single() else {
@@ -318,7 +317,7 @@ fn auction_probe(
                     "return select('#', GetAuctionItemClasses()), BrowseButton1:IsShown() ~= nil, \
                      BrowseNoResultsText:GetText() == BROWSE_SEARCH_TEXT, GetAuctionSort('list', 1) or ''",
                 );
-                let portrait = interact.0.is_some() && interact.1 == probe.auctioneer;
+                let portrait = live.interact_target().0 == probe.auctioneer;
                 let line = format!(
                     "classes={classes} row1_shown={row} search_prompt={prompt} portrait={portrait} \
                      sort1={sort:?} house={}",

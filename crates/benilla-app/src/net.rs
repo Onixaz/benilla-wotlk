@@ -168,9 +168,6 @@ impl Plugin for NetPlugin {
                 )
                     .chain()
                     .in_set(WorldStage::Net),
-                // `ui_session::feed_interact_npc` seats itself inside this chain, after
-                // `apply_net_updates` and before `drive_display_facing`, so the `"npc"` token is
-                // current when a window's show handler reads it.
             )
             // Not part of the movement chain above: the cascade's time query, after the self create
             // has claimed the mover.

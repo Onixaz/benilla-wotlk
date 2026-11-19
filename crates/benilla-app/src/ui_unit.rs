@@ -713,6 +713,11 @@ impl<'a> VmUnits<'a> {
         self.0.map(UiScript::focus_guid)
     }
 
+    /// The `"npc"` guid the VM was last pushed, read between calls.
+    fn npc(self) -> u64 {
+        self.0.map_or(0, UiScript::npc_guid)
+    }
+
     fn unit_by_name<'t>(self, token: &'t str) -> Option<(u64, Hops<'t>)> {
         self.0?.unit_by_name(token)
     }
@@ -740,8 +745,6 @@ pub(crate) struct UnitTokens<'w, 's> {
     index: Option<Res<'w, crate::net::GuidIndex>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
-    npc_fallback: Option<Res<'w, crate::ui_session::NpcTokenFallback>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
@@ -845,12 +848,10 @@ impl UnitTokens<'_, '_> {
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            // The interact target read through the lent view (`0x60af67`); with none held, a window not on it yet (#1329); outside a lending system, the open window.
+            // The interact target (`0x60af67`), read through the view lent to the call, else straight.
             UnitBase::Npc => match crate::ui_script::live::interact_target() {
-                Some(target) => {
-                    target.or_else(|| self.npc_fallback.as_ref().map(|f| f.0).filter(|&g| g != 0))
-                }
-                None => self.interact.as_ref()?.1,
+                Some(target) => target,
+                None => Some(vm.npc()).filter(|&g| g != 0),
             },
             // The quest window's source (`0x6081b0`), read through the view lent to the call.
             UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
@@ -1617,7 +1618,6 @@ pub(crate) fn push_npc_unit(
 /// the encounter's `"bossN"` and the arena's `"arenaN"` and `"arenapetN"`.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Interactions<'w> {
-    npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     /// The active battlefield's arena test, which drops the selection colour's PvP flag.
@@ -1702,7 +1702,8 @@ fn feed_units(
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     // The drain waits on this pass's world entry, so it runs whatever else moved.
     let entry_owed = hold.as_ref().is_some_and(|h| h.0);
-    let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
+    let (interact_guid, target_changed) = live.interact_target();
+    let interact_changed = target_changed
         || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
         || interact.arena.as_ref().is_some_and(|r| r.is_changed())
@@ -1861,13 +1862,11 @@ fn feed_units(
         script.set_unit("focus", focus.clone());
     }
 
-    // `"npc"`: the interaction NPC, the reference's global that the interact-NPC setter writes,
-    // which `InteractNpc` models. No guild leg, as for `"targettarget"`.
-    let npc = interact
-        .npc
-        .as_deref()
-        .and_then(|i| Some((i.0?, i.1?)))
-        .and_then(|(entity, guid)| Some(held.state(stores.all.get(entity).ok()?, guid)));
+    // `"npc"`: the interact target (`0xbd07a8`). No guild leg, as for `"targettarget"`.
+    let npc = interact_guid.and_then(|guid| {
+        let entity = index.as_deref()?.0.get(&guid).copied()?;
+        Some(held.state(stores.all.get(entity).ok()?, guid))
+    });
     // Closing the window must clear the token, so the memo is written here, not only read. No
     // `fire_transitions`: nothing draws `"npc"` as a unit frame.
     let npc_dirty = match (&npc, memo.last.get("npc")) {
@@ -4392,7 +4391,7 @@ mod tests {
     /// would hold the gate open.
     #[test]
     fn the_npc_token_follows_the_interaction_npc_and_clears_with_it() {
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
         use benilla_protocol::messages::ObjectFields;
 
         const FIELD_UNIT_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
@@ -4410,7 +4409,8 @@ mod tests {
             // `show_messages`' sink is the chat log and the message-sound queue.
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_guild::GuildCache>()
-            .init_resource::<InteractNpc>();
+            .init_resource::<InteractTarget>()
+            .init_resource::<crate::net::GuidIndex>();
         app.add_message::<FieldChanged>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
@@ -4427,6 +4427,9 @@ mod tests {
         };
         let brog = vendor(7);
         let dobbins = vendor(9);
+        let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
+        index.0.insert(BROG, brog);
+        index.0.insert(DOBBINS, dobbins);
         let eval = |app: &mut App, expr: &str| -> i64 {
             app.world_mut()
                 .non_send_resource_mut::<UiScript>()
@@ -4439,7 +4442,7 @@ mod tests {
         app.update();
         assert!(!exists(&mut app), "no window open, yet UnitExists(\"npc\")");
 
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc(Some(brog), Some(BROG));
+        app.world_mut().resource_mut::<InteractTarget>().0 = Some(BROG);
         app.update();
         assert_eq!(
             level(&mut app),
@@ -4448,7 +4451,7 @@ mod tests {
         );
 
         // Dobbins' window opens over it: the interaction NPC is the only thing that moved.
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc(Some(dobbins), Some(DOBBINS));
+        app.world_mut().resource_mut::<InteractTarget>().0 = Some(DOBBINS);
         app.update();
         assert_eq!(
             level(&mut app),
@@ -4456,7 +4459,7 @@ mod tests {
             "a second vendor over an open window swaps the token"
         );
 
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc::default();
+        app.world_mut().resource_mut::<InteractTarget>().0 = None;
         app.update();
         assert!(
             !exists(&mut app),

@@ -72,8 +72,7 @@ const SETTLE_SECS: f64 = 3.0;
 const GUILD_CLEAR_TIMEOUT_SECS: f64 = 20.0;
 const SCAN_TIMEOUT_SECS: f64 = 25.0;
 const MENU_TIMEOUT_SECS: f64 = 20.0;
-/// How long step 4 waits for the portrait's `"npc"` token, reported, not asserted:
-/// `feed_interact_npc` is unordered against the apply pass, so it resolves a frame late.
+/// How long step 4 waits for the portrait's `"npc"` token, reported, not asserted.
 const REGISTRAR_TOKEN_SETTLE_SECS: f64 = 1.0;
 
 const REGISTRAR_TIMEOUT_SECS: f64 = 15.0;
@@ -560,8 +559,7 @@ fn charter_probe(
             let cost = vm_charter_cost(&script);
             if parked && visible && cost == CHARTER_COST_COPPER {
                 // The portrait's `"npc"` token is reported, not asserted, and sampled up to
-                // `REGISTRAR_TOKEN_SETTLE_SECS` late: `feed_interact_npc` is unordered against
-                // the apply pass, so it is empty on the frame the window opens.
+                // `REGISTRAR_TOKEN_SETTLE_SECS` late.
                 let token = script
                     .eval::<String>("return UnitName(\"npc\") or \"\"")
                     .unwrap_or_default();

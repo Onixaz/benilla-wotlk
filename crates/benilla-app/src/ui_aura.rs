@@ -391,8 +391,6 @@ struct AuraUnits<'w> {
     group: Option<Res<'w, crate::ui_party::GroupState>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    // The `"npc"` guid while no interact target is held; the target itself is read at the call.
-    npc: Option<Res<'w, crate::ui_session::NpcTokenFallback>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
 }
@@ -544,6 +542,10 @@ fn feed_auras(
         let pet_of = crate::ui_arena::pet_of(&index, &stores);
         (a.opponents(), a.pets(&pet_of), a.count())
     });
+    // The interact target through the lent view (`0x60af67`).
+    let interact = crate::ui_script::live::interact_target()
+        .flatten()
+        .unwrap_or(0);
     let unit_changed = memo.units.feed(
         &mut script,
         units::Inputs {
@@ -559,12 +561,9 @@ fn feed_auras(
                     h.mouseover(&units.hovered_go.as_deref().copied().unwrap_or_default())
                 })
                 .map_or(0, |(_, guid)| guid),
-            npc: units.npc.as_deref().map_or(0, |f| f.0),
+            npc: interact,
             focus: focus_guid,
-            // The interact target through the lent view (`0x60af67`).
-            interact: crate::ui_script::live::interact_target()
-                .flatten()
-                .unwrap_or(0),
+            interact,
             // The player's transport while seated (`0x60ac87`).
             vehicle: seated
                 .filter(|p| p.state == crate::vehicle::SEATED)

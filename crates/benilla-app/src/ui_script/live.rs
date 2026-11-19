@@ -896,17 +896,19 @@ impl LiveState for LiveView<'_, '_> {
             ..
         } = self;
         let giver = lent.giver.get_mut()?;
-        let npc_flags = giver
-            .npc
+        let held = giver.npc;
+        let npc_flags = held
             .and_then(|npc| index.as_ref()?.0.get(&npc).copied())
             .and_then(|e| stores.get(e).ok())
             .map(|s| s.0.unit_npc_flags());
-        Some(crate::ui_quest::act(
-            giver,
-            action,
-            net.as_deref()?,
-            npc_flags,
-        ))
+        let out = crate::ui_quest::act(giver, action, net.as_deref()?, npc_flags);
+        // A finish with no gossip menu held clears the interact target on the old giver (`0x58cb83`-`0x58cb8a`, `0x58cdb7`-`0x58cde4`).
+        if let (true, Some(npc), None) = (out.finished, held, self.gossip.npc()) {
+            if let Some(t) = self.tabard.target_mut() {
+                t.clear_in_call(npc);
+            }
+        }
+        Some(out)
     }
 
     fn quest_npc(&self) -> Option<u64> {
@@ -1133,6 +1135,14 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     fn close_stables(&mut self) -> bool {
+        // The close clears the interact target on the master (`0x5a0f2c`).
+        let master = self
+            .stable
+            .open()
+            .and_then(crate::ui_session::NpcSession::npc);
+        if let (Some(master), Some(t)) = (master, self.tabard.target_mut()) {
+            t.clear_in_call(master);
+        }
         self.stable.close()
     }
 
@@ -1365,13 +1375,16 @@ impl LiveState for LiveView<'_, '_> {
 
     fn close_bank_interaction(&mut self) -> bool {
         let banker = self.lent.bank.get().and_then(|b| b.banker);
-        match self.tabard.target_mut() {
-            Some(t) if banker.is_some() && t.0 == banker => {
-                t.0 = None;
-                true
-            }
+        match (banker, self.tabard.target_mut()) {
+            (Some(banker), Some(t)) => t.clear_in_call(banker),
             _ => false,
         }
+    }
+
+    fn clear_interact_target(&mut self, guid: u64) -> bool {
+        self.tabard
+            .target_mut()
+            .is_some_and(|t| t.clear_in_call(guid))
     }
 
     fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {
@@ -2032,6 +2045,12 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     pub(crate) fn trainer_open(&self) -> Option<(u64, usize, u32)> {
         self.loan
             .with_view(|v| v.trainer.as_ref().and_then(|t| t.open()))
+    }
+
+    /// The interact target (`0xbd07a8`), read between calls; whether it moved since the system last ran.
+    pub(crate) fn interact_target(&self) -> (Option<u64>, bool) {
+        let view = self.view();
+        (view.tabard.target(), view.tabard.target_changed())
     }
 
     pub(crate) fn merchant_vendor(&self) -> Option<u64> {

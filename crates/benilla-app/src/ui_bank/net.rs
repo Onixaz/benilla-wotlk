@@ -5,8 +5,6 @@ use bevy::prelude::*;
 
 use super::BankOpen;
 use crate::net::{GuidIndex, NetHandlerApp, ObjectStore};
-use crate::ui_gossip::GossipState;
-use crate::ui_quest::QuestGiver;
 
 /// Register the bank handlers and the session-end listener.
 pub(super) fn register(app: &mut App) {
@@ -15,92 +13,10 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::BuyBankSlotResult, on_buy_slot_result)
         .net_handler(K::DestroyedOnDeath, on_destroyed_on_death)
         .net_handler(K::Disconnected, on_session_end);
-    // Ahead of each window's own handler: the setter runs at the start of its open (`0x54970f` before `0x54972c`).
-    app.net_handler_first(K::QuestGreeting, on_interact_target_taken)
-        .net_handler_first(K::QuestDetail, on_interact_target_taken)
-        .net_handler_first(K::QuestProgress, on_interact_target_taken)
-        .net_handler_first(K::QuestOffer, on_interact_target_taken)
-        .net_handler_first(K::AuctionHello, on_interact_target_taken)
-        .net_handler_first(K::ListStabledPets, on_interact_target_taken)
-        .net_handler_first(K::ShowMailbox, on_interact_target_taken)
-        .net_handler_first(K::BattlefieldList, on_interact_target_taken)
-        .net_handler_first(K::TradeStatus, on_interact_target_taken);
 }
 
-/// The object lookup a window's open makes before it takes the interact target: held, with a bit of `mask` in its type.
-fn held_as(index: Option<&GuidIndex>, stores: &Query<&ObjectStore>, guid: u64, mask: u32) -> bool {
-    index
-        .and_then(|i| i.0.get(&guid))
-        .and_then(|&e| stores.get(e).ok())
-        .is_some_and(|s| s.0.type_mask() & mask != 0)
-}
-
-/// A window's open takes the interact target (`0x51fce0`), whose interaction close takes the bank's leg while the banker holds it (`0x51fd1c` -> `0x512fa7`), ahead of that window's own open. The windows whose opens do not call the setter yet (#1329) run that leg here: the quest frame (`0x58c6cc`), the auctioneer (`0x59f008`), the stable (`0x5a11d9`), the mailbox (`0x56dbe2`), the battlemaster (`0x54e52e`) and the trade window (`0x587124`); the gossip, vendor, taxi, trainer, tabard, registrar, charter vendor, item text and guild bank opens call it themselves.
-fn on_interact_target_taken(
-    In(ev): In<SessionEvent>,
-    bank: NonSend<BankOpen>,
-    target: Res<crate::ui_session::InteractTarget>,
-    quest: NonSend<QuestGiver>,
-    index: Option<Res<GuidIndex>>,
-    stores: Query<&ObjectStore>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
-) {
-    use benilla_protocol::messages::TradeStatus;
-    if bank.banker.is_none() || target.0 != bank.banker {
-        return;
-    }
-    let held = |guid, mask| held_as(index.as_deref(), &stores, guid, mask);
-    let opens = match &ev {
-        SessionEvent::AuctionHello { enabled, .. } => *enabled,
-        // The random battleground's list from a battlemaster takes it first (`0x54e509`-`0x54e52e`); a list for the PvP window sets no battlemaster (`0x54e55d`); a zero one closes without the setter (`0x5496d9`).
-        SessionEvent::BattlefieldList(list) => {
-            list.battlemaster != 0
-                && (list.bg_type == benilla_ui::script::RANDOM_BATTLEGROUND || !list.from_anywhere)
-        }
-        SessionEvent::TradeStatus { status } => matches!(status, TradeStatus::OpenWindow { .. }),
-        // A held player's share onto an open window answers busy and opens nothing (`0x6d0753`-`0x6d07d0`).
-        SessionEvent::QuestDetail(d)
-            if benilla_protocol::guid::is_player(d.npc) && held(d.npc, 0x8) && quest.is_open() =>
-        {
-            false
-        }
-        // The quest frame takes it only for a held item, unit or GameObject giver (`0x58c5c7`, `0x58c5d0`).
-        SessionEvent::QuestDetail(d) => held(d.npc, 0x2a),
-        SessionEvent::QuestGreeting(l) => held(l.npc, 0x2a),
-        SessionEvent::QuestProgress(p) => held(p.npc, 0x2a),
-        SessionEvent::QuestOffer(o) => held(o.npc, 0x2a),
-        SessionEvent::ListStabledPets { .. } | SessionEvent::ShowMailbox { .. } => true,
-        _ => false,
-    };
-    if opens {
-        ui.world(super::close_by_interaction);
-    }
-}
-
-fn on_show_bank(
-    In(ev): In<SessionEvent>,
-    gossip: Res<GossipState>,
-    mut quest: NonSendMut<QuestGiver>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
-) {
+fn on_show_bank(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::ShowBank { banker } = ev {
-        // The setter's interaction close takes the window holding the target (`0x57b909` -> `0x51fce0`): the gossip menu with the quest frame on it, else the first other window open.
-        let gossip_held = gossip.npc;
-        let quest_closes = gossip_held.is_some() && quest.is_open();
-        if let Some(npc) = gossip_held {
-            // The gossip's leg of the walk with the target zeroed first fires `GOSSIP_CLOSED` once (`0x512ef6`).
-            ui.world(move |w| crate::ui_gossip::close_by_interaction(w, npc));
-            if quest_closes {
-                quest.clear();
-            }
-        }
-        // The quest window's close fires its event in the handler's turn (`0x58cb98`).
-        if quest_closes {
-            ui.fire("QUEST_FINISHED", vec![]);
-        }
-        if gossip_held.is_none() {
-            ui.world(crate::ui_session::close_target_holder);
-        }
         ui.world(move |world| super::open_bank(world, banker));
     }
 }
