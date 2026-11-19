@@ -24,7 +24,7 @@ use bevy::prelude::*;
 use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, Objects, SelfPlayer};
 
-use super::{cast_target, validator, AutoRepeatActive};
+use super::{cast_target, rank_pick, validator, AutoRepeatActive};
 use crate::ui_action::{reagent_totem_refusal, CastErrors, Spells};
 
 /// What the commit sends: the cast send branches on whether the pending-cast guid (the item's when
@@ -143,6 +143,10 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) summons: Option<Res<'w, super::SummonSlots>>,
     /// The area leg of the player's cast.
     pub(crate) area_gate: crate::area::CastAreaGate<'w>,
+    /// The player's book, which the send's rank pick walks (`0x53d9d0`).
+    pub(crate) actions: crate::ui_script::LentRef<'w, crate::ui_action::PlayerActions>,
+    /// The pet list, whose head alone re-ranks a pet's cast.
+    pub(crate) pet_list: Option<Res<'w, crate::ui_pet::PetList>>,
 }
 
 /// What a targeting-cursor click bound: what the location bind or the target bind fills into the
@@ -220,6 +224,52 @@ impl CastLadder<'_, '_> {
         let summons = self.summons.as_ref().map_or(&none, |s| &s.0);
         for send in crate::ui_companion::dismiss(spell_id, &spells.catalog, summons, store, auras) {
             let _ = self.commands.0.send(send);
+        }
+    }
+
+    /// The send's rank pick (`0x53d9d0`) for a cast at `unit` by the player (`caster` `None`) or by
+    /// the pet `caster`, given the caster's assist check toward the unit.
+    pub(crate) fn rank_for(
+        &self,
+        spell_id: u32,
+        caster: Option<u64>,
+        unit: Option<&benilla_protocol::messages::ObjectFields>,
+        assists: bool,
+    ) -> u32 {
+        let (Some(spells), Some(unit), true) = (self.spells.as_deref(), unit, assists) else {
+            return spell_id;
+        };
+        let summoner = unit
+            .unit_summoned_by()
+            .and_then(|guid| self.objects.object(guid));
+        match caster {
+            None => {
+                let Some(actions) = self.actions.get() else {
+                    return spell_id;
+                };
+                let none = benilla_formats::SummonPropertiesCatalog::default();
+                let book = rank_pick::Book::Player {
+                    spells: &actions.spells,
+                    summons: self.summons.as_ref().map_or(&none, |s| &s.0),
+                };
+                book.pick(spell_id, &spells.catalog, unit, summoner)
+            }
+            // A caster other than the player re-ranks only as the pet list's head.
+            Some(pet) => {
+                let head = self
+                    .pet_list
+                    .as_deref()
+                    .and_then(crate::ui_pet::PetList::head);
+                let (true, Some(bar)) = (head == Some(pet), self.pet_bar.get()) else {
+                    return spell_id;
+                };
+                rank_pick::Book::Pet(&bar.spells.spells).pick(
+                    spell_id,
+                    &spells.catalog,
+                    unit,
+                    summoner,
+                )
+            }
         }
     }
 
@@ -437,6 +487,21 @@ impl CastLadder<'_, '_> {
                 .enter(spell_id, CastCommit::Pet { caster: pet }, word);
             return;
         }
+        // The send's rank pick (`0x53d9d0`); with `owner_casts` the player is the caster.
+        let spell_id = match target {
+            Some(unit) => {
+                let is_self = ctx.self_guid == Some(unit);
+                let store = if is_self {
+                    ctx.rel.self_store
+                } else {
+                    ctx.rel.target_store
+                };
+                let caster = ctx.self_guid.filter(|&guid| guid == pet);
+                let assists = ctx.rel.assistable(is_self);
+                self.rank_for(spell_id, caster, store.map(|s| &s.0), assists)
+            }
+            None => spell_id,
+        };
         let target = target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit);
         self.commit_pet(spell_id, pet, target);
     }
@@ -560,12 +625,21 @@ impl CastLadder<'_, '_> {
                 .object(item)
                 .is_some_and(|f| crate::ui_socket::bound_tradeable(f, me, enchants, played))
         };
+        // A copy: a read of the lent book held across the ladder would trip its owner writes
+        // (the cooldown store's), which refuse beside any live shared read.
+        let known = self.actions.get().map(|a| a.spells.clone());
+        let none = benilla_formats::SummonPropertiesCatalog::default();
+        let book = known.as_ref().map(|spells| rank_pick::Book::Player {
+            spells,
+            summons: self.summons.as_ref().map_or(&none, |s| &s.0),
+        });
         send_spell_cast(
             spell_id,
             ctx,
             commit,
             on_object,
             hold,
+            book,
             (self.spell_enchant.as_deref_mut(), &bound_trade),
             &self.commands,
             &self.self_player,
@@ -624,6 +698,8 @@ fn send_spell_cast(
     bound_object: Option<u64>,
     // Set for a player's spell press, which parks in `held_for_pick` at the attack pick.
     hold: Option<HeldCast>,
+    // The player's book, which the send's rank pick walks.
+    book: Option<rank_pick::Book<'_>>,
     // The weapon imbue's trade-window confirm and its bound test.
     trade_confirm: (
         Option<&mut crate::ui_socket::SpellEnchantConfirm>,
@@ -1101,6 +1177,31 @@ fn send_spell_cast(
             }
         }
     }
+    // The send's rank pick (`0x53d9d0`), first in the send: a cast at a unit the caster may assist
+    // goes out at the rank the unit can take, and everything from here names that rank.
+    let pressed = spell_id;
+    let spell_id = match (commit, target, explicit_object, item_target, book, spells) {
+        (CastCommit::Spell, Some(unit), None, None, Some(book), Some(spells)) => {
+            let is_self = ctx.self_guid == Some(unit);
+            let store = if is_self {
+                ctx.rel.self_store
+            } else {
+                ctx.rel.target_store
+            };
+            match store.filter(|_| ctx.rel.assistable(is_self)) {
+                Some(store) => {
+                    let summoner = store.0.unit_summoned_by().and_then(|g| objects.object(g));
+                    book.pick(spell_id, &spells.catalog, &store.0, summoner)
+                }
+                None => spell_id,
+            }
+        }
+        _ => spell_id,
+    };
+    if spell_id != pressed {
+        debug!("ui_action: cast {pressed} goes out as {spell_id}, the rank its target takes");
+    }
+    let def = spells.and_then(|s| s.catalog.get(spell_id));
     if matches!(commit, CastCommit::Spell) {
         crate::ui_cast::queue_sent(ecs, spell_id, target);
     }
@@ -2670,5 +2771,140 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// Renew's ranks 2 and 3 (`Spell.dbc`): spell levels 14 and 20, aura 8, implicit target 21.
+    const RENEW_2: u32 = 6074;
+    const RENEW_3: u32 = 6075;
+    const ALLY: u64 = 0x11;
+
+    /// A press of Renew rank 3 by a level-20 priest at `ally_level`, the ally a player of our own
+    /// faction: what went out, and what the in-flight guard holds for the go to clear.
+    fn renew_at(ally_level: u32, at_self: bool) -> (Option<ClientCommand>, Option<u32>) {
+        use benilla_formats::{FactionCatalog, FactionTemplate, SpellCatalog, SpellDisplay};
+        use benilla_protocol::field::{
+            FIELD_OBJECT_TYPE, FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_FLAGS, FIELD_UNIT_HEALTH,
+            FIELD_UNIT_LEVEL,
+        };
+        use std::collections::HashMap;
+        let (mut world, rx) = world();
+        let renew = |id, spell_level| SpellDisplay {
+            id,
+            name: "Renew".into(),
+            spell_level,
+            implicit_target_a1: 21,
+            effect_apply_aura: [8, 0, 0],
+            ..Default::default()
+        };
+        world.insert_resource(Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([
+                (RENEW_2, renew(RENEW_2, 14)),
+                (RENEW_3, renew(RENEW_3, 20)),
+            ])),
+            ..Spells::empty_for_tests()
+        });
+        world.insert_resource(crate::ui_action::PlayerActions {
+            spells: [RENEW_2, RENEW_3].into(),
+            ..Default::default()
+        });
+        world.spawn(SelfPlayer);
+        // A live, player-controlled player of faction template 1, which assists its own kind.
+        let player = |level: u32| {
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_TYPE, 0x19),
+                (FIELD_UNIT_FACTIONTEMPLATE, 1),
+                (FIELD_UNIT_FLAGS, 0x8),
+                (FIELD_UNIT_HEALTH, 100),
+                (FIELD_UNIT_LEVEL, level),
+            ]))
+        };
+        let (me, ally) = (player(20), player(ally_level));
+        let factions = crate::target::Factions::from_catalog(FactionCatalog::from_rows(
+            HashMap::from([(
+                1,
+                FactionTemplate {
+                    faction: 1,
+                    group_mask: 3,
+                    friend_group_mask: 2,
+                    enemy_group_mask: 12,
+                    enemies: [0; 4],
+                    friends: [0; 4],
+                },
+            )]),
+            HashMap::new(),
+        ));
+        world
+            .run_system_once(move |mut ladder: CastLadder| {
+                let base = ctx();
+                let ctx = cast_target::CastContext {
+                    selection_guid: Some(if at_self { 0x7 } else { ALLY }),
+                    rel: cast_target::TargetRelations {
+                        target_store: Some(if at_self { &me } else { &ally }),
+                        self_store: Some(&me),
+                        factions: Some(&factions),
+                        ..base.rel
+                    },
+                    ..base
+                };
+                ladder.send(RENEW_3, &ctx, CastCommit::Spell);
+            })
+            .expect("the ladder runs as a one-shot system");
+        let sent = rx
+            .try_iter()
+            .find(|c| matches!(c, ClientCommand::CastSpell { .. }));
+        let armed = world
+            .resource::<crate::spell::PendingCast>()
+            .committed(Instant::now());
+        (sent, armed)
+    }
+
+    /// The reported bug: Renew on an ally more than ten levels below it went out at the pressed
+    /// rank while the server cast the rank the ally takes, so the go never matched the guard and
+    /// every press for five seconds read "Another action is in progress". The send's rank pick
+    /// (`0x53d9d0`) now sends and guards the rank the ally takes; within ten levels, and on
+    /// ourselves, the pressed rank stands.
+    #[test]
+    fn a_buff_on_a_low_ally_sends_and_guards_the_rank_it_takes() {
+        let (sent, armed) = renew_at(9, false);
+        assert!(
+            matches!(
+                sent,
+                Some(ClientCommand::CastSpell {
+                    spell_id: RENEW_2,
+                    target: Some(ALLY)
+                })
+            ),
+            "rank 2 goes out at the ally: {sent:?}"
+        );
+        assert_eq!(
+            armed,
+            Some(RENEW_2),
+            "the guard names the rank the go will name"
+        );
+
+        let (sent, armed) = renew_at(10, false);
+        assert!(
+            matches!(
+                sent,
+                Some(ClientCommand::CastSpell {
+                    spell_id: RENEW_3,
+                    ..
+                })
+            ),
+            "within ten levels: {sent:?}"
+        );
+        assert_eq!(armed, Some(RENEW_3));
+
+        let (sent, _) = renew_at(9, true);
+        assert!(
+            matches!(
+                sent,
+                Some(ClientCommand::CastSpell {
+                    spell_id: RENEW_3,
+                    ..
+                })
+            ),
+            "ourselves at our own level: {sent:?}"
+        );
     }
 }

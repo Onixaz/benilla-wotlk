@@ -26,6 +26,7 @@ pub(crate) mod multicast;
 pub(crate) mod net;
 mod range_check;
 mod range_units;
+mod rank_pick;
 pub(crate) mod targeting;
 pub(crate) mod text_caster;
 pub(crate) mod usable;
