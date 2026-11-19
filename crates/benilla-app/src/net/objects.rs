@@ -497,6 +497,10 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             }
             sc.ui
                 .world(move |world| crate::ui_guild_bank::item_landed(world, entry));
+            // The spell-failure display's callback (`0x808200`): a refusal that named this item
+            // shows now, "UNKNOWN" for an unknown one.
+            sc.ui
+                .world(move |world| crate::ui_action::template_landed(world, entry));
             // The bar's record callback (`0x5aadb0`): a found record runs the item update.
             if landed {
                 sc.ui

@@ -1,4 +1,5 @@
-//! [`super::feed::feed_actions`]'s error drains as a registered system through a real Lua VM.
+//! The error lines through a real Lua VM: [`super::feed::feed_actions`]'s drains, a cast
+//! refusal's display ([`super::show_refusal`]) and a handler's line in its turn.
 
 use std::collections::HashMap;
 
@@ -8,7 +9,7 @@ use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use super::feed::feed_actions;
-use super::{CastErrors, MountErrors, PetTameFailures, PlayerActions, UiErrorKeys, UiErrorTexts};
+use super::{CastFail, PlayerActions, UiErrorKeys, UiErrorTexts};
 use crate::entities::ItemDisplays;
 use crate::items::{test_template, Items};
 use crate::net::{ClientCommand, NetCommands};
@@ -50,12 +51,8 @@ fn app_with_food_on_the_bar() -> (App, crossbeam_channel::Receiver<ClientCommand
         .init_resource::<PlayerActions>()
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<CastErrors>()
-        .init_resource::<MountErrors>()
-        .init_resource::<PetTameFailures>()
         .init_resource::<UiErrorKeys>()
         .init_resource::<UiErrorTexts>()
-        // The cast-failure combat-log line rides the same drain.
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .insert_resource(ItemDisplays::icons_for_tests(
@@ -181,27 +178,23 @@ fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
 /// spell, so only the caster differs.
 #[test]
 fn a_pets_refused_cast_writes_no_combat_log_line() {
-    use crate::ui_action::{CastFail, Caster, Spells};
+    use crate::ui_action::{Caster, Spells};
     use benilla_formats::{SpellCatalog, SpellDisplay};
 
     const GROWL: u32 = 2649;
 
     let (tx, _rx) = crossbeam_channel::unbounded();
     let mut app = App::new();
-    let mut errors = CastErrors::default();
     // 0x5f ROOTED has a string on both tables, so neither entry drops for want of one.
-    errors.0.push(CastFail {
-        spell_id: GROWL,
-        reason: 0x5F,
-        arg: None,
-        arg2: None,
-        caster: Caster::Player,
-        redisplay: false,
-    });
-    errors.push_pet(GROWL, 0x5F, None);
+    let errors = [
+        CastFail::local(GROWL, 0x5F),
+        CastFail {
+            caster: Caster::Pet,
+            ..CastFail::local(GROWL, 0x5F)
+        },
+    ];
 
     app.insert_resource(PlayerActions::default())
-        .insert_resource(errors)
         .insert_resource(Spells {
             catalog: SpellCatalog::from_displays(HashMap::from([(
                 GROWL,
@@ -214,8 +207,6 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         })
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<MountErrors>()
-        .init_resource::<PetTameFailures>()
         .init_resource::<UiErrorKeys>()
         .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
@@ -226,8 +217,7 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
     // Only what the log entry needs; the red line's text has its own tests.
     script.run(r#"SPELL_FAILED_ROOTED = "A reason";"#).unwrap();
     app.insert_non_send_resource(script);
-    app.add_systems(Update, feed_actions);
-    app.update();
+    show_all(&mut app, errors);
 
     let logged: Vec<(u32, String)> = app
         .world_mut()
@@ -247,26 +237,24 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
 #[test]
 fn a_custom_refusal_shows_its_row_and_is_not_logged() {
     use crate::ui_action::cast_fail::CUSTOM_ERROR;
-    use crate::ui_action::{CastFail, Spells};
+    use crate::ui_action::Spells;
 
     const FIRE_NOVA: u32 = 61657;
 
     let (tx, _rx) = crossbeam_channel::unbounded();
     let mut app = App::new();
-    let mut errors = CastErrors::default();
-    errors.0.push(CastFail {
-        arg: Some(83),
-        ..CastFail::local(FIRE_NOVA, CUSTOM_ERROR)
-    });
-    errors.push_local(FIRE_NOVA, 0x5F);
+    let errors = [
+        CastFail {
+            arg: Some(83),
+            ..CastFail::local(FIRE_NOVA, CUSTOM_ERROR)
+        },
+        CastFail::local(FIRE_NOVA, 0x5F),
+    ];
 
     app.insert_resource(PlayerActions::default())
-        .insert_resource(errors)
         .insert_resource(Spells::empty_for_tests())
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<MountErrors>()
-        .init_resource::<PetTameFailures>()
         .init_resource::<UiErrorKeys>()
         .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
@@ -287,8 +275,7 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
         )
         .unwrap();
     app.insert_non_send_resource(script);
-    app.add_systems(Update, feed_actions);
-    app.update();
+    show_all(&mut app, errors);
 
     let shown = app
         .world()
@@ -309,7 +296,7 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
 /// `MIN_SKILL` (wire 150) the skill line and the value; the pet's table fills neither.
 #[test]
 fn need_more_items_and_min_skill_fill_both_argument_words() {
-    use crate::ui_action::{CastFail, Caster, Spells};
+    use crate::ui_action::{Caster, Spells};
     use benilla_formats::{SkillLineCatalog, SkillLineInfo};
 
     const PROSPECTING: u32 = 31252;
@@ -318,7 +305,6 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
 
     let (tx, _rx) = crossbeam_channel::unbounded();
     let mut app = App::new();
-    let mut errors = CastErrors::default();
     let fail = |reason, arg, arg2, caster| CastFail {
         spell_id: PROSPECTING,
         reason,
@@ -327,9 +313,11 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
         caster,
         redisplay: false,
     };
-    errors.0.push(fail(0x97, COPPER_ORE, 5, Caster::Player));
-    errors.0.push(fail(0x90, JEWELCRAFTING, 50, Caster::Player));
-    errors.0.push(fail(0x90, JEWELCRAFTING, 50, Caster::Pet));
+    let errors = [
+        fail(0x97, COPPER_ORE, 5, Caster::Player),
+        fail(0x90, JEWELCRAFTING, 50, Caster::Player),
+        fail(0x90, JEWELCRAFTING, 50, Caster::Pet),
+    ];
     let mut items = Items::default();
     items.insert_template(COPPER_ORE, Some(test_template("Copper Ore")));
     let lines = SkillLineCatalog::from_lines([(
@@ -346,15 +334,12 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
     )]);
 
     app.insert_resource(PlayerActions::default())
-        .insert_resource(errors)
         .insert_resource(Spells::empty_for_tests())
         .insert_resource(items)
         .insert_resource(crate::ui_spellbook::SkillLines {
             catalog: std::sync::Arc::new(lines),
         })
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<MountErrors>()
-        .init_resource::<PetTameFailures>()
         .init_resource::<UiErrorKeys>()
         .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
@@ -369,8 +354,7 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
         )
         .unwrap();
     app.insert_non_send_resource(script);
-    app.add_systems(Update, feed_actions);
-    app.update();
+    show_all(&mut app, errors);
 
     let logged: Vec<String> = app
         .world_mut()
@@ -388,8 +372,74 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
     );
 }
 
+/// A reagent refusal naming an item not yet cached shows nothing at first, then shows when the
+/// answer lands, through the cache callback (`0x808200`'s redisplay), and writes no log line.
+#[test]
+fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
+    use crate::ui_action::Spells;
+    use benilla_formats::{SpellCatalog, SpellDisplay};
+
+    const SMELT_COPPER: u32 = 2657;
+    const COPPER_ORE: u32 = 2770;
+
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut reagents = [(0, 0); 8];
+    reagents[0] = (COPPER_ORE, 1);
+    app.insert_resource(Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SMELT_COPPER,
+            SpellDisplay {
+                name: "Smelt Copper".into(),
+                reagents,
+                ..Default::default()
+            },
+        )])),
+        ..Spells::empty_for_tests()
+    })
+    .init_resource::<Items>()
+    .init_resource::<crate::net::GuidIndex>()
+    .init_resource::<super::CastFailsWaiting>()
+    .init_resource::<crate::ui_chat::ChatLog>()
+    .init_resource::<crate::sound::MessageSounds>()
+    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .insert_resource(NetCommands(tx));
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"SPELL_FAILED_REAGENTS = "Missing reagent: %s"
+               BENILLA_TEST_LINES = {}
+               local f = CreateFrame("Frame")
+               f:RegisterEvent("UI_ERROR_MESSAGE")
+               f:SetScript("OnEvent", function(_, _, t) table.insert(BENILLA_TEST_LINES, t) end)"#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    let shown = |app: &App| {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(BENILLA_TEST_LINES, '|')")
+            .unwrap()
+    };
+
+    show_all(&mut app, [CastFail::local(SMELT_COPPER, 0x5c)]);
+    assert_eq!(shown(&app), "", "the first pass waits on the record");
+    app.world_mut()
+        .resource_mut::<Items>()
+        .insert_template(COPPER_ORE, Some(test_template("Copper Ore")));
+    super::template_landed(app.world_mut(), COPPER_ORE);
+    assert_eq!(shown(&app), "Missing reagent: Copper Ore");
+    let logged = app
+        .world_mut()
+        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
+        .drain()
+        .count();
+    assert_eq!(logged, 0, "a redisplay is not logged");
+}
+
 /// The reference resolves `PETTAME_<reason>` first and passes the string to the error display as
-/// error id `0xee`, so `ERR_TAME_FAILED` ("%s.") prints the sentence, not the key.
+/// error id `0xee`, so `ERR_TAME_FAILED` ("%s.") prints the sentence, not the key; the line shows
+/// in the handler's turn.
 #[test]
 fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
     let (mut app, _rx) = app_with_food_on_the_bar();
@@ -421,14 +471,8 @@ fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
 
     // 9 is `PETTAME_TOOHIGHLEVEL`; 13, past the reference's switch (`0x800390`), takes the
     // default arm.
-    app.world_mut().resource_mut::<PetTameFailures>().0.push(9);
-    app.world_mut().resource_mut::<PetTameFailures>().0.push(13);
-    app.update();
-
-    assert!(
-        app.world().resource::<PetTameFailures>().0.is_empty(),
-        "the feed drains the queue"
-    );
+    show_tame(&mut app, 9);
+    show_tame(&mut app, 13);
     assert_eq!(
         line(&mut app, 1).as_deref(),
         Some("Creature is too high level for you to tame."),
@@ -440,12 +484,31 @@ fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
         "out of range takes the default arm rather than showing nothing"
     );
 
-    // A reason whose `PETTAME_` string is not loaded shows nothing, not a bare ".".
-    app.world_mut().resource_mut::<PetTameFailures>().0.push(1);
-    app.update();
+    // A reason whose `PETTAME_` string is not loaded fills the key, as the VM's string lookup
+    // returns it (`0x819d40`).
+    show_tame(&mut app, 1);
     assert_eq!(
-        line(&mut app, 3),
-        None,
-        "an unresolvable reason shows nothing"
+        line(&mut app, 3).as_deref(),
+        Some("PETTAME_INVALIDCREATURE."),
+        "an unloaded reason string shows its key"
     );
+}
+
+/// Show each refusal as a press or a handler does, in order.
+fn show_all(app: &mut App, fails: impl IntoIterator<Item = CastFail>) {
+    for fail in fails {
+        super::show_refusal(app.world_mut(), fail);
+    }
+}
+
+/// `SMSG_PET_TAME_FAILURE`'s line in a handler's turn.
+fn show_tame(app: &mut App, reason: u8) {
+    let world = app.world_mut();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
+    crate::ui_action::show_in_turn(
+        &mut world.resource_mut::<crate::ui_script::live::UiEvents>(),
+        "test",
+        crate::ui_pet::tame_failure_line(reason),
+    );
+    crate::ui_script::live::fire_handler_events(world);
 }

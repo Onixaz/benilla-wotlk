@@ -188,11 +188,12 @@ fn interaction_already_open_on(target: u64, interact: &crate::ui_session::Intera
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Feedback<'w> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
-    cast_errors: ResMut<'w, crate::ui_action::CastErrors>,
+    /// A cast refusal's line, shown in the click's turn (`0x808200`).
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     mail: ResMut<'w, crate::ui_mail::MailOpen>,
     item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
-    // `CastErrors` borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
+    // press borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
     openers: ResMut<'w, crate::ui_action::GoOpenerCasts>,
     // The stone's refusals need the roster, so they run in `super::stone`.
     stone_uses: MessageWriter<'w, crate::target::stone::MeetingStoneUse>,
@@ -877,7 +878,10 @@ impl Dispatch<'_, '_> {
         let own = self.self_store();
         if needs_foot && own.is_some_and(|s| self.mounted_gate().refuses(s)) {
             debug!("right-click skin: refused locally — mounted (0x39)");
-            self.feedback.cast_errors.push_local(spell_id, 0x39);
+            crate::ui_action::CastRefusals::push_local(&mut *self.feedback.ui, spell_id, 0x39);
+            self.service
+                .talk
+                .queue(crate::ui_script::live::fire_handler_events);
         } else {
             if let Some(own) = own.filter(|_| needs_foot) {
                 crate::creature_anim::dismount_first(own, &self.seam.net);
@@ -2556,7 +2560,7 @@ mod tests {
         world.init_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();
         world.init_resource::<crate::ui_session::InteractNpc>();
         world.init_resource::<crate::ui_action::UiErrorKeys>();
-        world.init_resource::<crate::ui_action::CastErrors>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<crate::ui_loot::LootState>();
         world.init_resource::<crate::ui_loot::LootLatch>();
         world.init_resource::<crate::ui_mail::MailOpen>();

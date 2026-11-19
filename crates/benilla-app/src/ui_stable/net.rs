@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use super::{StableOpen, SPELL_AURA_OPEN_STABLE};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfPlayer};
-use crate::ui_action::{PetTameFailures, Spells, UiError, UiErrorKeys};
+use crate::ui_action::{Spells, UiError, UiErrorKeys};
 use crate::ui_script::live::UiEvents;
 use crate::ui_session::NpcSession;
 use crate::unit_auras::UnitAuras;
@@ -96,7 +96,6 @@ fn on_result(
     In(ev): In<SessionEvent>,
     stable_open: ResMut<StableOpen>,
     mut errors: ResMut<UiErrorKeys>,
-    mut tame_failures: ResMut<PetTameFailures>,
     commands: Res<NetCommands>,
     self_auras: Query<&UnitAuras, With<SelfPlayer>>,
     spells: Option<Res<Spells>>,
@@ -117,6 +116,7 @@ fn on_result(
                     })
                 })
         };
+        let mut tame_failures = Vec::new();
         let update = stable_result(
             result,
             stable_open,
@@ -125,7 +125,18 @@ fn on_result(
             &commands,
             open_stable_aura,
         );
-        if let (true, Some(mut ui)) = (update, ui) {
+        let Some(mut ui) = ui else {
+            return;
+        };
+        // The exotic refusal's line shows in the handler's turn, as the tame failure's does.
+        for reason in tame_failures {
+            crate::ui_action::show_in_turn(
+                &mut ui,
+                "ui_stable",
+                crate::ui_pet::tame_failure_line(reason),
+            );
+        }
+        if update {
             ui.fire("PET_STABLE_UPDATE", vec![]);
         }
     }
@@ -161,7 +172,7 @@ fn stable_result(
     result: u8,
     mut stable_open: impl std::ops::DerefMut<Target = StableOpen>,
     errors: &mut UiErrorKeys,
-    tame_failures: &mut PetTameFailures,
+    tame_failures: &mut Vec<u8>,
     net_commands: &NetCommands,
     open_stable_aura: impl FnOnce() -> bool,
 ) -> bool {
@@ -188,7 +199,7 @@ fn stable_result(
             let _ = net_commands.0.send(ClientCommand::ListStabledPets { npc });
         }
         code::UPDATE => return true,
-        code::ERR_EXOTIC => tame_failures.0.push(result),
+        code::ERR_EXOTIC => tame_failures.push(result),
         _ => debug!("net: stable result {result} — no client-visible effect"),
     }
     false
@@ -203,11 +214,11 @@ mod tests {
         result: u8,
         open: &mut StableOpen,
         aura: bool,
-    ) -> (bool, UiErrorKeys, PetTameFailures, Vec<ClientCommand>) {
+    ) -> (bool, UiErrorKeys, Vec<u8>, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
         let mut errors = UiErrorKeys::default();
-        let mut tame = PetTameFailures::default();
+        let mut tame = Vec::new();
         let update = stable_result(result, open, &mut errors, &mut tame, &commands, || aura);
         (update, errors, tame, rx.try_iter().collect())
     }
@@ -235,10 +246,10 @@ mod tests {
     fn eleven_owes_the_update_and_twelve_is_the_exotic_tame_failure() {
         let mut open = StableOpen::default();
         let (update, _, tame, sent) = run(code::UPDATE, &mut open, false);
-        assert!(update && tame.0.is_empty() && sent.is_empty());
+        assert!(update && tame.is_empty() && sent.is_empty());
         let (update, errors, tame, _) = run(code::ERR_EXOTIC, &mut open, false);
         assert!(!update);
-        assert_eq!(tame.0, vec![12]);
+        assert_eq!(tame, vec![12]);
         assert!(errors.0.is_empty());
         let (_, errors, _, _) = run(code::ERR_MONEY, &mut open, false);
         assert_eq!(errors.0[0].key, "ERR_NOT_ENOUGH_MONEY");

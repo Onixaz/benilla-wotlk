@@ -2735,6 +2735,20 @@ impl UiEvents {
         self.0.push(UiEvent::CastEdge(edge));
     }
 
+    /// The cast refusals queued, taken.
+    #[cfg(test)]
+    pub(crate) fn take_refusals(&mut self) -> Vec<crate::ui_action::CastFail> {
+        let mut out = Vec::new();
+        self.0.retain(|e| match e {
+            UiEvent::CastEdge(crate::ui_cast::CastBarEdge::Refused(f)) => {
+                out.push(*f);
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+
     /// The cast edges queued, in order.
     #[cfg(test)]
     pub(crate) fn cast_edges(&self) -> Vec<crate::ui_cast::CastBarEdge> {

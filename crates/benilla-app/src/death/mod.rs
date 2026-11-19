@@ -5,6 +5,8 @@
 
 use bevy::prelude::*;
 
+use crate::ui_action::CastRefusals;
+
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_ui::script::{DeathAction, ScriptValue, UiScript};
 
@@ -950,7 +952,7 @@ fn drain_death(
                         match refusal {
                             // The check's custom line; nothing goes out.
                             Some(id) => {
-                                ladder.cast_errors.push_local_arg(
+                                ladder.press.push_local_arg(
                                     spell,
                                     crate::ui_action::cast_fail::CUSTOM_ERROR,
                                     id as u32,

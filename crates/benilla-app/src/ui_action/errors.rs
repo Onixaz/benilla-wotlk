@@ -1,5 +1,6 @@
-//! The UI error line's queues and resolvers, which `super::feed_actions` drains into
-//! [`show_messages`]; cast failures resolve in [`super::cast_fail`].
+//! The UI error line's resolvers and display ([`show_messages`], [`show_in_turn`]), and the app's
+//! generic queues `super::feed_actions` still drains a frame late (#1354). Cast failures resolve in
+//! [`super::cast_fail`] and show through `super::cast_refusal`.
 
 use benilla_ui::messages::MessageRecord;
 use benilla_ui::script::{ScriptValue, UiScript};
@@ -11,11 +12,7 @@ use crate::spell::validator::MountedGate;
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
 use crate::ui_items::{count_of, InventoryScope};
 
-/// Cast failures for the UI error line; the spell id lets the display key on the spell's record.
-#[derive(Resource, Default)]
-pub(crate) struct CastErrors(pub Vec<CastFail>);
-
-/// One queued cast failure. `arg` fills the message's `%s`; the reference raises its local refusals
+/// One cast failure. `arg` fills the message's `%s`; the reference raises its local refusals
 /// with none, except the crowd-control `0x8d`, which names the blocking aura's `SpellMechanic.dbc`
 /// id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,50 +64,6 @@ impl CastFail {
         }
     }
 }
-
-impl CastErrors {
-    /// Queue a [`CastFail::local`] refusal.
-    pub(crate) fn push_local(&mut self, spell_id: u32, reason: u8) {
-        self.0.push(CastFail::local(spell_id, reason));
-    }
-
-    /// Queue a client-local refusal with an argument word: the crowd-control `0x8d`, the missing
-    /// tool category `0x9c`.
-    pub(crate) fn push_local_arg(&mut self, spell_id: u32, reason: u8, arg: u32) {
-        self.0.push(CastFail {
-            spell_id,
-            reason,
-            arg: Some(arg),
-            arg2: None,
-            caster: Caster::Player,
-            redisplay: false,
-        });
-    }
-
-    /// Queue the pet's `SMSG_PET_CAST_FAILED` refusal; its handler (`0x806c30`) passes the
-    /// argument words to the message as the player's does.
-    pub(crate) fn push_pet(&mut self, spell_id: u32, reason: u8, arg: Option<u32>) {
-        self.0.push(CastFail {
-            spell_id,
-            reason,
-            arg,
-            arg2: None,
-            caster: Caster::Pet,
-            redisplay: false,
-        });
-    }
-}
-
-/// (Dis)mount refusals from `SMSG_MOUNTRESULT`/`SMSG_DISMOUNTRESULT` as `(mount, code)`, resolved
-/// by [`mount_result_key`].
-#[derive(Resource, Default)]
-pub(crate) struct MountErrors(pub Vec<(bool, u32)>);
-
-/// Taming refusals as the raw `SMSG_PET_TAME_FAILURE` reason. The reference resolves the reason's
-/// `PETTAME_*` string through the VM and passes it as `ERR_TAME_FAILED`'s `%s` (error id `0xee`),
-/// so both lookups wait for the VM at the drain.
-#[derive(Resource, Default)]
-pub(crate) struct PetTameFailures(pub Vec<u8>);
 
 /// Where a message shows: the `kind` field (`+0x04`) of the reference's message record, read from
 /// the catalog ([`benilla_ui::messages`]).
@@ -314,23 +267,41 @@ pub(crate) fn show_messages(
     who: &str,
     lines: impl IntoIterator<Item = Shown>,
 ) {
-    for Shown { record, kind, text } in lines {
-        debug!("{who}: message ({kind:?}) {text:?}");
-        // The reference sounds a message beside its text, so the sound shares the display's guards.
-        if let Some(record) = record {
-            sink.sounds.push(record);
+    for line in lines {
+        show_one(
+            script,
+            Some(&mut sink.chat),
+            Some(&mut sink.sounds),
+            who,
+            line,
+        );
+    }
+}
+
+/// [`show_messages`] for one line, either sink possibly absent.
+pub(super) fn show_one(
+    script: &mut UiScript,
+    chat: Option<&mut ChatLog>,
+    sounds: Option<&mut MessageSounds>,
+    who: &str,
+    Shown { record, kind, text }: Shown,
+) {
+    debug!("{who}: message ({kind:?}) {text:?}");
+    // The reference sounds a message beside its text, so the sound shares the display's guards.
+    if let (Some(record), Some(sounds)) = (record, sounds) {
+        sounds.push(record);
+    }
+    match kind {
+        MsgKind::Chat => {
+            if let Some(chat) = chat {
+                chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+            }
         }
-        match kind {
-            MsgKind::Chat => {
-                sink.chat
-                    .push_event(ChatEvent::text_only(ChatEventKind::System, text));
-            }
-            MsgKind::Info => {
-                script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
-            }
-            MsgKind::Error => {
-                script.fire_event("UI_ERROR_MESSAGE", vec![ScriptValue::Str(text)]);
-            }
+        MsgKind::Info => {
+            script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
+        MsgKind::Error => {
+            script.fire_event("UI_ERROR_MESSAGE", vec![ScriptValue::Str(text)]);
         }
     }
 }
@@ -451,7 +422,7 @@ pub(crate) fn reagent_totem_refusal(
     self_store: Option<&ObjectStore>,
     objects: &crate::net::Objects,
     tools: Option<ToolCheck>,
-    errors: &mut CastErrors,
+    errors: &mut impl super::CastRefusals,
 ) -> bool {
     let (Some(d), Some(store)) = (def, self_store) else {
         return false;
@@ -940,7 +911,7 @@ mod totem_reagent_tests {
             reagents,
             ..Default::default()
         };
-        let mut errors = CastErrors::default();
+        let mut errors: Vec<CastFail> = Vec::new();
         assert!(reagent_totem_refusal(
             2575,
             Some(&mining),
@@ -950,11 +921,11 @@ mod totem_reagent_tests {
             &mut errors
         ));
         assert_eq!(
-            (errors.0[0].reason, errors.0[0].arg),
+            (errors[0].reason, errors[0].arg),
             (0x9c, Some(165)),
             "the tool leg runs before the reagents"
         );
-        let mut errors = CastErrors::default();
+        let mut errors: Vec<CastFail> = Vec::new();
         assert!(reagent_totem_refusal(
             2575,
             Some(&mining),
@@ -963,7 +934,7 @@ mod totem_reagent_tests {
             None,
             &mut errors
         ));
-        assert_eq!(errors.0.as_slice(), &[CastFail::local(2575, 0x5c)]);
+        assert_eq!(errors.as_slice(), &[CastFail::local(2575, 0x5c)]);
     }
 
     /// Against empty bags: a totem spell refuses `0x78`, a reagent spell `0x5c`, totems first; a
@@ -973,7 +944,7 @@ mod totem_reagent_tests {
         let mut objs = objects();
         let st = store();
         let mining = spell([2901, 0], [(0, 0); 8]);
-        let mut errors = CastErrors::default();
+        let mut errors: Vec<CastFail> = Vec::new();
         assert!(reagent_totem_refusal(
             2575,
             Some(&mining),
@@ -982,12 +953,12 @@ mod totem_reagent_tests {
             None,
             &mut errors
         ));
-        assert_eq!(errors.0.as_slice(), &[CastFail::local(2575, 0x78)]);
+        assert_eq!(errors.as_slice(), &[CastFail::local(2575, 0x78)]);
 
         let mut reagents = [(0, 0); 8];
         reagents[0] = (17056, 1); // Slow Fall's Light Feather
         let slow_fall = spell([0, 0], reagents);
-        let mut errors = CastErrors::default();
+        let mut errors: Vec<CastFail> = Vec::new();
         assert!(reagent_totem_refusal(
             130,
             Some(&slow_fall),
@@ -996,10 +967,10 @@ mod totem_reagent_tests {
             None,
             &mut errors
         ));
-        assert_eq!(errors.0.as_slice(), &[CastFail::local(130, 0x5c)]);
+        assert_eq!(errors.as_slice(), &[CastFail::local(130, 0x5c)]);
 
         let both = spell([2901, 0], reagents);
-        let mut errors = CastErrors::default();
+        let mut errors: Vec<CastFail> = Vec::new();
         assert!(reagent_totem_refusal(
             1,
             Some(&both),
@@ -1008,10 +979,10 @@ mod totem_reagent_tests {
             None,
             &mut errors
         ));
-        assert_eq!(errors.0.as_slice(), &[CastFail::local(1, 0x78)]);
+        assert_eq!(errors.as_slice(), &[CastFail::local(1, 0x78)]);
 
         let plain = spell([0, 0], [(0, 0); 8]);
-        let mut errors = CastErrors::default();
+        let mut errors: Vec<CastFail> = Vec::new();
         assert!(!reagent_totem_refusal(
             133,
             Some(&plain),
@@ -1036,7 +1007,7 @@ mod totem_reagent_tests {
             None,
             &mut errors
         ));
-        assert!(errors.0.is_empty());
+        assert!(errors.is_empty());
     }
 
     /// Against empty bags, the first nonzero totem and reagent.

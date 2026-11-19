@@ -79,6 +79,8 @@ pub(crate) enum CastBarEdge {
     Selection,
     /// A plain signal a write inside the press raised, such as the auto-repeat spell's.
     Signal(&'static str),
+    /// A refusal's line, shown where it is raised (`0x808200`).
+    Refused(crate::ui_action::CastFail),
 }
 
 /// A press's signal joins its edges, in order with the send's and the cancel's.
@@ -90,15 +92,41 @@ impl crate::ui_action::signals::SignalSink for PressSignals<'_, '_> {
     }
 }
 
+/// A press's refusal joins its edges, in order with its signals.
+impl crate::ui_action::CastRefusals for PressSignals<'_, '_> {
+    fn refuse(&mut self, fail: crate::ui_action::CastFail) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Refused(fail));
+        }
+    }
+}
+
 /// The edges presses made and not yet fired, shared by every ladder and cancel.
 #[derive(Resource, Default)]
 pub(crate) struct PressEdges(Vec<CastBarEdge>);
 
-/// The edges a press makes: our cast send's `UNIT_SPELLCAST_SENT` (`0x80b556`) and our local
-/// cancel's end (`0x806200`). The reference signals both inside the press, so a system holding the
-/// VM fires them with it as soon as the ladder or the cancel returns ([`Self::fire`]); a packet
-/// handler hands them to its turn's queue ([`Self::defer`]), and a system without the VM fires
-/// them once its commands apply ([`Self::flush`]).
+impl PressEdges {
+    /// The refusals waiting, taken.
+    #[cfg(test)]
+    pub(crate) fn take_refusals(&mut self) -> Vec<crate::ui_action::CastFail> {
+        let mut out = Vec::new();
+        self.0.retain(|e| match e {
+            CastBarEdge::Refused(f) => {
+                out.push(*f);
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+}
+
+/// The edges a press makes: our cast send's `UNIT_SPELLCAST_SENT` (`0x80b556`), our local
+/// cancel's end (`0x806200`) and a local refusal's line (`0x808200`). The reference shows each
+/// inside the press, so a system holding the VM fires them with it as soon as the ladder or the
+/// cancel returns ([`Self::fire`]); a packet handler hands them to its turn's queue
+/// ([`Self::defer`]), and a system without the VM fires them once its commands apply
+/// ([`Self::flush`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PressSignals<'w, 's> {
     // `Option`: a ladder runs in harnesses without the cast plugin, which signal nothing.
@@ -109,6 +137,10 @@ pub(crate) struct PressSignals<'w, 's> {
     spells: Option<Res<'w, Spells>>,
     sent: Option<SentTarget<'w, 's>>,
     index: Option<Res<'w, GuidIndex>>,
+    /// A refusal's line and log.
+    refusals: Option<crate::ui_action::CastFailShow<'w, 's>>,
+    /// The refusals shown, for tests that run without the VM.
+    seen: Option<ResMut<'w, crate::ui_action::RefusalsSeen>>,
 }
 
 impl PressSignals<'_, '_> {
@@ -186,7 +218,29 @@ impl PressSignals<'_, '_> {
     /// (`0x80b533`), and a cancel's `INTERRUPTED`, the unit's cast cleared, then `STOP`
     /// (`0x8066ce`, `0x7fee38`).
     pub(crate) fn fire(&mut self, script: &mut UiScript) {
-        let edges = self.take();
+        let mut edges = self.take();
+        // A refusal shows in its place among the rest.
+        while let Some(at) = edges
+            .iter()
+            .position(|e| matches!(e, CastBarEdge::Refused(_)))
+        {
+            let rest = edges.split_off(at + 1);
+            let Some(CastBarEdge::Refused(fail)) = edges.pop() else {
+                unreachable!()
+            };
+            self.fire_edges(script, edges);
+            if let Some(seen) = self.seen.as_mut() {
+                seen.0.push(fail);
+            }
+            if let Some(show) = self.refusals.as_mut() {
+                show.show(Some(script), fail);
+            }
+            edges = rest;
+        }
+        self.fire_edges(script, edges);
+    }
+
+    fn fire_edges(&mut self, script: &mut UiScript, edges: Vec<CastBarEdge>) {
         let (Some(sent), Some(index), Some(casts)) = (
             self.sent.as_ref(),
             self.index.as_deref(),
@@ -555,6 +609,10 @@ impl SentTarget<'_, '_> {
 /// Apply `edge` to its caster's cast state and queue its `UNIT_SPELLCAST_*` events, with the
 /// `World` lent between the events around it.
 pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
+    if let CastBarEdge::Refused(fail) = edge {
+        crate::ui_action::show_refusal(world, fail);
+        return;
+    }
     if let CastBarEdge::CooldownStart { on_hold } = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             crate::ui_action::signals::cooldown_site(
@@ -618,7 +676,7 @@ fn edge_system(
     let units = &mut *units;
     match edge {
         // Run by `apply_edge` before this system.
-        CastBarEdge::CooldownStart { .. } => {}
+        CastBarEdge::CooldownStart { .. } | CastBarEdge::Refused(_) => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
         CastBarEdge::Sent { spell_id, target } => {
@@ -1718,5 +1776,81 @@ mod tests {
             .unwrap();
         assert_eq!(after, "INTERRUPTED=Lesser Heal STOP=nil");
         assert!(!app.world().resource::<UnitCasts>().casting(ME));
+    }
+
+    /// Records the signals and the error line the next tests fire, in order.
+    const RECORDER: &str = "SPELL_FAILED_ROOTED = 'Rooted' SEEN = {}
+        local f = CreateFrame('Frame')
+        f:RegisterEvent('UI_ERROR_MESSAGE') f:RegisterEvent('SPELLS_CHANGED')
+        f:RegisterEvent('ACTIONBAR_UPDATE_STATE')
+        f:SetScript('OnEvent', function(_, e, t) SEEN[#SEEN + 1] = e .. (t and (':' .. t) or '') end)";
+
+    /// A press's refusal shows in its place among the press's signals, inside the system holding
+    /// the VM (`0x808200` inside the press): a signal raised before it fires first, one after it
+    /// after.
+    #[test]
+    fn a_press_refusal_shows_between_the_signals_around_it() {
+        use crate::ui_action::signals::SignalSink;
+        use crate::ui_action::CastRefusals;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = feed_app();
+        // What the refusal's display reads besides the VM.
+        app.init_resource::<crate::items::Items>()
+            .insert_resource(NetCommands(crossbeam_channel::unbounded().0));
+        app.init_resource::<PressEdges>();
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(RECORDER)
+            .unwrap();
+        let seen = app
+            .world_mut()
+            .run_system_once(
+                |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                 mut press: PressSignals| {
+                    press.signal("SPELLS_CHANGED");
+                    press.push_local(HEAL, 0x5f);
+                    press.signal("ACTIONBAR_UPDATE_STATE");
+                    press.fire(&mut script);
+                    script
+                        .eval::<String>("return table.concat(SEEN, ' ')")
+                        .unwrap()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            seen,
+            "SPELLS_CHANGED UI_ERROR_MESSAGE:Rooted ACTIONBAR_UPDATE_STATE"
+        );
+    }
+
+    /// A handler's refusal shows in its turn, in order with the events it queued around it.
+    #[test]
+    fn a_handler_refusal_shows_in_its_turn_between_its_events() {
+        use crate::ui_action::CastRefusals;
+        let mut app = feed_app();
+        // What the refusal's display reads besides the VM.
+        app.init_resource::<crate::items::Items>()
+            .insert_resource(NetCommands(crossbeam_channel::unbounded().0));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(RECORDER)
+            .unwrap();
+        let world = app.world_mut();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        {
+            let mut ui = world.resource_mut::<crate::ui_script::live::UiEvents>();
+            ui.fire("SPELLS_CHANGED", Vec::new());
+            ui.push_local(HEAL, 0x5f);
+            ui.fire("ACTIONBAR_UPDATE_STATE", Vec::new());
+        }
+        crate::ui_script::live::fire_handler_events(world);
+        let seen = world
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(SEEN, ' ')")
+            .unwrap();
+        assert_eq!(
+            seen,
+            "SPELLS_CHANGED UI_ERROR_MESSAGE:Rooted ACTIONBAR_UPDATE_STATE"
+        );
     }
 }

@@ -19,7 +19,7 @@ use super::{
     QueuedMeleeSpell,
 };
 use crate::creature_anim::{CastEvent, CastEventKind, Casting, SpellGoTargets};
-use crate::ui_action::{CastErrors, PlayerActions, Spells, UiError, UiErrorKeys};
+use crate::ui_action::{CastRefusals, PlayerActions, Spells, UiError, UiErrorKeys};
 use crate::ui_cast::CastBarEdge;
 use crate::ui_spellbook::LearnedInTab;
 
@@ -510,11 +510,9 @@ fn on_cast_result(
             (spell_id, cast_count, wire_reason.unwrap_or(0)),
             success,
             reason,
-            [arg, arg2],
             &mut ladder.ecs,
             &r.self_guid,
             &r.index,
-            &mut ladder.cast_errors,
             &r.casting,
             &mut r.cast_events,
             &mut ladder.pending.write(),
@@ -537,6 +535,17 @@ fn on_cast_result(
         }
         if start_cleared {
             spellbook(&mut r.ui);
+        }
+        // The red line, independent of the bar: a pre-start failure still shows it, after the
+        // routine's cancel and before the cast's end (`0x808aa5`, `0x808b00`, then `0x808b75`).
+        // `0x17` DONT_REPORT shows nothing. `SMSG_CAST_FAILED` is addressed to the caster, and this
+        // handler is ours.
+        if let (false, Some(reason)) = (success, reason.filter(|&r| r != 0x17)) {
+            r.ui.refuse(crate::ui_action::CastFail {
+                arg,
+                arg2,
+                ..crate::ui_action::CastFail::local(spell_id, reason)
+            });
         }
         if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
             r.ui.cast_edge(CastBarEdge::Failed {
@@ -586,11 +595,9 @@ fn on_own_spell_go(
         (spell_id, 0, 0),
         true,
         None,
-        [None; 2],
         &mut ladder.ecs,
         &r.self_guid,
         &r.index,
-        &mut ladder.cast_errors,
         &r.casting,
         &mut r.cast_events,
         &mut ladder.pending.write(),
@@ -1457,11 +1464,9 @@ fn cast_result(
     (spell_id, cast_count, wire_reason): (u32, u8, u8),
     success: bool,
     reason: Option<u8>,
-    [arg, arg2]: [Option<u32>; 2],
     commands: &mut Commands,
     self_guid: &SelfGuid,
     index: &GuidIndex,
-    cast_errors: &mut CastErrors,
     casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
     pending: &mut PendingCast,
@@ -1527,20 +1532,6 @@ fn cast_result(
         // a failure.
         pending.clear_if(spell_id);
         queued_melee.clear_if(spell_id);
-        // The red line is independent of the bar: a pre-start failure still shows it.
-        if let Some(reason) = reason {
-            if !dont_report {
-                cast_errors.0.push(crate::ui_action::CastFail {
-                    spell_id,
-                    reason,
-                    arg,
-                    arg2,
-                    // `SMSG_CAST_FAILED` is addressed to the caster, and this handler is ours.
-                    caster: crate::ui_action::Caster::Player,
-                    redisplay: false,
-                });
-            }
-        }
         // Our cast died (vmangos never sends `SMSG_SPELL_FAILURE`): end the self avatar's cast
         // state and precast hold, keyed by spell id.
         if let Some(e) = self_e {
@@ -3254,7 +3245,7 @@ mod tests {
         app.add_message::<CastEvent>()
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
-            .init_resource::<CastErrors>()
+            .init_resource::<crate::ui_action::RefusalsSeen>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
@@ -3316,7 +3307,6 @@ mod tests {
                     move |mut commands: Commands,
                           self_guid: Res<SelfGuid>,
                           index: Res<GuidIndex>,
-                          mut cast_errors: ResMut<CastErrors>,
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           mut pending: ResMut<PendingCast>,
@@ -3327,11 +3317,9 @@ mod tests {
                             (spell, count, 0x1e),
                             false,
                             Some(0x1e),
-                            [None; 2],
                             &mut commands,
                             &self_guid,
                             &index,
-                            &mut cast_errors,
                             &casting,
                             &mut cast_events,
                             &mut pending,
@@ -3826,7 +3814,7 @@ mod tests {
         app.add_message::<CastEvent>()
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
-            .init_resource::<CastErrors>()
+            .init_resource::<crate::ui_action::RefusalsSeen>()
             .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
@@ -3859,7 +3847,6 @@ mod tests {
                     move |mut commands: Commands,
                           self_guid: Res<SelfGuid>,
                           index: Res<GuidIndex>,
-                          mut cast_errors: ResMut<CastErrors>,
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           mut pending: ResMut<PendingCast>,
@@ -3871,11 +3858,9 @@ mod tests {
                             (75, 0, 0),
                             false,
                             Some(reason),
-                            [None; 2],
                             &mut commands,
                             &self_guid,
                             &index,
-                            &mut cast_errors,
                             &casting,
                             &mut cast_events,
                             &mut pending,
@@ -4280,7 +4265,7 @@ mod tests {
             app.add_message::<CastEvent>()
                 .init_resource::<GuidIndex>()
                 .init_resource::<SelfGuid>()
-                .init_resource::<CastErrors>()
+                .init_resource::<crate::ui_action::RefusalsSeen>()
                 .init_resource::<crate::ui_action::UiErrorKeys>()
                 .init_resource::<crate::ui_action::UiErrorKeys>()
                 .init_resource::<crate::ui_script::live::UiEvents>()
@@ -4310,7 +4295,6 @@ mod tests {
                     move |mut commands: Commands,
                           self_guid: Res<SelfGuid>,
                           index: Res<GuidIndex>,
-                          mut cast_errors: ResMut<CastErrors>,
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           mut pending: ResMut<PendingCast>,
@@ -4322,11 +4306,9 @@ mod tests {
                             (spell_id, 0, 0),
                             success,
                             if success { None } else { Some(0x1b) },
-                            [None; 2],
                             &mut commands,
                             &self_guid,
                             &index,
-                            &mut cast_errors,
                             &casting,
                             &mut cast_events,
                             &mut pending,
@@ -4671,7 +4653,7 @@ mod tests {
         app.add_message::<CastEvent>()
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
-            .init_resource::<CastErrors>()
+            .init_resource::<crate::ui_action::RefusalsSeen>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
             .init_resource::<Cooldowns>()
@@ -4685,7 +4667,6 @@ mod tests {
                     move |mut commands: Commands,
                           self_guid: Res<SelfGuid>,
                           index: Res<GuidIndex>,
-                          mut cast_errors: ResMut<CastErrors>,
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           mut pending: ResMut<PendingCast>,
@@ -4700,11 +4681,9 @@ mod tests {
                             (STEALTH, 0, 0),
                             false,
                             Some(reason),
-                            [None; 2],
                             &mut commands,
                             &self_guid,
                             &index,
-                            &mut cast_errors,
                             &casting,
                             &mut cast_events,
                             &mut pending,

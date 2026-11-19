@@ -1069,9 +1069,6 @@ mod tests {
             world.resource::<crate::ui_action::UiErrorKeys>().0,
             vec![crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET")]
         );
-        assert!(world
-            .resource::<crate::ui_action::CastErrors>()
-            .0
-            .is_empty());
+        assert!(crate::ui_action::take_refusals(f.app.world_mut()).is_empty());
     }
 }

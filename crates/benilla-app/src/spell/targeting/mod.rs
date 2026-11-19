@@ -42,6 +42,8 @@ pub(crate) use world::{commit_ground_cast_on_click, commit_object_cast_on_click}
 
 use bevy::prelude::*;
 
+use crate::ui_action::CastRefusals;
+
 use benilla_world::interact::WorldRightPress;
 
 /// The inputs of the target bind's unit and corpse arms and of their read-only mirror
@@ -437,7 +439,7 @@ fn merge(
 ) {
     if let Some(reason) = range {
         debug!("ui_action: cast {spell_id} not bound at {bound:x?} — range ({reason:#x})");
-        ladder.cast_errors.push_local(spell_id, reason);
+        ladder.press.push_local(spell_id, reason);
         return;
     }
     debug!("ui_action: cast {spell_id} committed at {bound:x?}");
@@ -474,7 +476,7 @@ impl ScriptCursor<'_, '_> {
             None => {
                 debug!("ui_action: SpellTargetUnit({token}) names no unit — cast {spell_id} ends");
                 self.ladder
-                    .cast_errors
+                    .press
                     .push_local(spell_id, super::validator::ERR_OUT_OF_RANGE);
                 self.ladder.ground.write().clear();
                 self.ladder.press.selection();
@@ -505,7 +507,7 @@ impl ScriptCursor<'_, '_> {
             benilla_ui::script::GlyphPlacement::Fail(reason) => {
                 debug!("ui_action: glyph cast {spell_id} refused at socket {socket} ({reason:#x})");
                 let shared = benilla_protocol::messages::wotlk_cast_fail_shared(reason);
-                self.ladder.cast_errors.push_local(spell_id, shared);
+                self.ladder.press.push_local(spell_id, shared);
                 self.ladder.ground.write().clear();
                 self.ladder.press.selection();
             }
@@ -555,7 +557,8 @@ mod tests {
         world.init_resource::<crate::spell::QueuedMeleeSpell>();
         world.init_resource::<crate::spell::Cooldowns>();
         world.init_resource::<crate::spell::SpellModifiers>();
-        world.init_resource::<crate::ui_action::CastErrors>();
+        world.init_resource::<crate::ui_action::RefusalsSeen>();
+        world.init_resource::<crate::ui_cast::PressEdges>();
         world.init_resource::<crate::spell::AutoRepeatActive>();
         world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
         world.init_resource::<SpellTargeting>();
@@ -669,7 +672,7 @@ mod tests {
     }
 
     fn errors(world: &mut World) -> Vec<crate::ui_action::CastFail> {
-        std::mem::take(&mut world.resource_mut::<crate::ui_action::CastErrors>().0)
+        crate::ui_action::take_refusals(world)
     }
 
     /// The reference past the binding's checks: a token naming no unit ends the cast with "Out of

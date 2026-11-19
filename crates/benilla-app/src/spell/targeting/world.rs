@@ -148,7 +148,9 @@ mod tests {
         world.init_resource::<crate::spell::QueuedMeleeSpell>();
         world.init_resource::<crate::spell::Cooldowns>();
         world.init_resource::<crate::spell::SpellModifiers>();
-        world.init_resource::<crate::ui_action::CastErrors>();
+        world.init_resource::<crate::ui_action::RefusalsSeen>();
+        world.init_resource::<crate::ui_cast::PressEdges>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.init_resource::<crate::spell::AutoRepeatActive>();
         world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
@@ -491,7 +493,7 @@ mod tests {
         click(&mut world, id);
         assert!(rx.try_recv().is_err(), "out of range sends nothing");
         assert_eq!(
-            std::mem::take(&mut world.resource_mut::<crate::ui_action::CastErrors>().0),
+            crate::ui_action::take_refusals(&mut world),
             vec![crate::ui_action::CastFail::local(HEAL, 0x59)],
             "\"Out of range.\""
         );
@@ -511,10 +513,7 @@ mod tests {
                 target: Some(ALLY),
             })
         ));
-        assert!(world
-            .resource::<crate::ui_action::CastErrors>()
-            .0
-            .is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
         assert!(!world.resource::<super::super::SpellTargeting>().active());
     }
 
@@ -560,8 +559,7 @@ mod tests {
             );
             click(&mut world, id);
             let sent = rx.try_recv().ok();
-            let errors =
-                std::mem::take(&mut world.resource_mut::<crate::ui_action::CastErrors>().0);
+            let errors = crate::ui_action::take_refusals(&mut world);
             let armed = world.resource::<super::super::SpellTargeting>().active();
             (sent, errors, armed)
         };

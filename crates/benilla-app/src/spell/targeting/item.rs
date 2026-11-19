@@ -4,6 +4,8 @@
 
 use bevy::prelude::*;
 
+use crate::ui_action::CastRefusals;
+
 use crate::net::SelfPlayer;
 
 use super::TargetingWants;
@@ -313,7 +315,7 @@ pub(crate) fn commit_item_cast_on_pick(
                     "ui_action: cast {spell_id} refused at the item bind ({reason:#x}) — \
                      the cursor stays up"
                 );
-                ladder.cast_errors.push_local(spell_id, reason);
+                ladder.press.push_local(spell_id, reason);
             }
             ItemBind::ConfirmBind => {
                 debug!("ui_action: item bind confirm for {spell_id} on item {item_guid:#x}");

@@ -16,6 +16,7 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
 pub(crate) mod bonus;
 pub(crate) mod cast_fail;
+mod cast_refusal;
 mod drain;
 mod equipment_sets;
 // A `UseAction` press, applied in call order by `crate::script_calls`.
@@ -48,10 +49,15 @@ pub(crate) struct SlotIdentityFeed;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ActionRanks;
 
+#[cfg(test)]
+pub(crate) use cast_refusal::take_refusals;
+pub(crate) use cast_refusal::{
+    show_refusal, template_landed, CastFailShow, CastFailsWaiting, CastRefusals, RefusalsSeen,
+};
 pub(crate) use errors::{
-    attack_actor_blocked, attack_actor_refusal, keyed_line, keyed_line_s, reagent_totem_refusal,
-    show_in_turn, show_messages, ui_error_text, CastErrors, CastFail, Caster, FillArg, MessageSink,
-    MountErrors, PetTameFailures, Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
+    attack_actor_blocked, attack_actor_refusal, keyed_line, reagent_totem_refusal, show_in_turn,
+    show_messages, ui_error_text, CastFail, Caster, FillArg, MessageSink, Shown, ToolCheck,
+    UiError, UiErrorKeys, UiErrorTexts,
 };
 pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 
@@ -461,9 +467,7 @@ impl Plugin for UiActionPlugin {
             .init_resource::<usable_cache::UsableCaches>()
             .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
-            .init_resource::<CastErrors>()
-            .init_resource::<MountErrors>()
-            .init_resource::<PetTameFailures>()
+            .init_resource::<CastFailsWaiting>()
             .init_resource::<UiErrorKeys>()
             .init_resource::<UiErrorTexts>()
             .init_resource::<GoOpenerCasts>()
