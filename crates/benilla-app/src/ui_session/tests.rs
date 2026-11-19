@@ -201,3 +201,146 @@ fn the_watchdog_clears_a_target_gone() {
     assert_eq!(app.world().resource::<InteractTarget>().0, None);
     assert!(!app.world().resource::<MerchantOpen>().is_open());
 }
+
+/// Template 1, ours, in group 1; template 20 an enemy of group 1, 21 a creature template in group 1's enemies, 22 a contested-guard template friendly to group 1.
+fn reaction_factions() -> crate::target::Factions {
+    use benilla_formats::{FactionCatalog, FactionTemplate};
+    let tpl = |faction, group_mask, friend_group_mask, enemy_group_mask| FactionTemplate {
+        faction,
+        group_mask,
+        friend_group_mask,
+        enemy_group_mask,
+        enemies: [0; 4],
+        friends: [0; 4],
+    };
+    crate::target::Factions::from_catalog(
+        FactionCatalog::from_rows(
+            std::collections::HashMap::from([
+                (1, tpl(1, 1, 1, 0)),
+                (20, tpl(20, 0, 0, 1)),
+                (21, tpl(21, 8, 0, 1)),
+                (22, tpl(22, 0, 1, 0)),
+            ]),
+            std::collections::HashMap::new(),
+        )
+        .with_template_flags(22, 0x1000),
+    )
+}
+
+/// The watchdog app around a GameObject `SIGN` 1 yd off with `fields`, our player carrying `me` and the reaction catalog.
+fn watch_sign(fields: &[(u16, u32)], me: &[(u16, u32)]) -> App {
+    let mut app = watch(SIGN, 1.0, fields);
+    app.insert_resource(reaction_factions());
+    let mut q = app
+        .world_mut()
+        .query_filtered::<&mut ObjectStore, With<SelfPlayer>>();
+    let mut store = q.single_mut(app.world_mut()).unwrap();
+    store.0 = benilla_protocol::ObjectFields::from_pairs(me);
+    app
+}
+
+/// Our player: a player object (type `0x19`) on template 1, player-controlled, with `player_flags`.
+fn me(player_flags: u32) -> Vec<(u16, u32)> {
+    use benilla_protocol::field::*;
+    vec![
+        (FIELD_OBJECT_TYPE, 0x19),
+        (FIELD_UNIT_FACTIONTEMPLATE, 1),
+        (FIELD_UNIT_FLAGS, 0x8),
+        (FIELD_PLAYER_FLAGS, player_flags),
+    ]
+}
+
+/// A GameObject in reach with no faction is neutral and stays held; one whose `GAMEOBJECT_FACTION` reacts hostile to us, or held by a ghost, is cleared by the watchdog's interact check, ahead of its range (`0x51fe77` -> `0x71f8b0`: `0x71f8c1`, `0x71f8e3`).
+#[test]
+fn the_watchdog_clears_a_gameobject_we_cannot_interact_with() {
+    use benilla_protocol::field::{FIELD_GAMEOBJECT_FACTION, FIELD_OBJECT_TYPE};
+    let go = |faction: u32| {
+        vec![
+            (FIELD_OBJECT_TYPE, 0x21),
+            (FIELD_GAMEOBJECT_FACTION, faction),
+        ]
+    };
+    let mut app = watch_sign(&go(0), &me(0));
+    assert!(app.world().resource::<InteractRange>().0 > 0.0, "watched");
+    app.update();
+    assert_eq!(
+        app.world().resource::<InteractTarget>().0,
+        Some(SIGN),
+        "neutral, in reach"
+    );
+    let mut app = watch_sign(&go(20), &me(0));
+    app.update();
+    assert_eq!(
+        app.world().resource::<InteractTarget>().0,
+        None,
+        "hostile faction"
+    );
+    assert!(!app.world().resource::<MerchantOpen>().is_open());
+    let mut app = watch_sign(&go(0), &me(0x10));
+    app.update();
+    assert_eq!(app.world().resource::<InteractTarget>().0, None, "a ghost");
+}
+
+/// A GameObject's creator in view answers its reaction ahead of its faction (`0x70edf7` -> `0x70edff`): a hostile creator clears a GameObject whose own faction is friendly, and a gone creator falls back to the faction (`0x70ee04`).
+#[test]
+fn a_gameobjects_creator_answers_its_reaction() {
+    use benilla_protocol::field::{
+        FIELD_GAMEOBJECT_CREATED_BY, FIELD_GAMEOBJECT_FACTION, FIELD_OBJECT_TYPE,
+        FIELD_UNIT_FACTIONTEMPLATE,
+    };
+    const CREATOR: u64 = 0xF130_0000_0000_0077;
+    let fields = [
+        (FIELD_OBJECT_TYPE, 0x21),
+        (FIELD_GAMEOBJECT_FACTION, 1),
+        (FIELD_GAMEOBJECT_CREATED_BY, CREATOR as u32),
+        (FIELD_GAMEOBJECT_CREATED_BY + 1, (CREATOR >> 32) as u32),
+    ];
+    let mut app = watch_sign(&fields, &me(0));
+    app.update();
+    assert_eq!(
+        app.world().resource::<InteractTarget>().0,
+        Some(SIGN),
+        "no creator in view: the faction"
+    );
+    let creator = app
+        .world_mut()
+        .spawn((
+            Transform::default(),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_TYPE, 0x9),
+                (FIELD_UNIT_FACTIONTEMPLATE, 21),
+            ])),
+        ))
+        .id();
+    app.world_mut()
+        .resource_mut::<GuidIndex>()
+        .0
+        .insert(CREATOR, creator);
+    app.update();
+    assert_eq!(
+        app.world().resource::<InteractTarget>().0,
+        None,
+        "the hostile creator"
+    );
+}
+
+/// The generic reaction's contested leg (`0x71f7f7`-`0x71f80e`): a contested-PvP player is hostile to a guard template that is otherwise friendly, so its GameObject is cleared.
+#[test]
+fn a_contested_player_is_hostile_to_a_guard_template() {
+    use benilla_protocol::field::{FIELD_GAMEOBJECT_FACTION, FIELD_OBJECT_TYPE};
+    let go = [(FIELD_OBJECT_TYPE, 0x21), (FIELD_GAMEOBJECT_FACTION, 22)];
+    let mut app = watch_sign(&go, &me(0));
+    app.update();
+    assert_eq!(
+        app.world().resource::<InteractTarget>().0,
+        Some(SIGN),
+        "friendly"
+    );
+    let mut app = watch_sign(&go, &me(0x100));
+    app.update();
+    assert_eq!(
+        app.world().resource::<InteractTarget>().0,
+        None,
+        "contested"
+    );
+}

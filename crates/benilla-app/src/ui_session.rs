@@ -64,7 +64,7 @@ fn interact_range_sq(store: &ObjectStore, guid: u64) -> Option<f32> {
     }
 }
 
-/// The interact target's watchdog (`0x51fde0`): a held target with a reach is cleared with the goodbye (`0x51ff05`) when it is gone (`0x51fe2e`), when we are (`0x51fe5c`), when a GameObject is out of its reach (`0x51fe86`), when a player we cannot cooperate with (`0x51feba`) or a unit we cannot interact with (`0x51fed4`), or when either is past the stored reach (`0x51fef4`); an item is never watched (`0x51fe4f`).
+/// The interact target's watchdog (`0x51fde0`): a held target with a reach is cleared with the goodbye (`0x51ff05`) when it is gone (`0x51fe2e`) or disabled (`0x51fe34`, which benilla's disable meets by taking the guid out of the index at once), when we are (`0x51fe5c`), when a GameObject we cannot interact with (`0x51fe77`: a ghost, or its reaction below neutral) or out of its reach (`0x51fe86`), when a player we cannot cooperate with (`0x51feba`) or a unit we cannot interact with (`0x51fed4`), or when either is past the stored reach (`0x51fef4`); an item is never watched (`0x51fe4f`).
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(crate) fn update_interact_target(
     target: Res<InteractTarget>,
@@ -90,7 +90,22 @@ pub(crate) fn update_interact_target(
             let dist_sq = tf.translation.distance_squared(me_tf.translation);
             if benilla_protocol::guid::is_gameobject(guid) {
                 let type_id = store.map_or(0, |s| s.0.gameobject_type_id());
-                dist_sq > crate::target::cursor_mode::go_interact_range_sq(type_id)
+                let empty = crate::net::Reputations::default();
+                let creator = store
+                    .and_then(|s| s.0.gameobject_created_by())
+                    .and_then(|g| index.0.get(&g))
+                    .and_then(|&e| objects.get(e).ok())
+                    .and_then(|(_, s)| s);
+                let reaction = crate::target::ring::gameobject_reaction(
+                    factions.as_deref(),
+                    reputations.as_deref().unwrap_or(&empty),
+                    crate::target::party_of(party.as_deref()),
+                    creator,
+                    store.map_or(0, |s| s.0.gameobject_faction()),
+                    me_store,
+                );
+                !crate::target::ring::can_interact_with_gameobject(me_store, reaction)
+                    || dist_sq > crate::target::cursor_mode::go_interact_range_sq(type_id)
             } else {
                 let refused = if benilla_protocol::guid::is_player(guid) {
                     Some(me_entity) != object

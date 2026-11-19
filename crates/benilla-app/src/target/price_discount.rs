@@ -79,6 +79,17 @@ pub(crate) fn stormwind_fixture(
 #[cfg(test)]
 pub(crate) const HUMAN_WARRIOR: u32 = 1 | (1 << 8);
 
+/// A human warrior player as the reaction legs read one: [`HUMAN_WARRIOR`], the human template 1,
+/// and `UNIT_FIELD_FLAGS` bit 3, which every player carries (`0x71f7cc`).
+#[cfg(test)]
+pub(crate) fn human_warrior_fields() -> [(u16, u32); 3] {
+    [
+        (benilla_protocol::field::FIELD_UNIT_BYTES_0, HUMAN_WARRIOR),
+        (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+        (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,9 +194,6 @@ mod tests {
         );
     }
 
-    /// `UNIT_FIELD_BYTES_0`, absolute descriptor index.
-    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
-
     /// The reputation term reads the vendor's reaction to the player, the standing rank: Friendly
     /// (8999) earns nothing, Honored (9000) the 0.1. The player's reaction to the vendor would be
     /// 4 at both (not at war), so the other direction never discounts.
@@ -199,7 +207,7 @@ mod tests {
                 FIELD_UNIT_FACTIONTEMPLATE,
                 template,
             )]));
-            let me = ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, HUMAN_WARRIOR)]));
+            let me = ObjectStore(ObjectFields::from_pairs(&human_warrior_fields()));
             let got = vendor_price_discount(
                 Some(&factions),
                 &reps,

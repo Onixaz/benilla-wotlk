@@ -1098,6 +1098,8 @@ mod tests {
             Guid(0x5e1f),
             ObjectStore(ObjectFields::from_pairs(&[
                 (BYTES_0, crate::target::HUMAN_WARRIOR),
+                (FIELD_UNIT_FACTIONTEMPLATE, 1),
+                (FIELD_UNIT_FLAGS, 0x8),
                 (main_hand, SWORD as u32),
                 (main_hand + 1, (SWORD >> 32) as u32),
             ])),

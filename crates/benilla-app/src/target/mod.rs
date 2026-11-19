@@ -72,7 +72,7 @@ pub(crate) use flash::CombatFlash;
 // The discount the repair cost and the taxi fare take off their DBC prices.
 pub(crate) use price_discount::vendor_price_discount;
 #[cfg(test)]
-pub(crate) use price_discount::{stormwind_fixture, HUMAN_WARRIOR};
+pub(crate) use price_discount::{human_warrior_fields, stormwind_fixture, HUMAN_WARRIOR};
 pub(crate) use relations::{
     can_assist, can_assist_dir, can_attack, can_interact, corpse_friendly, highlight_variant,
     is_friendly, is_possessed_by, selection_color, selection_color_unheld, Assist,
