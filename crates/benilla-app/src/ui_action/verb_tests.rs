@@ -387,104 +387,118 @@ fn a_melee_button_reaches_the_moving_bonus_while_both_units_run() {
     assert_eq!(verdict(false, false, 4.9), 1, "the floor");
 }
 
-/// An item slot's on-use spell takes the usable walk, and every shipped Food/Drink spell has
-/// `Attributes` bit 28, `ATTR_NOT_IN_COMBAT` (the walk's leg 8).
-#[test]
-fn food_on_the_bar_greys_while_the_player_is_in_combat() {
+/// One ON_USE block casting 433 "Food", whose shipped `Attributes` are `0x18000100`.
+const FOOD_ITEM: u32 = 1487;
+const FOOD_SPELL: u32 = 433;
+
+/// A player with ten muffins in backpack slot 1 and the muffins on bar slot 1, in combat or not.
+fn food_app(in_combat: bool) -> App {
     use benilla_protocol::messages::{ActionButton, ItemUseSpell};
     use benilla_protocol::ObjectFields;
 
-    // One ON_USE block casting 433 "Food", whose shipped `Attributes` are `0x18000100`.
-    const FOOD_ITEM: u32 = 1487;
-    const FOOD_SPELL: u32 = 433;
     // Raw indices: `ITEM_FIELD_STACK_COUNT`, and `PLAYER_FIELD_PACK_SLOT_1`, backpack slot 1.
     const STACK: u16 = benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
     const PACK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
 
-    let lit = |in_combat: bool| {
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        let mut app = App::new();
-        let mut actions = PlayerActions::default();
-        actions.buttons.insert(
-            0,
-            ActionButton {
-                slot: 0,
-                action: FOOD_ITEM,
-                kind: ACTION_KIND_ITEM,
-            },
-        );
-        let mut items = Items::default();
-        items.insert_template(
-            FOOD_ITEM,
-            Some(benilla_protocol::messages::ItemInfo {
-                use_spell: Some(ItemUseSpell {
-                    spell_id: FOOD_SPELL,
-                    cooldown_ms: -1,
-                    category: 0,
-                    category_cooldown_ms: -1,
-                }),
-                ..crate::items::test_template("Conjured Muffin")
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut actions = PlayerActions::default();
+    actions.buttons.insert(
+        0,
+        ActionButton {
+            slot: 0,
+            action: FOOD_ITEM,
+            kind: ACTION_KIND_ITEM,
+        },
+    );
+    let mut items = Items::default();
+    items.insert_template(
+        FOOD_ITEM,
+        Some(benilla_protocol::messages::ItemInfo {
+            use_spell: Some(ItemUseSpell {
+                spell_id: FOOD_SPELL,
+                cooldown_ms: -1,
+                category: 0,
+                category_cooldown_ms: -1,
             }),
-        );
-        let food = SpellDisplay {
-            attributes: 0x1800_0100,
-            ..Default::default()
+            ..crate::items::test_template("Conjured Muffin")
+        }),
+    );
+    let food = SpellDisplay {
+        attributes: 0x1800_0100,
+        ..Default::default()
+    };
+    app.insert_resource(actions)
+        .insert_resource(crate::ui_macro::MacroBoundSpells::default())
+        .insert_resource(Spells {
+            catalog: benilla_formats::SpellCatalog::from_displays(
+                [(FOOD_SPELL, food)].into_iter().collect(),
+            ),
+            forms: Default::default(),
+            ranges: Default::default(),
+            cast_times: Default::default(),
+            power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
+            durations: Default::default(),
+            radii: Default::default(),
+        })
+        .init_resource::<Cooldowns>()
+        .init_resource::<crate::spell::SpellModifiers>()
+        .init_resource::<crate::ui_script::UiClock>()
+        .init_resource::<AutoRepeatActive>()
+        .init_resource::<crate::spell::PendingCast>()
+        .init_resource::<crate::spell::QueuedMeleeSpell>()
+        .init_resource::<crate::spell::ActiveChannel>()
+        .init_resource::<crate::spell::SpellTargeting>()
+        .init_resource::<crate::spell::HeldForPick>()
+        .init_resource::<Selection>()
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<crate::net::Reputations>()
+        .init_resource::<crate::names::NameCache>()
+        .insert_resource(items)
+        .insert_resource(NetCommands(tx));
+    crate::items::test_spawn_item(
+        app.world_mut(),
+        0xF0,
+        ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_ENTRY, FOOD_ITEM),
+            (STACK, 10),
+        ]),
+        false,
+    );
+    // The player: alive, with the ten muffins in backpack slot 1.
+    let flags = (1u32 << 3)
+        | if in_combat {
+            crate::player::UNIT_FLAG_IN_COMBAT
+        } else {
+            0
         };
-        app.insert_resource(actions)
-            .insert_resource(crate::ui_macro::MacroBoundSpells::default())
-            .insert_resource(Spells {
-                catalog: benilla_formats::SpellCatalog::from_displays(
-                    [(FOOD_SPELL, food)].into_iter().collect(),
-                ),
-                forms: Default::default(),
-                ranges: Default::default(),
-                cast_times: Default::default(),
-                power_displays: Default::default(),
-                difficulties: Default::default(),
-                instance_difficulty: Default::default(),
-                durations: Default::default(),
-                radii: Default::default(),
-            })
-            .init_resource::<Cooldowns>()
-            .init_resource::<crate::spell::SpellModifiers>()
-            .init_resource::<crate::ui_script::UiClock>()
-            .init_resource::<AutoRepeatActive>()
-            .init_resource::<crate::spell::PendingCast>()
-            .init_resource::<crate::spell::QueuedMeleeSpell>()
-            .init_resource::<crate::spell::ActiveChannel>()
-            .init_resource::<crate::spell::SpellTargeting>()
-            .init_resource::<crate::spell::HeldForPick>()
-            .init_resource::<Selection>()
-            .init_resource::<crate::net::GuidIndex>()
-            .init_resource::<crate::net::Reputations>()
-            .insert_resource(items)
-            .insert_resource(NetCommands(tx));
-        crate::items::test_spawn_item(
-            app.world_mut(),
-            0xF0,
-            ObjectFields::from_pairs(&[
-                (benilla_protocol::field::FIELD_OBJECT_ENTRY, FOOD_ITEM),
-                (STACK, 10),
-            ]),
-            false,
-        );
-        // The player: alive, with the ten muffins in backpack slot 1.
-        let flags = (1u32 << 3)
-            | if in_combat {
-                crate::player::UNIT_FLAG_IN_COMBAT
-            } else {
-                0
-            };
-        app.world_mut().spawn((
+    let me = app
+        .world_mut()
+        .spawn((
             SelfPlayer,
             Transform::default(),
             ObjectStore(ObjectFields::from_pairs(&[
+                (0, ME as u32),
+                (2, 0x19),
                 (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
                 (benilla_protocol::field::FIELD_UNIT_POWER1, 500),
                 (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
                 (PACK_SLOT_1, 0xF0),
             ])),
-        ));
+        ))
+        .id();
+    register_self(&mut app, me);
+    app
+}
+
+/// An item slot's on-use spell takes the usable walk, and every shipped Food/Drink spell has
+/// `Attributes` bit 28, `ATTR_NOT_IN_COMBAT` (the walk's leg 8).
+#[test]
+fn food_on_the_bar_greys_while_the_player_is_in_combat() {
+    let lit = |in_combat: bool| {
+        let mut app = food_app(in_combat);
         full_pass(&mut app);
         live_eval::<bool>(&mut app, "return (IsUsableAction(1)) and true or false")
     };
@@ -493,6 +507,57 @@ fn food_on_the_bar_greys_while_the_player_is_in_combat() {
     assert!(
         !lit(true),
         "in combat the food's on-use spell fails leg 8 and the button greys"
+    );
+}
+
+/// `IsUsableItem` (`0x51c450`) and `IsUsableSpell` (`0x541680`) walk at the call, with no cache:
+/// the muffins by id, by link and their Food spell by name and book slot are usable out of combat
+/// and grey in it; an item not held, a name the book lacks and a slot past the book are grey.
+#[test]
+fn is_usable_item_and_spell_walk_at_the_call() {
+    use benilla_ui::script::{SpellBookState, SpellSlotView, SpellTabView};
+
+    let answers = |in_combat: bool| {
+        let mut app = food_app(in_combat);
+        app.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+            tabs: vec![SpellTabView {
+                name: "General".into(),
+                texture: None,
+                offset: 0,
+                num_spells: 1,
+            }],
+            slots: vec![SpellSlotView {
+                spell_id: FOOD_SPELL,
+                name: "Food".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }));
+        app.insert_non_send_resource(UiScript::new().unwrap());
+        live_eval::<Vec<String>>(
+            &mut app,
+            "local out = {} \
+             local function pair(u, oom) out[#out + 1] = tostring(u) .. ',' .. tostring(oom) end \
+             pair(IsUsableItem(1487)) \
+             pair(IsUsableItem('|cffffffff|Hitem:1487:0:0:0:0:0:0:0:0:0|h[Conjured Muffin]|h|r')) \
+             pair(IsUsableItem(9999)) \
+             pair(IsUsableSpell('Food')) \
+             pair(IsUsableSpell(1, 'spell')) \
+             pair(IsUsableSpell(2, 'spell')) \
+             out[#out + 1] = tostring(select('#', IsUsableSpell('Pyroblast'))) \
+             return out",
+        )
+    };
+
+    assert_eq!(
+        answers(false),
+        ["1,nil", "1,nil", "nil,nil", "1,nil", "1,nil", "nil,nil", "0"],
+        "out of combat"
+    );
+    assert_eq!(
+        answers(true),
+        ["nil,nil", "nil,nil", "nil,nil", "nil,nil", "nil,nil", "nil,nil", "0"],
+        "in combat leg 8 refuses the Food spell, alone or through the muffins"
     );
 }
 

@@ -139,18 +139,6 @@ pub(crate) struct UsableCtx<'a> {
     pub(crate) place: UsablePlace,
 }
 
-/// The aura tables the usable walk's feeds read.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct UsableAuras<'w, 's> {
-    pub(crate) me: bevy::prelude::Query<
-        'w,
-        's,
-        &'static crate::unit_auras::UnitAuras,
-        bevy::prelude::With<crate::net::SelfPlayer>,
-    >,
-    pub(crate) all: bevy::prelude::Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
-}
-
 /// Whether an aura table holds `id` (`0x7282a0`'s walk).
 pub(crate) fn has_aura(table: &crate::unit_auras::UnitAuras, id: u32) -> bool {
     table.iter().any(|a| a.spell_id == id)

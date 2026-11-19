@@ -87,6 +87,13 @@ pub trait SpellInfoSource {
         None
     }
 
+    /// `IsUsableSpell`'s pair (`0x541680`): the usable walk (`0x80b5d0`) with no target, then the
+    /// power check (`0x8017e0`), on the player or with `pet` its pet; `None` without the caster's
+    /// state.
+    fn spell_usable(&self, _spell_id: u32, _pet: bool) -> Option<(bool, bool)> {
+        None
+    }
+
     /// The spell's stat-bearing fields, `None` for no row.
     fn spell_stat_effects(&self, _spell_id: u32) -> Option<SpellStatEffects> {
         None
@@ -259,6 +266,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let has = with_spell_source(lua, |s| s.spell_has_range(spell, pet)) == Some(true);
             let out = if has { Value::Integer(1) } else { Value::Nil };
             Ok(MultiValue::from_vec(vec![out]))
+        })?,
+    )?;
+
+    // IsUsableSpell(spell [, book]) (`0x541680`): usable and short of power, 1 or nil each; a
+    // failed parse answers nothing, and a slot past the book reads spell 0, which is neither.
+    lua.globals().set(
+        "IsUsableSpell",
+        lua.create_function(|lua, args: MultiValue| {
+            let Some((spell, pet)) = spell_or_zero(lua, &args, "IsUsableSpell")? else {
+                return Ok(MultiValue::new());
+            };
+            let (usable, no_power) = with_spell_source(lua, |s| s.spell_usable(spell, pet))
+                .flatten()
+                .unwrap_or_default();
+            let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
+            Ok(MultiValue::from_vec(vec![flag(usable), flag(no_power)]))
         })?,
     )?;
 

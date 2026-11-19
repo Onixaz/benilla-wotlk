@@ -98,6 +98,11 @@ pub(crate) trait CallReads {
     fn cast_now(&self) -> CastNow<'_>;
     /// A unit as the range check reads it, `None` before it streams.
     fn unit_facts(&self, guid: u64) -> Option<crate::spell::RangeFacts>;
+    /// The usable walk with no target and the power check (`0x541680`), on the player or with
+    /// `pet` its pet; `None` without the walk's state.
+    fn spell_usable(&self, _spell_id: u32, _pet: bool) -> Option<(bool, bool)> {
+        None
+    }
 }
 
 /// The spell tables an answer reads.
@@ -153,6 +158,10 @@ pub(crate) fn active_spell(
 }
 
 impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
+    fn spell_usable(&self, spell_id: u32, pet: bool) -> Option<(bool, bool)> {
+        self.reads.spell_usable(spell_id, pet)
+    }
+
     fn spell_has_range(&self, spell_id: u32, pet: bool) -> bool {
         let spells = self.tables.spells;
         let (Some(caster), Some(mods), Some(d)) = (

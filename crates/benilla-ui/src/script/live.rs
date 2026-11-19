@@ -584,6 +584,11 @@ pub trait LiveState {
         None
     }
 
+    /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
+    fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
+        None
+    }
+
     /// The stance bar as `GetShapeshiftFormInfo` reads it at the call (`0x53de90`): the cached list
     /// in bar order, each entry's active test and icon read now, castable off its cache; `None`
     /// without a view. The cooldown is read apart, as the spell's.

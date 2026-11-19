@@ -42,7 +42,96 @@ fn pet_spell_kind(kind: u8) -> bool {
     kind == PET_KIND_SPELL || (8..=17).contains(&kind)
 }
 
-impl LiveView<'_, '_> {
+impl<'w, 's> LiveView<'w, 's> {
+    /// `f` over the usable walk's reads (`0x80b5d0`) as the view holds them at the call.
+    pub(super) fn usable_reads<R>(
+        &self,
+        f: impl FnOnce(&crate::ui_action::usable_cache::Reads<'_, 'w, 's>) -> R,
+    ) -> Option<R> {
+        let (objects, items, commands) = self.containers.as_ref()?.item_reads();
+        let reads = crate::ui_action::usable_cache::Sources {
+            spells: self.spells.as_deref(),
+            actions: self.actions.get(),
+            bound: self.bound.get(),
+            pet_bar: self.pet_bar.get(),
+            cooldowns: self.cooldowns.get(),
+            me: self.me(),
+            target_guid: self.selection.get().and_then(|s| s.guid).unwrap_or(0),
+            stores: &self.stores,
+            objects,
+            auras: &self.auras,
+            place: self.place.get(),
+            world: &self.usable_world,
+            factions: self.factions.as_deref(),
+            reputations: self.reputations.as_deref(),
+            mods: self.spell_mods.as_deref(),
+            runes: self.runes.as_deref(),
+            rune_costs: self.rune_costs.as_deref(),
+            items: Some(items),
+            commands: Some(commands),
+        }
+        .reads()?;
+        Some(f(&reads))
+    }
+
+    /// `IsUsableItem` (`0x51c450`): a held copy (mask 0, `0x51c4dc`); not on hold under its first
+    /// on-use spell (`0x80ac10`); in an arena, unless the template's flags carry `0x200000`,
+    /// neither used up by its charges nor on a cooldown past 15 minutes (`0x51c538`-`0x51c5ae`);
+    /// then the use spell's walk with no target and its power check, or usable with no spell row.
+    /// The charges and cooldowns are the template's on-use block's: a use enchant is not built.
+    pub(super) fn item_usable_now(&self, item_id: u32) -> (bool, bool) {
+        const ARENA_USABLE: u32 = 0x0020_0000;
+        const COOLDOWN_CAP_MS: i32 = 900_000;
+        let (Some((_, me)), Some((objects, items, commands))) =
+            (self.me(), self.containers.as_ref().map(|c| c.item_reads()))
+        else {
+            return (false, false);
+        };
+        if item_id == 0
+            || crate::ui_items::count_of(
+                &me.0,
+                objects,
+                item_id,
+                crate::ui_items::InventoryScope::DEFAULT,
+            ) == 0
+        {
+            return (false, false);
+        }
+        let template = items.template(item_id, 0, commands);
+        let use_spell = template.and_then(|t| t.use_spell);
+        if let (Some(u), Some(cooldowns)) = (use_spell, self.cooldowns.get()) {
+            let category = match u.category {
+                0 => self
+                    .spells
+                    .as_deref()
+                    .and_then(|s| s.catalog.get(u.spell_id))
+                    .map_or(0, |d| d.category),
+                c => c,
+            };
+            if cooldowns.has_on_hold_record(u.spell_id, item_id, category) {
+                return (false, false);
+            }
+        }
+        if let Some(t) = template.filter(|t| t.flags & ARENA_USABLE == 0) {
+            if self.usable_world.in_arena() {
+                let (cooldown, category) =
+                    use_spell.map_or((0, 0), |u| (u.cooldown_ms, u.category_cooldown_ms));
+                if t.spell_charges_0 < 0 || cooldown > COOLDOWN_CAP_MS || category > COOLDOWN_CAP_MS
+                {
+                    return (false, false);
+                }
+            }
+        }
+        let Some(spell) = use_spell
+            .map(|u| u.spell_id)
+            .filter(|&id| self.spells.as_deref().is_some_and(|s| s.catalog.get(id).is_some()))
+        else {
+            return (true, false);
+        };
+        self.usable_reads(|r| r.spell_usable(spell, false).pair())
+            .unwrap_or_default()
+    }
+
     /// The 0-based bar `slot` through the resolvers.
     pub(super) fn resolve_slot(&self, slot: u32) -> Option<Resolved> {
         let actions = self.actions.get()?;

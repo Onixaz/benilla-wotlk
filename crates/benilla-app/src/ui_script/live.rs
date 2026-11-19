@@ -75,6 +75,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) usable: Slot<'w, crate::ui_action::usable_cache::UsableCaches>,
     /// The macros' bound spells, a macro slot's spell (`0x5a89f0`), which the rebind owns.
     pub(crate) bound: Slot<'w, crate::ui_macro::MacroBoundSpells>,
+    /// The usable walk's reads beside the player's own state (`0x80b5d0`).
+    usable_world: crate::ui_action::usable_cache::UsableWorld<'w>,
     /// The talent tables a talent link's rank reads.
     talents: Option<Res<'w, crate::ui_talent::Talents>>,
     /// The bind point and subclass names a spell tooltip reads.
@@ -339,6 +341,10 @@ impl LiveView<'_, '_> {
 /// The spell answers' reads at the call: our player and pet off the object stores, the cast state
 /// off the lent slots.
 impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
+    fn spell_usable(&self, spell_id: u32, pet: bool) -> Option<(bool, bool)> {
+        self.usable_reads(|r| r.spell_usable(spell_id, pet).pair())
+    }
+
     fn caster(&self, pet: bool) -> Option<crate::ui_spell_info::Caster<'_>> {
         let entity = if pet {
             let guid = self.pet_bar.get()?.spells.pet_guid;
@@ -1664,6 +1670,10 @@ impl LiveState for LiveView<'_, '_> {
     ) -> Option<(i64, u32, bool)> {
         let r = self.resolve_slot(slot)?;
         Some(self.slot_cooldown(r, anchor, ui_now))
+    }
+
+    fn item_usable(&self, item_id: u32) -> Option<(bool, bool)> {
+        Some(self.item_usable_now(item_id))
     }
 
     fn action_usable(&self, action: u32) -> Option<(bool, bool)> {

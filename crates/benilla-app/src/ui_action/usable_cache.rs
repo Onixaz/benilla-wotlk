@@ -181,43 +181,28 @@ pub(crate) fn reactive_spells(
 pub(crate) struct UsableInputs<'w, 's> {
     spells: Option<Res<'w, Spells>>,
     actions: LentRef<'w, PlayerActions>,
-    bound: Option<Res<'w, crate::ui_macro::MacroBoundSpells>>,
+    bound: LentRef<'w, crate::ui_macro::MacroBoundSpells>,
     pet_bar: LentRef<'w, crate::ui_pet::PetBar>,
     cooldowns: LentRef<'w, Cooldowns>,
     selection: LentRef<'w, crate::target::Selection>,
     me: Query<'w, 's, (Entity, &'static ObjectStore), With<SelfPlayer>>,
     stores: Query<'w, 's, &'static ObjectStore>,
     objects: Objects<'w, 's>,
-    auras: usable::UsableAuras<'w, 's>,
-    place: PlaceFeed<'w>,
-    auto: crate::spell::AutoChecks<'w>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    place: LentRef<'w, crate::area::PlayerPlace>,
+    world: UsableWorld<'w>,
     tables: UsableTables<'w>,
 }
 
-/// Where the caster stands, the walk's place legs: the place read through its loan, as a feed that
-/// owns it may hold the update.
+/// What the walks read beside the player's own state, one parameter: the live view takes it too.
 #[derive(SystemParam)]
-pub(crate) struct PlaceFeed<'w> {
-    place: LentRef<'w, crate::area::PlayerPlace>,
+pub(crate) struct UsableWorld<'w> {
     map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
-}
-
-impl PlaceFeed<'_> {
-    fn player(&self, knows_cold_weather_flying: bool) -> usable::UsablePlace {
-        usable::UsablePlace::of(
-            self.place.get().as_deref(),
-            self.map.as_deref().map(|m| m.0),
-            Some(knows_cold_weather_flying),
-        )
-    }
-
-    fn pet(&self) -> usable::UsablePlace {
-        usable::UsablePlace::of(
-            self.place.get().as_deref(),
-            self.map.as_deref().map(|m| m.0),
-            None,
-        )
-    }
+    /// `Map.dbc`, whose instance type `IsUsableItem`'s arena leg reads (`0x51c538`).
+    maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+    combo: Option<Res<'w, crate::spell::ComboPoints>>,
+    auto: crate::spell::AutoChecks<'w>,
 }
 
 /// The tables beside them, one parameter.
@@ -225,8 +210,6 @@ impl PlaceFeed<'_> {
 pub(crate) struct UsableTables<'w> {
     factions: Option<Res<'w, crate::target::Factions>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
-    group: Option<Res<'w, crate::ui_party::GroupState>>,
-    combo: Option<Res<'w, crate::spell::ComboPoints>>,
     mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     runes: Option<Res<'w, crate::ui_rune::Runes>>,
     rune_costs: Option<Res<'w, crate::ui_rune::RuneCosts>>,
@@ -234,8 +217,33 @@ pub(crate) struct UsableTables<'w> {
     commands: Option<Res<'w, NetCommands>>,
 }
 
-/// One update's reads, borrowed for its length.
-struct Reads<'a, 'w, 's> {
+/// Where a walk's reads come from: the update sites' parameters ([`UsableInputs`]) or the view lent
+/// to a verb at its call.
+pub(crate) struct Sources<'a, 'w, 's> {
+    pub(crate) spells: Option<&'a Spells>,
+    pub(crate) actions: Option<&'a PlayerActions>,
+    pub(crate) bound: Option<&'a crate::ui_macro::MacroBoundSpells>,
+    pub(crate) pet_bar: Option<&'a crate::ui_pet::PetBar>,
+    pub(crate) cooldowns: Option<&'a Cooldowns>,
+    pub(crate) me: Option<(Entity, &'a ObjectStore)>,
+    /// The locked target's guid, 0 for none.
+    pub(crate) target_guid: u64,
+    pub(crate) stores: &'a Query<'w, 's, &'static ObjectStore>,
+    pub(crate) objects: &'a Objects<'w, 's>,
+    pub(crate) auras: &'a Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    pub(crate) place: Option<&'a crate::area::PlayerPlace>,
+    pub(crate) world: &'a UsableWorld<'w>,
+    pub(crate) factions: Option<&'a crate::target::Factions>,
+    pub(crate) reputations: Option<&'a crate::net::Reputations>,
+    pub(crate) mods: Option<&'a crate::spell::SpellModifiers>,
+    pub(crate) runes: Option<&'a crate::ui_rune::Runes>,
+    pub(crate) rune_costs: Option<&'a crate::ui_rune::RuneCosts>,
+    pub(crate) items: Option<&'a Items>,
+    pub(crate) commands: Option<&'a NetCommands>,
+}
+
+/// One walk's reads, borrowed for its length.
+pub(crate) struct Reads<'a, 'w, 's> {
     spells: &'a Spells,
     actions: &'a PlayerActions,
     bound: Option<&'a crate::ui_macro::MacroBoundSpells>,
@@ -244,8 +252,9 @@ struct Reads<'a, 'w, 's> {
     me: Option<(Entity, &'a ObjectStore)>,
     /// The current target's store, the player's own when we target ourselves (`0x80b5d0`).
     target: Option<(Entity, &'a ObjectStore)>,
-    target_guid: u64,
-    inputs: &'a UsableInputs<'w, 's>,
+    stores: &'a Query<'w, 's, &'static ObjectStore>,
+    objects: &'a Objects<'w, 's>,
+    auras: &'a Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     factions: Option<&'a crate::target::Factions>,
     reputations: &'a crate::net::Reputations,
     group: Option<&'a crate::ui_party::GroupState>,
@@ -255,34 +264,43 @@ struct Reads<'a, 'w, 's> {
     carried: HashMap<u32, u32>,
     rune_check: Option<usable::RuneCheck<'a>>,
     auto_unshift: bool,
+    /// Where the player and the pet stand, as their walks' place legs read it.
+    place: (usable::UsablePlace, usable::UsablePlace),
+    /// The player's and the pet's combo points on the target.
+    combo: (u8, u8),
 }
 
-impl UsableInputs<'_, '_> {
-    /// `f` over the reads, `None` without the tables a walk needs.
-    fn with_reads<R>(&self, f: impl FnOnce(&Reads<'_, '_, '_>) -> R) -> Option<R> {
-        let spells = self.spells.as_deref()?;
-        let actions = self.actions.get()?;
-        let cooldowns = self.cooldowns.get()?;
-        let pet_bar = self.pet_bar.get();
-        let t = &self.tables;
-        let (Some(reputations), Some(mods), Some(items), Some(commands)) = (
-            t.reputations.as_deref(),
-            t.mods.as_deref(),
-            t.items.as_deref(),
-            t.commands.as_deref(),
-        ) else {
+impl UsableWorld<'_> {
+    /// Whether the player stands in an arena, `Map.dbc` instance type 4.
+    pub(crate) fn in_arena(&self) -> bool {
+        const INSTANCE_TYPE_ARENA: u32 = 4;
+        let (Some(map), Some(maps)) = (self.map.as_deref(), self.maps.as_deref()) else {
+            return false;
+        };
+        maps.0.instance_type(map.0) == Some(INSTANCE_TYPE_ARENA)
+    }
+}
+
+impl<'a, 'w, 's> Sources<'a, 'w, 's> {
+    /// The reads, `None` without the tables a walk needs.
+    pub(crate) fn reads(self) -> Option<Reads<'a, 'w, 's>> {
+        let spells = self.spells?;
+        let actions = self.actions?;
+        let cooldowns = self.cooldowns?;
+        let (Some(reputations), Some(mods), Some(items), Some(commands)) =
+            (self.reputations, self.mods, self.items, self.commands)
+        else {
             return None;
         };
-        let me = self.me.iter().next();
-        let target_guid = self.selection.get().and_then(|s| s.guid).unwrap_or(0);
+        let me = self.me;
         let target = self
             .objects
-            .entity(target_guid)
+            .entity(self.target_guid)
             .and_then(|e| Some((e, self.stores.get(e).ok()?)));
         let carried = me
-            .map(|(_, s)| crate::ui_items::carried_counts(&s.0, &self.objects))
+            .map(|(_, s)| crate::ui_items::carried_counts(&s.0, self.objects))
             .unwrap_or_default();
-        let rune_check = t.runes.as_deref().zip(t.rune_costs.as_deref()).zip(me).map(
+        let rune_check = self.runes.zip(self.rune_costs).zip(me).map(
             |((runes, costs), (_, store))| usable::RuneCheck {
                 state: &runes.state,
                 costs: &costs.0,
@@ -292,28 +310,74 @@ impl UsableInputs<'_, '_> {
         let auto_unshift = me.is_some_and(|(_, store)| {
             let form = u32::from(store.0.unit_shapeshift_form());
             let row = spells.forms.get(&form);
-            self.auto.unshift(store, row.map_or(0, |f| f.flags))
+            self.world.auto.unshift(store, row.map_or(0, |f| f.flags))
         });
-        let reads = Reads {
+        let map = self.world.map.as_deref().map(|m| m.0);
+        let knows_cold_weather_flying = actions.spells.contains(&usable::COLD_WEATHER_FLYING);
+        let place = (
+            usable::UsablePlace::of(self.place, map, Some(knows_cold_weather_flying)),
+            usable::UsablePlace::of(self.place, map, None),
+        );
+        let combo = self.world.combo.as_deref().map_or((0, 0), |c| {
+            (c.player.on(0, self.target_guid), c.pet.on(0, self.target_guid))
+        });
+        Some(Reads {
             spells,
-            actions: &actions,
-            bound: self.bound.as_deref(),
-            pet_bar: pet_bar.as_deref(),
-            cooldowns: &cooldowns,
+            actions,
+            bound: self.bound,
+            pet_bar: self.pet_bar,
+            cooldowns,
             me,
             target,
-            target_guid,
-            inputs: self,
-            factions: t.factions.as_deref(),
+            stores: self.stores,
+            objects: self.objects,
+            auras: self.auras,
+            factions: self.factions,
             reputations,
-            group: t.group.as_deref(),
+            group: self.world.group.as_deref(),
             mods,
             items,
             commands,
             carried,
             rune_check,
             auto_unshift,
-        };
+            place,
+            combo,
+        })
+    }
+}
+
+impl UsableInputs<'_, '_> {
+    /// `f` over the reads, `None` without the tables a walk needs.
+    fn with_reads<R>(&self, f: impl FnOnce(&Reads<'_, '_, '_>) -> R) -> Option<R> {
+        let actions = self.actions.get()?;
+        let cooldowns = self.cooldowns.get()?;
+        let pet_bar = self.pet_bar.get();
+        let bound = self.bound.get();
+        let place = self.place.get();
+        let t = &self.tables;
+        let reads = Sources {
+            spells: self.spells.as_deref(),
+            actions: Some(&actions),
+            bound: bound.as_deref(),
+            pet_bar: pet_bar.as_deref(),
+            cooldowns: Some(&cooldowns),
+            me: self.me.iter().next(),
+            target_guid: self.selection.get().and_then(|s| s.guid).unwrap_or(0),
+            stores: &self.stores,
+            objects: &self.objects,
+            auras: &self.auras,
+            place: place.as_deref(),
+            world: &self.world,
+            factions: t.factions.as_deref(),
+            reputations: t.reputations.as_deref(),
+            mods: t.mods.as_deref(),
+            runes: t.runes.as_deref(),
+            rune_costs: t.rune_costs.as_deref(),
+            items: t.items.as_deref(),
+            commands: t.commands.as_deref(),
+        }
+        .reads()?;
         Some(f(&reads))
     }
 }
@@ -323,8 +387,8 @@ impl Reads<'_, '_, '_> {
     fn ctx<'b>(&'b self, store: &'b ObjectStore, no_target: bool) -> usable::UsableCtx<'b> {
         let target = self.target.filter(|_| !no_target);
         usable::UsableCtx {
-            self_auras: self.inputs.auras.me.single().ok(),
-            target_auras: target.and_then(|(e, _)| self.inputs.auras.all.get(e).ok()),
+            self_auras: self.me.and_then(|(e, _)| self.auras.get(e).ok()),
+            target_auras: target.and_then(|(e, _)| self.auras.get(e).ok()),
             store,
             target_store: target.map(|(_, s)| s),
             factions: self.factions,
@@ -334,17 +398,20 @@ impl Reads<'_, '_, '_> {
             carried: &self.carried,
             spell_mods: self.mods,
             runes: self.rune_check,
-            combo_points: self
-                .inputs
-                .tables
-                .combo
-                .as_deref()
-                .map_or(0, |c| c.player.on(0, self.target_guid)),
+            combo_points: self.combo.0,
             auto_unshift: self.auto_unshift,
-            place: self
-                .inputs
-                .place
-                .player(self.actions.spells.contains(&usable::COLD_WEATHER_FLYING)),
+            place: self.place.0,
+        }
+    }
+
+    /// `IsUsableSpell`'s walk (`0x541680`): the player's or, with `pet`, the pet's, with no target.
+    pub(crate) fn spell_usable(&self, spell: u32, pet: bool) -> Usable {
+        if !pet {
+            return self.spell(spell);
+        }
+        match self.spells.catalog.get(spell) {
+            Some(d) => self.pet_spell(spell, d, true),
+            None => Usable::default(),
         }
     }
 
@@ -359,7 +426,7 @@ impl Reads<'_, '_, '_> {
             d,
             self.spells,
             &ctx,
-            &self.inputs.objects,
+            self.objects,
             self.items,
             self.commands,
         ))
@@ -376,7 +443,7 @@ impl Reads<'_, '_, '_> {
 
     /// One bar slot's bytes (`0x5aa3b0`'s compute): the slot through its macro, a pet slot through
     /// the pet bar, then the walk for a spell or an item.
-    fn slot(&self, slot: u8) -> Usable {
+    pub(crate) fn slot(&self, slot: u8) -> Usable {
         use crate::ui_macro::BoundSpell;
         let Some(button) = self.actions.buttons.get(&slot) else {
             return Usable::default();
@@ -414,7 +481,7 @@ impl Reads<'_, '_, '_> {
                 Some(d) if d.attributes_ex2 & ATTR_EX2_CAST_BY_PLAYER != 0 => {
                     (ACTION_KIND_SPELL, entry.action())
                 }
-                Some(d) => return self.pet_spell(entry.action(), d),
+                Some(d) => return self.pet_spell(entry.action(), d, false),
                 None => return Usable::default(),
             }
         } else {
@@ -434,7 +501,7 @@ impl Reads<'_, '_, '_> {
                     d,
                     self.spells,
                     &ctx,
-                    &self.inputs.objects,
+                    self.objects,
                     self.items,
                     self.commands,
                 ))
@@ -449,7 +516,7 @@ impl Reads<'_, '_, '_> {
                     store
                         .0
                         .player_inv_slot(i)
-                        .and_then(|g| self.inputs.objects.object(g))
+                        .and_then(|g| self.objects.object(g))
                         .and_then(|o| o.object_entry())
                         == Some(id)
                 });
@@ -460,7 +527,7 @@ impl Reads<'_, '_, '_> {
                     count > 0 || worn,
                     &ctx,
                     Some(self.spells),
-                    &self.inputs.objects,
+                    self.objects,
                     self.items,
                     self.commands,
                 ))
@@ -469,23 +536,23 @@ impl Reads<'_, '_, '_> {
         }
     }
 
-    /// The pet as caster, its own cooldowns (`0x5a8e40`); no pet, unusable.
-    fn pet_spell(&self, spell: u32, d: &benilla_formats::SpellDisplay) -> Usable {
+    /// The pet as caster, its own cooldowns (`0x5a8e40`), against the current target or, with
+    /// `no_target`, none; no pet, unusable.
+    fn pet_spell(&self, spell: u32, d: &benilla_formats::SpellDisplay, no_target: bool) -> Usable {
         let Some(bar) = self.pet_bar else {
             return Usable::default();
         };
         let Some(pet) = self
-            .inputs
             .objects
             .entity(bar.spells.pet_guid)
-            .and_then(|e| self.inputs.stores.get(e).ok())
+            .and_then(|e| self.stores.get(e).ok())
         else {
             return Usable::default();
         };
-        let target = self.target;
+        let target = self.target.filter(|_| !no_target);
         let ctx = usable::UsableCtx {
             self_auras: None,
-            target_auras: target.and_then(|(e, _)| self.inputs.auras.all.get(e).ok()),
+            target_auras: target.and_then(|(e, _)| self.auras.get(e).ok()),
             store: pet,
             target_store: target.map(|(_, s)| s),
             factions: self.factions,
@@ -495,13 +562,8 @@ impl Reads<'_, '_, '_> {
             carried: &HashMap::new(),
             spell_mods: self.mods,
             runes: None,
-            place: self.inputs.place.pet(),
-            combo_points: self
-                .inputs
-                .tables
-                .combo
-                .as_deref()
-                .map_or(0, |c| c.pet.on(0, self.target_guid)),
+            place: self.place.1,
+            combo_points: self.combo.1,
             auto_unshift: false,
         };
         Usable::of_walk(usable::spell_usable(
@@ -509,7 +571,7 @@ impl Reads<'_, '_, '_> {
             d,
             self.spells,
             &ctx,
-            &self.inputs.objects,
+            self.objects,
             self.items,
             self.commands,
         ))
@@ -535,10 +597,9 @@ impl Reads<'_, '_, '_> {
                 let d = self.spells.catalog.get(entry.action())?;
                 if d.attributes_ex2 & ATTR_EX2_CAST_BY_PLAYER == 0 {
                     let pet = self
-                        .inputs
                         .objects
                         .entity(bar.spells.pet_guid)
-                        .and_then(|e| self.inputs.stores.get(e).ok())?;
+                        .and_then(|e| self.stores.get(e).ok())?;
                     return Some(usable::can_afford(d, pet, self.mods));
                 }
                 entry.action()
