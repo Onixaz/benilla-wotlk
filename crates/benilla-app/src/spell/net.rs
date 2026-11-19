@@ -221,9 +221,9 @@ fn on_spell_learned(
             form: store.0.unit_shapeshift_form(),
         });
         let mut flash = LearnedInTab::default();
-        // Each slot the rank replace or the first-rank placement wrote signals in turn
-        // (`0x5aae80`).
-        for slot in learned_spell(
+        // Each slot the rank replace or the first-rank placement writes signals at its write
+        // (`0x5aae80`), around the announcement as the registrar orders them.
+        learned_spell(
             spell_id,
             (&mut l.actions, &mut l.slots),
             l.spells.as_deref(),
@@ -232,9 +232,7 @@ fn on_spell_learned(
             learner,
             &l.net,
             &l.summons.0,
-        ) {
-            crate::ui_action::slots::changed_in_turn(&mut l.ui, slot);
-        }
+        );
         // The registrar's stance and reactive lists (`0x542647`), past which a live learn signals
         // `UPDATE_SHAPESHIFT_FORMS`.
         if learner.is_some() {
@@ -1311,20 +1309,19 @@ fn learned_spell(
     spell_id: u32,
     (actions, bar): (&mut PlayerActions, &mut crate::ui_action::ActionSlots),
     spells: Option<&Spells>,
-    errors: &mut dyn crate::ui_action::signals::SignalSink,
+    errors: &mut dyn LearnOut,
     tab_flash: &mut LearnedInTab,
     learner: Option<Learner>,
     net: &NetCommands,
     summons: &benilla_formats::SummonPropertiesCatalog,
-) -> Vec<u8> {
-    let mut written = Vec::new();
+) {
     debug!("net: learned spell {spell_id}");
     if actions.spells.insert(spell_id) {
         actions.dirty = true;
     }
     let Some(learner) = learner else {
         debug!("net: learned spell {spell_id} before the player: book only");
-        return written;
+        return;
     };
     let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
     let display = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1332,25 +1329,25 @@ fn learned_spell(
         for slot in learn_place::lower_rank_slots(bar, &spells.catalog, display) {
             info!("net: bar slot {slot} rank-replaced by learned spell {spell_id}");
             if bar.write_slot(slot, packed, net) {
-                written.push(slot);
+                errors.slot_changed(slot);
             }
         }
     }
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
-            return written;
+            return;
         }
         if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
             announce_learn(spell_id, spells, errors);
-            return written;
+            return;
         }
         if d.is_companion(summons) {
-            return written;
+            return;
         }
     }
     announce_learn(spell_id, spells, errors);
     if display.is_some_and(|d| d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK != 0) {
-        return written;
+        return;
     }
     tab_flash.0.push(spell_id);
     if let (Some(spells), Some(display)) = (spells, display) {
@@ -1359,12 +1356,28 @@ fn learned_spell(
             if let Some(slot) = learn_place::first_empty_slot(bar, page) {
                 info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
                 if bar.write_slot(slot, packed, net) {
-                    written.push(slot);
+                    errors.slot_changed(slot);
                 }
             }
         }
     }
-    written
+}
+
+/// Where a learn's writes signal, in its order: a bar slot it wrote (`0x5aae80`) and its line.
+trait LearnOut: crate::ui_action::signals::SignalSink {
+    fn slot_changed(&mut self, slot: u8);
+}
+
+impl LearnOut for crate::ui_script::live::UiEvents {
+    fn slot_changed(&mut self, slot: u8) {
+        crate::ui_action::slots::changed_in_turn(self, slot);
+    }
+}
+
+/// A test's record of the lines; the slots are read off the bar.
+#[cfg(test)]
+impl LearnOut for crate::ui_action::signals::LinesSeen {
+    fn slot_changed(&mut self, _: u8) {}
 }
 
 /// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
@@ -2474,6 +2487,70 @@ mod tests {
         spells.catalog =
             benilla_formats::SpellCatalog::from_displays([(id, display)].into_iter().collect());
         spells
+    }
+
+    /// A learn's slot writes and its line, in the order they were raised.
+    #[derive(Default)]
+    struct LearnOrder(Vec<String>);
+
+    impl crate::ui_action::signals::SignalSink for LearnOrder {
+        fn signal(&mut self, _: &'static str) {}
+
+        fn line(&mut self, line: UiError) {
+            self.0.push(line.key.to_string());
+        }
+    }
+
+    impl LearnOut for LearnOrder {
+        fn slot_changed(&mut self, slot: u8) {
+            self.0.push(format!("slot {slot}"));
+        }
+    }
+
+    /// The rank below leaves its button for the new rank (`0x5aafd0`) before the registrar
+    /// announces the learn (`0x542030`), so the slot's signal comes ahead of the line.
+    #[test]
+    fn a_rank_up_signals_its_button_before_the_line() {
+        let mut spells = Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [(133, "Rank 1"), (143, "Rank 2")]
+                .into_iter()
+                .map(|(id, rank)| {
+                    (
+                        id,
+                        benilla_formats::SpellDisplay {
+                            id,
+                            name: "Fireball".to_string(),
+                            rank: Some(rank.to_string()),
+                            attributes: 0x10000,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        );
+        let mut bar = crate::ui_action::ActionSlots::default();
+        bar.buttons.insert(
+            0,
+            ActionButton {
+                slot: 0,
+                action: 133,
+                kind: ACTION_KIND_SPELL,
+            },
+        );
+        let mut order = LearnOrder::default();
+        learned_spell(
+            143,
+            (&mut PlayerActions::default(), &mut bar),
+            Some(&spells),
+            &mut order,
+            &mut LearnedInTab::default(),
+            live(),
+            &no_bar(),
+            &Default::default(),
+        );
+        assert_eq!(bar.buttons[&0].action, 143, "the rank replaced in place");
+        assert_eq!(order.0, ["slot 0", "ERR_LEARN_SPELL_S"]);
     }
 
     /// Heroic Strike carries `SPELL_ATTR_ABILITY`, so the reference lands on `0x38`, the ability
