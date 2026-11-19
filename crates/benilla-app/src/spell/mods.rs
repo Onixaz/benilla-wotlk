@@ -179,33 +179,6 @@ impl SpellModifiers {
             && d.attributes_ex3 & ATTR_EX3_IGNORE_CASTER_MODIFIERS == 0
     }
 
-    /// The `SpellFamilyFlags` bits whose cells any read for `d` can sum, whatever the op: its
-    /// whole mask past the gates, none before them. A change to another bit's cells cannot move
-    /// a value modified for `d`; a change of the class family can, whatever the bit.
-    pub(crate) fn read_bits(&self, d: &SpellDisplay) -> u128 {
-        if self.gates_pass(d) {
-            d.spell_family_flags
-        } else {
-            0
-        }
-    }
-
-    /// What differs from `prev`: the `SpellFamilyFlags` bits with any changed cell, in either
-    /// table and at any op, and whether the class family moved.
-    pub(crate) fn diff(&self, prev: &SpellModifiers) -> ModsDiff {
-        let bits = (0..BITS).fold(0u128, |bits, bit| {
-            let row = bit * OPS..(bit + 1) * OPS;
-            let same = self.flat[row.clone()] == prev.flat[row.clone()]
-                && self.pct[row.clone()] == prev.pct[row];
-            bits | u128::from(!same) << bit
-        });
-        ModsDiff {
-            bits,
-            class_family: self.class_family != prev.class_family,
-            weapon_speed: self.cost.weapon_speed != prev.cost.weapon_speed,
-        }
-    }
-
     /// The modifier pass (`0x7fd970`) for one spell and op. `None` covers all four of its false
     /// exits: the three gates and both sums zero. The op range check is ours; the reference's call
     /// sites all pass a literal.
@@ -286,16 +259,6 @@ impl SpellModifiers {
             self.apply_float(d, OP_RANGE, max)
         })
     }
-}
-
-/// How one snapshot of the tables differs from an earlier one ([`SpellModifiers::diff`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ModsDiff {
-    /// Bit `b` set: a cell of family-flag bit `b` changed, in either table at any op.
-    pub(crate) bits: u128,
-    pub(crate) class_family: bool,
-    /// The weapon term's hand speeds moved.
-    pub(crate) weapon_speed: bool,
 }
 
 /// The description expander's view of the tables.

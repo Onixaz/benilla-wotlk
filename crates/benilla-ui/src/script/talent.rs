@@ -19,7 +19,7 @@
 
 use mlua::{Lua, MultiValue, Table, Value};
 
-use super::tooltip_spell::{spell_view_of, TalentHint, TalentLines};
+use super::tooltip_spell::{TalentHint, TalentLines};
 use super::{Model, ScriptValue};
 
 /// The dual-spec activation spells `SetActiveTalentGroup` casts, by group (`0xad05e8`).
@@ -526,14 +526,8 @@ fn tooltip_lines(
     } else {
         0
     };
-    let next_desc = (next_spell != 0)
-        .then(|| {
-            model
-                .spell_tooltips
-                .get(&next_spell)
-                .map(|v| v.description.clone())
-        })
-        .flatten();
+    // Built at the call once the model's borrow ends ([`super::tooltip_spell::spell_view_of`]).
+    let next_desc = None;
     let get = |key: &str| crate::strings::global(lua, key);
     let rank_line = get("TOOLTIP_TALENT_RANK").map(|tmpl| {
         crate::strings::fill(
@@ -1140,7 +1134,7 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetTalent",
         lua.create_function(|lua, (this, args): (Table, MultiValue)| {
-            let (display, lines) = {
+            let (display, mut lines) = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
@@ -1166,17 +1160,14 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     flag_arg(args.get(5)),
                 )
             };
+            if lines.next_spell != 0 {
+                lines.next_desc = super::tooltip_spell::spell_view_of(lua, lines.next_spell, false)
+                    .map(|v| v.description);
+            }
             super::tooltip_spell::set_spell_with_talent(lua, &this, display, lines)
         })?,
     )?;
     Ok(())
-}
-
-/// Ask the spell store for the next rank's description; a miss queues it as a primary view's does.
-pub(super) fn ask_next_rank(lua: &Lua, next_spell: u32) {
-    if next_spell != 0 {
-        let _ = spell_view_of(lua, next_spell, false); // a miss records the ask as a side effect
-    }
 }
 
 #[cfg(test)]

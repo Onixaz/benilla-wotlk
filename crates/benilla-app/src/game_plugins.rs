@@ -877,7 +877,6 @@ pub(crate) mod schedule_tests {
     ///   facing and nearest-unit reads see a rider's pose or the camera a frame late at worst, as
     ///   the range compare's readers do;
     /// - the range compare's readers (`ui_action::state::feed_action_state`,
-    ///   `ui_tooltip::spell_feed::feed_spell_tooltips`,
     ///   the targeting cursor and the object-click commit) against the writers of `Player` and
     ///   `RemoteMotion` (`world_focus`'s focus publish and settle release,
     ///   `transport::compose_riders` and `ground_deck_riders`): the readers take the
@@ -983,11 +982,10 @@ pub(crate) mod schedule_tests {
     /// - Socketing and refunds (#202, #206) add 1: `ui_socket::drain_item_sends`, an
     ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
     ///   such drains pair; the refund feed's pairs left when its verbs began reading the records at the call (#1278).
-    /// - The small notices (#641) add 2: `ui_notices::drain_level_grant`, an `.after(UiInput)`
-    ///   drain, against `finish_colliders`, as the other such drains pair; and
-    ///   `ui_notices::feed_notices` against `feed_spell_tooltips` over `Items`: it only reads
-    ///   templates; its pair against the item-tooltip feed left when the item verbs began reading
-    ///   the cache at the call (#1278).
+    /// - The small notices (#641) add 1: `ui_notices::drain_level_grant`, an `.after(UiInput)`
+    ///   drain, against `finish_colliders`, as the other such drains pair; `ui_notices::feed_notices`'
+    ///   pairs left when the item verbs (#1278) and the spell tooltip (#1281) began reading the
+    ///   cache at the call.
     /// - The quest progress lines (#638) added 1, which left when the lines moved into their packets' handlers (#1276).
     /// - The quest panels and the world map's quest lines add 11: the NPC emote queue's
     ///   `set_emote_queues` and `drive_emote_queues` against `finish_colliders`, as the other

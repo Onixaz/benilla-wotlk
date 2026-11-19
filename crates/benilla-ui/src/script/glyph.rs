@@ -152,17 +152,6 @@ impl super::UiScript {
     }
 }
 
-/// The spells of every glyph the talent groups hold, whose descriptions the tooltip reads.
-pub(super) fn glyph_spells(model: &Model) -> impl Iterator<Item = u32> + '_ {
-    model
-        .talents
-        .groups
-        .iter()
-        .flat_map(|g| g.glyphs)
-        .filter_map(|id| model.glyph_catalog.glyph(id))
-        .map(|g| g.spell)
-}
-
 /// The player object exists, as every glyph verb but the count first asks.
 fn has_player(model: &Model) -> bool {
     model.unit("player").is_some_and(|u| u.exists)

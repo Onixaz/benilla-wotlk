@@ -35,6 +35,13 @@ pub(crate) struct ContainerLive<'w, 's> {
     watched: Option<Res<'w, super::watch::WatchedBags>>,
 }
 
+impl<'w, 's> ContainerLive<'w, 's> {
+    /// The object index, the item cache and the wire a spell view's item and reagent lines read.
+    pub(crate) fn item_reads(&self) -> (&Objects<'w, 's>, &Items, &NetCommands) {
+        (&self.objects, &self.items, &self.commands)
+    }
+}
+
 /// The lent state a bag read takes: the cooldown history, the item locks, the charter records and whether a banker is set (`0xbeb9a0`).
 pub(crate) struct ContainerLent<'a> {
     pub(crate) cooldowns: Option<&'a crate::spell::Cooldowns>,

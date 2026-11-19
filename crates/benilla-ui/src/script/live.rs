@@ -535,6 +535,17 @@ pub trait LiveState {
         false
     }
 
+    /// The spell tooltip builder's view of `spell_id` at the call, against the player or with
+    /// `alt_caster` its pet, its keyed cells filled through `get`; `None` without a row.
+    fn spell_tooltip(
+        &self,
+        _spell_id: u32,
+        _alt_caster: bool,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::SpellTooltipView> {
+        None
+    }
+
     /// `f` over the spell source that reads the casters and the player's cast state at the call;
     /// a view that has none leaves `f` uncalled, and the verb asks the source installed at load.
     fn with_spell_source(&self, _f: &mut dyn FnMut(&dyn super::SpellInfoSource)) {}

@@ -73,6 +73,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) trade: Slot<'w, crate::ui_tradeskill::TradeSkillOpen>,
     /// The talent tables a talent link's rank reads.
     talents: Option<Res<'w, crate::ui_talent::Talents>>,
+    /// The bind point and subclass names a spell tooltip reads.
+    tooltip: crate::ui_tooltip::spell_view::TooltipTables<'w>,
     /// Our auto-attack lock (`[player+0xa20]`) and auras, the current-spell test's reads.
     engaged: Query<
         'w,
@@ -1533,6 +1535,61 @@ impl LiveState for LiveView<'_, '_> {
         }
         let form = me.unit_shapeshift_form();
         form != 0 && d.shapeshift_form == Some(u32::from(form))
+    }
+
+    /// The spell tooltip builder at the hover: the player's or its pet's view of the spell, from
+    /// the state as it is now; the reference builds it whole at the call and keeps nothing.
+    fn spell_tooltip(
+        &self,
+        spell_id: u32,
+        alt_caster: bool,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::SpellTooltipView> {
+        use crate::ui_tooltip::spell_view::{build_view, ViewCaster, ViewCtx};
+        let spells = self.spells.as_deref()?;
+        let (objects, items, commands) = self.containers.as_ref()?.item_reads();
+        let me = self.me();
+        let store = me.map(|(_, s)| s);
+        let units = self.item_range.facts().range_units();
+        let no_mods = crate::spell::SpellModifiers::default();
+        let operands = crate::spell::text_caster::Operands::of(store, items);
+        let mut vctx = ViewCtx {
+            home_area: self.tooltip.home_area(),
+            form: store.map_or(0, |s| s.0.unit_shapeshift_form()),
+            store,
+            caster: ViewCaster::Player,
+            range_caster: units.caster(),
+            attack_target: units.caster_attack_target(),
+            objects,
+            items,
+            commands,
+            sub_classes: self.tooltip.sub_classes(),
+            skill_lines: self.skill_lines.as_deref().map(|l| &*l.catalog),
+            spell_mods: self.spell_mods.as_deref().unwrap_or(&no_mods),
+            get,
+            known: self
+                .actions
+                .get()
+                .map_or(&crate::ui_spell_info::NO_SPELLS, |a| &a.spells),
+            auras: me.and_then(|(e, _)| self.auras.get(e).ok()),
+            operands: &operands,
+        };
+        if alt_caster {
+            // The builder's unit selector: the player's charm, else its summon, read as it is now.
+            let pet = store
+                .and_then(|s| s.0.unit_pet_guid())
+                .and_then(|g| self.index.as_ref()?.0.get(&g).copied());
+            let pet_fields = pet.and_then(|e| self.stores.get(e).ok()).map(|s| &s.0);
+            vctx.caster = ViewCaster::Pet(pet_fields);
+            vctx.form = pet_fields.map_or(0, |p| p.unit_shapeshift_form());
+            vctx.range_caster =
+                pet.and_then(|e| units.unit(e))
+                    .unwrap_or(benilla_formats::RangeUnit::still(
+                        crate::spell::DEFAULT_REACH,
+                    ));
+            vctx.attack_target = pet.and_then(|e| units.attack_target(e));
+        }
+        build_view(spell_id, spells, &mut vctx)
     }
 
     fn with_spell_source(&self, f: &mut dyn FnMut(&dyn benilla_ui::script::SpellInfoSource)) {

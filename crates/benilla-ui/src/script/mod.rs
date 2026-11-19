@@ -46,6 +46,7 @@ macro_rules! drain_option {
 }
 
 /// Drain a set or map field into a `Vec`.
+#[cfg(any(test, feature = "fixtures"))]
 macro_rules! drain_set {
     ($self:expr, $($field:ident).+) => {{
         if $self.model_ref().$($field).+.is_empty() {

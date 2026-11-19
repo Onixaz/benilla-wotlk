@@ -974,15 +974,12 @@ pub(crate) struct Model {
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
-    /// Spell id to its tooltip view, and the misses asked for.
+    /// Stand-in spell tooltip views by spell id, the player's and its pet's, for a VM with no
+    /// live view: the live view builds each at the hover.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) spell_tooltips: HashMap<u32, super::SpellTooltipView>,
-    pub(crate) spell_tooltip_asks: HashSet<u32>,
-    /// The same for the views built against the player's pet, which the spell builder's unit
-    /// selector asks for (the spell builder's fourth argument).
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) pet_spell_tooltips: HashMap<u32, super::SpellTooltipView>,
-    pub(crate) pet_spell_tooltip_asks: HashSet<u32>,
-    /// The tooltips whose spell render missed its view, re-rendered when the app answers.
-    pub(crate) spell_tooltip_waits: HashMap<FrameHandle, super::tooltip_spell::SpellWait>,
     /// The tooltips whose item setter missed a record, re-run when it lands.
     pub(crate) item_tooltip_waits: HashMap<FrameHandle, super::tooltip_item::ItemWait>,
     /// The item setter call running, collecting what it misses.
@@ -1799,11 +1796,10 @@ impl Model {
             item_setter_again: false,
             #[cfg(any(test, feature = "fixtures"))]
             item_stat_asks: HashSet::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             spell_tooltips: HashMap::new(),
-            spell_tooltip_asks: HashSet::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             pet_spell_tooltips: HashMap::new(),
-            pet_spell_tooltip_asks: HashSet::new(),
-            spell_tooltip_waits: HashMap::new(),
             item_tooltip_waits: HashMap::new(),
             item_render: None,
             quest_log_collapse_filter: -1,

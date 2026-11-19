@@ -136,6 +136,15 @@ local VERBS = {
     { "tabs", function() return GetNumSpellTabs() end },
     { "book1", function() return (GetSpellName(1, "spell")) end },
     { "book2", function() return (GetSpellName(2, "spell")) end },
+    { "tip2", function()
+        if not GetSpellName(2, "spell") then return nil end
+        GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+        GameTooltip:SetSpell(2, "spell")
+        local n, last = GameTooltip:NumLines(), GameTooltipTextLeft1:GetText()
+        for i = 2, n do last = _G["GameTooltipTextLeft" .. i]:GetText() end
+        GameTooltip:Hide()
+        return n .. ":" .. tostring(last)
+    end },
     { "greenrange", function() return GetQuestGreenRange() end },
     { "cursize", function() return GetCurrencyListSize() end },
     { "cur2", function() local n, _, _, _, _, c = GetCurrencyListInfo(2) return tostring(n) .. "x" .. tostring(c) end },
@@ -6985,14 +6994,15 @@ const FROSTBOLT_1: u32 = 116;
 /// `0x542d16`); a supersede, the removal's update then the learn's (`0x5401b8`, `0x542cd4`); a
 /// removal (`0x5401b8`); and our level watch, which re-sorts nothing (`0x6d66fd`). Fireball and
 /// Frostbolt sit on two skill lines, so the learn flashes the second tab. A handler's events fire
-/// once its changes apply, so both of the supersede's read the new rank in the book.
+/// once its changes apply, so both of the supersede's read the new rank in the book. A hover of the
+/// new slot inside the learn's own events shows its whole tooltip: the builder runs at the call.
 #[test]
 fn book_updates_fire_from_their_handlers_in_wire_order() {
     let Some(mut rig) = Rig::login_after(vec![book(&[FIREBALL_1])], &[(2, 0x19)]) else {
         return;
     };
     let events = &["SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB"];
-    let verbs = &["tabs", "book1", "book2"];
+    let verbs = &["tabs", "book1", "book2", "tip2"];
     let seen = rig.packets(
         vec![
             SessionEvent::ObjectDestroyed(ME),
@@ -7014,14 +7024,14 @@ fn book_updates_fire_from_their_handlers_in_wire_order() {
     assert_eq!(
         pin(&seen, events, verbs),
         vec![
-            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil",
-            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt",
-            "LEARNED_SPELL_IN_TAB 2 | tabs=2 book1=Fireball book2=Frostbolt",
-            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt",
-            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt",
-            "LEARNED_SPELL_IN_TAB 1 | tabs=2 book1=Fireball book2=Frostbolt",
-            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil",
-            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "LEARNED_SPELL_IN_TAB 2 | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "LEARNED_SPELL_IN_TAB 1 | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
         ]
     );
 }

@@ -1178,6 +1178,11 @@ pub(crate) struct RangeFactsView<'w, 's> {
 }
 
 impl RangeFactsView<'_, '_> {
+    /// The units' reaches, motion and auto-attack targets.
+    pub(crate) fn range_units(&self) -> &super::RangeUnits<'_, '_> {
+        &self.range_units
+    }
+
     /// The unit `entity`'s reach and position now, `None` before it streams.
     pub(crate) fn at(&self, entity: Entity) -> Option<(benilla_formats::RangeUnit, Vec3)> {
         Some((
