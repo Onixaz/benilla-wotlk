@@ -446,7 +446,8 @@ pub use mail::{
 };
 pub use measure::TextMeasure;
 pub use merchant::{
-    CostItem, ExtendedCost, ItemStatsHead, MerchantItem, MerchantState, RepairCosts,
+    CostItem, ExtendedCost, ItemStatsHead, MerchantAct, MerchantItem, MerchantList,
+    MerchantOutcome, MerchantState, RepairAt, RepairCosts,
 };
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};

@@ -613,19 +613,19 @@ impl Model {
     /// The player's repair cost at live id `slot`, the vault and keyring bands by their container
     /// slots.
     pub(super) fn inv_repair_cost(&self, slot: usize) -> u32 {
-        let costs = &self.repair_costs;
-        let cost = if BANK_INV_SLOTS.contains(&slot) {
+        let at = if BANK_INV_SLOTS.contains(&slot) {
             let n = (slot - BANK_INV_SLOTS.start() + 1) as u32;
-            costs.bags.get(&(BANK_CONTAINER, n))
+            super::RepairAt::Bag(BANK_CONTAINER, n)
         } else if KEYRING_INV_SLOTS.contains(&slot) {
             let n = (slot - KEYRING_INV_SLOTS.start() + 1) as u32;
-            costs.bags.get(&(KEYRING_CONTAINER, n))
+            super::RepairAt::Bag(KEYRING_CONTAINER, n)
         } else {
-            u32::try_from(slot)
-                .ok()
-                .and_then(|s| costs.equipped.get(&s))
+            let Ok(slot) = u32::try_from(slot) else {
+                return 0;
+            };
+            super::RepairAt::Worn(slot)
         };
-        cost.copied().unwrap_or(0)
+        super::merchant::repair_cost(self, at)
     }
 
     fn bank_inv_slot(&self, slot: usize) -> Option<InvSlotView> {

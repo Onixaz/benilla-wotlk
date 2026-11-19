@@ -939,7 +939,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }) else {
                 return Ok(());
             };
-            if model.money < u64::from(cod) {
+            if crate::script::live::money(&model) < u64::from(cod) {
                 model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
@@ -971,7 +971,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     message_id: r.message_id,
                 });
             }
-            if model.money < u64::from(r.cod) {
+            if crate::script::live::money(&model) < u64::from(r.cod) {
                 model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
@@ -1070,7 +1070,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, copper: Value| {
             let n = number_arg(lua, copper, "Usage: SetSendMailMoney(amount)")? as u32;
             let mut model = crate::script::model_mut_of(lua);
-            if u64::from(n) > model.money {
+            if u64::from(n) > crate::script::live::money(&model) {
                 model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
                 return Ok(Value::Nil);
             }

@@ -484,6 +484,10 @@ pub(crate) enum RecordWait {
     GuildBank(crate::ui_guild_bank::Callback),
     /// The item-text reader's, from its page-id call (`0x707180` -> `0x58a450`).
     ItemText(u64),
+    /// The merchant rows', from a row's record read (`0x584680` -> `0x5844c0`).
+    Merchant,
+    /// The buyback rows', from a buyback row's record read (`0x58515d` -> `0x5840b0`).
+    Buyback,
     /// A callback the UI left inside a verb's call.
     Ui(benilla_ui::script::ItemRecordWait),
 }

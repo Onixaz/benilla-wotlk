@@ -576,6 +576,8 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::ItemText(item) => sc
             .ui
             .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
+        RecordWait::Merchant => sc.ui.world(crate::ui_merchant::record_callback),
+        RecordWait::Buyback => sc.ui.world(crate::ui_merchant::buyback_record_callback),
         RecordWait::Ui(wait) => sc
             .ui
             .write(move |script| script.item_record_callback(entry, landed, wait)),
@@ -1895,6 +1897,12 @@ fn is_currency_watch(index: u16) -> bool {
             .is_some_and(|(slot, _)| crate::ui_currency::watched_slot(slot))
 }
 
+/// The buyback prices and stamps, the one range `0x585f80` watches.
+fn is_buyback_watch(index: u16) -> bool {
+    let first = benilla_protocol::field::FIELD_PLAYER_BUYBACK_PRICE_1;
+    (first..first + 24).contains(&index)
+}
+
 /// Our slot fields' watches, the inventory watch's (`0x6e51c5`-`0x6e52c3`) and the containers' (`0x5d9c20`): every slot but the buyback's.
 fn is_slot_watch(index: u16) -> bool {
     benilla_protocol::field::player_slot_of_field(index)
@@ -2009,7 +2017,20 @@ fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: 
 /// Our player watches past the flags in field order: the bank's slot byte, honor, the currency watches, then the arena-team words once per update (`0x6cdda0`).
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
+    let mut buyback_done = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
+        // The coinage watch (`0x6da070`): `PLAYER_MONEY` (`0x6da091`); its coin sound plays from [`crate::sound`].
+        if index == benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE {
+            sc.ui.fire("PLAYER_MONEY", Vec::new());
+            continue;
+        }
+        // The buyback prices' and stamps' watch, one handler over the range, once per update (`0x585f60`).
+        if is_buyback_watch(index) {
+            if !std::mem::replace(&mut buyback_done, true) {
+                sc.ui.world(crate::ui_merchant::buyback_changed);
+            }
+            continue;
+        }
         if is_slot_watch(index) || is_currency_watch(index) {
             own_slot_watches(sc, guid, edges, at);
             continue;
@@ -2018,6 +2039,8 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         if index == benilla_protocol::field::FIELD_PLAYER_GUILDID {
             if old != new {
                 sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+                // The merchant's refresh with a vendor set (`0x6e1c09`), ahead of the tabs' clear.
+                sc.ui.world(crate::ui_merchant::refresh);
                 crate::ui_guild_bank::guild_id_changed(&mut sc.ui);
             }
             continue;
@@ -2206,7 +2229,9 @@ fn merge_fields(
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
                     || is_currency_watch(e.index)
-                    || is_slot_watch(e.index))
+                    || is_slot_watch(e.index)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)
+                    || is_buyback_watch(e.index))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }

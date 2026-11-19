@@ -1665,8 +1665,6 @@ pub(crate) mod schedule_tests {
          "`take_macros_dirty` is raised only by the macro window's Lua"),
         ("ui_mail/mod.rs", "feed_mail", Because::SelfHealing,
          "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
-        ("ui_merchant/mod.rs", "feed_merchant", Because::PlayerRoundTrip,
-         "a buy/sell refusal answers a click on an open merchant; show/update ride `VmMemo`s"),
         ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
          "every line answers a charter action of ours; the window edges ride the `fed` memo"),
         ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,

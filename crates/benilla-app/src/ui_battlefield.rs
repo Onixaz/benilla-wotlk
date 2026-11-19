@@ -826,9 +826,10 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
+    crate::ui_merchant::leave_world(world);
     crate::ui_pet::possess::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
         duel.leave_world();
@@ -856,6 +857,8 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
         // The containers' part (`0x5281c7`), ahead of the battlefield's (`0x528230`).
         crate::ui_items::watch::enter_world(world);
+        // The merchant's (`0x5281ea`).
+        crate::ui_merchant::enter_world(world);
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");
         }

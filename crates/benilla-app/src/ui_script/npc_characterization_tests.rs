@@ -1116,3 +1116,179 @@ fn a_read_gameobject_leaving_leaves_the_reader_open() {
         "a GameObject's disable has no reader leg"
     );
 }
+
+const MERCHANT_EVENTS: &[&str] = &[
+    "MERCHANT_SHOW",
+    "MERCHANT_UPDATE",
+    "MERCHANT_CLOSED",
+    "UI_ERROR_MESSAGE",
+    "PLAYER_MONEY",
+];
+
+/// A vendor row: `entry` in wire slot `slot` with `count` in stock.
+fn vendor_row(entry: u32, slot: u32, count: u32) -> benilla_protocol::messages::VendorItem {
+    benilla_protocol::messages::VendorItem {
+        slot,
+        entry,
+        display_id: 0,
+        current_count: count,
+        price: 10,
+        max_durability: 0,
+        buy_count: 1,
+        extended_cost: 0,
+    }
+}
+
+/// `vendor`'s `SMSG_LIST_INVENTORY` with `rows`.
+fn vendor_list(vendor: u64, rows: Vec<benilla_protocol::messages::VendorItem>) -> SessionEvent {
+    SessionEvent::VendorInventory {
+        vendor,
+        items: rows,
+        error: None,
+    }
+}
+
+/// A Lua expression's value at the call, `tostring`ed.
+fn eval(rig: &mut Rig, expr: &str) -> String {
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(&format!("return tostring({expr})"))
+    })
+    .expect("a VM")
+    .expect("the chunk runs")
+}
+
+/// `SMSG_LIST_INVENTORY` sets the merchant and fires `MERCHANT_SHOW` with no argument (`0x6d9af8` -> `0x584596`); `SMSG_BUY_ITEM` moves the row and fires `MERCHANT_UPDATE` for the open vendor only (`0x6cdd67` -> `0x58411b`); a sold-out refusal zeroes the row with its `MERCHANT_UPDATE` before its line (`0x6cdc06`, `0x6cdc23`); another vendor's list closes the first through the interact target's interaction close, `MERCHANT_CLOSED` before `MERCHANT_SHOW` (`0x584540` -> `0x512f3a`). The rows read at the call.
+#[test]
+fn the_merchant_fires_from_its_handlers_with_the_rows_read_at_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["merchantn"];
+    rig.packets(vec![npc_at(NPC, 0x80, NEAR), npc_at(NPC2, 0x80, NEAR)], 2);
+    let seen = rig.packets(
+        vec![vendor_list(
+            NPC,
+            vec![vendor_row(11, 1, 3), vendor_row(22, 2, 5)],
+        )],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, MERCHANT_EVENTS, verbs),
+        vec!["MERCHANT_SHOW | merchantn=2"]
+    );
+    let seen = rig.packets(
+        vec![
+            SessionEvent::VendorBuyResult {
+                vendor: NPC2,
+                slot: 2,
+                new_count: 1,
+                purchase_count: 1,
+            },
+            SessionEvent::VendorBuyResult {
+                vendor: NPC,
+                slot: 2,
+                new_count: 4,
+                purchase_count: 1,
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, MERCHANT_EVENTS, verbs),
+        vec!["MERCHANT_UPDATE | merchantn=2"],
+        "another vendor's count is dropped"
+    );
+    assert_eq!(eval(&mut rig, "select(5, GetMerchantItemInfo(2))"), "4");
+    let seen = rig.packets(
+        vec![SessionEvent::VendorBuyFailed {
+            vendor: NPC,
+            item_entry: 11,
+            reason: benilla_protocol::messages::buy_result::ITEM_ALREADY_SOLD,
+        }],
+        2,
+    );
+    let pinned = pin(&seen, MERCHANT_EVENTS, &[]);
+    assert_eq!(pinned.first().map(String::as_str), Some("MERCHANT_UPDATE"));
+    assert!(
+        pinned.len() == 2 && pinned[1].starts_with("UI_ERROR_MESSAGE"),
+        "{pinned:?}"
+    );
+    assert_eq!(eval(&mut rig, "select(5, GetMerchantItemInfo(1))"), "0");
+    let seen = rig.packets(vec![vendor_list(NPC2, vec![vendor_row(33, 1, 1)])], 2);
+    assert_eq!(
+        pin(&seen, MERCHANT_EVENTS, verbs),
+        vec![
+            "MERCHANT_CLOSED | merchantn=0",
+            "MERCHANT_SHOW | merchantn=1"
+        ]
+    );
+}
+
+/// `CloseMerchant` closes inside its call: the vendor holds the interact target, whose clear runs the interaction close's merchant leg first, so `MERCHANT_CLOSED` fires twice (`0x584614` -> `0x512f3a`, `0x58463e`); a second call finds no vendor.
+#[test]
+fn close_merchant_fires_twice_inside_its_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    let verbs = &["merchantn"];
+    rig.packets(vec![npc_at(NPC, 0x80, NEAR)], 2);
+    rig.packets(vec![vendor_list(NPC, vec![vendor_row(11, 1, 3)])], 2);
+    let pinned = fired_in_call(&mut rig, "CloseMerchant()", MERCHANT_EVENTS, verbs);
+    assert_eq!(
+        pinned,
+        vec![
+            "MERCHANT_CLOSED | merchantn=0",
+            "MERCHANT_CLOSED | merchantn=0"
+        ]
+    );
+    let pinned = fired_in_call(&mut rig, "CloseMerchant()", MERCHANT_EVENTS, verbs);
+    assert!(pinned.is_empty(), "{pinned:?}");
+}
+
+/// `BuyMerchantItem` and `BuybackItem` send inside their call (`0x5854c0`, `0x5855c0`); our coinage's watch fires `PLAYER_MONEY` from the handler with `GetMoney` read at the call (`0x6da091`), and the buyback fields' watch fires `MERCHANT_UPDATE` once per update (`0x585f60`).
+#[test]
+fn the_merchant_sends_in_its_calls_and_its_watches_fire_from_the_handler() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_BUYBACK_PRICE_1, FIELD_PLAYER_BUYBACK_TIMESTAMP_1, FIELD_PLAYER_FIELD_COINAGE,
+    };
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let rx = tap(&mut rig);
+    rig.packets(vec![npc_at(NPC, 0x80, NEAR)], 2);
+    rig.packets(vec![vendor_list(NPC, vec![vendor_row(11, 4, 3)])], 2);
+    let seen = rig.packets(vec![self_values(&[(FIELD_PLAYER_FIELD_COINAGE, 500)])], 2);
+    assert_eq!(
+        pin(&seen, MERCHANT_EVENTS, &["money"]),
+        vec!["PLAYER_MONEY | money=500"]
+    );
+    let seen = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_BUYBACK_PRICE_1, 7),
+            (FIELD_PLAYER_BUYBACK_TIMESTAMP_1, 9),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, MERCHANT_EVENTS, &[]),
+        vec!["MERCHANT_UPDATE"],
+        "one handler over the range"
+    );
+    while rx.try_recv().is_ok() {}
+    call(&mut rig, "BuyMerchantItem(1, 300)");
+    let sent: Vec<_> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::BuyItem {
+                vendor,
+                entry,
+                slot,
+                count,
+            } => Some((vendor, entry, slot, count)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![(NPC, 11, 4, 255)], "sent inside the call");
+}

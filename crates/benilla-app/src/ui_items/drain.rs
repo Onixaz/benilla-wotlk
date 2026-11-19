@@ -151,7 +151,6 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     aim: Local<'s, Option<crate::spell::cast_target::Aim>>,
     trade: Option<Res<'w, crate::ui_trade::TradeSession>>,
     self_q: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
-    merchant: Res<'w, crate::ui_merchant::MerchantOpen>,
     equip_sound: MessageWriter<'w, crate::sound::AutoEquipSound>,
     /// The read call's queue, which runs it with the world once the use returns.
     queue: Commands<'w, 's>,
@@ -332,22 +331,34 @@ impl ScriptItemUse<'_, '_> {
 
     /// `UseContainerItem(bag, slot)` outside repair mode: a sale with a merchant open, a bank
     /// move with the bank open, else the reference's equip-vs-use fork and use dispatcher.
-    pub(crate) fn use_container_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
-        self.use_at(script, bag, slot, false);
+    pub(crate) fn use_container_item(
+        &mut self,
+        script: &mut UiScript,
+        bag: i64,
+        slot: u32,
+        vendor: Option<u64>,
+    ) {
+        self.use_at(script, bag, slot, vendor, false);
     }
 
     /// The direct item use (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
     /// dispatcher alone, with no sale, bank move or equip.
     pub(crate) fn use_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
-        self.use_at(script, bag, slot, true);
+        self.use_at(script, bag, slot, None, true);
     }
 
-    fn use_at(&mut self, script: &mut UiScript, bag: i64, slot: u32, direct: bool) {
+    fn use_at(
+        &mut self,
+        script: &mut UiScript,
+        bag: i64,
+        slot: u32,
+        vendor: Option<u64>,
+        direct: bool,
+    ) {
         let Self {
             aim,
             trade: _,
             self_q,
-            merchant,
             equip_sound,
             queue,
             targeting,
@@ -362,7 +373,7 @@ impl ScriptItemUse<'_, '_> {
         } = self;
         let slot0 = u8::try_from(slot.saturating_sub(1)).ok();
         // With a merchant open, the click sells the whole stack (`CMSG_SELL_ITEM`, count 0).
-        if let (false, true, Some(vendor)) = (direct, merchant.is_open(), merchant.vendor) {
+        if let (false, Some(vendor)) = (direct, vendor) {
             let item_guid = self_q
                 .iter()
                 .next()
@@ -599,9 +610,8 @@ impl ScriptItemUse<'_, '_> {
 
 /// Sends the repair-mode clicks, bag and paper doll, as `CMSG_REPAIR_ITEM`.
 pub(super) fn drain_container_repairs(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    merchant: Res<crate::ui_merchant::MerchantOpen>,
     objects: Objects,
     commands: Res<NetCommands>,
     mut purse: crate::ui_merchant::RepairPurse,
@@ -613,13 +623,13 @@ pub(super) fn drain_container_repairs(
     // Repair-mode clicks repair the one item: the purse test first, then `ITEM_REPAIR` as it goes
     // out.
     for (bag, slot) in script.take_container_repairs() {
-        let (Some(vendor), Some(me)) = (merchant.vendor, me) else {
+        let (Some(vendor), Some(me)) = (live.merchant_vendor(), me) else {
             continue;
         };
         let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
         match slot_guid(&me.0, bag, slot0, &objects) {
             Some(guid) => {
-                if purse.refuses(&mut script, &merchant, me, [guid]) {
+                if purse.refuses(&mut script, Some(vendor), me, [guid]) {
                     continue;
                 }
                 debug!("ui_items: repair lua bag {bag} slot {slot} (item {guid:#x})");
@@ -635,7 +645,7 @@ pub(super) fn drain_container_repairs(
     }
     // The paper doll's repair clicks, the same arm on a worn item.
     for id in script.take_inventory_repairs() {
-        let (Some(vendor), Some(me)) = (merchant.vendor, me) else {
+        let (Some(vendor), Some(me)) = (live.merchant_vendor(), me) else {
             continue;
         };
         let item_guid = u8::try_from(id.wrapping_sub(1))
@@ -643,7 +653,7 @@ pub(super) fn drain_container_repairs(
             .and_then(|slot0| slot_guid(&me.0, EQUIPMENT_BAG, slot0, &objects));
         match item_guid {
             Some(guid) if (1..=19).contains(&id) => {
-                if purse.refuses(&mut script, &merchant, me, [guid]) {
+                if purse.refuses(&mut script, Some(vendor), me, [guid]) {
                     continue;
                 }
                 debug!("ui_items: repair worn lua slot {id} (item {guid:#x})");
@@ -905,7 +915,7 @@ fn run_container_clicks(world: &mut World) {
              mut items: ScriptItemUse| {
                 crate::script_calls::in_call_order(&mut script, |script, call| {
                     if let ScriptCall::UseContainerItem { bag, slot } = call {
-                        items.use_container_item(script, bag, slot);
+                        items.use_container_item(script, bag, slot, None);
                     }
                 });
             },

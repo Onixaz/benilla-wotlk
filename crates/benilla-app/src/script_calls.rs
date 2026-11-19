@@ -22,7 +22,7 @@ const MAX_NESTING: u8 = 8;
 /// made them and before the frame's feed, which publishes the cooldowns they arm.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 pub(crate) fn apply_script_calls(
-    (script, _live): (
+    (script, live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<(
             (
@@ -113,7 +113,8 @@ pub(crate) fn apply_script_calls(
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {
-                appliers.p5().use_container_item(script, bag, slot);
+                let vendor = live.merchant_vendor();
+                appliers.p5().use_container_item(script, bag, slot, vendor);
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
             ScriptCall::UseItemAt { bag, slot, at } => {

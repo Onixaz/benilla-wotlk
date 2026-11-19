@@ -29,7 +29,6 @@ use crate::names::NameCache;
 use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::player::Player;
 use crate::portrait::{BoothPanes, PortraitImages, PortraitSource};
-use crate::ui_merchant::MerchantOpen;
 
 /// Brog Hamfist `<General Supplies>`: `creature_template.entry = 151`, `npc_flags = 4`.
 const BROG_ENTRY: u32 = 151;
@@ -141,8 +140,7 @@ fn clear_log(script: &UiScript) {
 fn vendor_swap_probe(
     time: ProbeClock,
     mut probe: ResMut<VendorSwapProbe>,
-    merchant: Res<MerchantOpen>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     names: Res<NameCache>,
     panes: Res<BoothPanes>,
     images: Res<PortraitImages>,
@@ -222,7 +220,7 @@ fn vendor_swap_probe(
         Phase::Open { since } => {
             let brog = probe.brog.expect("set at Settle");
             let expect = names.peek(brog).unwrap_or("").to_string();
-            match (merchant.vendor == Some(brog), first_show(&script)) {
+            match (live.merchant_vendor() == Some(brog), first_show(&script)) {
                 (true, Some((npc, title))) => {
                     if npc == expect && title == expect {
                         info!(
@@ -243,7 +241,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: open FAIL — no merchant window + MERCHANT_SHOW on \
                          Brog within {WINDOW_TIMEOUT_SECS}s (vendor = {:?})",
-                        merchant.vendor
+                        live.merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -280,7 +278,7 @@ fn vendor_swap_probe(
         Phase::Swap { since } => {
             let dobbins = probe.dobbins.expect("set at Settle");
             let expect = names.peek(dobbins).unwrap_or("").to_string();
-            match (merchant.vendor == Some(dobbins), first_show(&script)) {
+            match (live.merchant_vendor() == Some(dobbins), first_show(&script)) {
                 (true, Some((npc, title))) => {
                     if npc == expect && title == expect {
                         info!(
@@ -301,7 +299,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: swap FAIL — no window swap + MERCHANT_SHOW on \
                          Dobbins within {WINDOW_TIMEOUT_SECS}s (vendor = {:?})",
-                        merchant.vendor
+                        live.merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -338,7 +336,7 @@ fn vendor_swap_probe(
         }
         Phase::Clear { since, closed_at } => {
             match closed_at {
-                None if merchant.vendor.is_none() => {
+                None if live.merchant_vendor().is_none() => {
                     probe.phase = Phase::Clear {
                         since,
                         closed_at: Some(now),
@@ -348,7 +346,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: clear FAIL — the session never cleared after \
                          HideUIPanel (vendor = {:?})",
-                        merchant.vendor
+                        live.merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;

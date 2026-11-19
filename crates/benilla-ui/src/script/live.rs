@@ -778,6 +778,51 @@ pub trait LiveState {
         0
     }
 
+    /// Our coinage at the call (`PLAYER_FIELD_COINAGE`), 0 with no player object; `None` where no view lends it.
+    fn player_money(&self) -> Option<u64> {
+        None
+    }
+
+    /// Whether a vendor is set (`0xbfa3e8`); `None` where no view lends the merchant.
+    fn merchant_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The count of `list` (`0xbfa3f0`, `0xbfa3f4`); `None` where no view lends the merchant.
+    fn merchant_len(&self, _list: super::MerchantList) -> Option<usize> {
+        None
+    }
+
+    /// Row `index` (0-based) of `list` resolved at the call, `ask` leaving the merchant's record callback on a vendor row's miss (`0x584680`); `None` where no view lends the merchant.
+    fn merchant_row(
+        &mut self,
+        _list: super::MerchantList,
+        _index: usize,
+        _ask: bool,
+    ) -> Option<Option<super::MerchantItem>> {
+        None
+    }
+
+    /// Whether the vendor's unit is held with the repair bit (`0x5845b0`); `None` where no view lends the merchant.
+    fn can_merchant_repair(&self) -> Option<bool> {
+        None
+    }
+
+    /// `GetRepairAllCost`'s sweep (`0x585990`): `Some(None)` with no repairer or no player; `None` where no view lends it.
+    fn repair_all_cost(&self) -> Option<Option<(u32, bool)>> {
+        None
+    }
+
+    /// An item's repair cost after the vendor's discount (`0x584b20`); `None` where no view lends it.
+    fn repair_cost(&self, _at: super::RepairAt) -> Option<u32> {
+        None
+    }
+
+    /// A merchant verb's act inside its call; `None` where no view lends the merchant.
+    fn merchant_act(&mut self, _act: super::MerchantAct) -> Option<super::MerchantOutcome> {
+        None
+    }
+
     /// The barber shop at the call: the open flag (`[0xbd19b8]`), our look, level and coinage, and our body's dials; `None` with no player object.
     fn barber(&self) -> Option<super::BarberRead<'_>> {
         None
@@ -1093,6 +1138,13 @@ pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str
     if write_live(|l| l.unique_signal(event)) != Some(true) {
         model.pending_events.push((event.to_string(), Vec::new()));
     }
+}
+
+/// Our coinage at the call through the lent view; where none lends it, a test's pushed purse.
+pub(crate) fn money(model: &super::Model) -> u64 {
+    read_live(|l| l.player_money())
+        .flatten()
+        .unwrap_or(model.money)
 }
 
 /// `f` over the view lent right now, `None` with none lent.

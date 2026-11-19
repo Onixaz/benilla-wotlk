@@ -160,6 +160,10 @@ local VERBS = {
     { "ittext", function() return ItemTextGetText() end },
     { "itpage", function() return ItemTextGetPage() end },
     { "itnext", function() return ItemTextHasNextPage() end },
+    { "merchantn", function() return GetMerchantNumItems() end },
+    { "buybackn", function() return GetNumBuybackItems() end },
+    { "repaircost", function() return GetRepairAllCost() end },
+    { "money", function() return GetMoney() end },
 }
 local function answers()
     local verbs = {}

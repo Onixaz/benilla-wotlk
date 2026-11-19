@@ -1263,7 +1263,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             } else {
                 bid
             };
-            if model.money < u64::from(cost) {
+            if crate::script::live::money(&model) < u64::from(cost) {
                 model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
@@ -1368,7 +1368,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             if r.bid_amount != 0 {
                 let cut = (r.bid_amount as f32 * 0.05) as u64;
-                if model.money < cut {
+                if crate::script::live::money(&model) < cut {
                     model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
                     return Ok(());
                 }

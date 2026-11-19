@@ -83,7 +83,6 @@ pub(super) fn seed_ui_fixture(
     mut ctx: ResMut<CaptureCtx>,
     mut commands: Commands,
     progress: Res<WorldLoadProgress>,
-    mut merchant: ResMut<crate::ui_merchant::MerchantOpen>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut script, mut live): (
@@ -256,8 +255,12 @@ pub(super) fn seed_ui_fixture(
                         extended_cost: 0,
                     }
                 })
-                .collect();
-            merchant.open(NPC_GUID, rows);
+                .collect::<Vec<_>>();
+            // The list's handler leg: the vendor set and `MERCHANT_SHOW` in its turn.
+            commands.queue(move |w: &mut World| {
+                crate::ui_merchant::set_merchant(w, NPC_GUID, rows);
+                crate::ui_script::live::fire_handler_events(w);
+            });
             // The usable gate's player half: with no active player in capture, the fixture's level-12 human warrior stands in.
             if let Some(s) = script.as_mut() {
                 s.set_player_req_state(benilla_ui::script::PlayerReqState {

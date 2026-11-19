@@ -108,6 +108,8 @@ pub(crate) struct LiveView<'w, 's> {
     gossip: crate::ui_gossip::GossipView<'w, 's>,
     /// The item-text reader's globals and what its draw reads.
     item_text: crate::ui_item_text::ItemTextLive<'w, 's>,
+    /// The merchant globals and what its rows, costs and sends read.
+    merchant: Option<crate::ui_merchant::MerchantLive<'w, 's>>,
     _mark: Option<Res<'w, LendsLive>>,
 }
 
@@ -1790,6 +1792,49 @@ impl LiveState for LiveView<'_, '_> {
         self.item_text.close(self.tabard.target_mut())
     }
 
+    fn player_money(&self) -> Option<u64> {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        Some(u64::from(me.and_then(|m| m.player_money()).unwrap_or(0)))
+    }
+
+    fn merchant_open(&self) -> Option<bool> {
+        Some(self.merchant.as_ref()?.open())
+    }
+
+    fn merchant_len(&self, list: benilla_ui::script::MerchantList) -> Option<usize> {
+        Some(self.merchant.as_ref()?.len(list))
+    }
+
+    fn merchant_row(
+        &mut self,
+        list: benilla_ui::script::MerchantList,
+        index: usize,
+        ask: bool,
+    ) -> Option<Option<benilla_ui::script::MerchantItem>> {
+        let waits = self.record_waits.as_deref_mut();
+        Some(self.merchant.as_mut()?.row(list, index, ask, waits))
+    }
+
+    fn can_merchant_repair(&self) -> Option<bool> {
+        Some(self.merchant.as_ref()?.can_repair())
+    }
+
+    fn repair_all_cost(&self) -> Option<Option<(u32, bool)>> {
+        Some(self.merchant.as_ref()?.repair_all_cost())
+    }
+
+    fn repair_cost(&self, at: benilla_ui::script::RepairAt) -> Option<u32> {
+        Some(self.merchant.as_ref()?.repair_cost(at))
+    }
+
+    fn merchant_act(
+        &mut self,
+        act: benilla_ui::script::MerchantAct,
+    ) -> Option<benilla_ui::script::MerchantOutcome> {
+        let target = self.tabard.target_mut();
+        Some(self.merchant.as_mut()?.act(act, target))
+    }
+
     fn close_gossip(&mut self) -> u32 {
         use crate::ui_session::NpcSession;
         let giver_held = self.lent.giver.get().and_then(|q| q.npc()).is_some();
@@ -1869,6 +1914,12 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     /// `f` over the quest giver this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_giver<R>(&self, f: impl FnOnce(Option<&QuestGiver>) -> R) -> R {
         self.loan.with_view(|v| f(v.lent.giver.get()))
+    }
+
+    /// The vendor this parameter's view lends, between calls into Lua.
+    pub(crate) fn merchant_vendor(&self) -> Option<u64> {
+        self.loan
+            .with_view(|v| v.merchant.as_ref().and_then(|m| m.state().vendor))
     }
 
     /// `f` over the gossip globals this parameter borrows, between calls into Lua.

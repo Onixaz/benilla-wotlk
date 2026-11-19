@@ -386,7 +386,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             let price = read_live(|l| l.stable_slot_price(list.num_slots + 1)).flatten();
-            let money = crate::script::model_mut_of(lua).money;
+            let money = crate::script::live::money(&crate::script::model_mut_of(lua));
             if price.is_some_and(|p| u64::from(p) <= money) {
                 send(StableIntent::BuySlot);
             }

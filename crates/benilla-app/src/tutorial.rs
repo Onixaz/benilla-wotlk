@@ -553,19 +553,17 @@ impl InputHooks<'_> {
 }
 
 /// The window edges the reference's handlers fire from: the trainer list (Trainers acknowledged),
-/// the vendor list (Vendors), the taxi map (Travel), and the group turning raid (Raid Groups, taken
-/// as the raid-type edge).
+/// the taxi map (Travel), and the group turning raid (Raid Groups, taken as the raid-type edge); the
+/// vendor's open triggers Vendors itself (`0x584537`).
 #[derive(Default)]
 struct WindowWatch {
     trainer: Option<u64>,
-    vendor: Option<u64>,
     taxi: bool,
     raid: Option<bool>,
 }
 
 fn watch_windows(
     trainer: Res<crate::ui_trainer::TrainerOpen>,
-    merchant: Res<crate::ui_merchant::MerchantOpen>,
     taxi: Res<crate::ui_taxi::TaxiState>,
     group: Res<crate::ui_party::GroupState>,
     mut watch: Local<WindowWatch>,
@@ -575,10 +573,6 @@ fn watch_windows(
         asks.write(TutorialEvent::Acknowledge { id: id::TRAINERS });
     }
     watch.trainer = trainer.trainer;
-    if merchant.vendor.is_some() && merchant.vendor != watch.vendor {
-        asks.write(TutorialEvent::trigger(id::VENDORS));
-    }
-    watch.vendor = merchant.vendor;
     let taxi_open = taxi.open.is_some();
     if taxi_open && !watch.taxi {
         asks.write(TutorialEvent::trigger(id::TRAVEL));

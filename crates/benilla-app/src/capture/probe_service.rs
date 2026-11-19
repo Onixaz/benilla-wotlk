@@ -35,7 +35,6 @@ use crate::target::cursor_mode::npc_flags as f;
 use crate::ui_gossip::GossipState;
 use benilla_ui::script::UiScript;
 
-use crate::ui_merchant::MerchantOpen;
 use crate::ui_quest::{QuestGiver, QuestStatuses};
 use crate::ui_session::InteractNpc;
 use crate::ui_trainer::TrainerOpen;
@@ -294,9 +293,8 @@ fn service_probe(
     // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
     // window and only by one.
     interact: Res<InteractNpc>,
-    // The vendor fork: the merchant window, the VM the held-cursor leg picks up in, and what
-    // turns a (bag, slot) into the item guid.
-    mut merchant: ResMut<MerchantOpen>,
+    // The vendor fork: the VM the held-cursor leg picks up in, and what turns a (bag, slot) into
+    // the item guid; the merchant window is read through the view.
     (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     objects: crate::net::Objects,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
@@ -613,7 +611,10 @@ fn service_probe(
             queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
             trainer.clear();
-            merchant.clear();
+            queue.queue(|w: &mut World| {
+                crate::ui_merchant::close_merchant(w);
+                crate::ui_script::live::fire_handler_events(w);
+            });
 
             // The empty-cursor leg. The arm is asserted: a vendor with a GOSSIP bit takes the
             // gossip arm.
@@ -648,7 +649,7 @@ fn service_probe(
             }
         }
         Phase::VendorOpen { since, guid } => {
-            if merchant.vendor == Some(guid) {
+            if live.merchant_vendor() == Some(guid) {
                 info!(
                     "PROBE_SERVICE: PASS (vendor fork, empty cursor) — merchant window open on \
                      {guid:#x}: the zero leg is still the plain list open"
@@ -656,7 +657,10 @@ fn service_probe(
                 probe.passes += 1;
                 // The window would arm the re-click gate and eat the next click, so close it the
                 // way its own close button does (no packet) before the held-cursor leg.
-                merchant.clear();
+                queue.queue(|w: &mut World| {
+                    crate::ui_merchant::close_merchant(w);
+                    crate::ui_script::live::fire_handler_events(w);
+                });
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: ChatKind::Say,
                     target: None,
