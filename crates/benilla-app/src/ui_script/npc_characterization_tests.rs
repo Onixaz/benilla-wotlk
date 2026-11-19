@@ -1359,6 +1359,44 @@ fn close_merchant_fires_twice_inside_its_call() {
     assert!(pinned.is_empty(), "{pinned:?}");
 }
 
+/// The unit-event fan-out names `"npc"` by the interact target itself (`0x60bece`): a hit on the open vendor fires `UNIT_COMBAT` for `"npc"` as the vendor's show stored it, and none once `CloseMerchant` clears the target; the aura walk holds the vendor's unit for `UnitAura("npc")`.
+#[test]
+fn a_hit_on_the_open_vendor_fires_unit_combat_for_npc() {
+    use crate::ui_unit::UnitCombatFeedback;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(vec![npc_at(NPC, 0x80, NEAR)], 2);
+    rig.packets(vec![vendor_list(NPC, vec![vendor_row(11, 1, 3)])], 2);
+    let hit = |rig: &mut Rig| {
+        rig.take();
+        rig.app
+            .world_mut()
+            .resource_mut::<bevy::ecs::message::Messages<UnitCombatFeedback>>()
+            .write(UnitCombatFeedback {
+                guid: NPC,
+                action: "WOUND",
+                flags: "CRITICAL",
+                amount: 7,
+                school: 1,
+            });
+        rig.run(1);
+        pin(&rig.take(), &["UNIT_COMBAT"], &[])
+    };
+    assert_eq!(hit(&mut rig), ["UNIT_COMBAT npc WOUND CRITICAL 7 1"]);
+    assert!(
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .held_unit_guids()
+            .contains(&NPC),
+        "the aura walk holds the interact target's unit"
+    );
+    call(&mut rig, "CloseMerchant()");
+    assert!(hit(&mut rig).is_empty(), "no interact target, no \"npc\"");
+}
+
 /// `BuyMerchantItem` and `BuybackItem` send inside their call (`0x5854c0`, `0x5855c0`); our coinage's watch fires `PLAYER_MONEY` from the handler with `GetMoney` read at the call (`0x6da091`), and the buyback fields' watch fires `MERCHANT_UPDATE` once per update (`0x585f60`).
 #[test]
 fn the_merchant_sends_in_its_calls_and_its_watches_fire_from_the_handler() {

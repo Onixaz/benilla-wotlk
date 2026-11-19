@@ -561,6 +561,10 @@ fn feed_auras(
                 .map_or(0, |(_, guid)| guid),
             npc: units.npc.as_deref().map_or(0, |f| f.0),
             focus: focus_guid,
+            // The interact target through the lent view (`0x60af67`).
+            interact: crate::ui_script::live::interact_target()
+                .flatten()
+                .unwrap_or(0),
             // The player's transport while seated (`0x60ac87`).
             vehicle: seated
                 .filter(|p| p.state == crate::vehicle::SEATED)

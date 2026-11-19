@@ -379,9 +379,7 @@ impl UnitGuids {
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
             // The interact target read at the call (`0x60af67`); with none held, the guid of a window not on it yet (#1329), else nobody.
-            UnitBase::Npc => read_live(|l| l.interact_target())
-                .flatten()
-                .unwrap_or(self.npc),
+            UnitBase::Npc => self.npc_guid(),
             // Deviation: the reference's party-pet lookup has no bound and reads past its
             // four-entry table, which is stale memory, not a mechanism; past it, nobody.
             UnitBase::PartyPet(row) => at(&self.party_pets, row),
@@ -548,10 +546,18 @@ impl UnitGuids {
         if self.focus == guid {
             out.push("focus".into());
         }
-        if self.npc == guid {
+        // The fan-out's compare is against the interact target itself (`0x60bece`).
+        if self.npc_guid() == guid {
             out.push("npc".into());
         }
         out
+    }
+
+    /// The `"npc"` guid: the interact target read at the call (`0x60af67`); with none held, the guid of a window not on it yet (#1329), else 0.
+    pub(crate) fn npc_guid(&self) -> u64 {
+        read_live(|l| l.interact_target())
+            .flatten()
+            .unwrap_or(self.npc)
     }
 }
 
