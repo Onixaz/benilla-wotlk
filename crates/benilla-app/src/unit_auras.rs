@@ -312,16 +312,34 @@ fn on_aura_update(
     // (`0x72fd30`), after the apply.
     let unit = update.unit;
     if let Some(ui) = ui.as_mut() {
-        let effects = moves.iter().flatten().filter(|(spell, _)| {
-            spells
+        // Each aura of ours that came or went: its effect's usable update, then the bar's aura
+        // update (`0x7220ff`, `0x7277e6`); a whole table's packet runs the bar's for every live
+        // aura (`0x72f9a2`).
+        let live: Vec<u32> = if update.all && mine {
+            update
+                .slots
+                .iter()
+                .filter_map(|(_, r)| r.map(|r| r.spell_id))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for &(spell, removed) in moves.iter().flatten() {
+            let moves_usability = spells
                 .as_ref()
-                .and_then(|s| s.catalog.get(*spell))
-                .is_some_and(crate::ui_action::usable_cache::moves_usability)
-        });
-        for _ in effects {
-            ui.world(crate::ui_action::usable_cache::step(
-                crate::ui_action::usable_cache::Pass::Full,
-            ));
+                .and_then(|s| s.catalog.get(spell))
+                .is_some_and(crate::ui_action::usable_cache::moves_usability);
+            if moves_usability {
+                ui.world(crate::ui_action::usable_cache::step(
+                    crate::ui_action::usable_cache::Pass::Full,
+                ));
+            }
+            if !update.all || removed {
+                ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
+            }
+        }
+        for spell in live {
+            ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
         }
         ui.world(move |world| crate::ui_action::usable_cache::aura_read(world, unit, changed));
         ui.world(move |world| crate::ui_cast::auras_changed(world, unit, changed));

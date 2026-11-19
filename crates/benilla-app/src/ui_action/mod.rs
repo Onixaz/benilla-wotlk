@@ -29,6 +29,7 @@ mod feed_tests;
 mod net;
 mod ranks;
 pub(crate) mod signals;
+pub(crate) mod slots;
 pub(crate) mod toggle;
 pub(crate) mod usable_cache;
 #[cfg(test)]
@@ -75,13 +76,9 @@ pub(crate) struct TempActionBar {
 /// The pet bar's temporary-bar flag.
 pub(crate) const TEMP_BAR_PET: u32 = 0x1;
 
-/// The action slots (wire 0..143) and the known spells. The bar is client-authoritative:
-/// [`drain::drain_action_sets`] writes it directly, and vmangos stores a slot without a reply
-/// (`MasterPlayer::addActionButton`).
+/// The known spells and the saved equipment sets, which the packet handlers write.
 #[derive(Resource, Default)]
 pub(crate) struct PlayerActions {
-    /// Wire slot (0-based) to its packed action; the Lua action id is slot + 1.
-    pub buttons: HashMap<u8, ActionButton>,
     /// The spell book (`SMSG_INITIAL_SPELLS`), ordered on purpose: the reference's first-hit scans
     /// pick between equal spells, 6478 and 22810 "Opening", by array order, which is ascending id:
     /// the server sends the book from a `std::map`.
@@ -90,9 +87,18 @@ pub(crate) struct PlayerActions {
     pub equipment_sets: Vec<benilla_protocol::messages::EquipmentSet>,
     /// A list has arrived this session, empty or not: a new VM starts loaded from it.
     pub equipment_sets_listed: bool,
-    /// Set by every book or bar change, cleared once the feed re-resolves slot identity, which a
-    /// landed item template ([`crate::items::Items::template_epoch`]) also triggers. Item counts
-    /// refresh every frame regardless.
+    /// Set by every book change, cleared by the rank pass ([`ranks`]) that it wakes.
+    pub dirty: bool,
+}
+
+/// The action slots (wire 0..143), lent to every VM holder: the verbs read them at the call and
+/// the bar verbs write them in it ([`ActionSlots::write_slot`]). The bar is client-authoritative:
+/// the server stores a slot without a reply.
+#[derive(Resource, Default)]
+pub(crate) struct ActionSlots {
+    /// Wire slot (0-based) to its packed action; the Lua action id is slot + 1.
+    pub buttons: HashMap<u8, ActionButton>,
+    /// Set by every bar change, cleared by the rank pass ([`ranks`]) that it wakes.
     pub dirty: bool,
     /// The last `SMSG_ACTION_BUTTONS` table (`0xad9f6c`), which the player's init puts on the bar.
     pub table: Option<Vec<ActionButton>>,
@@ -101,7 +107,7 @@ pub(crate) struct PlayerActions {
     pub locked: bool,
 }
 
-impl PlayerActions {
+impl ActionSlots {
     /// A local write that the server never hears of, as the temporary bar's (`0x5ab800`); returns
     /// whether the slot moved.
     pub(crate) fn set_local(&mut self, slot: u8, packed: u32) -> bool {
@@ -125,14 +131,19 @@ impl PlayerActions {
         true
     }
 
-    /// One button write, the tail every `PlaceAction` shares (`0x5aae80`, then
-    /// `CMSG_SET_ACTION_BUTTON`): the store, `dirty` for the feed (which fires
-    /// `ACTIONBAR_SLOT_CHANGED`), and the send. `packed == 0` clears; vmangos and AzerothCore
-    /// store the slot without a reply.
-    pub(crate) fn write_slot(&mut self, slot: u8, packed: u32, net: &crate::net::NetCommands) {
+    /// One button write (`0x5aae80`, `0x5aaa90` for 0, then `CMSG_SET_ACTION_BUTTON`): the store,
+    /// `dirty` for the rank pass, and the send; whether it was written, as a locked bar refuses
+    /// (`0x5aaec1`, `0x5aaac2`). The caller signals `ACTIONBAR_SLOT_CHANGED`. AzerothCore stores
+    /// the slot without a reply.
+    pub(crate) fn write_slot(
+        &mut self,
+        slot: u8,
+        packed: u32,
+        net: &crate::net::NetCommands,
+    ) -> bool {
         if self.locked {
             debug!("ui_action: bar locked — slot {slot} write refused");
-            return;
+            return false;
         }
         if packed == 0 {
             self.buttons.remove(&slot);
@@ -151,6 +162,7 @@ impl PlayerActions {
             button: slot,
             packed,
         });
+        true
     }
 }
 
@@ -440,6 +452,7 @@ impl Plugin for UiActionPlugin {
         net::register(app);
         equipment_sets::register(app);
         app.init_resource::<PlayerActions>()
+            .init_resource::<ActionSlots>()
             .init_resource::<usable_cache::UsableCaches>()
             .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
@@ -454,16 +467,14 @@ impl Plugin for UiActionPlugin {
             .add_systems(
                 Update,
                 (
-                    // The feeds ride with the unit feed, before the VM ticks: the rank pass before
-                    // the identity feed that consumes its `dirty`. The drains follow the input
-                    // pass, in any order: a gesture fills only one of their queues.
-                    // The rank pass writes the store every lent view reads, so it runs ahead of every VM holder, after the packets that dirty it.
+                    // The rank pass writes the store every lent view reads, so it runs ahead of
+                    // every VM holder, after the packets that dirty it. The drains follow the
+                    // input pass, in any order: a gesture fills only one of their queues.
                     ranks::normalize_action_ranks
                         .in_set(ActionRanks)
                         .after(benilla_world::schedule::WorldStage::Net)
                         .before(crate::ui_script::UiPress),
                     feed::feed_actions.in_set(UnitFeed).in_set(SlotIdentityFeed),
-                    drain::drain_action_sets.in_set(UiDrain),
                     equipment_sets::drain_equipment_sets.in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.
                     drain::drain_go_openers.in_set(UiDrain),

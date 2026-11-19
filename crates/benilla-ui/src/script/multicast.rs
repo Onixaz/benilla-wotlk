@@ -85,12 +85,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let fits = totem_fits(action, spell);
             let mut model = crate::script::model_mut_of(lua);
-            match fits {
-                None => {}
-                Some(_) if spell == 0 => {
-                    model.actions.remove(&action);
-                    model.action_sets.push((action, 0));
-                }
+            // The slot remover for spell 0, else the slot write, each sent and signalled in the
+            // call (`0x5ab8a0`).
+            let written = match fits {
+                None => false,
+                Some(_) if spell == 0 => super::action_slots::write(&mut model, action, None, None),
                 Some(true) => {
                     let texture = super::spellbook::live_book()
                         .book
@@ -98,22 +97,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         .iter()
                         .find(|s| s.spell_id == spell)
                         .and_then(|s| s.texture.clone());
-                    model.actions.insert(
-                        action,
-                        crate::script::ActionSlot {
-                            texture,
-                            kind: ACTION_KIND_SPELL,
-                            action: spell,
-                            count: 0,
-                            consumable: false,
-                            stackable: false,
-                            pet_spell: None,
-                        },
-                    );
-                    let packed = (u32::from(ACTION_KIND_SPELL) << 24) | (spell & 0x00FF_FFFF);
-                    model.action_sets.push((action, packed));
+                    let word = super::action_slots::Word {
+                        kind: ACTION_KIND_SPELL,
+                        action: spell,
+                    };
+                    super::action_slots::write(&mut model, action, Some(word), texture)
                 }
-                Some(false) => refuse_totem(&mut model, action),
+                Some(false) => {
+                    refuse_totem(&mut model, action);
+                    false
+                }
+            };
+            drop(model);
+            if written {
+                super::action_slots::signal(lua, action);
             }
             Ok(())
         })?,

@@ -181,6 +181,7 @@ pub(crate) fn reactive_spells(
 pub(crate) struct UsableInputs<'w, 's> {
     spells: Option<Res<'w, Spells>>,
     actions: LentRef<'w, PlayerActions>,
+    slots: LentRef<'w, crate::ui_action::ActionSlots>,
     bound: LentRef<'w, crate::ui_macro::MacroBoundSpells>,
     pet_bar: LentRef<'w, crate::ui_pet::PetBar>,
     cooldowns: LentRef<'w, Cooldowns>,
@@ -222,6 +223,7 @@ pub(crate) struct UsableTables<'w> {
 pub(crate) struct Sources<'a, 'w, 's> {
     pub(crate) spells: Option<&'a Spells>,
     pub(crate) actions: Option<&'a PlayerActions>,
+    pub(crate) slots: Option<&'a crate::ui_action::ActionSlots>,
     pub(crate) bound: Option<&'a crate::ui_macro::MacroBoundSpells>,
     pub(crate) pet_bar: Option<&'a crate::ui_pet::PetBar>,
     pub(crate) cooldowns: Option<&'a Cooldowns>,
@@ -246,6 +248,7 @@ pub(crate) struct Sources<'a, 'w, 's> {
 pub(crate) struct Reads<'a, 'w, 's> {
     spells: &'a Spells,
     actions: &'a PlayerActions,
+    slots: &'a crate::ui_action::ActionSlots,
     bound: Option<&'a crate::ui_macro::MacroBoundSpells>,
     pet_bar: Option<&'a crate::ui_pet::PetBar>,
     cooldowns: &'a Cooldowns,
@@ -286,6 +289,7 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
     pub(crate) fn reads(self) -> Option<Reads<'a, 'w, 's>> {
         let spells = self.spells?;
         let actions = self.actions?;
+        let slots = self.slots?;
         let cooldowns = self.cooldowns?;
         let (Some(reputations), Some(mods), Some(items), Some(commands)) =
             (self.reputations, self.mods, self.items, self.commands)
@@ -324,6 +328,7 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
         Some(Reads {
             spells,
             actions,
+            slots,
             bound: self.bound,
             pet_bar: self.pet_bar,
             cooldowns,
@@ -351,6 +356,7 @@ impl UsableInputs<'_, '_> {
     /// `f` over the reads, `None` without the tables a walk needs.
     fn with_reads<R>(&self, f: impl FnOnce(&Reads<'_, '_, '_>) -> R) -> Option<R> {
         let actions = self.actions.get()?;
+        let slots = self.slots.get()?;
         let cooldowns = self.cooldowns.get()?;
         let pet_bar = self.pet_bar.get();
         let bound = self.bound.get();
@@ -359,6 +365,7 @@ impl UsableInputs<'_, '_> {
         let reads = Sources {
             spells: self.spells.as_deref(),
             actions: Some(&actions),
+            slots: Some(&slots),
             bound: bound.as_deref(),
             pet_bar: pet_bar.as_deref(),
             cooldowns: Some(&cooldowns),
@@ -445,7 +452,7 @@ impl Reads<'_, '_, '_> {
     /// the pet bar, then the walk for a spell or an item.
     pub(crate) fn slot(&self, slot: u8) -> Usable {
         use crate::ui_macro::BoundSpell;
-        let Some(button) = self.actions.buttons.get(&slot) else {
+        let Some(button) = self.slots.buttons.get(&slot) else {
             return Usable::default();
         };
         let (kind, id) = match button.kind {
@@ -581,7 +588,7 @@ impl Reads<'_, '_, '_> {
     /// pet bar, and the pet's store for a pet spell; an item has none.
     fn slot_power(&self, slot: u8) -> Option<bool> {
         use crate::ui_macro::BoundSpell;
-        let button = self.actions.buttons.get(&slot)?;
+        let button = self.slots.buttons.get(&slot)?;
         let spell = match button.kind {
             ACTION_KIND_SPELL => button.action,
             ACTION_KIND_MACRO => match self.bound?.0.get(&button.action)? {
@@ -987,6 +994,7 @@ mod tests {
             radii: Default::default(),
         });
         world.insert_resource(actions);
+        world.init_resource::<crate::ui_action::ActionSlots>();
         world.init_resource::<Cooldowns>();
         world.init_resource::<crate::target::Selection>();
         world.init_resource::<crate::spell::SpellModifiers>();
@@ -1135,7 +1143,7 @@ mod tests {
             ]
         };
         let mut world = world(vec![(FIREBALL, fireball)], &[FIREBALL], &fields(100));
-        world.resource_mut::<PlayerActions>().buttons.insert(
+        world.resource_mut::<crate::ui_action::ActionSlots>().buttons.insert(
             0,
             benilla_protocol::messages::ActionButton {
                 slot: 0,

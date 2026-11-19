@@ -39,6 +39,14 @@ pub struct ActionSlot {
     pub pet_spell: Option<u32>,
 }
 
+/// An action slot's icon as the app resolves it (`0x5a97f0`): a texture path, or a pet mode's or
+/// order's `PET_%s_TEXTURE` global, which the VM reads (`0x5a9ac4`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionIcon {
+    Path(String),
+    Global(&'static str),
+}
+
 /// One action's per-frame state, read by `IsUsableAction`, `IsActionInRange`, `GetActionCooldown`
 /// and kin; kept apart from [`ActionSlot`] so its churn never fires `ACTIONBAR_SLOT_CHANGED`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -82,15 +90,9 @@ pub struct ActionUse {
 }
 
 impl super::UiScript {
-    /// Push the saved equipment sets as `(id, name)`, which set slots answer by id.
-    pub fn set_equipment_sets(&mut self, sets: Vec<(u32, String)>) {
-        let sets: std::collections::HashMap<u32, String> = sets.into_iter().collect();
-        if self.model_ref().equipment_sets != sets {
-            self.model_mut().equipment_sets = sets;
-        }
-    }
-
-    /// Push (or clear) one action slot, keyed by Lua action id (1..120).
+    /// The stand-in slot (or none) for Lua action id `action` (1..144), which the slot verbs read
+    /// with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_action(&mut self, action: u32, slot: Option<ActionSlot>) {
         let mut model = self.model_mut();
         match slot {
@@ -145,8 +147,9 @@ impl super::UiScript {
         })
     }
 
-    /// Drain the `(lua action id, packed)` pairs `PickupAction`/`PlaceAction` queued; the app
-    /// sends each as `CMSG_SET_ACTION_BUTTON` (`packed == 0` clears) and updates its own store.
+    /// The stand-in's slot writes as `(lua action id, packed)`, `packed == 0` a clear, made with no
+    /// view lent; with one, the app's bar stores and sends each inside the call.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn take_action_sets(&mut self) -> Vec<(u32, u32)> {
         drain_field!(self, action_sets)
     }
@@ -184,7 +187,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(flag(model.actions.contains_key(&action)))
+            Ok(flag(super::action_slots::word(&model, action).is_some()))
         })?,
     )?;
 
@@ -205,7 +208,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let resolved = u32::try_from(slot)
                 .ok()
                 .filter(|s| (1..=120).contains(s))
-                .and_then(|s| model.actions.get(&s))
+                .and_then(|s| super::action_slots::word(&model, s))
                 .and_then(|a| match a.kind & 0xf0 {
                     ACTION_KIND_MACRO => model.macros.get(a.action as usize).map(|_| {
                         let b = model
@@ -238,7 +241,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                model.actions.get(&action).and_then(|s| s.texture.clone())
+                super::action_slots::texture(&model, action, &|key| {
+                    lua.globals().get::<Option<String>>(key).ok().flatten()
+                })
             };
             match tex {
                 Some(t) => Ok(Value::String(lua.create_string(&t)?)),
@@ -265,7 +270,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .expect("model app_data");
                 u32::try_from(slot)
                     .ok()
-                    .and_then(|s| model.actions.get(&s))
+                    .and_then(|s| super::action_slots::word(&model, s))
                     .filter(|s| s.kind & 0xf0 == ACTION_KIND_MACRO)
                     .and_then(|s| model.macros.get(s.action as usize))
                     .map(|m| m.name.clone())
@@ -290,20 +295,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(a) = u32::try_from(slot).ok().and_then(|s| model.actions.get(&s)) else {
+            let a_id = u32::try_from(slot).unwrap_or(0);
+            let Some(a) = super::action_slots::word(&model, a_id).filter(|_| a_id != 0) else {
                 return Ok(MultiValue::new());
             };
             let str = |s: &str| lua.create_string(s).map(Value::String);
             Ok(MultiValue::from_vec(match a.kind & 0xf0 {
                 ACTION_KIND_ITEM => vec![str("item")?, Value::Integer(i64::from(a.action))],
                 ACTION_KIND_MACRO => vec![str("macro")?, Value::Integer(i64::from(a.action))],
-                ACTION_KIND_EQUIPMENT_SET => match model.equipment_sets.get(&a.action) {
-                    Some(name) => vec![str("equipmentset")?, str(name)?],
+                ACTION_KIND_EQUIPMENT_SET => match model
+                    .equipment_manager
+                    .sets
+                    .iter()
+                    .find(|s| s.id == a.action)
+                {
+                    Some(set) => vec![str("equipmentset")?, str(&set.name)?],
                     None => Vec::new(),
                 },
                 // A pet-action slot names the pet bar's spell (`0x5a8f10`'s pet leg): "spell", its
                 // pet book index, "pet", the id; nothing for an order or mode.
-                ACTION_KIND_PET => match a.pet_spell {
+                ACTION_KIND_PET => match super::action_slots::pet_spell(&model, a_id) {
                     Some(spell) => {
                         let index = super::spellbook::live_pet_book(&model)
                             .slots
@@ -367,13 +378,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let in_binding = super::input_verbs::in_binding(lua);
             let mut model = crate::script::model_mut_of(lua);
-            if super::cursor::use_action_places(&mut model, action, in_binding) {
+            let mut changed = Vec::new();
+            if super::cursor::use_action_places(&mut model, action, in_binding, &mut changed) {
+                let grid = super::cursor::take_grid_edge(&mut model);
+                drop(model);
+                super::action_slots::signal_all(lua, grid, changed);
                 return Ok(());
             }
             // A set slot wears the set (`0x5abdcc` → the equipment manager's set equip `0x5ae660`).
-            if let Some(set) = model
-                .actions
-                .get(&action)
+            if let Some(set) = super::action_slots::word(&model, action)
                 .filter(|a| a.kind == ACTION_KIND_EQUIPMENT_SET)
                 .map(|a| a.action)
             {
@@ -394,11 +407,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model
-                .actions
-                .get(&action)
-                .filter(|s| s.kind == ACTION_KIND_ITEM)
-                .map_or(0, |s| s.count))
+            Ok(super::action_slots::count(&model, action))
         })?,
     )?;
 
@@ -564,17 +573,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             ))
         })?,
     )?;
-    // From the slot, not the state map: the reference's answer depends only on the item template.
+    // IsConsumableAction(slot) (`0x5a9360`): ammo, thrown or a used-up item, or a player spell that
+    // takes reagents, read at the call.
     g.set(
         "IsConsumableAction",
         lua.create_function(|lua, action: u32| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            match model.actions.get(&action) {
-                Some(s) if s.consumable => Ok(Value::Integer(1)),
-                _ => Ok(Value::Nil),
-            }
+            Ok(flag(super::action_slots::consumable(&model, action)))
         })?,
     )?;
     // IsStackableAction(slot) (`0x5a8720`): 1 or nil; a non-number raises (`0x5a877d`).
@@ -586,10 +593,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(flag(
-                u32::try_from(slot)
-                    .ok()
-                    .and_then(|s| model.actions.get(&s))
-                    .is_some_and(|a| a.stackable),
+                u32::try_from(slot).is_ok_and(|s| super::action_slots::stackable(&model, s)),
             ))
         })?,
     )?;
@@ -959,7 +963,13 @@ mod tests {
         s.set_action(4, Some(slot(super::ACTION_KIND_MACRO, 2)));
         s.set_action(6, Some(slot(super::ACTION_KIND_EQUIPMENT_SET, 3)));
         s.set_action(7, Some(slot(super::ACTION_KIND_EQUIPMENT_SET, 4)));
-        s.set_equipment_sets(vec![(3, "Tank".into())]);
+        s.set_equipment_set_list(vec![crate::script::EquipmentSetView {
+            guid: 1,
+            id: 3,
+            name: "Tank".into(),
+            icon: "INV_Shield_06".into(),
+            items: [0; crate::script::EQUIPMENT_SET_SLOTS],
+        }]);
         let info = |s: &UiScript, n: u32| {
             s.eval::<String>(&format!(
                 "local t = {{GetActionInfo({n})}} \

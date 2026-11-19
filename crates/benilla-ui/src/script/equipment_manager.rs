@@ -100,7 +100,6 @@ impl super::UiScript {
         mgr.sets = sets.into_iter().take(MAX_EQUIPMENT_SETS).collect();
         mgr.awaiting_guid.clear();
         mgr.loaded = true;
-        sync_bar_names(&mut model);
     }
 
     /// `SMSG_EQUIPMENT_SET_SAVED` (`0x5ae760`): a guid names the set; 0 refuses it and the set is
@@ -115,7 +114,6 @@ impl super::UiScript {
             }
         } else {
             mgr.sets.retain(|s| s.id != id);
-            sync_bar_names(&mut model);
         }
     }
 
@@ -149,16 +147,6 @@ impl super::UiScript {
     pub fn take_equipment_set_requests(&mut self) -> Vec<EquipmentSetRequest> {
         drain_field!(self, equipment_set_requests)
     }
-}
-
-/// The action bar's id → name map follows the set list.
-fn sync_bar_names(model: &mut super::Model) {
-    model.equipment_sets = model
-        .equipment_manager
-        .sets
-        .iter()
-        .map(|s| (s.id, s.name.clone()))
-        .collect();
 }
 
 /// Where an item is, the player's slots and bags only.
@@ -283,10 +271,10 @@ fn contains_locked(model: &super::Model, set: &EquipmentSetView) -> bool {
 }
 
 /// The set save (`0x5ade50`): the name, the icon and each slot's equipped item, or
-/// [`IGNORED_SLOT`]; a set still waiting for its guid takes nothing. Queues the save and fires
-/// `EQUIPMENT_SETS_CHANGED`.
+/// [`IGNORED_SLOT`]; a set still waiting for its guid takes nothing. The bar's slots naming the set
+/// signal (`0x5adf28`), then it queues the save and fires `EQUIPMENT_SETS_CHANGED`.
 fn save_set(lua: &Lua, index: usize, name: &str, icon: &str) {
-    {
+    let saved_id = {
         let mut model = super::model_mut_of(lua);
         let items: [u64; EQUIPMENT_SET_SLOTS] = std::array::from_fn(|s| {
             if model.equipment_manager.ignored[s] {
@@ -306,12 +294,28 @@ fn save_set(lua: &Lua, index: usize, name: &str, icon: &str) {
         set.icon = icon.to_owned();
         set.items = items;
         let saved = set.clone();
+        let id = saved.id;
         model
             .equipment_set_requests
             .push(EquipmentSetRequest::Save(saved));
-        sync_bar_names(&mut model);
+        id
+    };
+    for action in set_slots(lua, saved_id) {
+        super::action_slots::signal(lua, action);
     }
     super::tick::fire_event_into(lua, "EQUIPMENT_SETS_CHANGED", Vec::new());
+}
+
+/// The bar's slots naming set `id`, in slot order.
+fn set_slots(lua: &Lua, id: u32) -> Vec<u32> {
+    let model = super::model_mut_of(lua);
+    (1..=144)
+        .filter(|&a| {
+            super::action_slots::word(&model, a).is_some_and(|w| {
+                w.kind & 0xf0 == super::action::ACTION_KIND_EQUIPMENT_SET && w.action == id
+            })
+        })
+        .collect()
 }
 
 /// `SaveEquipmentSet`'s icon (`0x5afa72`): a positive index names a macro icon, a negative one
@@ -517,13 +521,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(());
             };
+            // The bar's slots naming the set are removed, each sent and signalled (`0x5ae270`).
+            for action in set_slots(lua, set.id) {
+                let written =
+                    super::action_slots::write(&mut super::model_mut_of(lua), action, None, None);
+                if written {
+                    super::action_slots::signal(lua, action);
+                }
+            }
             {
                 let mut model = super::model_mut_of(lua);
                 model.equipment_manager.sets.retain(|s| s.id != set.id);
                 model
                     .equipment_set_requests
                     .push(EquipmentSetRequest::Delete(set.guid));
-                sync_bar_names(&mut model);
             }
             super::tick::fire_event_into(lua, "EQUIPMENT_SETS_CHANGED", Vec::new());
             Ok(())

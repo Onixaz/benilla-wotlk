@@ -215,7 +215,9 @@ const INSTRUMENT: &str = r#"
         cd:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 100 * i, 100)
         cd:Hide()
     end
+    PROBE_START = {}
     local function set_timer(cd, start, duration, enable)
+        PROBE_START[cd:GetName()] = start
         if start > 0 and duration > 0 and enable > 0 then
             cd:SetCooldown(start, duration)
         else
@@ -359,9 +361,9 @@ impl Rig {
             ..crate::ui_action::Spells::empty_for_tests()
         });
         {
-            let mut actions = world.resource_mut::<crate::ui_action::PlayerActions>();
+            let mut bar = world.resource_mut::<crate::ui_action::ActionSlots>();
             for (slot, spell) in [(0, BOLT), (1, NOVA)] {
-                actions.buttons.insert(
+                bar.buttons.insert(
                     slot,
                     ActionButton {
                         slot,
@@ -370,7 +372,7 @@ impl Rig {
                     },
                 );
             }
-            actions.spells = [BOLT, NOVA].into();
+            world.resource_mut::<crate::ui_action::PlayerActions>().spells = [BOLT, NOVA].into();
         }
         world
             .resource_mut::<crate::spell::Cooldowns>()
@@ -893,7 +895,7 @@ fn a_macros_target_then_cast_casts_at_the_new_target() {
     let index: u32 = rig.vm().eval("return MACRO_INDEX").expect("an index");
     rig.app
         .world_mut()
-        .resource_mut::<crate::ui_action::PlayerActions>()
+        .resource_mut::<crate::ui_action::ActionSlots>()
         .buttons
         .insert(
             2,
@@ -1099,9 +1101,11 @@ fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
         in_frame(&log, 2).contains(&"ACTIONBAR_UPDATE_COOLDOWN".to_string()),
         "the press frame's handler sets the running cooldown again: {log:?}"
     );
+    // The start the frame was handed: a later `GetActionCooldown` reads the recovery off the wall
+    // clock against the rig's pinned UI clock, so it drifts by however long the frame took.
     let (start, duration): (f64, f64) =
         crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
-            s.eval("local s, d = GetActionCooldown(2) return s, d")
+            s.eval("local _, d = GetActionCooldown(2) return PROBE_START.ProbeCooldown2, d")
                 .expect("Nova's triple")
         })
         .expect("the VM");

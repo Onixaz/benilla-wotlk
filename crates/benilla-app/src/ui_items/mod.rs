@@ -400,6 +400,21 @@ pub(crate) fn count_of(
     total
 }
 
+/// The charges left on the player's copies of `entry` (`0x754d50` with mask 0): each copy's first
+/// spell charges, negative ones counted as their size.
+pub(crate) fn charges_of(store: &ObjectFields, objects: &Objects, entry: u32) -> u32 {
+    let mut total = 0u32;
+    walk_inventory::<()>(store, objects, InventoryScope::DEFAULT, |_, _, guid| {
+        if let Some(fields) = objects.object(guid) {
+            if fields.object_entry() == Some(entry) {
+                total += fields.item_spell_charges(0).unwrap_or(0).unsigned_abs();
+            }
+        }
+        None
+    });
+    total
+}
+
 /// Every carried entry's count in one walk ([`InventoryScope::CARRIED`]): [`count_of`] for a
 /// caller asking about many entries in a frame.
 pub(crate) fn carried_counts(

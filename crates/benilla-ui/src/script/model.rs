@@ -10,7 +10,7 @@ use super::{
     combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
     loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
     quest, quest_log, reputation, session, simplehtml, skills, slider, social, stable, taxi, trade,
-    tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
+    tradeskill, trainer, unit_menu, weapon_enchant, AuraState, FontObject,
     MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
@@ -536,10 +536,9 @@ pub(crate) struct Model {
     /// The key-binding table the Key Bindings window edits, with its account and character sets.
     pub(crate) keybinds: super::keybind::KeybindState,
 
-    /// Action slots by Lua action id, 1..120.
-    pub(crate) actions: HashMap<u32, ActionSlot>,
-    /// The saved equipment sets by id, their names, which a set slot answers.
-    pub(crate) equipment_sets: HashMap<u32, String>,
+    /// The stand-in bar by Lua action id, 1..144, which the slot verbs read with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) actions: HashMap<u32, super::ActionSlot>,
     /// The currency display list as its last build left it (`0x5b06dd`, its count zeroed at `0x5b0044`).
     pub(crate) currency_list: Vec<super::currency::Entry>,
     /// The items whose record a build asked for with its landing callback (`0x5b01d7`, `0x5b0260`).
@@ -559,8 +558,8 @@ pub(crate) struct Model {
     pub(crate) temp_action_bar: u32,
     /// The main bar's page, 0-based (`[0xc1e598]`): `GetActionBarPage` answers it plus one.
     pub(crate) action_bar_page: u8,
-    /// `(action id, packed)` per slot `PickupAction`/`PlaceAction` changed, 0 clearing it: one
-    /// `CMSG_SET_ACTION_BUTTON` each, so a drag swap is two sends.
+    /// `(action id, packed)` per stand-in slot a verb wrote with no view lent, 0 clearing it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) action_sets: Vec<(u32, u32)>,
     /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
     /// (the reference's error display), each a literal from its table (stride `0x14`).
@@ -1576,8 +1575,8 @@ impl Model {
             saved_names_per_character: Vec::new(),
             held_saved_files: Vec::new(),
             keybinds: super::keybind::KeybindState::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             actions: HashMap::new(),
-            equipment_sets: HashMap::new(),
             currency_list: Vec::new(),
             currency_waiting: HashSet::new(),
             token_slots: None,
@@ -1588,6 +1587,7 @@ impl Model {
             bonus_bar_offset: 0,
             temp_action_bar: 0,
             action_bar_page: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
             message_sounds: Vec::new(),

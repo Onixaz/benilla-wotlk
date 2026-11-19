@@ -497,6 +497,11 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             }
             sc.ui
                 .world(move |world| crate::ui_guild_bank::item_landed(world, entry));
+            // The bar's record callback (`0x5aadb0`): a found record runs the item update.
+            if landed {
+                sc.ui
+                    .world(move |world| crate::ui_action::slots::record_landed(world, entry));
+            }
             // The callbacks that asked for this record, in ask order; each needs its item held and the record found (`0x70aeb6`, `0x70aebc`; `0x7078e7`).
             for (item, callback) in sc.items.take_record_waiters(entry) {
                 let Some(fields) = sc.index.0.get(&item).and_then(|&e| sc.stores.get(e).ok())
@@ -1673,9 +1678,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             .world(move |world| crate::ui_items::watch::enchants_changed(world, guid));
     }
     // The bag's slot watch (`0x5d9600`), once per slot field that moved, only on a bag the UI watches.
-    for j in merged.bag_slots.clone() {
-        sc.ui
-            .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j));
+    for (j, old) in merged.bag_slots.clone() {
+        sc.ui.world(move |world| {
+            crate::ui_items::watch::bag_slot_changed(world, guid, j, old)
+        });
     }
     // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`), the bank's leg.
     if merged.died {
@@ -1764,6 +1770,22 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         );
     }
     if merged.critter_moved {
+        // The bar's companion update for the old critter, then the new (`0x6cf6fc`, `0x6cf71b`).
+        let new = sc
+            .index
+            .0
+            .get(&guid)
+            .and_then(|&e| sc.stores.get(e).ok())
+            .and_then(|s| s.0.unit_critter())
+            .unwrap_or(0);
+        let (lo, hi) = merged.critter_old;
+        let old =
+            (u64::from(hi.unwrap_or((new >> 32) as u32)) << 32) | u64::from(lo.unwrap_or(new as u32));
+        for critter in [old, new] {
+            let entry = crate::ui_companion::critter_entry(critter);
+            sc.ui
+                .world(move |world| crate::ui_action::slots::critter_changed(world, entry));
+        }
         crate::ui_companion::critter_update(&mut sc.ui);
     }
     let split = merged
@@ -2105,8 +2127,14 @@ fn merge_fields(
             let pair = |f: u16| e.unit_field(f) || e.unit_field(f + 1);
             merged.pet_moved |= own && (pair(FIELD_UNIT_CHARM) || pair(FIELD_UNIT_SUMMON));
             merged.farsight_moved |= own && pair(FIELD_PLAYER_FARSIGHT);
-            merged.critter_moved |=
-                own && (e.unit_field(FIELD_UNIT_CRITTER) || e.unit_field(FIELD_UNIT_CRITTER + 1));
+            if own && e.unit_field(FIELD_UNIT_CRITTER) {
+                merged.critter_moved = true;
+                merged.critter_old.0 = Some(e.old);
+            }
+            if own && e.unit_field(FIELD_UNIT_CRITTER + 1) {
+                merged.critter_moved = true;
+                merged.critter_old.1 = Some(e.old);
+            }
             if let Some(event) = pet_signal(&e) {
                 merged.pet_signals.push(event);
             }
@@ -2181,8 +2209,16 @@ fn merge_fields(
                     && (FIELD_CONTAINER_SLOT_1..FIELD_CONTAINER_SLOT_1 + 72).contains(&e.index)
                 {
                     let j = ((e.index - FIELD_CONTAINER_SLOT_1) / 2) as u8;
-                    if merged.bag_slots.last() != Some(&j) {
-                        merged.bag_slots.push(j);
+                    let high = (e.index - FIELD_CONTAINER_SLOT_1) % 2 == 1;
+                    if merged.bag_slots.last().map(|&(k, _)| k) != Some(j) {
+                        merged.bag_slots.push((j, (None, None)));
+                    }
+                    if let Some((_, (lo, hi))) = merged.bag_slots.last_mut() {
+                        if high {
+                            *hi = Some(e.old);
+                        } else {
+                            *lo = Some(e.old);
+                        }
                     }
                 }
             }
@@ -2223,6 +2259,9 @@ const NPC_FLAG_BANKER: u32 = 0x20000;
 /// `UNIT_NPC_FLAG_GUILD_BANKER`, the bit the NPC-flag watch's guild bank leg tests (`0x71a1eb`).
 const NPC_FLAG_GUILD_BANKER: u32 = 0x80_0000;
 
+/// A guid field's old halves, low then high, where each moved.
+type GuidHalves = (Option<u32>, Option<u32>);
+
 /// What [`merge_fields`] saw.
 #[derive(Default)]
 struct Merged {
@@ -2233,6 +2272,8 @@ struct Merged {
     farsight_moved: bool,
     /// Our own `UNIT_FIELD_CRITTER` moved.
     critter_moved: bool,
+    /// Our critter guid's old halves, low then high, where they moved.
+    critter_old: GuidHalves,
     /// The pet frame's unit signals the delta's fields raise, in field order.
     pet_signals: Vec<PetSignal>,
     /// Our own death fields' `(index, old, new)`, in field order.
@@ -2252,7 +2293,8 @@ struct Merged {
     /// An item's enchant fields moved (`0x707f50`).
     item_enchants: bool,
     /// A container's own slots whose fields moved, each once in field order (`0x5d9600`).
-    bag_slots: Vec<u8>,
+    /// Each moved bag slot with its guid halves' old values, low then high, where they moved.
+    bag_slots: Vec<(u8, GuidHalves)>,
     /// A unit's entry moved (`0x72ceb0`).
     unit_entry: bool,
     /// Our own `PLAYER_FLAGS` `(old, new)` when it moved.
@@ -2349,6 +2391,9 @@ fn item_entry_watch(sc: &mut Scene, guid: u64, old: u32) {
         return;
     }
     let entry = item.0.object_entry().unwrap_or(0);
+    // The bar's item update for the old entry (`0x7079ad`), before its record is dropped.
+    sc.ui
+        .world(move |world| crate::ui_action::slots::update_item(world, old));
     sc.items.evict_template(old);
     if sc.items.template(entry, guid, &sc.net).is_some() {
         sc.ui
@@ -2436,6 +2481,9 @@ fn item_disable_watch(sc: &mut Scene, guid: u64) {
     if owner.is_none() || owner != sc.self_guid.0 {
         return;
     }
+    // The bar's item update (`0x70b0d0`) before the walk.
+    sc.ui
+        .world(move |world| crate::ui_action::slots::update_item(world, entry));
     let me = sc.self_guid.0.is_some_and(|g| sc.index.0.contains_key(&g));
     item_log_walk(sc, entry, me);
 }

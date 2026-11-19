@@ -1,6 +1,5 @@
 //! The spells that show an equipped weapon's icon: the melee auto-attack and the ranged auto-repeat
-//! shots. A weapon swap changes the icon without touching the action table, so the feed refreshes
-//! these every frame.
+//! shots. A weapon swap signals their slots (`0x5aa4e0`, `0x5aa550`); the icon is read at the call.
 
 use benilla_formats::SpellDisplay;
 
@@ -91,11 +90,6 @@ pub(crate) fn ranged_weapon_icon(
         return None;
     }
     crate::ui_items::item_icon(icons, template.display_info_id)
-}
-
-/// Whether `spell` shows a weapon's icon; the per-frame icon refresh keys on it.
-pub(super) fn substitutes_weapon_icon(spell: &SpellDisplay) -> bool {
-    spell.is_melee_auto_attack() || spell.ranged_icon_substitution()
 }
 
 /// The weapon icon `spell` shows on the bar; `None` shows the spell's own.

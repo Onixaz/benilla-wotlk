@@ -69,6 +69,7 @@ pub(crate) struct Lifecycle<'w> {
     spells: Option<Res<'w, Spells>>,
     net: Res<'w, NetCommands>,
     actions: ResMut<'w, PlayerActions>,
+    slots: ResMut<'w, crate::ui_action::ActionSlots>,
     /// The book the update rebuilds (`0x53ca70`).
     book: ResMut<'w, crate::ui_spellbook::SpellBook>,
     summons: Res<'w, super::SummonSlots>,
@@ -181,21 +182,25 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
 fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     if let SessionEvent::ActionButtons { state, buttons } = ev {
         let player = l.self_guid.0.is_some_and(|g| l.index.0.contains_key(&g));
-        action_buttons(state, buttons, player, &mut l.actions, &l.net);
+        let bar = (&*l.actions, &mut *l.slots);
+        action_buttons(state, buttons, player, bar, &l.net, &mut l.ui);
     }
 }
 
 /// Every session end returns to glue, whose next world entry zeroes the bar (`0x5a79d0`, via
 /// `0x52b550` from `0x405540`) before the login goes out; the lock lives on the player object.
-fn on_session_end(In(ev): In<SessionEvent>, mut actions: ResMut<PlayerActions>) {
+fn on_session_end(
+    In(ev): In<SessionEvent>,
+    mut slots: ResMut<crate::ui_action::ActionSlots>,
+) {
     if let SessionEvent::Disconnected { .. } = ev {
-        clear_bar(&mut actions);
+        clear_bar(&mut slots);
     }
 }
 
 /// The bar and its lock emptied without a send; the stored table stays (`0xad9f6c` is only
 /// overwritten).
-fn clear_bar(actions: &mut PlayerActions) {
+fn clear_bar(actions: &mut crate::ui_action::ActionSlots) {
     if !actions.buttons.is_empty() {
         actions.buttons.clear();
         actions.dirty = true;
@@ -220,16 +225,20 @@ fn on_spell_learned(
             form: store.0.unit_shapeshift_form(),
         });
         let mut flash = LearnedInTab::default();
-        learned_spell(
+        // Each slot the rank replace or the first-rank placement wrote signals in turn
+        // (`0x5aae80`).
+        for slot in learned_spell(
             spell_id,
-            &mut l.actions,
+            (&mut l.actions, &mut l.slots),
             l.spells.as_deref(),
             &mut errors,
             &mut flash,
             learner,
             &l.net,
             &l.summons.0,
-        );
+        ) {
+            crate::ui_action::slots::changed_in_turn(&mut l.ui, slot);
+        }
         // The registrar's stance and reactive lists (`0x542647`), past which a live learn signals
         // `UPDATE_SHAPESHIFT_FORMS`.
         if learner.is_some() {
@@ -1196,16 +1205,18 @@ fn spell_book(
 
 /// `SMSG_ACTION_BUTTONS` (`0x6d8750`). State 2 locks the bar of a streamed player (`0x6d8798`).
 /// States 0 and 1 store the table; state 1 also unlocks and puts it on a streamed player's bar
-/// (`0x6d87e8`): a slot that [`slot_stands`] is set without a send (`0x6d883c`), every other slot
-/// of the 144, an empty one included, is removed with its `CMSG_SET_ACTION_BUTTON` clear
-/// (`0x6d882c` -> `0x5aab02`). Otherwise the player's init puts the table on
-/// ([`put_action_table_on_init`]).
+/// (`0x6d87e8`): a slot that [`slot_stands`] is set without a send or a signal (`0x6d883c`), every
+/// other slot of the 144, an empty one included, is removed with its `CMSG_SET_ACTION_BUTTON` clear
+/// and its signal (`0x6d882c` -> `0x5aab02`), each slot's usable bytes recomputed in slot order;
+/// then the whole bar signals, 0 (`0x6d885b`). Otherwise the player's init puts the table on
+/// ([`put_action_table`]).
 fn action_buttons(
     state: u8,
     buttons: Vec<ActionButton>,
     player: bool,
-    actions: &mut PlayerActions,
+    (book, actions): (&PlayerActions, &mut crate::ui_action::ActionSlots),
     net: &NetCommands,
+    ui: &mut crate::ui_script::live::UiEvents,
 ) {
     debug!(
         "net: action bar — state {state}, {} occupied slots",
@@ -1226,14 +1237,20 @@ fn action_buttons(
     let table: std::collections::HashMap<u8, ActionButton> =
         buttons.into_iter().map(|b| (b.slot, b)).collect();
     for slot in 0..benilla_protocol::messages::ACTION_BUTTON_SLOTS as u8 {
-        match table.get(&slot).filter(|b| slot_stands(b, actions, true)) {
+        match table.get(&slot).filter(|b| slot_stands(b, book, true)) {
             Some(&b) => {
                 actions.buttons.insert(slot, b);
                 actions.dirty = true;
+                ui.world(move |world| crate::ui_action::slots::slot_set_silently(world, slot));
             }
-            None => actions.write_slot(slot, 0, net),
+            None => {
+                if actions.write_slot(slot, 0, net) {
+                    crate::ui_action::slots::changed_in_turn(ui, slot);
+                }
+            }
         }
     }
+    ui.world(crate::ui_action::slots::bar_changed);
 }
 
 /// Whether a table slot goes on the bar: a spell word (kind nibble 0) only if the spell is known,
@@ -1249,24 +1266,38 @@ fn slot_stands(b: &ActionButton, actions: &PlayerActions, sets: bool) -> bool {
         || actions.equipment_sets.iter().any(|s| s.id == b.action)
 }
 
-/// The player's init (`0x6e8000`-`0x6e8046`): the stored table's slots go on the bar, a spell slot
-/// only if known; nothing is removed.
-pub(crate) fn put_action_table_on_init(
-    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    mut actions: ResMut<PlayerActions>,
-) {
-    if cascades.read().next().is_none() {
-        return;
-    }
-    let Some(table) = actions.table.clone() else {
-        return;
-    };
-    for b in table {
-        if slot_stands(&b, &actions, false) {
-            actions.buttons.insert(b.slot, b);
+/// The player's init (`0x6e8000`-`0x6e8046`): the stored table's slots go on the bar without a
+/// send or a signal, a spell slot only if known, each slot's usable bytes recomputed; nothing is
+/// removed; then the whole bar signals, 0 (`0x6e8046`).
+pub(crate) fn put_action_table(world: &mut World) {
+    let slots = world
+        .get_resource::<PlayerActions>()
+        .zip(world.get_resource::<crate::ui_action::ActionSlots>())
+        .map(|(book, bar)| put_table(book, bar.table.as_deref()))
+        .unwrap_or_default();
+    if let Some(mut bar) = world.get_resource_mut::<crate::ui_action::ActionSlots>() {
+        for &b in &slots {
+            bar.buttons.insert(b.slot, b);
         }
+        bar.dirty = true;
     }
-    actions.dirty = true;
+    let slots: Vec<u8> = slots.into_iter().map(|b| b.slot).collect();
+    for slot in slots {
+        crate::ui_action::slots::slot_set_silently(world, slot);
+    }
+    crate::ui_action::slots::bar_changed(world);
+}
+
+/// The table's slots that go on the bar, in slot order.
+fn put_table(book: &PlayerActions, table: Option<&[ActionButton]>) -> Vec<ActionButton> {
+    let mut set: Vec<ActionButton> = table
+        .unwrap_or_default()
+        .iter()
+        .filter(|b| slot_stands(b, book, false))
+        .copied()
+        .collect();
+    set.sort_unstable_by_key(|b| b.slot);
+    set
 }
 
 /// `SMSG_LEARNED_SPELL` (`0x6e7d60`): with our player streamed, `0x6e7b00(spell, slot, 1, 1)`:
@@ -1281,56 +1312,62 @@ pub(crate) fn put_action_table_on_init(
 /// Hidden, recipe, companion (#263) and unbooked learns skip tab and bar (`0x54265c`-`0x542856`).
 fn learned_spell(
     spell_id: u32,
-    actions: &mut PlayerActions,
+    (actions, bar): (&mut PlayerActions, &mut crate::ui_action::ActionSlots),
     spells: Option<&Spells>,
     errors: &mut UiErrorKeys,
     tab_flash: &mut LearnedInTab,
     learner: Option<Learner>,
     net: &NetCommands,
     summons: &benilla_formats::SummonPropertiesCatalog,
-) {
+) -> Vec<u8> {
+    let mut written = Vec::new();
     debug!("net: learned spell {spell_id}");
     if actions.spells.insert(spell_id) {
         actions.dirty = true;
     }
     let Some(learner) = learner else {
         debug!("net: learned spell {spell_id} before the player: book only");
-        return;
+        return written;
     };
     let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
     let display = spells.and_then(|s| s.catalog.get(spell_id));
     if let (Some(spells), Some(display)) = (spells, display) {
-        for slot in learn_place::lower_rank_slots(actions, &spells.catalog, display) {
+        for slot in learn_place::lower_rank_slots(bar, &spells.catalog, display) {
             info!("net: bar slot {slot} rank-replaced by learned spell {spell_id}");
-            actions.write_slot(slot, packed, net);
+            if bar.write_slot(slot, packed, net) {
+                written.push(slot);
+            }
         }
     }
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
-            return;
+            return written;
         }
         if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
             announce_learn(spell_id, spells, errors);
-            return;
+            return written;
         }
         if d.is_companion(summons) {
-            return;
+            return written;
         }
     }
     announce_learn(spell_id, spells, errors);
     if display.is_some_and(|d| d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK != 0) {
-        return;
+        return written;
     }
     tab_flash.0.push(spell_id);
     if let (Some(spells), Some(display)) = (spells, display) {
         if learn_place::auto_place_allowed(display, learner.level) {
             let page = learn_place::auto_place_page(display, learner, &spells.forms);
-            if let Some(slot) = learn_place::first_empty_slot(actions, page) {
+            if let Some(slot) = learn_place::first_empty_slot(bar, page) {
                 info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
-                actions.write_slot(slot, packed, net);
+                if bar.write_slot(slot, packed, net) {
+                    written.push(slot);
+                }
             }
         }
     }
+    written
 }
 
 /// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
@@ -2466,11 +2503,12 @@ mod tests {
             },
         );
         let mut actions = PlayerActions::default();
+        let mut bar = crate::ui_action::ActionSlots::default();
         let mut errors = UiErrorKeys::default();
         let mut flash = LearnedInTab::default();
         learned_spell(
             78,
-            &mut actions,
+            (&mut actions, &mut bar),
             Some(&spells),
             &mut errors,
             &mut flash,
@@ -2501,7 +2539,10 @@ mod tests {
         let mut errors = UiErrorKeys::default();
         learned_spell(
             133,
-            &mut PlayerActions::default(),
+            (
+                &mut PlayerActions::default(),
+                &mut crate::ui_action::ActionSlots::default(),
+            ),
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
@@ -2524,7 +2565,10 @@ mod tests {
         let mut errors = UiErrorKeys::default();
         learned_spell(
             2550,
-            &mut PlayerActions::default(),
+            (
+                &mut PlayerActions::default(),
+                &mut crate::ui_action::ActionSlots::default(),
+            ),
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
@@ -2605,7 +2649,10 @@ mod tests {
         let mut errors = UiErrorKeys::default();
         learned_spell(
             668,
-            &mut PlayerActions::default(),
+            (
+                &mut PlayerActions::default(),
+                &mut crate::ui_action::ActionSlots::default(),
+            ),
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
@@ -2615,7 +2662,10 @@ mod tests {
         );
         learned_spell(
             99999,
-            &mut PlayerActions::default(),
+            (
+                &mut PlayerActions::default(),
+                &mut crate::ui_action::ActionSlots::default(),
+            ),
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
@@ -2632,10 +2682,11 @@ mod tests {
     #[test]
     fn learned_spell_adds_to_the_book_once() {
         let mut actions = PlayerActions::default();
+        let mut bar = crate::ui_action::ActionSlots::default();
         let mut errors = UiErrorKeys::default();
         learned_spell(
             6603,
-            &mut actions,
+            (&mut actions, &mut bar),
             None,
             &mut errors,
             &mut LearnedInTab::default(),
@@ -2649,7 +2700,7 @@ mod tests {
         actions.dirty = false;
         learned_spell(
             6603,
-            &mut actions,
+            (&mut actions, &mut bar),
             None,
             &mut errors,
             &mut LearnedInTab::default(),
@@ -2704,7 +2755,8 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let net = NetCommands(tx);
         let mut actions = PlayerActions::default();
-        actions.buttons.insert(
+        let mut bar = crate::ui_action::ActionSlots::default();
+        bar.buttons.insert(
             0,
             ActionButton {
                 slot: 0,
@@ -2717,7 +2769,7 @@ mod tests {
 
         learned_spell(
             133,
-            &mut actions,
+            (&mut actions, &mut bar),
             Some(&spells),
             &mut errors,
             &mut flash,
@@ -2725,7 +2777,7 @@ mod tests {
             &net,
             &Default::default(),
         );
-        assert_eq!(actions.buttons[&1].action, 133, "slot 1 is the first empty");
+        assert_eq!(bar.buttons[&1].action, 133, "slot 1 is the first empty");
         assert_eq!(
             sent(&rx),
             vec![(1, 133)],
@@ -2738,7 +2790,7 @@ mod tests {
         actions.dirty = false;
         learned_spell(
             168,
-            &mut actions,
+            (&mut actions, &mut bar),
             Some(&spells),
             &mut errors,
             &mut flash,
@@ -2746,14 +2798,14 @@ mod tests {
             &net,
             &Default::default(),
         );
-        assert!(!actions.buttons.contains_key(&2));
+        assert!(!bar.buttons.contains_key(&2));
         assert!(sent(&rx).is_empty());
 
         // Rank 2: the rank-1 button becomes rank 2 (`0x5aafd0` runs before the registrar), and
         // the rank gate (`< 2`) places nothing more.
         learned_spell(
             143,
-            &mut actions,
+            (&mut actions, &mut bar),
             Some(&spells),
             &mut errors,
             &mut flash,
@@ -2761,16 +2813,16 @@ mod tests {
             &net,
             &Default::default(),
         );
-        assert_eq!(actions.buttons[&1].action, 143);
-        assert!(!actions.buttons.contains_key(&2));
+        assert_eq!(bar.buttons[&1].action, 143);
+        assert!(!bar.buttons.contains_key(&2));
         assert_eq!(sent(&rx), vec![(1, 143)]);
 
         // At level 11 the level gate closes: the book grows, the bar does not.
         actions.spells.clear();
-        actions.buttons.remove(&1);
+        bar.buttons.remove(&1);
         learned_spell(
             133,
-            &mut actions,
+            (&mut actions, &mut bar),
             Some(&spells),
             &mut errors,
             &mut flash,
@@ -2783,7 +2835,7 @@ mod tests {
             &Default::default(),
         );
         assert!(actions.spells.contains(&133));
-        assert!(!actions.buttons.contains_key(&1));
+        assert!(!bar.buttons.contains_key(&1));
         assert!(sent(&rx).is_empty());
     }
 
@@ -2857,11 +2909,12 @@ mod tests {
             (1006, Some("ERR_LEARN_SPELL_S"), true),
         ] {
             let mut actions = PlayerActions::default();
+            let mut bar = crate::ui_action::ActionSlots::default();
             let mut errors = UiErrorKeys::default();
             let mut flash = LearnedInTab::default();
             learned_spell(
                 id,
-                &mut actions,
+                (&mut actions, &mut bar),
                 Some(&spells),
                 &mut errors,
                 &mut flash,
@@ -2872,7 +2925,7 @@ mod tests {
             assert!(actions.spells.contains(&id), "{id} joins the book");
             assert_eq!(errors.0.first().map(|e| e.key), line, "{id}'s line");
             assert_eq!(!flash.0.is_empty(), shown, "{id}'s tab flash");
-            assert_eq!(actions.buttons.contains_key(&0), shown, "{id}'s button");
+            assert_eq!(bar.buttons.contains_key(&0), shown, "{id}'s button");
         }
     }
 
@@ -2890,11 +2943,12 @@ mod tests {
         );
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut actions = PlayerActions::default();
+        let mut bar = crate::ui_action::ActionSlots::default();
         let mut errors = UiErrorKeys::default();
         let mut flash = LearnedInTab::default();
         learned_spell(
             133,
-            &mut actions,
+            (&mut actions, &mut bar),
             Some(&spells),
             &mut errors,
             &mut flash,
@@ -2903,7 +2957,7 @@ mod tests {
             &Default::default(),
         );
         assert!(actions.spells.contains(&133));
-        assert!(actions.buttons.is_empty(), "no button");
+        assert!(bar.buttons.is_empty(), "no button");
         assert!(sent(&rx).is_empty());
         assert!(errors.0.is_empty(), "no line");
         assert!(flash.0.is_empty(), "no flash");
@@ -2913,8 +2967,9 @@ mod tests {
     #[test]
     fn superceded_spell_swaps_the_book_and_leaves_the_bar_to_the_rank_pass() {
         let mut actions = PlayerActions::default();
+        let mut bar = crate::ui_action::ActionSlots::default();
         actions.spells.insert(78); // Heroic Strike rank 1, known
-        actions.buttons.insert(
+        bar.buttons.insert(
             0,
             ActionButton {
                 slot: 0,
@@ -2941,7 +2996,7 @@ mod tests {
             "the new rank enters the book"
         );
         assert_eq!(
-            actions.buttons[&0].action, 78,
+            bar.buttons[&0].action, 78,
             "the bar follows from the book, not from here"
         );
         assert!(actions.dirty, "…and `dirty` is what makes it follow");
@@ -3972,7 +4027,10 @@ mod tests {
         let mut errors = UiErrorKeys::default();
         learned_spell(
             1234,
-            &mut PlayerActions::default(),
+            (
+                &mut PlayerActions::default(),
+                &mut crate::ui_action::ActionSlots::default(),
+            ),
             Some(&spells),
             &mut errors,
             &mut LearnedInTab::default(),
@@ -4333,6 +4391,7 @@ mod tests {
     #[test]
     fn a_set_table_bars_known_spells_and_listed_sets_only() {
         let mut actions = PlayerActions::default();
+        let mut bar = crate::ui_action::ActionSlots::default();
         actions.spells.insert(133);
         actions
             .equipment_sets
@@ -4343,7 +4402,7 @@ mod tests {
                 icon: String::new(),
                 items: [0; benilla_protocol::messages::EQUIPMENT_SET_SLOTS],
             });
-        actions.locked = true;
+        bar.locked = true;
         let table = vec![
             slot(0, 133, ACTION_KIND_SPELL),
             slot(1, 116, ACTION_KIND_SPELL),
@@ -4356,16 +4415,17 @@ mod tests {
             ACTION_BUTTONS_SET,
             table.clone(),
             true,
-            &mut actions,
+            (&actions, &mut bar),
             &NetCommands(tx),
+            &mut crate::ui_script::live::UiEvents::default(),
         );
-        let mut barred: Vec<u8> = actions.buttons.keys().copied().collect();
+        let mut barred: Vec<u8> = bar.buttons.keys().copied().collect();
         barred.sort_unstable();
         assert_eq!(barred, [0, 2, 4]);
         // Every other slot, empty ones included, is cleared on the server too.
         assert_eq!(rx.try_iter().count(), 144 - 3);
-        assert!(!actions.locked, "state 1 unlocks");
-        assert_eq!(actions.table, Some(table));
+        assert!(!bar.locked, "state 1 unlocks");
+        assert_eq!(bar.table, Some(table));
     }
 
     /// State 2 locks the writers; state 0 stores without barring, and the player's init bars a
@@ -4375,11 +4435,12 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let net = NetCommands(tx);
         let mut actions = PlayerActions::default();
-        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), false, &mut actions, &net);
-        assert!(!actions.locked, "no player, no lock");
-        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), true, &mut actions, &net);
-        actions.write_slot(5, 133, &net);
-        assert!(actions.buttons.is_empty() && rx.try_iter().next().is_none());
+        let mut bar = crate::ui_action::ActionSlots::default();
+        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), false, (&actions, &mut bar), &net, &mut crate::ui_script::live::UiEvents::default());
+        assert!(!bar.locked, "no player, no lock");
+        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), true, (&actions, &mut bar), &net, &mut crate::ui_script::live::UiEvents::default());
+        bar.write_slot(5, 133, &net);
+        assert!(bar.buttons.is_empty() && rx.try_iter().next().is_none());
 
         actions.spells.insert(133);
         let table = vec![
@@ -4391,21 +4452,19 @@ mod tests {
             benilla_protocol::messages::ACTION_BUTTONS_INIT,
             table,
             true,
-            &mut actions,
+            (&actions, &mut bar),
             &net,
+            &mut crate::ui_script::live::UiEvents::default(),
         );
-        assert!(actions.buttons.is_empty(), "state 0 only stores");
+        assert!(bar.buttons.is_empty(), "state 0 only stores");
 
         let mut app = App::new();
-        app.add_message::<crate::net::WorldEnterCascadeMessage>()
-            .insert_resource(actions)
-            .add_systems(Update, put_action_table_on_init);
-        app.world_mut()
-            .write_message(crate::net::WorldEnterCascadeMessage);
-        app.update();
+        app.insert_resource(actions);
+        app.insert_resource(bar);
+        put_action_table(app.world_mut());
         let mut barred: Vec<u8> = app
             .world()
-            .resource::<PlayerActions>()
+            .resource::<crate::ui_action::ActionSlots>()
             .buttons
             .keys()
             .copied()
@@ -4421,23 +4480,30 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let net = NetCommands(tx);
         let mut app = App::new();
-        app.add_message::<crate::net::WorldEnterCascadeMessage>()
-            .init_resource::<PlayerActions>()
-            .add_systems(Update, put_action_table_on_init);
+        app.init_resource::<PlayerActions>();
+        app.init_resource::<crate::ui_action::ActionSlots>();
         let end = app.world_mut().register_system(on_session_end);
         let enter = |app: &mut App, spells: &[u32], table: Vec<ActionButton>| {
             {
-                let mut actions = app.world_mut().resource_mut::<PlayerActions>();
+                let world = app.world_mut();
                 // AzerothCore's login sends state 1 before our player streams: stored, not barred.
-                actions.spells = spells.iter().copied().collect();
-                action_buttons(ACTION_BUTTONS_SET, table, false, &mut actions, &net);
+                world.resource_mut::<PlayerActions>().spells = spells.iter().copied().collect();
+                world.resource_scope(|world, mut bar: Mut<crate::ui_action::ActionSlots>| {
+                    let actions = world.resource::<PlayerActions>();
+                    action_buttons(
+                        ACTION_BUTTONS_SET,
+                        table,
+                        false,
+                        (actions, &mut bar),
+                        &net,
+                        &mut crate::ui_script::live::UiEvents::default(),
+                    );
+                });
             }
-            app.world_mut()
-                .write_message(crate::net::WorldEnterCascadeMessage);
-            app.update();
+            put_action_table(app.world_mut());
             let mut barred: Vec<u8> = app
                 .world()
-                .resource::<PlayerActions>()
+                .resource::<crate::ui_action::ActionSlots>()
                 .buttons
                 .keys()
                 .copied()
@@ -4451,7 +4517,9 @@ mod tests {
             slot(9, 66, ACTION_KIND_SPELL),
         ];
         assert_eq!(enter(&mut app, &[133, 66], mage), [0, 9]);
-        app.world_mut().resource_mut::<PlayerActions>().dirty = false;
+        app.world_mut()
+            .resource_mut::<crate::ui_action::ActionSlots>()
+            .dirty = false;
 
         app.world_mut()
             .run_system_with(
@@ -4462,9 +4530,9 @@ mod tests {
                 },
             )
             .unwrap();
-        let actions = app.world().resource::<PlayerActions>();
-        assert!(actions.buttons.is_empty() && !actions.locked);
-        assert!(actions.dirty, "the feed re-resolves the emptied slots");
+        let bar = app.world().resource::<crate::ui_action::ActionSlots>();
+        assert!(bar.buttons.is_empty() && !bar.locked);
+        assert!(bar.dirty, "the rank pass re-reads the emptied slots");
 
         let warrior = vec![
             slot(72, 78, ACTION_KIND_SPELL),

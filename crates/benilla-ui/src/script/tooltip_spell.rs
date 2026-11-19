@@ -797,7 +797,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, slot): (Table, u32)| {
             let action = {
                 let model = crate::script::model_mut_of(lua);
-                model.actions.get(&slot).cloned()
+                crate::script::action_slots::word(&model, slot)
             };
             let Some(a) = action else { return Ok(()) };
             match a.kind {

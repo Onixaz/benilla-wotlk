@@ -1,46 +1,23 @@
-//! The action bar's identity feed: each of the action slots' icon and count, pushed to the VM with
-//! `ACTIONBAR_SLOT_CHANGED` per changed slot. [`feed_actions`] also drains the UI error queues and
-//! feeds the stance page (`GetBonusBarOffset`: the form's `SpellShapeshiftForm.dbc` BonusActionBar
-//! column).
-
-use crate::ui_items::{count_of, InventoryScope};
-use std::collections::{HashMap, HashSet};
+//! [`feed_actions`] drains the UI error queues and feeds the stance page (`GetBonusBarOffset`: the
+//! form's `SpellShapeshiftForm.dbc` BonusActionBar column).
 
 use bevy::prelude::*;
 
-use benilla_protocol::messages::{
-    ACTION_KIND_EQUIPMENT_SET, ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
-};
-use benilla_ui::script::{ActionSlot, ScriptValue, UiScript};
+use benilla_ui::script::UiScript;
 
-use crate::entities::ItemDisplays;
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 
 use super::errors::{first_missing_totem, first_short_reagent, mount_result_key};
-use super::weapon_icon::{auto_attack_icon, substitutes_weapon_icon};
 use super::{
     cast_fail, show_messages, ui_error_text, CastErrors, MessageSink, MountErrors, PetTameFailures,
     PlayerActions, Shown, Spells, UiError, UiErrorKeys, UiErrorTexts,
 };
 
-/// An item action's icon when its template has not answered or its display id has no
-/// `ItemDisplayInfo` row: the literal the reference's icon resolver falls back to.
-pub(super) const MISSING_ITEM_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
-
-/// The feed's memory of what it last pushed, for per-slot change events.
+/// The feed's memory of the stance page it last pushed.
 #[derive(Default)]
 pub(super) struct FeedMemory {
-    pushed: HashMap<u32, ActionSlot>,
     bonus_offset: u8,
-    /// Whether the identity resolve has run against this VM: a new VM resets this memory, while
-    /// every other input to the gate is host-side and may still match.
-    resolved: bool,
-    /// The [`Items::template_epoch`] of the last resolve; an advance re-resolves.
-    template_epoch: u64,
-    /// The macro-table generation of the last resolve: a macro edit changes a bar icon while
-    /// touching neither the action table nor any item template.
-    macro_generation: u64,
 }
 
 /// The DBC name tables the cast-fail argument arms read, as one parameter to stay within Bevy's
@@ -83,9 +60,9 @@ impl FailNameTables<'_> {
 pub(super) fn feed_actions(
     (script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsActions>,
+        crate::ui_script::LendLive,
     ),
-    mut action_store: crate::ui_script::OwnedMut<PlayerActions>,
+    action_store: crate::ui_script::LentRef<PlayerActions>,
     mut cast_errors: ResMut<CastErrors>,
     mut mount_errors: ResMut<MountErrors>,
     mut pet_tame_failures: ResMut<PetTameFailures>,
@@ -97,18 +74,13 @@ pub(super) fn feed_actions(
         Option<ResMut<Messages<crate::combat_log::SpellCastFailedLog>>>,
     ),
     spells: Option<Res<Spells>>,
-    // With the aura table, the `ActiveIconID` toggle's input.
-    self_q: Query<(&ObjectStore, Option<&crate::unit_auras::UnitAuras>), With<SelfPlayer>>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: crate::net::Objects,
     items: Res<Items>,
-    icons: Option<Res<ItemDisplays>>,
-    // With the temporary bar's owners and the pet bar its pet-action slots show.
+    // With the temporary bar's owners.
     bars: (
         Option<Res<crate::ui_items::ItemSubClasses>>,
         Option<Res<super::TempActionBar>>,
-        crate::ui_script::LentRef<crate::ui_pet::PetBar>,
-        // The slot's usable bytes, recomputed as a slot change does (`0x5aa390`).
-        Option<super::usable_cache::UsableRun>,
     ),
     name_tables: FailNameTables,
     commands: Res<NetCommands>,
@@ -119,17 +91,20 @@ pub(super) fn feed_actions(
         return;
     };
     let (mut ui_error_keys, mut ui_error_texts, mut cast_fail_log) = ui_errors;
-    let (sub_classes, temp_bar, pet_bar, mut usable) = bars;
+    let (sub_classes, temp_bar) = bars;
     let temp_flags = temp_bar.map_or(0, |t| t.flags);
     // Cold Weather Flying, what `flyable` needs in Northrend (`0x7261b0`).
-    script.set_knows_cold_weather_flying(action_store.read().spells.contains(&54197));
+    let knows = action_store
+        .get()
+        .is_some_and(|a| a.spells.contains(&54197));
+    script.set_knows_cold_weather_flying(knows);
     let memory = memory.get(&script);
 
     // Cast failures become error lines through [`cast_fail`], all resolved before any event fires.
     // The drain owns the arms that need our bags or the item cache: `0x78` and `0x5c` name the
     // failing slot's item, found as the pre-send check finds it. On a cache miss the entry stays
     // queued, as the reference's callback redisplays on the answer.
-    let self_store = self_q.iter().next().map(|(s, _)| s);
+    let self_store = self_q.iter().next();
     let mut await_template: Vec<crate::ui_action::CastFail> = Vec::new();
     // The same failures for the combat log: `0x808200` calls both the error display and the combat
     // log's spell-failure line (`0x751ad0`).
@@ -388,10 +363,7 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", unknown_lines);
 
-    let (store, auras) = self_q
-        .iter()
-        .next()
-        .map_or((None, None), |(s, a)| (Some(s), a));
+    let store = self_q.iter().next();
 
     // Stance page: the temporary bar's 5 while it has an owner, else our form's bonus bar offset,
     // with `UPDATE_BONUS_ACTIONBAR` on change and `ACTIONBAR_PAGE_CHANGED` first when leaving 5
@@ -417,249 +389,4 @@ pub(super) fn feed_actions(
         }
         script.fire_event("UPDATE_BONUS_ACTIONBAR", vec![]);
     }
-
-    // The identity resolve reruns on a new VM, a bar edit, a macro edit or a landed item
-    // template: a template is fetched ask-once, so a cold slot's first resolve only issues the
-    // query, and the epoch advance redisplays it, like the reference's cache callback.
-    let template_epoch = items.template_epoch();
-    let macro_generation = script.macros_generation();
-    let macros_moved = macro_generation != memory.macro_generation;
-    let dirty = action_store.read().dirty;
-    if !memory.resolved || dirty || template_epoch != memory.template_epoch || macros_moved {
-        action_store.write().dirty = false;
-        // Read until the slots are resolved; no verb runs meanwhile.
-        let actions = action_store.read();
-        memory.resolved = true;
-        memory.template_epoch = template_epoch;
-        memory.macro_generation = macro_generation;
-        let macros = script.macros();
-        script.set_equipment_sets(
-            actions
-                .equipment_sets
-                .iter()
-                .map(|s| (s.id, s.name.clone()))
-                .collect(),
-        );
-
-        // Each occupied slot's display, diffed against what the VM holds; a changed slot is
-        // pushed and fires `ACTIONBAR_SLOT_CHANGED` with its Lua action id.
-        let mut fresh: HashMap<u32, ActionSlot> = HashMap::new();
-        for (slot, button) in &actions.buttons {
-            let (texture, count, consumable, stackable) = match button.kind {
-                ACTION_KIND_SPELL => {
-                    let icon = spells.as_ref().and_then(|sp| {
-                        let d = sp.catalog.get(button.action)?;
-                        spell_action_icon(
-                            button.action,
-                            d,
-                            sp,
-                            store,
-                            auras,
-                            &objects,
-                            &items,
-                            icons.as_deref(),
-                            &commands,
-                        )
-                    });
-                    (icon, 0, false, false)
-                }
-                ACTION_KIND_ITEM => {
-                    // Never nil: the reference's resolver returns the question mark, and the stock
-                    // `ActionButton.lua:158` hides the icon on a nil texture.
-                    let template = items.template(button.action, 0, &commands).cloned();
-                    let texture = template
-                        .as_ref()
-                        .and_then(|t| {
-                            crate::ui_items::item_icon(icons.as_deref(), t.display_info_id)
-                        })
-                        .unwrap_or_else(|| MISSING_ITEM_ICON.to_string());
-                    let count = store
-                        .map(|s| count_of(&s.0, &objects, button.action, InventoryScope::CARRIED))
-                        .unwrap_or(0);
-                    // The Count gate ([`ItemInfo::is_consumable`]) reads the icon's template, so it
-                    // rides the same push.
-                    let consumable = template.as_ref().is_some_and(|t| t.is_consumable());
-                    // `IsStackableAction` (`0x5a8470`): the same template stacks past one.
-                    let stackable = template.as_ref().is_some_and(|t| t.stackable > 1);
-                    (Some(texture), count, consumable, stackable)
-                }
-                // A macro slot shows the macro's own icon, never its bound spell's, though its
-                // state follows the bound spell.
-                ACTION_KIND_MACRO => (
-                    macros
-                        .get(button.action as usize)
-                        .and_then(|m| m.texture.clone()),
-                    0,
-                    false,
-                    false,
-                ),
-                // A set slot shows `Interface\Icons\` and the set's icon, nothing for a set the
-                // list lacks or an empty icon (the equipment manager's icon path, `0x5ae6b0`).
-                ACTION_KIND_EQUIPMENT_SET => (
-                    actions
-                        .equipment_sets
-                        .iter()
-                        .find(|s| s.id == button.action)
-                        .filter(|s| !s.icon.is_empty())
-                        .map(|s| format!("Interface\\Icons\\{}", s.icon)),
-                    0,
-                    false,
-                    false,
-                ),
-                // The pet bar's action at the slot's index (`0x5a97f0`): a spell's icon, or a mode
-                // or order's `PET_%s_TEXTURE` global.
-                super::ACTION_KIND_PET => (
-                    pet_bar.get().and_then(|bar| {
-                        crate::ui_pet::temp_slot_texture(
-                            &bar,
-                            button.action,
-                            spells.as_ref().map(|s| &s.catalog),
-                            &|key| script.lua().globals().get::<String>(key).ok(),
-                        )
-                    }),
-                    0,
-                    false,
-                    false,
-                ),
-                _ => (None, 0, false, false),
-            };
-            fresh.insert(
-                u32::from(*slot) + 1,
-                ActionSlot {
-                    texture,
-                    kind: button.kind,
-                    action: button.action,
-                    count,
-                    consumable,
-                    stackable,
-                    // `0x5a80e0`: the pet bar's spell at the slot's index.
-                    pet_spell: (button.kind == super::ACTION_KIND_PET)
-                        .then(|| {
-                            let entry = *pet_bar.get()?.spells.bar.get(button.action as usize)?;
-                            (entry.is_spell() && !entry.is_empty()).then(|| entry.action())
-                        })
-                        .flatten(),
-                },
-            );
-        }
-        drop(actions);
-        // A macro rename changes the name line (`GetActionText`) but not the slot value, so a
-        // macro edit re-fires every macro slot.
-        let changed: Vec<u32> = fresh
-            .keys()
-            .chain(memory.pushed.keys())
-            .copied()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter(|a| {
-                fresh.get(a) != memory.pushed.get(a)
-                    || (macros_moved && fresh.get(a).is_some_and(|s| s.kind == ACTION_KIND_MACRO))
-            })
-            .collect();
-        for &action in &changed {
-            script.set_action(action, fresh.get(&action).cloned());
-        }
-        memory.pushed = fresh;
-        debug!(
-            "ui_action: fed {} changed slot(s) ({} occupied)",
-            changed.len(),
-            memory.pushed.len()
-        );
-        for action in changed {
-            // The slot change recomputes its usable bytes with no event (`0x5aa390`).
-            if let (Some(usable), Ok(slot)) = (usable.as_mut(), u8::try_from(action - 1)) {
-                usable.fire(&mut script, super::usable_cache::Pass::Slot(slot));
-            }
-            script.fire_event(
-                "ACTIONBAR_SLOT_CHANGED",
-                vec![ScriptValue::Int(i64::from(action))],
-            );
-        }
-    }
-
-    // An item slot's count and a live icon change without an action-table edit (eating a stack
-    // sends no `SMSG_ACTION_BUTTONS`), so the pushed slots refresh every frame.
-    if let Some(store) = store {
-        for (&action, slot) in memory.pushed.iter_mut() {
-            let changed = match slot.kind {
-                ACTION_KIND_ITEM => {
-                    let fresh = count_of(&store.0, &objects, slot.action, InventoryScope::CARRIED);
-                    let changed = fresh != slot.count;
-                    if changed {
-                        slot.count = fresh;
-                    }
-                    changed
-                }
-                // Live icons: a weapon face follows the equipped weapon and form, and a toggle's
-                // `ActiveIconID` follows its own aura.
-                ACTION_KIND_SPELL => {
-                    let d = spells
-                        .as_ref()
-                        .and_then(|s| s.catalog.get(slot.action))
-                        .filter(|d| substitutes_weapon_icon(d) || d.active_icon_id != 0);
-                    match (d, spells.as_ref()) {
-                        (Some(d), Some(sp)) => {
-                            let fresh = spell_action_icon(
-                                slot.action,
-                                d,
-                                sp,
-                                Some(store),
-                                auras,
-                                &objects,
-                                &items,
-                                icons.as_deref(),
-                                &commands,
-                            );
-                            let changed = fresh != slot.texture;
-                            if changed {
-                                debug!(
-                                    "ui_action: live icon swap slot {action} ({}) -> {fresh:?}",
-                                    slot.action
-                                );
-                                slot.texture = fresh;
-                            }
-                            changed
-                        }
-                        _ => false,
-                    }
-                }
-                _ => false,
-            };
-            if changed {
-                script.set_action(action, Some(slot.clone()));
-                // An item's count recomputes its slot's usable bytes (`0x5aa5c0`).
-                if let (Some(usable), Ok(slot)) = (usable.as_mut(), u8::try_from(action - 1)) {
-                    usable.fire(&mut script, super::usable_cache::Pass::Slot(slot));
-                }
-                script.fire_event(
-                    "ACTIONBAR_SLOT_CHANGED",
-                    vec![ScriptValue::Int(i64::from(action))],
-                );
-            }
-        }
-    }
-}
-
-/// A spell slot's icon, by the reference's `GetActionTexture` resolver in order: the auto-attack
-/// faces ([`auto_attack_icon`]), then `ActiveIconID` while the spell's own aura is live and
-/// cancelable (the predicate of [`super::toggle::active_action_toggle`]), then the spell's icon.
-/// The spellbook's `GetSpellTexture` never serves `ActiveIconID`.
-fn spell_action_icon(
-    spell_id: u32,
-    d: &benilla_formats::SpellDisplay,
-    spells: &super::Spells,
-    store: Option<&crate::net::ObjectStore>,
-    auras: Option<&crate::unit_auras::UnitAuras>,
-    objects: &crate::net::Objects,
-    items: &Items,
-    icons: Option<&ItemDisplays>,
-    commands: &NetCommands,
-) -> Option<String> {
-    auto_attack_icon(d, store, &spells.forms, objects, items, icons, commands)
-        .or_else(|| {
-            super::toggle::active_action_toggle(spell_id, d, auras)
-                .then(|| d.active_icon.clone())
-                .flatten()
-        })
-        .or_else(|| d.icon.clone())
 }

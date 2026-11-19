@@ -584,6 +584,46 @@ pub trait LiveState {
         None
     }
 
+    /// The 0-based bar `slot`'s word (`[0xc1e358 + slot * 4]`), 0 for an empty slot; `None`
+    /// without a view.
+    fn action_word(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// `GetActionTexture` for a spell, item or pet-action slot (`0x5a97f0`), resolved at the call;
+    /// `Some(None)` for no icon.
+    fn action_texture(&self, _slot: u32) -> Option<Option<super::ActionIcon>> {
+        None
+    }
+
+    /// `GetActionCount` (`0x5a7d10`): an item's count (`0x5a8a60`), a spell's reagent uses
+    /// (`0x801770`).
+    fn action_count(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// `IsConsumableAction` (`0x5a9360`).
+    fn action_consumable(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsStackableAction` (`0x5a8470`).
+    fn action_stackable(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// A pet-action slot's spell (`0x5a80e0`): `Some(None)` for a mode, an order or an empty word.
+    fn action_pet_spell(&self, _slot: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The slot write (`0x5aae80`, `0x5aaa90` for 0): the word stored, the slot's usable bytes
+    /// recomputed and the slot sent (`0x5aa390`); `Some(false)` while the bar is locked
+    /// (`0x5aaec1`, `0x5aaac2`), `None` without a view. The caller signals the slot.
+    fn set_action_word(&mut self, _slot: u32, _word: u32) -> Option<bool> {
+        None
+    }
+
     /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
     fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
         None

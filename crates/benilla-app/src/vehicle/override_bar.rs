@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use benilla_formats::OverrideSpellsRec;
 
 use crate::net::{EnteredWorldMessage, ObjectStore, SelfPlayer};
-use crate::ui_action::{PlayerActions, TempActionBar, TEMP_BAR_FIRST_SLOT};
+use crate::ui_action::{ActionSlots, TempActionBar, TEMP_BAR_FIRST_SLOT};
 
 use super::VehicleTables;
 
@@ -31,9 +31,13 @@ pub(super) fn update_override_bar(
     me: Query<&ObjectStore, With<SelfPlayer>>,
     mut entered: MessageReader<EnteredWorldMessage>,
     tables: Res<VehicleTables>,
-    actions: Option<ResMut<PlayerActions>>,
+    actions: Option<ResMut<ActionSlots>>,
     temp: Option<ResMut<TempActionBar>>,
     mut last: Local<Option<i16>>,
+    (ui, mut ecs): (
+        Option<ResMut<crate::ui_script::live::UiEvents>>,
+        Commands,
+    ),
 ) {
     let entry = entered.read().count() > 0;
     let (Some(mut actions), Some(mut temp)) = (actions, temp) else {
@@ -54,8 +58,17 @@ pub(super) fn update_override_bar(
         .filter(|r| has_spells(r));
     match rec {
         Some(rec) => {
+            // Each of the twelve set without a send and signalled, moved or not (`0x5ab800`).
+            let mut ui = ui;
             for (i, spell) in override_slots(rec).into_iter().enumerate() {
-                actions.set_local(TEMP_BAR_FIRST_SLOT + i as u8, spell);
+                let slot = TEMP_BAR_FIRST_SLOT + i as u8;
+                actions.set_local(slot, spell);
+                if let Some(ui) = ui.as_deref_mut() {
+                    crate::ui_action::slots::changed_in_turn(ui, slot);
+                }
+            }
+            if ui.is_some() {
+                ecs.queue(crate::ui_script::live::fire_handler_events);
             }
             temp.flags |= TEMP_BAR_OVERRIDE;
         }

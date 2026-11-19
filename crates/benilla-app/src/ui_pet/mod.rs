@@ -34,7 +34,7 @@ use menu::drain_pet_menu;
 pub(crate) use menu::PET_FLAG_ABANDON;
 pub(crate) use menu::{menu_predicates, run_menu_verb, summon_bars_dismiss, MenuCx};
 pub(crate) use net::set_pet_tail;
-pub(crate) use temp_bar::{temp_slot_texture, update_pet_temp_bar_step};
+pub(crate) use temp_bar::{temp_slot_icon, update_pet_temp_bar_step};
 pub(crate) use unit::{feed_pet_unit, pet_combat_flag, pet_renamed, push_pet_token};
 
 #[cfg(test)]

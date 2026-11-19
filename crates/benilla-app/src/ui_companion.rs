@@ -228,7 +228,9 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
         ui.world(edit_step(ListEdit::Rebuild));
     }
     // Shapeshifted only (`0x6e8050`-`0x6e8057`).
+    // The stored action table goes on the bar (`0x6e8000`-`0x6e8046`), then the shapeshifted tail.
     let tail = move |ui: &mut UiEvents| {
+        ui.world(crate::spell::net::put_action_table);
         if form != 0 {
             ui.world(crate::ui_action::usable_cache::step(
                 crate::ui_action::usable_cache::Pass::Full,

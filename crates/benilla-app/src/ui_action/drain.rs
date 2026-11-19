@@ -7,11 +7,10 @@ use bevy::prelude::*;
 use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
 use benilla_ui::script::UiScript;
 
-use crate::net::NetCommands;
 
 use crate::spell::{cast_target, CastLadder};
 
-use super::{attack_actor_refusal, PlayerActions, UiErrorKeys, SPELL_ATTACK};
+use super::{attack_actor_refusal, ActionSlots, UiErrorKeys, SPELL_ATTACK};
 
 /// What clicking an item action does, and to which copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,7 +304,7 @@ pub(super) fn drain_go_openers(
 /// What a `UseAction` press reads and writes.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ActionPress<'w, 's> {
-    actions: Res<'w, PlayerActions>,
+    actions: crate::ui_script::LentRef<'w, ActionSlots>,
     targeting: cast_target::CastTargeting<'w, 's>,
     // The by-key error line. Not a `CastLadder` field: Bevy panics, at runtime and not in unit
     // tests, on a resource reachable twice from one system.
@@ -351,7 +350,9 @@ pub(crate) fn use_action(
         Ok(s) => s,
         Err(_) => return UseOutcome::Done,
     };
-    match actions.buttons.get(&slot) {
+    // Copied out: a macro's verbs may write the bar inside the press.
+    let button = actions.get().and_then(|a| a.buttons.get(&slot).copied());
+    match button.as_ref() {
         Some(b) if b.kind == ACTION_KIND_SPELL && b.action == SPELL_ATTACK => {
             // `UseAction` casts Attack through the cast attempt, so its dead rung comes first: "You
             // are dead", where the binding, which skips the attempt, reads "Can't attack while
@@ -488,27 +489,3 @@ pub(crate) fn use_action(
     UseOutcome::Done
 }
 
-/// Applies the queued `PickupAction`/`PlaceAction` writes (packed 0 clears) to the store, which
-/// the VM already mirrors, marks it dirty for the feed and sends each as `CMSG_SET_ACTION_BUTTON`.
-pub(super) fn drain_action_sets(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsActions>,
-    ),
-    mut actions: crate::ui_script::OwnedMut<PlayerActions>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    for (lua_id, packed) in script.take_action_sets() {
-        let Ok(slot) = u8::try_from(lua_id.saturating_sub(1)) else {
-            debug!("ui_action: set_action_button lua id {lua_id} out of range — ignored");
-            continue;
-        };
-        debug!(
-            "ui_action: set_action_button lua {lua_id} (wire slot {slot}) packed {packed:#010x}"
-        );
-        actions.write().write_slot(slot, packed, &commands);
-    }
-}

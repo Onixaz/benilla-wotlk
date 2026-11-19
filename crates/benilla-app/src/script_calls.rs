@@ -830,7 +830,7 @@ mod tests {
             spawn_mob(&mut f, &[(TEMPLATE, FOE)]);
             f.app
                 .world_mut()
-                .resource_mut::<crate::ui_action::PlayerActions>()
+                .resource_mut::<crate::ui_action::ActionSlots>()
                 .buttons
                 .insert(
                     0,
@@ -944,7 +944,7 @@ mod tests {
                 .expect("the macro is made");
             let index: u32 = script.eval("return MACRO_INDEX").expect("an index");
             world
-                .resource_mut::<crate::ui_action::PlayerActions>()
+                .resource_mut::<crate::ui_action::ActionSlots>()
                 .buttons
                 .insert(
                     0,
@@ -979,7 +979,7 @@ mod tests {
             ..crate::ui_action::Spells::empty_for_tests()
         });
         world
-            .resource_mut::<crate::ui_action::PlayerActions>()
+            .resource_mut::<crate::ui_action::ActionSlots>()
             .buttons
             .insert(
                 0,

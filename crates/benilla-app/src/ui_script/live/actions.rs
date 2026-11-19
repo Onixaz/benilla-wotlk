@@ -52,6 +52,7 @@ impl<'w, 's> LiveView<'w, 's> {
         let reads = crate::ui_action::usable_cache::Sources {
             spells: self.spells.as_deref(),
             actions: self.actions.get(),
+            slots: self.slots.get(),
             bound: self.bound.get(),
             pet_bar: self.pet_bar.get(),
             cooldowns: self.cooldowns.get(),
@@ -134,10 +135,10 @@ impl<'w, 's> LiveView<'w, 's> {
 
     /// The 0-based bar `slot` through the resolvers.
     pub(super) fn resolve_slot(&self, slot: u32) -> Option<Resolved> {
-        let actions = self.actions.get()?;
+        let bar = self.slots.get()?;
         let Some(button) = u8::try_from(slot)
             .ok()
-            .and_then(|s| actions.buttons.get(&s))
+            .and_then(|s| bar.buttons.get(&s))
         else {
             return Some(Resolved::default());
         };
@@ -347,5 +348,155 @@ impl<'w, 's> LiveView<'w, 's> {
                 .unwrap_or(IDLE);
         }
         benilla_ui::script::LiveState::spell_cooldown(self, r.spell, anchor, ui_now).unwrap_or(IDLE)
+    }
+
+    /// The bar slot's word (`[0xc1e358 + slot * 4]`), 0 for an empty one.
+    pub(super) fn slot_word(&self, slot: u32) -> Option<u32> {
+        let bar = self.slots.get()?;
+        Some(
+            u8::try_from(slot)
+                .ok()
+                .and_then(|s| bar.buttons.get(&s))
+                .map_or(0, |b| (u32::from(b.kind) << 24) | b.action),
+        )
+    }
+
+    /// `GetActionTexture`'s icon for a spell, item or pet-action slot (`0x5a97f0`): the spell's
+    /// resolver ([`crate::ui_action::slots::spell_icon`]); an item's art, the question mark while
+    /// its template or display row is missing; a pet action's spell icon or mode or order global.
+    pub(super) fn slot_icon(&self, slot: u32) -> Option<Option<benilla_ui::script::ActionIcon>> {
+        use benilla_ui::script::ActionIcon;
+        let bar = self.slots.get()?;
+        let Some(button) = u8::try_from(slot)
+            .ok()
+            .and_then(|s| bar.buttons.get(&s))
+        else {
+            return Some(None);
+        };
+        let containers = self.containers.as_ref()?;
+        let (objects, items, commands) = containers.item_reads();
+        let icon = match button.kind {
+            ACTION_KIND_SPELL => self.spells.as_deref().and_then(|spells| {
+                let d = spells.catalog.get(button.action)?;
+                let me = self.me();
+                crate::ui_action::slots::spell_icon(
+                    button.action,
+                    d,
+                    spells,
+                    me.map(|(_, s)| s),
+                    me.and_then(|(e, _)| self.auras.get(e).ok()),
+                    objects,
+                    items,
+                    containers.icons(),
+                    commands,
+                )
+                .map(ActionIcon::Path)
+            }),
+            ACTION_KIND_ITEM => Some(ActionIcon::Path(
+                items
+                    .template(button.action, 0, commands)
+                    .and_then(|t| crate::ui_items::item_icon(containers.icons(), t.display_info_id))
+                    .unwrap_or_else(|| crate::ui_action::slots::MISSING_ITEM_ICON.to_string()),
+            )),
+            k if k == ACTION_KIND_PET => self.pet_bar.get().and_then(|bar| {
+                crate::ui_pet::temp_slot_icon(
+                    bar,
+                    button.action,
+                    self.spells.as_deref().map(|s| &s.catalog),
+                )
+            }),
+            _ => None,
+        };
+        Some(icon)
+    }
+
+    /// `GetActionCount` (`0x5a7d10`): an item's count (`0x5a8a60`), else a player spell's reagent
+    /// uses (`0x801770`).
+    pub(super) fn slot_count(&self, r: Resolved) -> u32 {
+        let (Some((_, me)), Some((objects, items, commands))) =
+            (self.me(), self.containers.as_ref().map(|c| c.item_reads()))
+        else {
+            return 0;
+        };
+        let spells = self.spells.as_deref();
+        if r.item != 0 {
+            return crate::ui_action::slots::item_count(me, objects, items, commands, spells, r.item);
+        }
+        if r.spell == 0 || r.pet {
+            return 0;
+        }
+        spells
+            .and_then(|s| s.catalog.get(r.spell))
+            .map_or(0, |d| {
+                crate::ui_action::slots::reagent_uses(d, |id| {
+                    crate::ui_items::count_of(
+                        &me.0,
+                        objects,
+                        id,
+                        crate::ui_items::InventoryScope::DEFAULT,
+                    )
+                })
+            })
+    }
+
+    /// `IsConsumableAction` (`0x5a9360`): an item that is ammo, thrown or used up by its charges,
+    /// else a player spell that takes reagents.
+    pub(super) fn slot_consumable(&self, r: Resolved) -> bool {
+        if r.item != 0 {
+            let consumable = self
+                .containers
+                .as_ref()
+                .map(|c| c.item_reads())
+                .and_then(|(_, items, commands)| items.template(r.item, 0, commands))
+                .is_some_and(|t| t.is_consumable());
+            if consumable {
+                return true;
+            }
+        }
+        !r.pet
+            && self
+                .spells
+                .as_deref()
+                .and_then(|s| s.catalog.get(r.spell))
+                .is_some_and(|d| d.reagents.iter().any(|&(id, n)| id != 0 && n > 0))
+    }
+
+    /// `IsStackableAction` (`0x5a8470`): an item whose template stacks past one.
+    pub(super) fn slot_stackable(&self, r: Resolved) -> bool {
+        r.item != 0
+            && self
+                .containers
+                .as_ref()
+                .map(|c| c.item_reads())
+                .and_then(|(_, items, commands)| items.template(r.item, 0, commands))
+                .is_some_and(|t| t.stackable > 1)
+    }
+
+    /// A pet-action slot's spell (`0x5a80e0`), `None` for a mode, an order or an empty action.
+    pub(super) fn slot_pet_spell(&self, r: Resolved) -> Option<u32> {
+        r.pet_word
+            .filter(|w| !w.is_empty() && w.is_spell())
+            .map(|w| w.action())
+    }
+
+    /// The slot write (`0x5aae80`, `0x5aaa90` for 0): stored and sent, then the slot's usable bytes
+    /// recomputed (`0x5aa390`); `Some(false)` on a locked bar.
+    pub(super) fn write_slot_word(&mut self, slot: u32, word: u32) -> Option<bool> {
+        let Ok(slot) = u8::try_from(slot) else {
+            return Some(false);
+        };
+        if usize::from(slot) >= crate::ui_action::usable_cache::BAR_SLOTS {
+            return Some(false);
+        }
+        let net = self.commands.as_deref()?;
+        let written = self.slots.get_mut()?.write_slot(slot, word, net);
+        if written {
+            if let Some(fresh) = self.usable_reads(|r| r.slot(slot)) {
+                if let Some(caches) = self.usable.get_mut() {
+                    caches.slots[usize::from(slot)] = fresh;
+                }
+            }
+        }
+        Some(written)
     }
 }

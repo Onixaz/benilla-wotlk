@@ -40,6 +40,11 @@ impl<'w, 's> ContainerLive<'w, 's> {
     pub(crate) fn item_reads(&self) -> (&Objects<'w, 's>, &Items, &NetCommands) {
         (&self.objects, &self.items, &self.commands)
     }
+
+    /// `ItemDisplayInfo.dbc`'s icons, `None` before it loads.
+    pub(crate) fn icons(&self) -> Option<&ItemDisplays> {
+        self.icons.as_deref()
+    }
 }
 
 /// The lent state a bag read takes: the cooldown history, the item locks, the charter records and whether a banker is set (`0xbeb9a0`).

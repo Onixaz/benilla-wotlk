@@ -66,7 +66,7 @@ fn the_full_pass_caches_a_bare_macro_as_usable() {
 
     let (tx, _rx) = crossbeam_channel::unbounded();
     let mut app = App::new();
-    let mut actions = PlayerActions::default();
+    let mut actions = crate::ui_action::ActionSlots::default();
     for (slot, index) in [(0u8, 1u32), (1, 2), (2, 3)] {
         actions.buttons.insert(
             slot,
@@ -82,6 +82,7 @@ fn the_full_pass_caches_a_bare_macro_as_usable() {
     bound.0.insert(1, BoundSpell::None);
     bound.0.insert(2, BoundSpell::Unresolved);
     app.insert_resource(actions)
+        .init_resource::<PlayerActions>()
         .insert_resource(bound)
         .insert_resource(Spells::empty_for_tests())
         .init_resource::<Cooldowns>()
@@ -138,7 +139,7 @@ fn a_ranged_button_pads_its_range_by_the_selected_target_alone() {
     let verdict = |distance: f32| {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
-        let mut actions = PlayerActions::default();
+        let mut actions = crate::ui_action::ActionSlots::default();
         actions.buttons.insert(
             0,
             ActionButton {
@@ -161,6 +162,7 @@ fn a_ranged_button_pads_its_range_by_the_selected_target_alone() {
             flags: 0,
         };
         app.insert_resource(actions)
+        .init_resource::<PlayerActions>()
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())
             .insert_resource(Spells {
                 catalog: benilla_formats::SpellCatalog::from_displays(
@@ -258,7 +260,7 @@ fn a_melee_button_reaches_the_moving_bonus_while_both_units_run() {
     let verdict = |caster_runs: bool, mob_runs: bool, distance: f32| {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
-        let mut actions = PlayerActions::default();
+        let mut actions = crate::ui_action::ActionSlots::default();
         actions.buttons.insert(
             0,
             ActionButton {
@@ -275,6 +277,7 @@ fn a_melee_button_reaches_the_moving_bonus_while_both_units_run() {
             flags: 1,
         };
         app.insert_resource(actions)
+        .init_resource::<PlayerActions>()
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())
             .insert_resource(Spells {
                 catalog: benilla_formats::SpellCatalog::from_displays(
@@ -402,7 +405,7 @@ fn food_app(in_combat: bool) -> App {
 
     let (tx, _rx) = crossbeam_channel::unbounded();
     let mut app = App::new();
-    let mut actions = PlayerActions::default();
+    let mut actions = crate::ui_action::ActionSlots::default();
     actions.buttons.insert(
         0,
         ActionButton {
@@ -429,6 +432,7 @@ fn food_app(in_combat: bool) -> App {
         ..Default::default()
     };
     app.insert_resource(actions)
+        .init_resource::<PlayerActions>()
         .insert_resource(crate::ui_macro::MacroBoundSpells::default())
         .insert_resource(Spells {
             catalog: benilla_formats::SpellCatalog::from_displays(
@@ -571,7 +575,7 @@ fn a_mid_frame_gcd_sweeps_its_whole_duration() {
     const SPELL: u32 = 20154;
     let (tx, _rx) = crossbeam_channel::unbounded();
     let mut app = App::new();
-    let mut actions = PlayerActions::default();
+    let mut actions = crate::ui_action::ActionSlots::default();
     actions.buttons.insert(
         0,
         ActionButton {
@@ -597,6 +601,7 @@ fn a_mid_frame_gcd_sweeps_its_whole_duration() {
         1.0,
     );
     app.insert_resource(actions)
+        .init_resource::<PlayerActions>()
         .insert_resource(crate::ui_macro::MacroBoundSpells::default())
         .insert_resource(Spells {
             catalog: benilla_formats::SpellCatalog::from_displays(
@@ -687,7 +692,7 @@ fn a_pet_action_slot_walks_with_the_pet_as_caster() {
     let run = |pet_streamed: bool| {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
-        let mut actions = PlayerActions::default();
+        let mut actions = crate::ui_action::ActionSlots::default();
         for i in 0..4u8 {
             actions.buttons.insert(
                 i,
@@ -708,6 +713,7 @@ fn a_pet_action_slot_walks_with_the_pet_as_caster() {
             ..Default::default()
         };
         app.insert_resource(actions)
+        .init_resource::<PlayerActions>()
             .insert_resource(bar)
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())
             .insert_resource(Spells {
@@ -787,4 +793,128 @@ fn a_pet_action_slot_walks_with_the_pet_as_caster() {
         (false, false),
         "no pet object, no caster: grey"
     );
+}
+
+/// A spell that takes two muffins per cast, for the reagent legs.
+const MUFFIN_SPELL: u32 = 9001;
+
+/// The food rig with the muffins' display row, a VM, and a reagent spell on bar slot 2.
+fn bar_app() -> App {
+    use benilla_protocol::messages::ActionButton;
+    let mut app = food_app(false);
+    let display = app
+        .world()
+        .resource::<Items>()
+        .template_cached(FOOD_ITEM)
+        .map_or(0, |t| t.display_info_id);
+    let displays = std::collections::HashMap::from([(
+        display,
+        benilla_formats::ItemDisplay {
+            icon: Some("Interface\\Icons\\INV_Misc_Food_11".into()),
+            ..Default::default()
+        },
+    )]);
+    app.insert_resource(crate::entities::ItemDisplays::icons_for_tests(
+        benilla_formats::ItemDisplayCatalog::from_displays(displays),
+    ));
+    let reagent = SpellDisplay {
+        reagents: [(FOOD_ITEM, 2), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+        ..Default::default()
+    };
+    let food = SpellDisplay {
+        attributes: 0x1800_0100,
+        ..Default::default()
+    };
+    app.world_mut().resource_mut::<Spells>().catalog = benilla_formats::SpellCatalog::from_displays(
+        [(FOOD_SPELL, food), (MUFFIN_SPELL, reagent)]
+            .into_iter()
+            .collect(),
+    );
+    app.world_mut().resource_mut::<crate::ui_action::ActionSlots>().buttons.insert(
+        1,
+        ActionButton {
+            slot: 1,
+            action: MUFFIN_SPELL,
+            kind: ACTION_KIND_SPELL,
+        },
+    );
+    app.init_resource::<super::usable_cache::UsableCaches>()
+        .init_resource::<crate::ui_script::live::UiEvents>();
+    app.insert_non_send_resource(UiScript::new().unwrap());
+    app
+}
+
+/// Each slot's icon, count and gates read at the call (`0x5a97f0`, `0x5a7d10`, `0x5a9360`): the
+/// item's art and carried count, a reagent spell's uses and its consumable gate.
+#[test]
+fn the_bar_slots_read_their_icon_and_count_at_the_call() {
+    let mut app = bar_app();
+    let read = live_eval::<Vec<String>>(
+        &mut app,
+        "local out = {} \
+         for a = 1, 3 do \
+           out[#out + 1] = tostring(GetActionTexture(a)) .. ',' .. GetActionCount(a) .. ',' \
+             .. tostring(IsConsumableAction(a)) .. ',' .. tostring(HasAction(a)) \
+         end \
+         return out",
+    );
+    assert_eq!(
+        read,
+        [
+            "Interface\\Icons\\INV_Misc_Food_11,10,nil,1",
+            "nil,5,1,1",
+            "nil,0,nil,nil",
+        ],
+        "the muffins, the spell their pairs feed, then an empty slot"
+    );
+}
+
+/// A pickup writes the bar inside the call (`0x5abe70` -> `0x5aaa90`): the slot empties, the clear
+/// goes out, and `ACTIONBAR_SLOT_CHANGED` fires before the call returns; the temporary bar's slots
+/// refuse a pickup (`0x5abe9d`).
+#[test]
+fn a_pickup_writes_the_bar_and_signals_inside_the_call() {
+    let mut app = bar_app();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    app.insert_resource(NetCommands(tx));
+    let log = live_eval::<Vec<String>>(
+        &mut app,
+        "Seen = {} \
+         local f = CreateFrame('Frame') f:RegisterEvent('ACTIONBAR_SLOT_CHANGED') \
+         f:SetScript('OnEvent', function(_, _, a) Seen[#Seen + 1] = 'slot ' .. a end) \
+         PickupAction(1) Seen[#Seen + 1] = 'returned ' .. tostring(HasAction(1)) \
+         PickupAction(121) Seen[#Seen + 1] = 'temp' \
+         return Seen",
+    );
+    assert_eq!(log, ["slot 1", "returned nil", "temp"]);
+    assert!(!app
+        .world()
+        .resource::<crate::ui_action::ActionSlots>()
+        .buttons
+        .contains_key(&0));
+    let sent: Vec<_> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::SetActionButton { button, packed } => Some((button, packed)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, [(0, 0)]);
+}
+
+/// The item update (`0x5aa5c0`) signals, in slot order, the item's slot and a spell slot that takes
+/// it as a reagent, each slot's usable bytes first.
+#[test]
+fn an_item_update_signals_its_slots_and_its_reagent_spells() {
+    let mut app = bar_app();
+    live_eval::<()>(
+        &mut app,
+        "Seen = {} \
+         local f = CreateFrame('Frame') f:RegisterEvent('ACTIONBAR_SLOT_CHANGED') \
+         f:SetScript('OnEvent', function(_, _, a) Seen[#Seen + 1] = a end)",
+    );
+    super::slots::update_item(app.world_mut(), FOOD_ITEM);
+    crate::ui_script::live::fire_handler_events(app.world_mut());
+    let seen = live_eval::<Vec<i64>>(&mut app, "return Seen");
+    assert_eq!(seen, [1, 2]);
 }

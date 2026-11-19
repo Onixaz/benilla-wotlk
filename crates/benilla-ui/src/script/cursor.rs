@@ -187,6 +187,16 @@ pub struct CursorMacro {
 /// Queue `CURSOR_UPDATE`, once per payload transition, plus a grid event when what the bars can
 /// take changes. Call it after `model.cursor` holds the new payload; an action hop keeps the grid
 /// up rather than hiding and reshowing it.
+/// The bar's grid edge [`queue_cursor_update`] queued last, taken out to fire inside a bar verb's
+/// call ahead of its slot signal, as the cursor setters signal it before the slot write.
+pub(crate) fn take_grid_edge(model: &mut Model) -> Option<String> {
+    let at = model
+        .pending_events
+        .iter()
+        .rposition(|(e, _)| e == "ACTIONBAR_SHOWGRID" || e == "ACTIONBAR_HIDEGRID")?;
+    Some(model.pending_events.remove(at).0)
+}
+
 pub(crate) fn queue_cursor_update(model: &mut Model) {
     model
         .pending_events
@@ -522,8 +532,13 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
         Some(CursorPayload::Merchant(m)) => vec![str("merchant")?, int(m.row + 1)],
         Some(CursorPayload::Macro(m)) => vec![str("macro")?, int(m.index)],
         // Mode 13 (`0x515200`): the set's name, nothing once the set is gone.
-        Some(CursorPayload::EquipmentSet(e)) => match model.equipment_sets.get(&e.id) {
-            Some(name) => vec![str("equipmentset")?, str(name)?],
+        Some(CursorPayload::EquipmentSet(e)) => match model
+            .equipment_manager
+            .sets
+            .iter()
+            .find(|s| s.id == e.id)
+        {
+            Some(set) => vec![str("equipmentset")?, str(&set.name)?],
             None => Vec::new(),
         },
         Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {

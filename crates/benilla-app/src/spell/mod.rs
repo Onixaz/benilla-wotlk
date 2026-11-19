@@ -148,13 +148,6 @@ impl Plugin for SpellPlugin {
             .init_resource::<SummonSlots>()
             .init_resource::<multicast::MultiCastLists>()
             .add_systems(
-                Update,
-                // The player's init puts the stored table on before the press reads it.
-                net::put_action_table_on_init
-                    .after(WorldStage::Net)
-                    .before(crate::ui_script::UiPress),
-            )
-            .add_systems(
                 Startup,
                 load_summon_slots.after(benilla_assets::AssetSet::Open),
             );

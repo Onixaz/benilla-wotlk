@@ -71,6 +71,7 @@ macro_rules! set_field {
 
 mod action;
 mod action_bar_toggles;
+mod action_slots;
 mod addon_message;
 mod arena_team;
 mod auction;
@@ -301,7 +302,7 @@ mod worldstate;
 mod worn_display;
 mod zone_text;
 
-pub use action::{ActionSlot, ActionState, ActionUse};
+pub use action::{ActionIcon, ActionSlot, ActionState, ActionUse};
 pub use addon::AddOnInfo;
 pub use addon_enable::{EnableHash, EnableLists};
 pub use addon_message::{AddonDistribution, AddonSend};
