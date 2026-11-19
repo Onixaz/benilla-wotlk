@@ -183,13 +183,12 @@ impl QuestTooltipLive<'_, '_> {
     }
 }
 
-/// Each record answer runs the quest tooltips' callbacks for it once the cache holds it (`0x61de20`): registered after the caches' own handlers, a found record builds every tooltip whose build missed it.
+/// Each quest, creature or GameObject record answer runs the quest tooltips' callbacks for it once the cache holds it (`0x61de20`): registered after the caches' own handlers, a found record builds every tooltip whose build missed it; an item record's run on the item cache's list.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::QuestTemplate, on_record)
         .net_handler(K::CreatureName, on_record)
-        .net_handler(K::GameObjectInfo, on_record)
-        .net_handler(K::ItemTemplate, on_record);
+        .net_handler(K::GameObjectInfo, on_record);
 }
 
 fn on_record(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
@@ -201,10 +200,6 @@ fn on_record(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
             ..
         } => QuestRecord::Creature(entry),
         SessionEvent::GameObjectInfo { entry, .. } => QuestRecord::GameObject(entry),
-        SessionEvent::ItemTemplate {
-            entry,
-            info: Some(_),
-        } => QuestRecord::Item(entry),
         _ => return,
     };
     ui.write(move |script| script.quest_record_landed(record));

@@ -174,6 +174,20 @@ fn call_setter(
 }
 
 impl crate::script::UiScript {
+    /// Tooltip `h`'s item callback on record `item_id` (`0x626650`): its waiting setter call runs again when it missed that record.
+    pub(crate) fn answer_item_wait(&mut self, h: FrameHandle, item_id: u32) {
+        let waits = self
+            .model_ref()
+            .item_tooltip_waits
+            .get(&h)
+            .is_some_and(|w| w.misses.items.contains(&item_id));
+        if waits {
+            if let Err(e) = answer_wait(&self.lua, h) {
+                self.push_error(e);
+            }
+        }
+    }
+
     /// Re-run every waiting setter call `landed` answers, as the tooltip's item callback does.
     pub(crate) fn answer_item_waits(&mut self, landed: impl Fn(&ItemMisses) -> bool) {
         let waiting: Vec<FrameHandle> = {

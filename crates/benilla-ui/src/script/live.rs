@@ -589,6 +589,11 @@ pub trait LiveState {
     /// Ask for item `id`'s record when the cache holds none, as a cache read with a landing callback does (`0x5b01ef`).
     fn ask_item_record(&self, _id: u32) {}
 
+    /// Leave `wait` on item `id`'s record, at the tail of its callbacks across every subsystem (`0x67cab1`); whether a view took it.
+    fn wait_item_record(&mut self, _id: u32, _wait: super::ItemRecordWait) -> bool {
+        false
+    }
+
     /// Item `id`'s record read from the item cache at the call (`0x67ca30`), its catalog names resolved now; `tooltip`, the VM's strings, adds the lines only the tooltip prints, the trigger spells' `$`-text and the reputation requirement. `Some(None)` for a record not cached, `None` where no view lends the cache.
     fn item_record(
         &self,

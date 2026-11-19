@@ -24,7 +24,7 @@ use crate::ui_session::npc_out_of_range;
 
 mod net;
 
-pub(crate) use net::{guild_id_changed, item_landed, name_landed};
+pub(crate) use net::{guild_id_changed, name_landed, record_callback};
 
 /// One slot as the reference keeps it (`0xc1dc40`, `0x2c` bytes): the wire fields and the lock (`+0x24`).
 #[derive(Clone, Debug, Default)]
@@ -67,16 +67,9 @@ pub(crate) struct LogRow {
     written_at: u32,
 }
 
-/// The record a guild bank cache callback waits on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Record {
-    Item(u32),
-    Name(u64),
-}
-
 /// The callback a record ask registered: the slots' (`0x5a47a0`) or the log's (`0x5a47d0`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Callback {
+pub(crate) enum Callback {
     Slots,
     Log,
 }
@@ -107,8 +100,8 @@ pub(crate) struct GuildBankState {
     log_waits: u32,
     /// The log tab last answered (`0xacf8c8`).
     log_tab: Option<u8>,
-    /// The record callbacks registered, in ask order.
-    callbacks: Vec<(Record, Callback)>,
+    /// The name cache's callbacks registered, in ask order; the item cache's wait on [`crate::items::RecordWaits`].
+    name_callbacks: Vec<(u64, Callback)>,
 }
 
 impl GuildBankState {

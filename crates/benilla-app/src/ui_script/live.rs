@@ -50,6 +50,8 @@ pub(crate) struct LiveView<'w, 's> {
     enchants: Option<Res<'w, crate::items::Enchants>>,
     /// The item cache, a refund ask's template test (`0x62d580`).
     items: Option<Res<'w, crate::items::Items>>,
+    /// The item records' callbacks, which a verb's ask joins in turn with every subsystem's.
+    record_waits: Option<NonSendMut<'w, crate::items::RecordWaits>>,
     /// The main-thread state a verb writes inside its call, filled by [`LendLive`].
     pub(crate) lent: Lent<'w>,
     companions: crate::ui_companion::CompanionLive<'w, 's>,
@@ -808,10 +810,14 @@ impl LiveState for LiveView<'_, '_> {
         get: &dyn Fn(&str) -> Option<String>,
     ) -> Option<Option<benilla_ui::script::QuestLogEntryView>> {
         let Self {
-            quest_rows, lent, ..
+            quest_rows,
+            lent,
+            record_waits,
+            ..
         } = self;
         let Lent { asks, expiries, .. } = lent;
-        quest_rows.row(quest_id, slot, get, expiries.get(), asks.get_mut())
+        let lists = (asks.get_mut(), record_waits.as_deref_mut());
+        quest_rows.row(quest_id, slot, get, expiries.get(), lists)
     }
 
     fn quest_log_detail(
@@ -820,9 +826,13 @@ impl LiveState for LiveView<'_, '_> {
         slot: u8,
     ) -> Option<Option<benilla_ui::script::QuestLogDetail>> {
         let Self {
-            quest_rows, lent, ..
+            quest_rows,
+            lent,
+            record_waits,
+            ..
         } = self;
-        quest_rows.detail(quest_id, slot, lent.asks.get_mut())
+        let lists = (lent.asks.get_mut(), record_waits.as_deref_mut());
+        quest_rows.detail(quest_id, slot, lists)
     }
 
     fn daily_quests_completed(&self) -> Option<u32> {
@@ -1623,6 +1633,14 @@ impl LiveState for LiveView<'_, '_> {
         self.currency.ask(id);
     }
 
+    fn wait_item_record(&mut self, id: u32, wait: benilla_ui::script::ItemRecordWait) -> bool {
+        let Some(waits) = self.record_waits.as_mut() else {
+            return false;
+        };
+        waits.wait(id, crate::items::RecordWait::Ui(wait), wait.once());
+        true
+    }
+
     fn clear_banker(&mut self) {
         if let Some(b) = self.lent.bank.get_mut() {
             b.clear();
@@ -1835,6 +1853,15 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         f: impl FnOnce(Option<&mut crate::ui_guild_bank::GuildBankState>) -> R,
     ) -> R {
         self.loan.with_view_mut(|v| f(v.lent.guild_bank.get_mut()))
+    }
+
+    /// Leave `wait` on item `entry`'s record through the view this parameter borrows, between calls into Lua (`0x67cab1`).
+    pub(crate) fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
+        self.loan.with_view_mut(|v| {
+            if let Some(waits) = v.record_waits.as_mut() {
+                waits.wait(entry, wait, false);
+            }
+        });
     }
 
     /// The overlay of `T`, set only inside [`Self::lending`].

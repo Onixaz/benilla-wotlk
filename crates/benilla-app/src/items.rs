@@ -463,41 +463,72 @@ pub(crate) struct Items {
     /// is set up, counting seconds from then; they live as long as the player, here the session.
     /// `SMSG_ITEM_TIME_UPDATE` has no such list.
     pending_enchant_times: Vec<(u64, u32, u32)>,
-    /// The record callbacks waiting on their record, in ask order: `(entry, item, callback)`.
-    record_waiters: Vec<(u32, u64, RecordWait)>,
 }
 
-/// A record callback an item registered with its ask.
+/// The item cache's callbacks still waiting on their record, every subsystem's on one list: 12340 links each ask's callback to the tail of its record's list (`0x67ca82`, `0x67cab1`, `0x67cb8b`), and the answer runs that list in order.
+#[derive(Default)]
+pub(crate) struct RecordWaits(Vec<(u32, RecordWait)>);
+
+/// A callback an ask left on an item record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecordWait {
-    /// The post-init's (`0x70af17` -> `0x70ae90`).
-    PostInit,
-    /// The entry watch's (`0x7079cf` -> `0x7078e0`).
-    Entry,
+    /// An item's post-init (`0x70af17` -> `0x70ae90`).
+    PostInit(u64),
+    /// An item's entry watch (`0x7079cf` -> `0x7078e0`).
+    Entry(u64),
+    /// A quest log verb's miss (`0x5e4516`, `0x5e46e6` -> `0x5dea40`).
+    QuestLog,
+    /// A turn-in's reward line, with its count (`0x6d102c`, `0x6d106d` -> `0x6cd8c0`).
+    QuestReward(u32),
+    /// The guild bank's slots' or log's count (`0x5a7664` -> `0x5a47a0`, `0x5a489c` -> `0x5a47d0`).
+    GuildBank(crate::ui_guild_bank::Callback),
+    /// A callback the UI left inside a verb's call.
+    Ui(benilla_ui::script::ItemRecordWait),
+}
+
+impl RecordWaits {
+    /// `wait` on `entry`'s record, at the list's tail (`0x67cab1`); a `once` ask whose callback and argument already wait adds none (`0x67cae8`-`0x67cb16`).
+    pub(crate) fn wait(&mut self, entry: u32, wait: RecordWait, once: bool) {
+        if once && self.0.contains(&(entry, wait)) {
+            return;
+        }
+        self.0.push((entry, wait));
+    }
+
+    /// The callbacks waiting on `entry`'s record, in ask order, unlinked.
+    pub(crate) fn take(&mut self, entry: u32) -> Vec<RecordWait> {
+        let mut taken = Vec::new();
+        self.0.retain(|&(e, wait)| {
+            let hit = e == entry;
+            if hit {
+                taken.push(wait);
+            }
+            !hit
+        });
+        taken
+    }
+
+    /// Unlink every callback `cancel` names, on any record (`0x67a0f0`).
+    pub(crate) fn cancel(&mut self, cancel: impl Fn(RecordWait) -> bool) {
+        self.0.retain(|&(_, wait)| !cancel(wait));
+    }
+
+    /// The waits, in ask order.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> &[(u32, RecordWait)] {
+        &self.0
+    }
+
+    /// Disconnect: the asks in flight died with the socket.
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
 }
 
 impl Items {
     /// The entry watch's drop of the old record (`0x7079bb`): the next read asks again.
     pub(crate) fn evict_template(&mut self, entry: u32) {
         self.templates.evict(entry);
-    }
-
-    /// `item`'s `callback`, run when `entry`'s record lands.
-    pub(crate) fn wait_record(&mut self, entry: u32, item: u64, callback: RecordWait) {
-        self.record_waiters.push((entry, item, callback));
-    }
-
-    /// The callbacks waiting on `entry`'s record, in ask order.
-    pub(crate) fn take_record_waiters(&mut self, entry: u32) -> Vec<(u64, RecordWait)> {
-        let mut taken = Vec::new();
-        self.record_waiters.retain(|&(e, item, callback)| {
-            let hit = e == entry;
-            if hit {
-                taken.push((item, callback));
-            }
-            !hit
-        });
-        taken
     }
 
     /// Queue an `SMSG_ITEM_ENCHANT_TIME_UPDATE` for an item not held. The caller has checked the
@@ -595,7 +626,6 @@ impl Items {
     /// item objects and their countdowns go with the index's sweep.
     pub(crate) fn clear_session(&mut self) {
         self.pending_enchant_times.clear();
-        self.record_waiters.clear();
         self.templates.clear_pending();
     }
 }

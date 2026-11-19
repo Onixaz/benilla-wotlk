@@ -162,6 +162,7 @@ fn build(model: &mut super::Model) {
     let h = holdings();
     let list = with_catalog(|c| display_list(model, c, h.as_ref())).unwrap_or_default();
     for e in list.iter().filter(|e| !e.header && e.name.is_none()) {
+        super::item_stats::wait_item_record(model, e.item_id, super::ItemRecordWait::Currency);
         super::read_live(|l| l.ask_item_record(e.item_id));
         model.currency_waiting.insert(e.item_id);
     }
