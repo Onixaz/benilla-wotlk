@@ -181,11 +181,10 @@ fn vm_bind_location(script: &UiScript) -> String {
 fn binder_probe(
     time: ProbeClock,
     mut probe: ResMut<BinderProbe>,
-    gossip: Res<GossipState>,
     binder: Res<BinderState>,
-    mut home: ResMut<HomeBind>,
+    home: Res<HomeBind>,
     areas: Option<Res<AreaTableRes>>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
@@ -198,6 +197,8 @@ fn binder_probe(
     let Some(script) = script else {
         return; // no UI VM in this build, so nothing to drive
     };
+    // The gossip globals as the verbs read them, through the view this system lends.
+    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
     let now = time.elapsed_secs_f64();
     let phase = probe.phase;
 
@@ -340,10 +341,9 @@ fn binder_probe(
         }
         Phase::Accept { since, sent } => {
             if !sent {
-                // Clear the bind before answering: a rebind to the same area re-sends an
-                // identical `SMSG_BINDPOINTUPDATE`, so only None → Some proves a fresh packet.
+                // A rebind to the same area re-sends an identical `SMSG_BINDPOINTUPDATE`, so the
+                // write after the answer, not the value, proves a fresh packet.
                 probe.baseline_area = home.0;
-                home.0 = None;
                 if let Err(e) = script.run("ConfirmBinder()") {
                     warn!(
                         "PROBE_BINDER: SKIP (6 bind) — ConfirmBinder() would not run in the live \
@@ -353,8 +353,8 @@ fn binder_probe(
                     return;
                 }
                 info!(
-                    "PROBE_BINDER: (6 bind) ConfirmBinder() run in the live VM — HomeBind cleared \
-                     from {:?}, waiting for a fresh SMSG_BINDPOINTUPDATE",
+                    "PROBE_BINDER: (6 bind) ConfirmBinder() run in the live VM — HomeBind was \
+                     {:?}, waiting for a fresh SMSG_BINDPOINTUPDATE",
                     probe.baseline_area
                 );
                 probe.phase = Phase::Accept {
@@ -369,7 +369,7 @@ fn binder_probe(
                 .unwrap_or_default()
                 .to_string();
             let vm = vm_bind_location(&script);
-            if !name.is_empty() && vm == name {
+            if home.is_changed() && !name.is_empty() && vm == name {
                 info!(
                     "PROBE_BINDER: PASS (6 bind) — HomeBind repopulated to area {:?} = {name:?} \
                      (was {:?}), and the VM's GetBindLocation() agrees: {vm:?}",

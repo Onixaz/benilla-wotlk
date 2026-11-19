@@ -325,11 +325,10 @@ fn probe_guild_name(prefix: &str) -> String {
 fn charter_probe(
     time: ProbeClock,
     mut probe: ResMut<CharterProbe>,
-    gossip: Res<GossipState>,
     registrar: Res<GuildRegistrarState>,
     objects: Objects,
     items: Res<Items>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
@@ -342,6 +341,8 @@ fn charter_probe(
     let Some(script) = script else {
         return; // no UI VM (headless net-only)
     };
+    // The gossip globals as the verbs read them, through the view this system lends.
+    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
     let now = time.elapsed_secs_f64();
     let phase = probe.phase;
 

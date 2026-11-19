@@ -265,7 +265,7 @@ mod net {
             .net_handler(K::BattlefieldStatus, on_battlefield_status);
     }
 
-    /// `SMSG_ENABLE_BARBER_SHOP` (`0x52f9b0`): needs our own body (`0x52f9c4`); the styles of our race and the sex in `PLAYER_BYTES_3` (`0x52fb45`), the flag set (`0x52fba5`), then `BARBER_SHOP_OPEN` (`0x52fbac`). The view's distance is the body's playing sequence's bounds radius, twice over, three times for a Gnome (`0x52fbf1`); the radius floors the zoom while the shop is open.
+    /// `SMSG_ENABLE_BARBER_SHOP` (`0x52f9b0`): needs our own body (`0x52f9ca`); the styles of our race and the sex in `PLAYER_BYTES_3` (`0x52fb45`), the flag set (`0x52fba5`), then `BARBER_SHOP_OPEN` (`0x52fbac`). The view's distance is the body's playing sequence's bounds radius, twice over, three times for a Gnome (`0x52fc47`); the radius floors the zoom while the shop is open.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn on_enable(
         In(ev): In<SessionEvent>,
