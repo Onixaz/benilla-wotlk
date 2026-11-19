@@ -1579,6 +1579,7 @@ pub(crate) fn push_npc_unit(
     reputations: Res<Reputations>,
     group: Res<crate::ui_party::GroupState>,
     instance: crate::ui_arena::ArenaInstance,
+    go_templates: Option<Res<crate::go_templates::GameObjectTemplates>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -1600,9 +1601,29 @@ pub(crate) fn push_npc_unit(
         .as_ref()
         .and_then(|i| i.0.get(&guid))
         .and_then(|&e| stores.get(e).ok())
-        .map(|store| held.state(store, guid))
+        .map(|store| npc_state(&held, store, guid, go_templates.as_deref()))
     {
         script.set_unit("npc", Some(state));
+    }
+}
+
+/// The `"npc"` snapshot: a unit's as any held unit's; a GameObject is no unit to the getters (`UnitExists` asks its targetable slot `0x60c2f8`, which answers 0 for a GameObject, `0x8e5250`) and `UnitName` reads its template's name, `""` until cached (`0x60e838` -> `0x70cdf0`).
+fn npc_state(
+    held: &held::HeldUnits,
+    store: &ObjectStore,
+    guid: u64,
+    go_templates: Option<&crate::go_templates::GameObjectTemplates>,
+) -> UnitState {
+    if store.0.is_unit() || !benilla_protocol::guid::is_gameobject(guid) {
+        return held.state(store, guid);
+    }
+    let name = go_templates
+        .and_then(|t| t.get(guid))
+        .map_or_else(String::new, |t| t.name.clone());
+    UnitState {
+        guid,
+        name: Some(name),
+        ..UnitState::default()
     }
 }
 
@@ -1614,6 +1635,8 @@ struct Interactions<'w> {
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     /// The active battlefield's arena test, which drops the selection colour's PvP flag.
     instance: crate::ui_arena::ArenaInstance<'w>,
+    /// A GameObject interact target's name.
+    go_templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
 }
 
 fn feed_units(
@@ -1699,7 +1722,11 @@ fn feed_units(
         || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
         || interact.arena.as_ref().is_some_and(|r| r.is_changed())
-        || interact.instance.is_changed();
+        || interact.instance.is_changed()
+        || interact
+            .go_templates
+            .as_ref()
+            .is_some_and(|t| interact_guid.is_some() && t.is_changed());
     gate::trace(
         "feed_units",
         &[
@@ -1857,7 +1884,13 @@ fn feed_units(
     // `"npc"`: the interact target (`0xbd07a8`). No guild leg, as for `"targettarget"`.
     let npc = interact_guid.and_then(|guid| {
         let entity = index.as_deref()?.0.get(&guid).copied()?;
-        Some(held.state(stores.all.get(entity).ok()?, guid))
+        let store = stores.all.get(entity).ok()?;
+        Some(npc_state(
+            &held,
+            store,
+            guid,
+            interact.go_templates.as_deref(),
+        ))
     });
     // Closing the window must clear the token, so the memo is written here, not only read. No
     // `fire_transitions`: nothing draws `"npc"` as a unit frame.

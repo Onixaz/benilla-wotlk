@@ -7055,3 +7055,52 @@ fn a_creature_givers_next_panel_finishes_the_last_and_a_gameobjects_does_not() {
         );
     }
 }
+
+/// `"npc"` on a GameObject interact target is no unit to the getters: `UnitExists` asks the object's targetable slot (`0x60c2f8`), which a GameObject answers 0 (`0x8e5250`), and `UnitName` reads the template's name, `""` until it is cached (`0x60e838` -> `0x70cdf0`); `UnitGUID` names it.
+#[test]
+fn npc_on_a_gameobject_names_its_template_and_is_no_unit() {
+    const BOX: u64 = 0xF110_0000_0300_0021;
+    const BARE: u64 = 0xF110_0000_0301_0022;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let mailbox = |guid: u64, entry: u32| SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::GameObject,
+        display_id: None,
+        position: [-8949.0, -130.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT; `OBJECT_FIELD_ENTRY`.
+        fields: ObjectFields::from_pairs(&[(2, 0x21), (3, entry)])
+            .into_created(ObjectType::GameObject),
+    };
+    rig.packets(vec![mailbox(BOX, 0x300), mailbox(BARE, 0x301)], 2);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::go_templates::GameObjectTemplates>()
+        .insert(0x300, 19, "Mailbox".into(), &[0; 24]);
+    lua(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SHOW') \
+         f:SetScript('OnEvent', function() STABLE_LOG = STABLE_LOG or {} \
+         table.insert(STABLE_LOG, strjoin('|', tostring(UnitName('npc')), \
+         tostring(UnitGUID('npc')), tostring(UnitExists('npc')))) end)",
+    );
+    rig.packets(vec![SessionEvent::ShowMailbox { mailbox: BOX }], 2);
+    rig.packets(vec![SessionEvent::ShowMailbox { mailbox: BARE }], 2);
+    assert_eq!(
+        lua(&mut rig, ""),
+        ["Mailbox|0xF110000003000021|nil", "|0xF110000003010022|nil"]
+    );
+}
