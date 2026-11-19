@@ -2807,7 +2807,7 @@ fn tapped_by_all_threat_list_reads_its_dynamic_flag() {
     assert!(s.run("UnitIsTappedByAllThreatList({})").is_err());
 }
 
-/// The per-token fan-out compares against the interact target itself (`0x60bece`): the held target names `"npc"` with no fallback guid pushed; none held, the fallback window's NPC does; no view lent, the fallback alone.
+/// The per-token fan-out compares against the interact target itself (`0x60bece`): the held target names `"npc"` over the guid last pushed; none held, nothing does, the last window's NPC included; no view lent, the pushed guid alone.
 #[test]
 fn the_fan_out_names_npc_by_the_interact_target() {
     use crate::script::LiveState;
@@ -2847,16 +2847,15 @@ fn the_fan_out_names_npc_by_the_interact_target() {
         naming(&mut s, Some(VENDOR), QUESTER).is_empty(),
         "the held target wins"
     );
-    assert_eq!(
-        naming(&mut s, None, QUESTER),
-        ["npc"],
-        "the fallback window (#1329)"
+    assert!(
+        naming(&mut s, None, QUESTER).is_empty(),
+        "none held: the last pushed NPC is nobody's, as after a window's close"
     );
     assert!(s.unit_tokens(VENDOR).is_empty(), "no view lent");
     assert_eq!(s.unit_tokens(QUESTER), ["npc"]);
 }
 
-/// `"npc"` is the interact target read at the call (`0xbd07a8`): a window's show reads the NPC its open just took, found by guid among the snapshots, though the pushed `"npc"` snapshot still names the last window's; with no target held, or no view lent, the pushed one answers.
+/// `"npc"` is the interact target read at the call (`0xbd07a8`): a window's show reads the NPC its open just took, found by guid among the snapshots, though the pushed `"npc"` snapshot still names the last window's; with no target held, nobody, the last window's NPC still pushed included; no view lent, the pushed one.
 #[test]
 fn the_npc_token_reads_the_interact_target_at_the_call() {
     use crate::script::LiveState;
@@ -2917,9 +2916,9 @@ fn the_npc_token_reads_the_interact_target_at_the_call() {
         ..Default::default()
     });
     assert_eq!(
-        read(&mut s, None).0.as_deref(),
-        Some("Brog Hamfist"),
-        "a window not on the target yet names its NPC through the fallback (#1329)"
+        read(&mut s, None),
+        (None, None),
+        "a window just closed: its NPC, still the guid last pushed, is not the token's (`0x512e89`)"
     );
     assert_eq!(
         s.eval::<Option<String>>(r#"return UnitName("npc")"#)

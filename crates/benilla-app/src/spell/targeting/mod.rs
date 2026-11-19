@@ -677,7 +677,17 @@ mod tests {
             .expect("a known token");
         world
             .run_system_cached(
-                |mut script: NonSendMut<UiScript>, mut cursor: ScriptCursor| {
+                |(mut script, _live): (
+                    NonSendMut<UiScript>,
+                    crate::ui_script::LendLive<(
+                        (
+                            crate::ui_script::OwnsCooldowns,
+                            crate::ui_script::OwnsSelection,
+                        ),
+                        crate::ui_script::OwnsPending,
+                    )>,
+                ),
+                 mut cursor: ScriptCursor| {
                     for token in script.take_spell_target_unit() {
                         cursor.spell_target_unit(&token, &script);
                     }

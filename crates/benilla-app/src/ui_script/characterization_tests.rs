@@ -162,6 +162,7 @@ local VERBS = {
     { "itnext", function() return ItemTextHasNextPage() end },
     { "merchantn", function() return GetMerchantNumItems() end },
     { "npc", function() return UnitGUID("npc") end },
+    { "npcname", function() return UnitName("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
     { "money", function() return GetMoney() end },
@@ -1739,30 +1740,20 @@ fn quest_dialogs_and_the_escort_confirm() {
         DIALOG_EVENTS,
         &[],
     ));
-    // No NPC is held, so each dialog closes on its first distance check; the close zeroes the giver and leaves the panel's text (`0x58cb6b`, `0x58cb98`).
+    // No NPC is in view, so no panel takes the interact target (`0x58c5c7`) and nothing closes one: no `QUEST_FINISHED`.
     let lines = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(
         seen,
         vec![
-            lines(&[
-                "QUEST_DETAIL | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle=Charz qdone=nil",
-            ]),
-            lines(&[
-                "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle=Charz qdone=1",
-            ]),
-            lines(&[
-                "QUEST_COMPLETE | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle=Charz qdone=nil",
-            ]),
+            lines(&["QUEST_DETAIL | qtitle=Charz qdone=nil"]),
+            lines(&["QUEST_PROGRESS | qtitle=Charz qdone=1"]),
+            lines(&["QUEST_COMPLETE | qtitle=Charz qdone=nil"]),
             // The template is not cached: the turn-in waits for its answer (`0x6d1192`).
             lines(&[]),
             // Each handler fires its panel's event in its turn (`0x58dfb5`, then `0x58bb4c`).
             lines(&[
                 "QUEST_DETAIL | qtitle=Charz qdone=nil",
                 "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle=Charz qdone=1",
             ]),
             lines(&["QUEST_ACCEPT_CONFIRM Escort Charz"]),
         ]
@@ -2639,7 +2630,7 @@ fn the_score_event_waits_for_the_last_name() {
     );
 }
 
-/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`).
+/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`). The anywhere list's battlemaster holds the interact target, so the same battlemaster's list re-sets it and the clear's walk closes that battlemaster first (`0x54970f` -> `0x51fd1c` -> `0x51309f` -> `0x5496dc`).
 #[test]
 fn each_battlefield_list_fires_its_source_event_with_its_instances() {
     use benilla_protocol::messages::BattlefieldList;
@@ -2679,6 +2670,7 @@ fn each_battlefield_list_fires_its_source_event_with_its_instances() {
         vec![
             "NPC_PVPQUEUE_ANYWHERE | bfcount=1",
             "PVPQUEUE_ANYWHERE_SHOW | bfcount=2",
+            "BATTLEFIELDS_CLOSED | bfcount=2",
             "BATTLEFIELDS_SHOW | bfcount=3",
             "BATTLEFIELDS_CLOSED | bfcount=4",
             "BATTLEFIELDS_CLOSED | bfcount=4",
@@ -3432,6 +3424,9 @@ const BANKER: u64 = 0xF130_0000_0200_0001;
 fn banker_create(npc_flags: u32) -> SessionEvent {
     npc_create(BANKER, npc_flags)
 }
+
+/// `UNIT_NPC_FLAG_GOSSIP`: a flag the interact target's watchdog wants to keep a unit held (`0x7295cc`).
+pub(super) const GOSSIP_NPC: u32 = crate::target::cursor_mode::npc_flags::GOSSIP;
 
 /// A creature as a stream create sends it, with `npc_flags`.
 pub(super) fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
@@ -5193,7 +5188,7 @@ fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
     }
 }
 
-/// The stable master beside us, so the range guard keeps the stable open.
+/// The stable master beside us, so the interact target's watchdog keeps the stable open.
 fn stable_master_create() -> SessionEvent {
     stable_master_at(STABLE_MASTER)
 }
@@ -5220,6 +5215,10 @@ fn stable_master_at(guid: u64) -> SessionEvent {
             (FIELD_UNIT_HEALTH, 500),
             (FIELD_UNIT_MAXHEALTH, 500),
             (FIELD_UNIT_LEVEL, 80),
+            (
+                benilla_protocol::field::FIELD_UNIT_NPC_FLAGS,
+                crate::target::cursor_mode::npc_flags::STABLEMASTER,
+            ),
         ])
         .into_created(ObjectType::Unit),
     }
@@ -6864,12 +6863,21 @@ fn every_window_open_takes_the_interact_target_from_the_vendor_holding_it() {
     const VENDOR: u64 = BANKER + 0x10;
     const NEW: u64 = BANKER + 0x11;
     const PARTNER: u64 = 0x0000_0000_0000_0777;
-    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+    // Both Human (template 1), so the partner passes the watchdog's cooperation check (`0x51feba`).
+    let human = (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1);
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, human]) else {
         return;
     };
     let (tx, _rx) = crossbeam_channel::unbounded();
     rig.app.insert_resource(crate::net::NetCommands(tx));
-    rig.packets(vec![npc_create(VENDOR, 0), npc_create(NEW, 0)], 2);
+    rig.packets(
+        vec![
+            npc_create(VENDOR, GOSSIP_NPC),
+            npc_create(NEW, GOSSIP_NPC),
+            player_create_with(PARTNER, &[human]),
+        ],
+        2,
+    );
     let vendor = || SessionEvent::VendorInventory {
         vendor: VENDOR,
         items: Vec::new(),
@@ -7019,7 +7027,7 @@ fn a_creature_givers_next_panel_finishes_the_last_and_a_gameobjects_does_not() {
         // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT.
         fields: ObjectFields::from_pairs(&[(2, 0x21)]).into_created(ObjectType::GameObject),
     };
-    rig.packets(vec![npc_create(GIVER, 0), board], 2);
+    rig.packets(vec![npc_create(GIVER, GOSSIP_NPC), board], 2);
     for (giver, finishes) in [(GIVER, 1), (BOARD, 0)] {
         let greeting = SessionEvent::QuestGreeting(QuestGiverList {
             npc: giver,

@@ -701,7 +701,7 @@ fn cached_full_name(names: &NameCache, guid: u64) -> Option<String> {
     })
 }
 
-/// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`) and the battlemaster walk-away close (`0x5496d0`).
+/// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`).
 fn drain_battlefield(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<Battlefield>,

@@ -888,7 +888,7 @@ fn a_stand_state_update_closes_the_barber_in_its_turn() {
     assert_eq!(stands, [0], "the close stood us up from the sit");
 }
 
-/// A new map's load closes the barber shop (`0x403ba2`), then its object manager's teardown leaves the UI's world, whose reader part closes the reader (`0x403ba7` -> `0x528ce2` -> `0x58a430`), twice as the reader still holds the interact target (`0x58a207` -> `0x512e60`), all in the worldport's turn ahead of the next packet's line; a login verify and our create again leave both open.
+/// A new map's load closes the barber shop (`0x403ba2`), then its object manager's teardown leaves the UI's world, whose reader part closes the reader (`0x403ba7` -> `0x528ce2` -> `0x58a430`), twice as the reader still holds the interact target (`0x58a207` -> `0x512e60`), all in the worldport's turn ahead of the next packet's line; a login verify and our create again leave the barber open, the reader closed by the watchdog once the purge takes its object.
 #[test]
 fn a_new_map_closes_the_barber_then_the_reader_in_its_turn() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -896,9 +896,10 @@ fn a_new_map_closes_the_barber_then_the_reader_in_its_turn() {
     };
     let _rx = tap(&mut rig);
     rig.packets(plaque(false), 2);
+    // Landing beside the plaque, so the reread stays in the GameObject's reach (`0x51fe86`).
     let port = |needs_ack| SessionEvent::Worldport {
         map_id: 1,
-        position: [16226.2, 16257.0, 13.2],
+        position: NEAR,
         orientation: 0.0,
         needs_ack,
     };
@@ -920,11 +921,18 @@ fn a_new_map_closes_the_barber_then_the_reader_in_its_turn() {
         2,
     );
     let error = "UI_ERROR_MESSAGE You must be sitting in a barber chair";
+    // The verify's own handler closes neither; its purge takes the plaque and us, so the interact target's watchdog clears the reader's hold (`0x51fe2e`, `0x51fe5c` -> `0x512ecf`).
     assert_eq!(
         pin(&seen, events, verbs),
-        [format!("{error} | barberinfo=4 ittext=Page one")],
-        "a login verify leaves both open"
+        [
+            "ITEM_TEXT_CLOSED | barberinfo=0 ittext=".to_string(),
+            format!("{error} | barberinfo=4 ittext="),
+        ],
+        "a login verify leaves the barber open"
     );
+    let mut reread = plaque(false);
+    reread.push(SessionEvent::GameObjectPageText { guid: PLAQUE });
+    rig.packets(reread, 2);
     let seen = rig.packets(vec![port(true), SessionEvent::BarberShopResult(2)], 2);
     assert_eq!(
         pin(&seen, events, verbs),
@@ -1205,9 +1213,9 @@ fn an_uncached_page_opens_from_its_answer_and_a_reread_closes() {
     );
 }
 
-/// Only an item's disable has a reader leg (`0x70b036` -> `0x58a1a0`): a read GameObject's destroy leaves the reader open.
+/// Only an item's disable has a reader leg (`0x70b036` -> `0x58a1a0`): a read GameObject's destroy leaves the reader open in its handler; the interact target's watchdog then finds the object gone and its clear closes the reader through the walk's reader leg (`0x51fe2e` -> `0x51ff05` -> `0x512ecf`).
 #[test]
-fn a_read_gameobject_leaving_leaves_the_reader_open() {
+fn a_read_gameobject_leaving_closes_the_reader_from_the_watchdog() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
@@ -1215,9 +1223,17 @@ fn a_read_gameobject_leaving_leaves_the_reader_open() {
     rig.packets(plaque(false), 2);
     rig.packets(vec![SessionEvent::GameObjectPageText { guid: PLAQUE }], 2);
     let seen = rig.packets(vec![SessionEvent::ObjectDestroyed(PLAQUE)], 2);
-    assert!(
-        pin(&seen, ITEM_TEXT_EVENTS, &[]).is_empty(),
-        "a GameObject's disable has no reader leg"
+    assert_eq!(
+        pin(&seen, ITEM_TEXT_EVENTS, &["ittext"]),
+        ["ITEM_TEXT_CLOSED | ittext="],
+        "the watchdog's clear alone closes it, once"
+    );
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::ui_session::InteractTarget>()
+            .0,
+        None
     );
 }
 
@@ -1338,7 +1354,7 @@ fn close_merchant_fires_twice_inside_its_call() {
         return;
     };
     let _rx = tap(&mut rig);
-    let verbs = &["merchantn", "npc"];
+    let verbs = &["merchantn", "npc", "npcname"];
     rig.packets(vec![npc_at(NPC, 0x80, NEAR)], 2);
     rig.packets(vec![vendor_list(NPC, vec![vendor_row(11, 1, 3)])], 2);
     assert_eq!(
@@ -1346,13 +1362,13 @@ fn close_merchant_fires_twice_inside_its_call() {
         format!("0x{NPC:016X}"),
         "the vendor holds the token while open"
     );
-    // The clear zeroes the target before its walk (`0x512e89`), so the token reads nobody at both (`0x60af67`).
+    // The clear zeroes the target before its walk (`0x512e89`), so the token reads nobody at both, by guid and by every unit getter (`0x60af67`).
     let pinned = fired_in_call(&mut rig, "CloseMerchant()", MERCHANT_EVENTS, verbs);
     assert_eq!(
         pinned,
         vec![
-            "MERCHANT_CLOSED | merchantn=0 npc=nil",
-            "MERCHANT_CLOSED | merchantn=0 npc=nil"
+            "MERCHANT_CLOSED | merchantn=0 npc=nil npcname=nil",
+            "MERCHANT_CLOSED | merchantn=0 npc=nil npcname=nil"
         ]
     );
     let pinned = fired_in_call(&mut rig, "CloseMerchant()", MERCHANT_EVENTS, verbs);

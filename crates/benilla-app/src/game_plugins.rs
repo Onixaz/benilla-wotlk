@@ -1244,7 +1244,7 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 672, 664),
+        ("Update", 658, 650),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
@@ -1658,8 +1658,6 @@ pub(crate) mod schedule_tests {
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
         ("ui_guild_bank/mod.rs", "drain_guild_bank", Because::FilledByVm,
          "the requests are the VM's own guild bank verbs, and the auto-store's event answers one"),
-        ("ui_battlefield.rs", "drain_battlefield", Because::PlayerRoundTrip,
-         "`closed` ends a battlemaster session, which only a list packet answering a click on a battlemaster opens"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,

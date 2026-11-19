@@ -193,7 +193,13 @@ pub(super) fn target_by_name_requests(
     mut commit: SelectCommit,
     (mut script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+        crate::ui_script::LendLive<(
+            (
+                crate::ui_script::OwnsCooldowns,
+                crate::ui_script::OwnsSelection,
+            ),
+            crate::ui_script::OwnsPending,
+        )>,
     ),
 ) {
     for request in requests.read() {
@@ -210,7 +216,13 @@ pub(super) fn assist_requests(
     mut commit: SelectCommit,
     (mut script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+        crate::ui_script::LendLive<(
+            (
+                crate::ui_script::OwnsCooldowns,
+                crate::ui_script::OwnsSelection,
+            ),
+            crate::ui_script::OwnsPending,
+        )>,
     ),
 ) {
     for request in requests.read() {
@@ -993,7 +1005,17 @@ mod tests {
                 .expect("the binding runs");
             world
                 .run_system_once(
-                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                    |(mut script, _live): (
+                        NonSendMut<UiScript>,
+                        crate::ui_script::LendLive<(
+                            (
+                                crate::ui_script::OwnsCooldowns,
+                                crate::ui_script::OwnsSelection,
+                            ),
+                            crate::ui_script::OwnsPending,
+                        )>,
+                    ),
+                     mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
                             select.select(request, &mut script);
                         }

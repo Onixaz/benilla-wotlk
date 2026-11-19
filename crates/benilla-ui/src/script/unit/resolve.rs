@@ -378,7 +378,7 @@ impl UnitGuids {
             UnitBase::Pet if self.player == 0 => 0,
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
-            // The interact target read at the call (`0x60af67`); with none held, the guid of a window not on it yet (#1329), else nobody.
+            // The interact target read at the call (`0x60af67`); with none held, nobody.
             UnitBase::Npc => self.npc_guid(),
             // Deviation: the reference's party-pet lookup has no bound and reads past its
             // four-entry table, which is stale memory, not a mechanism; past it, nobody.

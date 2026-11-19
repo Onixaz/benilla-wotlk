@@ -713,11 +713,6 @@ impl<'a> VmUnits<'a> {
         self.0.map(UiScript::focus_guid)
     }
 
-    /// The `"npc"` guid the VM was last pushed, read between calls.
-    fn npc(self) -> u64 {
-        self.0.map_or(0, UiScript::npc_guid)
-    }
-
     fn unit_by_name<'t>(self, token: &'t str) -> Option<(u64, Hops<'t>)> {
         self.0?.unit_by_name(token)
     }
@@ -848,11 +843,8 @@ impl UnitTokens<'_, '_> {
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            // The interact target (`0x60af67`), read through the view lent to the call, else straight.
-            UnitBase::Npc => match crate::ui_script::live::interact_target() {
-                Some(target) => target,
-                None => Some(vm.npc()).filter(|&g| g != 0),
-            },
+            // The interact target (`0x60af67`), read through the view every resolving system lends; with none lent, nobody.
+            UnitBase::Npc => crate::ui_script::live::interact_target().flatten(),
             // The quest window's source (`0x6081b0`), read through the view lent to the call.
             UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
             // The encounter's slot (`0x5ed710`).

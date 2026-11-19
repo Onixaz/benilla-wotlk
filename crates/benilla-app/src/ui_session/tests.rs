@@ -189,7 +189,9 @@ fn the_set_stores_the_reach_by_the_targets_type() {
 /// A target gone is cleared by the watchdog, whose clear closes the window bound to it (`0x51fe2e` -> `0x51ff05`).
 #[test]
 fn the_watchdog_clears_a_target_gone() {
-    let mut app = watch(VENDOR, 1.0, &[]);
+    const OBJECT_FIELD_TYPE: u16 = 2;
+    let mut app = watch(VENDOR, 1.0, &[(OBJECT_FIELD_TYPE, 0x9)]);
+    assert!(app.world().resource::<InteractRange>().0 > 0.0, "watched");
     assert!(app.world().resource::<MerchantOpen>().is_open());
     app.world_mut()
         .resource_mut::<GuidIndex>()
