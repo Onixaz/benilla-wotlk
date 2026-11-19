@@ -695,7 +695,7 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
-    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, the charter windows): every VM holder reaches it
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, the charter windows, the NPC service windows and the interact target): every VM holder reaches it
     ///   through its lent view and runs on the main thread, so two VM holders fighting over it
     ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
@@ -748,6 +748,23 @@ pub(crate) mod schedule_tests {
             (
                 "PetitionVendorState",
                 TypeId::of::<crate::ui_petition::PetitionVendorState>,
+            ),
+            // The NPC service windows and the one interact target, which their verbs read and write at the call.
+            ("GossipState", TypeId::of::<crate::ui_gossip::GossipState>),
+            (
+                "MerchantOpen",
+                TypeId::of::<crate::ui_merchant::MerchantOpen>,
+            ),
+            ("TrainerOpen", TypeId::of::<crate::ui_trainer::TrainerOpen>),
+            ("TaxiState", TypeId::of::<crate::ui_taxi::TaxiState>),
+            ("TabardOpen", TypeId::of::<crate::ui_tabard::TabardOpen>),
+            ("TabardDesign", TypeId::of::<crate::ui_tabard::TabardDesign>),
+            ("BarberShop", TypeId::of::<crate::ui_barber::BarberShop>),
+            ("BarberBody", TypeId::of::<crate::ui_barber::BarberBody>),
+            ("ItemText", TypeId::of::<crate::ui_item_text::ItemText>),
+            (
+                "InteractTarget",
+                TypeId::of::<crate::ui_session::InteractTarget>,
             ),
         ];
         const CACHES: &[ClassRow] = &[

@@ -121,7 +121,9 @@ impl Plugin for UiGossipPlugin {
         net::register(app);
         app.init_resource::<GossipState>().add_systems(
             Update,
-            close_out_of_range.after(crate::net::apply_net_updates),
+            close_out_of_range
+                .after(crate::net::apply_net_updates)
+                .before(crate::ui_script::UiPress),
         );
     }
 }
