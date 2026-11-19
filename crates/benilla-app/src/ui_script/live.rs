@@ -411,6 +411,9 @@ impl Owns for OwnsExpiries {
     const LENT: u16 = lent::EXPIRIES;
 }
 
+/// A script-call applier owns what its calls write: the cooldowns, the selection and the item locks.
+pub(crate) type OwnsScriptCalls = ((OwnsCooldowns, OwnsSelection), OwnsPending);
+
 /// An exclusive lender owns what the verbs write: the cooldowns (and the pet's words every loan owns).
 pub(crate) struct OwnsVerbWrites;
 impl Owns for OwnsVerbWrites {

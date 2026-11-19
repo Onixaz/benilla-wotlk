@@ -679,13 +679,7 @@ mod tests {
             .run_system_cached(
                 |(mut script, _live): (
                     NonSendMut<UiScript>,
-                    crate::ui_script::LendLive<(
-                        (
-                            crate::ui_script::OwnsCooldowns,
-                            crate::ui_script::OwnsSelection,
-                        ),
-                        crate::ui_script::OwnsPending,
-                    )>,
+                    crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
                 ),
                  mut cursor: ScriptCursor| {
                     for token in script.take_spell_target_unit() {

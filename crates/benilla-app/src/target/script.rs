@@ -193,13 +193,7 @@ pub(super) fn target_by_name_requests(
     mut commit: SelectCommit,
     (mut script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<(
-            (
-                crate::ui_script::OwnsCooldowns,
-                crate::ui_script::OwnsSelection,
-            ),
-            crate::ui_script::OwnsPending,
-        )>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
 ) {
     for request in requests.read() {
@@ -216,13 +210,7 @@ pub(super) fn assist_requests(
     mut commit: SelectCommit,
     (mut script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<(
-            (
-                crate::ui_script::OwnsCooldowns,
-                crate::ui_script::OwnsSelection,
-            ),
-            crate::ui_script::OwnsPending,
-        )>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
 ) {
     for request in requests.read() {
@@ -1007,13 +995,7 @@ mod tests {
                 .run_system_once(
                     |(mut script, _live): (
                         NonSendMut<UiScript>,
-                        crate::ui_script::LendLive<(
-                            (
-                                crate::ui_script::OwnsCooldowns,
-                                crate::ui_script::OwnsSelection,
-                            ),
-                            crate::ui_script::OwnsPending,
-                        )>,
+                        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
                     ),
                      mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
