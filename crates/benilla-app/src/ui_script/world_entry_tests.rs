@@ -826,6 +826,7 @@ fn player_login_fires_once_at_the_first_world_entry_ahead_of_entering_world() {
     app.init_resource::<crate::ui_party::GroupState>();
     app.init_resource::<crate::ui_chat::ChatLog>();
     app.init_resource::<crate::ui_guild::GuildState>();
+    app.init_resource::<crate::ui_guild::GuildCache>();
     app.add_message::<crate::creature_anim::SwingImpact>();
     app.insert_resource(State::new(crate::char_select::ClientState::InWorld));
     super::setup_script(app.world_mut());
@@ -922,6 +923,7 @@ fn the_login_one_shots_wait_for_the_in_game_ui() {
     app.init_resource::<crate::ui_party::GroupState>();
     app.init_resource::<crate::ui_chat::ChatLog>();
     app.init_resource::<crate::ui_guild::GuildState>();
+    app.init_resource::<crate::ui_guild::GuildCache>();
     app.add_message::<crate::creature_anim::SwingImpact>();
     super::setup_script(app.world_mut());
     super::install_boot_vm(app.world_mut());

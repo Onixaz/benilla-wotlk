@@ -112,14 +112,15 @@ fn on_collision_height_changed(
 fn on_stand_state_update(
     In(ev): In<SessionEvent>,
     mut out: MessageWriter<ServerStandState>,
-    mut player: ResMut<Player>,
+    // `Option`: a client built without the player plugin holds no mover.
+    player: Option<ResMut<Player>>,
     me: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
     mut barber: crate::ui_barber::BarberStand,
     mut asks: MessageWriter<super::StandStateRequest>,
 ) {
     if let SessionEvent::StandStateUpdate { state } = ev {
         // With our player held (`0x73f571`).
-        let Ok(store) = me.single() else {
+        let (Some(mut player), Ok(store)) = (player, me.single()) else {
             return;
         };
         super::posture::server_stand_state(
