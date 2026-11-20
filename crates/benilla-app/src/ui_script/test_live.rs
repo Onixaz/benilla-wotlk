@@ -6,7 +6,8 @@ use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
     CompanionState, CompanionType, CompanionView, LiveLoan, LiveState, PetActionView, PetBarLive,
-    PetBookState, PetStats, PossessView, StableCallback, StableFamily, StableList, UiScript,
+    PetBookState, PetStats, PossessView, RuneRegen, RuneState, SpellTargetingLive, StableCallback,
+    StableFamily, StableList, UiScript, UnitCast,
 };
 
 /// The death answers a test sets.
@@ -67,7 +68,21 @@ pub(crate) struct PetWrites {
     pub stops: u32,
 }
 
+/// The spell and action answers a test sets.
+#[derive(Clone, Debug, Default)]
+struct SpellAnswers {
+    /// The rune table and the player's rates; `None` without the player object.
+    runes: Option<(RuneState, RuneRegen)>,
+    /// The targeting cursor.
+    targeting: SpellTargetingLive,
+    /// The units' held casts and channels, by `(guid, channel)`.
+    unit_casts: std::collections::HashMap<(u64, bool), UnitCast>,
+    /// `SpellStopCasting`'s test.
+    stoppable: bool,
+}
+
 thread_local! {
+    static SPELL: RefCell<SpellAnswers> = RefCell::default();
     static DEATH: RefCell<DeathUiState> = RefCell::default();
     static SUMMON: RefCell<SummonConfirmUiState> = RefCell::default();
     static PET: RefCell<PetAnswers> = RefCell::default();
@@ -93,6 +108,52 @@ pub(crate) trait PetAnswersExt {
     fn set_pet_book(&mut self, book: PetBookState);
     /// What the pet verbs wrote inside their calls since the last take.
     fn take_pet_writes(&mut self) -> PetWrites;
+}
+
+/// Set spell and action answers on a bare VM, as the app's live view answers them: the first call lends [`View`] for the rest of the test's thread.
+pub(crate) trait SpellAnswersExt {
+    /// The rune table and the player's `PLAYER_RUNE_REGEN` rates, with the player object held.
+    fn set_runes(&mut self, runes: RuneState, regen: RuneRegen);
+    /// The targeting cursor up or down, an arm counted as the cast's cursor arm counts it.
+    fn set_spell_targeting(&mut self, active: bool);
+    /// A unit's held cast, or with `channel` its channel; `None` clears it.
+    fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>);
+    /// `SpellStopCasting`'s test: an auto-repeat or an in-flight cast to stop.
+    fn set_casting(&mut self, casting: bool);
+}
+
+impl SpellAnswersExt for UiScript {
+    fn set_runes(&mut self, runes: RuneState, regen: RuneRegen) {
+        sticky(self);
+        SPELL.with(|s| s.borrow_mut().runes = Some((runes, regen)));
+    }
+
+    fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>) {
+        sticky(self);
+        SPELL.with(|s| {
+            let casts = &mut s.borrow_mut().unit_casts;
+            match cast {
+                Some(c) => casts.insert((guid, channel), c),
+                None => casts.remove(&(guid, channel)),
+            };
+        });
+    }
+
+    fn set_casting(&mut self, casting: bool) {
+        sticky(self);
+        SPELL.with(|s| s.borrow_mut().stoppable = casting);
+    }
+
+    fn set_spell_targeting(&mut self, active: bool) {
+        sticky(self);
+        SPELL.with(|s| {
+            let t = &mut s.borrow_mut().targeting;
+            if active && !t.active {
+                t.arms = t.arms.wrapping_add(1);
+            }
+            t.active = active;
+        });
+    }
 }
 
 /// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no other loan may be up when it is made.
@@ -358,6 +419,22 @@ impl LiveState for View {
 
     fn pet_book(&self, _: std::time::Instant, _: f64) -> Option<PetBookState> {
         PET.with(|p| p.borrow().pet_book.clone())
+    }
+
+    fn spell_targeting(&self) -> SpellTargetingLive {
+        SPELL.with(|s| s.borrow().targeting)
+    }
+
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<UnitCast> {
+        SPELL.with(|s| s.borrow().unit_casts.get(&(guid, channel)).cloned())
+    }
+
+    fn has_stoppable_cast(&self) -> bool {
+        SPELL.with(|s| s.borrow().stoppable)
+    }
+
+    fn runes(&self) -> Option<(RuneState, RuneRegen)> {
+        SPELL.with(|s| s.borrow().runes.clone())
     }
 }
 

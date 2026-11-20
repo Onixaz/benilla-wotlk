@@ -1,82 +1,122 @@
-//! `GetSpellInfo`'s answers (`0x540a30`): the app's spell tables and a snapshot of the casters,
-//! the player and its pet, which the VM's [`SpellInfoSource`] reads at the call. The snapshot is
-//! refreshed before the input pass, from the same fields and modifier tables the spell tooltip's
-//! cells read, so the cost, cast time and range are the tooltip's numbers.
+//! `GetSpellInfo`'s answers (`0x540a30`) and the spell reads beside it: the app's spell tables,
+//! and the casters (the player and its pet) and the player's cast state as the call is made. The
+//! live view answers through [`Answers`] over its own reads; before a view is lent (the UI load,
+//! where 12340's `GetSpellInfo(id)` already reads the spell DBC) the source installed on the VM
+//! answers from the tables alone. The cost, cast time and range are the spell tooltip's numbers,
+//! from the same fields and modifier tables.
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 
-use benilla_formats::{RangeTargets, RangeUnit, SkillLineCatalog};
+use benilla_formats::{
+    RangeTargets, RangeUnit, SkillLineCatalog, SummonPropertiesCatalog, TalentCatalog,
+};
 use benilla_ui::script::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects, UiScript};
 
-use crate::net::{ObjectStore, SelfPlayer};
-use crate::spell::usable;
+use crate::net::ObjectStore;
+use crate::spell::{usable, SpellModifiers};
 use crate::ui_action::Spells;
-use crate::ui_script::VmMemo;
-use crate::ui_unit::UnitFeed;
 
-/// The book's weapon icons, which `GetSpellInfo` substitutes as `GetSpellTexture` does: the main
-/// hand's for the melee auto-attack and the ranged weapon's for a ranged shot, as the action bar's
-/// attack and ranged texture reads pick them, `None` without one.
-#[derive(Resource, Clone, Default, PartialEq)]
-pub(crate) struct WeaponActionIcons {
-    pub(crate) attack: Option<String>,
-    pub(crate) ranged: Option<String>,
-}
-
-/// One caster as the cost, cast and range terms read it.
-#[derive(Clone)]
-struct Caster {
-    guid: u64,
-    pos: Vec3,
-    store: ObjectStore,
+/// One caster as the cost, cast and range terms read it at the call.
+pub(crate) struct Caster<'a> {
+    pub(crate) guid: u64,
+    pub(crate) pos: Vec3,
+    pub(crate) store: &'a ObjectStore,
     /// The level the cost and cast terms scale by.
-    level: u32,
-    unit: RangeUnit,
+    pub(crate) level: u32,
+    pub(crate) unit: RangeUnit,
 }
 
-#[derive(Default)]
-struct Snapshot {
-    player: Option<Caster>,
-    pet: Option<Caster>,
-    mods: Option<crate::spell::SpellModifiers>,
-    icons: WeaponActionIcons,
-    cast: CastNow,
-    /// The units a token can name, as the range verbs' check reads them.
-    units: std::collections::HashMap<u64, crate::spell::RangeFacts>,
-}
-
-/// The player's cast state the current-spell test (`0x806030`) reads.
-#[derive(Default)]
-struct CastNow {
+/// The player's cast state the current-spell test (`0x806030`) reads, at the call.
+pub(crate) struct CastNow<'a> {
     /// The pending or running cast, or the queued strike (`0x805f30`).
-    pending: Option<u32>,
+    pub(crate) pending: Option<u32>,
     /// The item entry that started the pending cast (`0x805fc0`).
-    item: Option<u32>,
+    pub(crate) item: Option<u32>,
     /// The auto-repeating spell (`0x7fe130`); benilla keeps the auto-ranged-combat spell
     /// (`0x7fe180`), Auto Shot, in the same record.
-    auto_repeat: Option<u32>,
+    pub(crate) auto_repeat: Option<u32>,
     /// Auto-attacking (`[player+0xa20]`).
-    attacking: bool,
+    pub(crate) attacking: bool,
     /// The open trade-skill line (`[0xc235a4]`); a linked book is never open here.
-    trade_line: Option<u32>,
-    race_class: (u8, u8),
-    critter: Option<u64>,
-    /// The player's auras, `(spell, wire flags)`.
-    auras: Vec<(u32, u8)>,
+    pub(crate) trade_line: Option<u32>,
+    pub(crate) race_class: (u8, u8),
+    pub(crate) critter: Option<u64>,
+    /// The player's auras.
+    pub(crate) auras: Option<&'a crate::unit_auras::UnitAuras>,
     /// The player's guid and known spells, a trade link's reads.
-    guid: u64,
-    known: std::collections::BTreeSet<u32>,
-    summons: benilla_formats::SummonPropertiesCatalog,
+    pub(crate) guid: u64,
+    pub(crate) known: &'a BTreeSet<u32>,
+    pub(crate) summons: &'a SummonPropertiesCatalog,
 }
 
-struct Source {
-    spells: Spells,
-    skill_lines: Option<std::sync::Arc<SkillLineCatalog>>,
-    talents: Option<std::sync::Arc<benilla_formats::TalentCatalog>>,
-    snapshot: Arc<Mutex<Snapshot>>,
+/// No known spells, for a read with no action store.
+pub(crate) static NO_SPELLS: BTreeSet<u32> = BTreeSet::new();
+
+impl CastNow<'_> {
+    /// No player: nothing pending, known or worn.
+    pub(crate) fn none() -> CastNow<'static> {
+        CastNow {
+            pending: None,
+            item: None,
+            auto_repeat: None,
+            attacking: false,
+            trade_line: None,
+            race_class: (0, 0),
+            critter: None,
+            auras: None,
+            guid: 0,
+            known: &NO_SPELLS,
+            summons: &crate::ui_companion::EMPTY_SUMMONS,
+        }
+    }
+}
+
+/// The pending cast the current-spell test names (`0x805f30`): the pending list alone, not the
+/// unit's cast state, so a held cast whose pending cast was released is not current.
+pub(crate) fn pending_spell(
+    pending: &crate::spell::PendingCast,
+    queued_melee: &crate::spell::QueuedMeleeSpell,
+    casting: Option<&crate::creature_anim::Casting>,
+    now: std::time::Instant,
+) -> Option<u32> {
+    let started = casting.filter(|c| c.listed).map(|c| c.spell_id);
+    crate::spell::inflight(pending, queued_melee, started, now).map(|i| i.spell_id())
+}
+
+/// What a spell answer reads of the world as the call is made.
+pub(crate) trait CallReads {
+    /// The player, or with `pet` its pet, `None` while it is not streamed.
+    fn caster(&self, pet: bool) -> Option<Caster<'_>>;
+    fn mods(&self) -> Option<&SpellModifiers>;
+    /// The weapon face the action bar's attack read (`0x5a84d0`) picks, or with `ranged` its
+    /// ranged read (`0x5a85e0`); `None` without one.
+    fn weapon_icon(&self, ranged: bool) -> Option<String>;
+    fn cast_now(&self) -> CastNow<'_>;
+    /// A unit as the range check reads it, `None` before it streams.
+    fn unit_facts(&self, guid: u64) -> Option<crate::spell::RangeFacts>;
+    /// The usable walk with no target and the power check (`0x541680`), on the player or with
+    /// `pet` its pet; `None` without the walk's state.
+    fn spell_usable(&self, _spell_id: u32, _pet: bool) -> Option<(bool, bool)> {
+        None
+    }
+}
+
+/// The spell tables an answer reads.
+#[derive(Clone, Copy)]
+pub(crate) struct Tables<'a> {
+    pub(crate) spells: &'a Spells,
+    pub(crate) skill_lines: Option<&'a SkillLineCatalog>,
+    pub(crate) talents: Option<&'a TalentCatalog>,
+}
+
+/// The VM's spell answers over `tables` and the world as `reads` sees it.
+pub(crate) struct Answers<'a, R: ?Sized> {
+    pub(crate) tables: Tables<'a>,
+    pub(crate) reads: &'a R,
 }
 
 /// `SPELL_EFFECT_ATTACK`, the melee auto-attack's first effect.
@@ -84,78 +124,81 @@ const EFFECT_ATTACK: u32 = 78;
 /// `SPELL_AURA_MOD_SHAPESHIFT`.
 const AURA_SHAPESHIFT: u32 = 36;
 
-impl Source {
-    /// The active-spell test (`0x802cb0`) for the player: a critter summon while its creature is
-    /// out, a spell whose own cancelable aura (flag `0x10`) is up, or a mount while any `MOUNTED`
-    /// aura rides its creature.
-    fn is_active_spell(
-        &self,
-        spell_id: u32,
-        d: &benilla_formats::SpellDisplay,
-        now: &CastNow,
-    ) -> bool {
-        let critter =
-            d.companion_kind(&now.summons) == Some(benilla_formats::CompanionKind::Critter);
-        if d.active_icon.is_none() && d.companion_kind(&now.summons).is_none() {
-            return false;
-        }
-        if critter {
-            let entry = now.critter.map(|g| ((g >> 24) & 0x0fff_ffff) as i32);
-            return entry == Some(d.effect_misc_value[0]);
-        }
-        if now.auras.iter().any(|&(id, flags)| {
-            id == spell_id && flags & benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE != 0
-        }) {
-            return true;
-        }
-        d.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
-            && now.auras.iter().any(|&(id, _)| {
-                self.spells.catalog.get(id).is_some_and(|a| {
-                    a.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
-                        && a.effect_misc_value[0] == d.effect_misc_value[0]
-                })
-            })
+/// The active-spell test (`0x802cb0`) for the player: a critter summon while its creature is out,
+/// a spell whose own cancelable aura (flag `0x10`) is up, or a mount while any `MOUNTED` aura rides
+/// its creature; a spell with no `ActiveIconID` that summons no companion is never active.
+pub(crate) fn active_spell(
+    spell_id: u32,
+    d: &benilla_formats::SpellDisplay,
+    now: &CastNow,
+    catalog: &benilla_formats::SpellCatalog,
+) -> bool {
+    let kind = d.companion_kind(now.summons);
+    if d.active_icon.is_none() && kind.is_none() {
+        return false;
     }
+    if kind == Some(benilla_formats::CompanionKind::Critter) {
+        let entry = now.critter.map(|g| ((g >> 24) & 0x0fff_ffff) as i32);
+        return entry == Some(d.effect_misc_value[0]);
+    }
+    let auras = || now.auras.into_iter().flat_map(|a| a.iter());
+    if auras().any(|a| {
+        a.spell_id == spell_id
+            && a.flags & benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE != 0
+    }) {
+        return true;
+    }
+    d.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
+        && auras().any(|a| {
+            catalog.get(a.spell_id).is_some_and(|m| {
+                m.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
+                    && m.effect_misc_value[0] == d.effect_misc_value[0]
+            })
+        })
 }
 
-impl SpellInfoSource for Source {
+impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
+    fn spell_usable(&self, spell_id: u32, pet: bool) -> Option<(bool, bool)> {
+        self.reads.spell_usable(spell_id, pet)
+    }
+
     fn spell_has_range(&self, spell_id: u32, pet: bool) -> bool {
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let caster = if pet { &snap.pet } else { &snap.player };
-        let (Some(caster), Some(mods), Some(d)) =
-            (caster, &snap.mods, self.spells.catalog.get(spell_id))
-        else {
+        let spells = self.tables.spells;
+        let (Some(caster), Some(mods), Some(d)) = (
+            self.reads.caster(pet),
+            self.reads.mods(),
+            spells.catalog.get(spell_id),
+        ) else {
             return false;
         };
-        let row = self.spells.ranges.get(d.range_index);
+        let row = spells.ranges.get(d.range_index);
         mods.min_max_range(d, row, caster.unit, RangeTargets::default())
             .is_some_and(|(min, max)| min.abs() > f32::EPSILON || max.abs() > f32::EPSILON)
     }
 
     fn spell_in_range(&self, spell_id: u32, pet: bool, target: u64) -> Option<bool> {
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let caster = if pet { &snap.pet } else { &snap.player };
-        let (caster, mods) = (caster.as_ref()?, snap.mods.as_ref()?);
-        let d = self.spells.catalog.get(spell_id)?;
+        let spells = self.tables.spells;
+        let caster = self.reads.caster(pet)?;
+        let mods = self.reads.mods()?;
+        let d = spells.catalog.get(spell_id)?;
+        let pet_guid = if pet {
+            Some(caster.guid)
+        } else {
+            self.reads.caster(true).map(|p| p.guid)
+        };
         crate::spell::range_check(
             d,
-            self.spells.ranges.get(d.range_index),
+            spells.ranges.get(d.range_index),
             mods,
             (caster.unit, caster.pos),
             target,
-            snap.pet.as_ref().map(|p| p.guid),
-            |guid| snap.units.get(&guid).copied(),
+            pet_guid,
+            |guid| self.reads.unit_facts(guid),
         )
     }
 
     fn spell_stat_effects(&self, spell_id: u32) -> Option<SpellStatEffects> {
-        let d = self.spells.catalog.get(spell_id)?;
+        let d = self.tables.spells.catalog.get(spell_id)?;
         Some(SpellStatEffects {
             attributes: d.attributes,
             effects: std::array::from_fn(|i| SpellStatEffect {
@@ -173,24 +216,16 @@ impl SpellInfoSource for Source {
     }
 
     fn is_auto_repeat_spell(&self, spell_id: u32) -> bool {
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        snap.cast.auto_repeat == Some(spell_id)
+        self.reads.cast_now().auto_repeat == Some(spell_id)
     }
 
     fn is_current_item(&self, item_id: u32) -> bool {
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        snap.cast.item == Some(item_id)
+        self.reads.cast_now().item == Some(item_id)
     }
 
     fn talent_rank_spell(&self, talent_id: u32, rank: i32) -> Option<(u32, u32)> {
-        self.talents
-            .as_ref()?
+        self.tables
+            .talents?
             .rank_spell(talent_id, usize::try_from(rank).ok()?)
     }
 
@@ -201,23 +236,20 @@ impl SpellInfoSource for Source {
         spell_id: u32,
         skill: &dyn Fn(u32) -> (u32, u32),
     ) -> Option<(String, Option<String>)> {
-        let d = self.spells.catalog.get(spell_id)?;
+        let d = self.tables.spells.catalog.get(spell_id)?;
         if d.attributes & 0x180 == 0x180 {
             return None;
         }
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (race, class) = snap.cast.race_class;
-        let trade = self.skill_lines.as_ref().and_then(|lines| {
+        let now = self.reads.cast_now();
+        let (race, class) = now.race_class;
+        let trade = self.tables.skill_lines.and_then(|lines| {
             let line = lines.spell_to_line(spell_id, race, class)?;
             crate::ui_tradeskill::list_link(
                 d,
                 line,
                 lines,
-                &snap.cast.known,
-                (race, class, snap.cast.guid),
+                now.known,
+                (race, class, now.guid),
                 skill(line),
             )
         });
@@ -226,20 +258,16 @@ impl SpellInfoSource for Source {
 
     /// The current-spell test (`0x806030`): no row is nil; the pending cast; the auto-attack
     /// while attacking; a trade-skill opener while its line's book is open; a critter, mount or
-    /// shapeshift by [`Source::is_active_spell`].
+    /// shapeshift by [`active_spell`].
     fn is_current_spell(&self, spell_id: u32) -> bool {
-        let Some(d) = self.spells.catalog.get(spell_id) else {
+        let Some(d) = self.tables.spells.catalog.get(spell_id) else {
             return false;
         };
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let now = &snap.cast;
+        let now = self.reads.cast_now();
         if now.pending == Some(spell_id) {
             return true;
         }
-        if snap.player.is_none() {
+        if self.reads.caster(false).is_none() {
             return false;
         }
         match d.effects[0] {
@@ -247,52 +275,43 @@ impl SpellInfoSource for Source {
             benilla_formats::SPELL_EFFECT_TRADE_SKILL => {
                 let (race, class) = now.race_class;
                 let line = self
+                    .tables
                     .skill_lines
-                    .as_deref()
                     .and_then(|c| c.spell_to_line(spell_id, race, class));
                 return line.is_some() && line == now.trade_line;
             }
             _ => {}
         }
-        if d.companion_kind(&now.summons).is_none()
+        if d.companion_kind(now.summons).is_none()
             && !d.effect_apply_aura.contains(&AURA_SHAPESHIFT)
         {
             return false;
         }
-        self.is_active_spell(spell_id, d, now)
+        active_spell(spell_id, d, &now, &self.tables.spells.catalog)
     }
 
     fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo> {
-        let d = self.spells.catalog.get(spell_id)?;
-        let snap = self
-            .snapshot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let caster = if pet {
-            snap.pet.as_ref()
-        } else {
-            snap.player.as_ref()
-        };
-        let no_mods = crate::spell::SpellModifiers::default();
-        let mods = snap.mods.as_ref().unwrap_or(&no_mods);
+        let spells = self.tables.spells;
+        let d = spells.catalog.get(spell_id)?;
+        let caster = self.reads.caster(pet);
+        let no_mods = SpellModifiers::default();
+        let mods = self.reads.mods().unwrap_or(&no_mods);
         let texture = if d.is_melee_auto_attack() {
-            snap.icons.attack.clone()
+            self.reads.weapon_icon(false)
         } else if d.ranged_icon_substitution() {
-            snap.icons.ranged.clone()
+            self.reads.weapon_icon(true)
         } else {
             Some(d.icon.clone().unwrap_or_default())
         };
         // The power-cost and per-second-cost reads (`0x7ff100`) over the shared display divisor; a
         // positive per-second cost is the funnel's.
-        let cost = caster.map_or(d.mana_cost, |c| {
+        let cost = caster.as_ref().map_or(d.mana_cost, |c| {
             usable::power_cost_at(d, &c.store.0, c.level, mods)
         });
-        let skill = match (pet, caster) {
-            (false, Some(c)) => crate::spell::spell_skill_value(
-                Some(&c.store),
-                self.skill_lines.as_deref(),
-                spell_id,
-            ),
+        let skill = match (pet, caster.as_ref()) {
+            (false, Some(c)) => {
+                crate::spell::spell_skill_value(Some(c.store), self.tables.skill_lines, spell_id)
+            }
             (true, Some(c)) => c.level.saturating_mul(5),
             _ => 0,
         };
@@ -316,13 +335,14 @@ impl SpellInfoSource for Source {
         let cast_ms = if d.attributes & 0x40 != 0 {
             0
         } else {
-            let level = caster.map_or(0, |c| c.level);
-            self.spells.cast_time_unclamped_ms(d, level, mods) as u32
+            let level = caster.as_ref().map_or(0, |c| c.level);
+            spells.cast_time_unclamped_ms(d, level, mods) as u32
         };
         // The range needs the player and the caster: a melee row is 0, 0; else the min/max range
         // read with no target, and a minimum-range row's floor `5 + min` (`0x7ff400`).
-        let range = snap.player.as_ref().and(caster).map(|c| {
-            let row = self.spells.ranges.get(d.range_index);
+        let player_too = !pet || self.reads.caster(false).is_some();
+        let range = caster.as_ref().filter(|_| player_too).map(|c| {
+            let row = spells.ranges.get(d.range_index);
             if row.is_some_and(|r| r.is_melee()) {
                 return (0.0, 0.0);
             }
@@ -351,248 +371,119 @@ impl SpellInfoSource for Source {
     }
 }
 
-pub(crate) struct UiSpellInfoPlugin;
+/// The source installed on the VM, for a call with no view lent: the tables alone, no caster.
+struct Installed {
+    spells: Spells,
+    skill_lines: Option<Arc<SkillLineCatalog>>,
+    talents: Option<Arc<TalentCatalog>>,
+    mods: Option<SpellModifiers>,
+}
 
-impl Plugin for UiSpellInfoPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<WeaponActionIcons>().add_systems(
-            Update,
-            // After the book feed, whose weapon icons it copies.
-            feed_spell_info
-                .in_set(UnitFeed)
-                .after(crate::ui_spellbook::BookFeed),
-        );
+impl CallReads for Installed {
+    fn caster(&self, _: bool) -> Option<Caster<'_>> {
+        None
+    }
+
+    fn mods(&self) -> Option<&SpellModifiers> {
+        self.mods.as_ref()
+    }
+
+    fn weapon_icon(&self, _: bool) -> Option<String> {
+        None
+    }
+
+    fn cast_now(&self) -> CastNow<'_> {
+        CastNow::none()
+    }
+
+    fn unit_facts(&self, _: u64) -> Option<crate::spell::RangeFacts> {
+        None
     }
 }
 
-/// The source's snapshot, kept across frames for the VM it was installed in.
-#[derive(Default)]
-struct Installed(Option<Arc<Mutex<Snapshot>>>);
-
-fn install_source(
-    script: &mut UiScript,
-    spells: Spells,
-    skill_lines: Option<Arc<SkillLineCatalog>>,
-    talents: Option<Arc<benilla_formats::TalentCatalog>>,
-    snapshot: Snapshot,
-) -> Arc<Mutex<Snapshot>> {
-    let snapshot = Arc::new(Mutex::new(snapshot));
-    script.set_spell_info_source(Rc::new(Source {
-        spells,
-        skill_lines,
-        talents,
-        snapshot: snapshot.clone(),
-    }));
-    snapshot
+impl Installed {
+    fn answers(&self) -> Answers<'_, Self> {
+        Answers {
+            tables: Tables {
+                spells: &self.spells,
+                skill_lines: self.skill_lines.as_deref(),
+                talents: self.talents.as_deref(),
+            },
+            reads: self,
+        }
+    }
 }
 
-/// 12340's GetSpellInfo(id) reads the spell DBC during the UI load, before any player feed.
+impl SpellInfoSource for Installed {
+    fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo> {
+        self.answers().spell_info(spell_id, pet)
+    }
+
+    fn is_current_spell(&self, spell_id: u32) -> bool {
+        self.answers().is_current_spell(spell_id)
+    }
+
+    fn spell_has_range(&self, spell_id: u32, pet: bool) -> bool {
+        self.answers().spell_has_range(spell_id, pet)
+    }
+
+    fn spell_stat_effects(&self, spell_id: u32) -> Option<SpellStatEffects> {
+        self.answers().spell_stat_effects(spell_id)
+    }
+
+    fn talent_rank_spell(&self, talent_id: u32, rank: i32) -> Option<(u32, u32)> {
+        self.answers().talent_rank_spell(talent_id, rank)
+    }
+
+    fn spell_link(
+        &self,
+        spell_id: u32,
+        skill: &dyn Fn(u32) -> (u32, u32),
+    ) -> Option<(String, Option<String>)> {
+        self.answers().spell_link(spell_id, skill)
+    }
+}
+
+/// 12340's `GetSpellInfo(id)` reads the spell DBC during the UI load, before any view is lent.
 pub(crate) fn seed_spell_info_for_vm(world: &World, script: &mut UiScript) {
     let Some(spells) = world.get_resource::<Spells>() else {
         return;
     };
-    install_source(
-        script,
-        spells.clone(),
-        world
+    script.set_spell_info_source(Rc::new(Installed {
+        spells: spells.clone(),
+        skill_lines: world
             .get_resource::<crate::ui_spellbook::SkillLines>()
             .map(|s| s.catalog.clone()),
-        world
+        talents: world
             .get_resource::<crate::ui_talent::Talents>()
             .map(|t| t.catalog.clone()),
-        Snapshot {
-            mods: world
-                .get_resource::<crate::spell::SpellModifiers>()
-                .cloned(),
-            icons: world
-                .get_resource::<WeaponActionIcons>()
-                .cloned()
-                .unwrap_or_default(),
-            ..Default::default()
-        },
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn feed_spell_info(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    spells: Option<Res<Spells>>,
-    skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
-    talents: Option<Res<crate::ui_talent::Talents>>,
-    mods: Res<crate::spell::SpellModifiers>,
-    icons: Res<WeaponActionIcons>,
-    self_q: Query<(Entity, Ref<ObjectStore>), With<SelfPlayer>>,
-    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
-    index: Res<crate::net::GuidIndex>,
-    stores: Query<Ref<ObjectStore>>,
-    range_units: crate::spell::RangeUnits,
-    targeting: crate::spell::cast_target::CastTargeting,
-    transforms: Query<&Transform>,
-    cast_now: CastNowInputs,
-    mut memory: Local<VmMemo<Installed>>,
-) {
-    let (Some(mut script), Some(spells)) = (script, spells) else {
-        return;
-    };
-    let (installed, vm_reset) = memory.get_reset(&script);
-    let reinstall = vm_reset
-        || installed.0.is_none()
-        || spells.is_changed()
-        || skill_lines.as_ref().is_some_and(|s| s.is_changed())
-        || talents.as_ref().is_some_and(|t| t.is_changed());
-    if reinstall {
-        installed.0 = Some(install_source(
-            &mut script,
-            spells.clone(),
-            skill_lines.as_ref().map(|s| s.catalog.clone()),
-            talents.as_ref().map(|t| t.catalog.clone()),
-            Snapshot::default(),
-        ));
-    }
-    let Some(snapshot) = installed.0.as_ref() else {
-        return;
-    };
-    let mut snap = snapshot
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if reinstall || mods.is_changed() {
-        snap.mods = Some(mods.clone());
-    }
-    if reinstall || icons.is_changed() {
-        snap.icons = icons.clone();
-    }
-    // The units' motion moves every frame; their fields only when their stores do.
-    let caster = |entity: Entity, store: &Ref<ObjectStore>, old: Option<Caster>, level: u32| {
-        let unit = range_units.unit(entity)?;
-        let guid = store.0.object_guid()?;
-        let pos = transforms.get(entity).ok()?.translation;
-        let store = match old {
-            Some(c) if !reinstall && !store.is_changed() => c.store,
-            _ => ObjectStore::clone(store),
-        };
-        Some(Caster {
-            guid,
-            pos,
-            store,
-            level,
-            unit,
-        })
-    };
-    snap.player = self_q.iter().next().and_then(|(entity, store)| {
-        let level = store.0.unit_level().unwrap_or(0);
-        caster(entity, &store, snap.player.take(), level)
-    });
-    let pet = pet_bar
-        .get()
-        .map(|b| b.spells.pet_guid)
-        .filter(|&g| g != 0)
-        .and_then(|g| index.0.get(&g).copied())
-        .and_then(|e| Some((e, stores.get(e).ok()?)));
-    snap.pet = pet.and_then(|(entity, store)| {
-        let level = store.0.unit_level().unwrap_or(0);
-        caster(entity, &store, snap.pet.take(), level)
-    });
-    cast_now.refresh(&mut snap.cast, reinstall);
-    snap.units.clear();
-    for guid in script.held_unit_guids() {
-        if let Some(facts) = targeting.range_facts(guid) {
-            snap.units.insert(guid, facts);
-        }
-    }
-}
-
-/// The self player's store, running cast, attack lock and auras.
-type SelfCastState = (
-    &'static ObjectStore,
-    Option<&'static crate::creature_anim::Casting>,
-    Has<crate::creature_anim::Engaged>,
-    Option<Ref<'static, crate::unit_auras::UnitAuras>>,
-);
-
-/// What [`CastNow`] reads off the world.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct CastNowInputs<'w, 's> {
-    pending: Res<'w, crate::spell::PendingCast>,
-    auto_repeat: Option<Res<'w, crate::spell::AutoRepeatActive>>,
-    queued_melee: Res<'w, crate::spell::QueuedMeleeSpell>,
-    trade_skill: Option<Res<'w, crate::ui_tradeskill::TradeSkillOpen>>,
-    summons: Res<'w, crate::spell::SummonSlots>,
-    actions: Res<'w, crate::ui_action::PlayerActions>,
-    me: Query<'w, 's, SelfCastState, With<SelfPlayer>>,
-}
-
-impl CastNowInputs<'_, '_> {
-    fn refresh(&self, cast: &mut CastNow, reinstall: bool) {
-        let (store, casting, engaged, auras) = match self.me.iter().next() {
-            Some((s, c, e, a)) => (Some(s), c, e, a),
-            None => (None, None, false, None),
-        };
-        cast.pending = crate::spell::inflight(
-            &self.pending,
-            &self.queued_melee,
-            // The pending list alone (`0x805f30`), not the unit's cast state.
-            casting.filter(|c| c.listed).map(|c| c.spell_id),
-            std::time::Instant::now(),
-        )
-        .map(|i| i.spell_id());
-        cast.item = self.pending.current_item(std::time::Instant::now());
-        cast.auto_repeat = self.auto_repeat.as_ref().and_then(|a| a.0);
-        cast.attacking = engaged;
-        cast.trade_line = self.trade_skill.as_ref().and_then(|t| t.line);
-        cast.race_class = crate::spell::race_class(store);
-        cast.critter = store.and_then(|s| s.0.unit_critter());
-        cast.guid = store.and_then(|s| s.0.object_guid()).unwrap_or(0);
-        if reinstall || self.actions.is_changed() {
-            cast.known.clone_from(&self.actions.spells);
-        }
-        if reinstall || self.summons.is_changed() {
-            cast.summons = self.summons.0.clone();
-        }
-        match auras {
-            Some(auras) if reinstall || auras.is_changed() => {
-                cast.auras = auras.iter().map(|a| (a.spell_id, a.flags)).collect();
-            }
-            Some(_) => {}
-            None => cast.auras.clear(),
-        }
-    }
+        mods: world.get_resource::<SpellModifiers>().cloned(),
+    }));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::creature_anim::Casting;
-    use bevy::ecs::system::RunSystemOnce;
 
     /// The current-spell test reads the pending list alone (`0x805f30`): a held cast whose pending
     /// cast was released is not current.
     #[test]
     fn a_held_cast_is_current_only_while_listed() {
         for (listed, want) in [(true, Some(133)), (false, None)] {
-            let mut app = App::new();
-            app.init_resource::<crate::spell::PendingCast>()
-                .init_resource::<crate::spell::QueuedMeleeSpell>()
-                .init_resource::<crate::spell::SummonSlots>()
-                .init_resource::<crate::ui_action::PlayerActions>();
-            app.world_mut().spawn((
-                SelfPlayer,
-                ObjectStore::default(),
-                Casting {
-                    spell_id: 133,
-                    cast_count: 0,
-                    until: None,
-                    listed,
-                    hidden: false,
-                },
-            ));
-            let got = app
-                .world_mut()
-                .run_system_once(|inputs: CastNowInputs| {
-                    let mut cast = CastNow::default();
-                    inputs.refresh(&mut cast, true);
-                    cast.pending
-                })
-                .unwrap();
+            let casting = Casting {
+                spell_id: 133,
+                cast_count: 0,
+                until: None,
+                listed,
+                hidden: false,
+            };
+            let got = pending_spell(
+                &crate::spell::PendingCast::default(),
+                &crate::spell::QueuedMeleeSpell::default(),
+                Some(&casting),
+                std::time::Instant::now(),
+            );
             assert_eq!(got, want);
         }
     }

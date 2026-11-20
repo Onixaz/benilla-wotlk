@@ -219,18 +219,21 @@ impl Rig {
 
     /// `CastPetAction(slot)`, applied as the script call's applier applies it.
     pub(super) fn press(&mut self, slot: u32) -> super::PetCast {
-        self.apply(move |p| p.press_slot(slot))
+        self.apply(move |p, s| p.press_slot(slot, s))
     }
 
     /// `PetAttack` and the other one-shot orders, as their slot's packed word, applied.
     pub(super) fn order(&mut self, packed: u32) {
-        self.apply(move |p| p.order(packed));
+        self.apply(move |p, s| p.order(packed, s));
     }
 
     /// One press through the applier's path, its events fired as it returns.
     fn apply(
         &mut self,
-        f: impl FnOnce(&mut PetPress) -> super::PetCast + Send + Sync + 'static,
+        f: impl FnOnce(&mut PetPress, &mut dyn crate::ui_action::signals::SignalSink) -> super::PetCast
+            + Send
+            + Sync
+            + 'static,
     ) -> super::PetCast {
         let mut f = Some(f);
         self.app
@@ -344,6 +347,55 @@ fn a_spell_press_starts_the_pets_gcd_for_every_slot_sharing_its_category() {
         "the second slot sweeps the GCD: {duration}"
     );
     assert_eq!(rig.cooldown(3), (0.0, 0.0, 1), "Growl shows no sweep");
+}
+
+/// An on-hold spell's start (Attributes bit 25) runs the usable update inside the press, between
+/// the spellbook's cooldown signals and the pet bar's (`0x805ec3`, `0x805ed1`, `0x805eda`); an
+/// ordinary start runs none.
+#[test]
+fn an_on_hold_pet_start_runs_the_usable_update_inside_the_press() {
+    let on_hold = || SpellDisplay {
+        attributes: 0x0200_0000,
+        ..claw()
+    };
+    let mut rig = rig(
+        vec![(CLAW, on_hold()), (BITE, bite())],
+        &[CLAW, BITE],
+        Some(owned_pet()),
+    );
+    rig.app
+        .world_mut()
+        .non_send_resource_mut::<benilla_ui::script::UiScript>()
+        .run(
+            r#"
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("SPELL_UPDATE_USABLE")
+            f:SetScript("OnEvent", function() table.insert(SEEN, event) end)
+        "#,
+        )
+        .expect("the usable listener registers");
+
+    rig.press(1);
+    assert_eq!(
+        rig.frame(),
+        [
+            "ACTIONBAR_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_USABLE",
+            "PET_BAR_UPDATE_COOLDOWN"
+        ]
+    );
+
+    rig.press(2);
+    assert_eq!(
+        rig.frame(),
+        [
+            "ACTIONBAR_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_COOLDOWN",
+            "PET_BAR_UPDATE_COOLDOWN"
+        ],
+        "an ordinary start runs no usable update"
+    );
 }
 
 /// A spell with neither `StartRecovery*` field starts nothing.

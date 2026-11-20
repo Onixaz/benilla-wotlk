@@ -2,7 +2,9 @@
 //! death knight's buttons follow the rune table through `RUNE_POWER_UPDATE` and
 //! `RUNE_TYPE_UPDATE`.
 
-use benilla_ui::script::{PlayerRecord, RuneState, ScriptValue, UiScript, RUNE_KINDS};
+use benilla_ui::script::{PlayerRecord, RuneRegen, RuneState, ScriptValue, UiScript, RUNE_KINDS};
+
+use super::test_live::SpellAnswersExt;
 
 /// The production load as `class`, with the environment lock the load needs held.
 fn setup(class: (&str, &str)) -> (std::sync::MutexGuard<'static, ()>, UiScript, Vec<String>) {
@@ -26,12 +28,11 @@ fn setup(class: (&str, &str)) -> (std::sync::MutexGuard<'static, ()>, UiScript, 
     (lock, s, failures)
 }
 
-/// A death knight's table: ten seconds a rune for every kind.
+/// A death knight's rates: ten seconds a rune for every kind.
+const DK: RuneRegen = [0.1; RUNE_KINDS];
+
 fn dk_runes() -> RuneState {
-    RuneState {
-        regen: [0.1; RUNE_KINDS],
-        ..Default::default()
-    }
+    RuneState::default()
 }
 
 /// A session clock past zero: a last-used time of 0 reads as a ready rune.
@@ -63,7 +64,7 @@ fn a_death_knight_s_runes_follow_the_table() {
     let ours: Vec<_> = failures.iter().filter(|f| f.contains("Rune")).collect();
     assert!(ours.is_empty(), "load failures: {ours:#?}");
     assert!(s.eval::<bool>("return RuneFrame:IsShown()").unwrap());
-    s.set_runes(dk_runes());
+    s.set_runes(dk_runes(), DK);
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
     let icon = |s: &UiScript, i: u32| {
         s.eval::<String>(&format!("return RuneButtonIndividual{i}Rune:GetTexture()"))
@@ -76,8 +77,8 @@ fn a_death_knight_s_runes_follow_the_table() {
 
     // Rune 1 spent now: the event arms the button's ticker, which starts the cooldown.
     let mut runes = dk_runes();
-    runes.set_predicted(0x3f, 0x3e, None, NOW_MS);
-    s.set_runes(runes.clone());
+    runes.set_predicted(0x3f, 0x3e, None, NOW_MS, &DK);
+    s.set_runes(runes.clone(), DK);
     power_update(&mut s, 1, false);
     let tick = "local b = RuneButtonIndividual1 local f = b:GetScript('OnUpdate') \
         if f then f(b, 0.1) end return b:GetScript('OnUpdate') ~= nil";
@@ -87,8 +88,8 @@ fn a_death_knight_s_runes_follow_the_table() {
         .unwrap());
 
     // Ready again: the next tick sees it and stops.
-    runes.set_predicted(0x3e, 0x3f, None, NOW_MS);
-    s.set_runes(runes.clone());
+    runes.set_predicted(0x3e, 0x3f, None, NOW_MS, &DK);
+    s.set_runes(runes.clone(), DK);
     power_update(&mut s, 1, true);
     assert!(
         !s.eval::<bool>(tick).unwrap(),
@@ -97,7 +98,7 @@ fn a_death_knight_s_runes_follow_the_table() {
 
     // A death rune repaints the button.
     runes.convert(0, 3);
-    s.set_runes(runes);
+    s.set_runes(runes, DK);
     s.fire_event("RUNE_TYPE_UPDATE", vec![ScriptValue::Int(1)]);
     assert!(icon(&s, 1).contains("Death"), "{}", icon(&s, 1));
     // A bare VM's `PLAYER_ENTERING_WORLD` trips other frames; only the rune bar's count here.

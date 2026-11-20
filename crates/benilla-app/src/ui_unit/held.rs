@@ -523,14 +523,10 @@ mod tests {
             }
         };
         let aura = one("::ui_aura::feed_auras");
-        for feed in [
-            "::ui_unit::held::feed_chain_units",
-            "::targeting::feed_targeting_to_vm",
-        ] {
-            assert!(
-                c.dependencies.contains(&(aura, one(feed))),
-                "{feed} is declared after feed_auras"
-            );
-        }
+        let feed = "::ui_unit::held::feed_chain_units";
+        assert!(
+            c.dependencies.contains(&(aura, one(feed))),
+            "{feed} is declared after feed_auras"
+        );
     }
 }

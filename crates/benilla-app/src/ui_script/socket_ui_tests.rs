@@ -164,8 +164,9 @@ fn the_socketing_window_places_a_gem_and_accepts_it() {
     s.run("PickupContainerItem(0, 3) ClickSocketButton(2)")
         .unwrap();
     assert_eq!(
-        s.take_ui_errors(),
-        ["ERR_SOCKETING_META_GEM_ONLY_IN_METASLOT"]
+        s.take_message_sounds(),
+        ["ERR_SOCKETING_META_GEM_ONLY_IN_METASLOT"],
+        "the refusal went through the display inside the call"
     );
     s.run(
         r#"

@@ -28,8 +28,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetUnitPitch",
     "GetUnitSpeed",
     "InteractUnit",
-    "IsUsableItem",
-    "IsUsableSpell",
     "MoveAndSteerStart",
     "MoveAndSteerStop",
     "OpenTrainer",

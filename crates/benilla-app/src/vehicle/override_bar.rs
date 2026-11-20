@@ -1,15 +1,15 @@
-//! The override bar (`CGActionBar::UpdateOverrideSpellBar`, `0x5abb40`): an `OverrideSpellData`
-//! row named by our `PLAYER_FIELD_BYTES2` low `i16` with any spell takes the temporary bar, slots
-//! 121-130 its ten spells and 131-132 empty (`0x5ab800` with `0x5a7cf0`), under flag `0x4`. It
-//! runs when the field moves (`0x6d1c30`) and at world entry (`0x5ac0e0`); a row with no spell, or
-//! none, gives the flag back and leaves the slots as written.
+//! The override bar (`0x5abb40`): an `OverrideSpellData` row named by our `PLAYER_FIELD_BYTES2`
+//! low `i16` with any spell takes the temporary bar, slots 121-130 its ten spells and 131-132 empty
+//! (`0x5ab800` with `0x5a7cf0`), under flag `0x4`. It runs in the turn of the field's watch
+//! (`0x6d1c5d`) and of world entry (`0x5ac0ea`); a row with no spell, or none, gives the flag back
+//! and leaves the slots as written.
 
 use bevy::prelude::*;
 
 use benilla_formats::OverrideSpellsRec;
 
-use crate::net::{EnteredWorldMessage, ObjectStore, SelfPlayer};
-use crate::ui_action::{PlayerActions, TempActionBar, TEMP_BAR_FIRST_SLOT};
+use crate::net::{ObjectStore, SelfPlayer};
+use crate::ui_action::TempActionBar;
 
 use super::VehicleTables;
 
@@ -26,42 +26,36 @@ pub(super) fn override_slots(rec: &OverrideSpellsRec) -> [u32; 12] {
     std::array::from_fn(|i| rec.spells.get(i).copied().unwrap_or(0))
 }
 
-/// Re-run the override bar on a move of our override id or a world entry.
-pub(super) fn update_override_bar(
-    me: Query<&ObjectStore, With<SelfPlayer>>,
-    mut entered: MessageReader<EnteredWorldMessage>,
-    tables: Res<VehicleTables>,
-    actions: Option<ResMut<PlayerActions>>,
-    temp: Option<ResMut<TempActionBar>>,
-    mut last: Local<Option<i16>>,
-) {
-    let entry = entered.read().count() > 0;
-    let (Some(mut actions), Some(mut temp)) = (actions, temp) else {
-        return;
-    };
-    let Ok(store) = me.single() else {
-        return;
-    };
-    let id = store.0.player_override_spells_id().unwrap_or(0);
-    if !entry && *last == Some(id) {
-        return;
-    }
-    *last = Some(id);
+/// `0x5abb40` as a step in its caller's turn.
+pub(crate) fn update_override_bar(world: &mut World) {
+    let mut me = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
+    // No player gives the flag back.
+    let id = me
+        .iter(world)
+        .next()
+        .map(|s| s.0.player_override_spells_id().unwrap_or(0));
     // `GetRecord((int16)id)`: a negative id names no row.
-    let rec = u32::try_from(id)
-        .ok()
-        .and_then(|id| tables.catalog.override_spells.get(&id))
-        .filter(|r| has_spells(r));
-    match rec {
-        Some(rec) => {
-            for (i, spell) in override_slots(rec).into_iter().enumerate() {
-                actions.set_local(TEMP_BAR_FIRST_SLOT + i as u8, spell);
-            }
-            temp.flags |= TEMP_BAR_OVERRIDE;
-        }
-        None => temp.flags &= !TEMP_BAR_OVERRIDE,
+    let words = id
+        .and_then(|id| u32::try_from(id).ok())
+        .and_then(|id| {
+            world
+                .get_resource::<VehicleTables>()?
+                .catalog
+                .override_spells
+                .get(&id)
+        })
+        .filter(|r| has_spells(r))
+        .map(override_slots);
+    if let Some(words) = words {
+        crate::ui_action::bonus::write_temp_bar(world, words);
     }
-    debug!("vehicle: override bar {id} ({})", rec.is_some());
+    if let Some(mut temp) = world.get_resource_mut::<TempActionBar>() {
+        match words {
+            Some(_) => temp.flags |= TEMP_BAR_OVERRIDE,
+            None => temp.flags &= !TEMP_BAR_OVERRIDE,
+        }
+    }
+    debug!("vehicle: override bar {id:?} ({})", words.is_some());
 }
 
 #[cfg(test)]

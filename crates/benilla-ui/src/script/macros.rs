@@ -142,12 +142,15 @@ fn clamp_chars(s: &str, max: usize) -> String {
 
 impl super::UiScript {
     /// Seed the whole table from the app's load. It does not mark the table dirty, or the load
-    /// would trigger a save.
+    /// would trigger a save. The load's end signals the whole bar, 0 (`0x567fac`).
     pub fn set_macros(&mut self, state: MacroState) {
-        let mut model = self.model_mut();
-        model.macros = state;
-        model.macros_dirty = false;
-        model.macros_generation += 1;
+        {
+            let mut model = self.model_mut();
+            model.macros = state;
+            model.macros_dirty = false;
+            model.macros_generation += 1;
+        }
+        self.fire_event("ACTIONBAR_SLOT_CHANGED", vec![super::ScriptValue::Int(0)]);
     }
 
     /// The live table, for the app's save.
@@ -183,6 +186,24 @@ impl super::UiScript {
     /// owner, the save, and a second reader would steal its edge.
     pub fn macros_generation(&self) -> u64 {
         self.model_ref().macros_generation
+    }
+}
+
+/// The bar's macro update (`0x5aa920`): each slot whose macro `touched` names signals
+/// `ACTIONBAR_SLOT_CHANGED` inside the call, in slot order.
+fn signal_macro_slots(lua: &mlua::Lua, touched: impl Fn(u32) -> bool) {
+    let slots: Vec<u32> = {
+        let model = crate::script::model_mut_of(lua);
+        (1..=144)
+            .filter(|&a| {
+                super::action_slots::word(&model, a).is_some_and(|w| {
+                    w.kind & 0xf0 == super::action::ACTION_KIND_MACRO && touched(w.action)
+                })
+            })
+            .collect()
+    };
+    for action in slots {
+        super::action_slots::signal(lua, action);
     }
 }
 
@@ -393,12 +414,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let texture = icon_path(&model, a.get(1));
             let body = opt_string(a.get(2)).unwrap_or_default();
             let per_character = flag(a.get(3));
-            Ok(
-                match create_macro(&mut model, &name, texture, &body, per_character) {
-                    Some(i) => Value::Integer(i as i64),
-                    None => Value::Nil,
-                },
-            )
+            let made = create_macro(&mut model, &name, texture, &body, per_character);
+            drop(model);
+            let Some(i) = made else {
+                return Ok(Value::Nil);
+            };
+            signal_macro_slots(lua, |m| m as usize == i);
+            Ok(Value::Integer(i as i64))
         })?,
     )?;
 
@@ -417,18 +439,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let name = opt_string(a.get(1));
             let body = opt_string(a.get(3));
-            Ok(match edit_macro(&mut model, index, name, texture, body) {
-                Some(i) => Value::Integer(i as i64),
-                None => Value::Nil,
-            })
+            let edited = edit_macro(&mut model, index, name, texture, body);
+            drop(model);
+            let Some(i) = edited else {
+                return Ok(Value::Nil);
+            };
+            signal_macro_slots(lua, |m| m as usize == i);
+            Ok(Value::Integer(i as i64))
         })?,
     )?;
 
     g.set(
         "DeleteMacro",
         lua.create_function(|lua, index: usize| {
-            let mut model = crate::script::model_mut_of(lua);
-            Ok(delete_macro(&mut model, index))
+            let deleted = delete_macro(&mut crate::script::model_mut_of(lua), index);
+            if deleted {
+                // The gap closes, so every later index of the same set names another macro now.
+                let last = if index <= MAX_ACCOUNT_MACROS {
+                    MAX_ACCOUNT_MACROS
+                } else {
+                    MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS
+                };
+                signal_macro_slots(lua, |m| (index..=last).contains(&(m as usize)));
+            }
+            Ok(deleted)
         })?,
     )?;
 

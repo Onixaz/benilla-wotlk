@@ -25,7 +25,7 @@ use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, Objects, SelfPlayer};
 
 use super::{cast_target, rank_pick, validator, AutoRepeatActive};
-use crate::ui_action::{reagent_totem_refusal, CastErrors, Spells};
+use crate::ui_action::{reagent_totem_refusal, CastRefusals, Spells};
 
 /// What the commit sends: the cast send branches on whether the pending-cast guid (the item's when
 /// the cast attempt got one, else the caster's) is the caster's; the item arm sends
@@ -114,16 +114,17 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) objects: Objects<'w, 's>,
     pub(crate) sheath: MessageWriter<'w, crate::creature_anim::SheathRequest>,
     pub(crate) ecs: Commands<'w, 's>,
-    pub(crate) pending: ResMut<'w, crate::spell::PendingCast>,
-    pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) pending: crate::ui_script::OwnedMut<'w, crate::spell::PendingCast>,
+    pub(crate) queued_melee: crate::ui_script::OwnedMut<'w, crate::spell::QueuedMeleeSpell>,
     pub(crate) cooldowns: crate::ui_script::OwnedMut<'w, crate::spell::Cooldowns>,
     /// The talent spell modifiers the power gate's cost goes through.
     pub(crate) spell_mods: Res<'w, crate::spell::SpellModifiers>,
-    pub(crate) cast_errors: ResMut<'w, CastErrors>,
-    pub(crate) auto_repeat: ResMut<'w, AutoRepeatActive>,
+    pub(crate) auto_repeat: crate::ui_script::OwnedMut<'w, AutoRepeatActive>,
     pub(crate) trade_skill_opens: ResMut<'w, crate::ui_tradeskill::TradeSkillOpens>,
-    pub(crate) ground: ResMut<'w, super::targeting::SpellTargeting>,
+    pub(crate) ground: crate::ui_script::OwnedMut<'w, super::targeting::SpellTargeting>,
     pub(crate) held_for_pick: ResMut<'w, HeldForPick>,
+    /// The cast send's `UNIT_SPELLCAST_SENT`, fired by the caller inside the press (`0x80b556`).
+    pub(crate) press: crate::ui_cast::PressSignals<'w, 's>,
     /// The pet's cooldown list and pending cast, which a cast as the pet reads; its writes are
     /// queued, as the script appliers share the bar.
     pub(crate) pet_bar: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
@@ -283,7 +284,7 @@ impl CastLadder<'_, '_> {
     ) {
         if let CastCommit::Pet { caster } = commit {
             self.commit_pet(spell_id, caster, bound_target(bound));
-            self.ground.clear();
+            self.ground.write().clear();
             return;
         }
         if let TargetedBind::Dest(p) | TargetedBind::Source(p) = bound {
@@ -336,9 +337,9 @@ impl CastLadder<'_, '_> {
                 TargetedBind::Unit(guid) => Some(guid),
                 _ => None,
             };
-            crate::ui_cast::queue_sent(&mut self.ecs, spell_id, target);
+            self.press.sent(spell_id, target);
         }
-        if let Some(prelude) = self.ground.prelude() {
+        if let Some(prelude) = self.ground.read().prelude() {
             prelude.send(&self.commands, &mut self.ecs);
         }
         let _ = self.commands.0.send(cmd);
@@ -348,7 +349,7 @@ impl CastLadder<'_, '_> {
         }
         let now = Instant::now();
         if let CastCommit::Item { entry, .. } = commit {
-            self.pending.arm_item(spell_id, entry, now);
+            self.pending.write().arm_item(spell_id, entry, now);
         } else {
             // The ladder's `normal_cast` predicate; a ranged shot never raises the cursor.
             let guards = self
@@ -356,15 +357,20 @@ impl CastLadder<'_, '_> {
                 .as_ref()
                 .and_then(|s| s.catalog.get(spell_id))
                 .is_none_or(|d| !d.ranged_attack() && !d.on_next_swing());
-            self.pending.arm(spell_id, now, guards);
+            self.pending.write().arm(spell_id, now, guards);
         }
         if let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) {
             let speed = cast_speed(self.objects.player_object());
-            self.cooldowns
+            let armed = self
+                .cooldowns
                 .write()
                 .start_gcd(spell_id, d, now, &self.spell_mods, speed);
+            // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
+            if armed {
+                self.press.cooldown_start(d.cooldown_on_event());
+            }
         }
-        self.ground.clear();
+        self.ground.write().clear();
     }
 
     /// The spell-cast entry (`0x80cce0`) with the pet as caster, for the pet's client-targeted and
@@ -381,7 +387,7 @@ impl CastLadder<'_, '_> {
         if d.attributes & 0x40 != 0 {
             return;
         }
-        if caster_dead_refusal(spell_id, Some(d), ctx.rel.self_store, &mut self.cast_errors) {
+        if caster_dead_refusal(spell_id, Some(d), ctx.rel.self_store, &mut self.press) {
             return;
         }
         // The same spell pending for this caster bails on cooldown or `0x404` (`0x80d36d`).
@@ -396,8 +402,9 @@ impl CastLadder<'_, '_> {
                 return;
             }
         }
-        if self.ground.active() {
-            self.ground.clear();
+        if self.ground.read().active() {
+            self.ground.write().clear();
+            self.press.selection();
         }
         let candidates = cast_target::CastCandidates {
             selection: ctx.selection_guid,
@@ -421,7 +428,7 @@ impl CastLadder<'_, '_> {
                 None
             }
             cast_target::CastWireTarget::Refused(reason) => {
-                self.cast_errors.push_local(spell_id, reason);
+                self.press.push_local(spell_id, reason);
                 return;
             }
             cast_target::CastWireTarget::RefusedAtArm(reason) => {
@@ -436,13 +443,13 @@ impl CastLadder<'_, '_> {
                 .and_then(|s| s.ranges.get(d.range_index));
             if let Some(reason) = ctx.range.refusal(d, row, &self.spell_mods) {
                 debug!("ui_pet: pet cast {spell_id} refused locally — range ({reason:#x})");
-                self.cast_errors.push_local(spell_id, reason);
+                self.press.push_local(spell_id, reason);
                 return;
             }
         }
         if let Some(store) = ctx.rel.self_store {
             if !super::usable::can_afford(d, store, &self.spell_mods) {
-                self.cast_errors.push_local(spell_id, 0x4d);
+                self.press.push_local(spell_id, 0x4d);
                 return;
             }
         }
@@ -472,19 +479,21 @@ impl CastLadder<'_, '_> {
             },
         ) {
             match mechanic {
-                Some(m) => self.cast_errors.push_local_arg(spell_id, reason, m),
-                None => self.cast_errors.push_local(spell_id, reason),
+                Some(m) => self.press.push_local_arg(spell_id, reason, m),
+                None => self.press.push_local(spell_id, reason),
             }
             return;
         }
         if let Some(reason) = deferred_refusal {
-            self.cast_errors.push_local(spell_id, reason);
+            self.press.push_local(spell_id, reason);
             return;
         }
         if let Some(word) = pending_word {
             debug!("ui_pet: pet cast {spell_id} awaits its click ({word:#06x})");
             self.ground
+                .write()
                 .enter(spell_id, CastCommit::Pet { caster: pet }, word);
+            self.press.selection();
             return;
         }
         // The send's rank pick (`0x53d9d0`); with `owner_casts` the player is the caster.
@@ -540,15 +549,29 @@ impl CastLadder<'_, '_> {
             if !world.contains_resource::<crate::ui_pet::PetBar>() {
                 return;
             }
-            world.resource_scope(|world, mut bar: Mut<crate::ui_pet::PetBar>| {
+            let armed = world.resource_scope(|world, mut bar: Mut<crate::ui_pet::PetBar>| {
                 bar.pending_cast = Some((spell_id, now + PET_PENDING_LIFE));
                 let d = world
                     .get_resource::<crate::ui_action::Spells>()
                     .and_then(|s| s.catalog.get(spell_id));
-                if let Some(d) = d {
-                    bar.cooldowns.start_gcd(spell_id, d, now, &mods, speed);
-                }
+                d.and_then(|d| {
+                    bar.cooldowns
+                        .start_gcd(spell_id, d, now, &mods, speed)
+                        .then(|| d.cooldown_on_event())
+                })
             });
+            // The pet's armed start: the spellbook's signals, the usable update when on hold, then
+            // the pet bar's (`0x805ec3`-`0x805eda`), fired as this send's commands apply.
+            if let Some(on_hold) = armed {
+                if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+                    crate::ui_action::signals::cooldown_site(
+                        &mut ui,
+                        on_hold,
+                        crate::ui_action::signals::Tail::Pet,
+                    );
+                }
+                crate::ui_script::live::fire_handler_events(world);
+            }
         });
     }
 
@@ -560,7 +583,7 @@ impl CastLadder<'_, '_> {
         self_store: Option<&crate::net::ObjectStore>,
     ) -> bool {
         let def = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
-        caster_dead_refusal(spell_id, def, self_store, &mut self.cast_errors)
+        caster_dead_refusal(spell_id, def, self_store, &mut self.press)
     }
 
     /// Run the ladder for `spell_id` and commit as `commit` says, with no attack pick: no 1.12 item
@@ -649,16 +672,16 @@ impl CastLadder<'_, '_> {
             self.totem_categories.as_deref().map(|t| &t.0),
             &mut self.sheath,
             &mut self.ecs,
-            &mut self.pending,
-            &mut self.queued_melee,
+            &mut self.pending.write(),
+            &mut self.queued_melee.write(),
             &mut self.cooldowns.write(),
             &self.spell_mods,
-            &mut self.cast_errors,
-            &mut self.auto_repeat,
+            &mut self.auto_repeat.write(),
             &mut self.trade_skill_opens,
-            &mut self.ground,
+            &mut self.ground.write(),
             &mut self.held_for_pick,
             &self.area_gate,
+            &mut self.press,
         );
     }
 }
@@ -670,7 +693,7 @@ fn caster_dead_refusal(
     spell_id: u32,
     def: Option<&benilla_formats::SpellDisplay>,
     self_store: Option<&crate::net::ObjectStore>,
-    cast_errors: &mut CastErrors,
+    cast_errors: &mut impl CastRefusals,
 ) -> bool {
     if !self_store.is_some_and(|s| s.0.is_dead_or_ghost())
         || def.is_some_and(|d| d.attributes & benilla_formats::ATTR_CASTABLE_WHILE_DEAD != 0)
@@ -717,12 +740,12 @@ fn send_spell_cast(
     queued_melee: &mut crate::spell::QueuedMeleeSpell,
     cooldowns: &mut crate::spell::Cooldowns,
     spell_mods: &crate::spell::SpellModifiers,
-    cast_errors: &mut CastErrors,
     auto_repeat: &mut AutoRepeatActive,
     trade_skill_opens: &mut crate::ui_tradeskill::TradeSkillOpens,
     ground: &mut super::targeting::SpellTargeting,
     held_for_pick: &mut HeldForPick,
     area_gate: &crate::area::CastAreaGate,
+    press: &mut crate::ui_cast::PressSignals,
 ) {
     let now = Instant::now();
     let def = spells.and_then(|s| s.catalog.get(spell_id));
@@ -738,10 +761,16 @@ fn send_spell_cast(
     if def.is_some_and(|d| d.auto_repeat()) && auto_repeat.0 == Some(spell_id) {
         debug!("ui_action: cast {spell_id} re-pressed — auto-repeat toggles off");
         let self_e = self_player.single().ok().map(|(e, _)| e);
-        crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, ecs, commands);
+        crate::creature_anim::cancel_auto_repeat_local(
+            self_e,
+            auto_repeat,
+            ecs,
+            commands,
+            &mut *press,
+        );
         return;
     }
-    if caster_dead_refusal(spell_id, def, ctx.rel.self_store, cast_errors) {
+    if caster_dead_refusal(spell_id, def, ctx.rel.self_store, &mut *press) {
         return;
     }
     // The cast attempt's targeting check leg: a new press while the cursor is up clears the word,
@@ -749,6 +778,8 @@ fn send_spell_cast(
     if ground.active() {
         debug!("ui_action: cast {spell_id} supersedes the targeting cursor");
         ground.clear();
+        // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
+        press.selection();
     }
     // A ranged shot's record does not guard. An on-next-swing spell (`Attributes & 0x404`) queues
     // on the melee slot ([`crate::spell::QueuedMeleeSpell`]) and does not guard either: the
@@ -766,7 +797,7 @@ fn send_spell_cast(
         // the pressed spell's, and a guarding record is always an ordinary cast or an item use, so
         // every press class is refused here.
         if pending.current(now) != Some(spell_id) {
-            cast_errors.push_local(spell_id, 0x61);
+            press.push_local(spell_id, 0x61);
         }
         debug!("ui_action: cast {spell_id} suppressed — a cast is already in flight");
         return;
@@ -784,7 +815,7 @@ fn send_spell_cast(
         ctx.rel.self_store,
         objects,
         tools,
-        cast_errors,
+        &mut *press,
     ) {
         return;
     }
@@ -796,7 +827,7 @@ fn send_spell_cast(
             if !super::usable::equipped_item_fits_cached(d, store, objects, items) {
                 let reason = super::usable::equipped_item_reason(d);
                 debug!("ui_action: cast {spell_id} refused locally — equipped item ({reason:#x})");
-                cast_errors.push_local(spell_id, reason);
+                press.push_local(spell_id, reason);
                 return;
             }
         }
@@ -814,7 +845,7 @@ fn send_spell_cast(
                 0x46
             };
             debug!("ui_action: cast {spell_id} refused locally — no combo points ({reason:#x})");
-            cast_errors.push_local(spell_id, reason);
+            press.push_local(spell_id, reason);
             return;
         }
     }
@@ -872,7 +903,7 @@ fn send_spell_cast(
                     debug!(
                     "ui_action: cast {spell_id} refused locally — unbindable target ({reason:#x})"
                 );
-                    cast_errors.push_local(spell_id, reason);
+                    press.push_local(spell_id, reason);
                     return;
                 }
                 // The cast attempt's tail after the target resolve returns false runs below the
@@ -902,7 +933,7 @@ fn send_spell_cast(
             let row = spells.and_then(|s| s.ranges.get(d.range_index));
             if let Some(reason) = ctx.range.refusal(d, row, spell_mods) {
                 debug!("ui_action: cast {spell_id} refused locally — range ({reason:#x})");
-                cast_errors.push_local(spell_id, reason);
+                press.push_local(spell_id, reason);
                 return;
             }
         }
@@ -936,11 +967,12 @@ fn send_spell_cast(
                         auto_repeat,
                         ecs,
                         commands,
+                        &mut *press,
                     );
                 }
             }
         }
-        cast_errors.push_local(spell_id, commit.not_ready_reason());
+        press.push_local(spell_id, commit.not_ready_reason());
         return;
     }
     // The power gate (spells only: the item fork jumps past it): the power check `0x8017e0`
@@ -950,7 +982,7 @@ fn send_spell_cast(
         if let (Some(d), Some(store)) = (def, ctx.rel.self_store) {
             if !super::usable::can_afford(d, store, spell_mods) {
                 debug!("ui_action: cast {spell_id} refused locally — not enough power (0x4d)");
-                cast_errors.push_local(spell_id, 0x4d);
+                press.push_local(spell_id, 0x4d);
                 return;
             }
         }
@@ -996,8 +1028,8 @@ fn send_spell_cast(
              mechanic {mechanic:?})"
         );
         match mechanic {
-            Some(m) => cast_errors.push_local_arg(spell_id, reason, m),
-            None => cast_errors.push_local(spell_id, reason),
+            Some(m) => press.push_local_arg(spell_id, reason, m),
+            None => press.push_local(spell_id, reason),
         }
         return;
     }
@@ -1012,7 +1044,7 @@ fn send_spell_cast(
     );
     if dismount && !ctx.auto_dismount {
         debug!("ui_action: cast {spell_id} refused locally — mounted (0x39)");
-        cast_errors.push_local(spell_id, 0x39);
+        press.push_local(spell_id, 0x39);
         return;
     }
     // The seated block (`0x739650`): unless `Attributes & 0x08000000`, a seated caster the
@@ -1024,7 +1056,7 @@ fn send_spell_cast(
             .is_some_and(|s| s.0.unit_stand_state() != 0);
     if stand && !ctx.auto_stand {
         debug!("ui_action: cast {spell_id} refused locally — seated (0x3e)");
-        cast_errors.push_local(spell_id, 0x3e);
+        press.push_local(spell_id, 0x3e);
         return;
     }
     // The water leg: 0x50 "Cannot use while swimming" for mounts, Travel Form and food, 0x58 "Can
@@ -1032,7 +1064,7 @@ fn send_spell_cast(
     // and would grant Aquatic Form on land.
     if let Some(reason) = validator::cast_water_refusal(ctx.self_move_flags, def) {
         debug!("ui_action: cast {spell_id} refused locally — water side ({reason:#x})");
-        cast_errors.push_local(spell_id, reason);
+        press.push_local(spell_id, reason);
         return;
     }
     // The moving leg: a cast-time press while moving refuses 0x2e. Local, because vmangos accepts
@@ -1046,7 +1078,7 @@ fn send_spell_cast(
         let cast_time_ms = spells.map_or(0, |s| s.cast_time_ms(d, caster_level, spell_mods));
         if validator::cast_moving_refusal(ctx.self_move_flags, cast_time_ms, def) {
             debug!("ui_action: cast {spell_id} refused locally — moving (0x2e)");
-            cast_errors.push_local(spell_id, 0x2e);
+            press.push_local(spell_id, 0x2e);
             return;
         }
     }
@@ -1071,7 +1103,7 @@ fn send_spell_cast(
             {
                 let reason = refusal.reason();
                 debug!("ui_action: cast {spell_id} refused locally — the form gate ({reason:#x})");
-                cast_errors.push_local(spell_id, reason);
+                press.push_local(spell_id, reason);
                 return;
             }
             cancel_form = true;
@@ -1108,7 +1140,7 @@ fn send_spell_cast(
         };
         if let Some(reason) = validator::cast_aura_refusal(d, sp, ctx.self_auras, target_auras) {
             debug!("ui_action: cast {spell_id} refused locally — an aura spell ({reason:#x})");
-            cast_errors.push_local(spell_id, reason);
+            press.push_local(spell_id, reason);
             return;
         }
     }
@@ -1116,21 +1148,21 @@ fn send_spell_cast(
     if let Some((reason, area)) = def.and_then(|d| area_gate.refusal(d)) {
         debug!("ui_action: cast {spell_id} refused locally — the area leg ({reason:#x})");
         match area {
-            Some(area) => cast_errors.push_local_arg(spell_id, reason, area),
-            None => cast_errors.push_local(spell_id, reason),
+            Some(area) => press.push_local_arg(spell_id, reason, area),
+            None => press.push_local(spell_id, reason),
         }
         return;
     }
     // The place legs (`0x739650`), after the area leg.
     if let Some(reason) = def.and_then(|d| area_gate.place_refusal(d)) {
         debug!("ui_action: cast {spell_id} refused locally — the place leg ({reason:#x})");
-        cast_errors.push_local(spell_id, reason);
+        press.push_local(spell_id, reason);
         return;
     }
     // The deferred no-bind refusal: every rung passed and nothing bound.
     if let Some(reason) = deferred_refusal {
         debug!("ui_action: cast {spell_id} refused locally — the cast-arm tail ({reason:#x})");
-        cast_errors.push_local(spell_id, reason);
+        press.push_local(spell_id, reason);
         return;
     }
     // The deferred cursor entry: every rung passed, the cursor waits for its click.
@@ -1138,6 +1170,8 @@ fn send_spell_cast(
         debug!("ui_action: cast {spell_id} awaits its click — targeting cursor up ({word:#06x})");
         ground.enter(spell_id, commit, word);
         ground.prelude_at_commit(prelude);
+        // The cursor's arm runs the selection update (`0x80d806`).
+        press.selection();
         return;
     }
     // The wand handoff: a new cast cancels the running repeat only when it carries
@@ -1153,7 +1187,13 @@ fn send_spell_cast(
                 .0
                 .send(ClientCommand::CancelCast { spell_id: cached });
             let self_e = self_player.single().ok().map(|(e, _)| e);
-            crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, ecs, commands);
+            crate::creature_anim::cancel_auto_repeat_local(
+                self_e,
+                auto_repeat,
+                ecs,
+                commands,
+                &mut *press,
+            );
         }
     }
     if let Some(d) = def {
@@ -1168,7 +1208,7 @@ fn send_spell_cast(
             if d.auto_repeat() {
                 ecs.entity(e).insert(crate::creature_anim::AutoRepeatArmed);
                 // The autorepeat key the button's checked state reads.
-                auto_repeat.0 = Some(spell_id);
+                auto_repeat.set(spell_id, &mut *press);
                 // The commit's StopAttack, gated only on the caster being the active player:
                 // starting a repeat ends the melee swing and its queued strike. This is where melee
                 // and auto-repeat are kept exclusive. It runs after the arm above, so it never
@@ -1203,7 +1243,7 @@ fn send_spell_cast(
     }
     let def = spells.and_then(|s| s.catalog.get(spell_id));
     if matches!(commit, CastCommit::Spell) {
-        crate::ui_cast::queue_sent(ecs, spell_id, target);
+        press.sent(spell_id, target);
     }
     // The pending send's stand, dismount and unshift go out ahead of the cast.
     prelude.send(commands, ecs);
@@ -1282,6 +1322,7 @@ fn send_spell_cast(
                         sheath,
                         ecs,
                         commands,
+                        &mut *press,
                     );
                 }
             }
@@ -1293,7 +1334,11 @@ fn send_spell_cast(
             CastCommit::Pet { caster } => objects.object(caster),
             _ => ctx.rel.self_store.map(|s| &s.0),
         };
-        cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
+        let armed = cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
+        // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
+        if armed {
+            press.cooldown_start(d.cooldown_on_event());
+        }
     }
 }
 
@@ -1462,7 +1507,8 @@ mod tests {
         world.init_resource::<crate::spell::QueuedMeleeSpell>();
         world.init_resource::<crate::spell::Cooldowns>();
         world.init_resource::<crate::spell::SpellModifiers>();
-        world.init_resource::<CastErrors>();
+        world.init_resource::<crate::ui_action::RefusalsSeen>();
+        world.init_resource::<crate::ui_cast::PressEdges>();
         world.init_resource::<AutoRepeatActive>();
         world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
         world.init_resource::<crate::spell::SpellTargeting>();
@@ -1570,7 +1616,7 @@ mod tests {
                 "{label}: a refused press never sends"
             );
             assert_eq!(
-                std::mem::take(&mut world.resource_mut::<CastErrors>().0),
+                crate::ui_action::take_refusals(&mut world),
                 vec![CastFail::local(PLAIN, 0x13)],
                 "{label}: \"You are dead\""
             );
@@ -1581,7 +1627,7 @@ mod tests {
                 .expect("one-shot");
             assert!(refused, "{label}: the Attack button stops at the same rung");
             assert_eq!(
-                std::mem::take(&mut world.resource_mut::<CastErrors>().0),
+                crate::ui_action::take_refusals(&mut world),
                 vec![CastFail::local(ATTACK, 0x13)]
             );
         }
@@ -1592,14 +1638,14 @@ mod tests {
             world.resource::<crate::ui_tradeskill::TradeSkillOpens>().0,
             vec![PROFESSION]
         );
-        assert!(world.resource::<CastErrors>().0.is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
 
         press(&mut world, WHILE_DEAD, ghost);
         assert!(
             matches!(rx.try_recv(), Ok(ClientCommand::CastSpell { spell_id, .. }) if spell_id == WHILE_DEAD),
             "the castable-while-dead attribute waives the rung"
         );
-        assert!(world.resource::<CastErrors>().0.is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
     }
 
     /// The mounted block (`0x739e8f`): a mounted press the auto-dismount check allows sends
@@ -1886,14 +1932,14 @@ mod tests {
             ),
             "the dismount goes first: {sent:?}"
         );
-        assert!(world.resource::<CastErrors>().0.is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
 
         assert!(
             press(&mut world, PLAIN, false).is_empty(),
             "refused, no packet"
         );
         assert_eq!(
-            std::mem::take(&mut world.resource_mut::<CastErrors>().0),
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(PLAIN, 0x39)],
             "\"You are mounted\""
         );
@@ -1970,7 +2016,7 @@ mod tests {
         send_at_go(&mut world, OPENING, CHEST);
         assert!(rx.try_recv().is_err(), "no duplicate on the wire");
         assert!(
-            world.resource::<CastErrors>().0.is_empty(),
+            crate::ui_action::take_refusals(&mut world).is_empty(),
             "the same spell's re-press is the reference's SILENT bail, not \"Another \
              action is in progress\""
         );
@@ -1979,7 +2025,7 @@ mod tests {
         send(&mut world, MOUNT, CastCommit::Spell);
         assert!(rx.try_recv().is_err());
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(MOUNT, 0x61)],
             "a different spell mid-cast still errors 0x61"
         );
@@ -2229,7 +2275,7 @@ mod tests {
 
         assert!(rx.try_recv().is_err(), "nothing goes out on the wire");
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(AUTO_SHOT, 0x61)],
             "a different spell mid-cast is \"Another action is in progress\", whatever its class"
         );
@@ -2293,7 +2339,7 @@ mod tests {
             })
         );
         assert!(rx.try_recv().is_err(), "a held press sends nothing");
-        assert!(world.resource::<CastErrors>().0.is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
         assert_eq!(
             press(&mut world, SERPENT_STING),
             None,
@@ -2326,7 +2372,7 @@ mod tests {
             .expect("the ladder runs as a one-shot system");
         assert_eq!(held, None, "in flight");
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(RAPTOR_STRIKE, 0x61)]
         );
         assert!(rx.try_recv().is_err());
@@ -2353,7 +2399,7 @@ mod tests {
                 .expect("the ladder runs as a one-shot system");
             assert_eq!(held, None, "class {class}: no combo points");
             assert_eq!(
-                world.resource::<CastErrors>().0,
+                crate::ui_action::take_refusals(&mut world),
                 vec![CastFail::local(EVISCERATE, reason)],
                 "class {class}"
             );
@@ -2483,14 +2529,14 @@ mod tests {
         send(&mut world, HEARTHSTONE, HEARTH_COMMIT);
         assert!(rx.try_recv().is_err(), "no duplicate on the wire");
         assert!(
-            world.resource::<CastErrors>().0.is_empty(),
+            crate::ui_action::take_refusals(&mut world).is_empty(),
             "the same spell's re-press is the reference's SILENT bail, not a red line"
         );
 
         send(&mut world, MOUNT, HEARTH_COMMIT);
         assert!(rx.try_recv().is_err());
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(MOUNT, 0x61)],
             "a different spell mid-cast is the reference's \"Another action is in progress\""
         );
@@ -2517,19 +2563,19 @@ mod tests {
         send(&mut world, HEARTHSTONE, HEARTH_COMMIT);
         assert!(rx.try_recv().is_err(), "an item on cooldown never sends");
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(HEARTHSTONE, 0x28)]
         );
 
         // The record is keyed (use-spell, entry); a spell press queries (spell, 0) and passes.
-        world.resource_mut::<CastErrors>().0.clear();
+        crate::ui_action::take_refusals(&mut world);
         world.insert_resource(crate::spell::PendingCast::default());
         send(&mut world, HEARTHSTONE, CastCommit::Spell);
         assert!(
             matches!(rx.try_recv(), Ok(ClientCommand::CastSpell { .. })),
             "the item-keyed record never not-readies a bare spell press"
         );
-        assert!(world.resource::<CastErrors>().0.is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
     }
 
     /// The cast send: two opcodes, one targets block; a key's lock rides it as
@@ -2626,11 +2672,11 @@ mod tests {
             .expect("one-shot");
         assert!(rx.try_recv().is_err(), "an unaffordable press never sends");
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(HEARTHSTONE, 0x4d)]
         );
 
-        world.resource_mut::<CastErrors>().0.clear();
+        crate::ui_action::take_refusals(&mut world);
         let base = ctx();
         let with_store = cast_target::CastContext {
             rel: cast_target::TargetRelations {
@@ -2648,7 +2694,7 @@ mod tests {
             matches!(rx.try_recv(), Ok(ClientCommand::UseItem { .. })),
             "an item press is never power-gated"
         );
-        assert!(world.resource::<CastErrors>().0.is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
     }
 
     /// The cast attempt's in-flight refusal (`0x61`) precedes the not-ready rung.
@@ -2675,7 +2721,7 @@ mod tests {
         send(&mut world, MOUNT, CastCommit::Spell);
         assert!(rx.try_recv().is_err());
         assert_eq!(
-            world.resource::<CastErrors>().0,
+            crate::ui_action::take_refusals(&mut world),
             vec![CastFail::local(MOUNT, 0x61)],
             "mid-cast outranks the cooldown rung (the in-flight refusal precedes the validator)"
         );

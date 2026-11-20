@@ -1,6 +1,6 @@
 //! The stance bar's four bindings, which `BonusActionBarFrame.lua`'s `ShapeshiftBar_*` calls, and
-//! `GetShapeshiftForm`, over a form list and form byte the app resolves and pushes; flags answer
-//! 1/nil and the cooldown is the reference's `(start, duration, enable)`.
+//! `GetShapeshiftForm`, over the stance list and form byte read at the call; flags answer 1/nil and
+//! the cooldown is the reference's `(start, duration, enable)`.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -32,8 +32,9 @@ pub(crate) struct StoredShapeshiftForm {
     pub(crate) cooldown: Option<(f64, f64, bool)>,
 }
 
+#[cfg(any(test, feature = "fixtures"))]
 impl super::UiScript {
-    /// Replace the form list, in bar order; the app fires `UPDATE_SHAPESHIFT_FORMS` itself.
+    /// Stand in the form list, in bar order, for a VM with no live view.
     pub fn set_shapeshift_forms(&mut self, forms: Vec<ShapeshiftFormView>) {
         let mut model = self.model_mut();
         model.shapeshift_forms = forms
@@ -51,11 +52,13 @@ impl super::UiScript {
             .collect();
     }
 
-    /// Push the player's raw form byte, 0 unshifted or no player.
+    /// Stand in the player's raw form byte, 0 unshifted or no player, for a VM with no live view.
     pub fn set_shapeshift_form_byte(&mut self, form: u8) {
         self.model_mut().shapeshift_form_byte = form;
     }
+}
 
+impl super::UiScript {
     /// Take the `CastShapeshiftForm` calls out of the call stream, as form spells; the app casts
     /// each, or cancels it when it is the active form.
     pub fn take_shapeshift_casts(&mut self) -> Vec<u32> {
@@ -66,24 +69,73 @@ impl super::UiScript {
     }
 }
 
+/// The stance bar at the call: the live view's, else the stand-in a test or fixture pushed, each
+/// with its cooldown in `GetTime` seconds where the stand-in carries one.
+pub(super) fn forms(lua: &Lua) -> Vec<StoredShapeshiftForm> {
+    if let Some(live) = super::read_live(|l| l.shapeshift_forms()).flatten() {
+        return live
+            .into_iter()
+            .map(|view| StoredShapeshiftForm {
+                view,
+                cooldown: None,
+            })
+            .collect();
+    }
+    stand_in_forms(lua)
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+fn stand_in_forms(lua: &Lua) -> Vec<StoredShapeshiftForm> {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model.shapeshift_forms.clone()
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn stand_in_forms(_: &Lua) -> Vec<StoredShapeshiftForm> {
+    Vec::new()
+}
+
+/// The player's form byte at the call, else the stand-in's.
+fn form_byte(model: &Model) -> u8 {
+    let live = super::read_live(|l| l.shapeshift_form_byte()).flatten();
+    #[cfg(any(test, feature = "fixtures"))]
+    let live = live.or(Some(model.shapeshift_form_byte));
+    #[cfg(not(any(test, feature = "fixtures")))]
+    let _ = model;
+    live.unwrap_or(0)
+}
+
 /// A 1-based button index, as the reference indexes.
-fn form_at(model: &Model, i: u32) -> Option<&StoredShapeshiftForm> {
+fn form_at(forms: &[StoredShapeshiftForm], i: u32) -> Option<&StoredShapeshiftForm> {
     usize::try_from(i.checked_sub(1)?)
         .ok()
-        .and_then(|n| model.shapeshift_forms.get(n))
+        .and_then(|n| forms.get(n))
 }
 
 /// The current form's 1-based bar index (`0x53d4b0`): the last button reading active, else one
 /// past the bar while the form byte is set, else 0; `shifted_only` answers 0 while it is not.
 pub(super) fn current_form_index(model: &Model, shifted_only: bool) -> u32 {
-    let shifted = model.shapeshift_form_byte != 0;
+    let shifted = form_byte(model) != 0;
     if shifted_only && !shifted {
         return 0;
     }
-    let forms = &model.shapeshift_forms;
-    match forms.iter().rposition(|f| f.view.active) {
+    let live = super::read_live(|l| l.shapeshift_forms()).flatten();
+    let active: Vec<bool> = match live {
+        Some(forms) => forms.iter().map(|f| f.active).collect(),
+        #[cfg(any(test, feature = "fixtures"))]
+        None => model
+            .shapeshift_forms
+            .iter()
+            .map(|f| f.view.active)
+            .collect(),
+        #[cfg(not(any(test, feature = "fixtures")))]
+        None => Vec::new(),
+    };
+    match active.iter().rposition(|&a| a) {
         Some(i) => i as u32 + 1,
-        None if shifted => forms.len() as u32 + 1,
+        None if shifted => active.len() as u32 + 1,
         None => 0,
     }
 }
@@ -103,23 +155,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `GetNumShapeshiftForms()` (`0x53c0b0`): the list's count.
     g.set(
         "GetNumShapeshiftForms",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.shapeshift_forms.len() as i64)
-        })?,
+        lua.create_function(|lua, ()| Ok(forms(lua).len() as i64))?,
     )?;
 
     g.set(
         "GetShapeshiftFormInfo",
         lua.create_function(|lua, i: u32| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let Some(form) = form_at(&model, i) else {
+            let forms = forms(lua);
+            let Some(form) = form_at(&forms, i) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
             let texture = match &form.view.texture {
@@ -138,14 +184,29 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // As `GetActionCooldown`: an elapsed or absent cooldown answers `(0, 0, 1)`, so a re-feed never
     // replays the sweep.
+    // The live bar reads the spell's cooldown at the call (`0x53c180` -> `0x809000`).
     g.set(
         "GetShapeshiftFormCooldown",
         lua.create_function(|lua, i: u32| {
             let now = crate::script::clock::now(lua);
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match form_at(&model, i).and_then(|f| f.cooldown) {
+            let live = super::read_live(|l| l.shapeshift_forms().is_some()).unwrap_or(false);
+            let forms = forms(lua);
+            let cooldown = form_at(&forms, i).and_then(|f| {
+                if live {
+                    super::spellbook::live_spell_cooldown(lua, f.view.spell_id).map(
+                        |(start_ms, duration_ms, enabled)| {
+                            (
+                                start_ms as f64 / 1000.0,
+                                f64::from(duration_ms) / 1000.0,
+                                enabled,
+                            )
+                        },
+                    )
+                } else {
+                    f.cooldown
+                }
+            });
+            Ok(match cooldown {
                 Some((start, duration, enabled)) if start + duration > now || !enabled => {
                     (start, duration, i32::from(enabled))
                 }
@@ -157,8 +218,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CastShapeshiftForm",
         lua.create_function(|lua, i: u32| {
+            let spell = form_at(&forms(lua), i).map(|f| f.view.spell_id);
             let mut model = crate::script::model_mut_of(lua);
-            if let Some(spell_id) = form_at(&model, i).map(|f| f.view.spell_id) {
+            if let Some(spell_id) = spell {
                 model
                     .script_calls
                     .push(super::ScriptCall::CastShapeshiftForm(spell_id));

@@ -102,15 +102,6 @@ impl UsablePlaceFeed<'_> {
             Some(knows_cold_weather_flying),
         )
     }
-
-    /// A pet's place.
-    pub(crate) fn pet(&self) -> UsablePlace {
-        UsablePlace::of(
-            self.place.as_deref(),
-            self.map.as_deref().map(|m| m.0),
-            None,
-        )
-    }
 }
 
 /// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single
@@ -146,18 +137,6 @@ pub(crate) struct UsableCtx<'a> {
     pub(crate) target_auras: Option<&'a crate::unit_auras::UnitAuras>,
     /// Where the caster stands, for the place legs.
     pub(crate) place: UsablePlace,
-}
-
-/// The aura tables the usable walk's feeds read.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct UsableAuras<'w, 's> {
-    pub(crate) me: bevy::prelude::Query<
-        'w,
-        's,
-        &'static crate::unit_auras::UnitAuras,
-        bevy::prelude::With<crate::net::SelfPlayer>,
-    >,
-    pub(crate) all: bevy::prelude::Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
 
 /// Whether an aura table holds `id` (`0x7282a0`'s walk).
@@ -351,24 +330,6 @@ fn needs_equipped_item(d: &SpellDisplay) -> bool {
         && d.targets & TARGET_FLAG_ITEM == 0
 }
 
-/// The equipment slots [`equipped_item_fits`] reads for `d`, a bit each: none unless it searches,
-/// else the slots its hand restriction leaves and both hands, which the disarm ladder reads
-/// whatever the restriction.
-pub(crate) fn worn_slots_read(d: &SpellDisplay) -> u32 {
-    if needs_equipped_item(d) {
-        (hand_mask(d) | HANDS) & EQUIPMENT_MASK
-    } else {
-        0
-    }
-}
-
-/// The main and off hand, the two slots the disarm ladder tells apart.
-const HANDS: u32 =
-    1 << crate::items::EQUIPMENT_SLOT_MAINHAND | 1 << crate::items::EQUIPMENT_SLOT_OFFHAND;
-
-/// Every equipment index the search covers, as a mask: the 19 worn slots and the four bags.
-pub(crate) const EQUIPMENT_MASK: u32 = (1 << EQUIPMENT_SLOTS) - 1;
-
 /// [`equipped_item_fits`] for the cast ladder's rung 7: the same search, never querying a
 /// missing template; an uncached one counts as a match.
 pub(crate) fn equipped_item_fits_cached(
@@ -458,18 +419,6 @@ impl SlotItem {
             } => c == class && subclass_mask & (1 << sub) != 0,
         }
     }
-}
-
-/// Equipment slot `slot`'s [`SlotItem`] from the cached records, without an ask.
-pub(crate) fn slot_item_cached(
-    store: &ObjectStore,
-    slot: u8,
-    objects: &Objects,
-    items: &Items,
-) -> SlotItem {
-    SlotItem::of(store.0.player_inv_slot(slot).unwrap_or(0), |guid| {
-        worn_item_cached(guid, objects, items)
-    })
 }
 
 /// The equipped-item refusal reason, keyed on `AttributesEx3` alone: main-hand-only `0x1a`,
@@ -893,16 +842,6 @@ pub(crate) fn cost_basis(d: &SpellDisplay) -> CostBasis {
         2 | 3 => CostBasis::Fixed(100),
         _ => CostBasis::None,
     }
-}
-
-/// Whether [`power_cost_at`]'s level term moves the cost: only a spell with a per-level cost.
-pub(crate) fn cost_reads_level(d: &SpellDisplay) -> bool {
-    d.mana_cost_per_level != 0
-}
-
-/// Whether [`power_cost_at`]'s weapon term can move the cost.
-pub(crate) fn cost_reads_weapon(d: &SpellDisplay) -> bool {
-    d.attributes_ex4 & ATTR_EX4_WEAPON_SPEED_COST != 0
 }
 
 /// Whether the caster can afford `d`, for leg 12 and the press-path gate (`0x8017e0`): health

@@ -40,6 +40,7 @@ pub(super) fn select_on_plate_click(
     mut greeting: MessageWriter<crate::sound::NpcGreetingRequest>,
     mut right_clicks: MessageWriter<WorldRightClick>,
     units: Query<(&Guid, Option<&ObjectStore>)>,
+    mut signals: crate::ui_action::signals::QueuedSignals,
 ) {
     let (left, right) = (
         std::mem::take(&mut plate.left),
@@ -69,8 +70,10 @@ pub(super) fn select_on_plate_click(
             engaged,
             self_guid,
             attack,
+            &mut signals,
         );
     }
+    signals.flush(&mut seam.ecs);
     if right.into_iter().any(|e| press.hovered.target == Some(e)) {
         right_clicks.write(WorldRightClick);
     }
@@ -92,6 +95,7 @@ pub(crate) fn select_on_click(
     click_cfg: Res<ClickConfig>,
     // Read at the commit, where the reference resolves it for its selectable gate.
     stores: Query<&ObjectStore>,
+    mut signals: crate::ui_action::signals::QueuedSignals,
 ) {
     let (hovered, occlusion) = (press.hovered, press.occlusion);
     let clicked = clicks.read().last().is_some();
@@ -121,7 +125,9 @@ pub(crate) fn select_on_click(
                 engaged,
                 self_guid,
                 press.attack(),
+                &mut signals,
             );
+            signals.flush(&mut seam.ecs);
         }
         // Deselect, except on the sky with a payload held (reachable only over a GameObject, as a
         // payload's empty-world press is the drop's); `deselectOnClick` 0 keeps the target.
@@ -182,11 +188,12 @@ fn interaction_already_open_on(target: u64, interact: &crate::ui_session::Intera
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Feedback<'w> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
-    cast_errors: ResMut<'w, crate::ui_action::CastErrors>,
+    /// A cast refusal's line, shown in the click's turn (`0x808200`).
+    ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     mail: ResMut<'w, crate::ui_mail::MailOpen>,
     item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
-    // `CastErrors` borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
+    // press borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
     openers: ResMut<'w, crate::ui_action::GoOpenerCasts>,
     // The stone's refusals need the roster, so they run in `super::stone`.
     stone_uses: MessageWriter<'w, crate::target::stone::MeetingStoneUse>,
@@ -871,7 +878,10 @@ impl Dispatch<'_, '_> {
         let own = self.self_store();
         if needs_foot && own.is_some_and(|s| self.mounted_gate().refuses(s)) {
             debug!("right-click skin: refused locally — mounted (0x39)");
-            self.feedback.cast_errors.push_local(spell_id, 0x39);
+            crate::ui_action::CastRefusals::push_local(&mut *self.feedback.ui, spell_id, 0x39);
+            self.service
+                .talk
+                .queue(crate::ui_script::live::fire_handler_events);
         } else {
             if let Some(own) = own.filter(|_| needs_foot) {
                 crate::creature_anim::dismount_first(own, &self.seam.net);
@@ -1210,8 +1220,11 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     // A mid-combat click on a vendor or corpse switches and stops, never swings; the sword, not the
     // fork, as the re-swing also needs the player's own legs. Deref'd only where it commits: a leg
     // that does not select leaves the change tick alone.
+    // A seam write's signal fires into the VM this system holds, in turn.
+    let mut unheld: Vec<&'static str> = Vec::new();
     let commit = |seam: &mut crate::creature_anim::AttackSeam,
-                  selection: &mut crate::ui_script::OwnedMut<Selection>| {
+                  selection: &mut crate::ui_script::OwnedMut<Selection>,
+                  sink: &mut dyn crate::ui_action::signals::SignalSink| {
         scan::commit(
             &mut selection.write(),
             seam,
@@ -1221,10 +1234,18 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
             me.is_some_and(|(_, _, e)| e),
             me.map(|(_, g, _)| g),
             press.attack(),
+            sink,
         )
     };
     let mut outcome = match &mut select {
-        Select::First(selection) => commit(&mut dispatch.seam, selection),
+        Select::First(selection) => {
+            let sink: &mut dyn crate::ui_action::signals::SignalSink =
+                match dispatch.service.script.as_deref_mut() {
+                    Some(script) => script,
+                    None => &mut unheld,
+                };
+            commit(&mut dispatch.seam, selection, sink)
+        }
         Select::OnAttack(_) => scan::CommitOutcome::default(),
     };
     // A dead player acts on nothing, but through a possessed unit (`0x731298`, `0x7312a0`).
@@ -1259,7 +1280,12 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
                 // StartAttack's own select, past its gates and before the swing: the click's
                 // commit, with its stop and re-swing mid-combat.
                 if let Select::OnAttack(selection) = &mut select {
-                    outcome = commit(&mut dispatch.seam, selection);
+                    let sink: &mut dyn crate::ui_action::signals::SignalSink =
+                        match dispatch.service.script.as_deref_mut() {
+                            Some(script) => script,
+                            None => &mut unheld,
+                        };
+                    outcome = commit(&mut dispatch.seam, selection, sink);
                 }
                 debug!("right-click attack: {guid:#x}");
                 // The combat enter (`0x73154a`), silent when the click can walk in.
@@ -1268,7 +1294,14 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
                     // The reference's body through the seam; `swung` means the commit's re-swing
                     // already went out, which the reference keeps from sending twice.
                     let engaged = me.is_some_and(|(_, _, e)| e);
-                    dispatch.seam.start(guid, engaged || outcome.swung, false);
+                    let sink: &mut dyn crate::ui_action::signals::SignalSink =
+                        match dispatch.service.script.as_deref_mut() {
+                            Some(script) => script,
+                            None => &mut unheld,
+                        };
+                    dispatch
+                        .seam
+                        .start(guid, engaged || outcome.swung, false, sink);
                 }
             }
         }
@@ -1858,6 +1891,7 @@ pub(crate) fn clear_target_requests(
     mut arrivals: MessageReader<ArrivalAttack>,
     enemies: Query<&ObjectStore>,
     me: Query<&Guid, With<SelfPlayer>>,
+    mut signals: crate::ui_action::signals::QueuedSignals,
 ) {
     for ask in arrivals.read() {
         let swinging = !engaged.is_empty();
@@ -1870,9 +1904,11 @@ pub(crate) fn clear_target_requests(
             swinging,
             me.single().ok().map(|g| g.0),
             true,
+            &mut signals,
         );
-        seam.start(ask.guid, swinging || outcome.swung, false);
+        seam.start(ask.guid, swinging || outcome.swung, false, &mut signals);
     }
+    signals.flush(&mut seam.ecs);
     if guid_asks
         .read()
         .any(|ask| ask.0 == 0 || selection.guid == Some(ask.0))
@@ -2524,7 +2560,7 @@ mod tests {
         world.init_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();
         world.init_resource::<crate::ui_session::InteractNpc>();
         world.init_resource::<crate::ui_action::UiErrorKeys>();
-        world.init_resource::<crate::ui_action::CastErrors>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<crate::ui_loot::LootState>();
         world.init_resource::<crate::ui_loot::LootLatch>();
         world.init_resource::<crate::ui_mail::MailOpen>();

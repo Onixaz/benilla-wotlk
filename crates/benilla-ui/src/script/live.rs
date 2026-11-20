@@ -503,6 +503,174 @@ pub trait LiveState {
         None
     }
 
+    /// The player's book as the last book update built it (`0x53ca70`); `None` with none lent.
+    fn player_book(&self) -> Option<std::sync::Arc<super::PlayerBook>> {
+        None
+    }
+
+    /// Whether the player knows `spell_id`, the known-spell bits (`0xbe6d88`, `0x7260e0`).
+    fn spell_known(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Whether the player knows `spell_id` or a higher rank of it (`0x7260e0`, `0x726160`).
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        self.spell_known(spell_id)
+    }
+
+    /// A player book spell's texture at the call (`0x53dc20`): the weapon faces for the melee
+    /// auto-attack and a ranged shot (`0x5a84d0`, `0x5a85e0`), else the record's icon.
+    fn book_spell_texture(&self, spell_id: u32) -> Option<String> {
+        super::spellbook::live_book()
+            .book
+            .named()
+            .find(|s| s.spell_id == spell_id)?
+            .texture
+            .clone()
+    }
+
+    /// A player book spell's selected test at the call (`0x53d350`): the open trade-skill line's
+    /// spell, or a shapeshift into the player's current form.
+    fn spell_selected(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// `IsUsableAction`'s pair for the 1-based `action` off the bar's usable cache (`0x5a7e60`);
+    /// `None` without a view.
+    fn action_usable(&self, _action: u32) -> Option<(bool, bool)> {
+        None
+    }
+
+    /// `IsCurrentAction` for the 0-based bar `slot` at the call (`0x5aa240`); `None` without a view.
+    fn action_current(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsAutoRepeatAction` for the 0-based bar `slot` at the call (`0x5a9470`).
+    fn action_auto_repeat(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsActionInRange` for the 0-based bar `slot` at `target`, 0 for the locked target
+    /// (`0x5a94c0`): `Some(None)` where the check does not apply.
+    fn action_in_range(&self, _slot: u32, _target: u64) -> Option<Option<bool>> {
+        None
+    }
+
+    /// `ActionHasRange` for the 0-based bar `slot` (`0x5a95e0`).
+    fn action_has_range(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsAttackAction` for the 0-based bar `slot` (`0x5a96d0`).
+    fn action_attack(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsEquippedAction` for the 0-based bar `slot` (`0x5a88b0`).
+    fn action_equipped(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `GetActionCooldown` for the 0-based bar `slot` (`0x5a8e40`): `(start_ms, duration_ms,
+    /// enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`, `(0, 0, false)`
+    /// for a slot naming nothing; `None` without a view.
+    fn action_cooldown(
+        &self,
+        _slot: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        None
+    }
+
+    /// The 0-based bar `slot`'s word (`[0xc1e358 + slot * 4]`), 0 for an empty slot; `None`
+    /// without a view.
+    fn action_word(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// `GetActionTexture` for a spell, item or pet-action slot (`0x5a97f0`), resolved at the call;
+    /// `Some(None)` for no icon.
+    fn action_texture(&self, _slot: u32) -> Option<Option<super::ActionIcon>> {
+        None
+    }
+
+    /// `GetActionCount` (`0x5a7d10`): an item's count (`0x5a8a60`), a spell's reagent uses
+    /// (`0x801770`).
+    fn action_count(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// `IsConsumableAction` (`0x5a9360`).
+    fn action_consumable(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsStackableAction` (`0x5a8470`).
+    fn action_stackable(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// A pet-action slot's spell (`0x5a80e0`): `Some(None)` for a mode, an order or an empty word.
+    fn action_pet_spell(&self, _slot: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The temporary bar's owners (`[0xc1e5a0]`); `None` without a view.
+    fn temp_action_bar(&self) -> Option<u32> {
+        None
+    }
+
+    /// The bonus offset (`[0xc1e59c]`); `None` without a view.
+    fn bonus_bar_offset(&self) -> Option<u8> {
+        None
+    }
+
+    /// Whether the book holds Cold Weather Flying (`0x7261b0`); `None` without a view.
+    fn knows_cold_weather_flying(&self) -> Option<bool> {
+        None
+    }
+
+    /// The slot write (`0x5aae80`, `0x5aaa90` for 0): the word stored, the slot's usable bytes
+    /// recomputed and the slot sent (`0x5aa390`); `Some(false)` while the bar is locked
+    /// (`0x5aaec1`, `0x5aaac2`), `None` without a view. The caller signals the slot.
+    fn set_action_word(&mut self, _slot: u32, _word: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
+    fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
+        None
+    }
+
+    /// The stance bar as `GetShapeshiftFormInfo` reads it at the call (`0x53de90`): the cached list
+    /// in bar order, each entry's active test and icon read now, castable off its cache; `None`
+    /// without a view. The cooldown is read apart, as the spell's.
+    fn shapeshift_forms(&self) -> Option<Vec<super::ShapeshiftFormView>> {
+        None
+    }
+
+    /// The player's shapeshift form byte now, 0 unshifted; `None` without a view.
+    fn shapeshift_form_byte(&self) -> Option<u8> {
+        None
+    }
+
+    /// The spell tooltip builder's view of `spell_id` at the call, against the player or with
+    /// `alt_caster` its pet, its keyed cells filled through `get`; `None` without a row.
+    fn spell_tooltip(
+        &self,
+        _spell_id: u32,
+        _alt_caster: bool,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::SpellTooltipView> {
+        None
+    }
+
+    /// `f` over the spell source that reads the casters and the player's cast state at the call;
+    /// a view that has none leaves `f` uncalled, and the verb asks the source installed at load.
+    fn with_spell_source(&self, _f: &mut dyn FnMut(&dyn super::SpellInfoSource)) {}
+
     /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` with nothing running.
     fn spell_cooldown(
         &self,
@@ -510,6 +678,61 @@ pub trait LiveState {
         _anchor: std::time::Instant,
         _ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
+        None
+    }
+
+    /// The targeting cursor at the call: up, wanting an item, and its arm count.
+    fn spell_targeting(&self) -> super::SpellTargetingLive {
+        super::SpellTargetingLive::default()
+    }
+
+    /// `SpellCanTargetUnit`'s unit leg toward the held unit `guid` at the call (`0x804190`): the standing word binds it with no range refusal; false while not targeting.
+    fn spell_can_target_unit(&self, _guid: u64) -> bool {
+        false
+    }
+
+    /// A unit's cast, or with `channel` its channel, as the unit holds it at the call (`+0xa6c`-`+0xa7c`, `+0xa80`-`+0xa88`), with the not-interruptible test's answer (`0x71ab20`); `None` with none.
+    fn unit_cast(&self, _guid: u64, _channel: bool) -> Option<super::UnitCast> {
+        None
+    }
+
+    /// `SpellStopCasting`'s test at the call: the auto-repeating spell is set, else a cast is in flight (`0x7fe130`, `0x805f30`); never a channel.
+    fn has_stoppable_cast(&self) -> bool {
+        false
+    }
+
+    /// The totem table's live slot `slot` (0-based) at the call (`0xbd0b00`), `None` for an empty one.
+    fn totem(&self, _slot: usize) -> Option<super::TotemView> {
+        None
+    }
+
+    /// An empty totem slot's flag: the player held and a carried item covering the slot's `TotemCategory` row, the bag search run at the call (`0x51d42f`, `0x51d457`-`0x51d496`).
+    fn totem_tool(&self, _slot: usize) -> bool {
+        false
+    }
+
+    /// Destroy the live slot `slot` inside the call: `CMSG_TOTEM_DESTROYED`, then the slot cleared (`0x5197d0`); false for an empty slot, which sends nothing. The caller fires `PLAYER_TOTEM_UPDATE`.
+    fn destroy_totem(&mut self, _slot: usize) -> bool {
+        false
+    }
+
+    /// The totem bar's element list `element` (0 fire, 1 earth, 2 water, 3 air) at the call (`0xbe8ea0`).
+    fn multicast_list(&self, _element: usize) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// `spell`'s two `TotemCategory` rows off its record (`0x5a7bc0`), `None` for no record.
+    fn spell_totem_categories(&self, _spell: u32) -> Option<[u32; 2]> {
+        None
+    }
+
+    /// The `TotemCategory.dbc` row's name, `ERR_MULTI_CAST_ACTION_TOTEM_S`'s argument (`0x5ab24b`).
+    fn totem_category_name(&self, _row: u32) -> Option<String> {
+        None
+    }
+
+    /// The rune table (`0xc24304`-`0xc24388`) and the active player's `PLAYER_RUNE_REGEN` rates, read at the call; `None` without the active player object (`0x61306f`).
+    fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
         None
     }
 
@@ -1080,6 +1303,21 @@ pub(crate) struct TestView {
     pub pet_stops: Cell<u32>,
     /// The 0-based slots the bar toggle reached past its gate, in order.
     pub pet_toggles: std::cell::RefCell<Vec<u32>>,
+    /// The units' held casts and channels, by `(guid, channel)`.
+    pub unit_casts: std::collections::HashMap<(u64, bool), super::UnitCast>,
+    /// `SpellStopCasting`'s test.
+    pub stoppable_cast: bool,
+    /// The totem table's slots, which the destroy clears, and each empty slot's tool flag.
+    pub totems: std::cell::RefCell<[Option<super::TotemView>; super::MAX_TOTEM_SLOTS]>,
+    pub totem_tools: [bool; super::MAX_TOTEM_SLOTS],
+    /// The 0-based slots the destroy sent, in order.
+    pub totem_destroys: std::cell::RefCell<Vec<usize>>,
+    /// The totem bar's element lists, the spells' `TotemCategory` pairs and the rows' names.
+    pub multicast_lists: [Vec<u32>; 4],
+    pub totem_categories: std::collections::HashMap<u32, [u32; 2]>,
+    pub totem_category_names: std::collections::HashMap<u32, String>,
+    /// The rune table and the player's rates; `None` without the player object.
+    pub runes: Option<(super::RuneState, super::RuneRegen)>,
     /// The guild bank, its locks as `(tab, slot, item)`, the current tab and the two moneys.
     pub guild_bank: super::GuildBankView,
     pub guild_bank_locks: Vec<(u8, u8, u32)>,
@@ -1106,6 +1344,65 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {
+        self.unit_casts.get(&(guid, channel)).cloned()
+    }
+
+    fn has_stoppable_cast(&self) -> bool {
+        self.stoppable_cast
+    }
+
+    fn spell_targeting(&self) -> super::SpellTargetingLive {
+        TEST_TARGETING.with(|t| t.borrow().0)
+    }
+
+    fn spell_can_target_unit(&self, guid: u64) -> bool {
+        TEST_TARGETING.with(|t| {
+            let t = t.borrow();
+            t.0.active && t.1.contains(&guid)
+        })
+    }
+
+    fn multicast_list(&self, element: usize) -> Vec<u32> {
+        self.multicast_lists
+            .get(element)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn spell_totem_categories(&self, spell: u32) -> Option<[u32; 2]> {
+        self.totem_categories.get(&spell).copied()
+    }
+
+    fn totem_category_name(&self, row: u32) -> Option<String> {
+        self.totem_category_names.get(&row).cloned()
+    }
+
+    fn totem(&self, slot: usize) -> Option<super::TotemView> {
+        self.totems.borrow().get(slot).cloned().flatten()
+    }
+
+    fn totem_tool(&self, slot: usize) -> bool {
+        self.totem_tools.get(slot).copied().unwrap_or(false)
+    }
+
+    fn destroy_totem(&mut self, slot: usize) -> bool {
+        let live = self
+            .totems
+            .borrow_mut()
+            .get_mut(slot)
+            .and_then(Option::take)
+            .is_some();
+        if live {
+            self.totem_destroys.borrow_mut().push(slot);
+        }
+        live
+    }
+
+    fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
+        self.runes.clone()
+    }
+
     fn item_tables(&self) -> Option<&super::ItemTables> {
         self.item_tables.as_ref()
     }
@@ -1460,7 +1757,35 @@ impl LiveState for TestView {
         _anchor: std::time::Instant,
         _ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
-        self.cooldowns.get(&spell_id).copied()
+        self.cooldowns
+            .get(&spell_id)
+            .copied()
+            .or_else(|| super::spellbook::stand_in_slot(spell_id).and_then(|s| s.cooldown))
+    }
+
+    fn spell_selected(&self, spell_id: u32) -> bool {
+        super::spellbook::stand_in_slot(spell_id).is_some_and(|s| s.current)
+    }
+
+    fn spell_known(&self, spell_id: u32) -> bool {
+        TEST_KNOWN.with(|k| k.borrow().0.contains(&spell_id))
+    }
+
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        TEST_KNOWN.with(|k| {
+            let (known, next) = &*k.borrow();
+            let mut cur = spell_id;
+            for _ in 0..32 {
+                if known.contains(&cur) {
+                    return true;
+                }
+                let Some(&n) = next.get(&cur) else {
+                    return false;
+                };
+                cur = n;
+            }
+            false
+        })
     }
 
     fn pet_bar(&self) -> Option<super::PetBarLive> {
@@ -1551,6 +1876,79 @@ thread_local! {
     /// The pet book's set writes through a test view, in order.
     static TEST_SPELL_AUTOCASTS: std::cell::RefCell<Vec<(u32, bool)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The targeting cursor and the guids `SpellCanTargetUnit` passes, as every test view on this thread answers them.
+    static TEST_TARGETING: std::cell::RefCell<(super::SpellTargetingLive, std::collections::HashSet<u64>)> =
+        std::cell::RefCell::default();
+    /// The known spells with the rank table, as every test view on this thread answers them.
+    static TEST_KNOWN: std::cell::RefCell<(std::collections::HashSet<u32>, std::collections::HashMap<u32, u32>)> =
+        std::cell::RefCell::default();
+    /// The view lent for the rest of the thread once a test moves the cursor with none up.
+    static TEST_TARGETING_LOAN: std::cell::RefCell<Option<LiveLoan<TestView>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Move the targeting cursor on a bare VM as the app's view answers it, lending a view for the rest of the thread when none is up.
+#[cfg(test)]
+pub(crate) trait TestTargeting {
+    /// The cursor up or down; going up counts an arm, as the cast's cursor arm does (`0x80d7f7`).
+    fn set_spell_targeting(&mut self, active: bool);
+    /// The word's item half (`& 0x4010`).
+    fn set_item_pick_armed(&mut self, armed: bool);
+    /// The guids `SpellCanTargetUnit` passes while the cursor is up.
+    fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>);
+}
+
+/// Answer `known` as the player's known spells on this thread, as [`set_test_book`] does.
+#[cfg(test)]
+pub(crate) fn set_test_known(known: impl IntoIterator<Item = u32>) {
+    sticky_targeting();
+    TEST_KNOWN.with(|k| k.borrow_mut().0 = known.into_iter().collect());
+}
+
+/// Answer `next` as the rank table the known test walks on this thread.
+#[cfg(test)]
+pub(crate) fn set_test_next_ranks(next: std::collections::HashMap<u32, u32>) {
+    sticky_targeting();
+    TEST_KNOWN.with(|k| k.borrow_mut().1 = next);
+}
+
+#[cfg(test)]
+fn sticky_targeting() {
+    if read_live(|_| ()).is_none() {
+        // SAFETY: held until the thread ends, made with no other loan up.
+        let loan = unsafe { LiveLoan::new(TestView::default()) };
+        TEST_TARGETING_LOAN.with(|l| *l.borrow_mut() = Some(loan));
+    }
+}
+
+#[cfg(test)]
+impl TestTargeting for UiScript {
+    fn set_spell_targeting(&mut self, active: bool) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| {
+            let t = &mut t.borrow_mut().0;
+            if active && !t.active {
+                t.arms = t.arms.wrapping_add(1);
+            }
+            t.active = active;
+            if !active {
+                t.wants_item = false;
+            }
+        });
+    }
+
+    fn set_item_pick_armed(&mut self, armed: bool) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| t.borrow_mut().0.wants_item = armed);
+    }
+
+    fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| t.borrow_mut().1 = guids.into_iter().collect());
+    }
 }
 
 /// A test's pet book: the book before it comes back, and the view it lent with none up drops, when it drops.

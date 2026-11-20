@@ -362,7 +362,7 @@ pub(super) fn item_use_refusal_by_id(model: &super::Model, item_id: u32) -> Opti
     }
     let v = item_record(model, item_id)?;
     item_use_refusal(&v, &player_req(), |id| {
-        model.known_spells.known_or_higher(id)
+        super::read_live(|l| l.spell_known_or_higher(id)).unwrap_or(false)
     })
 }
 
