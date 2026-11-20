@@ -666,14 +666,14 @@ fn spawn_sheet_tiles(ship: &mut ChildSpawnerCommands, tiles: Vec<SizedImage>) {
 /// that departs the map the packet says we leave.
 #[allow(clippy::too_many_arguments)]
 fn pick_ship_route(
-    transfer: Option<Res<crate::net::PendingTransfer>>,
+    mut transfers: MessageReader<crate::net::TransferPendingMessage>,
     data: Option<Res<ShipRouteData>>,
     player: Option<Res<crate::player::Player>>,
     objects: Query<(&crate::net::Guid, Option<&crate::net::ObjectStore>)>,
     templates: Res<crate::go_templates::GameObjectTemplates>,
     mut screen: ResMut<LoadingScreen>,
 ) {
-    let Some(info) = transfer.filter(|t| t.is_changed()).and_then(|t| t.0) else {
+    let Some(&crate::net::TransferPendingMessage(info)) = transfers.read().last() else {
         return;
     };
     // No entry, or no map after it, is the plain raise (`0x401480`).
@@ -941,6 +941,7 @@ fn drive_loading_screen(
         MessageReader<crate::net::CharacterLoginFailedMessage>,
         Option<Res<crate::net::PendingTransfer>>,
         Option<Res<crate::char_select::Roster>>,
+        MessageReader<crate::net::TransferPendingMessage>,
     ),
 ) {
     let (
@@ -953,6 +954,7 @@ fn drive_loading_screen(
         mut refusals,
         transfer,
         roster,
+        mut transfer_packets,
     ) = edges;
     let (progress, focus) = (&stream.0, &stream.1);
     let now = time.elapsed_secs();
@@ -972,14 +974,19 @@ fn drive_loading_screen(
         screen.tip_edge = Some(TipEdge::Pick);
     }
     // `SMSG_TRANSFER_PENDING`: cover now, before the server unloads us, as both arms of the
-    // reference do (`0x4014ef`, `0x401509`); a transport's arm draws its route if it can.
-    if let Some(t) = transfer.as_ref().filter(|t| t.is_changed()) {
-        match &t.0 {
-            Some(info) => screen.raise_for_transfer(info.map_id, now),
-            // Cleared with no snap in flight is `SMSG_TRANSFER_ABORTED` (a worldport lands below
-            // this frame): stop waiting, and the resident old world clears the screen.
-            None => screen.awaiting_snap = false,
-        }
+    // reference do (`0x4014ef`, `0x401509`); a transport's arm draws its route if it can. Raised
+    // on the packet's message: the worldport that follows in the same drain has already taken
+    // the latch.
+    if let Some(crate::net::TransferPendingMessage(info)) = transfer_packets.read().last() {
+        screen.raise_for_transfer(info.map_id, now);
+    }
+    // The latch cleared with no snap in flight is `SMSG_TRANSFER_ABORTED` (a worldport lands below
+    // this frame): stop waiting, and the resident old world clears the screen.
+    if transfer
+        .as_ref()
+        .is_some_and(|t| t.is_changed() && t.0.is_none())
+    {
+        screen.awaiting_snap = false;
     }
     // A snap never re-raises a live screen ([`LoadingScreen::far_snap`]).
     for w in worldports.read() {
