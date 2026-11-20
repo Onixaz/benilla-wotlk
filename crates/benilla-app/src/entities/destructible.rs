@@ -21,6 +21,8 @@ use bevy::prelude::*;
 use crate::go_templates::GoTemplate;
 use crate::net::{Guid, NetEntity, ObjectStore};
 
+use benilla_world::terrain_stream::PendingCollider;
+
 use super::VisualAttached;
 
 /// `AnimationData` Stand, Custom0, Custom1 and Custom2.
@@ -293,6 +295,9 @@ impl BuildingSets<'_> {
 pub(super) fn track_building_states(
     mut commands: Commands,
     sets: BuildingSets,
+    parts: Query<(&Children, &GlobalTransform)>,
+    solid: Query<(), Or<(With<avian3d::prelude::Collider>, With<PendingCollider>)>>,
+    swaps: Query<&BuildingSwap>,
     mut buildings: Query<
         (
             Entity,
@@ -350,6 +355,37 @@ pub(super) fn track_building_states(
                 from: seen.state,
                 from_display: net.display_id,
             });
+            // The old model stays up beside the new one: until it is built, or through the rise.
+            if let Some(old) = swaps.get(entity).ok().and_then(|s| s.ghost) {
+                commands.entity(old).despawn();
+            }
+            let ghost = parts.get(entity).ok().map(|(children, gt)| {
+                let shown: Vec<Entity> = children.iter().filter(|&c| !solid.contains(c)).collect();
+                let ghost = commands
+                    .spawn((
+                        gt.compute_transform(),
+                        Visibility::default(),
+                        BuildingGhostOf(entity),
+                    ))
+                    .add_children(&shown)
+                    .id();
+                ghost
+            });
+            let rise = sets
+                .row(guid.0, &store)
+                .and_then(|row| Rise::plan(row, state, net.display_id));
+            match ghost {
+                Some(ghost) => {
+                    commands.entity(entity).insert(BuildingSwap {
+                        ghost: Some(ghost),
+                        rise,
+                        started: None,
+                    });
+                }
+                None => {
+                    commands.entity(entity).remove::<BuildingSwap>();
+                }
+            }
             super::live_display::rebuild_visual(&mut commands, entity);
         }
         *seen = BuildingState {
@@ -410,6 +446,205 @@ pub(super) fn drive_building_doodads(
                 None => doodad.done = true,
             },
             Some(_) => {}
+        }
+    }
+}
+
+/// The rise's default speed when the row's is 0 or less (`0x70dfa0`).
+const DEFAULT_HEAL_SPEED: f32 = 12.0;
+
+/// A rebuild's rise: a change into the intact or rebuilding state, on a row whose heal effect is
+/// not 4 (`0x70dfa0`). The new model climbs out of the ground over its own height at a third of
+/// the heal speed per second; effect 0 waits half the time, then eases up while the old model
+/// sinks over that first half; effects 1 to 3 ease up from the start, effect 2 sinking the old
+/// model as it goes, effect 1 keeping it standing, effect 3 dropping it at once (`0x70e750`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Rise {
+    effect: i32,
+    speed: f32,
+    /// The display the old model showed, whose height it sinks by.
+    from_display: Option<u32>,
+}
+
+impl Rise {
+    fn plan(row: &DestructibleModel, state: usize, from_display: Option<u32>) -> Option<Rise> {
+        if !matches!(state, 0 | 3) || row.heal_effect == 4 {
+            return None;
+        }
+        let speed = row.heal_effect_speed as f32;
+        Some(Rise {
+            effect: row.heal_effect,
+            speed: if speed > 0.0 {
+                speed
+            } else {
+                DEFAULT_HEAL_SPEED
+            },
+            from_display,
+        })
+    }
+
+    /// The rise's length for a model this tall.
+    fn duration(&self, height: f32) -> f32 {
+        height / (self.speed / 3.0)
+    }
+
+    /// At progress `p` in `[0, 1)`, how far below its rest the new model is and how far the old
+    /// one has sunk, each as a fraction of its own height; `None` for an old model left where it
+    /// stands.
+    fn depths(&self, p: f32) -> (f32, Option<f32>) {
+        if self.effect == 0 {
+            let up = if p > 0.5 {
+                let t = 1.0 - 2.0 * (p - 0.5);
+                1.0 - t * t * t
+            } else {
+                0.0
+            };
+            let sunk = if p >= 0.5 { 1.0 } else { 8.0 * p * p * p };
+            (1.0 - up, Some(sunk))
+        } else {
+            let r = 1.0 - p;
+            (r * r * r, (self.effect == 2).then_some(p * p * p))
+        }
+    }
+
+    /// Whether the old model stays up through the rise.
+    fn keeps_old(&self) -> bool {
+        self.effect != 3
+    }
+}
+
+/// A building's state swap in flight: the old model's render parts, moved onto a ghost so they
+/// outlive the teardown, and the rise, if the new state rises.
+#[derive(Component, Debug)]
+pub(crate) struct BuildingSwap {
+    /// `None` once the ghost is gone.
+    ghost: Option<Entity>,
+    rise: Option<Rise>,
+    /// When the new visual landed and the two models' heights.
+    started: Option<(f32, f32, f32)>,
+}
+
+/// A ghost of an old building model, freed with its building.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct BuildingGhostOf(Entity);
+
+/// A render part's rest placement under a rising building.
+#[derive(Component, Clone, Copy, Debug)]
+#[component(storage = "SparseSet")]
+pub(crate) struct RiseRest(Vec3);
+
+/// A building display's height, the vertical extent of its WMO's root box at the object's scale.
+fn display_height(
+    gameobjects: Option<&super::GameObjects>,
+    wmos: &Assets<benilla_assets::WmoModel>,
+    display: Option<u32>,
+    scale: f32,
+) -> f32 {
+    display
+        .and_then(|d| gameobjects?.models.get(&d))
+        .and_then(|dm| match &dm.handle {
+            super::ModelHandle::Wmo(h) => wmos.get(h),
+            _ => None,
+        })
+        .and_then(|w| w.root_bbox)
+        .map_or(0.0, |(min, max)| (max[2] - min[2]).max(0.0) * scale)
+}
+
+/// Run each building swap once the new model is built: without a rise the ghost goes; with one,
+/// the new model's render parts climb and the ghost sinks or stands until the rise ends, then
+/// the parts settle at rest. The colliders stay at rest throughout, the base collision the
+/// reference keeps on while the model is in motion.
+#[allow(clippy::type_complexity)] // the swap's part queries
+pub(super) fn tend_building_swaps(
+    mut commands: Commands,
+    time: Res<Time>,
+    gameobjects: Option<Res<super::GameObjects>>,
+    wmos: Res<Assets<benilla_assets::WmoModel>>,
+    mut swaps: Query<
+        (Entity, &mut BuildingSwap, &NetEntity, Option<&Children>),
+        With<VisualAttached>,
+    >,
+    solid: Query<(), Or<(With<avian3d::prelude::Collider>, With<PendingCollider>)>>,
+    mut parts: Query<(&mut Transform, Option<&RiseRest>), Without<BuildingGhostOf>>,
+    mut ghosts: Query<&mut Transform, (With<BuildingGhostOf>, Without<RiseRest>)>,
+    orphans: Query<(Entity, &BuildingGhostOf)>,
+    alive: Query<(), With<BuildingSwap>>,
+) {
+    // A ghost whose building left or settled goes with it.
+    for (ghost, of) in &orphans {
+        if !alive.contains(of.0) {
+            commands.entity(ghost).despawn();
+        }
+    }
+    let now = time.elapsed_secs();
+    for (entity, mut swap, net, children) in &mut swaps {
+        let Some(rise) = swap.rise else {
+            if let Some(ghost) = swap.ghost.take() {
+                commands.entity(ghost).despawn();
+            }
+            commands.entity(entity).remove::<BuildingSwap>();
+            continue;
+        };
+        if swap.started.is_none() {
+            swap.started = Some((
+                now,
+                display_height(gameobjects.as_deref(), &wmos, net.display_id, net.scale),
+                display_height(gameobjects.as_deref(), &wmos, rise.from_display, net.scale),
+            ));
+            if !rise.keeps_old() {
+                if let Some(ghost) = swap.ghost.take() {
+                    commands.entity(ghost).despawn();
+                }
+            }
+        }
+        let Some((start, height, old_height)) = swap.started else {
+            continue;
+        };
+        let duration = rise.duration(height);
+        let p = if duration > 0.0 {
+            (now - start) / duration
+        } else {
+            1.0
+        };
+        // The building's own placement; the parts query covers it, being no ghost.
+        let Ok(root) = parts.get(entity).map(|(tf, _)| *tf) else {
+            continue;
+        };
+        let root = &root;
+        // World up in the building's own frame, so a tilted or scaled placement sinks straight.
+        let down =
+            |root: &Transform, d: f32| root.rotation.inverse() * Vec3::NEG_Y * d / root.scale;
+        let done = p >= 1.0;
+        let (new_depth, old_depth) = if done { (0.0, None) } else { rise.depths(p) };
+        for c in children.into_iter().flatten() {
+            if solid.contains(*c) {
+                continue;
+            }
+            let Ok((mut tf, rest)) = parts.get_mut(*c) else {
+                continue;
+            };
+            let rest = match rest {
+                Some(r) => r.0,
+                None => {
+                    commands.entity(*c).insert(RiseRest(tf.translation));
+                    tf.translation
+                }
+            };
+            tf.translation = rest + down(root, new_depth * height);
+            if done {
+                commands.entity(*c).remove::<RiseRest>();
+            }
+        }
+        if let (Some(sunk), Some(mut g)) =
+            (old_depth, swap.ghost.and_then(|g| ghosts.get_mut(g).ok()))
+        {
+            g.translation = root.translation + Vec3::NEG_Y * sunk * old_height;
+        }
+        if done {
+            if let Some(ghost) = swap.ghost.take() {
+                commands.entity(ghost).despawn();
+            }
+            commands.entity(entity).remove::<BuildingSwap>();
         }
     }
 }
@@ -603,5 +838,50 @@ mod tests {
                 from_display: None
             }]
         );
+    }
+
+    fn rise(effect: i32) -> Rise {
+        Rise {
+            effect,
+            speed: 12.0,
+            from_display: None,
+        }
+    }
+
+    #[test]
+    fn only_intact_and_rebuilding_rise_and_effect_4_never() {
+        let row = |heal_effect, heal_effect_speed| DestructibleModel {
+            heal_effect,
+            heal_effect_speed,
+            ..Default::default()
+        };
+        assert!(Rise::plan(&row(0, 0), 1, None).is_none());
+        assert!(Rise::plan(&row(0, 0), 2, None).is_none());
+        assert!(Rise::plan(&row(4, 0), 0, None).is_none());
+        assert_eq!(Rise::plan(&row(0, 0), 0, None).unwrap().speed, 12.0);
+        // Row 58: effect 1 at speed 25.
+        let r = Rise::plan(&row(1, 25), 3, Some(7541)).unwrap();
+        assert_eq!((r.effect, r.speed, r.from_display), (1, 25.0, Some(7541)));
+        // A third of the speed per second: a 30-yard wall at 12 takes 7.5 s.
+        assert_eq!(rise(0).duration(30.0), 7.5);
+    }
+
+    #[test]
+    fn effect_0_waits_half_the_rise_while_the_old_model_sinks() {
+        let r = rise(0);
+        assert_eq!(r.depths(0.0), (1.0, Some(0.0)));
+        assert_eq!(r.depths(0.25), (1.0, Some(0.125)));
+        assert_eq!(r.depths(0.5), (1.0, Some(1.0)));
+        let (new, old) = r.depths(0.75);
+        assert!((new - 0.125).abs() < 1e-6, "{new}");
+        assert_eq!(old, Some(1.0));
+    }
+
+    #[test]
+    fn effects_1_to_3_ease_up_from_the_start() {
+        assert_eq!(rise(1).depths(0.5), (0.125, None));
+        assert_eq!(rise(2).depths(0.5), (0.125, Some(0.125)));
+        assert_eq!(rise(3).depths(0.5), (0.125, None));
+        assert!(rise(1).keeps_old() && rise(2).keeps_old() && !rise(3).keeps_old());
     }
 }
