@@ -12,6 +12,7 @@ use crate::dbc::{parse, str_at, u32_at};
 const GAMEOBJECT_DISPLAY_INFO: &str = "DBFilesClient\\GameObjectDisplayInfo.dbc";
 
 /// `displayId → model path` from GameObjectDisplayInfo.dbc.
+#[derive(Default)]
 pub struct GameObjectCatalog {
     models: HashMap<u32, String>,
 }

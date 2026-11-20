@@ -249,7 +249,12 @@ pub(super) fn heal_rig_starved(
                 benilla_world::rig_palette::RigSkin,
                 super::BoneAttach,
                 super::equipment::HeldAttached,
-                benilla_world::rig_palette::RigStarved,
+                (
+                    benilla_world::rig_palette::RigStarved,
+                    // The art kit goes on the new body again, as each model load applies it.
+                    super::art_kit::AppliedArtKit,
+                    super::art_kit::ArtKitPending,
+                ),
             )>()
             .insert((super::equipment::Reattached, ShownRebuild));
     }
@@ -315,6 +320,8 @@ pub(super) fn rebuild_visual(commands: &mut Commands, entity: Entity) {
             benilla_world::rig_palette::RigSkin,
             super::BoneAttach,
             super::equipment::HeldAttached,
+            // The art kit goes on the new body again, as each model load applies it.
+            (super::art_kit::AppliedArtKit, super::art_kit::ArtKitPending),
         )>()
         .insert(super::equipment::Reattached);
 }

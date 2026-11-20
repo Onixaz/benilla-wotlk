@@ -131,6 +131,10 @@ mod creature_families;
 pub use creature_families::{
     load_creature_families, load_pet_food_names, CreatureFamilies, CreatureFamily, PetFoodNames,
 };
+mod gameobject_art_kit;
+pub use gameobject_art_kit::{
+    load_gameobject_art_kits, ArtKit, GameObjectArtKits, ART_KIT_MODELS, ART_KIT_TEXTURES,
+};
 mod gameobjects;
 pub use gameobjects::{
     go_sound_slot, load_gameobject_catalog, load_gameobject_sounds, GameObjectCatalog,
