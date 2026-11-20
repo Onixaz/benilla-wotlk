@@ -338,6 +338,15 @@ impl LoadingScreen {
         self.ship = ship;
     }
 
+    /// A ridden transport's leg change on this map (`0x40ae30`): up with no snap to wait for,
+    /// showing the leg just left. A failed route clears any route and keeps the screen's last map,
+    /// as the reference leaves its map id alone here.
+    fn raise_for_ship_leg(&mut self, route: Option<ShipRoute>, now: f32) {
+        let map = if route.is_some() { None } else { self.map };
+        self.raise("ship leg", false, map, now);
+        self.set_ship(route);
+    }
+
     /// `SMSG_TRANSFER_PENDING`'s raise (`0x401480`): plain when no transport rides along
     /// (`0x40ab70`), else the transport raise (`0x40ad50`), which keeps no map once its route draws.
     fn raise_for_transfer(&mut self, map: u32, now: f32) {
@@ -404,7 +413,12 @@ impl Plugin for LoadingScreenPlugin {
             // streamer refocuses in Stream, so the cover lands on the same frame, never a flash.
             .add_systems(
                 Update,
-                (pick_ship_route, drive_loading_screen, draw_ship_route)
+                (
+                    pick_ship_route,
+                    follow_ship_leg,
+                    drive_loading_screen,
+                    draw_ship_route,
+                )
                     .chain()
                     .in_set(WorldStage::Present),
             );
@@ -694,6 +708,81 @@ fn pick_ship_route(
     };
     info!("loading screen: transport {entry} leaving map {from_map} → {pick:?}");
     screen.ship_pick = Some(pick);
+}
+
+/// The ridden transport's leg, last seen on this map, and the transport.
+#[derive(Default)]
+struct SeenShipLeg(Option<(Entity, u32)>);
+
+/// A ridden type-15 that changes leg on the current map raises the screen over the leg it left
+/// (`0x7134a0` → `0x40ae30`): Undercity to Grom'gol's mid-route teleport and its wrap. The leg only
+/// updates while the transport samples this map, and the first sight of a transport, after boarding
+/// or a worldport (whose re-create is a new object there), only records it.
+#[allow(clippy::type_complexity)]
+fn follow_ship_leg(
+    player: Option<Res<crate::player::Player>>,
+    current_map: Option<Res<CurrentMap>>,
+    transports: Query<(
+        &crate::net::Guid,
+        &crate::transport::Transport,
+        &crate::transport::TransportAnchor,
+    )>,
+    mut worldports: MessageReader<crate::net::WorldportMessage>,
+    templates: Res<crate::go_templates::GameObjectTemplates>,
+    data: Option<Res<ShipRouteData>>,
+    time: Res<Time<Real>>,
+    mut seen: Local<SeenShipLeg>,
+    mut screen: ResMut<LoadingScreen>,
+) {
+    if worldports.read().count() > 0 {
+        seen.0 = None;
+    }
+    let (Some(player), Some(current_map)) = (player, current_map) else {
+        return;
+    };
+    let Some((deck, (guid, transport, anchor))) = player
+        .ride_entity()
+        .and_then(|deck| transports.get(deck).ok().map(|t| (deck, t)))
+    else {
+        seen.0 = None;
+        return;
+    };
+    let Some(leg) = transport.ship_leg_at(anchor) else {
+        return;
+    };
+    if transport.sample_at(anchor, current_map.0).map != current_map.0 {
+        return;
+    }
+    let previous = match seen.0 {
+        Some((entity, previous)) if entity == deck => previous,
+        _ => {
+            seen.0 = Some((deck, leg));
+            return;
+        }
+    };
+    if previous == leg {
+        return;
+    }
+    seen.0 = Some((deck, leg));
+    let route = templates
+        .get(guid.0)
+        .and_then(|t| t.mo_transport)
+        .zip(data.as_ref())
+        .and_then(|(mo, d)| {
+            ship_route(
+                &d.splines,
+                &d.legs,
+                &d.continents,
+                mo.taxi_path_id,
+                previous,
+            )
+        });
+    info!(
+        "loading screen: transport {:#x} left leg {previous} for {leg} → route {}",
+        guid.0,
+        route.is_some()
+    );
+    screen.raise_for_ship_leg(route, time.elapsed_secs());
 }
 
 /// The route over the sheet (`0x408e10`): the dots up to the load's progress, then the two dock
@@ -1284,6 +1373,21 @@ mod tests {
         screen.raise_for_transfer(0, 0.0);
         screen.dismiss();
         assert_eq!(screen.ship, None, "the dismiss clears the route");
+    }
+
+    /// `0x40ae30`: no snap to wait for; a failed route keeps the screen's last map.
+    #[test]
+    fn a_ship_leg_raise_waits_for_no_snap_and_keeps_the_last_map_when_its_route_fails() {
+        let mut screen = LoadingScreen::default();
+        screen.raise("world entry", true, Some(0), 0.0);
+        screen.dismiss();
+        screen.raise_for_ship_leg(None, 1.0);
+        assert!(screen.active && !screen.awaiting_snap);
+        assert_eq!(screen.map, Some(0), "the map id the last raise left");
+        assert_eq!(screen.ship, None);
+        screen.dismiss();
+        screen.raise_for_ship_leg(Some(route()), 2.0);
+        assert_eq!((screen.map, screen.ship.clone()), (None, Some(route())));
     }
 
     /// The reference's raises store the map id with no guard.

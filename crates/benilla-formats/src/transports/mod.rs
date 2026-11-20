@@ -56,6 +56,8 @@ struct Frame {
     /// The [`Leg`] and control index of this frame's outbound segment.
     leg: usize,
     local_index: usize,
+    /// The reference's leg of this frame's node ([`ship_legs`]).
+    ship_leg: u32,
 }
 
 /// A kept node before the derived quantities.
@@ -67,6 +69,27 @@ struct RawFrame {
     delay_secs: f32,
     initial_orientation: f32,
     teleport: bool,
+    ship_leg: u32,
+}
+
+/// Each node's leg in the reference's own ship path (`0x7f90f0`): a leg opens at the first node,
+/// at a node on another map than its leg's, and after a teleport node (flag 1). It is the index
+/// the reference compares to spot a leg change (`0x7134a0`), which vmangos's legs do not keep:
+/// those never visit the path's end nodes.
+fn ship_legs(nodes: &[TaxiPathNode]) -> Vec<u32> {
+    let mut legs = Vec::with_capacity(nodes.len());
+    let mut leg: Option<(u32, u32)> = None; // (index, map)
+    let mut teleport = false;
+    for node in nodes {
+        leg = match leg {
+            Some((i, map)) if map == node.map_id && !teleport => Some((i, map)),
+            Some((i, _)) => Some((i + 1, node.map_id)),
+            None => Some((0, node.map_id)),
+        };
+        legs.push(leg.map_or(0, |(i, _)| i));
+        teleport = node.flags & 1 != 0;
+    }
+    legs
 }
 
 /// A run of keyframes ending at a teleport or the path's end: a non-cyclic Catmull-Rom spline
@@ -466,6 +489,7 @@ impl TransportTimetable {
         }
 
         // Phase A: the map-change skip (`TransportMgr.cpp:128-152`), end nodes never visited.
+        let ship_leg_of = ship_legs(nodes);
         let mut raws: Vec<RawFrame> = Vec::new();
         let mut map_change = false;
         for i in 1..n_raw - 1 {
@@ -494,6 +518,7 @@ impl TransportTimetable {
                     delay_secs: node.delay as f32,
                     initial_orientation,
                     teleport: false,
+                    ship_leg: ship_leg_of[i],
                 });
             }
         }
@@ -633,6 +658,7 @@ impl TransportTimetable {
                 next_arrive_time: next_arrive_time[j],
                 leg: leg_of[j],
                 local_index: local_index_of[j],
+                ship_leg: raws[j].ship_leg,
             })
             .collect();
 
@@ -670,6 +696,18 @@ impl TransportTimetable {
             }
         }
         self.period_ms = period_ms;
+    }
+
+    /// The reference's ship-path leg at `cycle_ms`: the leg of the frame the cycle is in. The
+    /// reference switches legs at its own leg end times (`0x7f82b0`); these are vmangos's frame
+    /// windows, which put the switch at the same teleport.
+    pub fn ship_leg(&self, cycle_ms: u32) -> u32 {
+        let cycle_ms = cycle_ms.min(self.period_ms.saturating_sub(1));
+        self.frames
+            .iter()
+            .find(|f| cycle_ms < f.next_arrive_time)
+            .or(self.frames.last())
+            .map_or(0, |f| f.ship_leg)
     }
 
     /// Position and heading at `cycle_ms` (`progress % period_ms`), as `ShipTransport::Update` and
