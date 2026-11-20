@@ -26,7 +26,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("DestructibleModelData", "#243 destructible buildings"),
     ("GameObjectArtKit", "#243 game object art kits"),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
-    ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),
     ("NamesProfanity", "#242 character name checks"),
     ("NamesReserved", "#242 character name checks"),

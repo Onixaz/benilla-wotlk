@@ -205,6 +205,12 @@ pub use light::{
 };
 mod loading_screen;
 pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};
+// The ship loading screen's route (`LoadingScreenTaxiSplines.dbc`).
+mod ship_route;
+pub use ship_route::{
+    continent_position, lit_dots, load_taxi_splines, ship_route, DockLegs, ShipRoute,
+    TaxiSplineRow, TaxiSplines,
+};
 mod liquid;
 pub use liquid::{mclq_liquid_type, LiquidKind, LiquidMesh};
 mod liquid_type;
