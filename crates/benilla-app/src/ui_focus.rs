@@ -117,65 +117,82 @@ fn on_break_target(
     }
 }
 
+/// The focus feed's inputs, released before its clear calls into Lua.
+#[derive(SystemParam)]
+struct FocusInputs<'w, 's> {
+    breaks: ResMut<'w, FocusBreaks>,
+    edges: MessageReader<'w, 's, FieldChanged>,
+    deselect: MessageWriter<'w, DeselectGuid>,
+    gate: GroupGate<'w, 's>,
+    me: Query<'w, 's, (), With<SelfPlayer>>,
+    memo: Local<'s, crate::ui_script::VmMemo<FocusMemo>>,
+}
+
 /// Apply the owed clears and the field-edge ones: `UNIT_FLAG_NOT_SELECTABLE` rising
 /// (`0x73c5b4`), a departed pet of ours or a party member's (`0x6d1a30`), and the world leaving
-/// with a focus outside the group (`0x528e44`).
-#[allow(clippy::too_many_arguments)]
-fn feed_focus(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut breaks: ResMut<FocusBreaks>,
-    mut edges: MessageReader<FieldChanged>,
-    mut deselect: MessageWriter<DeselectGuid>,
-    gate: GroupGate,
-    me: Query<(), With<SelfPlayer>>,
-    mut memo: Local<crate::ui_script::VmMemo<FocusMemo>>,
-) {
-    let Some(mut script) = script else {
-        breaks.0.clear();
-        return;
-    };
-    let memo = memo.get(&script);
-    for edge in edges.read() {
-        if edge.unit_field(FIELD_UNIT_FLAGS)
-            && (edge.old ^ edge.new) & edge.new & UNIT_FLAG_NOT_SELECTABLE != 0
-        {
-            break_target(edge.guid, &mut breaks, &mut deselect);
-        }
-        let pet_field = [FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON]
-            .iter()
-            .any(|&f| edge.unit_field(f) || edge.unit_field(f + 1));
-        let owner = edge.guid;
-        let watched =
-            Some(owner) == gate.self_guid.0 || gate.group.party_slots().any(|m| m.guid == owner);
-        if pet_field && watched {
-            let now = gate.store(owner).map_or([0; 2], |s| {
-                [
-                    s.0.unit_charm().unwrap_or(0),
-                    s.0.unit_summon().unwrap_or(0),
-                ]
-            });
-            let was = memo.pets.insert(owner, now).unwrap_or([0; 2]);
-            for (old, new) in was.into_iter().zip(now) {
-                // A pet that left and is no longer an object (`0x6d1a0e`).
-                if old != 0 && old != new && !gate.index.0.contains_key(&old) {
-                    breaks.0.push(old);
-                    deselect.write(DeselectGuid(old));
+/// with a focus outside the group (`0x528e44`). Exclusive: the clear's `PLAYER_FOCUS_CHANGED`
+/// (`0x51ff20`) fires with the `World` lent and no borrow held.
+fn feed_focus(world: &mut World, inputs: &mut bevy::ecs::system::SystemState<FocusInputs>) {
+    let script = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share);
+    let clear = {
+        let FocusInputs {
+            mut breaks,
+            mut edges,
+            mut deselect,
+            gate,
+            me,
+            mut memo,
+        } = inputs.get_mut(world);
+        let Some(script) = script.as_ref() else {
+            breaks.0.clear();
+            return;
+        };
+        let memo = memo.get(script);
+        for edge in edges.read() {
+            if edge.unit_field(FIELD_UNIT_FLAGS)
+                && (edge.old ^ edge.new) & edge.new & UNIT_FLAG_NOT_SELECTABLE != 0
+            {
+                break_target(edge.guid, &mut breaks, &mut deselect);
+            }
+            let pet_field = [FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON]
+                .iter()
+                .any(|&f| edge.unit_field(f) || edge.unit_field(f + 1));
+            let owner = edge.guid;
+            let watched = Some(owner) == gate.self_guid.0
+                || gate.group.party_slots().any(|m| m.guid == owner);
+            if pet_field && watched {
+                let now = gate.store(owner).map_or([0; 2], |s| {
+                    [
+                        s.0.unit_charm().unwrap_or(0),
+                        s.0.unit_summon().unwrap_or(0),
+                    ]
+                });
+                let was = memo.pets.insert(owner, now).unwrap_or([0; 2]);
+                for (old, new) in was.into_iter().zip(now) {
+                    // A pet that left and is no longer an object (`0x6d1a0e`).
+                    if old != 0 && old != new && !gate.index.0.contains_key(&old) {
+                        breaks.0.push(old);
+                        deselect.write(DeselectGuid(old));
+                    }
                 }
             }
         }
-    }
 
-    let focus = script.focus_guid();
-    let here = !me.is_empty();
-    if std::mem::replace(&mut memo.in_world, here)
-        && !here
-        && focus != 0
-        && !gate.member_or_pet(focus)
-    {
-        breaks.0.push(focus);
-    }
-    if breaks.0.drain(..).any(|g| g == focus) && focus != 0 {
-        script.set_focus_guid(0);
+        let focus = script.focus_guid();
+        let here = !me.is_empty();
+        if std::mem::replace(&mut memo.in_world, here)
+            && !here
+            && focus != 0
+            && !gate.member_or_pet(focus)
+        {
+            breaks.0.push(focus);
+        }
+        breaks.0.drain(..).any(|g| g == focus) && focus != 0
+    };
+    if let (true, Some(mut script)) = (clear, script) {
+        crate::ui_script::safe_world::lend_to(world, &mut script, |s| s.set_focus_guid(0));
     }
 }
 

@@ -209,43 +209,69 @@ pub(super) struct FedGates {
     lfg_signals: u32,
 }
 
+/// The menu gates' inputs, released before the signals call into Lua.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct GateInputs<'w, 's> {
+    group: Res<'w, GroupState>,
+    spells: Option<Res<'w, Spells>>,
+    actions: Res<'w, PlayerActions>,
+    self_q: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    fed: Local<'s, crate::ui_script::VmMemo<FedGates>>,
+}
+
 /// Push the difficulties, the LFG bit and the Refer-a-Friend state, and fire one
-/// `PARTY_LFG_RESTRICTED` per list that set the bit.
+/// `PARTY_LFG_RESTRICTED` per list that set the bit, with the `World` lent and no borrow held.
 pub(super) fn feed_menu_gates(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    group: Res<GroupState>,
-    spells: Option<Res<Spells>>,
-    actions: Res<PlayerActions>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut fed: Local<crate::ui_script::VmMemo<FedGates>>,
+    world: &mut World,
+    inputs: &mut bevy::ecs::system::SystemState<GateInputs>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+    else {
         return;
     };
-    let (fed, vm_reset) = fed.get_reset(&script);
-    script.set_difficulty(DifficultyState {
-        dungeon: group.current_dungeon_difficulty(),
-        player_dungeon: group.player_difficulty.dungeon,
-        raid: group.current_raid_difficulty(),
-        player_raid: group.player_difficulty.raid,
-    });
-    script.set_lfg_restricted(group.lfg_restricted);
-    script.set_refer_a_friend(ReferAFriendState {
-        grantable_levels: self_q
-            .iter()
-            .next()
-            .map_or(0, |s| s.0.player_raf_grantable_level()),
-        summon_spell: spells
-            .as_deref()
-            .and_then(|s| s.learned_with_effect(&actions.spells, SPELL_EFFECT_SUMMON_RAF_FRIEND))
-            .unwrap_or(0),
-    });
-    if vm_reset {
+    let signals = {
+        let GateInputs {
+            group,
+            spells,
+            actions,
+            self_q,
+            mut fed,
+        } = inputs.get_mut(world);
+        let (fed, vm_reset) = fed.get_reset(&script);
+        script.set_difficulty(DifficultyState {
+            dungeon: group.current_dungeon_difficulty(),
+            player_dungeon: group.player_difficulty.dungeon,
+            raid: group.current_raid_difficulty(),
+            player_raid: group.player_difficulty.raid,
+        });
+        script.set_lfg_restricted(group.lfg_restricted);
+        script.set_refer_a_friend(ReferAFriendState {
+            grantable_levels: self_q
+                .iter()
+                .next()
+                .map_or(0, |s| s.0.player_raf_grantable_level()),
+            summon_spell: spells
+                .as_deref()
+                .and_then(|s| {
+                    s.learned_with_effect(&actions.spells, SPELL_EFFECT_SUMMON_RAF_FRIEND)
+                })
+                .unwrap_or(0),
+        });
+        if vm_reset {
+            fed.lfg_signals = group.lfg_signals;
+        }
+        let owed = group.lfg_signals.wrapping_sub(fed.lfg_signals);
         fed.lfg_signals = group.lfg_signals;
-    }
-    while fed.lfg_signals != group.lfg_signals {
-        fed.lfg_signals = fed.lfg_signals.wrapping_add(1);
-        script.fire_event("PARTY_LFG_RESTRICTED", vec![]);
+        owed
+    };
+    if signals != 0 {
+        crate::ui_script::safe_world::lend_to(world, &mut script, |s| {
+            for _ in 0..signals {
+                s.fire_event("PARTY_LFG_RESTRICTED", vec![]);
+            }
+        });
     }
 }
 

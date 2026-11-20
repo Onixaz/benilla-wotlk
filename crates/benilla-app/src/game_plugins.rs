@@ -1757,7 +1757,22 @@ pub(crate) mod schedule_tests {
                     continue;
                 }
                 let takes = f.body.contains("mem::take(") || f.body.contains(".drain(");
-                let memo = f.params.contains("VmMemo<");
+                // An exclusive holder's memo sits in its `SystemState`'s parameter struct.
+                let state_memo = f
+                    .params
+                    .split("SystemState<")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['>', '<', ',']).next())
+                    .and_then(|ty| text.split(&format!("struct {}<", ty.trim())).nth(1))
+                    .and_then(|body| {
+                        body.split(
+                            "
+}",
+                        )
+                        .next()
+                    })
+                    .is_some_and(|body| body.contains("VmMemo<"));
+                let memo = f.params.contains("VmMemo<") || state_memo;
                 consumers.push((rel.clone(), f.name.to_string(), takes, memo));
             }
         }
