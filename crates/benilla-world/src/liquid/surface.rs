@@ -28,14 +28,14 @@ use benilla_formats::{
 #[derive(Resource, Default)]
 pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
-    /// The `LiquidType` rows, which decide how a WMO pool draws ([`PoolType`]).
+    /// The `LiquidType` rows, which decide how a liquid draws ([`TypeSettings`]).
     types: LiquidTypes,
 }
 
-/// What a WMO pool's `LiquidType` row decides about how it draws: its environment
-/// (`0x793d20`), its depth texture and its sheet's texture matrix (`0x8a5590`).
+/// What a liquid's `LiquidType` row decides about how it draws: a WMO pool's environment
+/// (`0x793d20`), its depth texture and the sheet's texture matrix, terrain water's too (`0x8a5590`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PoolType {
+pub(crate) struct TypeSettings {
     /// `Flags & 0x200`: the exterior environment in any group.
     exterior: bool,
     /// `Texture[1]` is a depth swatch, colour and alpha both by V.
@@ -45,10 +45,10 @@ pub(crate) struct PoolType {
     sheet: [[f32; 2]; 2],
 }
 
-impl Default for PoolType {
+impl Default for TypeSettings {
     /// A type with no row: an interior-capable pool on the band texture, its sheet unscaled.
     fn default() -> Self {
-        PoolType {
+        TypeSettings {
             exterior: false,
             swatch: false,
             sheet: [[1.0, 0.0], [0.0, 1.0]],
@@ -56,11 +56,11 @@ impl Default for PoolType {
     }
 }
 
-impl PoolType {
+impl TypeSettings {
     pub(crate) fn from_row(row: &LiquidTypeRow) -> Self {
         let (sin, cos) = row.sheet_rotation.sin_cos();
         let scale = row.sheet_scale;
-        PoolType {
+        TypeSettings {
             exterior: row.exterior_pool(),
             swatch: row.depth_texture.is_some_and(|t| t.is_swatch()),
             sheet: [[cos * scale, sin * scale], [-sin * scale, cos * scale]],
@@ -98,7 +98,7 @@ impl LiquidPath {
     /// A WMO pool's renderer: interior only in an interior group (`MOGP.flags & 0x48 == 0`) and for
     /// a type without `LiquidType.Flags & 0x200`, the reference's exterior test (`0x793d20`); an
     /// exterior pool whose type binds a depth swatch draws the swatch, as terrain water does.
-    pub(crate) fn wmo(group_interior: bool, pool: PoolType) -> Self {
+    pub(crate) fn wmo(group_interior: bool, pool: TypeSettings) -> Self {
         if group_interior && !pool.exterior {
             Self::WmoInterior
         } else if pool.swatch {
@@ -166,11 +166,11 @@ impl LiquidAssets {
             .map(|e| e.material.clone())
     }
 
-    /// What a WMO pool of `liquid_type` takes from its row; the default for a type with no row.
-    fn pool_type(&self, liquid_type: u32) -> PoolType {
+    /// What a liquid of `liquid_type` takes from its row; the default for a type with no row.
+    fn type_settings(&self, liquid_type: u32) -> TypeSettings {
         self.types
             .get(liquid_type)
-            .map_or_else(PoolType::default, PoolType::from_row)
+            .map_or_else(TypeSettings::default, TypeSettings::from_row)
     }
 }
 
@@ -218,7 +218,17 @@ pub(crate) fn spawn_liquids<'a>(
         entities.push(
             commands
                 .spawn((
-                    Mesh3d(meshes.add(liquid_bevy_mesh(lq, None, None))),
+                    // Water through its type's sheet matrix (Orange Slime's is ×2); magma keeps its
+                    // own coordinates.
+                    Mesh3d(
+                        meshes.add(liquid_bevy_mesh(
+                            lq,
+                            None,
+                            (!lq.kind.is_fullbright())
+                                .then(|| liquid.type_settings(lq.liquid_type))
+                                .as_ref(),
+                        )),
+                    ),
                     MeshMaterial3d(material),
                     Transform::IDENTITY,
                     LiquidSurface,
@@ -275,12 +285,12 @@ fn liquid_collider(lq: &LiquidMesh) -> Option<Collider> {
 }
 
 /// The render mesh for one [`LiquidMesh`] in its own space (absolute for MCLQ, model-local for WMO
-/// liquid): a flat up normal, the tiling UVs (through a WMO water pool's `sheet` matrix), and the
+/// liquid): a flat up normal, the tiling UVs (through a water type's `sheet` matrix), and the
 /// per-vertex depth `V` in UV1.x.
 fn liquid_bevy_mesh(
     lq: &LiquidMesh,
     body_color: Option<[f32; 3]>,
-    sheet: Option<&PoolType>,
+    sheet: Option<&TypeSettings>,
 ) -> Mesh {
     let positions: Vec<[f32; 3]> = lq
         .positions
@@ -331,8 +341,8 @@ pub(crate) fn spawn_wmo_liquids<'a>(
         return;
     };
     for lq in liquids {
-        let pool_type = liquid.pool_type(lq.liquid_type);
-        let path = LiquidPath::wmo(interior, pool_type);
+        let type_settings = liquid.type_settings(lq.liquid_type);
+        let path = LiquidPath::wmo(interior, type_settings);
         // The one path that can scroll, decided by the type, not the kind (`scrolls`).
         let scroll = scrolls(lq.liquid_type);
         // The interior arm's body colour via the pool's MLIQ `materialId`; none when fullbright.
@@ -358,7 +368,7 @@ pub(crate) fn spawn_wmo_liquids<'a>(
                 Mesh3d(meshes.add(liquid_bevy_mesh(
                     lq,
                     body_color,
-                    (!lq.kind.is_fullbright()).then_some(&pool_type),
+                    (!lq.kind.is_fullbright()).then_some(&type_settings),
                 ))),
                 MeshMaterial3d(material),
                 transform,
@@ -631,10 +641,10 @@ mod tests {
     /// depth swatch draws the swatch.
     #[test]
     fn a_wmo_pool_is_interior_only_in_an_interior_group_without_the_exterior_flag() {
-        let pool = |exterior, swatch| PoolType {
+        let pool = |exterior, swatch| TypeSettings {
             exterior,
             swatch,
-            ..PoolType::default()
+            ..TypeSettings::default()
         };
         assert_eq!(
             LiquidPath::wmo(true, pool(false, false)),
@@ -670,12 +680,12 @@ mod tests {
             sheet_scale: 0.5,
             sheet_rotation: std::f32::consts::FRAC_PI_2,
         };
-        let pool = PoolType::from_row(&row);
+        let pool = TypeSettings::from_row(&row);
         let close =
             |[a, b]: [f32; 2], [c, d]: [f32; 2]| (a - c).abs() < 1e-6 && (b - d).abs() < 1e-6;
         assert!(close(pool.sheet_uv([1.0, 0.0]), [0.0, 0.5]));
         assert!(close(pool.sheet_uv([0.0, 1.0]), [-0.5, 0.0]));
-        assert_eq!(PoolType::default().sheet_uv([3.0, 4.0]), [3.0, 4.0]);
+        assert_eq!(TypeSettings::default().sheet_uv([3.0, 4.0]), [3.0, 4.0]);
     }
 
     /// An ADT surface carries `ExteriorScene` and none of the components `UnownedSceneFilter`
@@ -727,7 +737,7 @@ mod tests {
 /// The scroll and fog-block rules against the real client files.
 #[cfg(test)]
 mod real_data {
-    use super::{LiquidKind, LiquidPath, PoolType};
+    use super::{LiquidKind, LiquidPath, TypeSettings};
     use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh, WmoLiquidRule};
     use std::collections::HashMap;
 
@@ -753,7 +763,7 @@ mod real_data {
                     interior,
                     types
                         .get(lq.liquid_type)
-                        .map_or_else(PoolType::default, PoolType::from_row),
+                        .map_or_else(TypeSettings::default, TypeSettings::from_row),
                 ),
             )
         };
