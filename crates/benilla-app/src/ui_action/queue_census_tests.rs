@@ -81,7 +81,10 @@ fn walk(dir: &Path, root: &Path, out: &mut BTreeMap<String, usize>) {
         if is_test_file(&rel) || HOME.contains(&rel.as_str()) {
             continue;
         }
-        let source = std::fs::read_to_string(&path).expect("a source file reads");
+        // A checkout's line ends do not move the `#[cfg(test)]` split.
+        let source = std::fs::read_to_string(&path)
+            .expect("a source file reads")
+            .replace("\r\n", "\n");
         let count = non_test(&source)
             .lines()
             .filter(|l| names_a_queue(l))
