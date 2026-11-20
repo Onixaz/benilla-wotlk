@@ -814,6 +814,7 @@ pub fn spawn_model_entities(
             // first real one decides the slot.
             active: false,
             parked_at: now,
+            fade_out: None,
         });
         // The lazy rig, only with skinnable parts: an emitter-only host never takes a slot.
         if !lazy_parts.is_empty() {
