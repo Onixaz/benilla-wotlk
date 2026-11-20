@@ -307,92 +307,123 @@ fn on_threat(
 
 /// The despawns' clears (`0x7345c0` from the unit's teardown), each entry's melee range, the view,
 /// then the tooltips, sounds, tutorial and signals the frame owes.
-#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
+/// The feed's inputs, released before it calls into Lua.
+#[derive(bevy::ecs::system::SystemParam)]
+struct ThreatInputs<'w, 's> {
+    threat: ResMut<'w, Threat>,
+    index: Res<'w, GuidIndex>,
+    units: Query<'w, 's, (&'static ObjectStore, &'static Transform)>,
+    me: Res<'w, SelfGuid>,
+    sounds: ResMut<'w, crate::sound::MessageSounds>,
+    tutorials: Option<MessageWriter<'w, crate::tutorial::TutorialEvent>>,
+}
+
+/// Exclusive: the tooltip refreshes and the unit signals run with the `World` lent, after the
+/// lists are settled and no borrow is held.
 fn feed_threat(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut threat: ResMut<Threat>,
-    index: Res<GuidIndex>,
-    units: Query<(&ObjectStore, &Transform)>,
-    me: Res<SelfGuid>,
-    mut sounds: ResMut<crate::sound::MessageSounds>,
-    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    world: &mut World,
+    inputs: &mut bevy::ecs::system::SystemState<ThreatInputs>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<ThreatView>>>,
 ) {
-    let unit_of = |guid: u64| {
-        index
-            .0
-            .get(&guid)
-            .and_then(|&e| units.get(e).ok())
-            .filter(|(s, _)| s.is_unit())
-    };
-    let gone: Vec<u64> = threat
-        .lists
-        .keys()
-        .copied()
-        .filter(|&g| unit_of(g).is_none())
-        .collect();
-    for unit in gone {
-        threat.clear(unit);
-        threat.lists.remove(&unit);
-    }
-    // `0x737560`: in range when `max(reachA + reachB + 4/3, 5)` squared reaches the squared
-    // distance between the two units.
-    for (&unit, held) in threat.lists.iter_mut() {
-        let Some((owner, owner_tf)) = unit_of(unit) else {
-            continue;
+    let script = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share);
+    let (tooltips, signals) = {
+        let ThreatInputs {
+            mut threat,
+            index,
+            units,
+            me,
+            mut sounds,
+            mut tutorials,
+        } = inputs.get_mut(world);
+        let unit_of = |guid: u64| {
+            index
+                .0
+                .get(&guid)
+                .and_then(|&e| units.get(e).ok())
+                .filter(|(s, _)| s.is_unit())
         };
-        for e in &mut held.list.entries {
-            e.in_melee = unit_of(e.guid).is_some_and(|(other, tf)| {
-                let reach = (owner.0.unit_combat_reach() + other.0.unit_combat_reach() + 4.0 / 3.0)
-                    .max(5.0);
-                reach * reach >= owner_tf.translation.distance_squared(tf.translation)
-            });
+        let gone: Vec<u64> = threat
+            .lists
+            .keys()
+            .copied()
+            .filter(|&g| unit_of(g).is_none())
+            .collect();
+        for unit in gone {
+            threat.clear(unit);
+            threat.lists.remove(&unit);
         }
-    }
+        // `0x737560`: in range when `max(reachA + reachB + 4/3, 5)` squared reaches the squared
+        // distance between the two units.
+        for (&unit, held) in threat.lists.iter_mut() {
+            let Some((owner, owner_tf)) = unit_of(unit) else {
+                continue;
+            };
+            for e in &mut held.list.entries {
+                e.in_melee = unit_of(e.guid).is_some_and(|(other, tf)| {
+                    let reach =
+                        (owner.0.unit_combat_reach() + other.0.unit_combat_reach() + 4.0 / 3.0)
+                            .max(5.0);
+                    reach * reach >= owner_tf.translation.distance_squared(tf.translation)
+                });
+            }
+        }
 
+        let Some(script) = script.as_ref() else {
+            return;
+        };
+        let mut script = script.share();
+        let view = ThreatView {
+            lists: threat
+                .lists
+                .iter()
+                .map(|(&g, held)| (g, held.list.clone()))
+                .collect(),
+        };
+        let last = pushed.get(&script);
+        if last.as_ref() != Some(&view) {
+            script.set_threat(view.clone());
+            *last = Some(view);
+        }
+        let play = script
+            .cvar("threatPlaySounds")
+            .is_some_and(|v| v.trim().parse::<i64>().unwrap_or(0) != 0);
+        for id in std::mem::take(&mut threat.sounds) {
+            if play {
+                sounds.push_kit(id);
+            }
+        }
+        if std::mem::take(&mut threat.tutorial) && script.threat_warning_enabled() {
+            let level =
+                me.0.and_then(unit_of)
+                    .and_then(|(s, _)| s.0.unit_level())
+                    .unwrap_or(0);
+            if level >= TUTORIAL_LEVEL {
+                if let Some(t) = tutorials.as_mut() {
+                    t.write(crate::tutorial::TutorialEvent::trigger(
+                        crate::tutorial::id::THREAT,
+                    ));
+                }
+            }
+        }
+        (
+            std::mem::take(&mut threat.tooltips),
+            std::mem::take(&mut threat.signals),
+        )
+    };
+    inputs.apply(world);
     let Some(mut script) = script else {
         return;
     };
-    let view = ThreatView {
-        lists: threat
-            .lists
-            .iter()
-            .map(|(&g, held)| (g, held.list.clone()))
-            .collect(),
-    };
-    let last = pushed.get(&script);
-    if last.as_ref() != Some(&view) {
-        script.set_threat(view.clone());
-        *last = Some(view);
-    }
-
-    for unit in std::mem::take(&mut threat.tooltips) {
-        script.refresh_unit_tooltip(unit);
-    }
-    let play = script
-        .cvar("threatPlaySounds")
-        .is_some_and(|v| v.trim().parse::<i64>().unwrap_or(0) != 0);
-    for id in std::mem::take(&mut threat.sounds) {
-        if play {
-            sounds.push_kit(id);
+    crate::ui_script::safe_world::lend_to(world, &mut script, |script| {
+        for unit in tooltips {
+            script.refresh_unit_tooltip(unit);
         }
-    }
-    if std::mem::take(&mut threat.tutorial) && script.threat_warning_enabled() {
-        let level =
-            me.0.and_then(unit_of)
-                .and_then(|(s, _)| s.0.unit_level())
-                .unwrap_or(0);
-        if level >= TUTORIAL_LEVEL {
-            if let Some(t) = tutorials.as_mut() {
-                t.write(crate::tutorial::TutorialEvent::trigger(
-                    crate::tutorial::id::THREAT,
-                ));
-            }
+        for (guid, signal) in signals {
+            script.fire_unit_event(guid, signal.event(), vec![]);
         }
-    }
-    for (guid, signal) in std::mem::take(&mut threat.signals) {
-        script.fire_unit_event(guid, signal.event(), vec![]);
-    }
+    });
 }
 
 #[cfg(test)]

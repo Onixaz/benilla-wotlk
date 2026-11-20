@@ -187,7 +187,28 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "TargetSetTail",
         "the selection setter's writes into the VM's model; its raises run after it with the `World` lent",
     ),
+    (
+        "ui_summon.rs",
+        "drain_summon",
+        "takes the answers `ConfirmSummon` and `CancelSummon` queued, a field drain",
+    ),
+    (
+        "ui_tabard.rs",
+        "sync_tabard_booth",
+        "reads the designer's shown flag and the pane's facing off the model",
+    ),
 ];
+
+/// Whether `CALLS_NO_LUA` argues the scheduled system `name` (`crate::module::item`).
+fn argued_system(name: &str) -> bool {
+    CALLS_NO_LUA.iter().any(|&(file, item, _)| {
+        let module = file
+            .trim_end_matches(".rs")
+            .trim_end_matches("/mod")
+            .replace('/', "::");
+        name.ends_with(&format!("{module}::{item}"))
+    })
+}
 
 /// Whether `CALLS_NO_LUA` argues `item` in `rel`.
 fn argued(rel: &str, item: &str) -> bool {
@@ -322,7 +343,7 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
                 let access = with_access.access.combined_access();
                 if access.has_resource_read(vm) || access.has_resource_write(vm) {
                     holders += 1;
-                    if !access.has_resource_read(mark) {
+                    if !access.has_resource_read(mark) && !argued_system(&system.name()) {
                         offenders.push(format!("{label:?}: {}", system.name()));
                     }
                 }

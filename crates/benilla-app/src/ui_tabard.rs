@@ -219,10 +219,7 @@ pub(crate) fn enter_world(world: &mut World) {
 }
 
 /// The pane's yaw onto the booth while the designer shows: rendering, no event, as the model frame reads its facing on every frame render.
-fn sync_tabard_booth(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
-    mut booth: ResMut<PaperDollBooth>,
-) {
+fn sync_tabard_booth(script: Option<NonSend<UiScript>>, mut booth: ResMut<PaperDollBooth>) {
     let Some(script) = script else {
         return;
     };
