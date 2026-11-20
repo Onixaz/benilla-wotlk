@@ -158,9 +158,7 @@ impl BindGate<'_> {
             PendingEquip::AutoEquip { .. } => "AUTOEQUIP_BIND_CONFIRM",
         };
         debug!("ui_bind_confirm: {event} index {index} for {rec:?}");
-        // Queued, not fired: the triggering action has already queued its `CURSOR_UPDATE`, which
-        // hides both equip dialogs (`UIParent.lua:357-361`). Fired now, the question would come
-        // first and be cancelled on the next tick.
+        // Queued for the tick: the drain runs after the call that asked, where 12340 signals inside it (`0x6dfb3d`, `0x6dfe31`).
         script.queue_event(event, vec![ScriptValue::Int(i64::from(index))]);
     }
 

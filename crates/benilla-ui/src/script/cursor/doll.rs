@@ -1,10 +1,10 @@
 //! The paper-doll cursor verbs: an equipped slot is an item source under
 //! [`super::EQUIPMENT_BAG`], so the shared cursor code handles its cancel, clear and world drop.
 
+use crate::script::container::SwapGate;
 use mlua::{Lua, Value};
 
 use crate::script::binding_abi::flag;
-use crate::script::container::ContainerMove;
 use crate::script::Model;
 
 use super::{clear_cursor, set_cursor, set_item_lock, CursorItem, CursorPayload, EQUIPMENT_BAG};
@@ -83,15 +83,8 @@ pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, i
             if is_inventory_item_locked(model, id) {
                 return false;
             }
-            model.container_moves.push(ContainerMove {
-                src_bag: held.bag,
-                src_slot: held.slot,
-                dst_bag: EQUIPMENT_BAG,
-                dst_slot: id,
-                count: None,
-            });
-            // The swap's clear leaves the held item locked (`0x6dfc0d`), then the slot's item locks (`0x5e89c7`).
-            super::clear_cursor_with(model, false, true);
+            // The swap runs (`0x5e89c0`), then the slot's item locks whatever it did (`0x5e89c7`).
+            crate::script::container::swap_held(model, &held, EQUIPMENT_BAG, id);
             set_item_lock(model, EQUIPMENT_BAG, id, true);
             true
         }
@@ -158,7 +151,7 @@ pub(super) fn cursor_can_go_in_slot(model: &Model, id: u32) -> bool {
 /// whole stack from a bag becomes `CMSG_AUTOEQUIP_ITEM`: the server picks the slot and swaps
 /// the displaced piece back (`ItemHandler.cpp:138-228`); an item off the doll's 23 slots goes back
 /// with nothing sent (`0x6dfcf3`); a split stays held. Returns whether to repaint.
-pub(super) fn auto_equip_cursor_item(model: &mut crate::script::ModelGuard<'_>) -> bool {
+pub(crate) fn auto_equip_cursor_item(model: &mut crate::script::ModelGuard<'_>) -> bool {
     match model.cursor.clone() {
         Some(CursorPayload::Item(item))
             if item.bag == EQUIPMENT_BAG && (1..=23).contains(&item.slot) =>
@@ -166,11 +159,42 @@ pub(super) fn auto_equip_cursor_item(model: &mut crate::script::ModelGuard<'_>) 
             clear_cursor(model);
             true
         }
-        // The equip goes out and the cursor clears, its item still locked until the answer (`0x6dfe81`, `0x6dfebd`).
         Some(CursorPayload::Item(item)) if item.bag >= 0 && item.count.is_none() => {
-            model.container_autoequips.push((item.bag, item.slot));
-            super::clear_cursor_with(model, false, true);
-            true
+            let gate =
+                crate::script::read_live(|l| l.auto_equip_gate(item.bag, item.slot)).flatten();
+            #[cfg(any(test, feature = "fixtures"))]
+            let gate = gate.or(model
+                .swap_gates
+                .get(&(item.bag, item.slot))
+                .map(|&g| (g, false)));
+            let (gate, ammo) = gate.unwrap_or((SwapGate::Send, false));
+            match gate {
+                // No item object: nothing moves (`0x6dfd45`).
+                SwapGate::Refuse => false,
+                // The record is out: its callback runs the equip again (`0x6dfd99`, `0x6dbbe0`).
+                SwapGate::Wait(entry) => {
+                    crate::script::item_stats::wait_item_record(
+                        model,
+                        entry,
+                        crate::script::ItemRecordWait::AutoEquip,
+                    );
+                    crate::script::item_stats::ask_item_record(model, entry);
+                    false
+                }
+                // `AUTOEQUIP_BIND_CONFIRM` is asked and the cursor stays as it was (`0x6dfe31`).
+                SwapGate::Ask(entry)
+                    if crate::script::item_stats::item_usable_by_id(model, entry) =>
+                {
+                    model.container_autoequips.push((item.bag, item.slot));
+                    false
+                }
+                // The equip goes out and the cursor clears, its item still locked until the answer (`0x6dfe81`, `0x6dfebd`); ammunition is set by its id and unlocks (`0x6dfe51`).
+                SwapGate::Send | SwapGate::Ask(_) => {
+                    model.container_autoequips.push((item.bag, item.slot));
+                    super::clear_cursor_with(model, ammo, true);
+                    true
+                }
+            }
         }
         _ => false,
     }
@@ -646,6 +670,48 @@ mod tests {
 
         assert!(s.eval::<bool>("return AutoEquipCursorItem()").unwrap());
         assert!(s.cursor_item().is_none());
+        assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
+    }
+
+    /// The auto-equip's bind question returns before the send's clear (`0x6dfe31`), as a record still out does (`0x6dfd99`), whose landing equips the item if it is still the one held (`0x6dbbe0`); no item object moves nothing (`0x6dfd45`).
+    #[test]
+    fn auto_equip_cursor_item_keeps_the_cursor_through_its_question_and_its_wait() {
+        use crate::script::container::SwapGate;
+        let item_id = one_fitting_bag_item().slots[&1].item_id;
+        let locked = |s: &UiScript| {
+            s.eval::<bool>("return select(3, GetContainerItemInfo(0, 1)) == 1")
+                .unwrap()
+        };
+
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Ask(item_id));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        crate::script::tick::fired::take();
+        assert!(!s.eval::<bool>("return AutoEquipCursorItem()").unwrap());
+        assert!(crate::script::tick::fired::names().is_empty());
+        assert!(s.cursor_item().is_some() && locked(&s));
+        assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
+
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Refuse);
+        s.run("PickupContainerItem(0, 1) AutoEquipCursorItem()")
+            .unwrap();
+        assert!(s.cursor_item().is_some() && s.take_container_autoequips().is_empty());
+
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Wait(item_id));
+        s.run("PickupContainerItem(0, 1) AutoEquipCursorItem()")
+            .unwrap();
+        assert!(s.cursor_item().is_some() && s.take_container_autoequips().is_empty());
+        // Another record landing equips nothing; the held item's own does.
+        s.set_swap_gate(0, 1, SwapGate::Send);
+        s.item_record_callback(item_id + 1, true, crate::script::ItemRecordWait::AutoEquip);
+        assert!(s.cursor_item().is_some());
+        s.item_record_callback(item_id, true, crate::script::ItemRecordWait::AutoEquip);
+        assert!(s.cursor_item().is_none() && locked(&s));
         assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
     }
 

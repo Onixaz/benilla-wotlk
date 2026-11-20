@@ -713,6 +713,11 @@ pub(crate) struct Model {
     /// object, only an item on terrain, and anything over nothing.
     /// Held-item bag moves, sent as `CMSG_SWAP_INV_ITEM` or `CMSG_SPLIT_ITEM`.
     pub(crate) container_moves: Vec<container::ContainerMove>,
+    /// The swaps that asked `EQUIP_BIND_CONFIRM` in their call (`0x6dfb3d`), for the app to file.
+    pub(crate) container_bind_asks: Vec<container::ContainerMove>,
+    /// A fixture's stand-in for the swap gate, by the put-down's `(bag, slot)`.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) swap_gates: HashMap<(i64, u32), container::SwapGate>,
     /// `(bag, slot)` clicks made in repair mode.
     pub(crate) container_repairs: Vec<(i64, u32)>,
     /// Picked `(bag, slot)`s; a paper-doll click is `EQUIPMENT_BAG` and its 1-based inventory slot.
@@ -1678,6 +1683,9 @@ impl Model {
             cursor_standing: 0,
             item_locks: Vec::new(),
             container_moves: Vec::new(),
+            container_bind_asks: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
+            swap_gates: HashMap::new(),
             container_repairs: Vec::new(),
             item_picks: Vec::new(),
             enchant_confirms: Vec::new(),

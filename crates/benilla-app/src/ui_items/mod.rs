@@ -34,7 +34,7 @@ pub(crate) use container_live::{BagRead, ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
 
-pub(crate) use drain::send_auto_equip;
+pub(crate) use drain::{auto_equip_gate, send_auto_equip, swap_gate};
 use drain::{
     drain_bag_autostores, drain_container_autoequips, drain_container_destroys,
     drain_container_moves, drain_container_repairs,

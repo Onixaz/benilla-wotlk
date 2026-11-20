@@ -153,7 +153,7 @@ pub struct ContainerState {
 /// One queued move from `(src_bag, src_slot)` to `(dst_bag, dst_slot)`. `count` is `None` for a
 /// whole stack (a move, a swap, or a merge the server tops up), `Some(n)` for a split placement
 /// (`CMSG_SPLIT_ITEM`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContainerMove {
     pub src_bag: i64,
     pub src_slot: u32,
@@ -514,10 +514,9 @@ pub(super) fn pickup_container_item(
             if refused {
                 return;
             }
-            // The slot's item locks (`0x5d82af`), the swap goes out and the cursor clears, its item still locked until the answer (`0x6dfc0d`).
+            // The slot's item locks (`0x5d82af`), then the swap runs (`0x5d82dc`).
             cursor::set_item_lock(model, bag, slot, true);
-            queue_move(model, &held, bag, slot, None);
-            cursor::clear_cursor_with(model, false, true);
+            swap_held(model, &held, bag, slot);
         }
         // Mode 5, a held vendor row, buys into this slot whatever it holds: `CMSG_BUY_ITEM_IN_SLOT`
         // (0x1a3) with count 1, and the cursor clears either way. Deviation: a row that no longer
@@ -557,6 +556,88 @@ pub(super) fn pickup_container_item(
             // Mode 2, money, stays held for a money frame's DropFunc.
             | CursorPayload::Money(_),
         ) => {}
+    }
+}
+
+/// What the item swap does with its two ends before its send (`0x6df890`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapGate {
+    /// The swap goes out and the cursor clears, its item still locked (`0x6dfc04`, `0x6dfc0d`).
+    Send,
+    /// An unbound item is being equipped and its record is not cached: the swap is kept for the record's callback and nothing else moves (`0x6dfa1d`, `0x6db6f0`).
+    Wait(u32),
+    /// The item being equipped binds when equipped (`0x6dfaac`): `EQUIP_BIND_CONFIRM` is asked if the player can use it (`0x6dfac1`, `0x6dfb3d`), and the cursor stays as it was.
+    Ask(u32),
+    /// The other end's bag is not held: nothing goes out (`0x6df98f` -> `0x6dfb45`).
+    Refuse,
+}
+
+/// The item swap of the held item with `(dst_bag, dst_slot)` (`0x6df890`): the send clears the cursor with its item still locked (`0x6dfc0d`); a bind question, a record still out and a refusal return before it (`0x6dfb45`, `0x6dfb4d`), the cursor holding.
+pub(crate) fn swap_held(
+    model: &mut crate::script::ModelGuard<'_>,
+    held: &CursorItem,
+    dst_bag: i64,
+    dst_slot: u32,
+) {
+    let mv = ContainerMove {
+        src_bag: held.bag,
+        src_slot: held.slot,
+        dst_bag,
+        dst_slot,
+        count: None,
+    };
+    match swap_gate(model, &mv) {
+        SwapGate::Send => {
+            model.container_moves.push(mv);
+            cursor::clear_cursor_with(model, false, true);
+        }
+        SwapGate::Ask(_) => model.container_bind_asks.push(mv),
+        SwapGate::Wait(entry) => {
+            super::item_stats::wait_item_record(model, entry, super::ItemRecordWait::Swap(mv));
+            super::item_stats::ask_item_record(model, entry);
+        }
+        SwapGate::Refuse => {}
+    }
+}
+
+/// The swap's gate read at the call; an item the player cannot use asks nothing (`0x6dfac1`), and with no view answering the swap goes out.
+fn swap_gate(model: &super::Model, mv: &ContainerMove) -> SwapGate {
+    let gate =
+        super::read_live(|l| l.swap_gate((mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)))
+            .flatten();
+    #[cfg(any(test, feature = "fixtures"))]
+    let gate = gate.or(model.swap_gates.get(&(mv.dst_bag, mv.dst_slot)).copied());
+    match gate.unwrap_or(SwapGate::Send) {
+        SwapGate::Ask(entry) if !super::item_stats::item_usable_by_id(model, entry) => {
+            SwapGate::Send
+        }
+        gate => gate,
+    }
+}
+
+impl super::UiScript {
+    /// The swaps that asked `EQUIP_BIND_CONFIRM` in their call, taken: the app files each and raises its question.
+    pub fn take_container_bind_asks(&mut self) -> Vec<ContainerMove> {
+        drain_field!(self, container_bind_asks)
+    }
+
+    /// A fixture's stand-in for the swap gate of a put-down at `(bag, slot)`.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn set_swap_gate(&mut self, bag: i64, slot: u32, gate: SwapGate) {
+        self.model_mut().swap_gates.insert((bag, slot), gate);
+    }
+
+    /// A kept swap's record landed (`0x6db6f0`): the swap runs again from its two ends, unsuppressed, and its send clears whatever the cursor holds (`0x6db784`).
+    pub(crate) fn swap_record_landed(&mut self, mv: ContainerMove) {
+        let mut model = self.model_mut();
+        match swap_gate(&model, &mv) {
+            SwapGate::Send => {
+                model.container_moves.push(mv);
+                cursor::clear_cursor_with(&mut model, false, true);
+            }
+            SwapGate::Ask(_) => model.container_bind_asks.push(mv),
+            SwapGate::Wait(_) | SwapGate::Refuse => {}
+        }
     }
 }
 
@@ -1001,8 +1082,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContainerMove, ContainerSlot, ContainerState, PendingWrap, UiCursorMode};
+    use super::{
+        ContainerMove, ContainerSlot, ContainerState, PendingWrap, SwapGate, UiCursorMode,
+    };
+    use crate::script::cursor::EQUIPMENT_BAG;
     use crate::script::{MerchantItem, MerchantState, UiScript};
+    use std::collections::HashMap;
 
     fn backpack() -> ContainerState {
         let mut slots = std::collections::HashMap::new();
@@ -1237,6 +1322,163 @@ mod tests {
         assert_eq!(s.gift_wrap_armed(), None);
         assert!(s.take_container_wraps().is_empty(), "nothing wrapped");
         assert_eq!(s.take_container_uses(), vec![(0, 4)]);
+    }
+
+    /// A two-item backpack and a helmet worn in the head slot.
+    fn swap_rig() -> UiScript {
+        let mut s = UiScript::new().unwrap();
+        let mut slots = HashMap::new();
+        for (slot, item_id) in [(1, 1234), (2, 4500)] {
+            slots.insert(
+                slot,
+                ContainerSlot {
+                    item_id,
+                    count: 1,
+                    equip_slots: vec![1],
+                    ..Default::default()
+                },
+            );
+        }
+        s.set_container(
+            0,
+            Some(ContainerState {
+                bag_family: 0,
+                name: None,
+                num_slots: 16,
+                slots,
+            }),
+        );
+        let mut worn: crate::script::InventorySlots = Default::default();
+        worn[1] = Some(crate::script::InvSlotView {
+            item_id: 77,
+            count: 1,
+            equip_slots: vec![1],
+            ..Default::default()
+        });
+        s.set_inventory_slots(worn);
+        s
+    }
+
+    fn slot_locked(s: &UiScript, slot: u32) -> bool {
+        s.eval::<bool>(&format!(
+            "return select(3, GetContainerItemInfo(0, {slot})) == 1"
+        ))
+        .unwrap()
+    }
+
+    /// A swap that asks `EQUIP_BIND_CONFIRM` returns before the send and the clear (`0x6dfb3d`, `0x6dfb45`): the cursor still holds the item, both ends locked as the callers left them (`0x5d82af`, `0x5e89c7`), and nothing goes out.
+    #[test]
+    fn a_swap_that_asks_the_bind_leaves_the_cursor_holding() {
+        // A bag slot put-down of a worn item over a bind-on-equip one.
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 1, SwapGate::Ask(0));
+        s.run("PickupInventoryItem(1)").unwrap();
+        crate::script::tick::fired::take();
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["ITEM_LOCK_CHANGED", "ITEM_LOCKED"],
+            "the slot's item locks and no CURSOR_UPDATE follows"
+        );
+        assert!(s.cursor_item().is_some_and(|i| i.bag == EQUIPMENT_BAG));
+        assert!(s.take_container_moves().is_empty());
+        assert_eq!(
+            s.take_container_bind_asks(),
+            [ContainerMove {
+                src_bag: EQUIPMENT_BAG,
+                src_slot: 1,
+                dst_bag: 0,
+                dst_slot: 1,
+                count: None,
+            }]
+        );
+        assert!(slot_locked(&s, 1));
+
+        // The doll's put-down of a bag item: the slot's item locks after the swap returns.
+        let mut s = swap_rig();
+        s.set_swap_gate(EQUIPMENT_BAG, 1, SwapGate::Ask(0));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        crate::script::tick::fired::take();
+        s.run("PickupInventoryItem(1)").unwrap();
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["ITEM_LOCK_CHANGED", "ITEM_LOCKED"]
+        );
+        assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
+        assert!(s.take_container_moves().is_empty());
+        assert_eq!(s.take_container_bind_asks().len(), 1);
+        assert!(s
+            .eval::<bool>("return IsInventoryItemLocked(1) == 1")
+            .unwrap());
+    }
+
+    /// A swap refused before its send (`0x6df991` -> `0x6dfb45`) and one kept for its record (`0x6dfa1d`) both return with the cursor holding and nothing sent; the record's landing runs the kept swap, whose send clears the cursor with the item still locked (`0x6db784`, `0x6dfc0d`).
+    #[test]
+    fn a_refused_or_waiting_swap_leaves_the_cursor_holding() {
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 2, SwapGate::Refuse);
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+            .unwrap();
+        assert!(s.cursor_item().is_some_and(|i| i.slot == 1));
+        assert!(s.take_container_moves().is_empty() && s.take_container_bind_asks().is_empty());
+        assert!(
+            slot_locked(&s, 2),
+            "the slot's item locked before the swap ran"
+        );
+
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 2, SwapGate::Wait(4500));
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+            .unwrap();
+        assert!(s.cursor_item().is_some() && s.take_container_moves().is_empty());
+        let mv = ContainerMove {
+            src_bag: 0,
+            src_slot: 1,
+            dst_bag: 0,
+            dst_slot: 2,
+            count: None,
+        };
+        assert_eq!(
+            std::mem::take(&mut s.model_mut().item_record_waits),
+            [(4500, crate::script::ItemRecordWait::Swap(mv))]
+        );
+        // A record that did not land runs nothing (`0x6db760`).
+        s.item_record_callback(4500, false, crate::script::ItemRecordWait::Swap(mv));
+        assert!(s.cursor_item().is_some() && s.take_container_moves().is_empty());
+        s.set_swap_gate(0, 2, SwapGate::Send);
+        crate::script::tick::fired::take();
+        s.item_record_callback(4500, true, crate::script::ItemRecordWait::Swap(mv));
+        assert_eq!(crate::script::tick::fired::names(), ["CURSOR_UPDATE"]);
+        assert_eq!(s.take_container_moves(), [mv]);
+        assert!(s.cursor_payload().is_none() && slot_locked(&s, 1));
+    }
+
+    /// An item the player cannot use asks nothing: the swap goes out (`0x6dfac8`).
+    #[test]
+    fn a_bind_on_equip_item_the_player_cannot_use_swaps_unasked() {
+        let mut s = swap_rig();
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 40,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        s.set_item_template(
+            4500,
+            crate::script::ItemTemplateView {
+                allowable_class: -1,
+                allowable_race: -1,
+                required_level: 60,
+                ..Default::default()
+            },
+        );
+        s.set_swap_gate(0, 2, SwapGate::Ask(4500));
+        assert!(!s.item_usable(4500));
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+            .unwrap();
+        assert!(s.cursor_payload().is_none());
+        assert_eq!(s.take_container_moves().len(), 1);
+        assert!(s.take_container_bind_asks().is_empty());
     }
 
     /// The put-down's clear leaves the held item locked until the answer (`0x6dfc0d`).

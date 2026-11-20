@@ -900,6 +900,16 @@ pub trait LiveState {
         None
     }
 
+    /// The item swap's gate over its two ends, each `(bag, 1-based slot)` (`0x6df890`); `None` with no active player held.
+    fn swap_gate(&self, _src: (i64, u32), _dst: (i64, u32)) -> Option<super::SwapGate> {
+        None
+    }
+
+    /// `AutoEquipCursorItem`'s gate over the held item at `(bag, 1-based slot)` and whether it is ammunition (`0x6dfd45`-`0x6dfe51`); `None` with no active player held.
+    fn auto_equip_gate(&self, _bag: i64, _slot: u32) -> Option<(super::SwapGate, bool)> {
+        None
+    }
+
     /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
     fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
         None

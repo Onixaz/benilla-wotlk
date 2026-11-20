@@ -567,6 +567,10 @@ pub enum ItemRecordWait {
     QuestItem,
     /// A quest tooltip's, one per build (`0x622984`).
     QuestTooltip(crate::widget::FrameHandle),
+    /// `AutoEquipCursorItem`'s, which equips the held item again if it is still that item (`0x6dfd99` -> `0x6dbbe0`).
+    AutoEquip,
+    /// An item swap kept for the record of the item it equips, one per swap (`0x6dfa1d`).
+    Swap(super::container::ContainerMove),
 }
 
 impl ItemRecordWait {
@@ -605,6 +609,14 @@ impl super::UiScript {
             }
             ItemRecordWait::QuestItem if landed => self.fire_event("QUEST_ITEM_UPDATE", vec![]),
             ItemRecordWait::QuestTooltip(h) if landed => self.quest_tooltip_callback(h),
+            ItemRecordWait::Swap(mv) if landed => self.swap_record_landed(mv),
+            ItemRecordWait::AutoEquip if landed => {
+                let mut model = self.model_mut();
+                let held = matches!(&model.cursor, Some(super::cursor::CursorPayload::Item(i)) if i.item_id == item_id);
+                if held {
+                    super::cursor::doll::auto_equip_cursor_item(&mut model);
+                }
+            }
             _ => {}
         }
     }

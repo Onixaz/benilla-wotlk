@@ -2,8 +2,6 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use crate::script::container::ContainerMove;
-
 use super::{
     clear_cursor, clear_cursor_with, set_cursor, set_item_lock, CursorItem, CursorPayload,
 };
@@ -94,17 +92,10 @@ pub(super) fn put_item_in_bag(model: &mut crate::script::ModelGuard<'_>, live: u
         clear_cursor(model);
         return true;
     }
-    // A bag off a bag slot, or any container, swaps with this one: the slot's bag locks (`0x5e8ea1`, `0x5e8ede`), the swap goes out and the cursor clears, its item still locked (`0x6dfc0d`).
+    // A bag off a bag slot, or any container, swaps with this one: the slot's bag locks (`0x5e8ea1`, `0x5e8ede`), then the swap runs (`0x5e8f0c`).
     if is_container(&held) || (held.bag == EQUIPMENT_BAG && (20..=23).contains(&held.slot)) {
         set_item_lock(model, EQUIPMENT_BAG, live, true);
-        model.container_moves.push(ContainerMove {
-            src_bag: held.bag,
-            src_slot: held.slot,
-            dst_bag: EQUIPMENT_BAG,
-            dst_slot: live,
-            count: None,
-        });
-        clear_cursor_with(model, false, true);
+        crate::script::container::swap_held(model, &held, EQUIPMENT_BAG, live);
         return true;
     }
 

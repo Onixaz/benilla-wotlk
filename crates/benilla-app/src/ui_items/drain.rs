@@ -727,6 +727,18 @@ pub(super) fn drain_container_moves(
             item_slot: item_wire_slot,
         });
     }
+    // A swap that asked in its call is filed and its question raised (`0x6dface`, `0x6dfb3d`); nothing goes out.
+    for mv in script.take_container_bind_asks() {
+        gate.defer_equip(
+            &mut script,
+            crate::ui_bind_confirm::PendingEquip::Swap {
+                src_bag: mv.src_bag,
+                src_slot: mv.src_slot,
+                dst_bag: mv.dst_bag,
+                dst_slot: mv.dst_slot,
+            },
+        );
+    }
     for mv in script.take_container_moves() {
         send_container_move(
             &mut script,
@@ -746,6 +758,84 @@ pub(super) fn drain_container_moves(
 fn is_equip_position(bag_index: u8, slot: u8) -> bool {
     let bank_bags = super::BANK_BAG_SLOT_FIRST..super::BANK_BAG_SLOT_FIRST + super::BANK_BAGS;
     bag_index == BAG_PLAYER_INVENTORY && (slot <= 22 || bank_bags.contains(&slot))
+}
+
+/// The item swap's gate over its two ends before its send (`0x6df890`): with exactly one end an equip position, the other end's bag must be held (`0x6df991`, `0x6df9a2`) and its unbound item's record decides, a miss keeping the swap (`0x6dfa1d`) and a bind-on-equip one asking (`0x6dfaac`).
+pub(crate) fn swap_gate(
+    me: &benilla_protocol::ObjectFields,
+    objects: &Objects,
+    items: &Items,
+    enchants: Option<&crate::items::Enchants>,
+    src: (i64, u32),
+    dst: (i64, u32),
+) -> benilla_ui::script::SwapGate {
+    use benilla_ui::script::SwapGate;
+    let (Some(s), Some(d)) = (wire_pos(src.0, src.1), wire_pos(dst.0, dst.1)) else {
+        return SwapGate::Refuse;
+    };
+    if is_equip_position(d.0, d.1) == is_equip_position(s.0, s.1) {
+        return SwapGate::Send;
+    }
+    let ((bag, slot), (bag_index, _)) = if is_equip_position(d.0, d.1) {
+        (src, s)
+    } else {
+        (dst, d)
+    };
+    // A worn or bank bag's object, where the end is inside one.
+    if bag_index != BAG_PLAYER_INVENTORY {
+        let held = me
+            .player_slot(bag_index)
+            .filter(|&g| g != 0)
+            .is_some_and(|g| objects.object(g).is_some());
+        if !held {
+            return SwapGate::Refuse;
+        }
+    }
+    let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
+    let Some(fields) = slot_guid(me, bag, slot0, objects).and_then(|g| objects.object(g)) else {
+        return SwapGate::Send;
+    };
+    if crate::items::already_bound(fields, enchants) {
+        return SwapGate::Send;
+    }
+    let Some(entry) = fields.object_entry() else {
+        return SwapGate::Send;
+    };
+    match items.template_cached(entry) {
+        None => SwapGate::Wait(entry),
+        Some(t) if t.bonding == crate::ui_bind_confirm::BIND_WHEN_EQUIPPED => SwapGate::Ask(entry),
+        Some(_) => SwapGate::Send,
+    }
+}
+
+/// `AutoEquipCursorItem`'s gate over the held item (`0x6dfc40`): no item object refuses (`0x6dfd45`), an unbound item's record decides as the swap's does (`0x6dfd99`, `0x6dfda6`), and the class picks the ammunition arm (`0x6dfe51`).
+pub(crate) fn auto_equip_gate(
+    me: &benilla_protocol::ObjectFields,
+    objects: &Objects,
+    items: &Items,
+    enchants: Option<&crate::items::Enchants>,
+    bag: i64,
+    slot: u32,
+) -> (benilla_ui::script::SwapGate, bool) {
+    use benilla_ui::script::SwapGate;
+    let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
+    let Some(fields) = slot_guid(me, bag, slot0, objects).and_then(|g| objects.object(g)) else {
+        return (SwapGate::Refuse, false);
+    };
+    let template = fields
+        .object_entry()
+        .map(|entry| (entry, items.template_cached(entry)));
+    if !crate::items::already_bound(fields, enchants) {
+        match template {
+            Some((entry, None)) => return (SwapGate::Wait(entry), false),
+            Some((entry, Some(t))) if t.bonding == crate::ui_bind_confirm::BIND_WHEN_EQUIPPED => {
+                return (SwapGate::Ask(entry), false);
+            }
+            _ => {}
+        }
+    }
+    let ammo = template.is_some_and(|(_, t)| t.is_some_and(|t| t.class == 6));
+    (SwapGate::Send, ammo)
 }
 
 /// One container move: the soulbind deferral, then the send; the verb locked its items at its own steps (`0x5d82af`, `0x5d822f`). A whole stack
@@ -1459,6 +1549,210 @@ mod bind_confirm_tests {
     /// `PLAYER_FIELD_PACK_SLOT_1`, backpack slot 1's guid pair.
     const F_PACK_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1;
     const F_OBJECT_ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+
+    /// A world holding the axe in backpack slot 1, its record cached or not, and a bare VM.
+    fn axe_world(
+        bonding: Option<u32>,
+        bound: bool,
+    ) -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.init_resource::<PendingItemOps>()
+            .init_resource::<crate::ui_bind_confirm::PendingEquips>()
+            .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
+            .init_resource::<Items>()
+            .init_resource::<crate::names::NameCache>()
+            .init_resource::<crate::net::GuidIndex>()
+            .insert_resource(crate::net::SelfGuid(Some(0x42)))
+            .insert_resource(NetCommands(tx));
+        let me = app
+            .world_mut()
+            .spawn((
+                SelfPlayer,
+                ObjectStore(ObjectFields::from_pairs(&[
+                    (F_PACK_SLOT_1, AXE_GUID as u32),
+                    (F_PACK_SLOT_1 + 1, (AXE_GUID >> 32) as u32),
+                ])),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(0x42, me);
+        crate::items::test_spawn_item(
+            app.world_mut(),
+            AXE_GUID,
+            ObjectFields::from_pairs(&[
+                (F_OBJECT_ENTRY, FLURRY_AXE),
+                (F_ITEM_FLAGS, u32::from(bound)),
+            ]),
+            false,
+        );
+        if let Some(bonding) = bonding {
+            app.world_mut().resource_mut::<Items>().insert_template(
+                FLURRY_AXE,
+                Some(ItemInfo {
+                    bonding,
+                    inventory_type: 17,
+                    ..crate::items::test_template("Flurry Axe")
+                }),
+            );
+        }
+        app.insert_non_send_resource(UiScript::new().unwrap());
+        (app, rx)
+    }
+
+    fn gate_of(app: &mut App, dst: (i64, u32)) -> benilla_ui::script::SwapGate {
+        app.world_mut()
+            .run_system_once(move |objects: Objects, items: Res<Items>| {
+                swap_gate(
+                    objects.player_object().expect("the player"),
+                    &objects,
+                    &items,
+                    None,
+                    (0, 1),
+                    dst,
+                )
+            })
+            .unwrap()
+    }
+
+    /// The swap's gate before its send (`0x6df890`): only an equip of an unbound item reads its record, a miss keeping the swap (`0x6dfa1d`), bonding 2 asking (`0x6dfaac`); a bag end whose bag is not held refuses (`0x6df991`).
+    #[test]
+    fn the_swap_gate_reads_the_equipped_items_record() {
+        use benilla_ui::script::SwapGate;
+        let main_hand = (benilla_ui::script::EQUIPMENT_BAG, 16);
+        let (mut app, _rx) = axe_world(Some(2), false);
+        assert_eq!(gate_of(&mut app, main_hand), SwapGate::Ask(FLURRY_AXE));
+        assert_eq!(gate_of(&mut app, (0, 2)), SwapGate::Send, "no equip end");
+        for bonding in [0, 1, 3, 4] {
+            let (mut app, _rx) = axe_world(Some(bonding), false);
+            assert_eq!(gate_of(&mut app, main_hand), SwapGate::Send, "{bonding}");
+        }
+        let (mut app, _rx) = axe_world(Some(2), true);
+        assert_eq!(gate_of(&mut app, main_hand), SwapGate::Send, "bound");
+        let (mut app, _rx) = axe_world(None, false);
+        assert_eq!(gate_of(&mut app, main_hand), SwapGate::Wait(FLURRY_AXE));
+        // The worn item put down into bag 1, which holds no bag object.
+        let (mut app, _rx) = axe_world(Some(2), false);
+        let gate = app
+            .world_mut()
+            .run_system_once(|objects: Objects, items: Res<Items>| {
+                swap_gate(
+                    objects.player_object().expect("the player"),
+                    &objects,
+                    &items,
+                    None,
+                    (benilla_ui::script::EQUIPMENT_BAG, 16),
+                    (1, 1),
+                )
+            })
+            .unwrap();
+        assert_eq!(gate, SwapGate::Refuse);
+    }
+
+    /// `AutoEquipCursorItem`'s gate (`0x6dfc40`): no item refuses (`0x6dfd45`), a record miss waits (`0x6dfd99`), bonding 2 asks (`0x6dfda6`), and ammunition takes its own arm (`0x6dfe51`).
+    #[test]
+    fn the_auto_equip_gate_reads_the_held_items_record() {
+        use benilla_ui::script::SwapGate;
+        let gate = |app: &mut App, slot: u32| {
+            app.world_mut()
+                .run_system_once(move |objects: Objects, items: Res<Items>| {
+                    auto_equip_gate(
+                        objects.player_object().expect("the player"),
+                        &objects,
+                        &items,
+                        None,
+                        0,
+                        slot,
+                    )
+                })
+                .unwrap()
+        };
+        let (mut app, _rx) = axe_world(Some(2), false);
+        assert_eq!(gate(&mut app, 1), (SwapGate::Ask(FLURRY_AXE), false));
+        assert_eq!(gate(&mut app, 2), (SwapGate::Refuse, false));
+        let (mut app, _rx) = axe_world(Some(2), true);
+        assert_eq!(gate(&mut app, 1), (SwapGate::Send, false));
+        let (mut app, _rx) = axe_world(None, false);
+        assert_eq!(gate(&mut app, 1), (SwapGate::Wait(FLURRY_AXE), false));
+        let (mut app, _rx) = axe_world(Some(0), false);
+        app.world_mut().resource_mut::<Items>().insert_template(
+            FLURRY_AXE,
+            Some(ItemInfo {
+                class: 6,
+                ..crate::items::test_template("Arrow")
+            }),
+        );
+        assert_eq!(gate(&mut app, 1), (SwapGate::Send, true));
+    }
+
+    /// A bind-on-equip item put on the doll asks inside the call and returns with the cursor still holding it (`0x6dfb3d`, `0x6dfb45`); the drain files the record and sends nothing, and the accept's re-run sends the swap.
+    #[test]
+    fn placing_a_bind_on_equip_item_keeps_it_on_the_cursor_and_sends_nothing() {
+        let (mut app, rx) = axe_world(Some(2), false);
+        let held = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run("PickupContainerItem(0, 1) PickupInventoryItem(16)")
+                .unwrap();
+            script.cursor_item()
+        })
+        .unwrap();
+        assert_eq!(
+            held.map(|i| (i.bag, i.slot, i.item_id)),
+            Some((0, 1, FLURRY_AXE)),
+            "the question leaves the cursor as it was"
+        );
+        app.world_mut()
+            .run_system_once(drain_container_moves)
+            .unwrap();
+        assert!(rx.try_iter().next().is_none(), "nothing goes out");
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            1
+        );
+        assert!(
+            app.world().resource::<PendingItemOps>().is_locked(AXE_GUID),
+            "the held item is still locked"
+        );
+
+        // The accept re-runs the swap suppressed (`0x6e021d`), which sends.
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run("EquipPendingItem(0)")
+            .unwrap();
+        app.world_mut()
+            .run_system_once(drain_bind_confirm_answers)
+            .unwrap();
+        assert!(matches!(
+            rx.try_iter().next(),
+            Some(ClientCommand::SwapInvItem { .. })
+        ));
+    }
+
+    /// The same put-down of an item that binds nothing sends and clears the cursor, the item locked until the answer (`0x6dfc04`, `0x6dfc0d`).
+    #[test]
+    fn placing_an_item_that_binds_nothing_sends_and_clears_the_cursor() {
+        let (mut app, rx) = axe_world(Some(0), false);
+        let held = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run("PickupContainerItem(0, 1) PickupInventoryItem(16)")
+                .unwrap();
+            script.cursor_payload()
+        })
+        .unwrap();
+        assert!(held.is_none());
+        app.world_mut()
+            .run_system_once(drain_container_moves)
+            .unwrap();
+        assert!(matches!(
+            rx.try_iter().next(),
+            Some(ClientCommand::SwapInvItem { .. })
+        ));
+        assert!(app.world().resource::<PendingItemOps>().is_locked(AXE_GUID));
+    }
 
     fn load_ui(s: &UiScript) {
         // Chain files, so through the chain-aware reader.

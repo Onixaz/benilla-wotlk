@@ -2281,6 +2281,32 @@ impl LiveState for LiveView<'_, '_> {
         Some(held.then(|| records.view(item)).flatten())
     }
 
+    fn swap_gate(&self, src: (i64, u32), dst: (i64, u32)) -> Option<benilla_ui::script::SwapGate> {
+        let (objects, items, _) = self.containers.as_ref()?.item_reads();
+        let me = objects.player_object()?;
+        Some(crate::ui_items::swap_gate(
+            me,
+            objects,
+            items,
+            self.enchants.as_deref(),
+            src,
+            dst,
+        ))
+    }
+
+    fn auto_equip_gate(&self, bag: i64, slot: u32) -> Option<(benilla_ui::script::SwapGate, bool)> {
+        let (objects, items, _) = self.containers.as_ref()?.item_reads();
+        let me = objects.player_object()?;
+        Some(crate::ui_items::auto_equip_gate(
+            me,
+            objects,
+            items,
+            self.enchants.as_deref(),
+            bag,
+            slot,
+        ))
+    }
+
     fn trade_item_facts(&self, item: u64) -> Option<benilla_ui::script::TradeItemFacts> {
         let index = self.index.as_ref()?;
         let fields = index
