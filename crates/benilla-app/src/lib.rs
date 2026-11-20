@@ -27,6 +27,11 @@ static ALLOC: assert_no_alloc::AllocDisabler = assert_no_alloc::AllocDisabler;
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// The main thread's stack reserve on Windows, which `crates/benilla/build.rs` links: the VM runs
+/// there, and a self-pressing macro must end in Lua's C-call error, as 12340's does, before the
+/// native stack does (it needs about 0.75 MiB at that limit; the PE default is 1 MiB).
+pub const MAIN_THREAD_STACK: usize = 8 << 20;
+
 mod account_data;
 pub mod addon_harness;
 mod area;
