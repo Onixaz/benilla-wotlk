@@ -34,7 +34,7 @@ pub(crate) fn commit_ground_cast_on_click(
     mut ladder: crate::spell::CastLadder,
 ) {
     let occlusion = press.occlusion;
-    if !ladder.ground.active() {
+    if !ladder.ground.read().active() {
         // A click buffered while idle must not replay as a commit once the mode turns on.
         clicks.clear();
         return;
@@ -43,7 +43,8 @@ pub(crate) fn commit_ground_cast_on_click(
         return;
     }
     // The location-wanted test: a word without it binds nothing and the mode stays.
-    let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Location) else {
+    let held = ladder.ground.read().pending_for(TargetingWants::Location);
+    let Some((spell_id, commit)) = held else {
         return;
     };
     // A boat's or zeppelin's deck binds its guid and the point in its frame (`0x80c38c`).
@@ -53,12 +54,15 @@ pub(crate) fn commit_ground_cast_on_click(
     };
     // The location bind: SOURCE (`0x20`) first, then DEST (`0x40`). `None` cannot happen behind
     // `pending_for(Location)`; the `let else` fails closed.
-    let Some(bound) = ladder.ground.location_bind(at) else {
+    let held = ladder.ground.read().location_bind(at);
+    let Some(bound) = held else {
         return;
     };
     debug!("ui_action: ground cast {spell_id} committed at {at:?} as {bound:?}");
     // The cast send: a thrown grenade commits as `CMSG_USE_ITEM` with the location block.
     ladder.commit_targeted(spell_id, commit, bound);
+    // No VM here: the commit's cast-bar edges fire once this system's commands apply.
+    ladder.press.flush(&mut ladder.ecs);
 }
 
 /// The object leg. A left-click on an object goes to the selection set, whose first act while
@@ -84,7 +88,7 @@ pub(crate) fn commit_object_cast_on_click(
     mut ladder: crate::spell::CastLadder,
 ) {
     let (hovered, hovered_object) = (press.hovered, press.object);
-    if !ladder.ground.active() {
+    if !ladder.ground.read().active() {
         // A click buffered while idle must not replay as a commit once the mode turns on.
         clicks.clear();
         return;
@@ -93,7 +97,7 @@ pub(crate) fn commit_object_cast_on_click(
         return;
     }
     // The object-wanted test: without it the pick holds no GameObject.
-    if !(ladder.ground.wants(TargetingWants::GameObject)
+    if !(ladder.ground.read().wants(TargetingWants::GameObject)
         && go_is_nearest(&hovered, &hovered_object))
     {
         if let Some((entity, guid)) = hovered.target.zip(hovered.guid) {
@@ -101,9 +105,11 @@ pub(crate) fn commit_object_cast_on_click(
         } else if let Some((entity, guid)) = hovered.corpse.zip(hovered.corpse_guid) {
             super::corpse::bind_target_corpse(&mut ladder, &checks, entity, guid);
         }
+        ladder.press.flush(&mut ladder.ecs);
         return;
     }
-    let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::GameObject) else {
+    let held = ladder.ground.read().pending_for(TargetingWants::GameObject);
+    let Some((spell_id, commit)) = held else {
         return;
     };
     let Some(guid) = hovered_object.guid else {
@@ -112,6 +118,8 @@ pub(crate) fn commit_object_cast_on_click(
     debug!("ui_action: cast {spell_id} committed at gameobject {guid:#x}");
     // `CMSG_CAST_SPELL` mask `0x800` and the packed guid, or `CMSG_USE_ITEM` for a key.
     ladder.commit_targeted(spell_id, commit, TargetedBind::Object(guid));
+    // No VM here: the commit's cast-bar edges fire once this system's commands apply.
+    ladder.press.flush(&mut ladder.ecs);
 }
 
 #[cfg(test)]
@@ -140,7 +148,9 @@ mod tests {
         world.init_resource::<crate::spell::QueuedMeleeSpell>();
         world.init_resource::<crate::spell::Cooldowns>();
         world.init_resource::<crate::spell::SpellModifiers>();
-        world.init_resource::<crate::ui_action::CastErrors>();
+        world.init_resource::<crate::ui_action::RefusalsSeen>();
+        world.init_resource::<crate::ui_cast::PressEdges>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.init_resource::<crate::spell::AutoRepeatActive>();
         world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
@@ -483,7 +493,7 @@ mod tests {
         click(&mut world, id);
         assert!(rx.try_recv().is_err(), "out of range sends nothing");
         assert_eq!(
-            std::mem::take(&mut world.resource_mut::<crate::ui_action::CastErrors>().0),
+            crate::ui_action::take_refusals(&mut world),
             vec![crate::ui_action::CastFail::local(HEAL, 0x59)],
             "\"Out of range.\""
         );
@@ -503,10 +513,7 @@ mod tests {
                 target: Some(ALLY),
             })
         ));
-        assert!(world
-            .resource::<crate::ui_action::CastErrors>()
-            .0
-            .is_empty());
+        assert!(crate::ui_action::take_refusals(&mut world).is_empty());
         assert!(!world.resource::<super::super::SpellTargeting>().active());
     }
 
@@ -552,8 +559,7 @@ mod tests {
             );
             click(&mut world, id);
             let sent = rx.try_recv().ok();
-            let errors =
-                std::mem::take(&mut world.resource_mut::<crate::ui_action::CastErrors>().0);
+            let errors = crate::ui_action::take_refusals(&mut world);
             let armed = world.resource::<super::super::SpellTargeting>().active();
             (sent, errors, armed)
         };

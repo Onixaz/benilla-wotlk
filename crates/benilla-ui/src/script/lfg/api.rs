@@ -264,7 +264,7 @@ fn join(lua: &Lua) {
 }
 
 fn ui_error(lua: &Lua, key: &'static str) {
-    crate::script::model_mut_of(lua).ui_errors.push(key);
+    crate::script::ui_errors::show_now(lua, key);
 }
 
 pub(super) fn fire(lua: &Lua, event: &str) {
@@ -607,7 +607,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             if accept {
                 roles = filter_roles(&model.lfg, selected) as u8;
                 if roles & 0xe == 0 {
-                    model.ui_errors.push("ERR_LFG_NO_ROLES_SELECTED");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_LFG_NO_ROLES_SELECTED");
                     return Ok(values(vec![Value::Boolean(false)]));
                 }
             }

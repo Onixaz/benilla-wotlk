@@ -496,6 +496,12 @@ pub(crate) enum RecordWait {
     DressUp(crate::ui_dressup::Pane),
     /// A callback the UI left inside a verb's call.
     Ui(benilla_ui::script::ItemRecordWait),
+    /// The bar's item update, linked once by a table put's slot set (`0x5aaee6`-`0x5aaf0f` ->
+    /// `0x5aadb0`).
+    ActionBar,
+    /// A refusal's line that named the item, linked each time (`0x8086bc`, `0x80874e` ->
+    /// `0x7fea80`, `0x7feb50`): it shows again, unlogged.
+    CastFailure(crate::ui_action::CastFail),
 }
 
 impl RecordWaits {

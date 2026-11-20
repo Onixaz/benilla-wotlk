@@ -223,7 +223,7 @@ impl super::UiScript {
 
     /// The repair-mode latch: while set, a bag or equipment click repairs the item.
     pub fn repair_mode(&self) -> bool {
-        self.model_ref().repair_mode
+        repair_mode(&self.model_ref())
     }
 
     /// Leave repair mode, as `HideRepairCursor` does, for the world's right mouse-down, which
@@ -386,6 +386,13 @@ pub(crate) fn merchant_act(model: &mut super::Model, act: MerchantAct) -> Mercha
     #[cfg(not(any(test, feature = "fixtures")))]
     let _ = (model, act);
     MerchantOutcome::default()
+}
+
+/// Repair mode (`InRepairMode`): armed by `ShowRepairCursor` and not since overwritten by a
+/// targeting arm, which writes the Cast base mode over Repair (`0x80d7f7`); the cursor's end
+/// restores Point, never Repair.
+pub(crate) fn repair_mode(model: &super::Model) -> bool {
+    model.repair_mode && super::spellbook::targeting().arms == model.repair_armed_at
 }
 
 /// 1 or nil, as the client pushes a usable flag (`pushnumber(1.0)` / `pushnil`).
@@ -789,11 +796,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             // `0x584a60`: a targeting spell or a vendor without repair service leaves the
             // cursor untouched. `ClearCursor(1,1)` returns any held item before mode 0x11 arms.
-            if model.spell_targeting || !can_repair(&model) {
+            let targeting = super::spellbook::targeting();
+            if targeting.active || !can_repair(&model) {
                 return Ok(());
             }
             crate::script::cursor::clear_cursor(&mut model);
             model.repair_mode = true;
+            model.repair_armed_at = targeting.arms;
             model.ui_cursor = None;
             model.ui_cursor_dirty = true;
             Ok(())
@@ -809,7 +818,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "InRepairMode",
         lua.create_function(|lua, ()| {
-            let mode = model_of(lua).repair_mode;
+            let mode = repair_mode(&model_of(lua));
             Ok(if mode { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;
@@ -820,10 +829,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ShowMerchantSellCursor",
         lua.create_function(|lua, index: usize| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.spell_targeting {
+            if super::spellbook::targeting().active {
                 return Ok(());
             }
+            let mut model = crate::script::model_mut_of(lua);
             let Some(mode) = merchant_cursor_mode(&model, index.wrapping_sub(1)) else {
                 return Ok(());
             };
@@ -835,11 +844,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ShowBuybackSellCursor",
         lua.create_function(|lua, index: usize| {
-            let mut model = crate::script::model_mut_of(lua);
             // The family bails on the targeting check first: an armed spell keeps its cursor.
-            if model.spell_targeting {
+            if super::spellbook::targeting().active {
                 return Ok(());
             }
+            let mut model = crate::script::model_mut_of(lua);
             let Some(price) =
                 merchant_row(&model, MerchantList::Buyback, index.wrapping_sub(1), false)
                     .map(|it| it.price)
@@ -907,6 +916,7 @@ fn merchant_cursor_mode(model: &super::Model, index: usize) -> Option<UiCursorMo
 #[cfg(test)]
 mod tests {
     use super::{ItemStatsHead, MerchantItem, MerchantState};
+    use crate::script::live::TestTargeting;
     use crate::script::{ContainerSlot, ContainerState, UiScript};
 
     fn stock() -> MerchantState {

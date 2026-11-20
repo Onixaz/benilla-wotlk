@@ -228,6 +228,7 @@ fn on_list(
     commands: Res<NetCommands>,
     // Real: the stale window is wall-clock seconds (`0x6d8945`).
     clock: Res<Time<Real>>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::GroupList {
         group_type,
@@ -270,6 +271,10 @@ fn on_list(
         if !battleground {
             group.set_real_counts(group_type == GROUPTYPE_RAID, rows, list_leader);
         }
+        // The list ends in the bar's refresh (`0x6d91ef`).
+        ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Bar,
+        ));
     }
 }
 

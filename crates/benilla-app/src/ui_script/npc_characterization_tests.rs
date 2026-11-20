@@ -641,7 +641,7 @@ fn the_cansave_event_fires_from_the_guild_change_handlers() {
     assert!(pin(&seen, events, &[]).is_empty(), "no ask waits on it now");
 }
 
-/// Our own player's init runs its guild change (`0x6e82c0`) before the active player's init (`0x6e8378`), whose UI world entry fires after it (`0x6e8186`); a worldport's fresh create of ours.
+/// Our own player's init runs its guild change (`0x6e82c0`) before the active player's init (`0x6e8378`), which signals the whole bar (`0x6e8046`) and then fires its UI world entry (`0x6e8186`); a worldport's fresh create of ours.
 #[test]
 fn our_create_fires_the_cansave_event_before_the_active_players_init() {
     let Some(mut rig) = Rig::login(&guild_master()) else {
@@ -669,7 +669,14 @@ fn our_create_fires_the_cansave_event_before_the_active_players_init() {
         .filter(|s| events.contains(&s.event.as_str()))
         .map(|s| s.event.clone())
         .collect();
-    assert_eq!(fired, ["TABARD_CANSAVE_CHANGED", "PLAYER_ENTERING_WORLD"]);
+    assert_eq!(
+        fired,
+        [
+            "TABARD_CANSAVE_CHANGED",
+            "ACTIONBAR_SLOT_CHANGED",
+            "PLAYER_ENTERING_WORLD"
+        ]
+    );
 }
 
 /// One values update moving our guild id and its timestamp: the guild id's watch runs first (`0x6e1bb0` before `0x6e1c60`), so `CanSaveTabardNow` reads the new guild's cached record at its `TABARD_CANSAVE_CHANGED`; the stamp's drop follows (`0x6e1d47`).

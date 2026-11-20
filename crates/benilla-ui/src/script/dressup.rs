@@ -115,9 +115,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             match intent {
                 Some(intent) => dress(h, intent),
-                None => crate::script::model_mut_of(lua)
-                    .ui_errors
-                    .push("ERR_NOT_EQUIPPABLE"),
+                None => crate::script::ui_errors::show_now(lua, "ERR_NOT_EQUIPPABLE"),
             }
             Ok(())
         })?,
@@ -228,7 +226,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            s.take_ui_errors(),
+            s.take_shown(),
             vec!["ERR_NOT_EQUIPPABLE"],
             "the nil argument"
         );

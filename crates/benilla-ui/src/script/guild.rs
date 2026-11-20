@@ -622,9 +622,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             global,
             lua.create_function(move |lua, name: Value| {
                 let Some(name) = lua.coerce_string(name)? else {
-                    crate::script::model_mut_of(lua)
-                        .ui_errors
-                        .push("ERR_COMMAND_NEEDS_TARGET");
+                    crate::script::ui_errors::show_now(lua, "ERR_COMMAND_NEEDS_TARGET");
                     return Ok(());
                 };
                 if name.as_bytes().len() > 48 {
@@ -1536,7 +1534,7 @@ mod tests {
                 GuildRequest::SetLeader(String::new()),
             ]
         );
-        assert_eq!(s.take_ui_errors(), vec!["ERR_COMMAND_NEEDS_TARGET"]);
+        assert_eq!(s.take_shown(), vec!["ERR_COMMAND_NEEDS_TARGET"]);
         assert!(s.run(r#"GuildPromote(string.rep("a", 49))"#).is_err());
         s.run(r#"GuildDemote(string.rep("a", 48))"#).unwrap();
         assert_eq!(s.take_guild_requests().len(), 1);

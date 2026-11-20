@@ -68,7 +68,7 @@ fn menu_in_call(lua: &Lua, verb: PetMenuVerb<'_>) -> bool {
         PetMenuOutcome::VehicleExit => crate::script::model_mut_of(lua)
             .vehicle_requests
             .push(super::VehicleRequest::Exit),
-        PetMenuOutcome::Refused(key) => crate::script::model_mut_of(lua).ui_errors.push(key),
+        PetMenuOutcome::Refused(key) => crate::script::ui_errors::show_now(lua, key),
     }
     true
 }
@@ -328,14 +328,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // PetHasActionBar() (`0x5d3720`): nil while the pet's actions own the main bar's temporary
-    // page (`m_tempPageActiveFlags & 1`), so the stock pet bar hides behind the bonus bar.
+    // page (`[0xc1e5a0] & 1`), so the stock pet bar hides behind the bonus bar.
     g.set(
         "PetHasActionBar",
         lua.create_function(move |lua, ()| {
-            let temp = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .temp_action_bar;
+            let temp = super::action::temp_action_bar(
+                &lua.app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data"),
+            );
             Ok(flag(live_bar().has_bar && temp & TEMP_BAR_PET == 0))
         })?,
     )?;

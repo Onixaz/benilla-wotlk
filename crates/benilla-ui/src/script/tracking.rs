@@ -97,35 +97,50 @@ impl TrackingSpell {
 /// The VM's tracking state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct TrackingModel {
-    /// The known tracking spells in book display order (the reference's tracking-spell list, sorted
-    /// by `0x53ca70`).
-    pub(crate) spells: Vec<TrackingSpell>,
     /// The active tracking spell, 0 for none.
     pub(crate) spell: u32,
     /// The active town type, an index into [`TOWN_TYPES`].
     pub(crate) town: Option<usize>,
-    /// The player's class, for the class masks.
-    pub(crate) class_id: u8,
+}
+
+/// The active player's class bit at the call, 0 with no active player (`0x57e999`).
+fn live_class_mask() -> u32 {
+    let class_id = super::read_live(|l| l.player_fields())
+        .flatten()
+        .map_or_else(
+            || u32::from(super::spellbook::stand_in_class()),
+            |f| f.class_id,
+        );
+    if class_id == 0 {
+        0
+    } else {
+        1u32.wrapping_shl(class_id)
+    }
+}
+
+/// Whether the row is offered to the class bit `class_mask` (`0x57e980`).
+fn offered(class_mask: u32, row: &TownType) -> bool {
+    row.class_mask == 0 || row.class_mask & class_mask != 0
+}
+
+/// The town types offered to `class_mask`, menu order (`0x57eb00`).
+fn towns(class_mask: u32) -> impl Iterator<Item = usize> {
+    (0..TOWN_TYPES.len()).filter(move |&i| offered(class_mask, &TOWN_TYPES[i]))
+}
+
+/// The book at the call, whose tracking spells are the book update's sorted list (`0x53ca70`).
+fn live_spells() -> std::sync::Arc<super::PlayerBook> {
+    super::spellbook::live_book()
 }
 
 impl TrackingModel {
-    /// Whether the row is offered to this class (`0x57e980`).
-    fn offered(&self, row: &TownType) -> bool {
-        row.class_mask == 0 || row.class_mask & (1u32 << self.class_id.min(31)) != 0
-    }
-
-    /// The offered town types, menu order (`0x57eb00`).
-    fn towns(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..TOWN_TYPES.len()).filter(|&i| self.offered(&TOWN_TYPES[i]))
-    }
-
     /// `GetTrackingTexture` (`0x57f4f0`): the town file, else the active spell's icon, else
     /// `Tracking\None`.
-    fn texture(&self) -> String {
+    fn texture(&self, spells: &[TrackingSpell]) -> String {
         if let Some(t) = self.town {
             return format!("{TRACKING_DIR}\\{}", TOWN_TYPES[t].file);
         }
-        self.spells
+        spells
             .iter()
             .find(|s| s.spell_id == self.spell && self.spell != 0)
             .and_then(|s| s.shown_icon(true).cloned())
@@ -139,11 +154,11 @@ enum Row<'a> {
     Town(usize),
 }
 
-fn row(model: &TrackingModel, index: i64) -> Option<Row<'_>> {
+fn row(spells: &[TrackingSpell], class_mask: u32, index: i64) -> Option<Row<'_>> {
     let i = usize::try_from(index.checked_sub(1)?).ok()?;
-    match model.spells.get(i) {
+    match spells.get(i) {
         Some(s) => Some(Row::Spell(s)),
-        None => model.towns().nth(i - model.spells.len()).map(Row::Town),
+        None => towns(class_mask).nth(i - spells.len()).map(Row::Town),
     }
 }
 
@@ -175,10 +190,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetNumTrackingTypes() (`0x57f170`): the known tracking spells plus the offered town types.
     g.set(
         "GetNumTrackingTypes",
-        lua.create_function(|lua, ()| {
-            let model = model_of(lua);
-            let t = &model.minimap_tracking;
-            Ok(t.spells.len() + t.towns().count())
+        lua.create_function(|_, ()| {
+            Ok(live_spells().tracking.len() + towns(live_class_mask()).count())
         })?,
     )?;
 
@@ -191,7 +204,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (name, texture, active, category) = {
                 let model = model_of(lua);
                 let t = &model.minimap_tracking;
-                match row(t, index) {
+                let book = live_spells();
+                match row(&book.tracking, live_class_mask(), index) {
                     None => return Ok(MultiValue::new()),
                     Some(Row::Spell(s)) => {
                         let active = t.spell == s.spell_id;
@@ -255,7 +269,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let town = {
                 let mut model = super::model_mut_of(lua);
-                let picked = match row(&model.minimap_tracking, index) {
+                let book = live_spells();
+                let picked = match row(&book.tracking, live_class_mask(), index) {
                     None => return Ok(()),
                     Some(Row::Spell(s)) => Err(s.spell_id),
                     Some(Row::Town(i)) => Ok(i),
@@ -287,36 +302,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetTrackingTexture() (`0x57f4f0`), the stock button's icon.
     g.set(
         "GetTrackingTexture",
-        lua.create_function(|lua, ()| Ok(model_of(lua).minimap_tracking.texture()))?,
+        lua.create_function(|lua, ()| {
+            let book = live_spells();
+            Ok(model_of(lua).minimap_tracking.texture(&book.tracking))
+        })?,
     )?;
 
     Ok(())
 }
 
 impl super::UiScript {
-    /// Replace the known tracking spells and the player's class; the reference rebuilds the list
-    /// with the book (`0x542030`). Read first: the feed calls this on every book pass.
+    /// Stand `spells` in for the book's tracking spells and `class_id` for the player's class on
+    /// this thread while no live view answers, for a test or a fixture.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_tracking_spells(&mut self, spells: Vec<TrackingSpell>, class_id: u8) {
-        let same = {
-            let t = &self.model_ref().minimap_tracking;
-            t.spells == spells && (class_id == 0 || t.class_id == class_id)
+        let book = live_spells();
+        let book = super::PlayerBook {
+            tracking: spells,
+            ..(*book).clone()
         };
-        if same {
-            return;
-        }
-        let mut model = self.model_mut();
-        let t = &mut model.minimap_tracking;
-        t.spells = spells;
-        if class_id != 0 {
-            t.class_id = class_id;
-        }
+        super::spellbook::set_stand_in(Some(book), Some(class_id));
     }
 
     /// Whether `spell_id` is a known tracking spell (`0x53bd10`).
     pub fn is_tracking_spell(&self, spell_id: u32) -> bool {
-        self.model_ref()
-            .minimap_tracking
-            .spells
+        live_spells()
+            .tracking
             .iter()
             .any(|s| s.spell_id == spell_id)
     }
@@ -340,20 +351,14 @@ impl super::UiScript {
     /// `minimapTrackedInfo` names, if this class is offered it.
     pub fn load_tracked_state(&mut self, class_id: u8) {
         let town = {
-            let mut model = self.model_mut();
-            if class_id != 0 {
-                model.minimap_tracking.class_id = class_id;
-            }
+            let model = self.model_ref();
             let saved = model
                 .cvars
                 .get("minimaptrackedinfo")
                 .map(|s| s.value.clone())
                 .unwrap_or_default();
-            let town = model
-                .minimap_tracking
-                .towns()
-                .find(|&i| TOWN_TYPES[i].token == saved);
-            town
+            let class_mask = if class_id == 0 { 0 } else { 1u32 << class_id };
+            towns(class_mask).find(|&i| TOWN_TYPES[i].token == saved)
         };
         if let Some(town) = town {
             load_town(&self.lua, Some(town));
@@ -376,7 +381,11 @@ impl super::UiScript {
             if t.spell != 0 || t.town.is_some() {
                 return;
             }
-            t.spells.iter().map(|s| s.spell_id).find(|&id| allowed(id))
+            live_spells()
+                .tracking
+                .iter()
+                .map(|s| s.spell_id)
+                .find(|&id| allowed(id))
         };
         if let Some(spell_id) = pick {
             self.model_mut().script_calls.push(ScriptCall::CastSpell {
@@ -398,11 +407,9 @@ impl super::UiScript {
         self.model_ref().minimap_tracking.spell
     }
 
-    /// Drop the session's tracking spell and spells; the town type lives on in its CVar.
+    /// Drop the session's tracking spell; the town type lives on in its CVar.
     pub fn clear_tracking(&mut self) {
-        let mut model = self.model_mut();
-        model.minimap_tracking.spells.clear();
-        model.minimap_tracking.spell = 0;
+        self.model_mut().minimap_tracking.spell = 0;
     }
 }
 

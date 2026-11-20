@@ -84,7 +84,8 @@ impl super::UiScript {
         set_field!(self, option_state, state);
     }
 
-    /// Whether the book holds Cold Weather Flying.
+    /// Whether the book holds Cold Weather Flying, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_knows_cold_weather_flying(&mut self, knows: bool) {
         set_field!(self, knows_cold_weather_flying, knows);
     }
@@ -284,12 +285,16 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         // The main bar's page (`[0xc1e598] + 1`, `0x5ef204`).
         "actionbar" | "bar" => any_number(i64::from(model.action_bar_page) + 1, args, false),
         // The bonus bar offset (`[0xc1e59c]`).
-        "bonusbar" => any_number(i64::from(model.bonus_bar_offset), args, false),
+        "bonusbar" => any_number(
+            i64::from(super::action::bonus_bar_offset(model)),
+            args,
+            false,
+        ),
         // The player's running channel, by spell name when arguments say (`0x5efeb0`).
         "channeling" => {
-            let channel = model
-                .unit_casts
-                .channel_of(model.unit_guids.player)
+            let player = model.unit_guids.player;
+            let channel = super::live::read_live(|l| l.unit_cast(player, true))
+                .flatten()
                 .filter(|c| model.now * 1000.0 < c.end_ms);
             match channel {
                 None => false,
@@ -380,9 +385,29 @@ pub(crate) fn parse(model: &mut Model, options: &str) -> Option<(String, Option<
     }
 }
 
-/// The area's flying flag, and in Northrend the training too (`0x7261b0` with its flag set).
+/// The area's flying flag, and in Northrend the training too (`0x7261b0` with its flag set), the
+/// book read at the call.
 fn flyable(model: &Model) -> bool {
-    model.option_state.flyable && (!model.option_state.northrend || model.knows_cold_weather_flying)
+    model.option_state.flyable
+        && (!model.option_state.northrend || knows_cold_weather_flying(model))
+}
+
+/// Whether the book holds Cold Weather Flying: the app's at the call, or the stand-in.
+fn knows_cold_weather_flying(model: &Model) -> bool {
+    match super::live::read_live(|l| l.knows_cold_weather_flying()).flatten() {
+        Some(knows) => knows,
+        None => stand_in_cold_weather(model),
+    }
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+fn stand_in_cold_weather(model: &Model) -> bool {
+    model.knows_cold_weather_flying
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn stand_in_cold_weather(_: &Model) -> bool {
+    false
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {

@@ -315,6 +315,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 spell_id: s.spell_id,
                 cast_flags: s.cast_flags,
                 runes,
+                start: true,
             }));
             events
         }
@@ -325,6 +326,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 spell_id: s.spell_id,
                 cast_flags: s.cast_flags,
                 runes,
+                start: false,
             });
             let mut events = vec![SessionEvent::SpellGo {
                 caster,

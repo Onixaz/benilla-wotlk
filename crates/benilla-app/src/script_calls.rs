@@ -22,7 +22,7 @@ const MAX_NESTING: u8 = 8;
 /// made them and before the frame's feed, which publishes the cooldowns they arm.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 pub(crate) fn apply_script_calls(
-    (script, live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
@@ -47,28 +47,28 @@ pub(crate) fn apply_script_calls(
                 appliers.p0().target_by_name(&name, exact, script);
             }
             ScriptCall::TargetNearest { mode, reverse } => {
-                appliers.p0().target_nearest(mode, reverse);
+                appliers.p0().target_nearest(mode, reverse, script);
             }
             ScriptCall::TargetLastTarget => appliers.p0().target_last_target(script),
             ScriptCall::ClearTarget => appliers.p0().clear_target(),
-            ScriptCall::AttackTarget => appliers.p7().attack_target(),
-            ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(),
+            ScriptCall::AttackTarget => appliers.p7().attack_target(script),
+            ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(script),
             ScriptCall::StartAttack {
                 unit: Some(unit),
                 exact,
             } => {
                 let named = appliers.p0().attack_unit(&unit, exact, script);
-                if appliers.p7().may_start() {
+                if appliers.p7().may_start(script) {
                     match named {
                         Some((entity, guid)) => {
-                            appliers.p0().select_for_attack(entity, guid);
-                            appliers.p7().swing_at_selection();
+                            appliers.p0().select_for_attack(entity, guid, script);
+                            appliers.p7().swing_at_selection(script);
                         }
-                        None => appliers.p7().no_attack_target(),
+                        None => crate::ui_action::AttackPress::no_attack_target(script),
                     }
                 }
             }
-            ScriptCall::StopAttack => appliers.p7().stop_attack(),
+            ScriptCall::StopAttack => appliers.p7().stop_attack(script),
             ScriptCall::Dismount => crate::ui_shapeshift::dismount(&mut appliers.p3()),
             ScriptCall::CancelShapeshiftForm => {
                 crate::ui_shapeshift::cancel_form(&mut appliers.p3());
@@ -94,14 +94,39 @@ pub(crate) fn apply_script_calls(
             ScriptCall::UseAction(press) => {
                 match crate::ui_action::use_action(&mut appliers.p4(), script, press) {
                     crate::ui_action::UseOutcome::Done => {}
-                    crate::ui_action::UseOutcome::Attack => appliers.p7().attack_target(),
+                    crate::ui_action::UseOutcome::Attack => appliers.p7().attack_target(script),
                     // A pet-action slot sends the pet bar's action, at no unit (`0x5ac000` →
                     // `0x5d4210`).
                     crate::ui_action::UseOutcome::PetAction(index) => {
-                        let out =
-                            pet_press(&mut appliers.p6(), script, |p| p.press_slot(index + 1));
+                        // The pet arm sends a word that holds anything, then runs the bar's
+                        // selection signal (`0x5abe32`).
+                        let held = appliers
+                            .p6()
+                            .bar
+                            .read()
+                            .spells
+                            .bar
+                            .get(index as usize)
+                            .is_some_and(|w| !w.is_empty());
+                        let out = pet_press(&mut appliers.p6(), script, |p, s| {
+                            p.press_slot(index + 1, s)
+                        });
                         cast_as_pet(&mut appliers.p3(), out);
+                        if held {
+                            appliers.p3().ladder.press.fire(script, &mut live);
+                            script.fire_event("ACTIONBAR_UPDATE_STATE", Vec::new());
+                        }
                     }
+                }
+            }
+            // The destroy in its turn, through the lent view (`0x5197d0`).
+            ScriptCall::DestroyTotem(slot) => {
+                let slot = usize::from(slot);
+                if benilla_ui::script::write_live(|l| l.destroy_totem(slot)) == Some(true) {
+                    script.fire_event(
+                        "PLAYER_TOTEM_UPDATE",
+                        vec![benilla_ui::script::ScriptValue::Int(slot as i64 + 1)],
+                    );
                 }
             }
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
@@ -122,48 +147,54 @@ pub(crate) fn apply_script_calls(
                 appliers.p5().equip_item(script, bag, slot, dst);
             }
             ScriptCall::CastPetSpell { spell_id, on_self } => {
-                let out = pet_press(&mut appliers.p6(), script, |p| {
-                    crate::ui_pet_book::cast_pet_spell(p, spell_id, on_self)
+                let out = pet_press(&mut appliers.p6(), script, |p, s| {
+                    crate::ui_pet_book::cast_pet_spell(p, spell_id, on_self, s)
                 });
                 cast_as_pet(&mut appliers.p3(), out);
             }
             ScriptCall::PetAction(slot) => {
-                let out = pet_press(&mut appliers.p6(), script, |p| p.press_slot(slot));
+                let out = pet_press(&mut appliers.p6(), script, |p, s| p.press_slot(slot, s));
                 cast_as_pet(&mut appliers.p3(), out);
             }
             ScriptCall::PetOrder(packed) => {
-                let out = pet_press(&mut appliers.p6(), script, |p| p.order(packed));
+                let out = pet_press(&mut appliers.p6(), script, |p, s| p.order(packed, s));
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
         // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
         // picked and resumed before the next call reads the selection.
-        let Some(held) = appliers.p3().ladder.take_held() else {
-            return;
-        };
-        if appliers.p7().pick_for_cast(held) {
-            let mut cast = appliers.p3();
-            let ctx = cast.targeting.context();
-            cast.ladder.resume_after_pick(held, &ctx);
+        if let Some(held) = appliers.p3().ladder.take_held() {
+            if appliers.p7().pick_for_cast(held, script) {
+                let mut cast = appliers.p3();
+                let ctx = cast.targeting.context();
+                cast.ladder.resume_after_pick(held, &ctx);
+            }
         }
+        // A press's cast-bar edges, fired as the call that made them returns (`0x80b556`,
+        // `0x806200`); the cancel's share the ladder's queue.
+        appliers.p3().ladder.press.fire(script, &mut live);
     });
 }
 
-/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and the flush its cooldown start made (`0x805ec3`, `0x805eda`), fired as the press returns.
+/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), fired as the press returns.
 pub(crate) fn pet_press(
     press: &mut crate::ui_pet::PetPress,
     script: &mut UiScript,
-    f: impl FnOnce(&mut crate::ui_pet::PetPress) -> crate::ui_pet::PetCast,
+    f: impl FnOnce(
+        &mut crate::ui_pet::PetPress,
+        &mut dyn crate::ui_action::signals::SignalSink,
+    ) -> crate::ui_pet::PetCast,
 ) -> crate::ui_pet::PetCast {
     let at = |press: &crate::ui_pet::PetPress| {
         let bar = press.bar.read();
         (bar.bar_signals, bar.cooldowns.generation)
     };
     let (signals, generation) = at(press);
-    let out = f(press);
+    // The press's writes signal into the VM it runs inside.
+    let out = f(press, script);
     let (now_signals, now_generation) = at(press);
     if now_generation != generation {
-        crate::ui_pet::pet_cooldown_flush_now(script);
+        press.fire_cooldown_start(script);
     }
     crate::ui_pet::fire_bar_signals(script, signals, now_signals);
     out
@@ -313,7 +344,7 @@ mod tests {
             };
         }
         let mut script = UiScript::new().expect("a VM");
-        script.set_spellbook(SpellBookState {
+        world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
             tabs: vec![SpellTabView {
                 name: "Holy".into(),
                 texture: None,
@@ -326,7 +357,7 @@ mod tests {
                 ..Default::default()
             }],
             ..Default::default()
-        });
+        }));
         if selected {
             // The frame's unit snapshot, as the feed pushed it before the input pass.
             script.set_unit(
@@ -457,14 +488,12 @@ mod tests {
     }
 
     /// The keys of the error lines raised.
-    fn errors(f: &Frame) -> Vec<&'static str> {
+    /// The keys of the lines shown, taken.
+    fn errors(f: &mut Frame) -> Vec<&'static str> {
         f.app
-            .world()
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
-            .iter()
-            .map(|e| e.key)
-            .collect()
+            .world_mut()
+            .non_send_resource_mut::<benilla_ui::script::UiScript>()
+            .take_shown_keys()
     }
 
     /// `CastSpellByName(name, unit)` (`0x540310`) casts at the unit its token names and
@@ -510,22 +539,20 @@ mod tests {
             catalog: benilla_formats::SpellCatalog::from_displays([(FORTITUDE, display)].into()),
             ..crate::ui_action::Spells::empty_for_tests()
         });
-        world
-            .non_send_resource_mut::<UiScript>()
-            .set_spellbook(SpellBookState {
-                tabs: vec![SpellTabView {
-                    name: "Priest".into(),
-                    texture: None,
-                    offset: 0,
-                    num_spells: 1,
-                }],
-                slots: vec![SpellSlotView {
-                    spell_id: FORTITUDE,
-                    name: "Fortitude".into(),
-                    ..Default::default()
-                }],
+        world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+            tabs: vec![SpellTabView {
+                name: "Priest".into(),
+                texture: None,
+                offset: 0,
+                num_spells: 1,
+            }],
+            slots: vec![SpellSlotView {
+                spell_id: FORTITUDE,
+                name: "Fortitude".into(),
                 ..Default::default()
-            });
+            }],
+            ..Default::default()
+        }));
     }
 
     /// The bind runs the ordinary relation chain over the player: with a unit we cannot assist
@@ -770,10 +797,10 @@ mod tests {
                     })
                     .collect();
             if x > 5.0 {
-                assert_eq!(errors(&f), vec!["ERR_OUT_OF_RANGE"]);
+                assert_eq!(errors(&mut f), vec!["ERR_OUT_OF_RANGE"]);
                 assert!(sent.is_empty());
             } else {
-                assert!(errors(&f).is_empty());
+                assert!(errors(&mut f).is_empty());
                 assert!(matches!(
                     sent.as_slice(),
                     [
@@ -796,7 +823,7 @@ mod tests {
             spawn_mob(&mut f, &[(TEMPLATE, FOE)]);
             f.app
                 .world_mut()
-                .resource_mut::<crate::ui_action::PlayerActions>()
+                .resource_mut::<crate::ui_action::ActionSlots>()
                 .buttons
                 .insert(
                     0,
@@ -809,7 +836,7 @@ mod tests {
             run(&mut f, lua);
             assert_eq!(selected(&f), Some(MOB), "{lua}");
             assert_eq!(swings(&f), (vec![MOB], false), "{lua}");
-            assert_eq!(errors(&f), Vec::<&str>::new(), "{lua}");
+            assert_eq!(errors(&mut f), Vec::<&str>::new(), "{lua}");
         }
     }
 
@@ -839,14 +866,14 @@ mod tests {
         with_factions(&mut f, FRIEND, &[]);
         run(&mut f, "AttackTarget()");
         assert_eq!(selected(&f), Some(OLD));
-        assert_eq!(errors(&f), vec!["ERR_INVALID_ATTACK_TARGET"]);
+        assert_eq!(errors(&mut f), vec!["ERR_INVALID_ATTACK_TARGET"]);
         assert_eq!(swings(&f), (vec![], false));
 
         let mut f = frame(false);
         with_factions(&mut f, FRIEND, &[]);
         run(&mut f, "AttackTarget()");
         assert_eq!(selected(&f), None);
-        assert_eq!(errors(&f), vec!["ERR_NO_ATTACK_TARGET"]);
+        assert_eq!(errors(&mut f), vec!["ERR_NO_ATTACK_TARGET"]);
         assert_eq!(swings(&f), (vec![], false));
     }
 
@@ -860,7 +887,7 @@ mod tests {
         spawn_mob(&mut f, &[(TEMPLATE, FOE)]);
         run(&mut f, "AttackTarget()");
         assert_eq!(selected(&f), Some(OLD));
-        assert_eq!(errors(&f), vec!["ERR_INVALID_ATTACK_TARGET"]);
+        assert_eq!(errors(&mut f), vec!["ERR_INVALID_ATTACK_TARGET"]);
         assert_eq!(swings(&f), (vec![], false));
     }
 
@@ -882,7 +909,7 @@ mod tests {
             run(&mut f, "AttackTarget()");
             assert_eq!(swings(&f), (vec![], stopped), "health {health}");
             assert_eq!(
-                errors(&f),
+                errors(&mut f),
                 refused.into_iter().collect::<Vec<_>>(),
                 "health {health}"
             );
@@ -910,7 +937,7 @@ mod tests {
                 .expect("the macro is made");
             let index: u32 = script.eval("return MACRO_INDEX").expect("an index");
             world
-                .resource_mut::<crate::ui_action::PlayerActions>()
+                .resource_mut::<crate::ui_action::ActionSlots>()
                 .buttons
                 .insert(
                     0,
@@ -945,7 +972,7 @@ mod tests {
             ..crate::ui_action::Spells::empty_for_tests()
         });
         world
-            .resource_mut::<crate::ui_action::PlayerActions>()
+            .resource_mut::<crate::ui_action::ActionSlots>()
             .buttons
             .insert(
                 0,
@@ -1030,14 +1057,7 @@ mod tests {
         run(&mut f, "UseAction(1)");
         assert_eq!(casts(&f), vec![]);
         assert_eq!(selected(&f), None);
-        let world = f.app.world();
-        assert_eq!(
-            world.resource::<crate::ui_action::UiErrorKeys>().0,
-            vec![crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET")]
-        );
-        assert!(world
-            .resource::<crate::ui_action::CastErrors>()
-            .0
-            .is_empty());
+        assert_eq!(errors(&mut f), vec!["ERR_NO_ATTACK_TARGET"]);
+        assert!(crate::ui_action::take_refusals(f.app.world_mut()).is_empty());
     }
 }

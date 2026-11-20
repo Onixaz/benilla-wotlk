@@ -305,7 +305,8 @@ fn on_mover_edge(
 }
 
 /// The control update's UI half: only for our own unit (`0x71c98b`) it writes the control flag and,
-/// on a change, fires `PLAYER_CONTROL_GAINED` or `PLAYER_CONTROL_LOST` (`0x520fe0`).
+/// on a change, fires `PLAYER_CONTROL_GAINED` or `PLAYER_CONTROL_LOST`, then runs the usable
+/// update (`0x520fe0`).
 fn on_control_flag(
     In(ev): In<SessionEvent>,
     self_guid: Res<SelfGuid>,
@@ -325,6 +326,9 @@ fn on_control_flag(
         "PLAYER_CONTROL_LOST"
     };
     ui.fire(event, Vec::new());
+    ui.world(crate::ui_action::usable_cache::step(
+        crate::ui_action::usable_cache::Pass::Full,
+    ));
 }
 
 fn on_worldport(
@@ -777,6 +781,7 @@ fn worldport(
     transports: &Query<&crate::transport::Transport>,
     worldports: &mut MessageWriter<WorldportMessage>,
 ) {
+    let mut disabled = Vec::new();
     index.0.retain(|guid, e| {
         if transports.get(*e).is_ok_and(|t| t.touches_map(map_id)) {
             // info, not debug: rare, and the crossing depends on it firing for the ridden boat.
@@ -784,7 +789,14 @@ fn worldport(
             return true;
         }
         commands.entity(*e).try_despawn();
+        disabled.push(*guid);
         false
+    });
+    // Each object left behind is disabled, which destroys a totem slot its unit holds (`0x73574a`).
+    commands.queue(move |world: &mut World| {
+        for guid in disabled {
+            crate::ui_totem::unit_disabled(world, guid);
+        }
     });
     let announced = pending.0.take();
     if let Some(p) = announced {

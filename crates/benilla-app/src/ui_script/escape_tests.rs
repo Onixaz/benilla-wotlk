@@ -2,6 +2,7 @@
 //! focused edit box preempts. The bag windows are recycled, so a bag is asked of `IsBagOpen`,
 //! never by frame name.
 
+use super::test_live::SpellAnswersExt;
 use benilla_ui::script::{ContainerSlot, ContainerState, LootRow, LootState, UiScript};
 
 use super::test_ui::{bag_open, bag_slot_button, click, load_ui as load_xml, BAG_UI};

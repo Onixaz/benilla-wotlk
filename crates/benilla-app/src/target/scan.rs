@@ -482,6 +482,7 @@ pub(super) fn commit(
     engaged: bool,
     self_guid: Option<u64>,
     new_attackable: bool,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> CommitOutcome {
     commit_at(
         selection,
@@ -492,6 +493,7 @@ pub(super) fn commit(
         engaged,
         self_guid,
         new_attackable,
+        sink,
     )
 }
 
@@ -506,6 +508,7 @@ pub(super) fn commit_at(
     engaged: bool,
     self_guid: Option<u64>,
     new_attackable: bool,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> CommitOutcome {
     // The selectable test, before the dedup: a non-selectable unit is a complete no-op that keeps
     // the current target, for every selection writer.
@@ -534,12 +537,12 @@ pub(super) fn commit_at(
     // and leaves the swing stopped; off, the swing moves to the new target.
     let stop_on_change = seam.stops_on_target_change();
     if stop_on_change {
-        seam.cancel_auto_repeat();
+        seam.cancel_auto_repeat(sink);
     }
     let swung = stop_and_repoint && !stop_on_change && new_attackable && self_guid != Some(guid);
     if swung {
         // The swing goes out despite the lock, and cancels auto-repeat.
-        seam.start(guid, engaged, true);
+        seam.start(guid, engaged, true, sink);
     }
     CommitOutcome {
         changed: true,
@@ -558,6 +561,7 @@ pub(super) fn cycle(
     selection: &mut Selection,
     seam: &mut crate::creature_anim::AttackSeam,
     engaged: bool,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     history.enter(side);
     history.prune(now);
@@ -623,6 +627,7 @@ pub(super) fn cycle(
         // check's < 4). A duelling friendly passes the attack check's duel arm, which reads no
         // reaction, so the reference's `Attack` would re-swing at it; here it gets none.
         matches!(side, ScanSide::Enemy | ScanSide::EnemyPlayer),
+        sink,
     );
     if out.changed {
         history.push(guid, now);
@@ -676,8 +681,8 @@ impl AttackPick<'_, '_> {
         passed: Option<u64>,
         selection: &mut Selection,
         seam: &mut crate::creature_anim::AttackSeam,
-        errors: &mut crate::ui_action::UiErrorKeys,
         check_range: bool,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
     ) -> Option<u64> {
         if !passed.or(selection.guid).is_some_and(|g| self.keeps(g)) {
             let engaged = self.engaged();
@@ -690,9 +695,10 @@ impl AttackPick<'_, '_> {
                 selection,
                 seam,
                 engaged,
+                sink,
             );
         }
-        self.gated(selection, errors, check_range)
+        self.gated(selection, check_range, sink)
     }
 
     /// The pick's tail, which an explicit target runs alone: the selection as it stands through
@@ -700,14 +706,12 @@ impl AttackPick<'_, '_> {
     pub(crate) fn gated(
         &mut self,
         selection: &Selection,
-        errors: &mut crate::ui_action::UiErrorKeys,
         check_range: bool,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
     ) -> Option<u64> {
         let Some(guid) = selection.guid else {
             debug!("attack: nothing to attack (ERR_NO_ATTACK_TARGET)");
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+            sink.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
             return None;
         };
         // The second resolve: a miss refuses with no message.
@@ -718,9 +722,7 @@ impl AttackPick<'_, '_> {
         // The mounted range leg, ahead of the final gate.
         if check_range && self.scan.mounted_out_of_reach(guid, store) {
             debug!("attack: mounted, {guid:#x} is past melee reach (ERR_OUT_OF_RANGE)");
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
+            sink.line(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
             return None;
         }
         // The final gate's target legs; its actor legs repeat phase A's dead and mounted refusals,
@@ -733,9 +735,7 @@ impl AttackPick<'_, '_> {
             self.scan.self_store(),
         ) {
             debug!("attack: {guid:#x} fails the final gate (ERR_INVALID_ATTACK_TARGET)");
-            errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_INVALID_ATTACK_TARGET"));
+            sink.line(crate::ui_action::UiError::key("ERR_INVALID_ATTACK_TARGET"));
             return None;
         }
         Some(guid)
@@ -886,6 +886,7 @@ pub(super) fn auto_acquire_attacker(
     stores: Query<&ObjectStore>,
     mut selection: ResMut<Selection>,
     mut seam: crate::creature_anim::AttackSeam,
+    mut signals: crate::ui_action::signals::QueuedSignals,
 ) {
     for s in swings.read() {
         if selection.target.is_some() {
@@ -914,8 +915,10 @@ pub(super) fn auto_acquire_attacker(
             false,
             Some(my_guid.0),
             false,
+            &mut signals,
         );
     }
+    signals.flush(&mut seam.ecs);
 }
 
 #[cfg(test)]
@@ -958,6 +961,7 @@ mod tests {
                         engaged,
                         self_guid,
                         attackable,
+                        &mut Vec::new(),
                     )
                 },
             )

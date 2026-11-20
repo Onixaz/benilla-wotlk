@@ -234,7 +234,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(guid) if super::merchant::merchant_open(&model) => {
                     model.refund_sends.push(guid)
                 }
-                _ => model.ui_errors.push("ERR_INTERNAL_BAG_ERROR"),
+                _ => {
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_INTERNAL_BAG_ERROR");
+                }
             }
             Ok(())
         })?,
@@ -378,7 +381,7 @@ mod tests {
         let mut s = script_with_purchase(Vec::new());
         s.run("ContainerRefundItemPurchase(0, 1)").unwrap();
         assert!(s.take_refund_sends().is_empty());
-        assert_eq!(s.take_ui_errors(), ["ERR_INTERNAL_BAG_ERROR"]);
+        assert_eq!(s.take_shown(), ["ERR_INTERNAL_BAG_ERROR"]);
         s.set_merchant(Some(MerchantState::default()));
         s.run("ContainerRefundItemPurchase(0, 1)").unwrap();
         assert_eq!(s.take_refund_sends(), [ITEM]);

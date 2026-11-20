@@ -1554,11 +1554,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: SpellTargetUnit("unit")"#,
             )?;
-            if !lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_targeting
-            {
+            if !crate::script::spellbook::targeting().active {
                 return Ok(());
             }
             let mut model = crate::script::model_mut_of(lua);

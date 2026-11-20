@@ -186,7 +186,7 @@ impl super::UiScript {
 
     /// The app refused a swap the reference refuses before its send: the cursor stays.
     pub fn guild_bank_swap_refused(&mut self, error: &'static str) {
-        self.model_mut().ui_errors.push(error);
+        self.show_line(error);
     }
 
     /// Drain the queued sends.
@@ -652,7 +652,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let mut model = crate::script::model_mut_of(lua);
             if u64::from(cost) > crate::script::live::money(&model) + bank_money() {
-                model.ui_errors.push("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_BANKSLOT_INSUFFICIENT_FUNDS");
                 return Ok(());
             }
             model
@@ -673,7 +674,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .guild_bank_requests
                     .push(GuildBankRequest::DepositMoney(money));
             } else {
-                model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+                {
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
+                }
             }
             Ok(())
         })?,
@@ -944,7 +948,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             if let Err(e) = crate::names::check_guild_bank_tab_name(&name) {
-                model.ui_errors.push(e.key());
+                drop(model);
+                crate::script::ui_errors::show_now(lua, e.key());
                 return Ok(());
             }
             if bank_open() && tab < num_tabs() {
@@ -1248,7 +1253,7 @@ mod tests {
         s.set_money(500);
         s.run("DepositGuildBankMoney(600)").unwrap();
         assert!(s.take_guild_bank_requests().is_empty());
-        assert_eq!(s.take_ui_errors(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+        assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
         s.run("DepositGuildBankMoney(400) WithdrawGuildBankMoney(7.9) BuyGuildBankTab()")
             .unwrap();
         assert_eq!(
@@ -1259,7 +1264,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            s.take_ui_errors(),
+            s.take_shown(),
             vec!["ERR_BANKSLOT_INSUFFICIENT_FUNDS"],
             "the third tab costs more than purse and bank"
         );
@@ -1423,6 +1428,6 @@ mod tests {
                 icon: "INV_Axe_01".into()
             }]
         );
-        assert_eq!(s.take_ui_errors(), vec!["ERR_NAME_INVALID"]);
+        assert_eq!(s.take_shown(), vec!["ERR_NAME_INVALID"]);
     }
 }

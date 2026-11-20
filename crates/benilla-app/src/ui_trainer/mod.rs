@@ -14,7 +14,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use benilla_ui::script::{
-    TrainerService, TrainerServiceLive, TrainerState, TrainerTooltip, TrainerWindow, UiScript,
+    TrainerService, TrainerServiceLive, TrainerState, TrainerWindow, UiScript,
 };
 
 use crate::entities::ItemDisplays;
@@ -80,14 +80,6 @@ impl TrainerOpen {
     }
 }
 
-/// The spells the open trainer's services show as tooltips, which the spell-tooltip feed pushes: a
-/// pet-learn service's view is built against the pet (the builder's unit selector).
-#[derive(Resource, Default, PartialEq)]
-pub(crate) struct TrainerTooltipSubjects {
-    pub(crate) player: Vec<u32>,
-    pub(crate) pet: Vec<u32>,
-}
-
 mod net;
 mod reeval;
 
@@ -98,8 +90,7 @@ impl Plugin for UiTrainerPlugin {
         net::register(app);
         app.init_resource::<TrainerOpen>()
             .init_resource::<TrainerAsked>()
-            .init_resource::<UnlearnedSpells>()
-            .init_resource::<TrainerTooltipSubjects>();
+            .init_resource::<UnlearnedSpells>();
     }
 }
 
@@ -327,10 +318,6 @@ fn build_list(
             &get,
         )
     };
-    let subjects = tooltip_subjects(&state);
-    if let Some(mut t) = world.get_resource_mut::<TrainerTooltipSubjects>() {
-        t.set_if_neq(subjects);
-    }
     if let Some(mut open) = world.get_resource_mut::<TrainerOpen>() {
         open.open(trainer, trainer_type, services, greeting);
         open.trainer = (trainer != 0).then_some(trainer);
@@ -362,29 +349,6 @@ fn parse_greeting(world: &mut World, greeting: &str) -> String {
             achievement: None,
         },
     )
-}
-
-/// The spells the services show as tooltips, the pet's apart.
-fn tooltip_subjects(state: &TrainerState) -> TrainerTooltipSubjects {
-    let mut out = TrainerTooltipSubjects::default();
-    for service in &state.services {
-        if let TrainerTooltip::Spell {
-            spell_id,
-            alt_caster,
-        } = service.tooltip
-        {
-            if alt_caster {
-                out.pet.push(spell_id);
-            } else {
-                out.player.push(spell_id);
-            }
-        }
-    }
-    for subjects in [&mut out.player, &mut out.pet] {
-        subjects.sort_unstable();
-        subjects.dedup();
-    }
-    out
 }
 
 /// The re-evaluator (`0x596b00`) in its trigger's turn: with a trainer open and an active player,

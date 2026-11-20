@@ -98,8 +98,7 @@ impl Plugin for UiChatPlugin {
                 Update,
                 (
                     language::load_language_words,
-                    // After the totem refill, the frame's other book-side writer.
-                    language::feed_language_skills.after(crate::spell::multicast::run_refill),
+                    language::feed_language_skills,
                     language::feed_default_language,
                 )
                     .before(feed::feed_chat)
