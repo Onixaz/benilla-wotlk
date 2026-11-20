@@ -287,6 +287,10 @@ pub(super) fn heal_rig_starved(
                     // The art kit goes on the new body again, as each model load applies it.
                     super::art_kit::AppliedArtKit,
                     super::art_kit::ArtKitPending,
+                    // A WMO GameObject's props are children of the visual: resolve them again.
+                    super::wmo_props::WmoPropsResolved,
+                    super::wmo_props::WmoProps,
+                    crate::transport::ShipProps,
                 ),
             )>()
             .insert((super::equipment::Reattached, ShownRebuild));
@@ -353,8 +357,15 @@ pub(super) fn rebuild_visual(commands: &mut Commands, entity: Entity) {
             benilla_world::rig_palette::RigSkin,
             super::BoneAttach,
             super::equipment::HeldAttached,
-            // The art kit goes on the new body again, as each model load applies it.
-            (super::art_kit::AppliedArtKit, super::art_kit::ArtKitPending),
+            (
+                // The art kit goes on the new body again, as each model load applies it.
+                super::art_kit::AppliedArtKit,
+                super::art_kit::ArtKitPending,
+                // A WMO GameObject's props are children of the visual: resolve them again.
+                super::wmo_props::WmoPropsResolved,
+                super::wmo_props::WmoProps,
+                crate::transport::ShipProps,
+            ),
         )>()
         .insert(super::equipment::Reattached);
 }

@@ -745,8 +745,17 @@ impl Plugin for EntitiesPlugin {
                 build_dressup_preview,
                 attach_entity_visuals,
                 // A WMO GameObject's doodad props, spawned as each M2 lands.
-                resolve_wmo_gameobject_props,
-                spawn_wmo_gameobject_props,
+                (
+                    resolve_wmo_gameobject_props,
+                    wmo_props::resolve_building_impacts,
+                )
+                    .chain(),
+                // A destructible building's state sets step through their sequences.
+                (
+                    spawn_wmo_gameobject_props,
+                    destructible::drive_building_doodads,
+                )
+                    .chain(),
                 attach_held_items,
                 // Spell-kit effect models and held-item glows, after the item roots exist.
                 // A GameObject's art kit models, on its built body.
@@ -775,6 +784,8 @@ impl Plugin for EntitiesPlugin {
                 // A display swap rebuilds, a scale change eases over the reference's 2 s, and a
                 // unit denied a palette rig rebuilds once the table has room.
                 (
+                    // A building's state change, before the swap reads its new display.
+                    destructible::track_building_states,
                     refresh_live_display,
                     tick_scale_ease,
                     live_display::heal_rig_starved,
