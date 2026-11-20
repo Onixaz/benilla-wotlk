@@ -145,6 +145,9 @@ enum Step {
     /// The pet bar's feed and its cooldown flush: `GetPetActionCooldown`.
     /// The VM's tick: the `OnUpdate` scripts and the cooldown widgets' update.
     Tick,
+    /// The units' feed: the `"target"` snapshot and `PLAYER_TARGET_CHANGED` for a selection a
+    /// script did not move.
+    UnitFeed,
 }
 
 impl Step {
@@ -156,6 +159,7 @@ impl Step {
             Step::ScriptCalls => "::script_calls::apply_script_calls",
             Step::WorldSelect => "::click::select_on_click",
             Step::Tick => "::extract::tick_script",
+            Step::UnitFeed => "::ui_unit::feed_units",
         }
     }
 
@@ -171,6 +175,10 @@ impl Step {
                 schedule.add_systems(crate::target::click::select_on_click.in_set(self))
             }
             Step::Tick => schedule.add_systems(crate::ui_script::extract::tick_script.in_set(self)),
+            Step::UnitFeed => {
+                crate::ui_unit::feed_units_in(schedule, self);
+                schedule
+            }
         };
     }
 }
@@ -1217,6 +1225,79 @@ fn target_unit_then_unit_exists_reads_a_unit_no_snapshot_held() {
         rig.vm().eval("return READ[1], READ[2]").expect("the reads");
     assert!(exists, "the new target exists in the call");
     assert_eq!(guid, format!("0x{NEW:016X}"));
+}
+
+/// The new target `party1` as a named player at 42 health, so its snapshot reads apart from `OLD`'s.
+fn bob_at_42(rig: &mut Rig) {
+    let world = rig.app.world_mut();
+    let entity = world.resource::<GuidIndex>().0[&NEW];
+    world
+        .entity_mut(entity)
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 42),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        ])));
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(NEW, "Bob".into(), None);
+}
+
+/// `TargetUnit` then the snapshot getters in one `OnUpdate`: the setter's tail writes the new
+/// target's snapshot before it returns (`0x524f38`), so `UnitName` and `UnitHealth` read it in the
+/// call.
+#[test]
+fn target_unit_then_unit_name_reads_the_new_target_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    bob_at_42(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"TICK_DO = function()
+            TargetUnit("party1")
+            READ = { UnitName("target"), UnitHealth("target") }
+        end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.selected(), Some(NEW));
+    let (name, health): (String, i64) =
+        rig.vm().eval("return READ[1], READ[2]").expect("the reads");
+    assert_eq!(
+        (name.as_str(), health),
+        ("Bob", 42),
+        "the new target's snapshot in the call"
+    );
+}
+
+/// A snapshot the setter's tail wrote is diffed by the feed against what the VM holds: the
+/// selection moved back by a path that is not a script's leaves no stale `"target"` behind.
+#[test]
+fn a_target_the_tail_wrote_is_replaced_when_the_selection_moves_back() {
+    let mut rig = rig_or_skip!(&[Step::UnitFeed, Step::Tick]);
+    bob_at_42(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() TargetUnit("party1") end"#);
+    rig.frame();
+    let health: i64 = rig
+        .vm()
+        .eval(r#"return UnitHealth("target")"#)
+        .expect("a read");
+    assert_eq!(health, 42, "the tail wrote the new target's snapshot");
+    rig.lua("TICK_DO = nil");
+    let old = rig.app.world().resource::<GuidIndex>().0[&OLD];
+    *rig.app.world_mut().resource_mut::<Selection>() = Selection {
+        target: Some(old),
+        guid: Some(OLD),
+        ..Default::default()
+    };
+    rig.frame();
+    let health: i64 = rig
+        .vm()
+        .eval(r#"return UnitHealth("target")"#)
+        .expect("a read");
+    assert_eq!(
+        health, 100,
+        "the feed pushed the old target's snapshot over the tail's"
+    );
 }
 
 /// The setter fires `PLAYER_TARGET_CHANGED` before it returns (`0x524f54`), after the usable

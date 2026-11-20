@@ -1715,6 +1715,12 @@ pub(crate) fn target_set_tail(world: &mut World) {
     });
 }
 
+/// The units' feed in a test's own schedule, in `set`.
+#[cfg(test)]
+pub(crate) fn feed_units_in(schedule: &mut Schedule, set: impl bevy::ecs::schedule::SystemSet) {
+    schedule.add_systems(feed_units.in_set(set));
+}
+
 /// The world entry's inputs and the new target's cast re-read, one parameter under Bevy's 16.
 type EntryAndTarget<'w, 's> = (
     Option<MessageReader<'w, 's, crate::net::EnteredWorldMessage>>,
@@ -1912,18 +1918,15 @@ fn feed_units(
 
     // `"player"` is pushed only while its descriptor exists: the roster seat stands in before
     // arrival, and `PLAYER_LOGOUT` handlers still read `UnitName("player")`, as the reference's do.
-    // `"target"` pushes its absence too; both diff against the event loop's memo.
+    // `"target"` pushes its absence too; `"player"` diffs against the event loop's memo.
     if let Some(cur) = &player {
         if memo.last.get("player") != Some(cur) {
             gate.audit("feed_units", "the player snapshot");
             script.set_unit("player", player.clone());
         }
     }
-    let target_dirty = match (&target, memo.last.get("target")) {
-        (Some(cur), Some(prev)) => cur != prev,
-        (None, None) => false,
-        _ => true,
-    };
+    // `"target"` diffs against the VM's own: the selection setter's tail writes it in the call.
+    let target_dirty = !script.holds_unit("target", target.as_ref());
     if target_dirty {
         gate.audit("feed_units", "the target snapshot");
         script.set_unit("target", target.clone());
