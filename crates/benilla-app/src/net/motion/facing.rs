@@ -34,6 +34,42 @@ const STEP_FRACTION: f32 = 0.5;
 /// `UNIT_FLAG_STUNNED`, goal-chain row 4.
 const UNIT_FLAG_STUNNED: u32 = 0x0004_0000;
 
+/// The `UNIT_FIELD_FLAGS` bit that turns a non-player unit by the damped chase (`0x735f60`).
+const UNIT_FLAG_PLAYER_CONTROLLED: u32 = 0x0000_0008;
+
+/// The `UNIT_FIELD_FLAGS` bit the in-combat test reads beside auto-attack (`0x71afb0`).
+const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
+
+/// The smallest `SmoothFacingChaseRate` that chases (`0x735f60`).
+const CHASE_RATE_FLOOR: f32 = 0.000_01;
+
+/// The chase rates of a player-controlled unit, in and out of combat (`0x735f60`).
+const CONTROLLED_CHASE_RATE: (f32, f32) = (30.0, 20.0);
+
+/// `CreatureMovementInfo.dbc`, the creature templates' smooth-facing chase rates; without it every
+/// creature takes the box filter or the player-controlled chase.
+#[derive(Resource)]
+pub(crate) struct ChaseRates(benilla_formats::CreatureMovementInfo);
+
+pub(crate) fn load_chase_rates(
+    mut commands: Commands,
+    assets: Option<Res<benilla_assets::WorldAssets>>,
+) {
+    use benilla_assets::LockRecover;
+    let Some(assets) = assets else { return };
+    let loaded = {
+        let mut chain = assets.chain.lock_recover();
+        benilla_formats::load_creature_movement_info(&mut chain)
+    };
+    match loaded {
+        Ok(table) => {
+            info!("facing: {} creature movement rows", table.len());
+            commands.insert_resource(ChaseRates(table));
+        }
+        Err(e) => warn!("facing: CreatureMovementInfo failed to load: {e:#}"),
+    }
+}
+
 /// The `EmoteFlags` bit that permits the target and interaction facing during a state emote; the
 /// name is ours, the tested bit is the reference's.
 const EMOTE_PERMITS_FACING: u32 = benilla_formats::EMOTE_FLAG_INTERACTION;
@@ -48,6 +84,8 @@ pub(crate) struct DisplayFacing {
     wire: f32,
     /// A zero head means the next pump takes the ring-fill leg.
     hist: [f32; 4],
+    /// The damped chase's angular velocity (rad/s), which the box filter leaves alone.
+    velocity: f32,
     /// A deck rider's display facing in its deck's frame, which `compose_riders` turns the shown
     /// yaw through; the pump steps it there (`0x7362e3`).
     deck: Option<f32>,
@@ -154,6 +192,7 @@ pub(crate) fn apply_walk_end_facing(
             commands.entity(e).try_insert(DisplayFacing {
                 wire: wire.rem_euclid(std::f32::consts::TAU),
                 hist: [0.0; 4],
+                velocity: 0.0,
                 deck: None,
             });
         }
@@ -210,6 +249,48 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
     (cur + step * STEP_FRACTION).rem_euclid(TAU)
 }
 
+/// How a unit's display facing steps toward its goal (`0x735f60`): a damped chase at its
+/// template's `CreatureMovementInfo` rate when that is over `1e-5`, else a damped chase at 30 in
+/// combat and 20 out of it for a non-player unit with `UNIT_FLAG_PLAYER_CONTROLLED`, else the box
+/// filter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Smoothing {
+    Damped(f32),
+    Filter,
+}
+
+fn smoothing(template_rate: Option<f32>, unit_flags: u32, engaged: bool) -> Smoothing {
+    if let Some(rate) = template_rate.filter(|&r| CHASE_RATE_FLOOR < r) {
+        return Smoothing::Damped(rate);
+    }
+    if unit_flags & UNIT_FLAG_PLAYER_CONTROLLED != 0 {
+        let in_combat = unit_flags & UNIT_FLAG_PET_IN_COMBAT != 0 || engaged;
+        let (fighting, idle) = CONTROLLED_CHASE_RATE;
+        return Smoothing::Damped(if in_combat { fighting } else { idle });
+    }
+    Smoothing::Filter
+}
+
+/// One step of the critically damped chase (`0x7160b0`) toward `goal`, unfolded to within π of
+/// `cur` first, over `dt` seconds; the result is wrapped to `[0, 2π)`.
+fn damped_step(cur: f32, goal: f32, rate: f32, dt: f32, velocity: &mut f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let goal = if goal + PI < cur {
+        goal + TAU
+    } else if goal - PI > cur {
+        goal - TAU
+    } else {
+        goal
+    };
+    let k = rate * dt;
+    let damping = 1.0 / (k + (k * k * k * 0.235 + k * k * 0.48) + 1.0);
+    let offset = cur - goal;
+    let change = dt * (offset * rate + *velocity);
+    let value = (offset + change) * damping + goal;
+    *velocity = (*velocity - rate * change) * damping;
+    value.rem_euclid(TAU)
+}
+
 /// Turns every stationary unit toward the goal the client's chain picks, in its branch order (the
 /// order is the behaviour):
 ///
@@ -233,10 +314,16 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
 /// A deck rider turns in its deck's frame: its raw goal is the wire's deck-local facing, and a
 /// bearing goal is taken off the deck's yaw (`0x7362e3`). Deviation: the reference reads row 5's
 /// world bearing (`0x7567ec`) as deck-local; benilla takes it off the deck's yaw too.
+///
+/// The step toward the goal is [`Smoothing`]'s: the template's chase, the player-controlled
+/// chase, or the box filter.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn drive_display_facing(
     mut commands: Commands,
     index: Res<GuidIndex>,
+    time: Option<Res<Time>>,
+    names: Option<Res<crate::names::NameCache>>,
+    rates: Option<Res<ChaseRates>>,
     // `Option<Res<_>>` throughout: a headless test mounts this system without the UI plugins.
     interact: Option<Res<crate::ui_session::InteractTarget>>,
     emotes: Option<Res<crate::sound::EmoteSounds>>,
@@ -248,6 +335,7 @@ pub(crate) fn drive_display_facing(
             &NetEntity,
             &ObjectStore,
             Option<&crate::transport::TransportRider>,
+            Has<crate::creature_anim::Engaged>,
         ),
         (
             Without<Spline>,
@@ -285,8 +373,8 @@ pub(crate) fn drive_display_facing(
     let interact_npc = interact.and_then(|t| crate::ui_session::interact_entity(&t, &index));
 
     // Collect goals first, then apply, so no transform is borrowed mutably while another is read.
-    let mut goals: Vec<(Entity, Option<f32>, GoalSource, Riding)> = Vec::new();
-    for (e, net, store, rider) in &candidates {
+    let mut goals: Vec<(Entity, Option<f32>, GoalSource, Riding, Smoothing)> = Vec::new();
+    for (e, net, store, rider, engaged) in &candidates {
         if net.kind != EntityKind::Unit {
             continue; // a GameObject sits at its authored facing
         }
@@ -306,6 +394,11 @@ pub(crate) fn drive_display_facing(
             },
         };
         let fields = &store.0;
+        let template_rate = fields
+            .object_entry()
+            .and_then(|entry| names.as_ref()?.creature_record(entry))
+            .and_then(|rec| rates.as_ref()?.0.chase_rate(rec.movement_id));
+        let smooth = smoothing(template_rate, fields.unit_flags(), engaged);
         // Rows 2-4.
         if fields.unit_stand_state() != 0
             || fields.unit_flags() & UNIT_FLAG_STUNNED != 0
@@ -313,13 +406,13 @@ pub(crate) fn drive_display_facing(
                 emotes.as_ref().and_then(|c| c.emote_flags(id))
             })
         {
-            goals.push((e, None, GoalSource::Raw, riding));
+            goals.push((e, None, GoalSource::Raw, riding, smooth));
             continue;
         }
         // Row 5.
         if let Ok((_, _, hold)) = holds.get(e) {
             if !hold.died {
-                goals.push((e, Some(hold.yaw), GoalSource::Held, riding));
+                goals.push((e, Some(hold.yaw), GoalSource::Held, riding, smooth));
                 continue;
             }
         }
@@ -334,7 +427,7 @@ pub(crate) fn drive_display_facing(
             .and_then(|te| transforms.get(te).ok())
             .and_then(|t| bearing(unit_pos, bevy_to_wow(t.translation)));
         if let Some(goal) = target {
-            goals.push((e, Some(goal), GoalSource::Target, riding));
+            goals.push((e, Some(goal), GoalSource::Target, riding, smooth));
             continue;
         }
         // Row 9: the interact target (`0xbd07a8`).
@@ -343,13 +436,14 @@ pub(crate) fn drive_display_facing(
             .flatten()
             .and_then(|p| bearing(unit_pos, p));
         match facing_me {
-            Some(goal) => goals.push((e, Some(goal), GoalSource::Interact, riding)),
-            None => goals.push((e, None, GoalSource::Raw, riding)),
+            Some(goal) => goals.push((e, Some(goal), GoalSource::Interact, riding, smooth)),
+            None => goals.push((e, None, GoalSource::Raw, riding, smooth)),
         }
     }
 
+    let dt = time.map_or(0.0, |t| t.delta_secs());
     let mut stepping: bevy::ecs::entity::EntityHashSet = default();
-    for (e, goal, source, riding) in goals {
+    for (e, goal, source, riding, smooth) in goals {
         use std::f32::consts::TAU;
         let deck = match riding {
             Riding::Deck(d) => Some(d),
@@ -364,6 +458,7 @@ pub(crate) fn drive_display_facing(
             commands.entity(e).try_insert(DisplayFacing {
                 wire: yaw_of(tf.rotation).rem_euclid(TAU),
                 hist: [0.0; 4],
+                velocity: 0.0,
                 deck: deck.map(|d| d.wire),
             });
             continue;
@@ -380,7 +475,10 @@ pub(crate) fn drive_display_facing(
         };
         // The raw facing is a goal, not a freeze: it swings an NPC back when its window closes.
         let goal = goal.map_or(raw, |g| (g - frame).rem_euclid(TAU));
-        let new = filter_step(cur, goal, &mut state.hist);
+        let new = match smooth {
+            Smoothing::Damped(rate) => damped_step(cur, goal, rate, dt, &mut state.velocity),
+            Smoothing::Filter => filter_step(cur, goal, &mut state.hist),
+        };
         state.deck = deck.is_some().then_some(new);
         // Write only on change: a settled unit's `new` is bitwise the goal, so a standing crowd
         // stops tripping every downstream `Changed<Transform>` gate.
@@ -502,6 +600,57 @@ mod tests {
             hist[1], hist[0],
             "and the ring refilled rather than averaged"
         );
+    }
+
+    /// The step picker's order (`0x735f60`): a template rate over `1e-5` first, then the
+    /// player-controlled chase at 30 in combat (the `0x800` flag or auto-attack) and 20 out of it,
+    /// else the box filter.
+    #[test]
+    fn the_template_rate_then_player_control_pick_the_chase() {
+        assert_eq!(smoothing(Some(5.0), 0, false), Smoothing::Damped(5.0));
+        assert_eq!(smoothing(Some(5.0), 0x8, true), Smoothing::Damped(5.0));
+        assert_eq!(smoothing(Some(0.0), 0, false), Smoothing::Filter);
+        assert_eq!(smoothing(None, 0, false), Smoothing::Filter);
+        assert_eq!(smoothing(Some(0.0), 0x8, false), Smoothing::Damped(20.0));
+        assert_eq!(smoothing(None, 0x8 | 0x800, false), Smoothing::Damped(30.0));
+        assert_eq!(smoothing(None, 0x8, true), Smoothing::Damped(30.0));
+        assert_eq!(smoothing(None, 0x800, true), Smoothing::Filter);
+    }
+
+    /// The chase closes on the goal over time, the short way round the wrap, and holds still for
+    /// a zero `dt`.
+    #[test]
+    fn the_chase_closes_on_its_goal_the_short_way() {
+        let mut v = 0.0;
+        let mut cur = TAU - 0.1;
+        for _ in 0..120 {
+            cur = damped_step(cur, 0.1, 10.0, 1.0 / 60.0, &mut v);
+        }
+        let left = crate::creature_anim::wrap_pi(0.1 - cur);
+        assert!(
+            left.abs() < 0.01,
+            "settled near the goal: {cur} ({left} left)"
+        );
+        let mut v = 0.0;
+        let first = damped_step(TAU - 0.1, 0.1, 10.0, 1.0 / 60.0, &mut v);
+        let moved = crate::creature_anim::wrap_pi(first - (TAU - 0.1));
+        assert!(moved > 0.0 && moved < 0.2, "short way, part way: {moved}");
+        let mut v = 0.0;
+        assert_eq!(damped_step(1.0, 2.0, 10.0, 0.0, &mut v), 1.0);
+    }
+
+    /// The reference's damped chase (`0x7160b0`) on known numbers: one 0.1 s step at rate 2 from
+    /// rest, 1 rad short of the goal.
+    #[test]
+    fn one_damped_step_matches_the_reference_formula() {
+        let mut v = 0.0;
+        let out = damped_step(1.0, 2.0, 2.0, 0.1, &mut v);
+        let k = 0.2f32;
+        let damping = 1.0 / (k + (k * k * k * 0.235 + k * k * 0.48) + 1.0);
+        // `dt · (offset · rate + velocity)`, offset −1, rate 2, velocity 0.
+        let change = 0.1 * -2.0;
+        assert!((out - ((-1.0 + change) * damping + 2.0)).abs() < 1e-6);
+        assert!((v - (-2.0 * change) * damping).abs() < 1e-6);
     }
 
     #[test]

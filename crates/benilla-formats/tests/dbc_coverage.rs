@@ -21,7 +21,6 @@ use benilla_formats::{dbc_width, READ_TABLES};
 /// open issue that builds it, where one does.
 const NOT_READ: &[(&str, &str)] = &[
     ("BannedAddOns", "#245 the addon ban list"),
-    ("CreatureMovementInfo", "#243 creature movement"),
     ("DanceMoves", "#243 dance studio emotes"),
     ("DestructibleModelData", "#243 destructible buildings"),
     ("GameObjectArtKit", "#243 game object art kits"),

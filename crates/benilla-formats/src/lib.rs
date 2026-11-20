@@ -143,6 +143,8 @@ pub use exhaustion::{load_exhaustion, ExhaustionRow};
 mod movie;
 pub use movie::{load_movies, MovieCatalog, MovieFile};
 mod bank_bag_slot_prices;
+mod creature_movement_info;
+pub use creature_movement_info::{load_creature_movement_info, CreatureMovementInfo};
 mod currency;
 pub use bank_bag_slot_prices::{load_bank_bag_slot_prices, BankBagSlotPrices};
 pub use currency::{load_currency_tables, CurrencyCategory, CurrencyTables, CurrencyType};
