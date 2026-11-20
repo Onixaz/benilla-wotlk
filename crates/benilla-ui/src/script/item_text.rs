@@ -1,43 +1,33 @@
-//! The `ItemTextFrame` Lua surface (letters, books, plaques) over the read session the app owns:
-//! getters over the pushed [`ItemTextState`], and the close and page-turn intents. The app fires
-//! `ITEM_TEXT_BEGIN` then `ITEM_TEXT_READY` (`ItemTextFrame.lua:11`, `:38`), and `ITEM_TEXT_CLOSED`
-//! after `CloseItemText()`, the frame's OnHide (`ItemTextFrame.xml:349`).
+//! The `ItemTextFrame` Lua surface (letters, books, plaques) over the reader's globals the app owns, read at the call. The app fires `ITEM_TEXT_BEGIN`, `ITEM_TEXT_READY` and `ITEM_TEXT_CLOSED` from its handlers; a page turn fires `ITEM_TEXT_READY` and `CloseItemText` fires `ITEM_TEXT_CLOSED` inside their calls.
 
 use mlua::{Lua, Value};
 
-/// The open read session as Lua sees it, pushed whole by the app.
+/// The reader at the call.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ItemTextState {
-    /// `ItemTextGetItem()`: the item's name, the window title.
-    pub item: String,
-    /// `ItemTextGetCreator()`: `ITEM_FIELD_CREATOR`'s name, `None` for an authorless text.
-    pub creator: Option<String>,
-    /// `ItemTextGetText()`: the current page's text.
+pub struct ItemTextRead {
+    /// `ItemTextGetItem()` (`0x589c40`): the read object's name, `None` with the object gone.
+    pub item: Option<String>,
+    /// `ItemTextGetText()` (`0x589b90`): the text the last draw left (`0xbfaa00`).
     pub text: String,
-    /// The 1-based page (`ItemTextGetPage()`); letters are always page 1.
+    /// `ItemTextGetPage()` (`0x589b50`): the page index plus one (`0xbfc940`).
     pub page: u32,
-    /// Whether a next page exists (`ItemTextHasNextPage()`); always `false` for letters.
+    /// `ItemTextHasNextPage()` (`0x589d70`): no letter, and the next page id is set.
     pub has_next: bool,
-    /// `ItemTextGetMaterial()`, e.g. "Stone"; `None` reads nil, which the frame shows as
-    /// parchment (`ItemTextFrame.lua:19-21`).
+    /// `ItemTextGetMaterial()` (`0x589c90`): the object's `PageTextMaterial.dbc` name, `None` for nil.
     pub material: Option<String>,
 }
 
-impl super::UiScript {
-    /// Push the open read session, or clear it with `None`.
-    pub fn set_item_text(&mut self, state: Option<ItemTextState>) {
-        set_field!(self, item_text, state);
-    }
+/// `f` over the reader at the call; `None` with no view lent.
+fn read<R>(f: impl FnOnce(&ItemTextRead) -> R) -> Option<R> {
+    super::read_live(|l| l.item_text().map(|r| f(&r))).flatten()
+}
 
-    /// Whether `CloseItemText()` was called since the last drain (and clear the flag).
-    pub fn take_item_text_close(&mut self) -> bool {
-        drain_field!(self, item_text_close)
-    }
-
-    /// Drain the `ItemTextPrevPage()`/`ItemTextNextPage()` turns (`-1`/`+1`, in click order).
-    pub fn take_item_text_page_turns(&mut self) -> Vec<i32> {
-        drain_field!(self, item_text_page_turns)
-    }
+/// A string or nil.
+fn string_or_nil(lua: &Lua, s: Option<String>) -> mlua::Result<Value> {
+    Ok(match s {
+        Some(s) => Value::String(lua.create_string(&s)?),
+        None => Value::Nil,
+    })
 }
 
 /// Register the item-text globals.
@@ -46,65 +36,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "ItemTextGetItem",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model
-                .item_text
-                .as_ref()
-                .map(|s| s.item.clone())
-                .unwrap_or_default())
-        })?,
+        lua.create_function(|lua, ()| string_or_nil(lua, read(|r| r.item.clone()).flatten()))?,
     )?;
 
+    // `0x58a480`: the creator's cached name, a miss asked with the reader's callback on it.
     g.set(
         "ItemTextGetCreator",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(
-                match model.item_text.as_ref().and_then(|s| s.creator.clone()) {
-                    Some(c) => Value::String(lua.create_string(&c)?),
-                    None => Value::Nil,
-                },
-            )
+            string_or_nil(lua, super::write_live(|l| l.item_text_creator()).flatten())
         })?,
     )?;
 
     g.set(
         "ItemTextGetText",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model
-                .item_text
-                .as_ref()
-                .map(|s| s.text.clone())
-                .unwrap_or_default())
-        })?,
+        lua.create_function(|_, ()| Ok(read(|r| r.text.clone()).unwrap_or_default()))?,
     )?;
 
     g.set(
         "ItemTextGetPage",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.item_text.as_ref().map_or(1, |s| i64::from(s.page)))
-        })?,
+        lua.create_function(|_, ()| Ok(read(|r| i64::from(r.page)).unwrap_or(1)))?,
     )?;
 
     g.set(
         "ItemTextHasNextPage",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match model.item_text.as_ref().is_some_and(|s| s.has_next) {
-                true => Value::Integer(1),
+        lua.create_function(|_, ()| {
+            Ok(match read(|r| r.has_next).unwrap_or(false) {
+                true => Value::Number(1.0),
                 false => Value::Nil,
             })
         })?,
@@ -112,34 +69,29 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "ItemTextGetMaterial",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(
-                match model.item_text.as_ref().and_then(|s| s.material.clone()) {
-                    Some(m) => Value::String(lua.create_string(&m)?),
-                    None => Value::Nil,
-                },
-            )
-        })?,
+        lua.create_function(|lua, ()| string_or_nil(lua, read(|r| r.material.clone()).flatten()))?,
     )?;
 
+    // `0x58a400` -> `0x58a1a0` with no object: `ITEM_TEXT_CLOSED` inside the call, twice while the reader holds the interact target, whose close re-enters it (`0x58a207` -> `0x512e60`).
     g.set(
         "CloseItemText",
         lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).item_text_close = true;
+            let closes = super::write_live(|l| l.close_item_text()).unwrap_or(0);
+            for _ in 0..closes {
+                super::tick::fire_event_into(lua, "ITEM_TEXT_CLOSED", Vec::new());
+            }
             Ok(())
         })?,
     )?;
 
-    for (name, delta) in [("ItemTextPrevPage", -1i32), ("ItemTextNextPage", 1)] {
+    // `0x58a110`, `0x58a150`: the page steps and redraws inside the call (`0x589e90`), `ITEM_TEXT_READY` with it when the page is cached.
+    for (name, next) in [("ItemTextPrevPage", false), ("ItemTextNextPage", true)] {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                crate::script::model_mut_of(lua)
-                    .item_text_page_turns
-                    .push(delta);
+                if super::write_live(|l| l.item_text_turn(next)) == Some(true) {
+                    super::tick::fire_event_into(lua, "ITEM_TEXT_READY", Vec::new());
+                }
                 Ok(())
             })?,
         )?;
@@ -150,59 +102,83 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::script::live::{TestItemText, TestView};
     use crate::script::UiScript;
 
-    fn state() -> ItemTextState {
-        ItemTextState {
-            item: "Plain Letter".into(),
-            creator: Some("One".into()),
-            text: "asd".into(),
-            page: 1,
-            has_next: false,
-            material: None,
+    fn view() -> TestView {
+        TestView {
+            item_text: Some(TestItemText {
+                read: super::ItemTextRead {
+                    item: Some("Plain Letter".into()),
+                    text: "asd".into(),
+                    page: 1,
+                    has_next: false,
+                    material: None,
+                },
+                creator: Some("One".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
         }
     }
 
     #[test]
-    fn getters_mirror_the_pushed_state() {
+    fn getters_read_the_reader_at_the_call() {
         let mut s = UiScript::new().unwrap();
-        // No session: empty defaults; the frame reads these only while shown.
-        assert_eq!(s.eval::<String>("return ItemTextGetItem()").unwrap(), "");
-        assert!(s
-            .eval::<bool>("return ItemTextGetCreator() == nil")
-            .unwrap());
-
-        s.set_item_text(Some(state()));
-        assert_eq!(
-            s.eval::<String>("return ItemTextGetItem()").unwrap(),
-            "Plain Letter"
-        );
-        assert_eq!(
-            s.eval::<String>("return ItemTextGetCreator()").unwrap(),
-            "One"
-        );
-        assert_eq!(s.eval::<String>("return ItemTextGetText()").unwrap(), "asd");
+        // No view: the defaults the frame never reads while hidden.
+        assert!(s.eval::<bool>("return ItemTextGetItem() == nil").unwrap());
         assert_eq!(s.eval::<i64>("return ItemTextGetPage()").unwrap(), 1);
-        assert!(s
-            .eval::<bool>("return ItemTextHasNextPage() == nil")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("return ItemTextGetMaterial() == nil")
-            .unwrap());
+
+        let mut v = view();
+        s.with_live(&mut v, |s| {
+            assert_eq!(
+                s.eval::<String>("return ItemTextGetItem()").unwrap(),
+                "Plain Letter"
+            );
+            assert_eq!(
+                s.eval::<String>("return ItemTextGetCreator()").unwrap(),
+                "One"
+            );
+            assert_eq!(s.eval::<String>("return ItemTextGetText()").unwrap(), "asd");
+            assert_eq!(s.eval::<i64>("return ItemTextGetPage()").unwrap(), 1);
+            assert!(s
+                .eval::<bool>("return ItemTextHasNextPage() == nil")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("return ItemTextGetMaterial() == nil")
+                .unwrap());
+        });
     }
 
+    /// The close fires its events inside the call, the page turn its redraw's.
     #[test]
-    fn close_and_page_intents_queue_and_drain() {
+    fn close_and_turns_fire_inside_their_calls() {
         let mut s = UiScript::new().unwrap();
-        s.set_item_text(Some(state()));
-        assert!(!s.take_item_text_close());
-        s.run("CloseItemText()").unwrap();
-        assert!(s.take_item_text_close());
-        assert!(!s.take_item_text_close(), "drained");
-
-        s.run("ItemTextNextPage() ItemTextPrevPage()").unwrap();
-        assert_eq!(s.take_item_text_page_turns(), vec![1, -1]);
-        assert!(s.take_item_text_page_turns().is_empty(), "drained");
+        s.run(
+            "log = {} local f = CreateFrame('Frame') \
+             f:RegisterEvent('ITEM_TEXT_CLOSED') f:RegisterEvent('ITEM_TEXT_READY') \
+             f:SetScript('OnEvent', function(_, e) table.insert(log, e) end)",
+        )
+        .unwrap();
+        let mut v = view();
+        if let Some(t) = v.item_text.as_mut() {
+            t.closes = 2;
+            t.turn_ready = true;
+        }
+        let log = s.with_live(&mut v, |s| {
+            s.run("ItemTextNextPage() table.insert(log, 'after next') CloseItemText() table.insert(log, 'after close') CloseItemText()").unwrap();
+            s.eval::<Vec<String>>("return log").unwrap()
+        });
+        assert_eq!(
+            log,
+            [
+                "ITEM_TEXT_READY",
+                "after next",
+                "ITEM_TEXT_CLOSED",
+                "ITEM_TEXT_CLOSED",
+                "after close"
+            ]
+        );
+        assert_eq!(v.item_text.as_ref().unwrap().turns, [true]);
     }
 }

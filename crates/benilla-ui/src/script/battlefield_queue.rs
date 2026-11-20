@@ -482,12 +482,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     let party = model.party.members.len() as i32;
                     let raid = model.party.raid.len() as i32;
                     if r.max_group_size < party || r.max_group_size < raid {
-                        model.ui_errors.push("ERR_GROUP_JOIN_BATTLEGROUND_TOO_MANY");
+                        drop(model);
+                        crate::script::ui_errors::show_now(
+                            lua,
+                            "ERR_GROUP_JOIN_BATTLEGROUND_TOO_MANY",
+                        );
                         return Ok(());
                     }
                 }
                 if !arena && model.instance_type == Some(INSTANCE_TYPE_BATTLEGROUND) {
-                    model.ui_errors.push("ERR_BATTLEGROUND_NOT_IN_BATTLEGROUND");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_BATTLEGROUND_NOT_IN_BATTLEGROUND");
                     return Ok(());
                 }
                 let bf = &model.battlefield;
@@ -518,11 +523,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
 
-    // Fires `BATTLEFIELDS_CLOSED` and drops the battlemaster (`0x549b40`).
+    // Fires `BATTLEFIELDS_CLOSED`, clears the interact target on the battlemaster, whose interaction close fires it again while the battlemaster held it (`0x549b60` -> `0x51309f` -> `0x5496e1`), and drops the battlemaster (`0x549b40`).
     g.set(
         "CloseBattlefield",
         lua.create_function(|lua, ()| {
             super::tick::fire_event_into(lua, "BATTLEFIELDS_CLOSED", Vec::new());
+            let held = crate::script::model_mut_of(lua).battlefield.battlemaster;
+            if held != 0 && super::write_live(|l| l.clear_interact_target(held)).unwrap_or(false) {
+                super::tick::fire_event_into(lua, "BATTLEFIELDS_CLOSED", Vec::new());
+            }
             let mut model = crate::script::model_mut_of(lua);
             model.battlefield.battlemaster = 0;
             model.battlefield.closes += 1;
@@ -666,7 +675,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .flatten()
                     .or(fatigued);
                 if let Some(key) = refusal {
-                    model.ui_errors.push(key);
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, key);
                     return Ok(Value::Nil);
                 }
             }

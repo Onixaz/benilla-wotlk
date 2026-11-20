@@ -232,6 +232,11 @@ pub trait LiveState {
         None
     }
 
+    /// The interact target (`0xbd07a8`), the `"npc"` unit's guid; `None` with none held.
+    fn interact_target(&self) -> Option<u64> {
+        None
+    }
+
     /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
     fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
         None
@@ -503,6 +508,174 @@ pub trait LiveState {
         None
     }
 
+    /// The player's book as the last book update built it (`0x53ca70`); `None` with none lent.
+    fn player_book(&self) -> Option<std::sync::Arc<super::PlayerBook>> {
+        None
+    }
+
+    /// Whether the player knows `spell_id`, the known-spell bits (`0xbe6d88`, `0x7260e0`).
+    fn spell_known(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Whether the player knows `spell_id` or a higher rank of it (`0x7260e0`, `0x726160`).
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        self.spell_known(spell_id)
+    }
+
+    /// A player book spell's texture at the call (`0x53dc20`): the weapon faces for the melee
+    /// auto-attack and a ranged shot (`0x5a84d0`, `0x5a85e0`), else the record's icon.
+    fn book_spell_texture(&self, spell_id: u32) -> Option<String> {
+        super::spellbook::live_book()
+            .book
+            .named()
+            .find(|s| s.spell_id == spell_id)?
+            .texture
+            .clone()
+    }
+
+    /// A player book spell's selected test at the call (`0x53d350`): the open trade-skill line's
+    /// spell, or a shapeshift into the player's current form.
+    fn spell_selected(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// `IsUsableAction`'s pair for the 1-based `action` off the bar's usable cache (`0x5a7e60`);
+    /// `None` without a view.
+    fn action_usable(&self, _action: u32) -> Option<(bool, bool)> {
+        None
+    }
+
+    /// `IsCurrentAction` for the 0-based bar `slot` at the call (`0x5aa240`); `None` without a view.
+    fn action_current(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsAutoRepeatAction` for the 0-based bar `slot` at the call (`0x5a9470`).
+    fn action_auto_repeat(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsActionInRange` for the 0-based bar `slot` at `target`, 0 for the locked target
+    /// (`0x5a94c0`): `Some(None)` where the check does not apply.
+    fn action_in_range(&self, _slot: u32, _target: u64) -> Option<Option<bool>> {
+        None
+    }
+
+    /// `ActionHasRange` for the 0-based bar `slot` (`0x5a95e0`).
+    fn action_has_range(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsAttackAction` for the 0-based bar `slot` (`0x5a96d0`).
+    fn action_attack(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsEquippedAction` for the 0-based bar `slot` (`0x5a88b0`).
+    fn action_equipped(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `GetActionCooldown` for the 0-based bar `slot` (`0x5a8e40`): `(start_ms, duration_ms,
+    /// enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`, `(0, 0, false)`
+    /// for a slot naming nothing; `None` without a view.
+    fn action_cooldown(
+        &self,
+        _slot: u32,
+        _anchor: std::time::Instant,
+        _ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        None
+    }
+
+    /// The 0-based bar `slot`'s word (`[0xc1e358 + slot * 4]`), 0 for an empty slot; `None`
+    /// without a view.
+    fn action_word(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// `GetActionTexture` for a spell, item or pet-action slot (`0x5a97f0`), resolved at the call;
+    /// `Some(None)` for no icon.
+    fn action_texture(&self, _slot: u32) -> Option<Option<super::ActionIcon>> {
+        None
+    }
+
+    /// `GetActionCount` (`0x5a7d10`): an item's count (`0x5a8a60`), a spell's reagent uses
+    /// (`0x801770`).
+    fn action_count(&self, _slot: u32) -> Option<u32> {
+        None
+    }
+
+    /// `IsConsumableAction` (`0x5a9360`).
+    fn action_consumable(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsStackableAction` (`0x5a8470`).
+    fn action_stackable(&self, _slot: u32) -> Option<bool> {
+        None
+    }
+
+    /// A pet-action slot's spell (`0x5a80e0`): `Some(None)` for a mode, an order or an empty word.
+    fn action_pet_spell(&self, _slot: u32) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The temporary bar's owners (`[0xc1e5a0]`); `None` without a view.
+    fn temp_action_bar(&self) -> Option<u32> {
+        None
+    }
+
+    /// The bonus offset (`[0xc1e59c]`); `None` without a view.
+    fn bonus_bar_offset(&self) -> Option<u8> {
+        None
+    }
+
+    /// Whether the book holds Cold Weather Flying (`0x7261b0`); `None` without a view.
+    fn knows_cold_weather_flying(&self) -> Option<bool> {
+        None
+    }
+
+    /// The slot write (`0x5aae80`, `0x5aaa90` for 0): the word stored, the slot's usable bytes
+    /// recomputed and the slot sent (`0x5aa390`); `Some(false)` while the bar is locked
+    /// (`0x5aaec1`, `0x5aaac2`), `None` without a view. The caller signals the slot.
+    fn set_action_word(&mut self, _slot: u32, _word: u32) -> Option<bool> {
+        None
+    }
+
+    /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
+    fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
+        None
+    }
+
+    /// The stance bar as `GetShapeshiftFormInfo` reads it at the call (`0x53de90`): the cached list
+    /// in bar order, each entry's active test and icon read now, castable off its cache; `None`
+    /// without a view. The cooldown is read apart, as the spell's.
+    fn shapeshift_forms(&self) -> Option<Vec<super::ShapeshiftFormView>> {
+        None
+    }
+
+    /// The player's shapeshift form byte now, 0 unshifted; `None` without a view.
+    fn shapeshift_form_byte(&self) -> Option<u8> {
+        None
+    }
+
+    /// The spell tooltip builder's view of `spell_id` at the call, against the player or with
+    /// `alt_caster` its pet, its keyed cells filled through `get`; `None` without a row.
+    fn spell_tooltip(
+        &self,
+        _spell_id: u32,
+        _alt_caster: bool,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<super::SpellTooltipView> {
+        None
+    }
+
+    /// `f` over the spell source that reads the casters and the player's cast state at the call;
+    /// a view that has none leaves `f` uncalled, and the verb asks the source installed at load.
+    fn with_spell_source(&self, _f: &mut dyn FnMut(&dyn super::SpellInfoSource)) {}
+
     /// The player's cooldown history for `spell_id` at the call, as `GetCompanionCooldown` asks it (`0x53e54c`): `(start_ms, duration_ms, enabled)` on the `GetTime` clock that `ui_now` seconds names at `anchor`; `None` with nothing running.
     fn spell_cooldown(
         &self,
@@ -510,6 +683,61 @@ pub trait LiveState {
         _anchor: std::time::Instant,
         _ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
+        None
+    }
+
+    /// The targeting cursor at the call: up, wanting an item, and its arm count.
+    fn spell_targeting(&self) -> super::SpellTargetingLive {
+        super::SpellTargetingLive::default()
+    }
+
+    /// `SpellCanTargetUnit`'s unit leg toward the held unit `guid` at the call (`0x804190`): the standing word binds it with no range refusal; false while not targeting.
+    fn spell_can_target_unit(&self, _guid: u64) -> bool {
+        false
+    }
+
+    /// A unit's cast, or with `channel` its channel, as the unit holds it at the call (`+0xa6c`-`+0xa7c`, `+0xa80`-`+0xa88`), with the not-interruptible test's answer (`0x71ab20`); `None` with none.
+    fn unit_cast(&self, _guid: u64, _channel: bool) -> Option<super::UnitCast> {
+        None
+    }
+
+    /// `SpellStopCasting`'s test at the call: the auto-repeating spell is set, else a cast is in flight (`0x7fe130`, `0x805f30`); never a channel.
+    fn has_stoppable_cast(&self) -> bool {
+        false
+    }
+
+    /// The totem table's live slot `slot` (0-based) at the call (`0xbd0b00`), `None` for an empty one.
+    fn totem(&self, _slot: usize) -> Option<super::TotemView> {
+        None
+    }
+
+    /// An empty totem slot's flag: the player held and a carried item covering the slot's `TotemCategory` row, the bag search run at the call (`0x51d42f`, `0x51d457`-`0x51d496`).
+    fn totem_tool(&self, _slot: usize) -> bool {
+        false
+    }
+
+    /// Destroy the live slot `slot` inside the call: `CMSG_TOTEM_DESTROYED`, then the slot cleared (`0x5197d0`); false for an empty slot, which sends nothing. The caller fires `PLAYER_TOTEM_UPDATE`.
+    fn destroy_totem(&mut self, _slot: usize) -> bool {
+        false
+    }
+
+    /// The totem bar's element list `element` (0 fire, 1 earth, 2 water, 3 air) at the call (`0xbe8ea0`).
+    fn multicast_list(&self, _element: usize) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// `spell`'s two `TotemCategory` rows off its record (`0x5a7bc0`), `None` for no record.
+    fn spell_totem_categories(&self, _spell: u32) -> Option<[u32; 2]> {
+        None
+    }
+
+    /// The `TotemCategory.dbc` row's name, `ERR_MULTI_CAST_ACTION_TOTEM_S`'s argument (`0x5ab24b`).
+    fn totem_category_name(&self, _row: u32) -> Option<String> {
+        None
+    }
+
+    /// The rune table (`0xc24304`-`0xc24388`) and the active player's `PLAYER_RUNE_REGEN` rates, read at the call; `None` without the active player object (`0x61306f`).
+    fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
         None
     }
 
@@ -535,6 +763,11 @@ pub trait LiveState {
 
     /// The interaction close's bank leg when the interact target is the banker (`0x518d50` -> `0x512fa7`): the target zeroed, whether it was.
     fn close_bank_interaction(&mut self) -> bool {
+        false
+    }
+
+    /// The interact target's clear on `guid` inside the call (`0x518d50` with 0): the target zeroed when it held `guid`, whether it did; the caller runs its window's leg.
+    fn clear_interact_target(&mut self, _guid: u64) -> bool {
         false
     }
 
@@ -669,6 +902,273 @@ pub trait LiveState {
 
     /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
     fn ask_refund_record(&mut self, _item: u64) {}
+
+    /// `CheckBinderDist` (`0x6d2290`): the latched innkeeper held as a unit within its combat reach plus 4 yd of us.
+    fn binder_in_reach(&self) -> bool {
+        false
+    }
+
+    /// `ConfirmBinder`'s talk with no guid (`0x6d2120`): the latched innkeeper in reach, `CMSG_BINDER_ACTIVATE` goes out (`0x6d2257`).
+    fn confirm_binder(&self) {}
+
+    /// `CheckTalentMasterDist` (`0x6d2070`): the latched trainer held as a unit within its combat reach plus 4 yd of us.
+    fn talent_master_in_reach(&self) -> bool {
+        false
+    }
+
+    /// `ConfirmTalentWipe`'s talk with no guid (`0x6db1c0`): the latched trainer in reach, the wipe goes out when our money covers the latched cost, else the refusal line's key (`0x6db2ae`).
+    fn confirm_talent_wipe(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// `GetInstanceBootTimeRemaining` (`0x5162e0`): whole seconds to the boot deadline, 0 with none or past.
+    fn instance_boot_secs(&self) -> u32 {
+        0
+    }
+
+    /// `GetAreaSpiritHealerTime` (`0x516b90`): whole seconds to the held healer's wave, 0 with none or past.
+    fn area_spirit_healer_secs(&self) -> u32 {
+        0
+    }
+
+    /// `AcceptAreaSpiritHeal`'s healer poll at the call (`0x524b60` -> `0x524010`) up to its drop's cancel: whether a wave is cancelled, its event owed while the deadline still reads (`0x523eea` before `0x523efa`); `None` where no view lends it.
+    fn area_spirit_poll_drop(&mut self) -> Option<bool> {
+        None
+    }
+
+    /// The rest of the poll after that event, then `CMSG_AREA_SPIRIT_HEALER_QUEUE` naming the healer it left held (`0x524b60`).
+    fn accept_area_spirit_heal(&mut self, _cancelled: bool) {}
+
+    /// Whether our body is held, without which the 2584 aura cancel neither fires nor sends (`0x51f72d`, `0x51f75c`).
+    fn spirit_cancel_has_body(&self) -> bool {
+        false
+    }
+
+    /// `CancelAreaSpiritHeal`'s `CMSG_CANCEL_AURA` for 2584, after its event (`0x522fa0` -> `0x51f710`).
+    fn cancel_area_spirit_heal(&self) {}
+
+    /// Our player object held, the lookup the designer's verbs make first (`0x6de1d9`, `0x5997fd`).
+    fn active_player_held(&self) -> bool {
+        false
+    }
+
+    /// Our guild's record in the guild cache, asking nothing (`0x6de20c`): its five tabard fields, `-1`s when undesigned; `None` for no guild or no record.
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        None
+    }
+
+    /// The tabard save latch (`0xc9eacc`).
+    fn tabard_save_pending(&self) -> bool {
+        false
+    }
+
+    /// The tabard save (`0x6db320`): the first failing check's message key, else `MSG_SAVE_GUILD_EMBLEM` sent and the latch set; `None` with no player object.
+    fn save_tabard(&mut self, _design: [i32; 5]) -> Option<Result<(), &'static str>> {
+        None
+    }
+
+    /// The designer's close (`0x598ec0`): the vendor cleared, and how many `CLOSE_TABARD_FRAME`s fire, 0 with none held.
+    fn close_tabard(&mut self) -> u32 {
+        0
+    }
+
+    /// The seed's and a cycle's colours onto our body (`0x5993b0`).
+    fn apply_guild_color(&mut self, _design: [i32; 5]) {}
+
+    /// A `DressUpModel` pane's own model edited inside its verb's call: undress (`0x597ba0`), re-dress from its unit (`0x5977e0`) or a try-on (`0x597fc0`), whose record miss asks inside the call and leaves the pane's callback (`0x5980fa`).
+    fn dress_up(&mut self, _pane: crate::widget::FrameHandle, _intent: super::DressUpIntent) {}
+
+    /// The gossip globals at the call (`0xc00ef0`, `0xc00bf0`, `0xbfc968`, `0xc00be8`); `None` with no view.
+    fn gossip(&self) -> Option<super::GossipRead<'_>> {
+        None
+    }
+
+    /// `CMSG_GOSSIP_SELECT_OPTION` for option `slot` (0-based) to the held NPC, then the menu emptied (`0x58b040`, `0x58b045`).
+    fn select_gossip_option(&mut self, _slot: usize, _code: Option<String>) {}
+
+    /// The questgiver send for quest row `row` (0-based, whole menu) to the held NPC (`0x58b070`, `0x58b130`).
+    fn select_gossip_quest(&mut self, _row: usize) {}
+
+    /// `CloseGossip`'s zero set (`0x58a550`): how many `GOSSIP_CLOSED`s it fires, 0 with no NPC held.
+    fn close_gossip(&mut self) -> u32 {
+        0
+    }
+
+    /// The item-text reader at the call (`0xbfc948`, `0xbfc940`, `0xbfaa00`); `None` with no view.
+    fn item_text(&self) -> Option<super::ItemTextRead> {
+        None
+    }
+
+    /// `ItemTextGetCreator` (`0x58a480`): the read item's creator name, a miss asked with the reader's callback left on it.
+    fn item_text_creator(&mut self) -> Option<String> {
+        None
+    }
+
+    /// A page step and its redraw (`0x58a110`, `0x58a150` -> `0x589e90`): whether the redraw fired `ITEM_TEXT_READY`.
+    fn item_text_turn(&mut self, _next: bool) -> bool {
+        false
+    }
+
+    /// `CloseItemText` (`0x58a400`): how many `ITEM_TEXT_CLOSED`s it fires, 0 with no reader.
+    fn close_item_text(&mut self) -> u32 {
+        0
+    }
+
+    /// The taxi map the last setup listed (`0x5932e0`), `Some(None)` with none; `None` where no view lends it.
+    fn taxi_map(&self) -> Option<Option<&super::TaxiUiState>> {
+        None
+    }
+
+    /// `TaxiNodeCost`'s fare at the call (`0x591350`) for a 0-based listed slot; `None` where no view lends it.
+    fn taxi_node_cost(&self, _slot: u32) -> Option<i64> {
+        None
+    }
+
+    /// A taxi verb's act inside its call; `None` where no view lends the map.
+    fn taxi_act(&mut self, _act: super::TaxiAct) -> Option<super::TaxiOutcome> {
+        None
+    }
+
+    /// The charter window and the registrar's row at the call (`0xc22b20`.., `0xc0e558`); `None` where no view lends them.
+    fn petition_view(&self) -> Option<super::PetitionState> {
+        None
+    }
+
+    /// Whether a petition vendor is set (`0xc0f7c8`); `None` where no view lends it.
+    fn petition_vendor_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The vendor's row count (`0xc0f7d0`); `None` where no view lends it.
+    fn petition_vendor_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// Vendor row `index` (0-based) at the call, a miss asked with the vendor's record callback (`0x5a1f30`); `Some(None)` off the rows, `None` where no view lends it.
+    fn petition_item(&mut self, _index: u32) -> Option<Option<super::PetitionVendorItem>> {
+        None
+    }
+
+    /// A charter verb's act inside its call; `None` where no view lends the charter windows.
+    fn petition_act(&mut self, _act: super::PetitionRequest) -> Option<super::PetitionOutcome> {
+        None
+    }
+
+    /// The trainer window the list handler built (`0x596450`), `Some(None)` with none; `None` where no view lends it.
+    fn trainer(&self) -> Option<Option<&super::TrainerWindow>> {
+        None
+    }
+
+    /// The trainer window, written by a verb's mask commit or selection inside its call.
+    fn trainer_mut(&mut self) -> Option<Option<&mut super::TrainerWindow>> {
+        None
+    }
+
+    /// Service `position` (in list order)'s gates and product link at the call (`0x595470`, `0x5955e0`, `0x596290`); `Some(None)` past the list, `None` where no view lends it.
+    fn trainer_service_live(&self, _position: usize) -> Option<Option<super::TrainerServiceLive>> {
+        None
+    }
+
+    /// Service `position`'s description parsed at the call (`0x5959d0`), a recipe's product asked with the trainer's record callback; `None` where no view lends it.
+    fn trainer_description(
+        &mut self,
+        _position: usize,
+        _global: GlobalStrings<'_>,
+    ) -> Option<Option<String>> {
+        None
+    }
+
+    /// `CMSG_TRAINER_BUY_SPELL` to the open trainer inside the call (`0x594da0`); false where no view lends the wire.
+    fn trainer_buy(&mut self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Whether a trainer is open, which the setter's zero leg tests (`0x5940fa`); `None` where no view lends the trainer.
+    fn trainer_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The setter's interact target clear (`0x594113`): true when the trainer held it, whose interaction close runs the zero leg again inside it (`0x512f80`).
+    fn trainer_release_target(&mut self) -> bool {
+        false
+    }
+
+    /// The setter's zero (`0x59411b`): the trainer and its records.
+    fn trainer_zero(&mut self) {}
+
+    /// Our coinage at the call (`PLAYER_FIELD_COINAGE`), 0 with no player object; `None` where no view lends it.
+    fn player_money(&self) -> Option<u64> {
+        None
+    }
+
+    /// Whether a vendor is set (`0xbfa3e8`); `None` where no view lends the merchant.
+    fn merchant_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The count of `list` (`0xbfa3f0`, `0xbfa3f4`); `None` where no view lends the merchant.
+    fn merchant_len(&self, _list: super::MerchantList) -> Option<usize> {
+        None
+    }
+
+    /// Row `index` (0-based) of `list` resolved at the call, `ask` leaving the merchant's record callback on a vendor row's miss (`0x584680`); `None` where no view lends the merchant.
+    fn merchant_row(
+        &mut self,
+        _list: super::MerchantList,
+        _index: usize,
+        _ask: bool,
+    ) -> Option<Option<super::MerchantItem>> {
+        None
+    }
+
+    /// Whether the vendor's unit is held with the repair bit (`0x5845b0`); `None` where no view lends the merchant.
+    fn can_merchant_repair(&self) -> Option<bool> {
+        None
+    }
+
+    /// `GetRepairAllCost`'s sweep (`0x585990`): `Some(None)` with no repairer or no player; `None` where no view lends it.
+    fn repair_all_cost(&self) -> Option<Option<(u32, bool)>> {
+        None
+    }
+
+    /// An item's repair cost after the vendor's discount (`0x584b20`); `None` where no view lends it.
+    fn repair_cost(&self, _at: super::RepairAt) -> Option<u32> {
+        None
+    }
+
+    /// A merchant verb's act inside its call; `None` where no view lends the merchant.
+    fn merchant_act(&mut self, _act: super::MerchantAct) -> Option<super::MerchantOutcome> {
+        None
+    }
+
+    /// The barber shop at the call: the open flag (`[0xbd19b8]`), our look, level and coinage, and our body's dials; `None` with no player object.
+    fn barber(&self) -> Option<super::BarberRead<'_>> {
+        None
+    }
+
+    /// Our body's barber dials, written by a step or a reset inside its call (`0x52fc80`, `0x52f7d0`).
+    fn set_barber_dials(&mut self, _dials: [u8; 5]) {}
+
+    /// The skin style pointer (`[0xbd19b4]`), written by a skin step inside its call (`0x52fd94`).
+    fn set_barber_skin_style(&mut self, _data: u8) {}
+
+    /// `CMSG_ALTER_APPEARANCE` with the four style ids, sent inside the apply's call (`0x52eda0`).
+    fn send_alter_appearance(&mut self, _styles: [u32; 4]) {}
+
+    /// The shop's close (`0x52e9f0`): true when an open shop closed, for the caller to fire `BARBER_SHOP_CLOSE`.
+    fn close_barber_shop(&mut self) -> bool {
+        false
+    }
+
+    /// Our race row's hair token (`0x52e6d0`); `None` with no player object or row.
+    fn hair_customization(&self) -> Option<&str> {
+        None
+    }
+
+    /// Our race row's facial-hair token for our sex (`0x52e730`); `None` with no player object or row.
+    fn facial_hair_customization(&self) -> Option<&str> {
+        None
+    }
 
     /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
     fn item_set(
@@ -958,6 +1458,13 @@ pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str
     }
 }
 
+/// Our coinage at the call through the lent view; where none lends it, a test's pushed purse.
+pub(crate) fn money(model: &super::Model) -> u64 {
+    read_live(|l| l.player_money())
+        .flatten()
+        .unwrap_or(model.money)
+}
+
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
@@ -1080,6 +1587,21 @@ pub(crate) struct TestView {
     pub pet_stops: Cell<u32>,
     /// The 0-based slots the bar toggle reached past its gate, in order.
     pub pet_toggles: std::cell::RefCell<Vec<u32>>,
+    /// The units' held casts and channels, by `(guid, channel)`.
+    pub unit_casts: std::collections::HashMap<(u64, bool), super::UnitCast>,
+    /// `SpellStopCasting`'s test.
+    pub stoppable_cast: bool,
+    /// The totem table's slots, which the destroy clears, and each empty slot's tool flag.
+    pub totems: std::cell::RefCell<[Option<super::TotemView>; super::MAX_TOTEM_SLOTS]>,
+    pub totem_tools: [bool; super::MAX_TOTEM_SLOTS],
+    /// The 0-based slots the destroy sent, in order.
+    pub totem_destroys: std::cell::RefCell<Vec<usize>>,
+    /// The totem bar's element lists, the spells' `TotemCategory` pairs and the rows' names.
+    pub multicast_lists: [Vec<u32>; 4],
+    pub totem_categories: std::collections::HashMap<u32, [u32; 2]>,
+    pub totem_category_names: std::collections::HashMap<u32, String>,
+    /// The rune table and the player's rates; `None` without the player object.
+    pub runes: Option<(super::RuneState, super::RuneRegen)>,
     /// The guild bank, its locks as `(tab, slot, item)`, the current tab and the two moneys.
     pub guild_bank: super::GuildBankView,
     pub guild_bank_locks: Vec<(u8, u8, u32)>,
@@ -1089,11 +1611,77 @@ pub(crate) struct TestView {
     /// The tabs whose text is stale, and the text asks sent, in order.
     pub guild_bank_text_stale: Vec<u8>,
     pub guild_bank_text_sent: Vec<u8>,
+    /// Our guild's cached tabard record and the save latch.
+    pub tabard_record: Option<[i32; 5]>,
+    pub tabard_pending: bool,
     /// The item cache's records, and each read made, `(id, tooltip)`, in order.
     pub item_records: std::cell::RefCell<std::collections::HashMap<u32, super::ItemTemplateView>>,
     pub item_record_reads: std::cell::RefCell<Vec<(u32, bool)>>,
     /// The bind point's area name.
     pub bind_location: std::cell::RefCell<Option<String>>,
+    /// The gossip globals, the selects and the closes a close fires.
+    pub gossip: Option<TestGossip>,
+    /// The item-text reader.
+    pub item_text: Option<TestItemText>,
+    /// The barber shop, the alter-appearance sends and our race's two tokens.
+    pub barber: Option<TestBarber>,
+    pub barber_sent: Vec<[u32; 4]>,
+    pub hair_tokens: Option<(String, String)>,
+    /// The dressing-room edits the verbs made, in call order.
+    pub dressup: Vec<(crate::widget::FrameHandle, super::DressUpIntent)>,
+    /// The charter, taxi and trainer acts the verbs made inside their calls, which this view
+    /// records and leaves to the test's seeded windows.
+    pub petition_acts: Vec<super::PetitionRequest>,
+    pub taxi_acts: Vec<super::TaxiAct>,
+    pub trainer_bought: Vec<u32>,
+    /// Whether a trainer is open, which `CloseTrainer`'s zero leg tests; `None` answers nothing.
+    pub trainer_is_open: Option<bool>,
+    /// The trainer zero legs run.
+    pub trainer_zeroes: u32,
+}
+
+/// The gossip globals a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestGossip {
+    pub greeting: String,
+    pub options: Vec<super::GossipOptionView>,
+    pub quests: Vec<super::GossipQuestRow>,
+    pub pending: bool,
+    pub force_gossip: bool,
+    pub money: u64,
+    pub selects: Vec<(usize, Option<String>)>,
+    pub quest_selects: Vec<usize>,
+    /// What the first close returns; later closes return 0.
+    pub closes: u32,
+}
+
+/// The item-text reader a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestItemText {
+    pub read: super::ItemTextRead,
+    pub creator: Option<String>,
+    /// What the first close returns; later closes return 0.
+    pub closes: u32,
+    /// Whether a turn's redraw fires, and the turns made, `true` for next.
+    pub turn_ready: bool,
+    pub turns: Vec<bool>,
+}
+
+/// The barber shop a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestBarber {
+    pub open: bool,
+    pub class: u8,
+    pub base_cost: f32,
+    pub look: [u8; 5],
+    pub dials: [u8; 5],
+    pub skin_style: u8,
+    pub styles: Vec<super::BarberStyle>,
+    pub grid: Option<super::GlueCustomizeGrid>,
+    pub money: u32,
 }
 
 #[cfg(test)]
@@ -1106,8 +1694,98 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {
+        self.unit_casts.get(&(guid, channel)).cloned()
+    }
+
+    fn has_stoppable_cast(&self) -> bool {
+        self.stoppable_cast
+    }
+
+    fn spell_targeting(&self) -> super::SpellTargetingLive {
+        TEST_TARGETING.with(|t| t.borrow().0)
+    }
+
+    fn spell_can_target_unit(&self, guid: u64) -> bool {
+        TEST_TARGETING.with(|t| {
+            let t = t.borrow();
+            t.0.active && t.1.contains(&guid)
+        })
+    }
+
+    fn multicast_list(&self, element: usize) -> Vec<u32> {
+        self.multicast_lists
+            .get(element)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn spell_totem_categories(&self, spell: u32) -> Option<[u32; 2]> {
+        self.totem_categories.get(&spell).copied()
+    }
+
+    fn totem_category_name(&self, row: u32) -> Option<String> {
+        self.totem_category_names.get(&row).cloned()
+    }
+
+    fn totem(&self, slot: usize) -> Option<super::TotemView> {
+        self.totems.borrow().get(slot).cloned().flatten()
+    }
+
+    fn totem_tool(&self, slot: usize) -> bool {
+        self.totem_tools.get(slot).copied().unwrap_or(false)
+    }
+
+    fn destroy_totem(&mut self, slot: usize) -> bool {
+        let live = self
+            .totems
+            .borrow_mut()
+            .get_mut(slot)
+            .and_then(Option::take)
+            .is_some();
+        if live {
+            self.totem_destroys.borrow_mut().push(slot);
+        }
+        live
+    }
+
+    fn runes(&self) -> Option<(super::RuneState, super::RuneRegen)> {
+        self.runes.clone()
+    }
+
     fn item_tables(&self) -> Option<&super::ItemTables> {
         self.item_tables.as_ref()
+    }
+
+    fn dress_up(&mut self, pane: crate::widget::FrameHandle, intent: super::DressUpIntent) {
+        self.dressup.push((pane, intent));
+    }
+
+    fn petition_act(&mut self, act: super::PetitionRequest) -> Option<super::PetitionOutcome> {
+        // `HasFilledPetition`'s walk is a read; the test's vendor answers it.
+        if act != super::PetitionRequest::HasFilled {
+            self.petition_acts.push(act);
+        }
+        None
+    }
+
+    fn taxi_act(&mut self, act: super::TaxiAct) -> Option<super::TaxiOutcome> {
+        self.taxi_acts.push(act);
+        None
+    }
+
+    fn trainer_buy(&mut self, spell_id: u32) -> bool {
+        self.trainer_bought.push(spell_id);
+        true
+    }
+
+    fn trainer_open(&self) -> Option<bool> {
+        self.trainer_is_open
+    }
+
+    fn trainer_zero(&mut self) {
+        self.trainer_zeroes += 1;
+        self.trainer_is_open = self.trainer_is_open.map(|_| false);
     }
 
     fn guild_bank_open(&self) -> bool {
@@ -1274,6 +1952,120 @@ impl LiveState for TestView {
 
     fn active_player(&self) -> Option<u64> {
         self.player
+    }
+
+    fn spirit_cancel_has_body(&self) -> bool {
+        self.player.is_some()
+    }
+
+    fn active_player_held(&self) -> bool {
+        self.player.is_some()
+    }
+
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        self.tabard_record
+    }
+
+    fn gossip(&self) -> Option<super::GossipRead<'_>> {
+        let g = self.gossip.as_ref()?;
+        Some(super::GossipRead {
+            greeting: &g.greeting,
+            options: &g.options,
+            quests: &g.quests,
+            pending: g.pending,
+            force_gossip: g.force_gossip,
+            money: g.money,
+        })
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        if let Some(g) = self.gossip.as_mut() {
+            g.selects.push((slot, code));
+            g.options.clear();
+            g.quests.clear();
+        }
+    }
+
+    fn select_gossip_quest(&mut self, row: usize) {
+        if let Some(g) = self.gossip.as_mut() {
+            g.quest_selects.push(row);
+        }
+    }
+
+    fn close_gossip(&mut self) -> u32 {
+        self.gossip
+            .as_mut()
+            .map_or(0, |g| std::mem::take(&mut g.closes))
+    }
+
+    fn item_text(&self) -> Option<super::ItemTextRead> {
+        self.item_text.as_ref().map(|t| t.read.clone())
+    }
+
+    fn item_text_creator(&mut self) -> Option<String> {
+        self.item_text.as_ref()?.creator.clone()
+    }
+
+    fn item_text_turn(&mut self, next: bool) -> bool {
+        self.item_text.as_mut().is_some_and(|t| {
+            t.turns.push(next);
+            t.turn_ready
+        })
+    }
+
+    fn close_item_text(&mut self) -> u32 {
+        self.item_text
+            .as_mut()
+            .map_or(0, |t| std::mem::take(&mut t.closes))
+    }
+
+    fn barber(&self) -> Option<super::BarberRead<'_>> {
+        let b = self.barber.as_ref()?;
+        Some(super::BarberRead {
+            open: b.open,
+            class: b.class,
+            base_cost: b.base_cost,
+            look: b.look,
+            dials: b.dials,
+            skin_style: b.skin_style,
+            styles: &b.styles,
+            grid: b.grid.as_ref(),
+            money: b.money,
+        })
+    }
+
+    fn set_barber_dials(&mut self, dials: [u8; 5]) {
+        if let Some(b) = self.barber.as_mut() {
+            b.dials = dials;
+        }
+    }
+
+    fn set_barber_skin_style(&mut self, data: u8) {
+        if let Some(b) = self.barber.as_mut() {
+            b.skin_style = data;
+        }
+    }
+
+    fn send_alter_appearance(&mut self, styles: [u32; 4]) {
+        self.barber_sent.push(styles);
+    }
+
+    fn close_barber_shop(&mut self) -> bool {
+        self.barber
+            .as_mut()
+            .is_some_and(|b| std::mem::take(&mut b.open))
+    }
+
+    fn hair_customization(&self) -> Option<&str> {
+        self.hair_tokens.as_ref().map(|t| t.0.as_str())
+    }
+
+    fn facial_hair_customization(&self) -> Option<&str> {
+        self.hair_tokens.as_ref().map(|t| t.1.as_str())
+    }
+
+    fn tabard_save_pending(&self) -> bool {
+        self.tabard_pending
     }
 
     fn has_control(&self) -> bool {
@@ -1460,7 +2252,35 @@ impl LiveState for TestView {
         _anchor: std::time::Instant,
         _ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
-        self.cooldowns.get(&spell_id).copied()
+        self.cooldowns
+            .get(&spell_id)
+            .copied()
+            .or_else(|| super::spellbook::stand_in_slot(spell_id).and_then(|s| s.cooldown))
+    }
+
+    fn spell_selected(&self, spell_id: u32) -> bool {
+        super::spellbook::stand_in_slot(spell_id).is_some_and(|s| s.current)
+    }
+
+    fn spell_known(&self, spell_id: u32) -> bool {
+        TEST_KNOWN.with(|k| k.borrow().0.contains(&spell_id))
+    }
+
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        TEST_KNOWN.with(|k| {
+            let (known, next) = &*k.borrow();
+            let mut cur = spell_id;
+            for _ in 0..32 {
+                if known.contains(&cur) {
+                    return true;
+                }
+                let Some(&n) = next.get(&cur) else {
+                    return false;
+                };
+                cur = n;
+            }
+            false
+        })
     }
 
     fn pet_bar(&self) -> Option<super::PetBarLive> {
@@ -1551,6 +2371,79 @@ thread_local! {
     /// The pet book's set writes through a test view, in order.
     static TEST_SPELL_AUTOCASTS: std::cell::RefCell<Vec<(u32, bool)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The targeting cursor and the guids `SpellCanTargetUnit` passes, as every test view on this thread answers them.
+    static TEST_TARGETING: std::cell::RefCell<(super::SpellTargetingLive, std::collections::HashSet<u64>)> =
+        std::cell::RefCell::default();
+    /// The known spells with the rank table, as every test view on this thread answers them.
+    static TEST_KNOWN: std::cell::RefCell<(std::collections::HashSet<u32>, std::collections::HashMap<u32, u32>)> =
+        std::cell::RefCell::default();
+    /// The view lent for the rest of the thread once a test moves the cursor with none up.
+    static TEST_TARGETING_LOAN: std::cell::RefCell<Option<LiveLoan<TestView>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Move the targeting cursor on a bare VM as the app's view answers it, lending a view for the rest of the thread when none is up.
+#[cfg(test)]
+pub(crate) trait TestTargeting {
+    /// The cursor up or down; going up counts an arm, as the cast's cursor arm does (`0x80d7f7`).
+    fn set_spell_targeting(&mut self, active: bool);
+    /// The word's item half (`& 0x4010`).
+    fn set_item_pick_armed(&mut self, armed: bool);
+    /// The guids `SpellCanTargetUnit` passes while the cursor is up.
+    fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>);
+}
+
+/// Answer `known` as the player's known spells on this thread, as [`set_test_book`] does.
+#[cfg(test)]
+pub(crate) fn set_test_known(known: impl IntoIterator<Item = u32>) {
+    sticky_targeting();
+    TEST_KNOWN.with(|k| k.borrow_mut().0 = known.into_iter().collect());
+}
+
+/// Answer `next` as the rank table the known test walks on this thread.
+#[cfg(test)]
+pub(crate) fn set_test_next_ranks(next: std::collections::HashMap<u32, u32>) {
+    sticky_targeting();
+    TEST_KNOWN.with(|k| k.borrow_mut().1 = next);
+}
+
+#[cfg(test)]
+fn sticky_targeting() {
+    if read_live(|_| ()).is_none() {
+        // SAFETY: held until the thread ends, made with no other loan up.
+        let loan = unsafe { LiveLoan::new(TestView::default()) };
+        TEST_TARGETING_LOAN.with(|l| *l.borrow_mut() = Some(loan));
+    }
+}
+
+#[cfg(test)]
+impl TestTargeting for UiScript {
+    fn set_spell_targeting(&mut self, active: bool) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| {
+            let t = &mut t.borrow_mut().0;
+            if active && !t.active {
+                t.arms = t.arms.wrapping_add(1);
+            }
+            t.active = active;
+            if !active {
+                t.wants_item = false;
+            }
+        });
+    }
+
+    fn set_item_pick_armed(&mut self, armed: bool) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| t.borrow_mut().0.wants_item = armed);
+    }
+
+    fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
+        sticky_targeting();
+        TEST_TARGETING.with(|t| t.borrow_mut().1 = guids.into_iter().collect());
+    }
 }
 
 /// A test's pet book: the book before it comes back, and the view it lent with none up drops, when it drops.

@@ -1,10 +1,148 @@
 //! The stock 3.3.5a gossip window (`GossipFrame.lua`) and its popups (`UIParent.lua`'s
-//! `GOSSIP_CONFIRM`, `StaticPopup.lua`) on the production load, over the menu the app pushes.
+//! `GOSSIP_CONFIRM`, `StaticPopup.lua`) on the production load, over a lent menu the verbs read.
 
 use benilla_ui::script::{
-    GossipMenu, GossipOptionView, GossipQuestRow, JustifyH, PlayerReqState, QuadContent,
+    GossipOptionView, GossipQuestRow, GossipRead, JustifyH, LiveState, PlayerReqState, QuadContent,
     ScriptValue, UiScript,
 };
+
+/// The gossip globals a test lends, and the selects sent through it.
+#[derive(Clone, Default)]
+pub(super) struct Menu {
+    pub(super) greeting: String,
+    pub(super) quests: Vec<GossipQuestRow>,
+    pub(super) options: Vec<GossipOptionView>,
+    pub(super) force_gossip: bool,
+    pub(super) money: u64,
+    pub(super) selects: Vec<(usize, Option<String>)>,
+}
+
+impl LiveState for Menu {
+    fn gossip(&self) -> Option<GossipRead<'_>> {
+        Some(GossipRead {
+            greeting: &self.greeting,
+            options: &self.options,
+            quests: &self.quests,
+            pending: false,
+            force_gossip: self.force_gossip,
+            money: self.money,
+        })
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        self.selects.push((slot, code));
+        self.options.clear();
+        self.quests.clear();
+    }
+
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+}
+
+/// A [`Menu`] lent to every verb on the test's thread, with the quest selects and closes it saw.
+pub(super) struct MenuLoan(benilla_ui::script::LiveLoan<LoanedMenu>);
+
+/// The loaned menu and the sends it records.
+#[derive(Default)]
+pub(super) struct LoanedMenu {
+    menu: Menu,
+    quest_selects: Vec<usize>,
+    closes: u32,
+}
+
+impl LiveState for LoanedMenu {
+    fn gossip(&self) -> Option<GossipRead<'_>> {
+        self.menu.gossip()
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        self.menu.select_gossip_option(slot, code);
+    }
+
+    fn select_gossip_quest(&mut self, row: usize) {
+        self.quest_selects.push(row);
+    }
+
+    /// Recorded; the stub holds no NPC, so it fires no `GOSSIP_CLOSED`.
+    fn close_gossip(&mut self) -> u32 {
+        self.closes += 1;
+        0
+    }
+
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+}
+
+/// Lend an empty [`Menu`] for the rest of the test.
+pub(super) fn gossip_loan() -> MenuLoan {
+    // SAFETY: the test drops the loan on its own thread, after every loan made inside it.
+    MenuLoan(unsafe { benilla_ui::script::LiveLoan::new(LoanedMenu::default()) })
+}
+
+impl MenuLoan {
+    pub(super) fn set(&mut self, menu: Menu) {
+        self.0.with_view_mut(|v| v.menu = menu);
+    }
+
+    /// The 1-based options selected since the last take.
+    pub(super) fn take_selects(&mut self) -> Vec<(u32, Option<String>)> {
+        self.0.with_view_mut(|v| {
+            std::mem::take(&mut v.menu.selects)
+                .into_iter()
+                .map(|(slot, code)| (slot as u32 + 1, code))
+                .collect()
+        })
+    }
+
+    /// The 1-based whole-menu quest rows selected since the last take.
+    pub(super) fn take_quest_selects(&mut self) -> Vec<u32> {
+        self.0.with_view_mut(|v| {
+            std::mem::take(&mut v.quest_selects)
+                .into_iter()
+                .map(|r| r as u32 + 1)
+                .collect()
+        })
+    }
+
+    /// Whether `CloseGossip` ran since the last take.
+    pub(super) fn take_close(&mut self) -> bool {
+        self.0.with_view_mut(|v| std::mem::take(&mut v.closes) > 0)
+    }
+}
 
 /// Errors from the gossip window's own code; the production load carries unrelated 3.3.5a gaps.
 fn gossip_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -42,7 +180,7 @@ fn the_stock_gossip_window_paints_both_quest_lists_and_the_options() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = loaded();
-    s.set_gossip(Some(GossipMenu {
+    let mut m = Menu {
         greeting: "Well met.".into(),
         quests: vec![
             GossipQuestRow {
@@ -70,8 +208,8 @@ fn the_stock_gossip_window_paints_both_quest_lists_and_the_options() {
             option("Train me.", "trainer"),
             option("Let me browse your goods.", "vendor"),
         ],
-        force_gossip: false,
-    }));
+        ..Default::default()
+    };
     // Quest 60 is complete in the log, which `isComplete` reads (`0x58bcb0`).
     s.seed_quest_log(benilla_ui::script::QuestLogState {
         entries: vec![benilla_ui::script::QuestLogEntryView {
@@ -82,11 +220,12 @@ fn the_stock_gossip_window_paints_both_quest_lists_and_the_options() {
         }],
         ..Default::default()
     });
-    s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
-    let errors = gossip_errors(s.take_errors());
-    assert!(errors.is_empty(), "gossip window errors: {errors:#?}");
-    s.run(
-        r#"
+    s.with_live(&mut m, |s| {
+        s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
+        let errors = gossip_errors(s.take_errors());
+        assert!(errors.is_empty(), "gossip window errors: {errors:#?}");
+        s.run(
+            r#"
         assert(GossipFrame:IsShown(), "the window is open")
         assert(GossipGreetingText:GetText() == "Well met.", "the greeting")
         local function row(i) return _G["GossipTitleButton" .. i] end
@@ -105,14 +244,14 @@ fn the_stock_gossip_window_paints_both_quest_lists_and_the_options() {
         assert(icon(6):find("trainergossipicon"), "the trainer icon, got " .. icon(6))
         assert(row(7):GetText() == "Let me browse your goods.", "option 2")
         "#,
-    )
-    .unwrap();
-
-    // The second option's click queues its select, and the binding spends the menu.
-    s.run("GossipTitleButton7:Click()").unwrap();
-    assert_eq!(s.take_gossip_selects(), vec![(2, None)]);
-    assert!(s.eval::<i64>("return GetNumGossipOptions()").unwrap() == 0);
-    assert!(gossip_errors(s.take_errors()).is_empty());
+        )
+        .unwrap();
+        // The second option's click sends its select in the call, and the binding spends the menu.
+        s.run("GossipTitleButton7:Click()").unwrap();
+        assert!(s.eval::<i64>("return GetNumGossipOptions()").unwrap() == 0);
+        assert!(gossip_errors(s.take_errors()).is_empty());
+    });
+    assert_eq!(m.selects, vec![(1, None)]);
 }
 
 /// A lone service option skips the window and selects itself (`GossipFrame.lua`'s first branch),
@@ -124,25 +263,29 @@ fn a_lone_service_option_selects_itself_unless_forced() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = loaded();
-    let menu = GossipMenu {
+    let menu = Menu {
         greeting: "Yes?".into(),
         options: vec![option("Train me.", "trainer")],
         ..Default::default()
     };
-    s.set_gossip(Some(menu.clone()));
-    s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
-    assert!(gossip_errors(s.take_errors()).is_empty());
-    assert_eq!(s.take_gossip_selects(), vec![(1, None)]);
-    assert!(!s.eval::<bool>("return GossipFrame:IsShown()").unwrap());
+    let mut m = menu.clone();
+    s.with_live(&mut m, |s| {
+        s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
+        assert!(gossip_errors(s.take_errors()).is_empty());
+        assert!(!s.eval::<bool>("return GossipFrame:IsShown()").unwrap());
+    });
+    assert_eq!(m.selects, vec![(0, None)]);
 
-    s.set_gossip(Some(GossipMenu {
+    let mut m = Menu {
         force_gossip: true,
         ..menu
-    }));
-    s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
-    assert!(gossip_errors(s.take_errors()).is_empty());
-    assert!(s.take_gossip_selects().is_empty());
-    assert!(s.eval::<bool>("return GossipFrame:IsShown()").unwrap());
+    };
+    s.with_live(&mut m, |s| {
+        s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
+        assert!(gossip_errors(s.take_errors()).is_empty());
+        assert!(s.eval::<bool>("return GossipFrame:IsShown()").unwrap());
+    });
+    assert!(m.selects.is_empty());
 }
 
 /// An option with box text asks through the stock `GOSSIP_CONFIRM` popup, with its money, and
@@ -155,7 +298,8 @@ fn a_box_text_option_confirms_through_the_stock_popup() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = loaded();
     s.set_money(10_000);
-    s.set_gossip(Some(GossipMenu {
+    let mut m = Menu {
+        money: 10_000,
         greeting: "Hm?".into(),
         options: vec![
             GossipOptionView {
@@ -168,15 +312,18 @@ fn a_box_text_option_confirms_through_the_stock_popup() {
             option("Goodbye.", "gossip"),
         ],
         ..Default::default()
-    }));
-    s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
-    s.run("GossipTitleButton1:Click()").unwrap();
-    assert!(s.take_gossip_selects().is_empty(), "asked, not sent");
-    s.tick(0.0);
-    let errors = gossip_errors(s.take_errors());
-    assert!(errors.is_empty(), "popup errors: {errors:#?}");
-    s.run(
-        r#"
+    };
+    s.with_live(&mut m, |s| {
+        s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
+        s.run("GossipTitleButton1:Click()").unwrap();
+    });
+    assert!(m.selects.is_empty(), "asked, not sent");
+    s.with_live(&mut m, |s| {
+        s.tick(0.0);
+        let errors = gossip_errors(s.take_errors());
+        assert!(errors.is_empty(), "popup errors: {errors:#?}");
+        s.run(
+            r#"
         local dialog = StaticPopup_Visible("GOSSIP_CONFIRM")
         assert(dialog, "the confirm popup is up")
         assert(_G[dialog .. "Text"]:GetText() == "Are you sure?", "its text")
@@ -184,15 +331,16 @@ fn a_box_text_option_confirms_through_the_stock_popup() {
         assert(_G[dialog .. "MoneyFrame"]:IsShown(), "and the cost")
         _G[dialog .. "Button1"]:Click()
         "#,
-    )
-    .unwrap();
-    assert_eq!(s.take_gossip_selects(), vec![(1, None)]);
-    // The sent select's `GOSSIP_CONFIRM_CANCEL` hides the popup.
-    s.tick(0.0);
-    assert!(s
-        .eval::<bool>("return StaticPopup_Visible('GOSSIP_CONFIRM') == nil")
-        .unwrap());
-    assert!(gossip_errors(s.take_errors()).is_empty());
+        )
+        .unwrap();
+        // The sent select's `GOSSIP_CONFIRM_CANCEL` hides the popup.
+        s.tick(0.0);
+        assert!(s
+            .eval::<bool>("return StaticPopup_Visible('GOSSIP_CONFIRM') == nil")
+            .unwrap());
+        assert!(gossip_errors(s.take_errors()).is_empty());
+    });
+    assert_eq!(m.selects, vec![(0, None)]);
 }
 
 /// The text quad painted for `frame`'s label: its text, with its centre inside the frame.
@@ -246,7 +394,7 @@ fn the_gossip_rows_and_buttons_wear_their_style_fonts() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = loaded();
-    s.set_gossip(Some(GossipMenu {
+    let mut m = Menu {
         greeting: "Well met.".into(),
         quests: vec![GossipQuestRow {
             quest_id: 18,
@@ -256,8 +404,11 @@ fn the_gossip_rows_and_buttons_wear_their_style_fonts() {
         }],
         options: vec![option("Train me.", "trainer")],
         force_gossip: true,
-    }));
-    s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new());
+        ..Default::default()
+    };
+    s.with_live(&mut m, |s| {
+        s.fire_event("GOSSIP_SHOW", Vec::<ScriptValue>::new())
+    });
     let errors = gossip_errors(s.take_errors());
     assert!(errors.is_empty(), "gossip window errors: {errors:#?}");
 

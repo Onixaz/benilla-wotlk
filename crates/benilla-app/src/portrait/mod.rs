@@ -63,7 +63,7 @@ use light::{model_pane_light, studio_light, BoothLight};
 pub(crate) mod test_bake;
 
 /// The round portrait slots, each with its own layer and camera. `"npc"` is an interaction
-/// window's NPC ([`crate::ui_session::InteractNpc`]); `"targettarget"` resolves only while drawn,
+/// interact target ([`crate::ui_session::InteractTarget`]); `"targettarget"` resolves only while drawn,
 /// and so do a party member's pet, `"partypetN"`, and the loot source `SetLootPortrait` binds
 /// ([`benilla_ui::script::LOOT_PORTRAIT_UNIT`]).
 const SLOTS: [&str; 14] = [
@@ -1336,7 +1336,10 @@ fn sync_portraits(
     mut env_cache: Local<Option<bool>>,
     mut cams: Query<(&BoothCam, &mut Transform, &mut Projection)>,
     anim_data: Option<Res<crate::creature_anim::AnimData>>,
-    interact_npc: Res<crate::ui_session::InteractNpc>,
+    (interact, index): (
+        Res<crate::ui_session::InteractTarget>,
+        Res<crate::net::GuidIndex>,
+    ),
     mut party: PartyBooths,
 ) {
     if test_mode(&mut env_cache) {
@@ -1390,7 +1393,7 @@ fn sync_portraits(
                 }
                 entity
             }
-            "npc" => interact_npc.0,
+            "npc" => crate::ui_session::interact_entity(&interact, &index),
             // Gated on the UI drawing it, as `"targettarget"`: no stock file binds it.
             benilla_ui::script::LOOT_PORTRAIT_UNIT => party
                 .panes

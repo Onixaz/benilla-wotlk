@@ -238,7 +238,7 @@ pub(crate) fn drive_display_facing(
     mut commands: Commands,
     index: Res<GuidIndex>,
     // `Option<Res<_>>` throughout: a headless test mounts this system without the UI plugins.
-    interact: Option<Res<crate::ui_session::InteractNpc>>,
+    interact: Option<Res<crate::ui_session::InteractTarget>>,
     emotes: Option<Res<crate::sound::EmoteSounds>>,
     // A parked rig is drawn nowhere: its display facing resumes from its state when it wakes, as
     // the reference ticks no pass-2 unit.
@@ -282,7 +282,7 @@ pub(crate) fn drive_display_facing(
         .next()
         .and_then(|e| transforms.get(e).ok())
         .map(|t| bevy_to_wow(t.translation));
-    let interact_npc = interact.and_then(|r| r.0);
+    let interact_npc = interact.and_then(|t| crate::ui_session::interact_entity(&t, &index));
 
     // Collect goals first, then apply, so no transform is borrowed mutably while another is read.
     let mut goals: Vec<(Entity, Option<f32>, GoalSource, Riding)> = Vec::new();
@@ -337,7 +337,7 @@ pub(crate) fn drive_display_facing(
             goals.push((e, Some(goal), GoalSource::Target, riding));
             continue;
         }
-        // Row 9: `InteractNpc` stands for the client's open-NPC-window global.
+        // Row 9: the interact target (`0xbd07a8`).
         let facing_me = (interact_npc == Some(e))
             .then_some(self_pos)
             .flatten()
@@ -576,11 +576,22 @@ mod tests {
         assert!(app.world().entity(angled).get::<WalkEndFacing>().is_none());
     }
 
+    /// The interact target on `npc`, under a guid the index maps to it.
+    fn interact(app: &mut App, npc: Option<Entity>) {
+        let guid = npc.map(Entity::to_bits);
+        if let (Some(e), Some(g)) = (npc, guid) {
+            app.world_mut().resource_mut::<GuidIndex>().0.insert(g, e);
+        }
+        app.world_mut()
+            .resource_mut::<crate::ui_session::InteractTarget>()
+            .0 = guid;
+    }
+
     #[test]
     fn the_interaction_npc_turns_to_face_us_and_swings_back_on_close() {
         let mut app = App::new();
         app.init_resource::<GuidIndex>()
-            .init_resource::<crate::ui_session::InteractNpc>()
+            .init_resource::<crate::ui_session::InteractTarget>()
             .add_systems(Update, drive_display_facing);
         // Us at the origin; the vendor 5 yd along +x, facing +x, away from us.
         let me = app
@@ -626,9 +637,7 @@ mod tests {
         );
 
         // We are due west of the vendor: a bearing of pi.
-        app.world_mut()
-            .resource_mut::<crate::ui_session::InteractNpc>()
-            .0 = Some(npc);
+        interact(&mut app, Some(npc));
         for _ in 0..16 {
             app.update();
         }
@@ -638,9 +647,7 @@ mod tests {
             "the vendor faces us within the dead-band, got {facing_us}"
         );
 
-        app.world_mut()
-            .resource_mut::<crate::ui_session::InteractNpc>()
-            .0 = None;
+        interact(&mut app, None);
         for _ in 0..16 {
             app.update();
         }
@@ -657,7 +664,7 @@ mod tests {
     fn the_latch_carries_the_step_applied_not_the_gap_remaining() {
         let mut app = App::new();
         app.init_resource::<GuidIndex>()
-            .init_resource::<crate::ui_session::InteractNpc>()
+            .init_resource::<crate::ui_session::InteractTarget>()
             .add_systems(Update, drive_display_facing);
         // A bearing of +2.601 rad, reached counterclockwise: every step is a left turn.
         app.world_mut().spawn((
@@ -685,9 +692,7 @@ mod tests {
         let step = |app: &App| app.world().entity(npc).get::<FacingStep>().map(|f| f.0);
 
         app.update(); // the seeding frame
-        app.world_mut()
-            .resource_mut::<crate::ui_session::InteractNpc>()
-            .0 = Some(npc);
+        interact(&mut app, Some(npc));
 
         let goal = 3.0f32.atan2(-5.0);
         let (mut latched_inside_the_old_band, mut pumps) = (false, 0);
@@ -734,7 +739,7 @@ mod tests {
         use benilla_protocol::ObjectFields;
         let mut app = App::new();
         app.init_resource::<GuidIndex>()
-            .init_resource::<crate::ui_session::InteractNpc>()
+            .init_resource::<crate::ui_session::InteractTarget>()
             .add_systems(Update, drive_display_facing);
         app.world_mut()
             .spawn((SelfPlayer, ActiveMover, Transform::default()));
@@ -771,9 +776,7 @@ mod tests {
             .resource_mut::<GuidIndex>()
             .0
             .insert(7, victim);
-        app.world_mut()
-            .resource_mut::<crate::ui_session::InteractNpc>()
-            .0 = Some(npc);
+        interact(&mut app, Some(npc));
         for _ in 0..24 {
             app.update();
         }
@@ -793,7 +796,7 @@ mod tests {
         }
         let mut app = App::new();
         app.init_resource::<GuidIndex>()
-            .init_resource::<crate::ui_session::InteractNpc>()
+            .init_resource::<crate::ui_session::InteractTarget>()
             .init_resource::<Dirty>()
             .add_systems(Update, (drive_display_facing, spy).chain());
         // Off the vendor's axis: a goal at exactly pi sits on the wrap, where the unfolded-delta
@@ -820,9 +823,7 @@ mod tests {
             ))
             .id();
         // The control: a turning vendor dirties its transform.
-        app.world_mut()
-            .resource_mut::<crate::ui_session::InteractNpc>()
-            .0 = Some(npc);
+        interact(&mut app, Some(npc));
         app.update(); // seeding frame (spawn itself also reads as Changed here)
         app.update();
         assert!(

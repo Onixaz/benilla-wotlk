@@ -86,32 +86,24 @@ fn queue_panel_emotes(ev: &SessionEvent, out: &mut EmoteOut) {
     }
 }
 
-/// Whether a panel for `npc` replaces another giver's open window.
-fn switches(quest: &QuestGiver, npc: u64) -> bool {
-    quest.is_open() && quest.npc.is_some_and(|open| open != npc)
-}
-
-/// A panel packet's write and publish in the handler's turn ([`super::publish_panel`]). A different giver's open window closes first, before the new giver is stored (`0x58c6cc` -> `0x518d50`, then `0x58c6dd`), so its `QUEST_FINISHED` and the `CloseQuest` its hide calls find the old giver or none.
+/// A panel packet's write and publish in the handler's turn ([`super::publish_panel`]), after the set-current's interact target (`0x58c6cc`), whose interaction close takes the window bound to the old one, so its `QUEST_FINISHED` and the `CloseQuest` its hide calls find the old giver or none.
 fn open_panel(
     quest: &mut QuestGiver,
     ui: &mut UiEvents,
     npc: u64,
     write: impl FnOnce(&mut QuestGiver) -> bool + Send + Sync + 'static,
 ) {
-    if !switches(quest, npc) {
-        if write(quest) {
-            ui.world(super::publish_panel);
-        }
-        return;
-    }
+    let _ = quest;
     ui.world(move |world| {
-        super::close_interaction(world);
-        let wrote = world
-            .get_non_send_resource_mut::<QuestGiver>()
-            .is_some_and(|mut q| write(&mut q));
-        if wrote {
-            super::publish_panel(world);
-        }
+        super::take_interact_target(world, npc);
+        crate::ui_script::live::in_turn(world, move |world| {
+            let wrote = world
+                .get_non_send_resource_mut::<QuestGiver>()
+                .is_some_and(|mut q| write(&mut q));
+            if wrote {
+                super::publish_panel(world);
+            }
+        });
     });
 }
 

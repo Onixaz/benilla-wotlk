@@ -59,17 +59,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             // The pet's book is read at the call, as every pet book verb reads it.
-            let pet_book;
-            let slots = if pet {
-                pet_book = super::spellbook::live_pet_book(&model);
-                &pet_book.slots
-            } else {
-                &model.spellbook.slots
+            let find = |slots: &[super::SpellSlotView]| {
+                slots.iter().rposition(|s| s.spell_id == id as u32)
             };
-            Ok(slots
-                .iter()
-                .rposition(|s| s.spell_id == id as u32)
-                .map_or(Value::Nil, |i| Value::Integer(i as i64)))
+            let at = if pet {
+                find(&super::spellbook::live_pet_book(&model).slots)
+            } else {
+                find(&super::spellbook::live_book().book.slots)
+            };
+            Ok(at.map_or(Value::Nil, |i| Value::Integer(i as i64)))
         })?,
     )?;
 
@@ -136,13 +134,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, pet)) = spell_or_zero(lua, &args, "IsAutoRepeatSpell")? else {
                 return Ok(MultiValue::new());
             };
-            let source = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_info
-                .clone();
-            let hit =
-                spell_id != 0 && !pet && source.is_some_and(|s| s.is_auto_repeat_spell(spell_id));
+            let hit = spell_id != 0
+                && !pet
+                && super::spell_info::with_spell_source(lua, |s| s.is_auto_repeat_spell(spell_id))
+                    == Some(true);
             Ok(MultiValue::from_vec(vec![flag(hit)]))
         })?,
     )?;

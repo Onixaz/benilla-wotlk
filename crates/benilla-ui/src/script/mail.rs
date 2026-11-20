@@ -6,6 +6,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{flag, number_arg};
+use super::container::Arm;
 use super::cursor::{self, CursorItem, CursorPayload};
 use super::{Model, ScriptValue};
 
@@ -297,19 +298,22 @@ fn attach_refusal(model: &Model, item: &CursorItem) -> Option<&'static str> {
 }
 
 /// The outgoing-mail add (`0x56fff0`): `index` `None` takes the first free send slot. On success
-/// the item locks and `MAIL_SEND_INFO_UPDATE` fires.
-fn add_item_to_outgoing(model: &mut Model, index: Option<usize>, mut item: CursorItem) -> bool {
+/// the item locks and `MAIL_SEND_INFO_UPDATE` fires. A refusal is handed back for the caller to
+/// show at once.
+fn add_item_to_outgoing(
+    model: &mut Model,
+    index: Option<usize>,
+    mut item: CursorItem,
+) -> Result<(), &'static str> {
     if let Some(key) = attach_refusal(model, &item) {
-        model.ui_errors.push(key);
-        return false;
+        return Err(key);
     }
     let slot = match index {
         Some(i) => Some(i),
         None => (0..MAIL_SEND_SLOTS).find(|&i| model.mail_send_items[i].is_none()),
     };
     let Some(slot) = slot.filter(|&s| s < MAIL_SEND_SLOTS) else {
-        model.ui_errors.push("ERR_MAIL_INVALID_ATTACHMENT_SLOT");
-        return false;
+        return Err("ERR_MAIL_INVALID_ATTACHMENT_SLOT");
     };
     // The send-slot setter (`0x56d290`) drops the same item from any other slot.
     for (i, s) in model.mail_send_items.iter_mut().enumerate() {
@@ -326,19 +330,19 @@ fn add_item_to_outgoing(model: &mut Model, index: Option<usize>, mut item: Curso
     model.mail_send_items[slot] = Some(item);
     cursor::queue_lock_changed(model, bag, bag_slot);
     queue(model, "MAIL_SEND_INFO_UPDATE", vec![]);
-    true
+    Ok(())
 }
 
 /// `UseContainerItem`'s mail arm (`0x5d88cf`): with the Send tab showing at an open mailbox, the
-/// clicked item attaches to the first free slot. True when the arm took the click, refused or not.
-pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool {
+/// clicked item attaches to the first free slot.
+pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> Arm {
     if !model.mail_send_showing || !model.mail_mailbox {
-        return false;
+        return Arm::Pass;
     }
     let Some(s) = super::container::index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
-        return false;
+        return Arm::Pass;
     };
-    add_item_to_outgoing(
+    let added = add_item_to_outgoing(
         model,
         None,
         CursorItem {
@@ -353,7 +357,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
             bar_placeable: s.bar_placeable,
         },
     );
-    true
+    added.map_or_else(Arm::Refused, |()| Arm::Took)
 }
 
 /// A bag slot attached to the outgoing mail reads locked.
@@ -939,8 +943,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }) else {
                 return Ok(());
             };
-            if model.money < u64::from(cod) {
-                model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+            if crate::script::live::money(&model) < u64::from(cod) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
             model.mail_commands.push(MailCommand::TakeItem {
@@ -971,8 +976,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     message_id: r.message_id,
                 });
             }
-            if model.money < u64::from(r.cod) {
-                model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+            if crate::script::live::money(&model) < u64::from(r.cod) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
             let mut filled = r.attachments.iter().flatten().filter(|a| a.item_id != 0);
@@ -1031,7 +1037,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let present = super::container::live_slot(&model, it.bag, it.slot)
                     .is_some_and(|s| s.item_id == it.item_id);
                 if !present {
-                    model.ui_errors.push("ERR_ITEM_NOT_FOUND");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_ITEM_NOT_FOUND");
+                    let mut model = crate::script::model_mut_of(lua);
                     model.mail_send_items[i] = None;
                     queue(&mut model, "MAIL_SEND_INFO_UPDATE", vec![]);
                     return Ok(());
@@ -1070,8 +1078,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, copper: Value| {
             let n = number_arg(lua, copper, "Usage: SetSendMailMoney(amount)")? as u32;
             let mut model = crate::script::model_mut_of(lua);
-            if u64::from(n) > model.money {
-                model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+            if u64::from(n) > crate::script::live::money(&model) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
                 return Ok(Value::Nil);
             }
             model.mail_send_money = n;
@@ -1221,7 +1230,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .map(|n| super::binding_abi::ftol(n - 1.0) as u32 as usize);
             let clear = super::binding_abi::bool_or_default(Some(&clear), false);
             let mut model = crate::script::model_mut_of(lua);
-            click_send_mail_item(&mut model, slot, clear);
+            if let Some(key) = click_send_mail_item(&mut model, slot, clear) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, key);
+            }
             Ok(())
         })?,
     )?;
@@ -1421,8 +1433,13 @@ fn mark_as_read(model: &mut Model, index: usize) {
 
 /// `ClickSendMailItemButton` (`0x570550`). Without `clear`, a held item attaches to the slot (or
 /// the first free one) and the slot's old item, if any, goes to the cursor; with no held item the
-/// slot's item goes to the cursor. With `clear` the slot just empties and unlocks.
-fn click_send_mail_item(model: &mut Model, slot: Option<usize>, clear: bool) {
+/// slot's item goes to the cursor. With `clear` the slot just empties and unlocks. A refused
+/// attach is handed back for the caller to show at once.
+fn click_send_mail_item(
+    model: &mut Model,
+    slot: Option<usize>,
+    clear: bool,
+) -> Option<&'static str> {
     if clear {
         let taken = slot
             .filter(|&s| s < SEND_ARRAY)
@@ -1431,7 +1448,7 @@ fn click_send_mail_item(model: &mut Model, slot: Option<usize>, clear: bool) {
             cursor::queue_lock_changed(model, it.bag, it.slot);
             queue(model, "MAIL_SEND_INFO_UPDATE", vec![]);
         }
-        return;
+        return None;
     }
     // Only an item counts as held (`GetCursorItem`); any other payload reads as none.
     let held = match &model.cursor {
@@ -1443,16 +1460,17 @@ fn click_send_mail_item(model: &mut Model, slot: Option<usize>, clear: bool) {
         if h.bag == p.bag && h.slot == p.slot {
             // The slot's own item: the cursor just drops it (`0x570640`).
             cursor::clear_cursor(model);
-            return;
+            return None;
         }
     }
     match held {
         Some(h) => {
             // The held item leaves the cursor for the slot.
             model.cursor = None;
-            if !add_item_to_outgoing(model, slot, h.clone()) {
+            if let Err(key) = add_item_to_outgoing(model, slot, h.clone()) {
+                // Still held when the line shows, as the reference never let it go.
                 model.cursor = Some(CursorPayload::Item(h));
-                return;
+                return Some(key);
             }
         }
         None => {
@@ -1465,6 +1483,7 @@ fn click_send_mail_item(model: &mut Model, slot: Option<usize>, clear: bool) {
     model.cursor = prior.map(CursorPayload::Item);
     cursor::queue_cursor_update(model);
     queue(model, "MAIL_SEND_INFO_UPDATE", vec![]);
+    None
 }
 
 #[cfg(test)]

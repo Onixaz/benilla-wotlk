@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use benilla_assets::{AssetSet, LockRecover, MapCatalogRes, WorldAssets};
 use benilla_formats::{BattlemasterCatalog, MapCatalog};
 use benilla_protocol::messages::{
-    BattlefieldList, BattlefieldMgrNotice, BattlefieldStatus, GroupJoinedBattleground,
+    BattlefieldMgrNotice, BattlefieldStatus, GroupJoinedBattleground,
 };
 use benilla_ui::script::{
     BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldQueueSlot,
@@ -337,8 +337,6 @@ pub(crate) struct WorldPvp(WorldPvpQueue);
 pub(crate) struct Battlefield {
     /// The battlemaster the VM's session names, for the walk-away close.
     battlemaster: Option<u64>,
-    /// The walk-away closed the session; the VM's half follows on the drain.
-    closed: bool,
     /// Joined (`true`) or left guids awaiting a name (`0x54a530`, `0x54a5c0`).
     players: Vec<(u64, bool)>,
 }
@@ -348,10 +346,10 @@ pub(crate) struct Battlefield {
 pub(crate) struct StatusRequestOwed(bool);
 
 impl Battlefield {
-    pub(crate) fn apply_list(&mut self, list: &BattlefieldList) {
-        if list.battlemaster != 0 && (!list.from_anywhere || list.bg_type == RANDOM_BATTLEGROUND) {
-            self.battlemaster = Some(list.battlemaster);
-        } else if !list.from_anywhere {
+    fn apply(&mut self, battlemaster: u64, from_anywhere: bool, bg_type: u32) {
+        if battlemaster != 0 && (!from_anywhere || bg_type == RANDOM_BATTLEGROUND) {
+            self.battlemaster = Some(battlemaster);
+        } else if !from_anywhere {
             self.battlemaster = None;
         }
     }
@@ -368,9 +366,17 @@ impl NpcSession for Battlefield {
     }
 
     fn close(&mut self) {
-        if self.battlemaster.take().is_some() {
-            self.closed = true;
-        }
+        self.battlemaster = None;
+    }
+}
+
+/// The interaction close's battlemaster leg (`0x51309f` -> `0x5496d0` with none), its target already zeroed: `BATTLEFIELDS_CLOSED` and the battlemaster dropped (`0x5496e1`, `0x5496f5`).
+pub(crate) fn close_by_interaction(world: &mut World) {
+    if let Some(mut state) = world.get_resource_mut::<Battlefield>() {
+        state.battlemaster = None;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.write(UiScript::close_battlemaster);
     }
 }
 
@@ -695,7 +701,7 @@ fn cached_full_name(names: &NameCache, guid: u64) -> Option<String> {
     })
 }
 
-/// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`) and the battlemaster walk-away close (`0x5496d0`).
+/// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`).
 fn drain_battlefield(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut state: ResMut<Battlefield>,
@@ -706,10 +712,6 @@ fn drain_battlefield(
     let Some(mut script) = script else {
         return;
     };
-    // The interaction close's battlemaster arm clears it and signals BATTLEFIELDS_CLOSED (`0x51309f` -> `0x5496e1`).
-    if std::mem::take(&mut state.closed) {
-        script.close_battlemaster();
-    }
     let send = |c| {
         let _ = commands.0.send(c);
     };
@@ -775,16 +777,6 @@ fn drain_battlefield(
     }
 }
 
-/// A cross-map worldport leaves the world first (`0x528c30`).
-pub(crate) fn leave_world_on_worldport(
-    ports: Option<MessageReader<crate::net::WorldportMessage>>,
-    mut commands: Commands,
-) {
-    if ports.is_some_and(|mut p| p.read().filter(|w| w.needs_ack).count() > 0) {
-        commands.queue(leave_world);
-    }
-}
-
 /// The cascade's status request (`0x54cc40`), owed to the world entry that zeroes ahead of it.
 pub(crate) fn request_status_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
@@ -826,9 +818,20 @@ fn send_owed_status_request(mut owed: ResMut<StatusRequestOwed>, commands: Res<N
     }
 }
 
-/// The world leave's inspect (`0x528cd3`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
+/// The open banker (`0xbeb9a0`).
+fn bank_banker(world: &World) -> Option<u64> {
+    world
+        .get_non_send_resource::<crate::ui_bank::BankOpen>()?
+        .banker
+}
+
+/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
+    crate::ui_item_text::leave_world(world);
+    crate::ui_taxi::leave_world(world);
+    crate::ui_trainer::leave_world(world);
+    crate::ui_merchant::leave_world(world);
     crate::ui_pet::possess::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
         duel.leave_world();
@@ -840,22 +843,40 @@ pub(crate) fn leave_world(world: &mut World) {
         ui.write(UiScript::leave_battlefield_world);
     }
     crate::ui_stable::leave_world(world);
-    // The interaction close's bank leg, after the stable part.
-    crate::ui_bank::close_by_interaction(world);
+    // The interaction close zeroes the interact target ahead of its walk (`0x528dce` -> `0x512e89`).
+    let held = world
+        .get_resource_mut::<crate::ui_session::InteractTarget>()
+        .and_then(|mut t| t.close_interaction());
+    // The interaction close's bank leg, after the stable part, on the banker holding the target (`0x512f8a`).
+    if held.is_some() && bank_banker(world) == held {
+        crate::ui_bank::bank_leg(world);
+    }
+    // Its tabard leg (`0x51300e`).
+    crate::ui_tabard::leave_world(world);
+    // The registrar's part (`0x528d2d`) and the vendor's (`0x528d6e`).
+    crate::ui_petition::close_registrar(world);
+    crate::ui_petition::close_vendor(world);
     crate::ui_script::live::fire_handler_events(world);
 }
 
 /// Queue the battlefield's world entry (`0x54ca50`) for when the calling system's commands apply.
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
-        // The containers' part (`0x5281c7`), ahead of the battlefield's (`0x528230`).
+        // The bar's part (`0x5281b8`), then the containers' (`0x5281c7`), ahead of the
+        // battlefield's (`0x528230`).
+        crate::ui_action::bonus::enter_world(world);
         crate::ui_items::watch::enter_world(world);
+        // The merchant's (`0x5281ea`).
+        crate::ui_merchant::enter_world(world);
+        // The registrar's, the petition window's and the vendor's (`0x528217`, `0x528221`, `0x528258`).
+        crate::ui_petition::enter_world(world);
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");
         }
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
         crate::ui_stable::enter_world(world);
+        crate::ui_tabard::enter_world(world);
         crate::ui_currency::enter_world(world);
         if world.contains_resource::<NetCommands>()
             && world.contains_resource::<StatusRequestOwed>()
@@ -988,11 +1009,25 @@ mod net {
     }
 
     /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`): written into the VM in turn, then its source's event.
-    fn on_list(In(ev): In<SessionEvent>, mut state: ResMut<Battlefield>, mut ui: ResMut<UiEvents>) {
+    fn on_list(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
         let SessionEvent::BattlefieldList(list) = ev else {
             return;
         };
-        state.apply_list(&list);
+        // A battlemaster's list takes the interact target ahead of its event: the random battleground's (`0x54e52e`), else the battlemaster setter's (`0x54970f`).
+        let takes = list.battlemaster != 0
+            && (list.bg_type == benilla_ui::script::RANDOM_BATTLEGROUND || !list.from_anywhere);
+        if takes {
+            let battlemaster = list.battlemaster;
+            ui.world(move |w| crate::ui_session::set_interact_target(w, battlemaster));
+        }
+        // Stored in turn after the set, whose interaction close may take this battlemaster's own window first.
+        let (battlemaster, from_anywhere, bg_type) =
+            (list.battlemaster, list.from_anywhere, list.bg_type);
+        ui.world(move |w| {
+            if let Some(mut state) = w.get_resource_mut::<Battlefield>() {
+                state.apply(battlemaster, from_anywhere, bg_type);
+            }
+        });
         let push = BattlefieldListPush {
             battlemaster: list.battlemaster,
             from_anywhere: list.from_anywhere,
@@ -1124,16 +1159,11 @@ impl Plugin for BattlefieldPlugin {
             .add_systems(
                 Update,
                 (
-                    leave_world_on_worldport
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::enter_world_on_self_create),
                     // Owed ahead of the world entry, which sends it after the mail query's.
                     request_status_on_world_enter
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(crate::ui_unit::EnterWorldFeed),
-                    crate::ui_session::close_npc_session_out_of_range::<Battlefield>
-                        .before(drain_battlefield),
                     drain_battlefield.in_set(UiDrain),
                 ),
             );

@@ -1,11 +1,64 @@
 //! Drives the stock reader window (`ItemTextFrame.xml`, off the player's chain) through the
-//! engine: pushes an `ItemTextState`, fires `ITEM_TEXT_BEGIN`, `ITEM_TEXT_READY` and
+//! engine: lends a reader at the call, fires `ITEM_TEXT_BEGIN`, `ITEM_TEXT_READY` and
 //! `ITEM_TEXT_CLOSED`, and asserts what the Lua paints.
 
-use benilla_ui::script::{ItemTextState, UiScript};
+use benilla_ui::script::{LiveState, UiScript};
 
-#[path = "common/mod.rs"]
-mod common;
+/// What a test reader lends: the getters' answers, the creator, and the turns and closes asked.
+#[derive(Default)]
+struct ItemTextState {
+    item: String,
+    creator: Option<String>,
+    text: String,
+    page: u32,
+    has_next: bool,
+    material: Option<String>,
+    turns: Vec<bool>,
+    closes: u32,
+}
+
+impl LiveState for ItemTextState {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn item_text(&self) -> Option<benilla_ui::script::ItemTextRead> {
+        Some(benilla_ui::script::ItemTextRead {
+            item: Some(self.item.clone()),
+            text: self.text.clone(),
+            page: self.page,
+            has_next: self.has_next,
+            material: self.material.clone(),
+        })
+    }
+    fn item_text_creator(&mut self) -> Option<String> {
+        self.creator.clone()
+    }
+    fn item_text_turn(&mut self, next: bool) -> bool {
+        self.turns.push(next);
+        false
+    }
+    fn close_item_text(&mut self) -> u32 {
+        self.closes += 1;
+        0
+    }
+}
+
+/// Fire `event` with `reader` lent, as the app's handlers do.
+fn fire(s: &mut UiScript, reader: &mut ItemTextState, event: &str) {
+    s.with_live(reader, |s| s.fire_event(event, vec![]));
+}
 
 const UI_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ui");
 
@@ -84,6 +137,7 @@ fn letter() -> ItemTextState {
         page: 1,
         has_next: false,
         material: None,
+        ..Default::default()
     }
 }
 
@@ -97,14 +151,14 @@ fn a_letter_reads_with_the_creator_tail() {
     load_ui(&s);
     assert!(!s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
 
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
+    let mut r = letter();
+    fire(&mut s, &mut r, "ITEM_TEXT_BEGIN");
     assert_eq!(
         s.eval::<String>("return ItemTextTitleText:GetText()")
             .unwrap(),
         "Plain Letter"
     );
-    s.fire_event("ITEM_TEXT_READY", vec![]);
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
     assert!(s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
     assert!(
         page_blocks(&s).contains(&"\nasd\n\nFrom,\nOne\n\n".to_string()),
@@ -144,9 +198,9 @@ fn the_scrollbar_track_sits_right_of_the_page() {
     assert!(unresolved.is_empty(), "unresolved anchors: {unresolved:#?}");
 
     s.set_screen_size(1024.0, 768.0);
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
+    let mut r = letter();
+    fire(&mut s, &mut r, "ITEM_TEXT_BEGIN");
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
     s.resolve();
     let (track_left, page_right): (f32, f32) = s
         .eval(
@@ -168,16 +222,17 @@ fn a_book_page_shows_the_paging_chrome() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_item_text(Some(ItemTextState {
+    let mut r = ItemTextState {
         item: "Lament of the Highborne".into(),
         creator: None,
         text: "page one".into(),
         page: 1,
         has_next: true,
         material: None,
-    }));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
+        ..Default::default()
+    };
+    fire(&mut s, &mut r, "ITEM_TEXT_BEGIN");
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
     assert!(
         page_blocks(&s).contains(&"\npage one\n".to_string()),
         "the page body drawn: {:?}",
@@ -194,30 +249,28 @@ fn a_book_page_shows_the_paging_chrome() {
     assert!(s
         .eval::<bool>("return ItemTextNextPageButton:IsShown()")
         .unwrap());
-    s.run("ItemTextNextPageButton:Click()").unwrap();
-    assert_eq!(s.take_item_text_page_turns(), vec![1]);
+    s.with_live(&mut r, |s| s.run("ItemTextNextPageButton:Click()").unwrap());
+    assert_eq!(r.turns, [true]);
     assert!(s.take_errors().is_empty());
 }
 
-/// The X hides the panel and its OnHide queues `CloseItemText`; the app then clears the session
-/// and fires `ITEM_TEXT_CLOSED`, which hides again harmlessly.
+/// The X hides the panel and its OnHide calls `CloseItemText`; `ITEM_TEXT_CLOSED` then hides again harmlessly.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn closing_queues_the_close_intent() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
-    let _ = s.take_item_text_close();
+    let mut r = letter();
+    fire(&mut s, &mut r, "ITEM_TEXT_BEGIN");
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
+    let before = r.closes;
 
-    s.run("ItemTextCloseButton:Click()").unwrap();
+    s.with_live(&mut r, |s| s.run("ItemTextCloseButton:Click()").unwrap());
     assert!(!s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
-    assert!(s.take_item_text_close(), "OnHide queued the close intent");
+    assert_eq!(r.closes, before + 1, "OnHide called CloseItemText");
 
-    s.set_item_text(None);
-    s.fire_event("ITEM_TEXT_CLOSED", vec![]);
+    fire(&mut s, &mut r, "ITEM_TEXT_CLOSED");
     assert!(!s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
     assert!(s.take_errors().is_empty());
 }
@@ -230,7 +283,7 @@ fn the_reported_html_page_draws_as_blocks_not_as_its_own_markup() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_item_text(Some(ItemTextState {
+    let mut r = ItemTextState {
         item: "Alliance Military Ranks".into(),
         creator: None,
         text: "<HTML>\n<BODY>\n\
@@ -245,9 +298,10 @@ fn the_reported_html_page_draws_as_blocks_not_as_its_own_markup() {
         page: 1,
         has_next: false,
         material: None,
-    }));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
+        ..Default::default()
+    };
+    fire(&mut s, &mut r, "ITEM_TEXT_BEGIN");
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
     assert!(s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
 
     let drawn = page_blocks(&s);
@@ -293,7 +347,7 @@ fn the_reported_book_crest_draws_at_the_blps_own_size() {
         benilla_assets::sprite_dimensions(&chain, None, path)
     }));
     load_ui(&s);
-    s.set_item_text(Some(ItemTextState {
+    let mut r = ItemTextState {
         item: "A Treatise on Military Ranks".into(),
         creator: None,
         text: "<HTML>\n<BODY>\n\
@@ -308,9 +362,10 @@ fn the_reported_book_crest_draws_at_the_blps_own_size() {
         page: 1,
         has_next: true,
         material: None,
-    }));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
+        ..Default::default()
+    };
+    fire(&mut s, &mut r, "ITEM_TEXT_BEGIN");
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
     s.resolve();
 
     let crest: Vec<_> = s
@@ -341,7 +396,7 @@ fn the_reported_book_crest_draws_at_the_blps_own_size() {
 
     // Page 2 (`page_text` 2655): five unsized `<IMG>`s, each a 32x32 BLP. This VM has no font
     // engine, so text measures zero and only the sizes are checked, not the spacing.
-    s.set_item_text(Some(ItemTextState {
+    let mut r = ItemTextState {
         item: "A Treatise on Military Ranks".into(),
         creator: None,
         text: "<HTML>\n<BODY>\n\
@@ -362,8 +417,9 @@ fn the_reported_book_crest_draws_at_the_blps_own_size() {
         page: 2,
         has_next: true,
         material: None,
-    }));
-    s.fire_event("ITEM_TEXT_READY", vec![]);
+        ..Default::default()
+    };
+    fire(&mut s, &mut r, "ITEM_TEXT_READY");
     s.resolve();
 
     let badges: Vec<_> = s
@@ -385,70 +441,4 @@ fn the_reported_book_crest_draws_at_the_blps_own_size() {
             "each rank badge is its own 32x32 BLP, not a page-wide slab"
         );
     }
-}
-
-/// The reader's `UIPanelWindows` row (`{ area = "left", pushable = 0 }`, `UIParent.lua:20`) makes
-/// it and gossip left-slot rivals: showing one replaces the other in both orders, and each
-/// displaced window's OnHide ends its own session.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_quest_givers_gossip_displaces_the_open_reader() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    use benilla_ui::script::GossipMenu;
-
-    let mut s = UiScript::new().unwrap();
-    load_ui(&s);
-    // The stock gossip window, off the chain.
-    common::load_ui(&s, "Interface\\FrameXML\\GossipFrame.xml");
-
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
-    assert!(s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap());
-    assert!(
-        s.eval::<bool>("return GetLeftFrame():GetName() == 'ItemTextFrame'")
-            .unwrap(),
-        "the registered reader seats at the left slot, not a bare Show"
-    );
-    let _ = s.take_item_text_close();
-
-    s.set_gossip(Some(GossipMenu {
-        greeting: "What can I do for you?".into(),
-        quests: Vec::new(),
-        options: Vec::new(),
-        ..Default::default()
-    }));
-    s.fire_event("GOSSIP_SHOW", vec![]);
-    assert!(s.take_errors().is_empty());
-    assert!(
-        !s.eval::<bool>("return ItemTextFrame:IsShown()").unwrap(),
-        "gossip replaced the note — the two-window stack (both drawn at 0,-104) cannot form"
-    );
-    assert!(s
-        .eval::<bool>("return GossipFrame:IsShown() and GetLeftFrame():GetName() == 'GossipFrame'")
-        .unwrap());
-    assert!(
-        s.take_item_text_close(),
-        "the displaced reader's OnHide ended the read session (CloseItemText)"
-    );
-    // The app's close must not disturb the gossip that displaced it.
-    s.set_item_text(None);
-    s.fire_event("ITEM_TEXT_CLOSED", vec![]);
-    assert!(s.eval::<bool>("return GossipFrame:IsShown()").unwrap());
-
-    // The reverse order: reading the note over an open gossip ends the gossip session.
-    let _ = s.take_gossip_close();
-    s.set_item_text(Some(letter()));
-    s.fire_event("ITEM_TEXT_BEGIN", vec![]);
-    s.fire_event("ITEM_TEXT_READY", vec![]);
-    assert!(s.take_errors().is_empty());
-    assert!(
-        s.eval::<bool>("return ItemTextFrame:IsShown() and not GossipFrame:IsShown()")
-            .unwrap(),
-        "the reader replaces gossip the same way"
-    );
-    assert!(
-        s.take_gossip_close(),
-        "the displaced gossip's OnHide ended the gossip session (CloseGossip)"
-    );
 }

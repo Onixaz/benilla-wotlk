@@ -225,7 +225,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.title_throttle.admit(now) {
                 model.title_sets.push(mask);
             } else {
-                model.ui_errors.push("ERR_CLIENT_LOCKED_OUT");
+                {
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_CLIENT_LOCKED_OUT");
+                }
             }
             Ok(())
         })?,
@@ -316,7 +319,7 @@ mod tests {
         assert_eq!(s.take_title_sets(), vec![46, -1]);
         s.run("for i = 1, 10 do SetCurrentTitle(i) end").unwrap();
         assert_eq!(s.take_title_sets().len(), 9);
-        assert_eq!(s.take_ui_errors(), vec!["ERR_CLIENT_LOCKED_OUT"]);
+        assert_eq!(s.take_shown(), vec!["ERR_CLIENT_LOCKED_OUT"]);
     }
 
     /// The chosen-title name: the format filled, the female form, a medal line, and none at 0.

@@ -293,9 +293,12 @@ fn on_aura_update(
     if !store.is_unit() {
         return; // the lookup is unit-typed (`0x4d4db0`, mask 8)
     }
-    let (me, spells, ui) = own;
+    let (me, spells, mut ui) = own;
     let mine = me.is_some_and(|m| m.0 == Some(update.unit));
-    let moves = mine.then(|| own_aura_moves(auras.as_deref(), &update));
+    // Whether the packet adds or removes an aura, the reader's `changed` (`0x72fb6e`).
+    let all_moves = own_aura_moves(auras.as_deref(), &update);
+    let changed = !all_moves.is_empty();
+    let moves = mine.then_some(all_moves);
     match auras {
         Some(mut auras) => auras.apply(&update, now),
         None => {
@@ -304,10 +307,47 @@ fn on_aura_update(
             commands.entity(entity).insert(auras);
         }
     }
+    // Our own effects that move usability, then the reader's usable update (`0x724a20`,
+    // `0x71ea1e`, `0x72fbfb`), then its not-interruptible re-read for a watched caster
+    // (`0x72fd30`), after the apply.
+    let unit = update.unit;
+    if let Some(ui) = ui.as_mut() {
+        // Each aura of ours that came or went: its effect's usable update, then the bar's aura
+        // update (`0x7220ff`, `0x7277e6`); a whole table's packet runs the bar's for every live
+        // aura (`0x72f9a2`).
+        let live: Vec<u32> = if update.all && mine {
+            update
+                .slots
+                .iter()
+                .filter_map(|(_, r)| r.map(|r| r.spell_id))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for &(spell, removed) in moves.iter().flatten() {
+            let moves_usability = spells
+                .as_ref()
+                .and_then(|s| s.catalog.get(spell))
+                .is_some_and(crate::ui_action::usable_cache::moves_usability);
+            if moves_usability {
+                ui.world(crate::ui_action::usable_cache::step(
+                    crate::ui_action::usable_cache::Pass::Full,
+                ));
+            }
+            if !update.all || removed {
+                ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
+            }
+        }
+        for spell in live {
+            ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
+        }
+        ui.world(move |world| crate::ui_action::usable_cache::aura_read(world, unit, changed));
+        ui.world(move |world| crate::ui_cast::auras_changed(world, unit, changed));
+    }
     // Our own auras' effects come and go with the packet (`0x71e930`, `0x724820`).
-    if let (Some(moves), Some(spells), Some(mut ui)) = (moves, spells, ui) {
+    if let (Some(moves), Some(spells), Some(ui)) = (moves, spells, ui.as_mut()) {
         for (spell_id, removed) in moves {
-            crate::ui_companion::mount_updates(spell_id, &spells.catalog, &mut ui);
+            crate::ui_companion::mount_updates(spell_id, &spells.catalog, ui);
             // An open-stable effect's removal closes the stable, forced (`0x71ea25`).
             let opens_stable = || {
                 spells.catalog.get(spell_id).is_some_and(|rec| {

@@ -1,5 +1,5 @@
-//! The animated liquid surfaces: one shared material per (kind, [`LiquidPath`], scroll) over a
-//! `texture_2d_array` of the kind's frames, the two spawn paths (an ADT chunk's MCLQ, a WMO
+//! The animated liquid surfaces: one shared material per (frame sheet, [`LiquidPath`], scroll) over
+//! a `texture_2d_array` of the sheet's frames, the sheet the surface's `LiquidType` row names, the two spawn paths (an ADT chunk's MCLQ, a WMO
 //! group's MLIQ) and the flat mesh. The 24 fps frame flip and the lava scroll run in the shader
 //! off the wall clock, so no CPU mutates a material; a deterministic run bakes the clock off
 //! (frame 0, scroll 0). Day and night follow server time.
@@ -28,6 +28,11 @@ use benilla_formats::{
 #[derive(Resource, Default)]
 pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
+    /// Each `LiquidType` id's own sheet, with the kind it was built for: the reference binds the
+    /// row's `Texture[0]` (`0x8a28f0`), so Outland's magma (15) is green, not the base lava.
+    type_sheets: HashMap<u32, (LiquidKind, usize)>,
+    /// Each kind's base sheet ([`FRAME_SETS`]), for a type with no row or no sheet of its own.
+    kind_sheets: HashMap<LiquidKind, usize>,
     /// The `LiquidType` rows, which decide how a liquid draws ([`TypeSettings`]).
     types: LiquidTypes,
 }
@@ -132,7 +137,8 @@ impl LiquidPath {
 /// [`LiquidKind`] collapses (2 and 6 are both `Magma`), so it keys the material too.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct LiquidKey {
-    kind: LiquidKind,
+    /// The frame sheet, built for one kind ([`LiquidAssets::sheet`]).
+    sheet: usize,
     path: LiquidPath,
     /// This surface takes the animated stage-0 texture matrix ([`scrolls`]).
     scroll: bool,
@@ -154,15 +160,31 @@ struct LiquidEntry {
 }
 
 impl LiquidAssets {
-    /// The shared material for a kind, renderer and scroll, if one was built and its frames loaded.
+    /// The sheet a surface of `liquid_type` and `kind` draws: the type's own where it was built for
+    /// that kind, else the kind's base sheet.
+    fn sheet(&self, liquid_type: u32, kind: LiquidKind) -> Option<usize> {
+        match self.type_sheets.get(&liquid_type) {
+            Some(&(built_for, sheet)) if built_for == kind => Some(sheet),
+            _ => self.kind_sheets.get(&kind).copied(),
+        }
+    }
+
+    /// The shared material for a surface's type and kind, renderer and scroll, if one was built and
+    /// its frames loaded.
     pub(crate) fn material(
         &self,
+        liquid_type: u32,
         kind: LiquidKind,
         path: LiquidPath,
         scroll: bool,
     ) -> Option<Handle<LiquidMaterial>> {
+        let sheet = self.sheet(liquid_type, kind)?;
         self.materials
-            .get(&LiquidKey { kind, path, scroll })
+            .get(&LiquidKey {
+                sheet,
+                path,
+                scroll,
+            })
             .map(|e| e.material.clone())
     }
 
@@ -210,7 +232,8 @@ pub(crate) fn spawn_liquids<'a>(
     for lq in liquids {
         // The scene fog (the ADT passes submit none and draw under the scene submit), and never a
         // scroll, though ADT magma is nibble 6: its kernel zeroes the v-translate.
-        let Some(material) = liquid.material(lq.kind, LiquidPath::Adt, false) else {
+        let Some(material) = liquid.material(lq.liquid_type, lq.kind, LiquidPath::Adt, false)
+        else {
             continue; // this kind's frames failed to load (warned at setup)
         };
         let info = wet_footprint(lq, &Transform::IDENTITY, LiquidSource::AdtChunk);
@@ -353,7 +376,7 @@ pub(crate) fn spawn_wmo_liquids<'a>(
                     .copied()
             })
             .flatten();
-        let Some(material) = liquid.material(lq.kind, path, scroll) else {
+        let Some(material) = liquid.material(lq.liquid_type, lq.kind, path, scroll) else {
             continue; // this kind's frames failed to load (warned at setup)
         };
         if scroll {
@@ -401,16 +424,20 @@ pub(crate) fn spawn_wmo_liquids<'a>(
     }
 }
 
-/// Each kind's frames, `XTextures\<dir>\<stem>.<1..=count>.blp`, as `(kind, dir, stem, count)`.
-const FRAME_SETS: &[(LiquidKind, &str, &str, u32)] = &[
-    (LiquidKind::Still, "river", "lake_a", 30),
-    (LiquidKind::Rapids, "river", "fast_a", 16),
-    (LiquidKind::Ocean, "ocean", "ocean_h", 30),
+/// Each kind's base sheet, the `Texture[0]` of its base `LiquidType` row (1–4, and 9 for rapids), as
+/// `(kind, template)`; a type whose row names a sheet draws that one instead ([`LiquidAssets`]).
+const FRAME_SETS: &[(LiquidKind, &str)] = &[
+    (LiquidKind::Still, "XTextures\\river\\lake_a.%d.blp"),
+    (LiquidKind::Rapids, "XTextures\\river\\fast_a.%d.blp"),
+    (LiquidKind::Ocean, "XTextures\\ocean\\ocean_h.%d.blp"),
     // Fullbright: the sheet is the opaque, unlit, fogged body. Magma comes from both the WMO pools
     // and the ADT magma queue; the reference has no ADT queue for slime.
-    (LiquidKind::Magma, "lava", "lava", 30),
-    (LiquidKind::Slime, "slime", "slime", 30),
+    (LiquidKind::Magma, "XTextures\\lava\\lava.%d.blp"),
+    (LiquidKind::Slime, "XTextures\\slime\\slime.%d.blp"),
 ];
+
+/// The frames `0x8a2450` loads for a `%d` sheet: 1 to 30.
+const SHEET_FRAMES: u32 = 30;
 
 pub(super) fn setup_liquid(
     mut commands: Commands,
@@ -428,13 +455,100 @@ pub(super) fn setup_liquid(
     if let Some(tables) = &tables {
         assets.types = tables.0.types.clone();
     }
-    for &(kind, dir, stem, count) in FRAME_SETS {
-        let Some((frames, frame_count)) =
-            load_frame_array(&mut world_assets, &mut images, kind, dir, stem, count)
-        else {
-            warn!("liquid: no frames for {stem} — {kind:?} water will not render");
-            continue;
-        };
+    let mut builder = SheetBuilder {
+        world_assets: &mut world_assets,
+        images: &mut images,
+        materials: &mut materials,
+        built: HashMap::new(),
+        frames: HashMap::new(),
+    };
+    for &(kind, template) in FRAME_SETS {
+        match builder.sheet(&mut assets, template, kind) {
+            Some(sheet) => {
+                assets.kind_sheets.insert(kind, sheet);
+            }
+            None => warn!("liquid: no frames for {template} — {kind:?} water will not render"),
+        }
+    }
+    // Each type's own `Texture[0]` (`0x8a27c0`), built for the kind its class draws.
+    if let Some(tables) = tables {
+        let types = &tables.0.types;
+        for (id, row) in types.iter() {
+            let (Some(template), Some(kind)) = (row.sheet.as_deref(), types.kind(id)) else {
+                continue;
+            };
+            match builder.sheet(&mut assets, template, kind) {
+                Some(sheet) => {
+                    assets.type_sheets.insert(id, (kind, sheet));
+                }
+                None => {
+                    warn!("liquid: no frames for {template} — LiquidType {id} takes {kind:?}'s")
+                }
+            }
+        }
+    }
+    info!(
+        "liquid: loaded {} frame sheet(s) for {} liquid type(s)",
+        builder.built.values().flatten().count(),
+        assets.type_sheets.len()
+    );
+    commands.insert_resource(assets);
+}
+
+/// Builds each distinct (sheet, kind) once: its frame array and its materials, one per renderer
+/// and scroll lane the kind can take.
+struct SheetBuilder<'a> {
+    world_assets: &'a mut WorldAssets,
+    images: &'a mut Assets<Image>,
+    materials: &'a mut Assets<LiquidMaterial>,
+    /// By lowercased template and kind; `None` where the frames failed to load.
+    built: HashMap<(String, LiquidKind), Option<usize>>,
+    /// The frame arrays by lowercased template and DC flattening, shared across kinds.
+    frames: HashMap<(String, bool), Option<FrameArray>>,
+}
+
+/// A sheet's frame array and how many frames it holds.
+type FrameArray = (Handle<Image>, u32);
+
+impl SheetBuilder<'_> {
+    fn sheet(
+        &mut self,
+        assets: &mut LiquidAssets,
+        template: &str,
+        kind: LiquidKind,
+    ) -> Option<usize> {
+        let name = template.to_ascii_lowercase();
+        if let Some(&built) = self.built.get(&(name.clone(), kind)) {
+            return built;
+        }
+        // Deviation: water frames have their per-frame mean flattened (`flatten_frame_dc`), because
+        // mipping turns the shipped frames' drifting means into a flicker on distant water; magma
+        // and slime keep theirs, the body's intended pulse.
+        let normalize_dc = !kind.is_fullbright();
+        let frames = self
+            .frames
+            .entry((name.clone(), normalize_dc))
+            .or_insert_with(|| {
+                load_frame_array(self.world_assets, self.images, template, normalize_dc)
+            })
+            .clone();
+        let sheet = frames.map(|(frames, frame_count)| {
+            let sheet = self.built.values().flatten().count();
+            self.add_materials(assets, sheet, kind, &frames, frame_count);
+            sheet
+        });
+        self.built.insert((name, kind), sheet);
+        sheet
+    }
+
+    fn add_materials(
+        &mut self,
+        assets: &mut LiquidAssets,
+        sheet: usize,
+        kind: LiquidKind,
+        frames: &Handle<Image>,
+        frame_count: u32,
+    ) {
         // Blend per kind, over the device defaults every reference setter pushes and pops against.
         // Water and ocean: blend mode 2 (`SRC_ALPHA / INV_SRC_ALPHA`), depth write off (which is
         // not modelled). Magma and slime: blend stays 0 (disabled) with depth test and write on
@@ -461,7 +575,7 @@ pub(super) fn setup_liquid(
         .into_iter()
         .flat_map(|p| scroll_lanes.iter().map(move |s| (p, s)))
         {
-            let material = materials.add(ExtendedMaterial {
+            let material = self.materials.add(ExtendedMaterial {
                 base: StandardMaterial {
                     // The shader does the WoW lighting.
                     unlit: true,
@@ -501,39 +615,34 @@ pub(super) fn setup_liquid(
                             1.0
                         },
                     ),
-                    light_buf: world_assets.shared_light.clone(),
+                    light_buf: self.world_assets.shared_light.clone(),
                 },
             });
-            assets
-                .materials
-                .insert(LiquidKey { kind, path, scroll }, LiquidEntry { material });
+            assets.materials.insert(
+                LiquidKey {
+                    sheet,
+                    path,
+                    scroll,
+                },
+                LiquidEntry { material },
+            );
         }
     }
-    // Frame sets, not materials.
-    info!(
-        "liquid: loaded {} water frame set(s)",
-        FRAME_SETS
-            .iter()
-            .filter(|(k, ..)| assets.material(*k, LiquidPath::Adt, false).is_some())
-            .count()
-    );
-    commands.insert_resource(assets);
 }
 
-/// Decode frames `1..=count` with their authored mips into one repeating, anisotropic array,
-/// stopping at the first missing, non-square or mis-sized frame; returns it and the count loaded.
+/// Decode a `%d` sheet's frames `1..=30` with their authored mips into one repeating, anisotropic
+/// array, stopping at the first missing, non-square or mis-sized frame; returns it and the count
+/// loaded.
 fn load_frame_array(
     world_assets: &mut WorldAssets,
     images: &mut Assets<Image>,
-    kind: LiquidKind,
-    dir: &str,
-    stem: &str,
-    count: u32,
-) -> Option<(Handle<Image>, u32)> {
+    template: &str,
+    normalize_dc: bool,
+) -> Option<FrameArray> {
     let mut frames: Vec<BlpMipChain> = Vec::new();
     let mut size = 0u32;
-    for i in 1..=count {
-        let path = format!("XTextures\\{dir}\\{stem}.{i}.blp");
+    for i in 1..=SHEET_FRAMES {
+        let path = template.replacen("%d", &i.to_string(), 1);
         let Ok(chain) = read_texture_mip_chain(&mut world_assets.chain.lock_recover(), &path)
         else {
             break;
@@ -552,10 +661,6 @@ fn load_frame_array(
         return None;
     }
     let loaded = frames.len() as u32;
-    // Deviation: water frames have their per-frame mean flattened (`flatten_frame_dc`), because
-    // mipping turns the shipped frames' drifting means into a flicker on distant water; magma and
-    // slime keep theirs, the body's intended pulse.
-    let normalize_dc = !kind.is_fullbright();
     Some((images.add(liquid_frame_array(frames, normalize_dc)), loaded))
 }
 
@@ -624,7 +729,7 @@ mod tests {
         LiquidAssets {
             materials: HashMap::from([(
                 LiquidKey {
-                    kind: LiquidKind::Still,
+                    sheet: 0,
                     path: LiquidPath::Adt,
                     scroll: false,
                 },
@@ -632,6 +737,8 @@ mod tests {
                     material: Handle::default(),
                 },
             )]),
+            type_sheets: HashMap::new(),
+            kind_sheets: HashMap::from([(LiquidKind::Still, 0)]),
             types: LiquidTypes::default(),
         }
     }
@@ -676,6 +783,7 @@ mod tests {
             sound_id: 0,
             vertex_format: None,
             depth_ramp: None,
+            sheet: None,
             depth_texture: None,
             sheet_scale: 0.5,
             sheet_rotation: std::f32::consts::FRAC_PI_2,
@@ -686,6 +794,32 @@ mod tests {
         assert!(close(pool.sheet_uv([1.0, 0.0]), [0.0, 0.5]));
         assert!(close(pool.sheet_uv([0.0, 1.0]), [-0.5, 0.0]));
         assert_eq!(TypeSettings::default().sheet_uv([3.0, 4.0]), [3.0, 4.0]);
+    }
+
+    /// A type draws its own row's sheet (Outland's green magma, 15), but only for the kind it was
+    /// built for; a type with no sheet of its own, or a kind it was not built for, takes the kind's.
+    #[test]
+    fn a_liquid_type_draws_its_own_sheet() {
+        const BASE_LAVA: usize = 0;
+        const GREEN_LAVA: usize = 1;
+        const BASE_WATER: usize = 2;
+        let assets = LiquidAssets {
+            materials: HashMap::new(),
+            type_sheets: HashMap::from([(15, (LiquidKind::Magma, GREEN_LAVA))]),
+            kind_sheets: HashMap::from([
+                (LiquidKind::Magma, BASE_LAVA),
+                (LiquidKind::Still, BASE_WATER),
+            ]),
+            types: LiquidTypes::default(),
+        };
+        assert_eq!(assets.sheet(15, LiquidKind::Magma), Some(GREEN_LAVA));
+        assert_eq!(assets.sheet(3, LiquidKind::Magma), Some(BASE_LAVA));
+        assert_eq!(assets.sheet(15, LiquidKind::Still), Some(BASE_WATER));
+        assert_eq!(
+            assets.sheet(15, LiquidKind::Slime),
+            None,
+            "no slime sheet loaded"
+        );
     }
 
     /// An ADT surface carries `ExteriorScene` and none of the components `UnownedSceneFilter`

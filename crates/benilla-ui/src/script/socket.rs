@@ -191,29 +191,30 @@ fn queue(model: &mut Model, event: &str) {
 }
 
 /// Place `gem` (0 empties the socket) in socket `i` (`0x5c4780`). A gem goes only where
-/// its meta bit matches the socket's, else the reference's error shows. Returns whether it took.
-fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
+/// its meta bit matches the socket's, else its refusal is handed back for the caller to show at
+/// once. Returns whether it took.
+fn set_gem(model: &mut Model, i: usize, gem: u64) -> Result<bool, &'static str> {
     let item = model.socket_info.item;
     let Some(socket_stats) =
         find(model, item).and_then(|h| super::item_stats::item_record(model, h.item_id()))
     else {
-        return false;
+        return Ok(false);
     };
     if i >= MAX_SOCKETS {
-        return false;
+        return Ok(false);
     }
     if gem == 0 {
         model.socket_info.gems[i] = 0;
         queue(model, "SOCKET_INFO_UPDATE");
-        return true;
+        return Ok(true);
     }
     let Some(stats) =
         find(model, gem).and_then(|h| super::item_stats::item_record(model, h.item_id()))
     else {
-        return false;
+        return Ok(false);
     };
     if stats.gem_properties == 0 {
-        return false;
+        return Ok(false);
     }
     let meta = socket_stats.socket_colors[i] & 1;
     match &stats.gem {
@@ -223,13 +224,12 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
             } else {
                 "ERR_SOCKETING_META_GEM_ONLY_IN_METASLOT"
             };
-            model.ui_errors.push(key);
-            false
+            Err(key)
         }
         _ => {
             model.socket_info.gems[i] = gem;
             queue(model, "SOCKET_INFO_UPDATE");
-            true
+            Ok(true)
         }
     }
 }
@@ -612,8 +612,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let previous = model.socket_info.gems.get(i).copied().unwrap_or(0);
-            if !set_gem(&mut model, i, held) {
-                return Ok(());
+            match set_gem(&mut model, i, held) {
+                Ok(true) => {}
+                Ok(false) => return Ok(()),
+                Err(key) => {
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, key);
+                    return Ok(());
+                }
             }
             cursor::clear_cursor(&mut model);
             if let Some((bag, slot)) = find(&model, previous).map(|h| h.position()) {

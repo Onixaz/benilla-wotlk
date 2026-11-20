@@ -355,6 +355,11 @@ pub(crate) struct ItemRangeLive<'w, 's> {
 }
 
 impl ItemRangeLive<'_, '_> {
+    /// The range check's unit reads.
+    pub(crate) fn facts(&self) -> &crate::spell::cast_target::RangeFactsView<'_, '_> {
+        &self.facts
+    }
+
     /// The item's spell through the range check toward `target` (`0x5e55b6`), `None` with no answer.
     pub(crate) fn in_range(&self, spell_id: u32, target: u64) -> Option<bool> {
         let spells = self.spells.as_deref()?;

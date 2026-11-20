@@ -7,7 +7,7 @@ use benilla_protocol::messages::ACTION_KIND_SPELL;
 
 use crate::cvars::Cvars;
 use crate::net::NetCommands;
-use crate::ui_action::PlayerActions;
+use crate::ui_action::ActionSlots;
 
 /// The calls and Totemic Recall (`0xaccccc`): their learn or unlearn refills the bar.
 pub(crate) const CALL_SPELLS: [u32; 4] = [66842, 66843, 66844, 36936];
@@ -34,10 +34,8 @@ fn element_mask(category: u32) -> u32 {
 #[derive(Resource, Default, Debug)]
 pub(crate) struct MultiCastLists {
     pub(crate) lists: [Vec<u32>; 4],
-    /// Set by a live learn or any unlearn that calls for `0x5ab9d0`.
+    /// Set by a live learn or any unlearn that calls for `0x5ab9d0`, run in that handler's turn.
     pub(crate) refill_due: bool,
-    /// Set by a refill: the UI fires `UPDATE_MULTI_CAST_ACTIONBAR` (`0x5abaaa`).
-    pub(crate) announce: bool,
 }
 
 impl MultiCastLists {
@@ -95,22 +93,25 @@ impl MultiCastLists {
     }
 }
 
-/// `0x5ab9d0`: an unseeded element's first spell fills its empty slots; returns the new mask.
+/// `0x5ab9d0`: an unseeded element's first spell fills its empty slots, each sent; returns the new
+/// mask and the slots written, which the caller signals.
 pub(crate) fn refill(
     lists: &MultiCastLists,
-    actions: &mut PlayerActions,
+    actions: &mut ActionSlots,
     net: &NetCommands,
     mask: u32,
-) -> u32 {
+) -> (u32, Vec<u8>) {
     let mut next = mask;
+    let mut written = Vec::new();
     for (i, list) in lists.lists.iter().enumerate() {
         let bit = 1 << i;
         if mask & bit == 0 {
             if let Some(&spell) = list.first() {
                 let packed = spell | (u32::from(ACTION_KIND_SPELL) << 24);
                 for slot in (FIRST_TOTEM_SLOT + i as u8..FIRST_TOTEM_SLOT + 12).step_by(4) {
-                    if !actions.buttons.contains_key(&slot) {
-                        actions.write_slot(slot, packed, net);
+                    if !actions.buttons.contains_key(&slot) && actions.write_slot(slot, packed, net)
+                    {
+                        written.push(slot);
                     }
                 }
                 next |= bit;
@@ -119,27 +120,49 @@ pub(crate) fn refill(
             next &= !bit;
         }
     }
-    next
+    (next, written)
 }
 
-/// Runs a due refill, saving the mask when it moved.
-pub(crate) fn run_refill(
+/// The handler's due refill, run with the `World` once its commands apply.
+pub(crate) fn refill_if_due(world: &mut World) {
+    if world
+        .get_resource::<MultiCastLists>()
+        .is_some_and(|l| l.refill_due)
+    {
+        match world.run_system_cached(run_refill) {
+            Ok(written) => {
+                // Each written slot signals (`0x5aae80`), in turn with the handler's events.
+                for slot in written {
+                    crate::ui_action::slots::slot_changed(world, slot);
+                }
+                crate::ui_script::live::fire_handler_events(world);
+            }
+            Err(e) => warn!("multicast: the refill did not run: {e}"),
+        }
+    }
+}
+
+/// Runs a due refill, saving the mask when it moved, then queues `UPDATE_MULTI_CAST_ACTIONBAR` with
+/// the frame's unique signals (`0x5abaaa`).
+fn run_refill(
     mut lists: ResMut<MultiCastLists>,
-    mut actions: ResMut<PlayerActions>,
+    mut actions: ResMut<ActionSlots>,
     net: Res<NetCommands>,
     mut cvars: ResMut<Cvars>,
-) {
+    mut signals: NonSendMut<crate::ui_script::live::UniqueSignals>,
+) -> Vec<u8> {
     if !lists.refill_due {
-        return;
+        return Vec::new();
     }
     lists.refill_due = false;
     let mask = cvars.num(CVAR_AUTO_FILLED).map_or(0, |v| v as u32);
-    let next = refill(&lists, &mut actions, &net, mask);
+    let (next, written) = refill(&lists, &mut actions, &net, mask);
     if next != mask {
         cvars.set(CVAR_AUTO_FILLED, &next.to_string());
     }
     debug!("multicast: refilled, mask {mask:#x} -> {next:#x}");
-    lists.announce = true;
+    signals.unique_signal("UPDATE_MULTI_CAST_ACTIONBAR");
+    written
 }
 
 #[cfg(test)]
@@ -231,12 +254,12 @@ mod tests {
         learn_all(&mut lists, &cat, &[8071]);
         let (tx, rx) = crossbeam_channel::unbounded();
         let net = NetCommands(tx);
-        let mut actions = PlayerActions::default();
+        let mut actions = ActionSlots::default();
         // Page 2's earth slot is taken already.
         actions.write_slot(137, 2484 | (u32::from(ACTION_KIND_SPELL) << 24), &net);
         rx.try_iter().for_each(drop);
 
-        let mask = refill(&lists, &mut actions, &net, 0);
+        let (mask, _) = refill(&lists, &mut actions, &net, 0);
         assert_eq!(mask, 0x2, "earth seeded");
         let mut sent: Vec<u8> = rx
             .try_iter()
@@ -251,12 +274,12 @@ mod tests {
         // A seeded element is not refilled after the player clears its slot.
         actions.write_slot(133, 0, &net);
         rx.try_iter().for_each(drop);
-        assert_eq!(refill(&lists, &mut actions, &net, mask), 0x2);
+        assert_eq!(refill(&lists, &mut actions, &net, mask).0, 0x2);
         assert!(!actions.buttons.contains_key(&133));
         assert!(rx.try_iter().next().is_none());
 
         // An emptied list clears its bit, so a re-learn seeds again.
         lists.unlearn(8071);
-        assert_eq!(refill(&lists, &mut actions, &net, mask), 0);
+        assert_eq!(refill(&lists, &mut actions, &net, mask).0, 0);
     }
 }

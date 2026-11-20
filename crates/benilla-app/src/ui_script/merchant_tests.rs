@@ -5,6 +5,7 @@ use benilla_ui::script::{
     ScriptValue, SoundRequest, UiScript,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::{bag_open, stock_ui};
 
 /// Put a bag of `num_slots` empty slots in bag `id`: the stock `OpenBag` opens nothing for a
@@ -1015,6 +1016,7 @@ fn ctrl_and_shift_on_a_vendor_row_take_the_modified_click_and_never_buy() {
     benilla_formats::wow_data_or_skip!();
     const WATER_LINK: &str = "|cffffffff|Hitem:159:0:0:0:0:0:0:0:0|h[Refreshing Spring Water]|h|r";
     let mut s = stock_ui(1024.0, 768.0);
+    s.record_writes();
 
     s.set_money(12_345);
     s.set_merchant(Some(MerchantState {
@@ -1069,7 +1071,7 @@ fn ctrl_and_shift_on_a_vendor_row_take_the_modified_click_and_never_buy() {
 
     // The ctrl arm is `HandleModifiedItemClick`'s DRESSUP leg, and water is not dressable.
     assert!(
-        s.take_dressup_intents().is_empty(),
+        s.take_dressup_edits().is_empty(),
         "an undressable item opens no dressing room"
     );
 

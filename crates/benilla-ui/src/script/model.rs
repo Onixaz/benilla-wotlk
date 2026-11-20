@@ -7,11 +7,11 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, gossip, guild, inspect, item_text, lfg,
-    loot, loot_roll, macros, mail, merchant, mirror_timer, parse_unit_token, party, petition, pvp,
-    quest, quest_log, reputation, session, simplehtml, skills, slider, social, spellbook, stable,
-    taxi, trade, tradeskill, trainer, unit_menu, weapon_enchant, ActionSlot, AuraState, FontObject,
-    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
+    macros, mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
+    reputation, session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
+    weapon_enchant, AuraState, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest,
+    UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -282,8 +282,6 @@ pub(crate) struct Model {
     pub(crate) unit_auras: HashMap<u64, Vec<AuraState>>,
     /// The unit-token resolver's inputs, which the aura bindings resolve through.
     pub(crate) unit_guids: super::UnitGuids,
-    /// Each unit's running cast and channel, for `UnitCastingInfo` and `UnitChannelInfo`.
-    pub(crate) unit_casts: super::unit_cast::UnitCasts,
     /// Spell ids the cancel verbs queued (`CancelUnitBuff`, `SetTracking`, …), one
     /// `CMSG_CANCEL_AURA` each.
     pub(crate) cancel_aura_requests: Vec<u32>,
@@ -358,11 +356,11 @@ pub(crate) struct Model {
     pub(crate) guild_event_log: Vec<guild::GuildEventView>,
     /// Guild bank sends, queued for the app.
     pub(crate) guild_bank_requests: Vec<super::guild_bank::GuildBankRequest>,
-    /// The charter price and open petition, names resolved from caches as the reference does.
+    /// A test's charter window, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) petition: petition::PetitionState,
-    /// Charter calls (`BuyGuildCharter`, `SignPetition`, `TurnInGuildCharter`, …) queued.
-    pub(crate) petition_requests: Vec<petition::PetitionRequest>,
-    /// The arena registrar's petition vendor, as pushed.
+    /// A test's petition vendor, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) petition_vendor: petition::PetitionVendorState,
     /// The charter the petition vendor's button holds (`0xc0f7d8`), engine-side like the cursor.
     pub(crate) petition_button: Option<petition::PetitionButtonItem>,
@@ -538,10 +536,9 @@ pub(crate) struct Model {
     /// The key-binding table the Key Bindings window edits, with its account and character sets.
     pub(crate) keybinds: super::keybind::KeybindState,
 
-    /// Action slots by Lua action id, 1..120.
-    pub(crate) actions: HashMap<u32, ActionSlot>,
-    /// The saved equipment sets by id, their names, which a set slot answers.
-    pub(crate) equipment_sets: HashMap<u32, String>,
+    /// The stand-in bar by Lua action id, 1..144, which the slot verbs read with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) actions: HashMap<u32, super::ActionSlot>,
     /// The currency display list as its last build left it (`0x5b06dd`, its count zeroed at `0x5b0044`).
     pub(crate) currency_list: Vec<super::currency::Entry>,
     /// The items whose record a build asked for with its landing callback (`0x5b01d7`, `0x5b0260`).
@@ -554,15 +551,21 @@ pub(crate) struct Model {
     pub(crate) equipment_manager: super::equipment_manager::EquipmentManager,
     /// Equipment set sends, for the app.
     pub(crate) equipment_set_requests: Vec<super::equipment_manager::EquipmentSetRequest>,
+    /// Every line the display showed, for the tests.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) shown_lines: Vec<(&'static str, Option<String>)>,
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
+    /// The bonus offset a test or fixture pushed, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) bonus_bar_offset: u8,
-    /// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`).
+    /// The temporary bar's owners a test or fixture pushed, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) temp_action_bar: u32,
     /// The main bar's page, 0-based (`[0xc1e598]`): `GetActionBarPage` answers it plus one.
     pub(crate) action_bar_page: u8,
-    /// `(action id, packed)` per slot `PickupAction`/`PlaceAction` changed, 0 clearing it: one
-    /// `CMSG_SET_ACTION_BUTTON` each, so a drag swap is two sends.
+    /// `(action id, packed)` per stand-in slot a verb wrote with no view lent, 0 clearing it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) action_sets: Vec<(u32, u32)>,
     /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
     /// (the reference's error display), each a literal from its table (stride `0x14`).
@@ -570,11 +573,6 @@ pub(crate) struct Model {
     /// Catalog keys of lines a verb displayed inline, whose sound the app plays.
     pub(crate) message_sounds: Vec<&'static str>,
 
-    pub(crate) spellbook: spellbook::SpellBookState,
-    /// The book's highest-rank view, rebuilt with every [`Self::spellbook`] push.
-    pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
-    /// The full known-spell set, a superset of [`Self::spellbook`], and the rank table the item tests walk.
-    pub(crate) known_spells: spellbook::KnownSpells,
     /// `DismissCompanion` and `SummonRandomCritter` asks, in call order, for the app.
     pub(crate) companion_intents: Vec<super::companion::CompanionIntent>,
     /// The player's macros, owned here as 1.12 macros have no server side; the app persists them.
@@ -593,16 +591,6 @@ pub(crate) struct Model {
     pub(crate) macro_item_icons: Vec<String>,
     /// Builds [`Self::macro_item_icons`] on first use, then is spent.
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
-    /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
-    /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
-    pub(crate) casting: bool,
-    /// Spell targeting is on (`SpellIsTargeting`); it gates `SpellStopTargeting()`, whose nil the
-    /// ESC chain falls through on (`UIParent.lua:1490`).
-    pub(crate) spell_targeting: bool,
-    /// The units, by guid, for which `SpellCanTargetUnit`'s armed unit word clears fully, which
-    /// stock unit frames ask before they call `SpellTargetUnit`; a token resolves to its guid
-    /// through [`Self::unit_guids`].
-    pub(crate) spell_targetable_units: HashSet<u64>,
 
     pub(crate) talents: super::talent::TalentUiState,
     /// The achievement tables, lists and tracked set.
@@ -626,22 +614,7 @@ pub(crate) struct Model {
     pub(crate) inspect_talent_preview: Vec<Vec<Vec<i32>>>,
     /// `LearnPreviewTalents(true)` sends queued.
     pub(crate) pet_talent_preview_learns: Vec<Vec<(u32, u32)>>,
-    /// `ConfirmTalentWipe()` calls, one `MSG_TALENT_WIPE_CONFIRM` each; the app holds the trainer.
-    pub(crate) talent_wipe_confirms: u32,
-    /// `CheckTalentMasterDist()`: the respec question is live and in range; false hides its dialog.
-    pub(crate) talent_master_pending: bool,
     // ── The dialog engine's verbs ──
-    /// `ConfirmPetUnlearn()` calls; the app holds the trainer and the money gate.
-    pub(crate) pet_unlearn_confirms: u32,
-    /// `CheckPetUntrainerDist()`: the pet trainer's question is pending and in reach.
-    pub(crate) pet_untrainer_pending: bool,
-    /// `GetInstanceBootTimeRemaining()` in whole seconds, from the `SMSG_RAID_GROUP_ONLY` deadline.
-    pub(crate) instance_boot_secs: u32,
-    /// A cached area spirit healer and seconds to its wave.
-    pub(crate) area_spirit_healer_cached: bool,
-    pub(crate) area_spirit_secs: u32,
-    /// `AcceptAreaSpiritHeal()` calls, one `CMSG_AREA_SPIRIT_HEALER_QUEUE` each.
-    pub(crate) area_spirit_accepts: u32,
     /// The battleground scoreboard: pushed rows, faction filter, sort order.
     pub(crate) battlefield_board: super::battlefield_score::ScoreBoard,
     /// `RequestBattlefieldScoreData()` calls.
@@ -659,12 +632,11 @@ pub(crate) struct Model {
     pub(crate) tutorial_clears: u32,
     pub(crate) tutorial_resets: u32,
 
-    /// The stance bar's forms, in bar order.
+    /// The stand-in stance bar, in bar order, and form byte, for a VM with no live view.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
-    /// The player's raw shapeshift form byte, 0 unshifted or no player.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shapeshift_form_byte: u8,
-    /// The rune table `GetRuneType` reads.
-    pub(crate) runes: super::rune::RuneState,
     /// `GlyphProperties.dbc` and `GlyphSlot.dbc`.
     pub(crate) glyph_catalog: super::glyph::GlyphCatalogView,
     /// The player's glyph fields.
@@ -711,14 +683,11 @@ pub(crate) struct Model {
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// `s_vehicleAimNormPower`, 0..1.
     pub(crate) vehicle_aim_power: f32,
-    /// The four totem slots and their tools.
-    pub(crate) totems: super::totem::TotemSlots,
-    /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
-    pub(crate) totem_destroys: Vec<u8>,
-    /// The totem bar's element lists and the tables its slot test reads.
-    pub(crate) multicast: super::multicast::MultiCastView,
     /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
     pub(crate) ui_errors_s: Vec<(&'static str, String)>,
+    /// Chat-kind lines the app resolved and showed through [`super::UiScript::show_text`], their
+    /// key and text, which the app adds to the chat log.
+    pub(crate) chat_lines: Vec<(&'static str, String)>,
 
     /// `PetAbandon()` and `PetDismiss()` calls, counted apart though both end at one opcode.
     pub(crate) pet_abandons: u32,
@@ -745,8 +714,6 @@ pub(crate) struct Model {
     pub(crate) container_moves: Vec<container::ContainerMove>,
     /// `(bag, slot)` clicks made in repair mode.
     pub(crate) container_repairs: Vec<(i64, u32)>,
-    /// Targeting wants an item: a bag or paper-doll click becomes a pick.
-    pub(crate) item_pick_armed: bool,
     /// Picked `(bag, slot)`s; a paper-doll click is `EQUIPMENT_BAG` and its 1-based inventory slot.
     pub(crate) item_picks: Vec<(i64, u32)>,
     /// `BindEnchant()` and `ReplaceEnchant()`, the enchant popups' answers.
@@ -791,53 +758,52 @@ pub(crate) struct Model {
     /// A ColorSelect wheel or value-bar drag, press to release.
     pub(crate) color_drag: Option<colorselect::ColorDrag>,
 
-    /// The open gossip menu, the `SelectGossipOption` calls (position, code) and whether
-    /// `CloseGossip` ran.
-    pub(crate) gossip: Option<gossip::GossipMenu>,
-    pub(crate) gossip_selects: Vec<(u32, Option<String>)>,
-    pub(crate) gossip_close: bool,
-    /// The open menu's greeting query is out: selects do nothing.
-    pub(crate) gossip_pending: bool,
-    /// `SelectGossipQuest` 1-based rows, each sent as `CMSG_QUESTGIVER_QUERY_QUEST` for its quest.
-    pub(crate) gossip_quest_selects: Vec<u32>,
-
-    /// The open vendor's stock, the `BuyMerchantItem` calls and whether `CloseMerchant` ran.
-    pub(crate) merchant: Option<merchant::MerchantState>,
-    /// `GetRepairAllCost`'s total; 0 unless a repairer is open.
+    /// A test's vendor, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) merchant: Option<super::merchant::MerchantState>,
+    /// A test's `GetRepairAllCost` total, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) repair_all_cost: u32,
-    /// `GetRepairAllCost`'s second return: a swept item is damaged.
+    /// A test's `GetRepairAllCost` second return: a swept item is damaged.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) repair_all_damaged: bool,
-    /// The repair costs `SetInventoryItem` and `SetBagItem` return.
-    pub(crate) repair_costs: merchant::RepairCosts,
+    /// A test's repair costs `SetInventoryItem` and `SetBagItem` return.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) repair_costs: super::merchant::RepairCosts,
+    /// A test's `BuyMerchantItem` `(row, count)` calls where no view is lent, the row 1-based.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_buys: Vec<(u32, u32)>,
-    /// The held `(bag, slot)` when `PickupMerchantItem` sells, sent as `CMSG_SELL_ITEM`.
+    /// A test's held `(bag, slot)` sold by `PickupMerchantItem` where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_cursor_sells: Vec<(i64, u32)>,
-    /// A held vendor row dropped in a bag, `(bag, slot, 1-based row)`, for `CMSG_BUY_ITEM_IN_SLOT`.
+    /// A test's held vendor row dropped in a bag, `(bag, slot, 1-based row)`, where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_slot_buys: Vec<(i64, u32, u32)>,
+    /// A test's `CloseMerchant` where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_close: bool,
-    /// `BuybackItem` 1-based slots, the `RepairAllItems` flag and repair mode (`InRepairMode`).
+    /// A test's `BuybackItem` 1-based slots where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) merchant_buybacks: Vec<u32>,
+    /// A test's `RepairAllItems` guild-bank flag where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) repair_all: Option<bool>,
+    /// Repair mode (`InRepairMode`): a bag or equipment click repairs the item.
     pub(crate) repair_mode: bool,
+    /// The targeting cursor's arm count when repair mode armed: a later arm writes the Cast base
+    /// mode over Repair (`0x80d7f7`), ending it.
+    pub(crate) repair_armed_at: u32,
 
     /// The stable selection.
     pub(crate) stable: stable::StableModel,
 
-    /// The open trainer, its buys, selection and close. The selection is a spell id, since
-    /// filters, collapses and re-lists all move row numbers.
-    pub(crate) trainer: Option<trainer::TrainerState>,
-    pub(crate) trainer_buys: Vec<u32>,
-    pub(crate) trainer_selection: Option<u32>,
-    pub(crate) trainer_close: bool,
-    /// Collapsed skill-line ids (the complement of the expanded set), reset per list.
-    pub(crate) trainer_collapsed: HashSet<u32>,
-    /// Skill-line ids `SetTrainerSkillLineFilter` turned off, reset per list.
-    pub(crate) trainer_lines_off: HashSet<u32>,
+    /// A test's trainer window, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) trainer: Option<super::trainer::TrainerWindow>,
 
-    /// The open taxi map, the `TakeTaxiNode` calls and whether `CloseTaxiMap` ran.
-    pub(crate) taxi: Option<taxi::TaxiUiState>,
-    pub(crate) taxi_takes: Vec<usize>,
-    pub(crate) taxi_close: bool,
+    /// A test's taxi map, read where the lent view does not answer it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) taxi: Option<super::taxi::TaxiUiState>,
 
     /// The open tradeskill window, its filters and repeat.
     pub(crate) trade_skill: tradeskill::TradeSkillModel,
@@ -883,10 +849,6 @@ pub(crate) struct Model {
     /// The message of the day, `KBSystem_GetMOTD`.
     pub(crate) kb_motd: String,
 
-    /// The item-text reader: the pushed page, then the close and page-turn calls.
-    pub(crate) item_text: Option<item_text::ItemTextState>,
-    pub(crate) item_text_close: bool,
-    pub(crate) item_text_page_turns: Vec<i32>,
     /// The inbox, rows 1-based, kept past the window's close as the reference's inbox is.
     pub(crate) mail: mail::MailState,
     /// A mailbox is open.
@@ -1001,15 +963,12 @@ pub(crate) struct Model {
     /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
     pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
-    /// Spell id to its tooltip view, and the misses asked for.
+    /// Stand-in spell tooltip views by spell id, the player's and its pet's, for a VM with no
+    /// live view: the live view builds each at the hover.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) spell_tooltips: HashMap<u32, super::SpellTooltipView>,
-    pub(crate) spell_tooltip_asks: HashSet<u32>,
-    /// The same for the views built against the player's pet, which the spell builder's unit
-    /// selector asks for (the spell builder's fourth argument).
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) pet_spell_tooltips: HashMap<u32, super::SpellTooltipView>,
-    pub(crate) pet_spell_tooltip_asks: HashSet<u32>,
-    /// The tooltips whose spell render missed its view, re-rendered when the app answers.
-    pub(crate) spell_tooltip_waits: HashMap<FrameHandle, super::tooltip_spell::SpellWait>,
     /// The tooltips whose item setter missed a record, re-run when it lands.
     pub(crate) item_tooltip_waits: HashMap<FrameHandle, super::tooltip_item::ItemWait>,
     /// The item setter call running, collecting what it misses.
@@ -1088,15 +1047,9 @@ pub(crate) struct Model {
     /// `ClearInspectPlayer` ran, after this many of [`Self::inspect_notifies`]: the app drops its
     /// inspect target there, keeping the call order.
     pub(crate) inspect_clear: Option<usize>,
-    /// `DressUpModel` `SetUnit`, `Dress`, `Undress` and `TryOn` calls, applied in call order.
-    pub(crate) dressup_intents: Vec<super::dressup::DressUpIntent>,
     /// Tabard designs per `TabardModel`, the app's preview five, the host facts and queued calls.
     pub(crate) tabard_designs: HashMap<crate::widget::FrameHandle, [i32; 5]>,
     pub(crate) tabard_preview: Option<[i32; 5]>,
-    pub(crate) tabard_host: super::tabard::TabardHost,
-    pub(crate) tabard_intents: Vec<super::tabard::TabardIntent>,
-    /// The barber shop's host facts, preview dials and queued calls.
-    pub(crate) barber: super::barber::BarberState,
     /// The `WorldFrame` type's one-shot record: true once the first is made.
     pub(crate) world_frame_made: bool,
     /// Per live-unit guid, reach for `CanInspect`/`CheckInteractDistance`; absent: nil.
@@ -1175,10 +1128,6 @@ pub(crate) struct Model {
     pub(crate) stuck_casts: u32,
     /// The GM survey's tables and the answers given since the last submit.
     pub(crate) gm_survey: super::gm_ticket::SurveyState,
-    /// `ConfirmBinder()` calls, one `CMSG_BINDER_ACTIVATE` each; the app holds the innkeeper.
-    pub(crate) binder_confirms: u32,
-    /// `CheckBinderDist()`: the innkeeper's question is live and in range; false hides its dialog.
-    pub(crate) binder_pending: bool,
     /// `ConfirmSummon()` (true) and `CancelSummon()` (false) calls in order, one
     /// `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
     pub(crate) summon_answers: Vec<bool>,
@@ -1196,7 +1145,8 @@ pub(crate) struct Model {
     pub(crate) click_button: Option<String>,
     /// The player state `SecureCmdOptionParse`'s conditions read beside the unit snapshots.
     pub(crate) option_state: super::OptionState,
-    /// `flyable`'s Northrend training, from the spell book.
+    /// `flyable`'s Northrend training a test or fixture pushed, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) knows_cold_weather_flying: bool,
     /// What the macro conditions `equipped` and `worn` read.
     pub(crate) equipped_for_macros: super::EquippedForMacros,
@@ -1262,7 +1212,28 @@ impl Model {
         if token.eq_ignore_ascii_case("vehicle") {
             return self.vehicle_unit();
         }
+        if token.eq_ignore_ascii_case("npc") {
+            return self.npc_unit();
+        }
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
+    }
+
+    /// The `"npc"` unit by the interact target read at the call (`0xbd07a8`), as the getters look its object up; with none held, nil (`0x60af67`).
+    fn npc_unit(&self) -> Option<&UnitState> {
+        let pushed = self.pushed_unit("npc");
+        // No view lent (a bare harness): the pushed snapshot.
+        let Some(target) = super::live::read_live(|l| l.interact_target()) else {
+            return pushed;
+        };
+        let guid = target?;
+        pushed
+            .filter(|u| u.guid == guid)
+            .or_else(|| self.units_by_guid.get(&guid))
+            .or_else(|| {
+                self.units_by_lower
+                    .values()
+                    .find(|u| u.exists && u.guid == guid)
+            })
     }
 
     /// The focus's unit by guid, as the getters look its object up: the app's `focus` push while it
@@ -1488,7 +1459,6 @@ impl Model {
             player_auras: Vec::new(),
             unit_auras: HashMap::new(),
             unit_guids: Default::default(),
-            unit_casts: Default::default(),
             cancel_aura_requests: Vec::new(),
             minimap_tracking: Default::default(),
             script_calls: Vec::new(),
@@ -1524,8 +1494,9 @@ impl Model {
             guild_requests: Vec::new(),
             guild_event_log: Vec::new(),
             guild_bank_requests: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             petition: petition::PetitionState::default(),
-            petition_requests: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             petition_vendor: Default::default(),
             petition_button: None,
             // Per window, as the stock dock differs: 1 and 2 are the dock, the rest undocked.
@@ -1606,24 +1577,26 @@ impl Model {
             saved_names_per_character: Vec::new(),
             held_saved_files: Vec::new(),
             keybinds: super::keybind::KeybindState::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             actions: HashMap::new(),
-            equipment_sets: HashMap::new(),
             currency_list: Vec::new(),
             currency_waiting: HashSet::new(),
             token_slots: None,
             currency_collapsed: HashMap::new(),
             equipment_manager: Default::default(),
             equipment_set_requests: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
+            shown_lines: Vec::new(),
             action_states: HashMap::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             bonus_bar_offset: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             temp_action_bar: 0,
             action_bar_page: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
             message_sounds: Vec::new(),
-            spellbook: spellbook::SpellBookState::default(),
-            known_spells: spellbook::KnownSpells::default(),
-            spellbook_highest_rank: spellbook::HighestRankView::default(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
             macros_dirty: false,
@@ -1633,9 +1606,6 @@ impl Model {
             macro_icon_source: None,
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
-            casting: false,
-            spell_targeting: false,
-            spell_targetable_units: HashSet::new(),
             talents: super::talent::TalentUiState::default(),
             achievement: Default::default(),
             talent_preview: Vec::new(),
@@ -1647,14 +1617,6 @@ impl Model {
             inspect_talents: Default::default(),
             inspect_talent_preview: Vec::new(),
             pet_talent_preview_learns: Vec::new(),
-            talent_wipe_confirms: 0,
-            talent_master_pending: false,
-            pet_unlearn_confirms: 0,
-            pet_untrainer_pending: false,
-            instance_boot_secs: 0,
-            area_spirit_healer_cached: false,
-            area_spirit_secs: 0,
-            area_spirit_accepts: 0,
             battlefield_board: Default::default(),
             battlefield_score_requests: 0,
             battlefield: Default::default(),
@@ -1664,9 +1626,10 @@ impl Model {
             tutorial_triggers: Vec::new(),
             tutorial_clears: 0,
             tutorial_resets: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             shapeshift_forms: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             shapeshift_form_byte: 0,
-            runes: Default::default(),
             glyph_catalog: Default::default(),
             glyph_sockets: Default::default(),
             glyph_targeting: None,
@@ -1689,10 +1652,8 @@ impl Model {
             power_displays: Default::default(),
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
-            totems: Default::default(),
-            totem_destroys: Vec::new(),
-            multicast: Default::default(),
             ui_errors_s: Vec::new(),
+            chat_lines: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,
             pet_renames: Vec::new(),
@@ -1704,7 +1665,6 @@ impl Model {
             pet_grid_shown: false,
             container_moves: Vec::new(),
             container_repairs: Vec::new(),
-            item_pick_armed: false,
             item_picks: Vec::new(),
             enchant_confirms: Vec::new(),
             container_destroys: Vec::new(),
@@ -1722,32 +1682,33 @@ impl Model {
             sizing: None,
             slider_drag: None,
             color_drag: None,
-            gossip: None,
-            gossip_selects: Vec::new(),
-            gossip_close: false,
-            gossip_pending: false,
-            gossip_quest_selects: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant: None,
+            #[cfg(any(test, feature = "fixtures"))]
             repair_all_cost: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             repair_all_damaged: false,
+            #[cfg(any(test, feature = "fixtures"))]
             repair_costs: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_buys: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_cursor_sells: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_slot_buys: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_close: false,
+            #[cfg(any(test, feature = "fixtures"))]
             merchant_buybacks: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             repair_all: None,
             repair_mode: false,
+            repair_armed_at: 0,
             stable: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             trainer: None,
-            trainer_buys: Vec::new(),
-            trainer_selection: None,
-            trainer_close: false,
-            trainer_collapsed: HashSet::new(),
-            trainer_lines_off: HashSet::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             taxi: None,
-            taxi_takes: Vec::new(),
-            taxi_close: false,
             trade_skill: Default::default(),
             lfg: Default::default(),
             calendar: Default::default(),
@@ -1769,9 +1730,6 @@ impl Model {
             opt_out_of_loot: false,
             ui_time_offset: 0,
             kb_motd: String::new(),
-            item_text: None,
-            item_text_close: false,
-            item_text_page_turns: Vec::new(),
             mail: mail::MailState::default(),
             mail_mailbox: false,
             mail_commands: Vec::new(),
@@ -1840,10 +1798,8 @@ impl Model {
             #[cfg(any(test, feature = "fixtures"))]
             item_record_waits: Vec::new(),
             spell_tooltips: HashMap::new(),
-            spell_tooltip_asks: HashSet::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             pet_spell_tooltips: HashMap::new(),
-            pet_spell_tooltip_asks: HashSet::new(),
-            spell_tooltip_waits: HashMap::new(),
             item_tooltip_waits: HashMap::new(),
             item_render: None,
             quest_log_collapse_filter: -1,
@@ -1871,14 +1827,13 @@ impl Model {
             gm_ticket_intents: Vec::new(),
             stuck_casts: 0,
             gm_survey: Default::default(),
-            binder_confirms: 0,
-            binder_pending: false,
             summon_answers: Vec::new(),
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
             modifier_keys: 0,
             click_button: None,
             option_state: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             knows_cold_weather_flying: false,
             equipped_for_macros: Default::default(),
             autocomplete_contacts: Default::default(),
@@ -1920,12 +1875,8 @@ impl Model {
             inspect: None,
             inspect_notifies: Vec::new(),
             inspect_clear: None,
-            dressup_intents: Vec::new(),
             tabard_designs: HashMap::new(),
             tabard_preview: None,
-            tabard_host: Default::default(),
-            tabard_intents: Vec::new(),
-            barber: Default::default(),
             world_frame_made: false,
             unit_reach: HashMap::new(),
             chat_input: Vec::new(),

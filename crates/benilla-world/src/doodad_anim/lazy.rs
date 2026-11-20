@@ -211,6 +211,7 @@ mod tests {
                     anim_id: Some(0),
                     active: false,
                     parked_at: 0.0,
+                    fade_out: None,
                 },
                 LazyRig {
                     bones: 1,

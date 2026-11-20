@@ -366,25 +366,32 @@ const GO_TYPE_SPELL_FOCUS: i32 = 8;
 const GO_TYPE_DUEL_ARBITER: i32 = 16;
 const GO_TYPE_FISHINGHOLE: i32 = 25;
 const GO_TYPE_AURA_GENERATOR: i32 = 30;
-/// The highest type the type factory's jump table covers; 21 GUARDPOST has no case and takes
-/// `default:` with every out-of-range type.
-const GO_TYPE_MAX: i32 = 30;
+/// The highest type the type factory covers (`0x7143d9`); 20, 21 GUARDPOST and 28 have no case in
+/// its table (`0x7143e2`) and take `default:` with every out-of-range type.
+const GO_TYPE_MAX: i32 = 35;
 const GO_TYPE_GUARDPOST: i32 = 21;
+const GO_TYPE_28: i32 = 28;
+/// DUNGEON_DIFFICULTY (31), DESTRUCTIBLE_BUILDING (33) and TRAPDOOR (35): their use test is constant
+/// false (`0x427a90`); 33's own mouseover test (`0x70df30`) is #243.
+const GO_TYPE_DUNGEON_DIFFICULTY: i32 = 31;
+const GO_TYPE_DESTRUCTIBLE_BUILDING: i32 = 33;
+const GO_TYPE_TRAPDOOR: i32 = 35;
 
 /// Whether the type factory gives this type its `default:` strategy: a static placeholder whose
 /// `+0x14` and `+0xc` both answer false, so the object shows nothing. No 1.12 data sends such a
 /// type; the flag predicate alone would pass it.
 fn strategy_is_default(type_id: i32) -> bool {
-    type_id != GO_TYPE_GUILD_BANK
-        && (type_id == GO_TYPE_GUARDPOST || !(0..=GO_TYPE_MAX).contains(&type_id))
+    matches!(
+        type_id,
+        GO_TYPE_AUCTIONHOUSE | GO_TYPE_GUARDPOST | GO_TYPE_28
+    ) || !(0..=GO_TYPE_MAX).contains(&type_id)
 }
 /// `GAMEOBJECT_TYPE_TEXT` (9), a readable book or plaque: the Inspect magnifier.
 pub(crate) const GO_TYPE_TEXT: i32 = 9;
-/// MAILBOX(19) and type 28 show Mail; no 1.12 data uses type 28. RITUAL(18) shows Mail here, where
-/// the reference gives it the base cursor: its own vtable keeps.
+/// MAILBOX(19) shows Mail. RITUAL(18) shows Mail here, where the reference gives it the base
+/// cursor: its own vtable keeps.
 const GO_TYPE_RITUAL: i32 = 18;
 pub(super) const GO_TYPE_MAILBOX: i32 = 19;
-const GO_TYPE_28: i32 = 28;
 /// `GAMEOBJECT_TYPE_GUILD_BANK` (34), a guild vault: 3.3.5a gives it a strategy of its own
 /// (`0x712ac0`), whose cursor is Buy, grayed out of reach (`0x70b910`).
 pub(super) const GO_TYPE_GUILD_BANK: i32 = 34;
@@ -400,7 +407,7 @@ pub(crate) const GO_TYPE_CHAIR: i32 = 7;
 /// `GAMEOBJECT_TYPE_BARBER_CHAIR` (32): a chair (`0x70c7f0` builds on the chair's `0x70c6a0`), so
 /// its reach is the chair's 3.0 yd.
 pub(crate) const GO_TYPE_BARBER_CHAIR: i32 = 32;
-pub(super) fn go_interact_range_sq(type_id: i32) -> f32 {
+pub(crate) fn go_interact_range_sq(type_id: i32) -> f32 {
     match type_id {
         GO_TYPE_FISHINGNODE => 100.0 * 100.0,
         // Measured to the object; the reference and vmangos (`GameObject.cpp:2231-2236`) measure to
@@ -432,6 +439,9 @@ fn strategy_never_highlightable(type_id: i32) -> bool {
                 | GO_TYPE_AURA_GENERATOR
                 | GO_TYPE_AUCTIONHOUSE
                 | GO_TYPE_CAPTURE_POINT
+                | GO_TYPE_DUNGEON_DIFFICULTY
+                | GO_TYPE_DESTRUCTIBLE_BUILDING
+                | GO_TYPE_TRAPDOOR
         )
 }
 
@@ -610,7 +620,7 @@ fn go_lock_cursor(
 fn go_cursor_kind(type_id: i32, lock_cursor: Option<CursorKind>) -> CursorKind {
     match type_id {
         GO_TYPE_TEXT => CursorKind::Inspect,
-        GO_TYPE_RITUAL | GO_TYPE_MAILBOX | GO_TYPE_28 => CursorKind::Mail,
+        GO_TYPE_RITUAL | GO_TYPE_MAILBOX => CursorKind::Mail,
         GO_TYPE_GUILD_BANK => CursorKind::Buy,
         _ => lock_cursor.unwrap_or(CursorKind::Interact),
     }
@@ -1586,8 +1596,33 @@ mod tests {
                 GoOverrides::default()
             ));
         }
-        for t in (0..=GO_TYPE_MAX).filter(|t| *t != GO_TYPE_GUARDPOST) {
+        // The factory table's three `default:` rows (`0x7143e2`).
+        for t in (0..=GO_TYPE_MAX)
+            .filter(|t| ![GO_TYPE_AUCTIONHOUSE, GO_TYPE_GUARDPOST, GO_TYPE_28].contains(t))
+        {
             assert!(!strategy_is_default(t), "type {t} has its own strategy");
+        }
+        assert!(strategy_is_default(GO_TYPE_28));
+        // A barber chair has its own strategy (`0x7148d0` -> `0x70c7f0`) and the shared gate.
+        assert!(highlightable_flags(
+            GO_TYPE_BARBER_CHAIR,
+            0,
+            0,
+            Some(3),
+            GoOverrides::default()
+        ));
+        for t in [
+            GO_TYPE_DUNGEON_DIFFICULTY,
+            GO_TYPE_DESTRUCTIBLE_BUILDING,
+            GO_TYPE_TRAPDOOR,
+        ] {
+            assert!(!highlightable_flags(
+                t,
+                0,
+                0,
+                Some(3),
+                GoOverrides::default()
+            ));
         }
         assert!(!highlightable_flags(
             GO_TYPE_AUCTIONHOUSE,
@@ -1878,10 +1913,9 @@ mod tests {
 
     #[test]
     fn go_cursor_kind_maps_type_then_lock() {
-        // MAILBOX(19), RITUAL(18) and type 28 take Mail whatever their lock.
+        // MAILBOX(19) and RITUAL(18) take Mail; type 28 is the factory's `default:` (`0x7143e2`), never highlightable, so it takes no type cursor.
         assert_eq!(go_cursor_kind(19, None), CursorKind::Mail);
         assert_eq!(go_cursor_kind(18, None), CursorKind::Mail);
-        assert_eq!(go_cursor_kind(28, Some(CursorKind::Mine)), CursorKind::Mail);
         assert_eq!(go_cursor_kind(9, None), CursorKind::Inspect); // TEXT
         assert_eq!(go_cursor_kind(34, None), CursorKind::Buy); // GUILD_BANK
         assert!(!strategy_is_default(GO_TYPE_GUILD_BANK));

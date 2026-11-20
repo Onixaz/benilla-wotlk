@@ -83,8 +83,6 @@ pub(super) fn seed_ui_fixture(
     mut ctx: ResMut<CaptureCtx>,
     mut commands: Commands,
     progress: Res<WorldLoadProgress>,
-    mut merchant: ResMut<crate::ui_merchant::MerchantOpen>,
-    mut gossip: ResMut<crate::ui_gossip::GossipState>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut script, mut live): (
@@ -257,8 +255,12 @@ pub(super) fn seed_ui_fixture(
                         extended_cost: 0,
                     }
                 })
-                .collect();
-            merchant.open(NPC_GUID, rows);
+                .collect::<Vec<_>>();
+            // The list's handler leg: the vendor set and `MERCHANT_SHOW` in its turn.
+            commands.queue(move |w: &mut World| {
+                crate::ui_merchant::set_merchant(w, NPC_GUID, rows);
+                crate::ui_script::live::fire_handler_events(w);
+            });
             // The usable gate's player half: with no active player in capture, the fixture's level-12 human warrior stands in.
             if let Some(s) = script.as_mut() {
                 s.set_player_req_state(benilla_ui::script::PlayerReqState {
@@ -286,16 +288,12 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 }),
             );
-            gossip.npc = Some(NPC_GUID);
-            gossip.text_id = 1;
             // A greeting long enough that the wrapped options below run past the parchment.
-            gossip.greeting = Some(
-                "A man has been caught stealing corn from the fields of a noble, a lord known \
-                 for his harsh taxes throughout the land.$B$BMake your choice!"
-                    .into(),
-            );
+            let greeting =
+                "A man has been caught stealing corn from the fields of a noble, a lord \
+                 known for his harsh taxes throughout the land.$B$BMake your choice!";
             // An available quest row above the options, for the quest-row icon and text seating.
-            gossip.quests = vec![benilla_protocol::messages::QuestOption {
+            let quests = vec![benilla_protocol::messages::QuestOption {
                 quest_id: 783,
                 icon: 0,
                 level: 5,
@@ -315,7 +313,7 @@ pub(super) fn seed_ui_fixture(
                 "I allow the man to take enough corn to feed his family for a couple of days, \
                  encouraging him to leave the land.",
             ];
-            gossip.options = vec![benilla_protocol::messages::GossipOption {
+            let mut options = vec![benilla_protocol::messages::GossipOption {
                 index: 0,
                 icon: 1,
                 coded: false,
@@ -323,18 +321,30 @@ pub(super) fn seed_ui_fixture(
                 message: "Let me browse your goods.".into(),
                 box_text: None,
             }];
-            gossip
-                .options
-                .extend(judgement.iter().enumerate().map(|(i, message)| {
-                    benilla_protocol::messages::GossipOption {
-                        index: i as u32 + 1,
-                        icon: 0,
-                        coded: false,
-                        box_money: 0,
-                        message: (*message).into(),
-                        box_text: None,
-                    }
-                }));
+            options.extend(judgement.iter().enumerate().map(|(i, message)| {
+                benilla_protocol::messages::GossipOption {
+                    index: i as u32 + 1,
+                    icon: 0,
+                    coded: false,
+                    box_money: 0,
+                    message: (*message).into(),
+                    box_text: None,
+                }
+            }));
+            // The menu as the wire would read it, its greeting drawn and `GOSSIP_SHOW` fired in turn.
+            commands.queue(move |world: &mut World| {
+                crate::ui_gossip::seed_drawn(
+                    world,
+                    benilla_protocol::messages::GossipMenu {
+                        npc: NPC_GUID,
+                        menu_id: 0,
+                        text_id: 1,
+                        options,
+                        quests,
+                    },
+                    greeting.into(),
+                );
+            });
         }
         UiFixture::Bank => {
             // A pure banker and the vault, in the descriptor and caches the bank verbs read and `ui_items` pushes, as live wire data would.

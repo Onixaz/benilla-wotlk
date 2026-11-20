@@ -618,6 +618,17 @@ impl crate::script::UiScript {
         self.model_pane(name).map_or(0.0, |m| m.facing)
     }
 
+    /// A named pane's handle and yaw while it is effectively visible: the host draws a shown pane's own model.
+    pub fn shown_model_pane(&self, name: &str) -> Option<(crate::widget::FrameHandle, f32)> {
+        self.model_ref()
+            .arena
+            .frames_named(name)
+            .find_map(|(h, f)| match &f.kind_state {
+                KindState::Model(m) if f.effective_visible => Some((h, m.facing)),
+                _ => None,
+            })
+    }
+
     /// The host's facts for a model file, read off the loaded asset: every pane holding it runs the
     /// reference's load completion ([`ModelState::seed_from_facts`]) and takes its implicit rect.
     pub fn set_model_facts(&mut self, path: &str, facts: ModelFileFacts) {

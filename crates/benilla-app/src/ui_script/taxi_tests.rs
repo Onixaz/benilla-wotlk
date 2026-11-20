@@ -1,10 +1,12 @@
-//! The stock taxi map (`TaxiFrame.xml`) fed a two-node snapshot shaped as `crate::ui_taxi`'s feed
-//! pushes it: `TAXIMAP_OPENED` shows it and builds the node buttons, a click takes the node, and
+//! The stock taxi map (`TaxiFrame.xml`) fed a two-node snapshot shaped as `crate::ui_taxi`'s setup
+//! lists it: `TAXIMAP_OPENED` shows it and builds the node buttons, a click takes the node, and
 //! `TAXIMAP_CLOSED` hides it.
 
 use benilla_ui::script::{ScriptValue, TaxiNodeType, TaxiUiNode, TaxiUiState, UiScript};
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::load_ui as load_xml;
+use benilla_ui::script::TaxiAct;
 
 /// The taxi window and its dependencies.
 fn taxi_script() -> UiScript {
@@ -50,6 +52,7 @@ fn menu() -> TaxiUiState {
                 pos: (0.43, 0.33),
                 cost: 0,
                 routes: vec![],
+                num_routes: 0,
             },
             TaxiUiNode {
                 name: "Sentinel Hill, Westfall".into(),
@@ -57,6 +60,7 @@ fn menu() -> TaxiUiState {
                 pos: (0.41, 0.25),
                 cost: 110,
                 routes: vec![[0.43, 0.33, 0.41, 0.25]],
+                num_routes: 1,
             },
         ],
     }
@@ -67,6 +71,7 @@ fn menu() -> TaxiUiState {
 fn shipped_taxi_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = taxi_script();
+    s.record_writes();
 
     assert!(!s.eval::<bool>("return TaxiFrame:IsVisible()").unwrap());
 
@@ -97,8 +102,11 @@ fn shipped_taxi_frame_drives_end_to_end() {
         .unwrap();
     s.mouse_button(cx, cy, "LeftButton", true);
     s.mouse_button(cx, cy, "LeftButton", false);
-    assert_eq!(s.take_taxi_node(), vec![2]);
-    assert!(s.take_taxi_node().is_empty(), "drained");
+    assert_eq!(
+        s.take_taxi_acts(),
+        vec![TaxiAct::Take(1)],
+        "the 0-based slot, inside the call"
+    );
 
     s.set_taxi(None);
     s.fire_event("TAXIMAP_CLOSED", vec![]);
@@ -121,6 +129,7 @@ fn no_single_hop_destination_posts_the_error_and_closes() {
             pos: (0.43, 0.33),
             cost: 0,
             routes: vec![],
+            num_routes: 0,
         }],
     }));
     seat_flight_master(&mut s, "Dungar Longdrink");
@@ -151,6 +160,7 @@ fn no_single_hop_destination_posts_the_error_and_closes() {
 fn close_button_queues_the_intent_and_hides() {
     benilla_formats::wow_data_or_skip!();
     let mut s = taxi_script();
+    s.record_writes();
     s.set_taxi(Some(menu()));
     seat_flight_master(&mut s, "Dungar Longdrink");
     s.fire_event(
@@ -162,6 +172,6 @@ fn close_button_queues_the_intent_and_hides() {
     // `TaxiCloseButton` is a plain `UIPanelCloseButton` (`TaxiFrame.xml:133`).
     s.run("TaxiCloseButton:Click()").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    assert!(s.take_taxi_close());
+    assert_eq!(s.take_taxi_acts(), vec![TaxiAct::Close]);
     assert!(!s.eval::<bool>("return TaxiFrame:IsVisible()").unwrap());
 }

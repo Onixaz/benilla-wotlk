@@ -74,6 +74,8 @@ pub(super) fn control(
         // The one auto-move cell, follow or a Click to Move walk, which a knockback clears.
         ResMut<super::follow::FollowState>,
         ResMut<super::approach::Approach>,
+        // The stand-state setter's barber leg.
+        crate::ui_barber::BarberStand,
     ),
     mut commands: Commands,
     mut player: ResMut<Player>,
@@ -504,6 +506,7 @@ pub(super) fn control(
             &mut net.3,
             &mut net.10,
             &mut net.15,
+            &mut speed_capsule.14,
             moving,
             turned,
         );
@@ -667,6 +670,15 @@ pub(super) fn control(
             player.swimming = false;
         }
         let swimming = swimming && !breach && !knock_breach;
+        // Our swim status's edge runs the usable update (`0x730f1e`).
+        if swimming != was_swimming {
+            commands.queue(|world: &mut World| {
+                crate::ui_action::usable_cache::step(crate::ui_action::usable_cache::Pass::Full)(
+                    world,
+                );
+                crate::ui_script::live::fire_handler_events(world);
+            });
+        }
         // A knockback ends a flight and takes `CAN_FLY` with it (the knockback launch, `0x6e9ff0`),
         // sending no `CMSG_MOVE_SET_FLY`; the land mover flies it.
         if player.flying && knock_launch.is_some() {

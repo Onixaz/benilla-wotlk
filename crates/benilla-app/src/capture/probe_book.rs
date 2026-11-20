@@ -16,7 +16,6 @@ use benilla_ui::script::UiScript;
 use super::probes::ProbeClock;
 use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::player::Player;
-use crate::ui_item_text::ItemTextOpen;
 use crate::ui_script::{UiCostWanted, UiFrameCost};
 
 /// A standing position beside the plaque.
@@ -206,7 +205,7 @@ fn book_probe(
     mut probe: ResMut<BookProbe>,
     mut wanted: ResMut<UiCostWanted>,
     cost: Res<UiFrameCost>,
-    mut reader: ResMut<ItemTextOpen>,
+    mut commands: Commands,
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     player: Res<Player>,
@@ -269,8 +268,8 @@ fn book_probe(
             probe.closed.push(sample);
             if probe.closed.len() >= SAMPLE_FRAMES {
                 let guid = probe.plaque.unwrap_or_default();
-                info!("PROBE_BOOK: opening the reader on {guid:#x} (the right-click's own route — `ItemTextOpen::open_pages`)");
-                reader.open_pages(guid);
+                info!("PROBE_BOOK: opening the reader on {guid:#x} (the right-click's own route)");
+                crate::ui_item_text::read_from_click(&mut commands, guid);
                 probe.phase = Phase::WaitReady { since: now };
             }
         }

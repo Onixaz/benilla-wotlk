@@ -35,7 +35,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 // Repair mode and the targeting arm move the base.
-                if model.spell_targeting || model.repair_mode {
+                if super::spellbook::targeting().active || super::merchant::repair_mode(&model) {
                     return Ok(());
                 }
             }

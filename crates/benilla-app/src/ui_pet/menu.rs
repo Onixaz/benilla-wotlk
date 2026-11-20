@@ -7,7 +7,7 @@ use benilla_protocol::messages::{PET_ACT_COMMAND, PET_COMMAND_DISMISS};
 use benilla_ui::script::{PetMenuOutcome, PetMenuVerb, ScriptValue, UiScript};
 
 use crate::net::{ClientCommand, NetCommands};
-use crate::ui_action::{UiError, UiErrorKeys};
+use crate::ui_action::UiError;
 
 use super::{PetBar, PetUnit};
 
@@ -130,7 +130,6 @@ pub(super) fn drain_pet_menu(
     (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     bar: crate::ui_script::LentRef<PetBar>,
     commands: Res<NetCommands>,
-    mut ui_errors: ResMut<UiErrorKeys>,
     pet: PetUnit,
     spells: Option<Res<crate::ui_action::Spells>>,
     summons: Option<Res<crate::spell::SummonSlots>>,
@@ -179,7 +178,10 @@ pub(super) fn drain_pet_menu(
             PetMenuOutcome::VehicleExit => {
                 script.push_vehicle_request(benilla_ui::script::VehicleRequest::Exit);
             }
-            PetMenuOutcome::Refused(key) => ui_errors.0.push(UiError::key(key)),
+            // The refusal shows inside the verb's turn, in order with the menu's other events.
+            PetMenuOutcome::Refused(key) => {
+                crate::ui_action::signals::SignalSink::line(&mut *script, UiError::key(key));
+            }
         }
     }
 }

@@ -1,10 +1,9 @@
-//! The vendor window's packet handlers: they fill [`MerchantOpen`] and [`MerchantErrors`].
+//! The vendor window's packet handlers: each writes the merchant globals and fires its events in its turn.
 
 use benilla_protocol::messages::VendorList;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{MerchantErrors, MerchantOpen, MerchantRefusal};
 use crate::net::NetHandlerApp;
 
 /// Register the vendor handlers and the session-end listener.
@@ -17,65 +16,21 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Disconnected, on_session_end);
 }
 
-fn on_inventory(In(ev): In<SessionEvent>, mut merchant: ResMut<MerchantOpen>) {
-    if let SessionEvent::VendorInventory {
+/// `SMSG_LIST_INVENTORY` (`0x6d92d0`): a list sets the merchant (`0x6d9af8`); an empty list's refusal opens nothing (`0x6d9ad2`) and only reaches the console.
+fn on_inventory(In(ev): In<SessionEvent>, world: &mut World) {
+    let SessionEvent::VendorInventory {
         vendor,
         items,
         error,
     } = ev
-    {
-        vendor_inventory(
-            VendorList {
-                vendor,
-                items,
-                error,
-            },
-            &mut merchant,
-        );
-    }
-}
-
-fn on_buy_result(In(ev): In<SessionEvent>, mut merchant: ResMut<MerchantOpen>) {
-    if let SessionEvent::VendorBuyResult {
+    else {
+        return;
+    };
+    let list = VendorList {
         vendor,
-        slot,
-        new_count,
-        ..
-    } = ev
-    {
-        vendor_buy_result(vendor, slot, new_count, &mut merchant);
-    }
-}
-
-fn on_buy_failed(
-    In(ev): In<SessionEvent>,
-    mut merchant: ResMut<MerchantOpen>,
-    mut errors: ResMut<MerchantErrors>,
-) {
-    if let SessionEvent::VendorBuyFailed {
-        vendor,
-        item_entry,
-        reason,
-    } = ev
-    {
-        vendor_buy_failed(vendor, item_entry, reason, &mut merchant, &mut errors);
-    }
-}
-
-fn on_sell_failed(In(ev): In<SessionEvent>, mut errors: ResMut<MerchantErrors>) {
-    if let SessionEvent::VendorSellFailed { reason, .. } = ev {
-        vendor_sell_failed(reason, &mut errors);
-    }
-}
-
-/// The vendor window closes with the connection.
-fn on_session_end(In(_): In<SessionEvent>, mut merchant: ResMut<MerchantOpen>) {
-    merchant.clear_session();
-}
-
-/// `SMSG_LIST_INVENTORY` opens the window on the vendor's rows; an empty list's refusal opens
-/// nothing (`0x6d9ad0`) and only reaches the console.
-fn vendor_inventory(list: VendorList, merchant: &mut MerchantOpen) {
+        items,
+        error,
+    };
     if !list.opens() {
         debug!(
             "net: vendor {:#x} refused its list (reason {:?})",
@@ -88,39 +43,76 @@ fn vendor_inventory(list: VendorList, merchant: &mut MerchantOpen) {
         list.vendor,
         list.items.len()
     );
-    merchant.open(list.vendor, list.items);
+    super::set_merchant(world, list.vendor, list.items);
 }
 
-/// `SMSG_BUY_ITEM`'s new stock count, applied only to the open vendor.
-fn vendor_buy_result(vendor: u64, slot: u32, new_count: u32, merchant: &mut MerchantOpen) {
-    if merchant.vendor == Some(vendor) {
-        merchant.update_stock(slot, new_count);
+/// `SMSG_BUY_ITEM` (`0x6cdd10`): the row's new count through `0x5840e0`; the bought item itself arrives as an object create.
+fn on_buy_result(In(ev): In<SessionEvent>, world: &mut World) {
+    if let SessionEvent::VendorBuyResult {
+        vendor,
+        slot,
+        new_count,
+        ..
+    } = ev
+    {
+        super::update_item_quantity(world, vendor, slot, new_count);
     }
 }
 
-/// `SMSG_BUY_FAILED`: queue the message line, and for `ITEM_ALREADY_SOLD` zero the refused row of
-/// the open vendor, as the reference does (`0x6cdba0`).
+/// `SMSG_BUY_FAILED` (`0x6cdba0`): `ITEM_ALREADY_SOLD` zeroes each matching row through `0x5840e0`, its `MERCHANT_UPDATE` with each (`0x6cdc06`), then the code's line shows (`0x6cdc23`).
 ///
 /// Deviation: the row is matched by item entry, where the reference matches its vendor slot word
 /// (`+0x00`), because the server writes the item entry in that field.
-fn vendor_buy_failed(
-    vendor: u64,
-    item_entry: u32,
-    reason: u8,
-    merchant: &mut MerchantOpen,
-    errors: &mut MerchantErrors,
-) {
+fn on_buy_failed(In(ev): In<SessionEvent>, world: &mut World) {
+    let SessionEvent::VendorBuyFailed {
+        vendor,
+        item_entry,
+        reason,
+    } = ev
+    else {
+        return;
+    };
     debug!("net: buy failed (entry {item_entry}, reason {reason})");
-    if reason == benilla_protocol::messages::buy_result::ITEM_ALREADY_SOLD
-        && merchant.vendor == Some(vendor)
-    {
-        merchant.sold_out(item_entry);
+    if reason == benilla_protocol::messages::buy_result::ITEM_ALREADY_SOLD {
+        let slots: Vec<u32> = world
+            .get_resource::<super::MerchantOpen>()
+            .filter(|m| m.vendor == Some(vendor))
+            .map(|m| {
+                m.items
+                    .iter()
+                    .filter(|r| r.entry == item_entry)
+                    .map(|r| r.slot)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for slot in slots {
+            super::update_item_quantity(world, vendor, slot, 0);
+        }
     }
-    errors.0.push(MerchantRefusal::Buy(reason));
+    if let (Some(key), Some(mut ui)) = (
+        super::buy_error_key(reason),
+        world.get_resource_mut::<crate::ui_script::live::UiEvents>(),
+    ) {
+        crate::ui_action::show_in_turn(&mut ui, "ui_merchant", crate::ui_action::UiError::key(key));
+    }
 }
 
-/// `SMSG_SELL_ITEM`'s error path: queue the message line.
-fn vendor_sell_failed(reason: u8, errors: &mut MerchantErrors) {
-    debug!("net: sell failed (reason {reason})");
-    errors.0.push(MerchantRefusal::Sell(reason));
+/// `SMSG_SELL_ITEM`'s error path (`0x6d1540`): the code's line shows (`0x6d15f7`).
+fn on_sell_failed(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
+    if let SessionEvent::VendorSellFailed { reason, .. } = ev {
+        debug!("net: sell failed (reason {reason})");
+        if let Some(key) = super::sell_error_key(reason) {
+            crate::ui_action::show_in_turn(
+                &mut ui,
+                "ui_merchant",
+                crate::ui_action::UiError::key(key),
+            );
+        }
+    }
+}
+
+/// The vendor is dropped with the connection.
+fn on_session_end(In(_): In<SessionEvent>, mut merchant: ResMut<super::MerchantOpen>) {
+    merchant.vendor = None;
+    merchant.items.clear();
 }

@@ -332,7 +332,7 @@ fn takes_return_and_delete_follow_the_references_gates() {
     // A COD the purse cannot pay is refused locally.
     s.run("TakeInboxItem(3, 1)").unwrap();
     assert!(s.take_mail_commands().is_empty());
-    assert_eq!(s.take_ui_errors(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+    assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
 
     s.run("TakeInboxItem(2, 1)").unwrap();
     assert_eq!(

@@ -5,6 +5,7 @@ use benilla_ui::script::{
     GossipQuestRow, QuestItemView, QuestPanel, QuestState, ScriptValue, SoundRequest, UiScript,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::stock_ui;
 
 /// A view that records the questgiver buttons' calls, each answering as a window left open.
@@ -617,6 +618,7 @@ fn greeting_panel_title_rows_grow_to_their_wrapped_titles() {
 fn reward_rows_preview_and_post_without_selecting_the_choice() {
     benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    s.record_writes();
 
     const SWORD: &str = "|cffffffff|Hitem:2299:0:0:0:0:0:0:0:0|h[Worn Sword]|h|r";
     const MACE: &str = "|cffffffff|Hitem:2300:0:0:0:0:0:0:0:0|h[Worn Mace]|h|r";
@@ -662,7 +664,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
         .eval::<bool>("return QuestInfoItemHighlight:IsShown()")
         .unwrap());
     assert!(
-        s.take_dressup_intents().is_empty(),
+        s.take_dressup_edits().is_empty(),
         "a plain click never opens the dressing room"
     );
 
@@ -693,7 +695,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
     s.run("QuestInfoItem1:Click()").unwrap();
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![
             benilla_ui::script::DressUpIntent::Dress,
             benilla_ui::script::DressUpIntent::TryOn(2299, [0; 4])

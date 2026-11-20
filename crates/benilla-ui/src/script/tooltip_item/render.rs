@@ -354,7 +354,8 @@ fn render_lines(
             .get("colorblindmode")
             .is_some_and(|c| crate::script::cvars::sstr_to_int(&c.value) != 0);
         // The known bits or a higher rank (`0x62b4a2`-`0x62b4ae`, `0x62b50d`-`0x62b51c`).
-        let knows = |id: u32| model.known_spells.known_or_higher(id);
+        let knows =
+            |id: u32| crate::script::read_live(|l| l.spell_known_or_higher(id)).unwrap_or(false);
         let known = v.required_spell != 0 && knows(v.required_spell);
         // The taught spell known to its learner, the player or the pet (`0x62b4a2`).
         let taught = v.taught.is_some_and(|(id, pet)| {
@@ -367,17 +368,16 @@ fn render_lines(
         // The open merchant's first row of the item: its rating demand, bracket and the check
         // (`0x62b5ec`..`0x62b676`), the bracket clamped to 0..=3.
         let rated = match flags.requester {
-            Requester::Merchant { item_id } => model
-                .merchant
-                .as_ref()
-                .and_then(|m| m.items.iter().find(|r| r.item_id == item_id))
-                .and_then(|r| r.extended_cost.as_ref())
-                .filter(|c| c.required_rating > 0)
-                .map(|c| {
-                    let bracket = c.arena_bracket.clamp(0, 3);
-                    let met = crate::script::arena_team::rating_met(c.required_rating, bracket);
-                    (c.required_rating, bracket, met)
-                }),
+            Requester::Merchant { item_id } => {
+                { crate::script::merchant::first_vendor_row_of(&model, item_id) }
+                    .and_then(|r| r.extended_cost)
+                    .filter(|c| c.required_rating > 0)
+                    .map(|c| {
+                        let bracket = c.arena_bracket.clamp(0, 3);
+                        let met = crate::script::arena_team::rating_met(c.required_rating, bracket);
+                        (c.required_rating, bracket, met)
+                    })
+            }
             _ => None,
         };
         // The player's PvP team and sex, which name a required honor rank (`0x6d6f00`).
@@ -1290,7 +1290,10 @@ fn add_sell_price(lua: &Lua, this: &Table, v: &ItemTemplateView, sell: Sell) -> 
     }
     let (repairing, merchant_open) = {
         let model = crate::script::model_mut_of(lua);
-        (model.repair_mode, model.merchant.is_some())
+        (
+            crate::script::merchant::repair_mode(&model),
+            super::super::merchant::merchant_open(&model),
+        )
     };
     if repairing {
         return Ok(());

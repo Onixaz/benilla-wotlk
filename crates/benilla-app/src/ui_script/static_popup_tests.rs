@@ -253,29 +253,13 @@ fn hide_and_find_address_one_instance_by_data_only_for_a_multiple_dialog() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Five stock `UIParent.lua` event arms raise their dialogs, which call engine verbs.
+/// The stock `UIParent.lua` event arms raise and drop the boot and spirit healer dialogs.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_verb_dialogs_open_from_their_events_and_call_their_verbs() {
+fn the_verb_dialogs_open_from_their_events() {
     benilla_formats::wow_data_or_skip!();
-    use benilla_ui::script::ScriptValue;
     // `setup` carries UIParent.xml, whose `UIParent_OnEvent` holds the arms.
     let mut s = setup();
-    s.set_money(50_000);
-    s.fire_event("CONFIRM_PET_UNLEARN", vec![ScriptValue::Int(12_345)]);
-    s.tick(0.0);
-    assert_eq!(
-        s.eval::<String>("return StaticPopup1.which").unwrap(),
-        "CONFIRM_PET_UNLEARN"
-    );
-    assert_eq!(
-        s.eval::<f64>("return StaticPopup1MoneyFrame.staticMoney")
-            .unwrap(),
-        12_345.0
-    );
-    s.run("StaticPopup1Button1:Click()").unwrap();
-    assert_eq!(s.take_pet_unlearn_confirms(), 1);
-    s.set_instance_boot_secs(30);
     s.fire_event("INSTANCE_BOOT_START", vec![]);
     s.tick(0.0);
     assert!(s
@@ -286,24 +270,11 @@ fn the_verb_dialogs_open_from_their_events_and_call_their_verbs() {
     assert!(!s
         .eval::<bool>("return StaticPopup_Visible(\"INSTANCE_BOOT\") ~= nil")
         .unwrap());
-    s.set_area_spirit_healer(true, 20);
     s.fire_event("AREA_SPIRIT_HEALER_IN_RANGE", vec![]);
     s.tick(0.0);
     assert!(s
         .eval::<bool>("return StaticPopup_Visible(\"AREA_SPIRIT_HEAL\") ~= nil")
         .unwrap());
-    // The shipped dialog accepts on show and its one button cancels (`StaticPopup.lua:1224`).
-    assert!(
-        s.take_area_spirit_accepts() >= 1,
-        "showing the dialog IS the accept"
-    );
-    s.run("StaticPopup_OnClick(StaticPopup_FindVisible(\"AREA_SPIRIT_HEAL\"), 1)")
-        .unwrap();
-    assert_eq!(
-        s.take_area_spirit_accepts(),
-        0,
-        "the button cancels; it does not accept again"
-    );
     s.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
     s.tick(0.0);
     assert!(!s

@@ -7,6 +7,7 @@ use benilla_ui::script::{
     QuestLogObjectiveView, QuestLogState, SoundRequest, UiScript,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::stock_ui;
 
 thread_local! {
@@ -855,6 +856,7 @@ fn popup_children_inherit_the_dialog_stratum() {
 fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = open_log(eight_entries());
+    s.record_writes();
     // A main-hand template makes the hammer dressable (`IsDressableItem` `0x517530`).
     s.set_item_template(
         2024,
@@ -869,11 +871,11 @@ fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
         s.eval::<bool>("return QuestInfoItem1:IsShown()").unwrap(),
         "the fixture's one fixed reward row is laid out"
     );
-    let _ = s.take_dressup_intents();
+    let _ = s.take_dressup_edits();
 
     s.run("QuestInfoItem1:Click()").unwrap();
     assert!(
-        s.take_dressup_intents().is_empty(),
+        s.take_dressup_edits().is_empty(),
         "a plain click never opens the dressing room"
     );
     assert_eq!(
@@ -893,7 +895,7 @@ fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
         "shift-click posted the reward's link after `ChatEdit_InsertLink`'s space"
     );
     assert!(
-        s.take_dressup_intents().is_empty(),
+        s.take_dressup_edits().is_empty(),
         "the shift arm never opens the room"
     );
 
@@ -901,7 +903,7 @@ fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
     s.run("QuestInfoItem1:Click()").unwrap();
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![
             benilla_ui::script::DressUpIntent::Dress,
             benilla_ui::script::DressUpIntent::TryOn(2024, [0; 4])

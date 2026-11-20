@@ -13,15 +13,6 @@ use crate::unit_auras::UnitAuras;
 
 use super::SpellModifiers;
 
-/// One player input the parser read, for a caller that rebuilds what read it.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum CasterRead {
-    Spell(u32),
-    Aura(u32),
-    Operand(PlayerValue),
-    CastSpeed,
-}
-
 const OPERANDS: usize = PlayerValue::ALL.len();
 
 /// Every [`PlayerValue`] as the player's fields give it, in [`PlayerValue::ALL`] order; all 0
@@ -56,22 +47,6 @@ impl Operands {
     pub(crate) fn get(&self, v: PlayerValue) -> f32 {
         self.0[v.index()]
     }
-
-    /// The operands that differ from `prev`, a bit per [`PlayerValue::index`].
-    pub(crate) fn diff(&self, prev: &Self) -> u64 {
-        self.0
-            .iter()
-            .zip(&prev.0)
-            .enumerate()
-            .fold(0, |mask, (i, (now, before))| {
-                mask | u64::from(now.to_bits() != before.to_bits()) << i
-            })
-    }
-}
-
-/// The bit [`Operands::diff`] keeps `v` at.
-pub(crate) fn operand_bit(v: PlayerValue) -> u64 {
-    1 << v.index()
 }
 
 /// The two-handed test's weapon subclasses (`0x714c80`): two-handed axe, mace and sword, polearm,
@@ -182,24 +157,19 @@ pub(crate) struct TextCaster<'a> {
     pub(crate) skill: &'a dyn Fn(u32) -> u32,
     /// The view's resolved power cost, the player's or its pet's.
     pub(crate) power_cost: &'a dyn Fn(&SpellDisplay) -> i32,
-    /// Told of each read, for a caller that tracks what a parse depended on.
-    pub(crate) on_read: &'a dyn Fn(CasterRead),
 }
 
 impl benilla_formats::Caster for TextCaster<'_> {
     fn knows_spell(&self, spell: u32) -> bool {
-        (self.on_read)(CasterRead::Spell(spell));
         self.known.contains(&spell)
     }
 
     fn has_aura(&self, spell: u32) -> bool {
-        (self.on_read)(CasterRead::Aura(spell));
         self.auras
             .is_some_and(|a| a.iter().any(|aura| aura.spell_id == spell))
     }
 
     fn value(&self, value: PlayerValue) -> f32 {
-        (self.on_read)(CasterRead::Operand(value));
         self.operands.get(value)
     }
 
@@ -222,7 +192,6 @@ impl benilla_formats::Caster for TextCaster<'_> {
     }
 
     fn cast_speed(&self) -> f32 {
-        (self.on_read)(CasterRead::CastSpeed);
         self.store.0.unit_mod_cast_speed().unwrap_or(1.0)
     }
 }
@@ -241,10 +210,6 @@ pub(crate) struct CasterSources<'w, 's> {
 }
 
 impl CasterSources<'_, '_> {
-    pub(crate) fn auras(&self) -> Option<&UnitAuras> {
-        self.auras.single().ok().map(|a| a.into_inner())
-    }
-
     /// A learn, an unlearn or an aura change since the system last ran.
     pub(crate) fn changed(&self) -> bool {
         self.known_changed() || self.auras_changed()
@@ -278,6 +243,5 @@ pub(crate) fn untracked<'a>(
         mods,
         skill,
         power_cost,
-        on_read: &|_| {},
     }
 }

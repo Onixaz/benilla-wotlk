@@ -1,26 +1,24 @@
-//! The unit-cast feed: every unit's cast and channel edges, off its packets, become the
-//! `UNIT_SPELLCAST_*` events 3.3.5a's `CastingBarFrame.lua:6-15` registers for, fanned out over the
-//! tokens naming the caster (`0x60bf60`: unit, name, rank, castCount), and the cast state
-//! `UnitCastingInfo` and `UnitChannelInfo` read. The VM's casting flag is pushed each frame. The
-//! own-cast lifecycle it reads is `crate::spell`'s.
+//! Every unit's cast and channel edges, off its packets, the cast send and the local cancel: each
+//! applies to the caster's cast state in the turn of the handler or press that made it and fires
+//! the `UNIT_SPELLCAST_*` events 3.3.5a's `CastingBarFrame.lua:6-15` registers for, fanned out over
+//! the tokens naming the caster (`0x60bf60`: unit, name, rank, castCount). `UnitCastingInfo` and
+//! `UnitChannelInfo` read the state through the live view when called. The own-cast lifecycle it
+//! reads is `crate::spell`'s.
 //!
 //! A cast's end runs one path in the reference (`0x7fecc0`): `SUCCEEDED` for a launch (result
 //! `0xbb`), else `FAILED_QUIET`, `INTERRUPTED` or `FAILED` by reason, then `STOP` when it was the
 //! unit's running cast (`castCount` and spell, `+0xa5c`/`+0xa6c`).
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 use benilla_formats::SpellDisplay;
 use bevy::prelude::*;
 
 use benilla_ui::script::{ScriptValue, UiScript, UnitCast};
 
-use crate::creature_anim::Casting;
 use crate::net::{GuidIndex, NetCommands, ObjectStore, SelfGuid};
-use crate::spell::{inflight, PendingCast, QueuedMeleeSpell};
 use crate::ui_action::Spells;
-use crate::ui_unit::UnitFeed;
+use crate::ui_script::live::UiEvents;
 
 /// One edge of a unit's cast, queued by the spell's packet handlers, the cast send and the
 /// local cancel.
@@ -74,24 +72,243 @@ pub(crate) enum CastBarEdge {
         remaining_ms: u32,
         total_ms: u32,
     },
+    /// The send's GCD start armed (`0x805d70`), after its `SENT`: the spellbook's cooldown
+    /// signals, then the usable update for an on-hold spell (`0x805ec3`, `0x805ed1`).
+    CooldownStart { on_hold: bool },
+    /// Our cast's start visuals or its finish ran the selection update (`0x53b480`).
+    Selection,
+    /// A plain signal a write inside the press raised, such as the auto-repeat spell's.
+    Signal(&'static str),
+    /// A refusal's line, shown where it is raised (`0x808200`).
+    Refused(crate::ui_action::CastFail),
+    /// A line the press raised through the message display (`0x5216f0`), such as an attack
+    /// refusal.
+    Line(crate::ui_action::UiError),
 }
 
-/// The queue of [`CastBarEdge`]s, drained by [`feed_cast_bar`].
-#[derive(Resource, Default)]
-pub(crate) struct CastBarFeed(pub(crate) Vec<CastBarEdge>);
-
-/// Queue `UNIT_SPELLCAST_SENT` from a cast send, which holds no feed borrow: the reference fires it
-/// beside `CMSG_CAST_SPELL` (`0x80b556`).
-pub(crate) fn queue_sent(ecs: &mut Commands, spell_id: u32, target: Option<u64>) {
-    ecs.queue(move |world: &mut World| {
-        if let Some(mut feed) = world.get_resource_mut::<CastBarFeed>() {
-            feed.0.push(CastBarEdge::Sent { spell_id, target });
+/// A press's signal joins its edges, in order with the send's and the cancel's.
+impl crate::ui_action::signals::SignalSink for PressSignals<'_, '_> {
+    fn signal(&mut self, event: &'static str) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Signal(event));
         }
-    });
+    }
+
+    fn line(&mut self, line: crate::ui_action::UiError) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Line(line));
+        }
+    }
 }
 
-/// Each unit's running cast and channel as the feed tracks them: `(spell, castCount)` and the
-/// window on the `GetTime` clock in ms.
+/// A press's refusal joins its edges, in order with its signals.
+impl crate::ui_action::CastRefusals for PressSignals<'_, '_> {
+    fn refuse(&mut self, fail: crate::ui_action::CastFail) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Refused(fail));
+        }
+    }
+}
+
+/// The edges presses made and not yet fired, shared by every ladder and cancel.
+#[derive(Resource, Default)]
+pub(crate) struct PressEdges(Vec<CastBarEdge>);
+
+impl PressEdges {
+    /// The refusals waiting, taken.
+    #[cfg(test)]
+    pub(crate) fn take_refusals(&mut self) -> Vec<crate::ui_action::CastFail> {
+        let mut out = Vec::new();
+        self.0.retain(|e| match e {
+            CastBarEdge::Refused(f) => {
+                out.push(*f);
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+}
+
+/// The edges a press makes: our cast send's `UNIT_SPELLCAST_SENT` (`0x80b556`), our local
+/// cancel's end (`0x806200`) and a local refusal's line (`0x808200`). The reference fires each at
+/// its step inside the press; a system holding the VM fires them, in that order, as soon as the
+/// ladder or the cancel returns ([`Self::fire`]), so a handler sees the state after the press, not
+/// at its step (#1363); a packet handler hands them to its turn's queue
+/// ([`Self::defer`]), and a system without the VM fires them once its commands apply
+/// ([`Self::flush`]).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct PressSignals<'w, 's> {
+    // `Option`: a ladder runs in harnesses without the cast plugin, which signal nothing.
+    edges: Option<ResMut<'w, PressEdges>>,
+    casts: Option<crate::ui_script::OwnedMut<'w, UnitCasts>>,
+    /// The usable update a press runs in place.
+    usable: Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
+    spells: Option<Res<'w, Spells>>,
+    sent: Option<SentTarget<'w, 's>>,
+    index: Option<Res<'w, GuidIndex>>,
+    /// A refusal's line and log.
+    refusals: Option<crate::ui_action::CastFailShow<'w, 's>>,
+    /// The refusals shown, for tests that run without the VM.
+    seen: Option<ResMut<'w, crate::ui_action::RefusalsSeen>>,
+}
+
+impl PressSignals<'_, '_> {
+    /// `CMSG_CAST_SPELL` went out at `target`, or none: `UNIT_SPELLCAST_SENT` (`0x80b556`), then
+    /// the start visuals' selection update (`0x80b573`).
+    pub(crate) fn sent(&mut self, spell_id: u32, target: Option<u64>) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Sent { spell_id, target });
+            edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// The send's GCD start armed: its signals after the send's events (`0x805ec3`, `0x805ed1`).
+    pub(crate) fn cooldown_start(&mut self, on_hold: bool) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::CooldownStart { on_hold });
+        }
+    }
+
+    /// The selection update a press runs in place: the targeting cursor's arm (`0x80d806`), or its
+    /// pending cast ended without a send (`0x806366`, `0x8054f0`).
+    pub(crate) fn selection(&mut self) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// Our running cast was cancelled here (`0x806200`): its end, then its finish's selection
+    /// update (`0x806366`, `0x8054f0`).
+    pub(crate) fn cancelled(&mut self, caster: u64) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Cancelled { caster });
+            edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    fn take(&mut self) -> Vec<CastBarEdge> {
+        self.edges
+            .as_mut()
+            .map(|e| std::mem::take(&mut e.0))
+            .unwrap_or_default()
+    }
+
+    /// Hand the edges to the queue a packet handler fires in its turn.
+    pub(crate) fn defer(&mut self, ui: &mut UiEvents) {
+        for edge in self.take() {
+            ui.cast_edge(edge);
+        }
+    }
+
+    /// Hand the edges to the queue and fire it once the calling system's commands apply: a system
+    /// without the VM.
+    pub(crate) fn flush(&mut self, ecs: &mut Commands) {
+        let edges = self.take();
+        if edges.is_empty() {
+            return;
+        }
+        ecs.queue(move |world: &mut World| {
+            if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+                for edge in edges {
+                    ui.cast_edge(edge);
+                }
+            }
+            crate::ui_script::live::fire_handler_events(world);
+        });
+    }
+
+    /// The edges waiting, in order.
+    #[cfg(test)]
+    pub(crate) fn pending(&self) -> &[CastBarEdge] {
+        self.edges.as_ref().map_or(&[], |e| &e.0)
+    }
+
+    /// Fire the waiting edges into `script` now, in order: `SENT` with the target's name
+    /// (`0x80b533`), and a cancel's `INTERRUPTED`, the unit's cast cleared, then `STOP`
+    /// (`0x8066ce`, `0x7fee38`).
+    pub(crate) fn fire(
+        &mut self,
+        script: &mut UiScript,
+        records: &mut dyn crate::ui_action::WaitRecord,
+    ) {
+        let mut edges = self.take();
+        // A refusal or a line shows in its place among the rest.
+        while let Some(at) = edges
+            .iter()
+            .position(|e| matches!(e, CastBarEdge::Refused(_) | CastBarEdge::Line(_)))
+        {
+            let rest = edges.split_off(at + 1);
+            let shown = edges.pop();
+            self.fire_edges(script, edges);
+            match shown {
+                Some(CastBarEdge::Refused(fail)) => {
+                    if let Some(seen) = self.seen.as_mut() {
+                        seen.0.push(fail);
+                    }
+                    if let Some(show) = self.refusals.as_mut() {
+                        show.show(Some(script), fail, records);
+                    }
+                }
+                Some(CastBarEdge::Line(line)) => {
+                    crate::ui_action::signals::SignalSink::line(script, line);
+                }
+                _ => unreachable!(),
+            }
+            edges = rest;
+        }
+        self.fire_edges(script, edges);
+    }
+
+    fn fire_edges(&mut self, script: &mut UiScript, edges: Vec<CastBarEdge>) {
+        let (Some(sent), Some(index), Some(casts)) = (
+            self.sent.as_ref(),
+            self.index.as_deref(),
+            self.casts.as_mut(),
+        ) else {
+            return;
+        };
+        let spells = self.spells.as_deref();
+        for edge in edges {
+            match edge {
+                CastBarEdge::Sent { spell_id, target } => {
+                    let args = sent.args(index, spells, spell_id, target);
+                    script.fire_event("UNIT_SPELLCAST_SENT", args);
+                }
+                CastBarEdge::Cancelled { caster } => {
+                    let run = casts.read().casts.get(&caster).copied();
+                    let Some(run) = run else { continue };
+                    let args = spell_args(spells, run.spell_id, run.cast_count);
+                    script.fire_unit_event(caster, "UNIT_SPELLCAST_INTERRUPTED", args.clone());
+                    let mut casts = casts.write();
+                    if casts.casts.get(&caster).is_some_and(|r| {
+                        (r.spell_id, r.cast_count) == (run.spell_id, run.cast_count)
+                    }) {
+                        casts.casts.remove(&caster);
+                        drop(casts);
+                        script.fire_unit_event(caster, "UNIT_SPELLCAST_STOP", args);
+                    }
+                }
+                CastBarEdge::Selection => crate::ui_action::signals::selection_now(script),
+                CastBarEdge::Signal(event) => script.fire_event(event, Vec::new()),
+                CastBarEdge::CooldownStart { on_hold } => {
+                    crate::ui_action::signals::cooldown_site_now(
+                        script,
+                        self.usable.as_mut(),
+                        on_hold,
+                        crate::ui_action::signals::Tail::None,
+                    );
+                }
+                // A press makes no other edge.
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Each unit's running cast and channel as the unit holds them: `(spell, castCount)` and the
+/// window on the `GetTime` clock in ms. Every loan of the live view owns it: the edges and the
+/// aura path write it in turn, and the units' feed re-reads a new target's bit.
 #[derive(Resource, Default)]
 pub(crate) struct UnitCasts {
     casts: HashMap<u64, Running>,
@@ -101,26 +318,48 @@ pub(crate) struct UnitCasts {
     not_interruptible: HashMap<u64, bool>,
     /// Each caster's last cast immunities, `(school, mechanic)` (`+0xa64`, `+0xa68`).
     immunities: HashMap<u64, (u32, u32)>,
-    /// The player's four school masks over its known spells.
-    schools: InterruptSchools,
-    /// The target and focus the bit was last evaluated for.
-    watched: [Option<u64>; 2],
 }
 
 impl UnitCasts {
     /// The reference's not-interruptible test (`0x71ab20`): the unit's bit, and any of the player's
     /// masks, the two specials only against a non-player.
-    fn reads_not_interruptible(&self, caster: u64) -> bool {
+    fn reads_not_interruptible(&self, caster: u64, schools: InterruptSchools) -> bool {
         self.not_interruptible
             .get(&caster)
             .copied()
             .unwrap_or(false)
-            && self.schools.against(is_player(caster)).any()
+            && schools.against(is_player(caster)).any()
+    }
+
+    /// The unit's cast, or with `channel` its channel, as `UnitCastingInfo` and `UnitChannelInfo`
+    /// read it at the call.
+    pub(crate) fn live_cast(
+        &self,
+        guid: u64,
+        channel: bool,
+        spells: Option<&Spells>,
+        schools: InterruptSchools,
+    ) -> Option<UnitCast> {
+        let run = *if channel {
+            self.channels.get(&guid)
+        } else {
+            self.casts.get(&guid)
+        }?;
+        Some(unit_cast(
+            spells,
+            run,
+            channel,
+            self.reads_not_interruptible(guid, schools),
+        ))
     }
 
     /// What the plate's cast setter reads off `guid` (`0x720e50`): its channel first, else its
     /// cast.
-    pub(crate) fn plate_source(&self, guid: u64) -> Option<crate::vplates::CastSource> {
+    pub(crate) fn plate_source(
+        &self,
+        guid: u64,
+        schools: InterruptSchools,
+    ) -> Option<crate::vplates::CastSource> {
         let (run, channel) = match (self.channels.get(&guid), self.casts.get(&guid)) {
             (Some(r), _) => (r, true),
             (None, Some(r)) => (r, false),
@@ -131,7 +370,7 @@ impl UnitCasts {
             channel,
             start_ms: run.start_ms,
             end_ms: run.end_ms,
-            not_interruptible: self.reads_not_interruptible(guid),
+            not_interruptible: self.reads_not_interruptible(guid, schools),
         })
     }
 }
@@ -143,8 +382,8 @@ fn is_player(guid: u64) -> bool {
 
 /// The spell book update's four school masks (`0x53cd48`-`0x53ce75`) over the known spells: an
 /// interrupt (effect 68), a silence (an aura 27), and the `AttributesEx7` specials `0x800` and
-/// `0x1000`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// `0x1000`. The book's handlers rebuild them as the book changes ([`book_updated`]).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct InterruptSchools {
     interrupt: u32,
     silence: u32,
@@ -324,9 +563,9 @@ fn spell_args(spells: Option<&Spells>, id: u32, cast_count: u8) -> Vec<ScriptVal
 
 /// The cast as `UnitCastingInfo`/`UnitChannelInfo` read it. A cast's text is its name, empty under
 /// `AttributesEx3 & 4` (`0x611e81`); a channel's, as the `"player"` token reads it, is its name
-/// only with `AttributesEx` bit 29 (`0x612151`), else the Lua global `CHANNELING`.
+/// only with `AttributesEx` bit 29 (`0x612151`), else the Lua global `CHANNELING`, which the verb
+/// reads.
 fn unit_cast(
-    script: &UiScript,
     spells: Option<&Spells>,
     run: Running,
     channel: bool,
@@ -335,15 +574,11 @@ fn unit_cast(
     let display = spells.and_then(|s| s.catalog.get(run.spell_id));
     let (name, rank) = name_rank(spells, run.spell_id);
     let text = match display {
-        Some(d) if channel && !d.channel_bar_own_name() => script
-            .lua()
-            .globals()
-            .get::<String>("CHANNELING")
-            .unwrap_or_default(),
         Some(d) if !channel && d.no_casting_bar_text() => String::new(),
         _ => name.clone(),
     };
     UnitCast {
+        channeling_text: channel && display.is_some_and(|d| !d.channel_bar_own_name()),
         name,
         rank,
         text,
@@ -357,7 +592,7 @@ fn unit_cast(
     }
 }
 
-/// What the feed reads to name `UNIT_SPELLCAST_SENT`'s target.
+/// What names `UNIT_SPELLCAST_SENT`'s target.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct SentTarget<'w, 's> {
     names: Res<'w, crate::names::NameCache>,
@@ -365,399 +600,469 @@ pub(crate) struct SentTarget<'w, 's> {
     stores: Query<'w, 's, &'static ObjectStore>,
 }
 
-/// Drain the queue into the `UNIT_SPELLCAST_*` events and the VM's cast state, then push the flag
-/// `SpellStopCasting` answers from: auto-repeat or the in-flight slot, never a channel, taken
-/// after the local cancel. A queued strike counts, so the first Esc stops it and
-/// `ToggleGameMenu` skips `ClearTarget()` (`UIParent.lua:1489-1492`).
+impl SentTarget<'_, '_> {
+    /// `("player", name, rank, target)`, the target's name or `""` (`0x80b533`).
+    fn args(
+        &self,
+        index: &GuidIndex,
+        spells: Option<&Spells>,
+        spell_id: u32,
+        target: Option<u64>,
+    ) -> Vec<ScriptValue> {
+        let target = target
+            .and_then(|g| {
+                let store = index.0.get(&g).and_then(|&e| self.stores.get(e).ok());
+                self.names.resolve_unit(g, store, &self.commands)
+            })
+            .unwrap_or_default()
+            .to_string();
+        let (name, rank) = name_rank(spells, spell_id);
+        vec![
+            ScriptValue::Str("player".into()),
+            ScriptValue::Str(name),
+            ScriptValue::Str(rank),
+            ScriptValue::Str(target),
+        ]
+    }
+}
+
+/// Apply `edge` to its caster's cast state and queue its `UNIT_SPELLCAST_*` events, with the
+/// `World` lent between the events around it.
+pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
+    match edge {
+        CastBarEdge::Refused(fail) => {
+            crate::ui_action::show_refusal(world, fail);
+            return;
+        }
+        CastBarEdge::Line(line) => {
+            crate::ui_action::show_line_in_world(world, "ui_cast", line);
+            return;
+        }
+        _ => {}
+    }
+    if let CastBarEdge::CooldownStart { on_hold } = edge {
+        if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+            crate::ui_action::signals::cooldown_site(
+                &mut ui,
+                on_hold,
+                crate::ui_action::signals::Tail::None,
+            );
+        }
+        return;
+    }
+    let focus = focus_of(world);
+    if let Err(e) = world.run_system_cached_with(edge_system, (edge, focus)) {
+        warn!("ui_cast: a cast edge did not apply: {e}");
+    }
+}
+
+/// The focus guid the VM holds (`FocusUnit` sets it), read off the world between calls into Lua.
+fn focus_of(world: &World) -> Option<u64> {
+    world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::focus_guid)
+        .filter(|&g| g != 0)
+}
+
+/// The target and the focus, whom every setter and the aura reader evaluate the bit for
+/// (`0xbd07b0`, `0xbd07d0`).
+fn watched(shield: &ShieldInputs, focus: Option<u64>) -> [Option<u64>; 2] {
+    let target = shield.selection.as_ref().and_then(|s| s.guid);
+    [target, focus]
+}
+
+/// An arena opponent's guid, held in any of the five opponent slots (`0x6cf670`).
+fn arena_opponent(shield: &ShieldInputs, guid: u64) -> bool {
+    shield
+        .arena
+        .as_ref()
+        .is_some_and(|a| a.opponents().contains(&guid))
+}
+
+/// One edge, in the turn of the handler or press that made it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn feed_cast_bar(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut feed: ResMut<CastBarFeed>,
+fn edge_system(
+    In((edge, focus)): In<(CastBarEdge, Option<u64>)>,
     mut units: ResMut<UnitCasts>,
     spells: Option<Res<Spells>>,
-    pending: Res<PendingCast>,
-    queued_melee: Res<QueuedMeleeSpell>,
-    auto_repeat: Res<crate::spell::AutoRepeatActive>,
     self_guid: Res<SelfGuid>,
     index: Res<GuidIndex>,
-    casting: Query<&Casting>,
     sent: SentTarget,
     shield: ShieldInputs,
+    clock: Res<crate::ui_script::UiClock>,
+    mut ui: ResMut<UiEvents>,
 ) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let now = Instant::now();
-    if let (Some(actions), Some(s)) = (shield.actions.as_ref(), spells.as_ref()) {
-        if actions.is_changed() || s.is_changed() {
-            units.schools =
-                InterruptSchools::of(actions.spells.iter().filter_map(|&id| s.catalog.get(id)));
-        }
+    if *crate::net::CAST_TRACE {
+        info!("cast-trace: UNIT_SPELLCAST edge {edge:?}");
     }
-    let target = shield.selection.as_ref().and_then(|s| s.guid);
-    let focus = Some(script.focus_guid()).filter(|&g| g != 0);
-    let watched = [target, focus];
-    // The auto-repeat key, which the reference reads first, then the in-flight slot the cancel
-    // resolves, so the flag and the cancel agree.
-    let started = self_guid
-        .0
-        .as_ref()
-        .and_then(|g| index.0.get(g))
-        .and_then(|&e| casting.get(e).ok())
-        .map(|c| c.spell_id);
-    script.set_casting(
-        auto_repeat.0.is_some() || inflight(&pending, &queued_melee, started, now).is_some(),
-    );
     let spells = spells.as_deref();
-    let now_ms = script.now() * 1000.0;
+    let now_ms = clock.ui_now * 1000.0;
     let is_self = |guid: u64| self_guid.0 == Some(guid);
-    for edge in feed.0.drain(..) {
-        if *crate::net::CAST_TRACE {
-            info!("cast-trace: UNIT_SPELLCAST edge {edge:?}");
+    let watched = watched(&shield, focus);
+    let have_player = self_guid.0.is_some();
+    let units = &mut *units;
+    match edge {
+        // Run by `apply_edge` before this system.
+        CastBarEdge::CooldownStart { .. } | CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
+        CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
+        CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
+        CastBarEdge::Sent { spell_id, target } => {
+            ui.fire(
+                "UNIT_SPELLCAST_SENT",
+                sent.args(&index, spells, spell_id, target),
+            );
         }
-        match edge {
-            CastBarEdge::Sent { spell_id, target } => {
-                // `("player", name, rank, target)`, the target's name or `""` (`0x80b533`).
-                let target = target
-                    .and_then(|g| {
-                        let store = index.0.get(&g).and_then(|&e| sent.stores.get(e).ok());
-                        sent.names.resolve_unit(g, store, &sent.commands)
-                    })
-                    .unwrap_or_default()
-                    .to_string();
-                let (name, rank) = name_rank(spells, spell_id);
-                script.fire_event(
-                    "UNIT_SPELLCAST_SENT",
-                    vec![
-                        ScriptValue::Str("player".into()),
-                        ScriptValue::Str(name),
-                        ScriptValue::Str(rank),
-                        ScriptValue::Str(target),
-                    ],
-                );
+        CastBarEdge::Start {
+            caster,
+            spell_id,
+            cast_count,
+            cast_time_ms,
+            immunities,
+            hidden,
+        } => {
+            // Stored before any gate, and kept until the next start that carries a pair.
+            if let Some(pair) = immunities {
+                units.immunities.insert(caster, pair);
             }
-            CastBarEdge::Start {
-                caster,
+            let raises = spells
+                .and_then(|s| s.catalog.get(spell_id))
+                .is_none_or(|d| raises_events(d, is_self(caster), false));
+            if hidden || cast_time_ms == 0 || !raises {
+                return;
+            }
+            let run = Running {
                 spell_id,
                 cast_count,
-                cast_time_ms,
-                immunities,
-                hidden,
-            } => {
-                // Stored before any gate, and kept until the next start that carries a pair.
-                if let Some(pair) = immunities {
-                    units.immunities.insert(caster, pair);
-                }
-                let raises = spells
-                    .and_then(|s| s.catalog.get(spell_id))
-                    .is_none_or(|d| raises_events(d, is_self(caster), false));
-                if hidden || cast_time_ms == 0 || !raises {
-                    continue;
-                }
-                let run = Running {
-                    spell_id,
-                    cast_count,
-                    start_ms: now_ms,
-                    end_ms: now_ms + f64::from(cast_time_ms),
-                };
-                units.casts.insert(caster, run);
-                // The UI's cast setter evaluates the bit for the target and focus only
-                // (`0x72ac50`).
-                if watched.contains(&Some(caster)) {
-                    shield.evaluate(
-                        &mut units,
-                        spells,
-                        &index,
-                        self_guid.0.is_some(),
-                        caster,
-                        spell_id,
-                    );
-                }
-                let not = units.reads_not_interruptible(caster);
-                let cast = unit_cast(&script, spells, run, false, not);
-                script.set_unit_cast(caster, false, Some(cast));
-                script.fire_unit_event(
-                    caster,
-                    "UNIT_SPELLCAST_START",
-                    spell_args(spells, spell_id, cast_count),
-                );
+                start_ms: now_ms,
+                end_ms: now_ms + f64::from(cast_time_ms),
+            };
+            // The cast setter (`0x72ab60`) sets the cast, evaluates the bit for the target, the
+            // focus and an arena opponent (`0x72aba5`-`0x72ac0c`), and clears the channel
+            // (`0x72ac1e`-`0x72ac2a`).
+            units.casts.insert(caster, run);
+            units.channels.remove(&caster);
+            if watched.contains(&Some(caster)) || arena_opponent(&shield, caster) {
+                shield.evaluate(units, spells, &index, have_player, caster, spell_id);
             }
-            CastBarEdge::Go {
+            unit_event(
+                &mut ui,
                 caster,
+                "UNIT_SPELLCAST_START",
+                spells,
                 spell_id,
                 cast_count,
-                cast_flags,
-            } => {
-                if cast_flags & 1 != 0 {
-                    continue;
-                }
-                end_cast(
-                    &mut script,
-                    &mut units,
-                    spells,
-                    caster,
-                    spell_id,
-                    cast_count,
-                    "UNIT_SPELLCAST_SUCCEEDED",
-                );
+            );
+        }
+        CastBarEdge::Go {
+            caster,
+            spell_id,
+            cast_count,
+            cast_flags,
+        } => {
+            if cast_flags & 1 != 0 {
+                return;
             }
-            CastBarEdge::Failed {
-                caster,
-                spell_id,
-                cast_count,
-                reason,
-            } => end_cast(
-                &mut script,
-                &mut units,
+            end_cast(
+                &mut ui,
+                units,
                 spells,
                 caster,
                 spell_id,
                 cast_count,
-                end_event(reason),
-            ),
-            CastBarEdge::Cancelled { caster } => {
-                let Some(run) = units.casts.get(&caster).copied() else {
-                    continue;
-                };
-                end_cast(
-                    &mut script,
-                    &mut units,
-                    spells,
-                    caster,
-                    run.spell_id,
-                    run.cast_count,
-                    "UNIT_SPELLCAST_INTERRUPTED",
-                );
-            }
-            CastBarEdge::Delayed { caster, delay_ms } => {
-                let Some(run) = units.casts.get_mut(&caster) else {
-                    continue;
-                };
-                run.end_ms += f64::from(delay_ms);
-                let run = *run;
-                let not = units.reads_not_interruptible(caster);
-                let cast = unit_cast(&script, spells, run, false, not);
-                script.set_unit_cast(caster, false, Some(cast));
-                script.fire_unit_event(
-                    caster,
-                    "UNIT_SPELLCAST_DELAYED",
-                    spell_args(spells, run.spell_id, run.cast_count),
-                );
-            }
-            CastBarEdge::ChannelStart {
+                "UNIT_SPELLCAST_SUCCEEDED",
+            );
+        }
+        CastBarEdge::Failed {
+            caster,
+            spell_id,
+            cast_count,
+            reason,
+        } => end_cast(
+            &mut ui,
+            units,
+            spells,
+            caster,
+            spell_id,
+            cast_count,
+            end_event(reason),
+        ),
+        CastBarEdge::Cancelled { caster } => {
+            let Some(run) = units.casts.get(&caster).copied() else {
+                return;
+            };
+            end_cast(
+                &mut ui,
+                units,
+                spells,
                 caster,
+                run.spell_id,
+                run.cast_count,
+                "UNIT_SPELLCAST_INTERRUPTED",
+            );
+        }
+        CastBarEdge::Delayed { caster, delay_ms } => {
+            let Some(run) = units.casts.get_mut(&caster) else {
+                return;
+            };
+            run.end_ms += f64::from(delay_ms);
+            let run = *run;
+            unit_event(
+                &mut ui,
+                caster,
+                "UNIT_SPELLCAST_DELAYED",
+                spells,
+                run.spell_id,
+                run.cast_count,
+            );
+        }
+        CastBarEdge::ChannelStart {
+            caster,
+            spell_id,
+            duration_ms,
+        } => {
+            // No `Spell.dbc` row, no event (`0x801ced`).
+            let raises = spells
+                .and_then(|s| s.catalog.get(spell_id))
+                .is_some_and(|d| raises_events(d, is_self(caster), true));
+            if !raises {
+                return;
+            }
+            let run = Running {
                 spell_id,
-                duration_ms,
-            } => {
-                // No `Spell.dbc` row, no event (`0x801ced`).
-                let raises = spells
-                    .and_then(|s| s.catalog.get(spell_id))
-                    .is_some_and(|d| raises_events(d, is_self(caster), true));
-                if !raises {
-                    continue;
-                }
+                cast_count: 0,
+                start_ms: now_ms,
+                end_ms: now_ms + f64::from(duration_ms),
+            };
+            // The channel setter (`0x72ad20`) sets the channel, evaluates the bit for the target,
+            // the focus and an arena opponent, and clears the cast.
+            units.channels.insert(caster, run);
+            units.casts.remove(&caster);
+            if watched.contains(&Some(caster)) || arena_opponent(&shield, caster) {
+                shield.evaluate(units, spells, &index, have_player, caster, spell_id);
+            }
+            unit_event(
+                &mut ui,
+                caster,
+                "UNIT_SPELLCAST_CHANNEL_START",
+                spells,
+                spell_id,
+                0,
+            );
+        }
+        // `0x8020c0`: no attribute gate; a channel by AttributesEx `0x4` (`0x80215e`), each direct
+        // setter clearing the other's window and evaluating the bit for the target and the focus
+        // alone (`0x72ac50`, `0x72ae00`), with cast count 0.
+        CastBarEdge::Resume {
+            caster,
+            spell_id,
+            remaining_ms,
+            total_ms,
+        } => {
+            let Some(d) = spells.and_then(|s| s.catalog.get(spell_id)) else {
+                return;
+            };
+            let channel = d.tooltip_channeled();
+            let end_ms = now_ms + f64::from(remaining_ms);
+            let run = Running {
+                spell_id,
+                cast_count: 0,
+                start_ms: end_ms - f64::from(total_ms),
+                end_ms,
+            };
+            let (mine, other) = if channel {
+                (&mut units.channels, &mut units.casts)
+            } else {
+                (&mut units.casts, &mut units.channels)
+            };
+            mine.insert(caster, run);
+            other.remove(&caster);
+            if watched.contains(&Some(caster)) {
+                shield.evaluate(units, spells, &index, have_player, caster, spell_id);
+            }
+            let event = if channel {
+                "UNIT_SPELLCAST_CHANNEL_START"
+            } else {
+                "UNIT_SPELLCAST_START"
+            };
+            unit_event(&mut ui, caster, event, spells, spell_id, 0);
+        }
+        // `0x801e85`: nonzero re-times the channel, zero ends it.
+        CastBarEdge::ChannelUpdate {
+            caster,
+            remaining_ms,
+        } => {
+            let Some(run) = units.channels.get(&caster).copied() else {
+                return;
+            };
+            if remaining_ms == 0 {
+                units.channels.remove(&caster);
+                unit_event(
+                    &mut ui,
+                    caster,
+                    "UNIT_SPELLCAST_CHANNEL_STOP",
+                    spells,
+                    run.spell_id,
+                    0,
+                );
+            } else {
                 let run = Running {
-                    spell_id,
-                    cast_count: 0,
-                    start_ms: now_ms,
-                    end_ms: now_ms + f64::from(duration_ms),
+                    end_ms: now_ms + f64::from(remaining_ms),
+                    ..run
                 };
                 units.channels.insert(caster, run);
-                // The UI's channel setter evaluates the bit for the target and focus only
-                // (`0x72ad20`).
-                if watched.contains(&Some(caster)) {
-                    shield.evaluate(
-                        &mut units,
-                        spells,
-                        &index,
-                        self_guid.0.is_some(),
-                        caster,
-                        spell_id,
-                    );
-                }
-                let not = units.reads_not_interruptible(caster);
-                let cast = unit_cast(&script, spells, run, true, not);
-                script.set_unit_cast(caster, true, Some(cast));
-                script.fire_unit_event(
+                unit_event(
+                    &mut ui,
                     caster,
-                    "UNIT_SPELLCAST_CHANNEL_START",
-                    spell_args(spells, spell_id, 0),
+                    "UNIT_SPELLCAST_CHANNEL_UPDATE",
+                    spells,
+                    run.spell_id,
+                    0,
                 );
-            }
-            // `0x8020c0`: no attribute gate; a channel by AttributesEx `0x4` (`0x80215e`), each
-            // setter clearing the other's window (`0x72ac50`, `0x72ae00`), with cast count 0.
-            CastBarEdge::Resume {
-                caster,
-                spell_id,
-                remaining_ms,
-                total_ms,
-            } => {
-                let Some(d) = spells.and_then(|s| s.catalog.get(spell_id)) else {
-                    continue;
-                };
-                let channel = d.tooltip_channeled();
-                let end_ms = now_ms + f64::from(remaining_ms);
-                let run = Running {
-                    spell_id,
-                    cast_count: 0,
-                    start_ms: end_ms - f64::from(total_ms),
-                    end_ms,
-                };
-                let u = &mut *units;
-                let (mine, other) = if channel {
-                    (&mut u.channels, &mut u.casts)
-                } else {
-                    (&mut u.casts, &mut u.channels)
-                };
-                mine.insert(caster, run);
-                if other.remove(&caster).is_some() {
-                    script.set_unit_cast(caster, !channel, None);
-                }
-                if watched.contains(&Some(caster)) {
-                    shield.evaluate(
-                        &mut units,
-                        spells,
-                        &index,
-                        self_guid.0.is_some(),
-                        caster,
-                        spell_id,
-                    );
-                }
-                let not = units.reads_not_interruptible(caster);
-                let cast = unit_cast(&script, spells, run, channel, not);
-                script.set_unit_cast(caster, channel, Some(cast));
-                script.fire_unit_event(
-                    caster,
-                    if channel {
-                        "UNIT_SPELLCAST_CHANNEL_START"
-                    } else {
-                        "UNIT_SPELLCAST_START"
-                    },
-                    spell_args(spells, spell_id, 0),
-                );
-            }
-            // `0x801e85`: nonzero re-times the channel, zero ends it.
-            CastBarEdge::ChannelUpdate {
-                caster,
-                remaining_ms,
-            } => {
-                let Some(run) = units.channels.get(&caster).copied() else {
-                    continue;
-                };
-                if remaining_ms == 0 {
-                    units.channels.remove(&caster);
-                    script.set_unit_cast(caster, true, None);
-                    script.fire_unit_event(
-                        caster,
-                        "UNIT_SPELLCAST_CHANNEL_STOP",
-                        spell_args(spells, run.spell_id, 0),
-                    );
-                } else {
-                    let run = Running {
-                        end_ms: now_ms + f64::from(remaining_ms),
-                        ..run
-                    };
-                    units.channels.insert(caster, run);
-                    let not = units.reads_not_interruptible(caster);
-                    let cast = unit_cast(&script, spells, run, true, not);
-                    script.set_unit_cast(caster, true, Some(cast));
-                    script.fire_unit_event(
-                        caster,
-                        "UNIT_SPELLCAST_CHANNEL_UPDATE",
-                        spell_args(spells, run.spell_id, 0),
-                    );
-                }
             }
         }
     }
-    reevaluate_watched(
-        &mut script,
-        &mut units,
-        spells,
-        &index,
-        self_guid.0.is_some(),
-        &shield,
-        watched,
-    );
+    units.bound(watched);
 }
 
-/// The bit's other two evaluations: a new target re-reads it with no event (`0x524dbc`), and an
-/// aura change on the target or focus with a silenceable cast running (`PreventionType` 1)
-/// re-reads it and fires `UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE` on a change (`0x72fd30`).
-fn reevaluate_watched(
-    script: &mut UiScript,
-    units: &mut UnitCasts,
+/// Queue `event` to every token naming `caster`, with the spell's name, rank and `castCount`.
+fn unit_event(
+    ui: &mut UiEvents,
+    caster: u64,
+    event: &'static str,
     spells: Option<&Spells>,
-    index: &GuidIndex,
-    have_player: bool,
-    shield: &ShieldInputs,
-    watched: [Option<u64>; 2],
+    spell_id: u32,
+    cast_count: u8,
 ) {
-    for (slot, guid) in watched.into_iter().enumerate() {
-        let Some(guid) = guid else { continue };
-        let newly = slot == 0 && units.watched[0] != Some(guid);
-        let auras_moved = index
-            .0
-            .get(&guid)
-            .and_then(|&e| shield.auras.get(e).ok())
-            .is_some_and(|a| a.is_changed());
-        if !newly && !auras_moved {
-            continue;
+    let args = spell_args(spells, spell_id, cast_count);
+    ui.write(move |script| script.fire_unit_event(caster, event, args));
+}
+
+impl UnitCasts {
+    /// The bits outlive their casts, as on the unit; bound them by the units still in play.
+    fn bound(&mut self, watched: [Option<u64>; 2]) {
+        if self.not_interruptible.len() <= 256 {
+            return;
         }
-        // The casting spell first, else the channel.
-        let (run, channel) = match (units.casts.get(&guid), units.channels.get(&guid)) {
-            (Some(&r), _) => (r, false),
-            (None, Some(&r)) => (r, true),
-            (None, None) => continue,
-        };
-        let silenceable = spells
-            .and_then(|s| s.catalog.get(run.spell_id))
-            .is_some_and(|d| d.prevention_type == 1);
-        if !newly && !silenceable {
-            continue;
-        }
-        let before = units.reads_not_interruptible(guid);
-        shield.evaluate(units, spells, index, have_player, guid, run.spell_id);
-        let after = units.reads_not_interruptible(guid);
-        let cast = unit_cast(script, spells, run, channel, after);
-        script.set_unit_cast(guid, channel, Some(cast));
-        if !newly && before != after {
-            let event = if after {
-                "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"
-            } else {
-                "UNIT_SPELLCAST_INTERRUPTIBLE"
-            };
-            script.fire_unit_event(guid, event, vec![]);
-        }
-    }
-    units.watched = watched;
-    // The bits outlive their casts, as on the unit; bound them by the units still in play.
-    if units.not_interruptible.len() > 256 {
-        let UnitCasts {
+        let Self {
             casts,
             channels,
             not_interruptible,
             immunities,
-            ..
-        } = units;
+        } = self;
         let keep = |g: &u64| {
             casts.contains_key(g) || channels.contains_key(g) || watched.contains(&Some(*g))
         };
         not_interruptible.retain(|g, _| keep(g));
         immunities.retain(|g, _| keep(g));
     }
+
+    /// The unit's running cast first, else its channel.
+    fn running(&self, guid: u64) -> Option<Running> {
+        self.casts
+            .get(&guid)
+            .or_else(|| self.channels.get(&guid))
+            .copied()
+    }
 }
 
-/// What the not-interruptible bit reads beyond the feed: the known spells the school masks come
-/// from, the target, and the casters' auras.
+/// The aura reader's re-read (`0x72fd30`): a packet that changed an aura of the target or the focus
+/// (`0x72fb6e`, `0x72fbce`-`0x72fbef`), or any packet for an arena opponent (`0x72fbf1`), re-reads
+/// the bit of the unit's cast, else its channel, when no silence prevents it (`PreventionType` 1),
+/// and fires `UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE` on a change (`0x72fdbb`); queued by the aura
+/// handler, after its changes apply.
+pub(crate) fn auras_changed(world: &mut World, guid: u64, changed: bool) {
+    let focus = focus_of(world);
+    if let Err(e) = world.run_system_cached_with(aura_reread, (guid, focus, changed)) {
+        warn!("ui_cast: the aura re-read did not run: {e}");
+    }
+}
+
+fn aura_reread(
+    In((guid, focus, changed)): In<(u64, Option<u64>, bool)>,
+    mut units: ResMut<UnitCasts>,
+    spells: Option<Res<Spells>>,
+    self_guid: Res<SelfGuid>,
+    index: Res<GuidIndex>,
+    shield: ShieldInputs,
+    mut ui: ResMut<UiEvents>,
+) {
+    let watched = changed && watched(&shield, focus).contains(&Some(guid));
+    if !watched && !arena_opponent(&shield, guid) {
+        return;
+    }
+    let spells = spells.as_deref();
+    let Some(run) = units.running(guid) else {
+        return;
+    };
+    let silenceable = spells
+        .and_then(|s| s.catalog.get(run.spell_id))
+        .is_some_and(|d| d.prevention_type == 1);
+    if !silenceable {
+        return;
+    }
+    let schools = shield.schools();
+    let before = units.reads_not_interruptible(guid, schools);
+    shield.evaluate(
+        &mut units,
+        spells,
+        &index,
+        self_guid.0.is_some(),
+        guid,
+        run.spell_id,
+    );
+    let after = units.reads_not_interruptible(guid, schools);
+    if before != after {
+        let event = if after {
+            "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"
+        } else {
+            "UNIT_SPELLCAST_INTERRUPTIBLE"
+        };
+        ui.write(move |script| script.fire_unit_event(guid, event, vec![]));
+    }
+}
+
+/// The new target's re-read (`0x524dbc`): its running cast's bit evaluated again, with no event.
+/// The units' feed runs it beside `PLAYER_TARGET_CHANGED`, which it fires on the change (#1289).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct TargetReread<'w, 's> {
+    units: crate::ui_script::OwnedMut<'w, UnitCasts>,
+    spells: Option<Res<'w, Spells>>,
+    self_guid: Res<'w, SelfGuid>,
+    index: Res<'w, GuidIndex>,
+    shield: ShieldInputs<'w, 's>,
+}
+
+impl TargetReread<'_, '_> {
+    pub(crate) fn reread(&mut self, target: u64) {
+        let Some(run) = self.units.read().running(target) else {
+            return;
+        };
+        self.shield.evaluate(
+            &mut self.units.write(),
+            self.spells.as_deref(),
+            &self.index,
+            self.self_guid.0.is_some(),
+            target,
+            run.spell_id,
+        );
+    }
+}
+
+/// What the not-interruptible bit reads beyond the cast state: the book's school masks, the
+/// target, and the casters' auras.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ShieldInputs<'w, 's> {
-    actions: Option<Res<'w, crate::ui_action::PlayerActions>>,
+    schools: Option<Res<'w, InterruptSchools>>,
     selection: Option<Res<'w, crate::target::Selection>>,
-    auras: Query<'w, 's, Ref<'static, crate::unit_auras::UnitAuras>>,
+    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
 }
 
 impl ShieldInputs<'_, '_> {
+    fn schools(&self) -> InterruptSchools {
+        self.schools.as_deref().copied().unwrap_or_default()
+    }
+
     /// Run the not-interruptible evaluation for `caster`'s cast of `spell_id` into its bit.
     fn evaluate(
         &self,
@@ -778,7 +1083,7 @@ impl ShieldInputs<'_, '_> {
             .filter_map(|a| spells.catalog.get(a.spell_id));
         let bit = not_interruptible_bit(
             d,
-            units.schools.against(is_player(caster)),
+            self.schools().against(is_player(caster)),
             have_player,
             units.immunities.get(&caster).copied().unwrap_or((0, 0)),
             aura_spells,
@@ -787,47 +1092,82 @@ impl ShieldInputs<'_, '_> {
     }
 }
 
-/// `0x7fecc0`: the ending event for any cast, then `STOP` when it was the unit's running one.
+/// `0x7fecc0`: the ending event for any cast, then, when it was the unit's running one, the unit's
+/// cast cleared and `STOP` (`0x7fee38`-`0x7fee6c`): the ending event's handlers still read it.
 fn end_cast(
-    script: &mut UiScript,
-    units: &mut UnitCasts,
+    ui: &mut UiEvents,
+    units: &UnitCasts,
     spells: Option<&Spells>,
     caster: u64,
     spell_id: u32,
     cast_count: u8,
-    event: &str,
+    event: &'static str,
 ) {
-    script.fire_unit_event(caster, event, spell_args(spells, spell_id, cast_count));
+    unit_event(ui, caster, event, spells, spell_id, cast_count);
     let running = units
         .casts
         .get(&caster)
         .is_some_and(|r| r.spell_id == spell_id && r.cast_count == cast_count);
     if running {
-        units.casts.remove(&caster);
-        script.set_unit_cast(caster, false, None);
-        script.fire_unit_event(
+        ui.world(move |world| {
+            if let Some(mut units) = world.get_resource_mut::<UnitCasts>() {
+                units.casts.remove(&caster);
+            }
+        });
+        unit_event(
+            ui,
             caster,
             "UNIT_SPELLCAST_STOP",
-            spell_args(spells, spell_id, cast_count),
+            spells,
+            spell_id,
+            cast_count,
         );
     }
 }
 
-/// The unit-cast feed, drained before the VM ticks so an edge and its first `OnUpdate` share a
-/// frame, and after the local cancel so a move or Esc ends the bar on the next tick.
+/// The book update's mask rebuild (`0x53cd48`-`0x53ce75`), run by each handler that changes the
+/// known spells.
+pub(crate) fn book_updated(
+    schools: &mut InterruptSchools,
+    known: &std::collections::BTreeSet<u32>,
+    spells: Option<&Spells>,
+) {
+    let Some(spells) = spells else {
+        return;
+    };
+    *schools = InterruptSchools::of(known.iter().filter_map(|&id| spells.catalog.get(id)));
+}
+
+/// The cast state and the masks; nothing runs by frame.
 pub(crate) struct UiCastPlugin;
 
 impl Plugin for UiCastPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CastBarFeed>()
-            .init_resource::<UnitCasts>()
-            .add_systems(
-                Update,
-                // After the spell's local cancel, whose edges this drains the same frame.
-                feed_cast_bar
-                    .in_set(UnitFeed)
-                    .after(crate::spell::LocalCancel),
-            );
+        app.init_resource::<UnitCasts>()
+            .init_resource::<InterruptSchools>()
+            .init_resource::<PressEdges>()
+            .init_resource::<UiEvents>();
+    }
+}
+
+#[cfg(test)]
+impl UnitCasts {
+    /// A cast of `spell_id` running on `caster` with no end, for a test.
+    pub(crate) fn run_for_test(&mut self, caster: u64, spell_id: u32) {
+        self.casts.insert(
+            caster,
+            Running {
+                spell_id,
+                cast_count: 0,
+                start_ms: 0.0,
+                end_ms: f64::MAX,
+            },
+        );
+    }
+
+    /// Whether `caster` holds a running cast.
+    pub(crate) fn casting(&self, caster: u64) -> bool {
+        self.casts.contains_key(&caster)
     }
 }
 
@@ -869,11 +1209,13 @@ mod tests {
         let mut app = App::new();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx))
-            .init_resource::<CastBarFeed>()
+            .init_resource::<UiEvents>()
             .init_resource::<UnitCasts>()
-            .init_resource::<PendingCast>()
-            .init_resource::<QueuedMeleeSpell>()
-            .init_resource::<crate::spell::AutoRepeatActive>()
+            .init_resource::<InterruptSchools>()
+            .insert_resource(crate::ui_script::UiClock {
+                anchor: std::time::Instant::now(),
+                ui_now: 100.0,
+            })
             .init_resource::<SelfGuid>()
             .init_resource::<GuidIndex>()
             .init_resource::<crate::names::NameCache>()
@@ -914,13 +1256,23 @@ mod tests {
         app
     }
 
+    /// Apply `edges` as one handler's queue and fire what they raised; what the observer saw.
     fn run(app: &mut App, edges: Vec<CastBarEdge>) -> String {
-        use bevy::ecs::system::RunSystemOnce;
-        app.world_mut().resource_mut::<CastBarFeed>().0 = edges;
-        app.world_mut().run_system_once(feed_cast_bar).unwrap();
+        let mut ui = app.world_mut().resource_mut::<UiEvents>();
+        for edge in edges {
+            ui.cast_edge(edge);
+        }
+        crate::ui_script::live::fire_handler_events(app.world_mut());
         app.world_mut()
             .non_send_resource::<UiScript>()
             .eval::<String>("local s = table.concat(SEEN, ' ') SEEN = {} return s")
+            .unwrap()
+    }
+
+    /// `chunk`'s answer with the `World` lent, as a verb reads it.
+    fn live<R: mlua::FromLuaMulti>(app: &mut App, chunk: &str) -> R {
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| s.eval::<R>(chunk))
+            .expect("a VM")
             .unwrap()
     }
 
@@ -940,13 +1292,11 @@ mod tests {
         };
         assert_eq!(run(&mut app, vec![start(7)]), "START:player:Lesser Heal:7");
         assert_eq!(
-            app.world_mut()
-                .non_send_resource::<UiScript>()
-                .eval::<String>(
-                    r#"local n, r, t, i, a, b, ts, id = UnitCastingInfo("player")
-                       return n .. "|" .. r .. "|" .. a .. "|" .. b .. "|" .. id"#
-                )
-                .unwrap(),
+            live::<String>(
+                &mut app,
+                r#"local n, r, t, i, a, b, ts, id = UnitCastingInfo("player")
+                   return n .. "|" .. r .. "|" .. a .. "|" .. b .. "|" .. id"#
+            ),
             "Lesser Heal|Rank 1|100000|101500|7"
         );
         let go = CastBarEdge::Go {
@@ -960,10 +1310,7 @@ mod tests {
             "SUCCEEDED:player:Lesser Heal:7 STOP:player:Lesser Heal:7"
         );
         assert_eq!(
-            app.world_mut()
-                .non_send_resource::<UiScript>()
-                .arity(r#"UnitCastingInfo("player")"#)
-                .unwrap(),
+            live::<i64>(&mut app, "return select('#', UnitCastingInfo('player'))"),
             0
         );
 
@@ -1145,9 +1492,15 @@ mod tests {
                     .collect(),
             );
         }
-        let mut actions = crate::ui_action::PlayerActions::default();
-        actions.spells.insert(KICK);
-        app.insert_resource(actions);
+        let known = std::collections::BTreeSet::from([KICK]);
+        {
+            let spells = app.world().resource::<Spells>().clone();
+            book_updated(
+                &mut app.world_mut().resource_mut::<InterruptSchools>(),
+                &known,
+                Some(&spells),
+            );
+        }
         app.insert_resource(crate::target::Selection {
             guid: Some(MOB),
             ..Default::default()
@@ -1187,19 +1540,152 @@ mod tests {
             hidden: false,
         };
         run(&mut app, vec![start]);
-        let shield = |app: &mut App| {
-            app.world_mut()
-                .non_send_resource::<UiScript>()
-                .eval::<bool>(r#"return select(9, UnitCastingInfo("target"))"#)
-                .unwrap()
-        };
+        let shield =
+            |app: &mut App| live::<bool>(app, r#"return select(9, UnitCastingInfo("target"))"#);
         assert!(shield(&mut app), "the immunity aura shields the cast");
-        // The aura goes; the re-read clears the shield and says so.
+        // The aura goes; the aura handler's re-read clears the shield and says so (`0x72fd30`).
         app.world_mut()
             .entity_mut(mob)
             .insert(crate::unit_auras::UnitAuras::default());
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, true));
         assert_eq!(run(&mut app, vec![]), "INTERRUPTIBLE:target:nil:nil");
         assert!(!shield(&mut app));
+    }
+
+    /// The aura reader re-reads the target's bit only for a packet that changed an aura
+    /// (`0x72fb6e`), and an arena opponent's for any packet (`0x72fbf1`).
+    #[test]
+    fn the_aura_reread_needs_a_change_on_the_target_and_none_on_an_arena_opponent() {
+        const MOB: u64 = 0xF130_0000_0000_0042;
+        const BOLT: u32 = 9001;
+        const IMMUNE: u32 = 9002;
+        const KICK: u32 = 1766;
+        let mut app = feed_app();
+        let immune = SpellDisplay {
+            effect_apply_aura: [77, 0, 0],
+            effect_misc_value: [26, 0, 0],
+            ..Default::default()
+        };
+        app.world_mut().resource_mut::<Spells>().catalog =
+            benilla_formats::SpellCatalog::from_displays(
+                [(KICK, kick()), (BOLT, bolt()), (IMMUNE, immune)]
+                    .into_iter()
+                    .collect(),
+            );
+        let spells = app.world().resource::<Spells>().clone();
+        book_updated(
+            &mut app.world_mut().resource_mut::<InterruptSchools>(),
+            &std::collections::BTreeSet::from([KICK]),
+            Some(&spells),
+        );
+        let mob = app
+            .world_mut()
+            .spawn(crate::unit_auras::UnitAuras::of(MOB, &[(0, IMMUNE, 1)]))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(MOB, mob);
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "local g = CreateFrame('Frame') g:RegisterEvent('UNIT_SPELLCAST_INTERRUPTIBLE')
+                 g:SetScript('OnEvent', function(self, e) table.insert(SEEN, e:sub(16)) end)",
+            )
+            .unwrap();
+        // An arena opponent, not the target: its cast's start sets the bit (`0x72ab60`), and
+        // `arena1` names it for the signal's fan-out.
+        app.insert_resource(crate::ui_arena::ArenaOpponents::with_opponent_for_test(MOB));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_arena_unit_guids([MOB, 0, 0, 0, 0], [0; 5], 1);
+        app.insert_resource(crate::target::Selection::default());
+        let start = CastBarEdge::Start {
+            caster: MOB,
+            spell_id: BOLT,
+            cast_count: 0,
+            cast_time_ms: 2000,
+            immunities: None,
+            hidden: false,
+        };
+        run(&mut app, vec![start]);
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::default());
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, false));
+        assert_eq!(
+            run(&mut app, vec![]),
+            "INTERRUPTIBLE",
+            "any packet for an opponent"
+        );
+
+        // The target: an unchanged packet re-reads nothing.
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::of(MOB, &[(0, IMMUNE, 1)]));
+        app.insert_resource(crate::ui_arena::ArenaOpponents::default());
+        app.insert_resource(crate::target::Selection {
+            guid: Some(MOB),
+            ..Default::default()
+        });
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_unit_guids(&benilla_ui::script::UnitGuids {
+                player: ME,
+                target: MOB,
+                ..Default::default()
+            });
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, true));
+        run(&mut app, vec![]);
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::default());
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, false));
+        assert_eq!(run(&mut app, vec![]), "", "no aura changed");
+        app.world_mut()
+            .resource_mut::<UiEvents>()
+            .world(|w| auras_changed(w, MOB, true));
+        assert_eq!(run(&mut app, vec![]), "INTERRUPTIBLE");
+    }
+
+    /// Each setter clears the other's window: a cast's start ends the unit's channel window
+    /// (`0x72ac1e`-`0x72ac2a`) and a channel's start ends its cast's (`0x72ad20`).
+    #[test]
+    fn a_cast_and_a_channel_each_clear_the_other() {
+        let mut app = feed_app();
+        let channel = CastBarEdge::ChannelStart {
+            caster: ME,
+            spell_id: HEAL,
+            duration_ms: 5000,
+        };
+        let start = CastBarEdge::Start {
+            caster: ME,
+            spell_id: HEAL,
+            cast_count: 1,
+            cast_time_ms: 1500,
+            immunities: None,
+            hidden: false,
+        };
+        let held = |app: &mut App| {
+            live::<(i64, i64)>(
+                app,
+                "return select('#', UnitCastingInfo('player')), select('#', UnitChannelInfo('player'))",
+            )
+        };
+        run(&mut app, vec![channel.clone()]);
+        assert_eq!(held(&mut app), (0, 8));
+        run(&mut app, vec![start]);
+        assert_eq!(held(&mut app), (9, 0), "the cast's start ends the channel");
+        run(&mut app, vec![channel]);
+        assert_eq!(held(&mut app), (0, 8), "the channel's start ends the cast");
     }
 
     /// `0x8020c0`: a running cast reopens with its back-dated window and cast count 0; a channel
@@ -1245,12 +1731,10 @@ mod tests {
             total_ms,
         };
         let window = |app: &mut App, verb: &str| {
-            app.world_mut()
-                .non_send_resource::<UiScript>()
-                .eval::<String>(&format!(
-                    "local n, r, t, i, a, b = {verb}('player') return a .. '|' .. b"
-                ))
-                .unwrap()
+            live::<String>(
+                app,
+                &format!("local n, r, t, i, a, b = {verb}('player') return a .. '|' .. b"),
+            )
         };
         assert_eq!(
             run(&mut app, vec![resume(HEAL, 1_000, 1_500)]),
@@ -1263,14 +1747,170 @@ mod tests {
         );
         assert_eq!(window(&mut app, "UnitChannelInfo"), "95000|103000");
         assert_eq!(
-            app.world_mut()
-                .non_send_resource::<UiScript>()
-                .arity("UnitCastingInfo('player')")
-                .unwrap(),
+            live::<i64>(&mut app, "return select('#', UnitCastingInfo('player'))"),
             0,
             "the channel setter clears the cast"
         );
         // No `Spell.dbc` row: nothing.
         assert_eq!(run(&mut app, vec![resume(99, 1_000, 2_000)]), "");
+    }
+
+    /// A press's cancel fires inside the system holding the VM as the cancel returns
+    /// (`0x806200`): `INTERRUPTED` while the unit still holds its cast, then the cast cleared and
+    /// `STOP`, before the system makes any other call into Lua.
+    #[test]
+    fn a_press_cancel_fires_inside_the_holding_system() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = feed_app();
+        app.init_resource::<PressEdges>();
+        let start = CastBarEdge::Start {
+            caster: ME,
+            spell_id: HEAL,
+            cast_count: 3,
+            cast_time_ms: 1500,
+            immunities: None,
+            hidden: false,
+        };
+        assert_eq!(run(&mut app, vec![start]), "START:player:Lesser Heal:3");
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "HELD = {} local f = CreateFrame('Frame')
+                 f:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED') f:RegisterEvent('UNIT_SPELLCAST_STOP')
+                 f:SetScript('OnEvent', function(_, e)
+                     HELD[#HELD + 1] = e:sub(16) .. '=' .. tostring((UnitCastingInfo('player'))) end)",
+            )
+            .unwrap();
+        let after = app
+            .world_mut()
+            .run_system_once(
+                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                 mut press: PressSignals| {
+                    press.cancelled(ME);
+                    assert_eq!(
+                        press.pending(),
+                        [
+                            CastBarEdge::Cancelled { caster: ME },
+                            CastBarEdge::Selection
+                        ]
+                    );
+                    press.fire(&mut script, &mut live);
+                    script
+                        .eval::<String>("return table.concat(HELD, ' ')")
+                        .unwrap()
+                },
+            )
+            .unwrap();
+        assert_eq!(after, "INTERRUPTED=Lesser Heal STOP=nil");
+        assert!(!app.world().resource::<UnitCasts>().casting(ME));
+    }
+
+    /// Records the signals and the error line the next tests fire, in order.
+    const RECORDER: &str = "SPELL_FAILED_ROOTED = 'Rooted' SEEN = {}
+        local f = CreateFrame('Frame')
+        f:RegisterEvent('UI_ERROR_MESSAGE') f:RegisterEvent('SPELLS_CHANGED')
+        f:RegisterEvent('ACTIONBAR_UPDATE_STATE')
+        f:SetScript('OnEvent', function(_, e, t) SEEN[#SEEN + 1] = e .. (t and (':' .. t) or '') end)";
+
+    /// A press's refusal shows in its place among the press's signals as the press returns, inside
+    /// the system holding the VM (`0x808200`): a signal raised before it fires first, one after it
+    /// after.
+    #[test]
+    fn a_press_refusal_shows_between_the_signals_around_it() {
+        use crate::ui_action::signals::SignalSink;
+        use crate::ui_action::CastRefusals;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = feed_app();
+        // What the refusal's display reads besides the VM.
+        app.init_resource::<crate::items::Items>()
+            .insert_resource(NetCommands(crossbeam_channel::unbounded().0));
+        app.init_resource::<PressEdges>();
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(RECORDER)
+            .unwrap();
+        let seen = app
+            .world_mut()
+            .run_system_once(
+                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                 mut press: PressSignals| {
+                    press.signal("SPELLS_CHANGED");
+                    press.push_local(HEAL, 0x5f);
+                    press.signal("ACTIONBAR_UPDATE_STATE");
+                    press.fire(&mut script, &mut live);
+                    script
+                        .eval::<String>("return table.concat(SEEN, ' ')")
+                        .unwrap()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            seen,
+            "SPELLS_CHANGED UI_ERROR_MESSAGE:Rooted ACTIONBAR_UPDATE_STATE"
+        );
+    }
+
+    /// A line a press raises shows in its place among the press's signals as the press returns,
+    /// inside the system holding the VM (`0x5216f0`).
+    #[test]
+    fn a_press_line_shows_between_the_signals_around_it() {
+        use crate::ui_action::signals::SignalSink;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = feed_app();
+        app.init_resource::<PressEdges>();
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(&format!("ERR_NO_ATTACK_TARGET = 'Nothing' {RECORDER}"))
+            .unwrap();
+        let seen = app
+            .world_mut()
+            .run_system_once(
+                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+                 mut press: PressSignals| {
+                    press.signal("SPELLS_CHANGED");
+                    press.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+                    press.signal("ACTIONBAR_UPDATE_STATE");
+                    press.fire(&mut script, &mut live);
+                    script
+                        .eval::<String>("return table.concat(SEEN, ' ')")
+                        .unwrap()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            seen,
+            "SPELLS_CHANGED UI_ERROR_MESSAGE:Nothing ACTIONBAR_UPDATE_STATE"
+        );
+    }
+
+    /// A handler's refusal shows in its turn, in order with the events it queued around it.
+    #[test]
+    fn a_handler_refusal_shows_in_its_turn_between_its_events() {
+        use crate::ui_action::CastRefusals;
+        let mut app = feed_app();
+        // What the refusal's display reads besides the VM.
+        app.init_resource::<crate::items::Items>()
+            .insert_resource(NetCommands(crossbeam_channel::unbounded().0));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(RECORDER)
+            .unwrap();
+        let world = app.world_mut();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        {
+            let mut ui = world.resource_mut::<crate::ui_script::live::UiEvents>();
+            ui.fire("SPELLS_CHANGED", Vec::new());
+            ui.push_local(HEAL, 0x5f);
+            ui.fire("ACTIONBAR_UPDATE_STATE", Vec::new());
+        }
+        crate::ui_script::live::fire_handler_events(world);
+        let seen = world
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(SEEN, ' ')")
+            .unwrap();
+        assert_eq!(
+            seen,
+            "SPELLS_CHANGED UI_ERROR_MESSAGE:Rooted ACTIONBAR_UPDATE_STATE"
+        );
     }
 }

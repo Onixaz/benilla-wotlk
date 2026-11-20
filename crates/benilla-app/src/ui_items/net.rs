@@ -34,10 +34,7 @@ fn on_inventory_failure(
     mut latch: ResMut<LootLatch>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     net: Res<crate::net::NetCommands>,
-    (limits, mut errors): (
-        Option<Res<crate::ui_trade::ItemLimitCategories>>,
-        ResMut<crate::ui_action::UiErrorKeys>,
-    ),
+    limits: Option<Res<crate::ui_trade::ItemLimitCategories>>,
     mut ui: ResMut<UiEvents>,
 ) {
     if let SessionEvent::InventoryFailure(f) = ev {
@@ -47,8 +44,9 @@ fn on_inventory_failure(
                 .and_then(|l| l.0.get(id))
                 .map(|r| (r.quantity, r.name.clone()))
         };
+        // The limit line shows in the handler's turn, ahead of the failure's own.
         if let Some(line) = limit_line(f, limit) {
-            errors.0.push(line);
+            crate::ui_action::signals::SignalSink::line(&mut *ui, line);
         }
         inventory_failure(f, &mut ui);
         loot.inventory_failed(f.item, &mut latch, &net);

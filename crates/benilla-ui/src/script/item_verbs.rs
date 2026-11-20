@@ -104,6 +104,22 @@ fn string_arg(lua: &Lua, v: Value, usage: &str) -> mlua::Result<String> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // IsUsableItem(item) (`0x51c450`): usable and short of power, 1 or nil each, read at the call;
+    // a number is an id, a string goes through the name table, anything else is id 0.
+    g.set(
+        "IsUsableItem",
+        lua.create_function(|lua, item: Value| {
+            let id = {
+                let model = lua.app_data_ref::<ModelCell>().expect("model app_data");
+                item_arg(lua, &model, &item)?
+            };
+            let (usable, no_power) = super::read_live(|l| l.item_usable(id))
+                .flatten()
+                .unwrap_or_default();
+            Ok((flag(usable), flag(no_power)))
+        })?,
+    )?;
+
     // GetItemCount(item[, includeBank[, includeCharges]]) (`0x51c2e0`): the stacks the search walks.
     // The bank flag adds the bank; the charges flag reads broken items too. Not built: its
     // charge count for an unstackable item.
@@ -126,12 +142,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsCurrentItem",
         lua.create_function(|lua, item: Value| {
-            let (id, source) = {
+            let id = {
                 let model = lua.app_data_ref::<ModelCell>().expect("model app_data");
-                (item_arg(lua, &model, &item)?, model.spell_info.clone())
+                item_arg(lua, &model, &item)?
             };
             Ok(flag(
-                id != 0 && source.is_some_and(|s| s.is_current_item(id)),
+                id != 0
+                    && super::spell_info::with_spell_source(lua, |s| s.is_current_item(id))
+                        == Some(true),
             ))
         })?,
     )?;

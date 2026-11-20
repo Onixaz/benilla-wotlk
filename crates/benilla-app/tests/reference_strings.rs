@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 /// Per-file budgets of re-typed sentences, which may only go down. A one-word value is not
 /// checked: it collides with ordinary program text.
 const ALLOWED: &[(&str, usize)] = &[
-    // 12340's spell tooltip keys its cost line by power type (`CGTooltip::SetSpell`, `0x623dd8`:
-    // `MANA_COST`…`RUNIC_POWER_COST`, their `_PER_TIME` forms and `POWER_DISPLAY_COST_PER_TIME`);
-    // the view builder holds no VM yet, and the port comes with the spell tooltip tests.
-    ("benilla-app/src/ui_tooltip/spell_feed.rs", 1),
+    // 12340's spell tooltip keys its cost line by power type (`0x623dd8`: `MANA_COST`…
+    // `RUNIC_POWER_COST`, their `_PER_TIME` forms and `POWER_DISPLAY_COST_PER_TIME`); the view
+    // builder still composes the cost in English, and the port comes with the spell tooltip tests.
+    ("benilla-app/src/ui_tooltip/spell_view.rs", 1),
     // The output-device cache's entry 0 is the engine's own literal (`0x8784a0`), not a
     // `GlobalStrings.lua` lookup; the Lua key shares its wording.
     ("benilla-app/src/sound/engine.rs", 1),

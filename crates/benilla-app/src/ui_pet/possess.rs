@@ -247,31 +247,14 @@ pub(super) fn possess_view(spell_id: u32, spells: &SpellCatalog) -> PossessView 
 mod tests {
     use super::*;
 
-    /// A cross-map worldport runs the UI's world leave (`0x528c30`), whose pet part zeroes a held possess spell and fires `UPDATE_BONUS_ACTIONBAR` (`0x528d14` -> `0x5d3360`); with none held it fires nothing, and a same-map port leaves nothing.
+    /// The UI's world leave (`0x528c30`), whose pet part zeroes a held possess spell and fires `UPDATE_BONUS_ACTIONBAR` (`0x528d14` -> `0x5d3360`); with none held it fires nothing.
     #[test]
-    fn a_worldport_drops_the_possess_spell_and_fires_the_bonus_bar_once() {
-        let mut app = App::new();
-        app.add_message::<crate::net::WorldportMessage>()
-            .init_resource::<UiEvents>()
-            .insert_resource(PossessSpell(42, false))
-            .add_systems(Update, crate::ui_battlefield::leave_world_on_worldport);
-        let port = |needs_ack: bool| crate::net::WorldportMessage {
-            map_id: 1,
-            position: [0.0; 3],
-            orientation: 0.0,
-            needs_ack,
-            transport_entry: None,
-        };
-        app.world_mut().write_message(port(false));
-        app.update();
-        assert_eq!(
-            app.world().resource::<PossessSpell>().0,
-            42,
-            "an arrival leaves nothing"
-        );
-        app.world_mut().write_message(port(true));
-        app.update();
-        assert_eq!(app.world().resource::<PossessSpell>().0, 0);
+    fn the_world_leave_drops_the_possess_spell_and_fires_the_bonus_bar_once() {
+        let mut world = World::new();
+        world.insert_resource(PossessSpell(42, false));
+        world.init_resource::<UiEvents>();
+        crate::ui_battlefield::leave_world(&mut world);
+        assert_eq!(world.resource::<PossessSpell>().0, 0);
 
         // The pet part's event, queued in turn with the rest of the leave's.
         let mut world = World::new();

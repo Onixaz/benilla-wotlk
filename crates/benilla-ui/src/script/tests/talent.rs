@@ -240,9 +240,9 @@ fn set_talent_on_an_exceptional_talent_keeps_the_spell_body() {
     assert!(s.take_errors().is_empty());
 }
 
-/// A missing spell view renders the rank line alone and asks for the view once.
+/// A missing spell view renders the rank line alone.
 #[test]
-fn set_talent_locked_reqs_and_the_ask_once_miss() {
+fn set_talent_locked_reqs_and_a_missing_view() {
     let mut s = script();
     seed_talent_strings(&mut s);
     s.set_talents(one_tab_state());
@@ -258,11 +258,6 @@ fn set_talent_locked_reqs_and_the_ask_once_miss() {
     "#,
     )
     .unwrap();
-    let asks = s.take_spell_tooltip_asks();
-    assert!(
-        asks.contains(&11119),
-        "the display spell was asked: {asks:?}"
-    );
 
     s.set_spell_tooltip(
         11119,

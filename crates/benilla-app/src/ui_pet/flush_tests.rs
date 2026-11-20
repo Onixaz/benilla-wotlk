@@ -1,6 +1,6 @@
 //! The flush behind every mutation of the pet's cooldown list, whole client headless: each packet that reaches the list arrives as the session event it is and flushes in its handler, each press in its applier. The reference fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, and then `PET_BAR_UPDATE_COOLDOWN`; none of the callers fires `PET_BAR_UPDATE`.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use benilla_formats::SpellDisplay;
 use benilla_protocol::messages::{PetSpellCooldown, PetSpells};
@@ -80,18 +80,13 @@ impl Rig {
         self.app.world().resource::<PetBar>().cooldowns.generation
     }
 
-    /// How many records the pet's list holds that have not run out.
+    /// How many records the pet's list holds, elapsed ones included until a collection.
     fn record_count(&self) -> usize {
-        self.app.world().resource::<PetBar>().cooldowns.live_count()
-    }
-
-    /// Whether the pet's list still holds a record that has run out.
-    fn elapsed_pending(&self) -> bool {
         self.app
             .world()
             .resource::<PetBar>()
             .cooldowns
-            .sweep_pending(Instant::now())
+            .record_count()
     }
 }
 
@@ -122,8 +117,9 @@ fn a_strangers_pet_go_flushes_nothing() {
     assert!(rig.frame().is_empty());
 }
 
-/// `0x807033`, `0x807039`: the flush follows `SMSG_SPELL_COOLDOWN` for the pet's guid, and for it
-/// alone; the player's own list flushes through the action state's feed.
+/// `0x807033`, `0x807039`: the pet bar's flush follows `SMSG_SPELL_COOLDOWN` for the pet's guid,
+/// and for it alone; the player's own list signals the spellbook's pair and the bags' instead
+/// (`0x80702e`, `0x807048`).
 #[test]
 fn a_pet_addressed_spell_cooldown_fires_the_flush() {
     let mut rig = growl_rig();
@@ -133,8 +129,9 @@ fn a_pet_addressed_spell_cooldown_fires_the_flush() {
         flags: 0,
         cooldowns: vec![(GROWL, 3000)],
     }]);
-    assert!(
-        rig.frame().is_empty(),
+    assert_eq!(
+        rig.frame(),
+        ["ACTIONBAR_UPDATE_COOLDOWN", "SPELL_UPDATE_COOLDOWN"],
         "the player's list is not the pet's flush"
     );
 
@@ -446,15 +443,13 @@ fn an_insert_leaves_the_pets_list_its_live_records_alone() {
         rig.press(1);
     }
     let_the_gcds_run_out();
-    assert!(rig.elapsed_pending(), "the forty GCDs have run out");
 
     rig.press(1);
 
-    assert!(!rig.elapsed_pending(), "the insert marked them spent");
     assert_eq!(
         rig.record_count(),
-        3,
-        "Growl's recovery, the parked record and the new GCD"
+        43,
+        "Growl's recovery, the parked record and every GCD, until a collection"
     );
     rig.frame();
     assert_eq!(rig.cooldown(2).1, 5.0, "Growl still sweeps its 5 s");
@@ -465,9 +460,9 @@ fn an_insert_leaves_the_pets_list_its_live_records_alone() {
     );
 }
 
-/// The reference flushes no event for a cooldown's end, and the insert's prune is that end: each press's insert flushes once in its applier (`0x805ec3`, `0x805eda`), and nothing else. An insert that arms nothing changes nothing (`0x805e42`).
+/// The reference flushes no event for a cooldown's end: each press's insert flushes once in its applier (`0x805ec3`, `0x805eda`), and nothing else. An insert that arms nothing changes nothing (`0x805e42`).
 #[test]
-fn an_inserts_prune_fires_only_the_inserts_own_flush() {
+fn an_insert_fires_only_its_own_flush() {
     let mut rig = rig(
         vec![(CLAW, brisk_claw()), (GROWL, growl())],
         &[CLAW, GROWL],
@@ -479,7 +474,6 @@ fn an_inserts_prune_fires_only_the_inserts_own_flush() {
     assert_eq!(rig.frame(), flushes(5), "each press's own flush");
     let held = rig.generation();
     let_the_gcds_run_out();
-    assert!(rig.elapsed_pending());
 
     // Growl has no GCD pair: nothing is armed, so nothing is dropped or flushed.
     rig.press(2);
@@ -490,18 +484,14 @@ fn an_inserts_prune_fires_only_the_inserts_own_flush() {
     assert_eq!(rig.generation(), held);
 
     rig.press(1);
-    assert!(!rig.elapsed_pending(), "the insert dropped the five");
     assert_eq!(rig.frame(), FLUSH, "the insert's flush, once");
-    assert_eq!(
-        rig.generation(),
-        held + 1,
-        "the prune is no mutation of its own"
-    );
+    assert_eq!(rig.generation(), held + 1, "the insert is the one mutation");
     assert!(rig.frame().is_empty(), "and nothing follows");
 }
 
-/// An insert's prune is invisible to `GetPetActionCooldown`: a running recovery and a parked
-/// record whose timers have run down push what they pushed before, the same start included.
+/// An insert after the GCDs ran out changes no `GetPetActionCooldown` read: a running recovery and
+/// a parked record whose timers have run down push what they pushed before, the same start
+/// included.
 #[test]
 fn an_insert_changes_no_bar_read_of_the_records_that_stay() {
     let mut rig = rig(
@@ -529,10 +519,8 @@ fn an_insert_changes_no_bar_read_of_the_records_that_stay() {
         "the parked record shows disabled: {parked_read:?}"
     );
     let_the_gcds_run_out();
-    assert!(rig.elapsed_pending());
 
     rig.press(1);
-    assert!(!rig.elapsed_pending(), "the insert pruned");
     rig.frame();
 
     assert_eq!(
