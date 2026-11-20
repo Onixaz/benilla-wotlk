@@ -894,8 +894,8 @@ mod quest_material_tests {
         let mut data = [0i32; 24];
         data[2] = 2;
         data[9] = 3;
-        gos.insert(100, 2, "Wanted Poster".into(), &data);
-        gos.insert(102, 10, "Chest".into(), &data);
+        gos.insert(100, 2, 0, "Wanted Poster".into(), &data);
+        gos.insert(102, 10, 0, "Chest".into(), &data);
         assert_eq!(
             object_material(
                 go_guid(100),

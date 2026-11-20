@@ -1628,7 +1628,7 @@ fn gameobject_info(
     go_templates: &mut GameObjectTemplates,
 ) {
     debug!("net: gameobject template {entry} type {type_id} display {display_id} {name:?}");
-    go_templates.insert(entry, type_id, name, data);
+    go_templates.insert(entry, type_id, display_id, name, data);
 }
 
 /// A pet stat field's unit signal.

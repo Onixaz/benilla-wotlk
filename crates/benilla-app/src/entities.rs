@@ -60,6 +60,8 @@ pub(crate) use mount::MountDropped;
 /// The corpse object, drawn as the dressed body or, once it turns to bones, a skeleton prop.
 pub(crate) mod corpse;
 
+/// Destructible buildings: the damage-state model and its doodad sets.
+pub(crate) mod destructible;
 mod live_display;
 pub(crate) use live_display::DisplaySwapped;
 use live_display::{refresh_live_display, tick_scale_ease};
@@ -906,6 +908,14 @@ pub(crate) fn setup_entities(
             commands.insert_resource(art_kit::ArtKits::new(table));
         }
         Err(e) => warn!("gameobject art kits unavailable, no GameObject wears its kit: {e:#}"),
+    }
+    match benilla_formats::load_destructible_models(&mut chain) {
+        Ok(table) => {
+            info!("destructible model data: {} rows", table.len());
+            commands.insert_resource(destructible::Destructibles(table));
+        }
+        // Without it a destructible building shows `GAMEOBJECT_DISPLAYID` and is never a mouseover.
+        Err(e) => warn!("destructible model data unavailable, buildings keep one model: {e:#}"),
     }
     match benilla_formats::load_lock_catalog(&mut chain) {
         Ok(catalog) => {
