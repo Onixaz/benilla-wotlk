@@ -1330,6 +1330,33 @@ fn target_unit_fires_player_target_changed_inside_the_call() {
     );
 }
 
+/// A script call a listener makes while a press's raise runs applies inside that listener, nested,
+/// as 12340's verbs re-enter from a `UNIT_SPELLCAST_SENT` listener (`0x80b556`): the select is
+/// read back before the listener returns, and the outer press's cast kept its old target.
+#[test]
+fn a_select_from_a_sent_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function()
+            TargetUnit("party1")
+            SEEN = UnitGUID("target")
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let seen: String = rig.vm().eval("return SEEN").expect("the listener ran");
+    assert_eq!(
+        seen,
+        format!("0x{NEW:016X}"),
+        "the listener's select applied in it"
+    );
+    assert_eq!(rig.selected(), Some(NEW));
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+}
+
 /// A call made where no hook is lent waits; the next call made under one applies it first, so the
 /// two keep call order: the cast goes to the target the earlier call selected.
 #[test]

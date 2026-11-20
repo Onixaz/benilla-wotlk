@@ -227,7 +227,7 @@ impl Rig {
         self.apply(move |p, s| p.order(packed, s));
     }
 
-    /// One press through the applier's path, its events fired as it returns.
+    /// One press through the applier's path, its events fired as it returns, the world lent.
     fn apply(
         &mut self,
         f: impl FnOnce(&mut PetPress, &mut dyn crate::ui_action::signals::SignalSink) -> super::PetCast
@@ -236,20 +236,22 @@ impl Rig {
             + 'static,
     ) -> super::PetCast {
         let mut f = Some(f);
-        self.app
-            .world_mut()
+        let world = self.app.world_mut();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        let out = world
             .run_system_once(
-                move |(script, _live): (
-                    Option<NonSendMut<benilla_ui::script::UiScript>>,
-                    crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
-                ),
-                      mut press: PetPress| {
-                    let mut script = script.expect("the rig's VM");
+                move |mut ui: ResMut<crate::ui_script::live::UiEvents>, mut press: PetPress| {
                     let f = f.take().expect("one run");
-                    crate::script_calls::pet_press(&mut press, &mut script, f)
+                    crate::script_calls::pet_press(
+                        &mut press,
+                        &mut crate::script_calls::InTurn(&mut ui),
+                        f,
+                    )
                 },
             )
-            .expect("the press applies as a one-shot system")
+            .expect("the press applies as a one-shot system");
+        crate::ui_script::live::fire_handler_events(world);
+        out
     }
 
     /// `GetPetActionsUsable()` at the call, the world lent.

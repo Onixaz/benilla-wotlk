@@ -36,8 +36,6 @@ pub(crate) struct PetPress<'w, 's> {
     cvars: Option<Res<'w, crate::cvars::Cvars>>,
     /// The creature records, whose type flags exempt a mounted fighter (`0x715f70`).
     names: Option<Res<'w, crate::names::NameCache>>,
-    /// The usable update an on-hold cooldown start runs (`0x805ed1`).
-    usable: Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
     /// A press armed an on-hold start whose usable update has not run yet.
     on_hold_start: Local<'s, bool>,
 }
@@ -67,16 +65,11 @@ pub(crate) enum PetCast {
 }
 
 impl PetPress<'_, '_> {
-    /// The press's cooldown start, fired into `script`: the spellbook's signals, the usable update
+    /// The press's cooldown start, in turn on `ui`: the spellbook's signals, the usable update
     /// when on hold, then the pet bar's (`0x805ec3`-`0x805eda`).
-    pub(crate) fn fire_cooldown_start(&mut self, script: &mut benilla_ui::script::UiScript) {
+    pub(crate) fn cooldown_start_in_turn(&mut self, ui: &mut crate::ui_script::live::UiEvents) {
         let on_hold = std::mem::take(&mut *self.on_hold_start);
-        crate::ui_action::signals::cooldown_site_now(
-            script,
-            self.usable.as_mut(),
-            on_hold,
-            crate::ui_action::signals::Tail::Pet,
-        );
+        crate::ui_action::signals::cooldown_site(ui, on_hold, crate::ui_action::signals::Tail::Pet);
     }
 
     /// `CastPetAction(slot)`, a 1-based bar slot.

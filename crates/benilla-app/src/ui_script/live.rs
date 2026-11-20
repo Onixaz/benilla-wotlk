@@ -3106,6 +3106,17 @@ pub(crate) enum LineArg {
 pub(crate) struct UiEvents(Vec<UiEvent>);
 
 impl UiEvents {
+    /// What waits now, taken: an applier's own raises then queue and fire apart from it.
+    pub(crate) fn set_aside(&mut self) -> Self {
+        Self(std::mem::take(&mut self.0))
+    }
+
+    /// Put what [`Self::set_aside`] took back ahead of anything queued since.
+    pub(crate) fn put_back(&mut self, earlier: Self) {
+        let later = std::mem::replace(&mut self.0, earlier.0);
+        self.0.extend(later);
+    }
+
     /// Nothing waits.
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()

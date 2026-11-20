@@ -6,7 +6,7 @@
 //! ([`set_apply`]) wherever the host's state is lent ([`super::world_loan`]); with none lent it
 //! waits in one queue, in call order.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 
 use super::{world_loan, ActionUse, SelectionRequest, UiScript};
 
@@ -17,8 +17,6 @@ pub type ApplyCall = fn(&mlua::Lua, ScriptCall) -> bool;
 thread_local! {
     /// The host's applier, named once per thread.
     static APPLY: Cell<Option<ApplyCall>> = const { Cell::new(None) };
-    /// The loan depths at which a call is applying with the lent state borrowed, innermost last.
-    static APPLYING: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Name the host's applier of every script call made on this thread.
@@ -26,42 +24,21 @@ pub fn set_apply(apply: ApplyCall) {
     APPLY.with(|a| a.set(Some(apply)));
 }
 
-/// Marks the innermost loan borrowed by a call's applier until it drops: a call made meanwhile
-/// under that loan waits its turn behind the applying one.
-pub struct Applying(());
-
-impl Applying {
-    /// The innermost loan is borrowed by an applier from now until the drop.
-    pub fn hold() -> Self {
-        APPLYING.with_borrow_mut(|a| a.push(world_loan::depth()));
-        Self(())
-    }
-}
-
-impl Drop for Applying {
-    fn drop(&mut self) {
-        APPLYING.with_borrow_mut(|a| {
-            a.pop();
-        });
-    }
-}
-
 /// Make `call`: applied before this returns where the host's state is lent, after the calls still
-/// queued; with none lent, or while an applier holds the loan, it waits in the queue. The caller
-/// holds no model borrow.
+/// queued; with none lent it waits in the queue. The caller holds no model borrow.
 pub(crate) fn make(lua: &mlua::Lua, call: ScriptCall) {
     super::model_mut_of(lua).script_calls.push(call);
     apply_queued(lua);
 }
 
 /// Apply the queued calls front to back through the host's applier; with nothing lent, they wait.
-/// A call made while one applies joins the back of the queue and applies in its turn here.
+/// A call a listener makes while one applies is applied inside that listener, nested, as 12340
+/// re-enters its cast entry from a `UNIT_SPELLCAST_SENT` listener (`0x80b556`).
 pub fn apply_queued(lua: &mlua::Lua) {
     let Some(apply) = APPLY.with(Cell::get) else {
         return;
     };
-    let depth = world_loan::depth();
-    if depth == 0 || APPLYING.with_borrow(|a| a.last() == Some(&depth)) {
+    if !world_loan::lent() {
         return;
     }
     loop {

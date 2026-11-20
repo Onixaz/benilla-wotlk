@@ -1674,8 +1674,6 @@ pub(crate) mod schedule_tests {
          "runs in the challenge packet's handler turn, as 12340's handler fires `DUEL_REQUESTED` (`0x5cfd8b`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_unit.rs", "target_set_tail", Because::Deliberate,
          "the selection setter's tail (`0x524f54`), run inside the script call that moved the selection"),
-        ("script_calls.rs", "apply_one", Because::FilledByVm,
-         "applies one of the VM's own script calls; the `PLAYER_TOTEM_UPDATE` it fires is a `DestroyTotem`'s, in that call's turn"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
