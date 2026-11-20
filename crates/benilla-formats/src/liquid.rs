@@ -398,6 +398,7 @@ mod tests {
             depth_texture: None,
             sheet_scale: 1.0,
             sheet_rotation: 0.0,
+            depth_v_scale: 1.0,
         }
     }
 

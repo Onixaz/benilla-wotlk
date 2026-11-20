@@ -31,6 +31,8 @@ const DEPTH_TEXTURE: usize = 16;
 /// `Float[0]` and `Float[1]`: the sheet's texture-coordinate scale and rotation (`0x8a5590`).
 const SHEET_SCALE: usize = 23;
 const SHEET_ROTATION: usize = 24;
+/// `Float[2]`: the depth texture's V scale (`0x8a5590`).
+const DEPTH_V_SCALE: usize = 25;
 
 /// `LiquidType.Flags` bit: the loop is not played while the player is inside (`0x4d2390`).
 const FLAG_NO_SOUND_INSIDE: u32 = 0x80;
@@ -152,7 +154,13 @@ pub struct LiquidTypeRow {
     /// Ocean (`0x8a5590`).
     pub sheet_scale: f32,
     /// `Float[1] · 57.29578`, the angle `0x8a5590` rotates the sheet's coordinates by, in radians.
+    /// The reference multiplies the authored degrees by the radians-to-degrees factor and hands the
+    /// product to a radian rotation, so WMO Ocean's 180 turns the sheet ≈145.6°, not a half turn.
+    /// Kept as the reference draws it: do not "fix" it to `to_radians`.
     pub sheet_rotation: f32,
+    /// `Float[2]`, the factor on the depth texture's V (its texture matrix is identity but for
+    /// `b1`, `0x8a5590`); 1 for every water type but Orange Slime (181, 8.5).
+    pub depth_v_scale: f32,
 }
 
 /// Every `LiquidType` row, by id.
@@ -277,6 +285,7 @@ pub fn load_liquid_types(chain: &Chain) -> Result<LiquidTypes> {
                     .and_then(|name| DepthTexture::from_name(&name)),
                 sheet_scale: f32_bits(r, SHEET_SCALE).unwrap_or(1.0),
                 sheet_rotation: f32_bits(r, SHEET_ROTATION).unwrap_or(0.0) * 57.295_78,
+                depth_v_scale: f32_bits(r, DEPTH_V_SCALE).unwrap_or(1.0),
             },
         );
     }
@@ -340,6 +349,10 @@ mod tests {
         let water = types.get(13).unwrap();
         assert_eq!(water.depth_texture, Some(DepthTexture::WmoWater));
         assert_eq!((water.sheet_scale, water.sheet_rotation), (1.0, 0.0));
+        // The depth V stays as authored on plain water; Orange Slime stretches it 8.5×.
+        assert_eq!(water.depth_v_scale, 1.0);
+        assert_eq!(types.get(1).unwrap().depth_v_scale, 1.0);
+        assert_eq!(types.get(181).unwrap().depth_v_scale, 8.5);
         assert_eq!(
             types.get(2).unwrap().depth_texture,
             Some(DepthTexture::Ocean)
