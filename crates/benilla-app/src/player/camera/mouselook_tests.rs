@@ -18,7 +18,8 @@ struct Hand {
     click_consumed: bool,
 }
 
-/// `control`'s call of [`run_look_session`], with the both-button run read off the latch.
+/// The input pass's settle, then `control`'s call of [`run_look_session`], with the both-button run
+/// read off the latch.
 fn look_frame(
     motion: Res<AccumulatedMouseMotion>,
     mut rig: ResMut<CameraControl>,
@@ -35,6 +36,20 @@ fn look_frame(
     let focused = window.focused;
     let mut cam = cam.into_inner();
     let hand = &mut *hand;
+    let mut tests = WorldClickTests {
+        left: hand.left.take(),
+        right: hand.right.take(),
+    };
+    settle_click_tests(
+        &rig,
+        &mut tests,
+        motion.delta,
+        LookConfig::default(),
+        focused,
+        hand.now,
+        &mut clicks,
+    );
+    (hand.left, hand.right) = (tests.left, tests.right);
     let both = rig.world_mouse.both();
     let dynamics = DynamicsInput {
         options: CameraOptions::default(),
@@ -54,9 +69,6 @@ fn look_frame(
         &mut opts,
         false,
         hand.click_consumed,
-        &mut clicks.0,
-        &mut clicks.1,
-        &mut clicks.2,
         &mut hand.left,
         &mut hand.right,
         LookConfig::default(),
@@ -74,6 +86,9 @@ fn world(over_ui: bool) -> World {
     world.insert_resource(crate::ui_script::PointerOverUi(over_ui));
     world.init_resource::<CameraControl>();
     world.init_resource::<Hand>();
+    world.init_resource::<LookConfig>();
+    world.init_resource::<WorldClickTests>();
+    world.init_resource::<Time>();
     world.init_resource::<Messages<WorldClick>>();
     world.init_resource::<Messages<WorldDropClick>>();
     world.init_resource::<Messages<WorldRightClick>>();

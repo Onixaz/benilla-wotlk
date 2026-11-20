@@ -262,6 +262,10 @@ pub(crate) struct PointerOverUiPanel(pub(crate) bool);
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiPress;
 
+/// [`PointerOverUi`]'s arbiter, in [`UiPress`] after the pointer feed.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PointerArbiter;
+
 /// The player-UI feed phase, after [`UiPress`] and ungated (`UnitFeed` is the gated sub-phase):
 /// every push this frame's tick must see, as in the reference's frame, where packet dispatch
 /// precedes every script event signal and both precede `OnUpdate`. Every VM holder in `Update` is
@@ -557,12 +561,13 @@ impl Plugin for UiScriptPlugin {
                     .after(crate::vplates::VPlateSet)
                     .before(crate::ui_pass::UiQuadAppend),
             )
-            // After the hover is known and before gameplay reads `PointerOverUi`.
+            // After the hover is known and before the world mouse latch reads `PointerOverUi`.
             .add_systems(
                 Update,
                 arbitrate_pointer_over_ui
-                    .after(UiInput)
-                    .before(WorldStage::Input),
+                    .in_set(PointerArbiter)
+                    .in_set(UiPress)
+                    .after(input::feed_ui_input),
             );
 
         // A UI capture's synthetic unit snapshots, after the real feed so they win.

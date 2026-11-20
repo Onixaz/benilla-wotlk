@@ -679,17 +679,22 @@ fn raw_input_is_stamped_before_the_ui_input_feed() {
     assert!(g.before("::stamp_input", Step::BindingDispatch.suffix()));
 }
 
-/// The world clicks resolve against this frame's pick: player control settles the click, the press
-/// latch and the hover pick follow it, and every click leg (the select, the cursor commits, Click
-/// to Move's arrival, the right click and a crate's interaction) follows them.
+/// The world clicks resolve against the press's pick: the click tests settle in the press pass,
+/// the press latch follows the settle and the select follows the latch, all before the tick, as
+/// 12340's input pass selects (`0x480410`) before the paint's `OnUpdate` walk (`0x495320`); the
+/// hover pick follows player control, and every later click leg (the cursor commits, Click to
+/// Move's arrival, the right click and a crate's interaction) follows both picks.
 #[test]
 fn the_world_clicks_resolve_against_this_frames_pick() {
     let g = graph_or_skip!();
-    let control = "::controller::control";
-    for pick in ["::latch_press_pick", "::update_hover"] {
-        assert!(g.before(control, pick), "{pick} follows player control");
+    let latch = "::latch_press_pick";
+    assert!(g.before("::latch_world_mouse", latch));
+    assert!(g.before(latch, Step::WorldSelect.suffix()));
+    assert!(g.before(Step::WorldSelect.suffix(), Step::Tick.suffix()));
+    assert!(g.before(Step::ScriptCalls.suffix(), Step::WorldSelect.suffix()));
+    assert!(g.before("::controller::control", "::update_hover"));
+    for pick in [latch, "::update_hover"] {
         for leg in [
-            Step::WorldSelect.suffix(),
             "::commit_ground_cast_on_click",
             "::commit_object_cast_on_click",
             "::act_on_arrival",
@@ -851,7 +856,6 @@ fn a_binding_reads_the_world_on_its_press_and_its_release() {
 /// cast goes to the unit the click selected, once, as 12340's input pass selects before the
 /// paint runs the `OnUpdate` scripts (`0x480410`, `0x495320`).
 #[test]
-#[ignore = "#1376: the world click runs after the tick's OnUpdate"]
 fn a_world_click_selects_before_a_cast_a_script_makes_after_it() {
     let mut rig = rig_or_skip!(&[Step::WorldSelect, Step::ScriptCalls, Step::Tick]);
     rig.frame();

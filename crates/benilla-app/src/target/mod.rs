@@ -413,8 +413,7 @@ impl Plugin for TargetPlugin {
             .add_systems(
                 Update,
                 (
-                    // The latch first, before any pick refresh clears what the press was over.
-                    (latch_press_pick, hover::update_pick_occlusion).chain(),
+                    hover::update_pick_occlusion,
                     hover::update_hover,
                     hover::update_hovered_object,
                     cursor_mode::classify_cursor,
@@ -432,11 +431,9 @@ impl Plugin for TargetPlugin {
                     // reference's one caller of its ground-point range check feeds both.
                     reticle::update_reticle,
                     click::world_right_click_payload,
-                    // A plate click replayed as a click, then the select that reads it.
-                    (click::select_on_plate_click, click::select_on_click).chain(),
-                    // After the gated select, which must read the targeting mode before a commit
-                    // clears it. The pending spell feeds only one of the two legs, so their mutual
-                    // order is free.
+                    // After the gated select in the press pass, which reads the targeting mode
+                    // before a commit clears it. The pending spell feeds only one of the two
+                    // legs, so their mutual order is free.
                     crate::spell::targeting::commit_ground_cast_on_click,
                     crate::spell::targeting::commit_object_cast_on_click,
                     // The verb a walk owes runs at its stop, ahead of this frame's click.
@@ -474,6 +471,23 @@ impl Plugin for TargetPlugin {
                     .chain()
                     .in_set(TargetUpdate)
                     .after(WorldStage::Input),
+            )
+            // The world click's select, in the press pass after the click tests settle and after
+            // the frame's keys cast, and before the frame's `OnUpdate` scripts, as 12340's input
+            // pass selects (`0x480410`) before the paint's walk runs them (`0x495320`). The latch
+            // first: it reads last frame's pick, the press's; then a plate click replayed as a
+            // click, then the select that reads it.
+            .add_systems(
+                Update,
+                (
+                    latch_press_pick,
+                    click::select_on_plate_click,
+                    click::select_on_click,
+                )
+                    .chain()
+                    .in_set(crate::ui_script::UiPress)
+                    .after(crate::player::WorldClickSet)
+                    .after(crate::ui_action::drop_item::drop_on_world_click),
             )
             // The script calls that touch the selection, the cast or the targeting cursor
             // (`TargetUnit`, `/target`, `ClearTarget`, `/cast`, `UseAction`, …), applied in the
