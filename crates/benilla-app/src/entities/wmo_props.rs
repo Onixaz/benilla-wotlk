@@ -311,15 +311,10 @@ pub(super) fn spawn_wmo_gameobject_props(
             );
             commands.entity(entity).add_children(&ents);
             // A prop that authors a ship sequence (sails, rotors, a paddle wheel) follows the
-            // boat's state. One whose Stand holds bind pose was armed with no player, so it gets
-            // one; a host that already has its own keeps it.
+            // boat's state. All seven pose away from rest in Stand, so the loader arm gave each a
+            // player; the request re-arms that one.
             if let (Some(h), Some(anims)) = (host.as_ref(), m.animations.as_ref()) {
                 if SHIP_SEQUENCES.iter().any(|&id| anims.find(id).is_some()) {
-                    commands.entity(h.root()).insert_if_new((
-                        AnimationPlayer::default(),
-                        AnimationGraphHandle(anims.graph.clone()),
-                        anims.clone(),
-                    ));
                     ship_props.push(h.root());
                 }
             }
