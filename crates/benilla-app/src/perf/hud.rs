@@ -89,15 +89,18 @@ pub(super) fn toggle_hud(keys: Res<ButtonInput<KeyCode>>, mut hud: ResMut<PerfHu
 
 /// Advance the HUD's 4 Hz snapshot, independent of whether anything drew, and re-ask
 /// [`top_centre_claimed`] on the same cadence.
+/// The snapshot's inputs, released before the band's chunk runs.
+type HudInputs = (
+    ResMut<'static, PerfHud>,
+    Res<'static, FrameStats>,
+    Res<'static, Time<Real>>,
+    Query<'static, 'static, &'static Window, With<PrimaryWindow>>,
+);
+
 /// Exclusive: the band's chunk runs with the `World` lent.
 pub(super) fn refresh_hud_snapshot(
     world: &mut World,
-    inputs: &mut bevy::ecs::system::SystemState<(
-        ResMut<PerfHud>,
-        Res<FrameStats>,
-        Res<Time<Real>>,
-        Query<&Window, With<PrimaryWindow>>,
-    )>,
+    inputs: &mut bevy::ecs::system::SystemState<HudInputs>,
 ) {
     let height = {
         let (mut hud, stats, time, windows) = inputs.get_mut(world);

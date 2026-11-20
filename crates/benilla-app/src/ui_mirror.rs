@@ -102,11 +102,7 @@ fn feed_mirror_timers(world: &mut World, mut seeded: Local<crate::ui_script::VmM
     let fire = |world: &mut World, script: &mut UiScript, event: &str, args| {
         crate::ui_script::safe_world::lend_to(world, script, |s| s.fire_event(event, args));
     };
-    let edges: Vec<MirrorTimerEdge> = world
-        .resource_mut::<MirrorTimerFeed>()
-        .0
-        .drain(..)
-        .collect();
+    let edges = std::mem::take(&mut world.resource_mut::<MirrorTimerFeed>().0);
     for edge in edges {
         let raw = match edge {
             MirrorTimerEdge::Start(start) => start.kind,
