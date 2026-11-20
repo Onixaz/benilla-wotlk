@@ -390,6 +390,9 @@ mod tests {
             sound_id: 1,
             vertex_format: Some(lvf),
             depth_ramp: (lvf != VertexFormat::HeightUv).then_some(ramp),
+            depth_texture: None,
+            sheet_scale: 1.0,
+            sheet_rotation: 0.0,
         }
     }
 

@@ -4,7 +4,7 @@
 //! off the wall clock, so no CPU mutates a material; a deterministic run bakes the clock off
 //! (frame 0, scroll 0). Day and night follow server time.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -20,15 +20,58 @@ use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::materials::{LiquidExt, LiquidMaterial};
 use benilla_assets::LockRecover;
 use benilla_assets::{liquid_frame_array, LiquidTables, RenderConfig, WorldAssets};
-use benilla_formats::{read_texture_mip_chain, BlpMipChain, LiquidKind, LiquidMesh};
+use benilla_formats::{
+    read_texture_mip_chain, BlpMipChain, LiquidKind, LiquidMesh, LiquidTypeRow, LiquidTypes,
+};
 
 /// The shared liquid materials by [`LiquidKey`]; absent without client data.
 #[derive(Resource, Default)]
 pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
-    /// The `LiquidType` ids whose WMO pools take the exterior environment in any group
-    /// ([`LiquidTypes::exterior_pool`](benilla_formats::LiquidTypes::exterior_pool)).
-    exterior_pools: HashSet<u32>,
+    /// The `LiquidType` rows, which decide how a WMO pool draws ([`PoolType`]).
+    types: LiquidTypes,
+}
+
+/// What a WMO pool's `LiquidType` row decides about how it draws: its environment
+/// (`0x793d20`), its depth texture and its sheet's texture matrix (`0x8a5590`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PoolType {
+    /// `Flags & 0x200`: the exterior environment in any group.
+    exterior: bool,
+    /// `Texture[1]` is a depth swatch, colour and alpha both by V.
+    swatch: bool,
+    /// The sheet's texture-coordinate matrix, rows `a` and `b`: `RotZ(Float[1]·57.29578)` scaled
+    /// by `Float[0]`, applied as `uv·M` (`0x8a5590`, constants `c[9..12]` of `vsLiquidWater`).
+    sheet: [[f32; 2]; 2],
+}
+
+impl Default for PoolType {
+    /// A type with no row: an interior-capable pool on the band texture, its sheet unscaled.
+    fn default() -> Self {
+        PoolType {
+            exterior: false,
+            swatch: false,
+            sheet: [[1.0, 0.0], [0.0, 1.0]],
+        }
+    }
+}
+
+impl PoolType {
+    pub(crate) fn from_row(row: &LiquidTypeRow) -> Self {
+        let (sin, cos) = row.sheet_rotation.sin_cos();
+        let scale = row.sheet_scale;
+        PoolType {
+            exterior: row.exterior_pool(),
+            swatch: row.depth_texture.is_some_and(|t| t.is_swatch()),
+            sheet: [[cos * scale, sin * scale], [-sin * scale, cos * scale]],
+        }
+    }
+
+    /// `uv` through the sheet matrix, row-vector order as the vertex program applies it.
+    fn sheet_uv(&self, [u, v]: [f32; 2]) -> [f32; 2] {
+        let [a, b] = self.sheet;
+        [u * a[0] + v * b[0], u * a[1] + v * b[1]]
+    }
 }
 
 /// Which of the reference's three liquid renderers draws a surface: its dispatch sends the type
@@ -40,7 +83,8 @@ pub(crate) struct LiquidAssets {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LiquidPath {
     /// An ADT chunk's MCLQ: two stages, the depth swatch at `tc0 = (0.5, LUT[depthByte])` and the
-    /// sheet at `tc1 = (col·¼, row·¼)`; no vertex colour.
+    /// sheet at `tc1 = (col·¼, row·¼)`; no vertex colour. Also an exterior WMO pool whose type binds
+    /// a depth swatch (WMO Ocean): 12340 draws both with the one water program (`0x8a5590`).
     Adt,
     /// A WMO group's MLIQ, exterior or exterior-lit (`MOGP.flags & 0x48 != 0`): one stage, a
     /// 9-float vertex with an up normal and a colour dword, `MapObjExtWater0.bls` bound.
@@ -52,10 +96,13 @@ pub(crate) enum LiquidPath {
 
 impl LiquidPath {
     /// A WMO pool's renderer: interior only in an interior group (`MOGP.flags & 0x48 == 0`) and for
-    /// a type without `LiquidType.Flags & 0x200`, the reference's exterior test (`0x793d20`).
-    pub(crate) fn wmo(group_interior: bool, exterior_pool: bool) -> Self {
-        if group_interior && !exterior_pool {
+    /// a type without `LiquidType.Flags & 0x200`, the reference's exterior test (`0x793d20`); an
+    /// exterior pool whose type binds a depth swatch draws the swatch, as terrain water does.
+    pub(crate) fn wmo(group_interior: bool, pool: PoolType) -> Self {
+        if group_interior && !pool.exterior {
             Self::WmoInterior
+        } else if pool.swatch {
+            Self::Adt
         } else {
             Self::WmoExterior
         }
@@ -119,9 +166,11 @@ impl LiquidAssets {
             .map(|e| e.material.clone())
     }
 
-    /// Whether a WMO pool of `liquid_type` takes the exterior environment in any group.
-    fn exterior_pool(&self, liquid_type: u32) -> bool {
-        self.exterior_pools.contains(&liquid_type)
+    /// What a WMO pool of `liquid_type` takes from its row; the default for a type with no row.
+    fn pool_type(&self, liquid_type: u32) -> PoolType {
+        self.types
+            .get(liquid_type)
+            .map_or_else(PoolType::default, PoolType::from_row)
     }
 }
 
@@ -169,7 +218,7 @@ pub(crate) fn spawn_liquids<'a>(
         entities.push(
             commands
                 .spawn((
-                    Mesh3d(meshes.add(liquid_bevy_mesh(lq, None))),
+                    Mesh3d(meshes.add(liquid_bevy_mesh(lq, None, None))),
                     MeshMaterial3d(material),
                     Transform::IDENTITY,
                     LiquidSurface,
@@ -226,8 +275,13 @@ fn liquid_collider(lq: &LiquidMesh) -> Option<Collider> {
 }
 
 /// The render mesh for one [`LiquidMesh`] in its own space (absolute for MCLQ, model-local for WMO
-/// liquid): a flat up normal, the tiling UVs, and the per-vertex depth `V` in UV1.x.
-fn liquid_bevy_mesh(lq: &LiquidMesh, body_color: Option<[f32; 3]>) -> Mesh {
+/// liquid): a flat up normal, the tiling UVs (through a WMO water pool's `sheet` matrix), and the
+/// per-vertex depth `V` in UV1.x.
+fn liquid_bevy_mesh(
+    lq: &LiquidMesh,
+    body_color: Option<[f32; 3]>,
+    sheet: Option<&PoolType>,
+) -> Mesh {
     let positions: Vec<[f32; 3]> = lq
         .positions
         .iter()
@@ -241,7 +295,11 @@ fn liquid_bevy_mesh(lq: &LiquidMesh, body_color: Option<[f32; 3]>) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     // WoW up (0, 0, 1) is Bevy up (0, 1, 0).
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; n]);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, lq.uvs.clone());
+    let uvs = match sheet {
+        Some(pool) => lq.uvs.iter().map(|&uv| pool.sheet_uv(uv)).collect(),
+        None => lq.uvs.clone(),
+    };
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     let uv1: Vec<[f32; 2]> = lq.depths.iter().map(|&d| [d, 0.0]).collect();
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
     // An interior pool's `MOMT.diffColor` rides the vertex colour, where the reference's interior
@@ -273,7 +331,8 @@ pub(crate) fn spawn_wmo_liquids<'a>(
         return;
     };
     for lq in liquids {
-        let path = LiquidPath::wmo(interior, liquid.exterior_pool(lq.liquid_type));
+        let pool_type = liquid.pool_type(lq.liquid_type);
+        let path = LiquidPath::wmo(interior, pool_type);
         // The one path that can scroll, decided by the type, not the kind (`scrolls`).
         let scroll = scrolls(lq.liquid_type);
         // The interior arm's body colour via the pool's MLIQ `materialId`; none when fullbright.
@@ -295,7 +354,12 @@ pub(crate) fn spawn_wmo_liquids<'a>(
         }
         let surface = commands
             .spawn((
-                Mesh3d(meshes.add(liquid_bevy_mesh(lq, body_color))),
+                // The sheet matrix is the water material's; magma and slime keep their own UVs.
+                Mesh3d(meshes.add(liquid_bevy_mesh(
+                    lq,
+                    body_color,
+                    (!lq.kind.is_fullbright()).then_some(&pool_type),
+                ))),
                 MeshMaterial3d(material),
                 transform,
                 LiquidSurface,
@@ -352,7 +416,7 @@ pub(super) fn setup_liquid(
     // Light, fog and the water swatches come off the shared global-light buffer, as for terrain.
     let mut assets = LiquidAssets::default();
     if let Some(tables) = &tables {
-        assets.exterior_pools = tables.0.types.exterior_pool_ids().collect();
+        assets.types = tables.0.types.clone();
     }
     for &(kind, dir, stem, count) in FRAME_SETS {
         let Some((frames, frame_count)) =
@@ -558,18 +622,60 @@ mod tests {
                     material: Handle::default(),
                 },
             )]),
-            exterior_pools: HashSet::new(),
+            types: LiquidTypes::default(),
         }
     }
 
     /// The reference's exterior test (`0x793d20`): an exterior group's pool is exterior, and so is
-    /// an interior group's pool whose type carries `LiquidType.Flags & 0x200`.
+    /// an interior group's pool whose type carries `LiquidType.Flags & 0x200`. An exterior pool on a
+    /// depth swatch draws the swatch.
     #[test]
     fn a_wmo_pool_is_interior_only_in_an_interior_group_without_the_exterior_flag() {
-        assert_eq!(LiquidPath::wmo(true, false), LiquidPath::WmoInterior);
-        assert_eq!(LiquidPath::wmo(true, true), LiquidPath::WmoExterior);
-        assert_eq!(LiquidPath::wmo(false, false), LiquidPath::WmoExterior);
-        assert_eq!(LiquidPath::wmo(false, true), LiquidPath::WmoExterior);
+        let pool = |exterior, swatch| PoolType {
+            exterior,
+            swatch,
+            ..PoolType::default()
+        };
+        assert_eq!(
+            LiquidPath::wmo(true, pool(false, false)),
+            LiquidPath::WmoInterior
+        );
+        assert_eq!(
+            LiquidPath::wmo(true, pool(true, false)),
+            LiquidPath::WmoExterior
+        );
+        assert_eq!(
+            LiquidPath::wmo(false, pool(false, false)),
+            LiquidPath::WmoExterior
+        );
+        assert_eq!(
+            LiquidPath::wmo(false, pool(true, false)),
+            LiquidPath::WmoExterior
+        );
+        assert_eq!(LiquidPath::wmo(true, pool(true, true)), LiquidPath::Adt);
+        assert_eq!(LiquidPath::wmo(false, pool(false, true)), LiquidPath::Adt);
+    }
+
+    /// The sheet matrix is `RotZ(θ)·s` in row-vector order: a quarter turn at scale ½ sends
+    /// `(1, 0)` to `(0, ½)` and `(0, 1)` to `(−½, 0)`.
+    #[test]
+    fn the_sheet_matrix_rotates_and_scales_uvs_row_vector_first() {
+        let row = LiquidTypeRow {
+            flags: 0,
+            class: 1,
+            sound_id: 0,
+            vertex_format: None,
+            depth_ramp: None,
+            depth_texture: None,
+            sheet_scale: 0.5,
+            sheet_rotation: std::f32::consts::FRAC_PI_2,
+        };
+        let pool = PoolType::from_row(&row);
+        let close =
+            |[a, b]: [f32; 2], [c, d]: [f32; 2]| (a - c).abs() < 1e-6 && (b - d).abs() < 1e-6;
+        assert!(close(pool.sheet_uv([1.0, 0.0]), [0.0, 0.5]));
+        assert!(close(pool.sheet_uv([0.0, 1.0]), [-0.5, 0.0]));
+        assert_eq!(PoolType::default().sheet_uv([3.0, 4.0]), [3.0, 4.0]);
     }
 
     /// An ADT surface carries `ExteriorScene` and none of the components `UnownedSceneFilter`
@@ -621,14 +727,14 @@ mod tests {
 /// The scroll and fog-block rules against the real client files.
 #[cfg(test)]
 mod real_data {
-    use super::{LiquidKind, LiquidPath};
+    use super::{LiquidKind, LiquidPath, PoolType};
     use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh, WmoLiquidRule};
     use std::collections::HashMap;
 
     /// Daggercap Bay's cave pool is the one interior-group pool of type 14 (WMO Ocean) in the
-    /// install, so it takes the exterior arm; Drak'Tharon's interior water (13) stays interior.
+    /// install, so it draws exterior on the ocean swatch; Drak'Tharon's interior water (13) stays interior.
     #[test]
-    fn the_daggercap_cave_pool_takes_the_exterior_arm() {
+    fn the_daggercap_cave_pool_draws_exterior_on_the_ocean_swatch() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let types = benilla_formats::load_liquid_types(&chain).expect("LiquidType loads");
@@ -643,14 +749,19 @@ mod real_data {
             let interior = root.group_infos().get(gi).expect("group info").interior;
             (
                 lq.liquid_type,
-                LiquidPath::wmo(interior, types.exterior_pool(lq.liquid_type)),
+                LiquidPath::wmo(
+                    interior,
+                    types
+                        .get(lq.liquid_type)
+                        .map_or_else(PoolType::default, PoolType::from_row),
+                ),
             )
         };
         assert_eq!(
             pool_path("world\\wmo\\northrend\\howlingfjord\\daggercapcave.wmo", 0),
-            (14, LiquidPath::WmoExterior),
-            "the cave's ocean is drawn as exterior water; the interior arm adds its white MOMT \
-             colour and saturates it",
+            (14, LiquidPath::Adt),
+            "the cave's ocean is exterior water on the ocean swatch; the interior arm adds its \
+             white MOMT colour and saturates it",
         );
         assert_eq!(
             pool_path("world\\wmo\\dungeon\\draktharon\\draktharon.wmo", 2),
