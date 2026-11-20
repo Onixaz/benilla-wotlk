@@ -1,29 +1,68 @@
-//! The one point in the frame where the script calls that touch the selection, the player's cast or
-//! the targeting cursor take effect, in the order the script made them. In the reference each such
-//! call is done when it returns (the macro runner fires every line in one pass; `TargetByName` and
-//! `TargetUnit` commit through the selection setter; `CastSpellByName` casts at the selection as it
-//! stands then), so `/target Bob` then `/cast Flash Heal` heals Bob, and `/cast` then `/target`
-//! casts at the old target. A fixed order between per-kind drains cannot give both, so the VM keeps
-//! one queue ([`ScriptCall`]) and this system applies it front to back, each call through its
-//! owner's applier.
-
-use std::collections::VecDeque;
+//! Where the script calls that touch the selection, the player's cast or the targeting cursor
+//! take effect. In the reference each such call is done when it returns (the macro runner fires
+//! every line in one pass; `TargetByName` and `TargetUnit` commit through the selection setter
+//! `0x524bf0`; `CastSpellByName` casts at the selection as it stands then), so `/target Bob` then
+//! `/cast Flash Heal` heals Bob, and `/cast` then `/target` casts at the old target. A system that
+//! runs Lua with the `World` lent ([`crate::ui_script::safe_world`]) has each call applied inside
+//! the Lua call that made it ([`apply_in_call`]), each through its owner's applier;
+//! [`apply_script_calls`] applies what waited where no `World` was lent.
 
 use bevy::prelude::*;
 
 use benilla_ui::script::{ScriptCall, UiScript};
 
-/// How deep calls made while applying a call may nest in one frame: a macro whose line presses a
-/// macro, and so on. Past it (a macro that presses itself), what is left waits for the next frame,
-/// so a frame always ends.
-const MAX_NESTING: u8 = 8;
+/// What applying one call left to do once its appliers' borrows ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Applied {
+    /// The call is done.
+    Done,
+    /// `UseAction` on a macro slot: the 1-based macro, whose lines run inside the call (`0x5abdbc`).
+    Macro(u32),
+}
 
-/// Apply the queued script calls in call order, in the press pass after the clicks and keys that
-/// made them and before the frame's feed, which publishes the cooldowns they arm.
+/// Apply `call` inside the Lua call that made it, with the lent `World`; `false` in a world
+/// without the appliers' state, where the call waits.
+pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
+    let applied = crate::ui_script::safe_world::with_world(|world| {
+        // The appliers hold the `World` until they return: a listener's call waits behind this one.
+        let applying = benilla_ui::script::Applying::hold();
+        let applied = world.run_system_cached_with(apply_one, call).ok();
+        drop(applying);
+        // The setter's tail, inside the call that moved the selection (`0x524f38`-`0x524f54`).
+        if applied.is_some() {
+            crate::ui_unit::target_set_tail(world);
+        }
+        applied
+    })
+    .flatten();
+    match applied {
+        None => false,
+        Some(Applied::Done) => true,
+        // The macro's lines run through the chat input, as if typed, each line's call applying
+        // as the line runs (`0x564db0`, `0x564e5d`).
+        Some(Applied::Macro(index)) => {
+            if !crate::ui_macro::run_macro(&mut UiScript::in_call(lua), index) {
+                debug!("ui_action: macro {index} is empty");
+            }
+            true
+        }
+    }
+}
+
+/// Apply the calls that waited where no `World` was lent, in call order, in the press pass after
+/// the clicks and keys and before the frame's feed, which publishes the cooldowns they arm.
+pub(crate) fn apply_script_calls(world: &mut World) {
+    crate::ui_script::safe_world::lend(world, |script| {
+        benilla_ui::script::apply_queued(script.lua());
+    });
+}
+
+/// Apply one call in its owner's applier, with the press's edges fired as it returns.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
-pub(crate) fn apply_script_calls(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
+fn apply_one(
+    In(call): In<ScriptCall>,
+    (mut script, mut live): (
+        NonSendMut<UiScript>,
         crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
     mut appliers: ParamSet<(
@@ -36,11 +75,10 @@ pub(crate) fn apply_script_calls(
         crate::ui_pet::PetPress,
         crate::ui_action::AttackPress,
     )>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    in_call_order(&mut script, |script, call| {
+) -> Applied {
+    let script = &mut *script;
+    let mut applied = Applied::Done;
+    {
         match call {
             ScriptCall::Select(request) => appliers.p0().select(request, script),
             ScriptCall::TargetByName { name, exact } => {
@@ -94,6 +132,7 @@ pub(crate) fn apply_script_calls(
             ScriptCall::UseAction(press) => {
                 match crate::ui_action::use_action(&mut appliers.p4(), script, press) {
                     crate::ui_action::UseOutcome::Done => {}
+                    crate::ui_action::UseOutcome::Macro(index) => applied = Applied::Macro(index),
                     crate::ui_action::UseOutcome::Attack => appliers.p7().attack_target(script),
                     // A pet-action slot sends the pet bar's action, at no unit (`0x5ac000` →
                     // `0x5d4210`).
@@ -173,7 +212,8 @@ pub(crate) fn apply_script_calls(
         // A press's cast-bar edges, fired as the call that made them returns (`0x80b556`,
         // `0x806200`); the cancel's share the ladder's queue.
         appliers.p3().ladder.press.fire(script, &mut live);
-    });
+    }
+    applied
 }
 
 /// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), fired as the press returns.
@@ -220,31 +260,19 @@ fn cast_as_pet(cast: &mut crate::spell::ScriptCast, out: crate::ui_pet::PetCast)
     }
 }
 
-/// Apply every queued call front to back. Applying one may queue more: a macro's lines run inside
-/// `UseAction`, so the calls they make go before the next one queued.
+/// Apply every queued call front to back through `apply`, the calls one queues ahead of the
+/// next, as a call applies inside the call that made it.
+#[cfg(test)]
 pub(crate) fn in_call_order(
     script: &mut UiScript,
     mut apply: impl FnMut(&mut UiScript, ScriptCall),
 ) {
-    let mut queue: VecDeque<(ScriptCall, u8)> = script
-        .take_script_calls()
-        .into_iter()
-        .map(|call| (call, 0))
-        .collect();
-    let mut next_frame = Vec::new();
-    while let Some((call, depth)) = queue.pop_front() {
+    let mut queue: std::collections::VecDeque<ScriptCall> = script.take_script_calls().into();
+    while let Some(call) = queue.pop_front() {
         apply(script, call);
-        let nested = script.take_script_calls();
-        if depth >= MAX_NESTING {
-            next_frame.extend(nested);
-            continue;
+        for call in script.take_script_calls().into_iter().rev() {
+            queue.push_front(call);
         }
-        for call in nested.into_iter().rev() {
-            queue.push_front((call, depth + 1));
-        }
-    }
-    if !next_frame.is_empty() {
-        script.requeue_script_calls(next_frame);
     }
 }
 

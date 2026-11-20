@@ -314,16 +314,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(at) = super::calls::cast_at_arg(lua, Some(&unit)) else {
                 return Ok(());
             };
-            let mut model = crate::script::model_mut_of(lua);
+            let model = crate::script::model_mut_of(lua);
             if model.unit_guids.player == 0 {
                 return Ok(());
             }
             if let Some(held) = find_item(&model, &query, 0) {
-                model.script_calls.push(ScriptCall::UseItemAt {
-                    bag: held.bag,
-                    slot: held.slot,
-                    at,
-                });
+                drop(model);
+                super::calls::make(
+                    lua,
+                    ScriptCall::UseItemAt {
+                        bag: held.bag,
+                        slot: held.slot,
+                        at,
+                    },
+                );
             }
             Ok(())
         })?,
@@ -334,7 +338,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "EquipItemByName",
         lua.create_function(|lua, (item, slot): (Value, Value)| {
-            let mut model = crate::script::model_mut_of(lua);
+            let model = crate::script::model_mut_of(lua);
             if model.unit_guids.player == 0 {
                 return Ok(());
             }
@@ -355,11 +359,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 None => worn,
             };
             if !stays {
-                model.script_calls.push(ScriptCall::EquipItem {
-                    bag: held.bag,
-                    slot: held.slot,
-                    dst: dst.map(|d| d as u8),
-                });
+                drop(model);
+                super::calls::make(
+                    lua,
+                    ScriptCall::EquipItem {
+                        bag: held.bag,
+                        slot: held.slot,
+                        dst: dst.map(|d| d as u8),
+                    },
+                );
             }
             Ok(())
         })?,

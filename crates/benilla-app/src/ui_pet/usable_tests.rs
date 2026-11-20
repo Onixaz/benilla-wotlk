@@ -928,24 +928,19 @@ fn an_order_latches_signals_and_sends_inside_the_call() {
     }
 }
 
-/// A press behind a queued call keeps its turn, so `/target` then `/petfollow` sends at the new selection (`0x5d4240` reads it as the earlier call left it).
+/// `/target` then `/petfollow` in one chunk: the selection setter commits before `TargetUnit`
+/// returns (`0x524bf0`), so the follow sends at the new selection (`0x5d4240` reads it then).
 #[test]
-fn an_order_behind_a_queued_select_keeps_its_turn() {
+fn an_order_after_a_select_sends_at_the_new_selection() {
     let mut rig = scene_with(FOLLOW, 0);
     let queued = ui(&mut rig, |s| {
         s.run("TargetUnit('player') PetFollow()").unwrap();
         s.take_script_calls()
     });
-    assert_eq!(queued.len(), 2, "{queued:?}");
     assert!(
-        rig.sent().is_empty(),
-        "nothing goes before the select applies"
+        queued.is_empty(),
+        "both applied inside their calls: {queued:?}"
     );
-    ui(&mut rig, |s| s.requeue_script_calls(queued));
-    rig.app
-        .world_mut()
-        .run_system_once(crate::script_calls::apply_script_calls)
-        .unwrap();
     let sent = rig.sent();
     assert!(
         sent.iter().any(|c| matches!(
@@ -960,9 +955,11 @@ fn an_order_behind_a_queued_select_keeps_its_turn() {
     );
 }
 
-/// Attack keeps its script call turn: its validator's pick writes the selection and the TAB history, applied in call order with the player's own casts and selects (#1235); applied, any pet's pass raises the global (`0x5d4509`).
+/// Attack applies inside its call: its validator's pick writes the selection and the TAB history
+/// (`0x5d4500`), then any pet's pass raises the global (`0x5d4509`), so `IsPetAttackActive` after it
+/// in the same chunk reads true.
 #[test]
-fn an_attack_order_is_applied_in_call_order_and_raises_the_global() {
+fn an_attack_order_raises_the_global_inside_the_call() {
     let mut rig = scene_with(ATTACK, 0);
     let (in_call, queued) = ui(&mut rig, |s| {
         let a = s
@@ -970,13 +967,8 @@ fn an_attack_order_is_applied_in_call_order_and_raises_the_global() {
             .unwrap();
         (a, s.take_script_calls())
     });
-    assert!(!in_call);
-    assert_eq!(queued.len(), 1, "{queued:?}");
-    ui(&mut rig, |s| s.requeue_script_calls(queued));
-    rig.app
-        .world_mut()
-        .run_system_once(crate::script_calls::apply_script_calls)
-        .unwrap();
+    assert!(in_call, "the global is up before the verb returns");
+    assert!(queued.is_empty(), "{queued:?}");
     assert!(rig.app.world().resource::<PetBar>().attacking);
     let sent = rig.sent();
     assert!(
@@ -1048,16 +1040,30 @@ fn the_menu_verbs_act_inside_the_call() {
     assert!(ui(&mut rig, |s| s.take_pet_renames()).is_empty());
 }
 
-/// A menu verb behind a queued call waits for it, as a press does: the drain runs it after the call applied.
+/// A menu verb made after a call that waited, one made where no hook was lent, applies that call
+/// first and then runs inside its own, so the two keep call order.
 #[test]
-fn a_menu_verb_behind_a_queued_call_waits() {
+fn a_menu_verb_after_a_waiting_call_applies_it_first() {
     let mut rig = scene();
     let _ = rig.sent();
+    rig.app
+        .world_mut()
+        .non_send_resource_mut::<benilla_ui::script::UiScript>()
+        .run("TargetUnit('player')")
+        .unwrap();
     let (queued, gives_up) = ui(&mut rig, |s| {
-        s.run("TargetUnit('player') PetDismiss()").unwrap();
+        s.run("PetDismiss()").unwrap();
         (s.take_script_calls(), s.take_pet_gives_up())
     });
-    assert_eq!(queued.len(), 1);
-    assert_eq!(gives_up, (0, 1));
-    assert!(rig.sent().is_empty());
+    assert!(queued.is_empty(), "{queued:?}");
+    assert_eq!(gives_up, (0, 0), "nothing is left to the drain");
+    let dismiss = 3 | ((PET_ACT_COMMAND as u32) << 24);
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.last(),
+            Some(ClientCommand::PetAction { pet_guid: PET, packed, .. }) if *packed == dismiss
+        ),
+        "the dismiss goes out after the select: {sent:?}"
+    );
 }

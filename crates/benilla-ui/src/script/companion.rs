@@ -208,13 +208,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (ty, index): (Value, Value)| {
             let (ty, slot) = type_and_index(lua, &ty, index, "Usage: CallCompanion(type, index)")?;
             if let Some(spell_id) = spell_at(ty, slot) {
-                crate::script::model_mut_of(lua)
-                    .script_calls
-                    .push(ScriptCall::CastSpell {
+                super::calls::make(
+                    lua,
+                    ScriptCall::CastSpell {
                         spell_id,
                         at: CastAt::Selection,
                         via_book: false,
-                    });
+                    },
+                );
             }
             Ok(())
         })?,
@@ -286,14 +287,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if pool.is_empty() {
                 return Ok(());
             }
-            let mut model = crate::script::model_mut_of(lua);
             let roll = std::collections::hash_map::RandomState::new().hash_one(pool.len());
             let spell_id = pool[(roll % pool.len() as u64) as usize];
-            model.script_calls.push(ScriptCall::CastSpell {
-                spell_id,
-                at: CastAt::Selection,
-                via_book: false,
-            });
+            super::calls::make(
+                lua,
+                ScriptCall::CastSpell {
+                    spell_id,
+                    at: CastAt::Selection,
+                    via_book: false,
+                },
+            );
             Ok(())
         })?,
     )?;

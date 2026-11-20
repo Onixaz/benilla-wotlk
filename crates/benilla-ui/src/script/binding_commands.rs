@@ -156,6 +156,8 @@ pub(super) fn run_special(lua: &Lua, command: &str, down: bool) -> Option<mlua::
                         at,
                         via_book: true,
                     });
+                    drop(model);
+                    super::calls::apply_queued(lua);
                 }
             }
         }
@@ -171,6 +173,8 @@ pub(super) fn run_special(lua: &Lua, command: &str, down: bool) -> Option<mlua::
                         slot: held.slot,
                         at,
                     });
+                    drop(model);
+                    super::calls::apply_queued(lua);
                 }
             }
         }

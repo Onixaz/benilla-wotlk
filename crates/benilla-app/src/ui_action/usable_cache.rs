@@ -780,8 +780,13 @@ impl UsableRun<'_, '_> {
 
     /// Run `pass` and fire what it signals into `script`, in order.
     pub(crate) fn fire(&mut self, script: &mut benilla_ui::script::UiScript, pass: Pass) {
-        let events = run_into(&self.inputs, &mut self.caches, pass);
+        let events = self.run(pass);
         fire_into(script, events);
+    }
+
+    /// Run `pass`: what it signals, in order, for a caller that fires with no borrow held.
+    pub(crate) fn run(&mut self, pass: Pass) -> Vec<UsableEvent> {
+        run_into(&self.inputs, &mut self.caches, pass)
     }
 }
 

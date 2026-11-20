@@ -274,6 +274,9 @@ pub(crate) struct Model {
     /// [`super::UnitGuids::chain_ends`]: a token with a hop that no push names reads its
     /// resolved guid's entry here.
     pub(crate) units_by_guid: HashMap<u64, UnitState>,
+    /// The selection `PLAYER_TARGET_CHANGED` last announced to this VM
+    /// ([`super::UiScript::set_target_signalled`]).
+    pub(crate) target_signalled: Option<u64>,
     /// The player's auras in the reference cache's insertion order, durations joined: the
     /// `GetPlayerBuff` family's list, and any token naming the player's.
     pub(crate) player_auras: Vec<AuraState>,
@@ -1456,6 +1459,7 @@ impl Model {
             ui_scale: None,
             units_by_lower: HashMap::new(),
             units_by_guid: HashMap::new(),
+            target_signalled: None,
             player_auras: Vec::new(),
             unit_auras: HashMap::new(),
             unit_guids: Default::default(),
@@ -1797,6 +1801,7 @@ impl Model {
             item_stat_asks: HashSet::new(),
             #[cfg(any(test, feature = "fixtures"))]
             item_record_waits: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             spell_tooltips: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             pet_spell_tooltips: HashMap::new(),

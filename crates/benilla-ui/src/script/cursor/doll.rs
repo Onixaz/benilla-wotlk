@@ -267,8 +267,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(id) = live_id(lua, &id)?.filter(|&id| id != 0) else {
                 return Ok(());
             };
-            let mut model = crate::script::model_mut_of(lua);
-            use_inventory_item(&mut model, id);
+            use_inventory_item(&mut crate::script::model_mut_of(lua), id);
+            crate::script::calls::apply_queued(lua);
             Ok(())
         })?,
     )?;

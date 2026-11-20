@@ -52,6 +52,7 @@ const UI_MOUSE_BUTTONS: [(MouseButton, &str); 5] = [
 /// One `OnMouseWheel` call per whole notch, `arg1 = ±1`, the fraction carried in `notches`: a
 /// trackpad gesture arrives as a `Pixel` trickle, and the stock handlers act on the sign alone
 /// (`ScrollFrameTemplate_OnMouseWheel` scrolls half a pane per call, `UIPanelTemplates.lua:150`).
+#[cfg(test)]
 fn feed_wheel(
     script: &mut UiScript,
     notches: &mut WheelNotches,
@@ -60,63 +61,90 @@ fn feed_wheel(
     scroll: &AccumulatedMouseScroll,
 ) {
     let whole = notches.feed(crate::bindings::wheel_lines(scroll.unit, scroll.delta.y));
+    wheel_notches(script, whole, x, y);
+}
+
+/// `whole` signed notches as `OnMouseWheel` calls.
+fn wheel_notches(script: &mut UiScript, whole: i32, x: f32, y: f32) {
     let step = whole.signum() as f32;
     for _ in 0..whole.unsigned_abs() {
         script.mouse_wheel(x, y, step);
     }
 }
 
+/// What [`feed_ui_input`] reads and writes between its calls into the engine.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct UiInputParams<'w, 's> {
+    // Carries the `wl_display` the Wayland clipboard backend needs, once winit has a surface.
+    window: Query<
+        'w,
+        's,
+        (
+            &'static Window,
+            Option<&'static bevy::window::RawHandleWrapper>,
+        ),
+        With<PrimaryWindow>,
+    >,
+    buttons: Res<'w, ButtonInput<MouseButton>>,
+    // The wheel travel and its carried notch fraction.
+    scroll: Res<'w, AccumulatedMouseScroll>,
+    notches: ResMut<'w, WheelNotches>,
+    pointer: PointerFeed<'w>,
+    keyboard: MessageReader<'w, 's, KeyboardInput>,
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    capture: ResMut<'w, UiKeyboardCapture>,
+    // The pasteboard the clipboard chords use.
+    clipboard: NonSendMut<'w, HostClipboard>,
+    // The characters the active layout makes, which name a key for a keyboard frame.
+    layout: Res<'w, crate::bindings::LayoutNames>,
+}
+
 /// Feeds cursor, buttons, wheel and keys into the UI engine, publishing [`PlayerUiHover`] (the
 /// pointer arbiter yields to the UI) and [`UiKeyboardCapture`] (a key a box or frame ate never
 /// fires its binding). Runs first in [`super::UiPress`], before the binding dispatch,
 /// `WorldStage::Input` and every key reader.
+///
+/// Exclusive: each call into the engine runs with the `World` lent, so the script calls a click or
+/// a key makes apply inside it, and no parameter is held across it.
 pub(crate) fn feed_ui_input(
-    // It owns the pet bar: the drag a click runs writes the pet's words inside its call (`0x5d5c3e`).
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    // Carries the `wl_display` the Wayland clipboard backend needs, once winit has a surface.
-    window: Query<(&Window, Option<&bevy::window::RawHandleWrapper>), With<PrimaryWindow>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    // The wheel travel and its carried notch fraction, one param for clippy's argument ceiling.
-    (scroll, mut notches): (Res<AccumulatedMouseScroll>, ResMut<WheelNotches>),
-    mut pointer: PointerFeed,
-    // One param for clippy's argument ceiling, with the pasteboard the clipboard chords use.
-    mut kbd: (
-        MessageReader<KeyboardInput>,
-        Res<ButtonInput<KeyCode>>,
-        ResMut<UiKeyboardCapture>,
-        NonSendMut<HostClipboard>,
-    ),
-    // The characters the active layout makes, which name a key for a keyboard frame.
-    layout: Res<crate::bindings::LayoutNames>,
+    world: &mut World,
+    inputs: &mut bevy::ecs::system::SystemState<UiInputParams>,
     mut error_tally: Local<super::VmMemo<super::ScriptErrorTally>>,
 ) {
-    let (keyboard, keys, capture, clipboard) = (&mut kbd.0, &kbd.1, &mut kbd.2, &mut kbd.3);
-    let world_pick = pointer.world_pick();
+    let script = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share);
+    let mut p = inputs.get_mut(world);
+    let world_pick = p.pointer.world_pick();
     // The OS pointer is not ours while a probe drives a gesture through the real pointer path or a
     // capture pins it: skip the mouse half whole, else-arm included, whose `pointer_left_window`
     // would disarm the probe's gesture between its press and release.
-    let synthetic = pointer.synthetic.0 || pointer.capture_pinned.0;
-    let (hover, click_consumed, payload_held) = (
-        &mut pointer.hover,
-        &mut pointer.click_consumed,
-        &mut pointer.payload_held,
-    );
-    click_consumed.0 = false;
-    let Some(mut script) = script else {
-        capture.typing = false;
-        capture.arrows_fall_through = false;
-        capture.consumed.clear();
-        payload_held.0 = false;
+    let synthetic = p.pointer.synthetic.0 || p.pointer.capture_pinned.0;
+    p.pointer.click_consumed.0 = false;
+    let window = p.window.single().ok().map(|(window, raw_handle)| {
+        (
+            window.focused,
+            window.cursor_position(),
+            window.height(),
+            textinput::wayland_display(raw_handle),
+        )
+    });
+    let (Some(script), Some((focused, cursor, height, wl_display))) = (script, window) else {
+        p.capture.typing = false;
+        p.capture.arrows_fall_through = false;
+        p.capture.consumed.clear();
+        p.pointer.payload_held.0 = false;
         return;
     };
-    let Ok((window, raw_handle)) = window.single() else {
-        capture.typing = false;
-        capture.arrows_fall_through = false;
-        capture.consumed.clear();
-        payload_held.0 = false;
-        return;
-    };
-    let wl_display = textinput::wayland_display(raw_handle);
+    let keys = p.keys.clone();
+    let buttons = p.buttons.clone();
+    // One call into the engine with the `World` lent.
+    macro_rules! lua {
+        (|$s:ident| $body:expr) => {
+            crate::ui_script::safe_world::lua!(world, inputs, p, |$s| $body)
+                .expect("the VM is held")
+        };
+    }
     // ── Modifiers ── before the mouse feed, so a click's `IsShiftKeyDown` sees the click's state.
     // Each side apart, the reference's key word (`[0xbeadd8]+0x130`).
     let modifier_keys = [
@@ -130,25 +158,26 @@ pub(crate) fn feed_ui_input(
     .iter()
     .enumerate()
     .fold(0u8, |bits, (i, k)| bits | u8::from(keys.pressed(*k)) << i);
-    script.set_modifier_keys(modifier_keys);
+    lua!(|s| {
+        s.set_modifier_keys(modifier_keys);
+        s.set_window_focused(focused);
+    });
     let (shift, ctrl, alt) = (
         modifier_keys & 0x3 != 0,
         modifier_keys & 0xc != 0,
         modifier_keys & 0x30 != 0,
     );
-    script.set_window_focused(window.focused);
     // ── Mouse ── A cursor off the window skips only the mouse feed.
     // The headless hover probe's aim stands in for a missing cursor, so `PointerOverUi` rises and
     // falls over a panel in an automated run as it does for a person; a real pointer always wins.
-    if let Some(cursor) = window
-        .cursor_position()
+    if let Some(cursor) = cursor
         .or_else(crate::target::hover_probe_point)
         .filter(|_| !synthetic)
     {
         // The window cursor is logical px, y-down from the top left; the root is y-up and 768
         // units high: flip through the window height, then undo the extract seam's scale.
-        let s = super::seam_scale(window.height());
-        let (x, y) = (cursor.x / s, (window.height() - cursor.y) / s);
+        let seam = super::seam_scale(height);
+        let (x, y) = (cursor.x / seam, (height - cursor.y) / seam);
         // `WOW_HIT_COST=1` meters this call's per-frame hit-test rebuild, one line a second.
         static HIT_COST: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let metering =
@@ -156,9 +185,7 @@ pub(crate) fn feed_ui_input(
         let t0 = metering.then(std::time::Instant::now);
         // The world frame is mouse-enabled, so an addon's handlers can hover it, but its hit is
         // the world's: camera look, world clicks and hover targeting stay live over it.
-        hover.0 = script
-            .mouse_move(x, y)
-            .filter(|id| !script.is_world_frame(*id));
+        p.pointer.hover.0 = lua!(|s| s.mouse_move(x, y)).filter(|id| !script.is_world_frame(*id));
         if let Some(t0) = t0 {
             use std::sync::atomic::{AtomicU64, Ordering};
             static ACC_US: AtomicU64 = AtomicU64::new(0);
@@ -182,37 +209,41 @@ pub(crate) fn feed_ui_input(
         for (btn, name) in UI_MOUSE_BUTTONS {
             if buttons.just_pressed(btn) {
                 // A payload over terrain or the sky claims the click: those legs prompt, not select.
-                if btn == MouseButton::Left && hover.0.is_none() {
+                if btn == MouseButton::Left && p.pointer.hover.0.is_none() {
                     use benilla_ui::script::WorldPick;
-                    click_consumed.0 =
+                    p.pointer.click_consumed.0 =
                         matches!(world_pick, WorldPick::Terrain | WorldPick::Nothing)
                             && script.cursor_payload().is_some();
                 }
-                script.mouse_button(x, y, name, true);
+                lua!(|s| s.mouse_button(x, y, name, true));
             }
             if buttons.just_released(btn) {
-                script.mouse_button(x, y, name, false);
+                lua!(|s| s.mouse_button(x, y, name, false));
             }
         }
-        feed_wheel(&mut script, &mut notches, x, y, &scroll);
+        let scroll = (p.scroll.unit, p.scroll.delta.y);
+        let whole = p
+            .notches
+            .feed(crate::bindings::wheel_lines(scroll.0, scroll.1));
+        lua!(|s| wheel_notches(s, whole, x, y));
     } else if !synthetic {
         // The OS pointer left: leave the hovered frame once, and disarm any press or drag every
         // frame, since no release ends it and a stale gesture would fire on re-entry.
-        if hover.0.take().is_some() {
-            script.mouse_move(f32::MIN, f32::MIN);
+        if p.pointer.hover.0.take().is_some() {
+            lua!(|s| s.mouse_move(f32::MIN, f32::MIN));
         }
-        script.pointer_left_window();
+        lua!(|s| s.pointer_left_window());
     }
 
     // ── Keyboard capture gate ── read after the mouse feed (a click may have just focused a box)
     // and before the keys (an Escape that clears focus still counts as captured this frame).
-    capture.typing = script.has_keyboard_focus();
-    capture.consumed.clear();
+    p.capture.typing = script.has_keyboard_focus();
+    p.capture.consumed.clear();
     // ── The alt-arrow exemption ────────────────────────────────────────────────────────────────
     // An EditBox in alt-arrow mode (`ignoreArrows`, set on the chat box at `ChatFrame.xml:21`)
     // passes the arrows on unless ALT is held: its handler returns 0 and the binding runs at
     // the world frame; a focused box swallows any other key.
-    capture.arrows_fall_through = !alt && script.editbox_alt_arrow_mode();
+    p.capture.arrows_fall_through = !alt && script.editbox_alt_arrow_mode();
 
     // ── Keyboard → VM ── box-event keys go to `key_input` by name, editing keys through the
     // per-OS chord table as an `EditAction` or a clipboard operation (the macOS NSPasteboard
@@ -225,7 +256,8 @@ pub(crate) fn feed_ui_input(
         sup,
     };
     let mac = cfg!(target_os = "macos");
-    for ev in keyboard.read() {
+    let events: Vec<KeyboardInput> = p.keyboard.read().cloned().collect();
+    for ev in &events {
         let named = match ev.key_code {
             KeyCode::Enter | KeyCode::NumpadEnter => Some("ENTER"),
             KeyCode::Escape => Some("ESCAPE"),
@@ -234,7 +266,7 @@ pub(crate) fn feed_ui_input(
         };
         // What the layout names the key: the clipboard chords' letters, and a keyboard frame's
         // `arg1` below.
-        let token = crate::bindings::chord::key_token(ev.key_code, &layout);
+        let token = crate::bindings::chord::key_token(ev.key_code, &p.layout);
         if ev.state != ButtonState::Pressed {
             // The release goes to the keyboard frame its press went to, by the name the press
             // dispatched under (`0x494490`): that frame's `OnKeyUp`.
@@ -243,7 +275,7 @@ pub(crate) fn feed_ui_input(
                 .map(str::to_owned)
                 .or_else(|| token.map(|t| t.to_string()));
             if let Some(name) = name {
-                script.key_up(&name);
+                lua!(|s| s.key_up(&name));
             }
             continue;
         }
@@ -254,10 +286,10 @@ pub(crate) fn feed_ui_input(
         // suppresses the chord and the key's binding (the reference's existence gate).
         let frame_named = frame_key_name(ev.key_code);
         if let Some(name) = frame_named {
-            if script.frame_key_input(name) {
+            if lua!(|s| s.frame_key_input(name)) {
                 // Not `typing`: a frame eating one key is not a box taking focus, and treating it
                 // as one would stop a held movement key.
-                capture.consumed.push(ev.key_code);
+                p.capture.consumed.push(ev.key_code);
                 continue;
             }
         }
@@ -270,8 +302,8 @@ pub(crate) fn feed_ui_input(
         // ate, and it is not a focus change, so it releases nothing held.
         else if named.is_none() {
             if let Some(token) = token {
-                if script.frame_key_input(&token.to_string()) {
-                    capture.consumed.push(ev.key_code);
+                if lua!(|s| s.frame_key_input(&token.to_string())) {
+                    p.capture.consumed.push(ev.key_code);
                 }
             }
         }
@@ -279,13 +311,13 @@ pub(crate) fn feed_ui_input(
             // An unconsumed press is not acted on here: ESCAPE's close ladder, TAB's targeting and
             // ENTER's chat open live in the binding dispatch (`crate::bindings`), which runs after
             // this pass and reads the capture gate.
-            if script.key_input(name) {
-                capture.consumed.push(ev.key_code);
+            if lua!(|s| s.key_input(name)) {
+                p.capture.consumed.push(ev.key_code);
             }
         } else if let Some(chord) = chord {
             // The gate is on the key, not the action: a gated arrow never reaches the box (the
             // reference's `return 0`), while HOME/END, which also make a `Move`, do.
-            let gated_arrow = capture.arrows_fall_through
+            let gated_arrow = p.capture.arrows_fall_through
                 && matches!(
                     ev.key_code,
                     KeyCode::ArrowLeft
@@ -295,7 +327,7 @@ pub(crate) fn feed_ui_input(
                 );
             match chord {
                 keymap::Chord::Edit(action) if !gated_arrow => {
-                    script.editbox_action(action);
+                    lua!(|s| s.editbox_action(action));
                 }
                 // Declined: the key falls through to its binding, which `bindings.rs` allows
                 // because `arrows_fall_through` exempts exactly these four from the typing gate.
@@ -303,18 +335,18 @@ pub(crate) fn feed_ui_input(
                 // Copy and cut need a selection, and a password box yields its mask run, never the
                 // real text; paste sanitizes and inserts.
                 keymap::Chord::Copy => {
-                    if let Some(text) = script.editbox_copy() {
-                        clipboard.write(wl_display, &text);
+                    if let Some(text) = lua!(|s| s.editbox_copy()) {
+                        p.clipboard.write(wl_display, &text);
                     }
                 }
                 keymap::Chord::Cut => {
-                    if let Some(text) = script.editbox_cut() {
-                        clipboard.write(wl_display, &text);
+                    if let Some(text) = lua!(|s| s.editbox_cut()) {
+                        p.clipboard.write(wl_display, &text);
                     }
                 }
                 keymap::Chord::Paste => {
-                    if let Some(text) = clipboard.read(wl_display) {
-                        script.paste(&text);
+                    if let Some(text) = p.clipboard.read(wl_display) {
+                        lua!(|s| s.paste(&text));
                     }
                 }
             }
@@ -324,8 +356,8 @@ pub(crate) fn feed_ui_input(
             if let Some(text) = &ev.text {
                 // Same suppression as the named keys: the number row is a binding, so a digit typed
                 // into a keyboard frame (the stack-split spinner) must not also fire an action.
-                if script.char_input(text) {
-                    capture.consumed.push(ev.key_code);
+                if lua!(|s| s.char_input(text)) {
+                    p.capture.consumed.push(ev.key_code);
                 }
             }
         }
@@ -333,8 +365,9 @@ pub(crate) fn feed_ui_input(
 
     // The payload-held mirror, written last so a same-frame pickup or ESC clear shows: the
     // Send-side view the world-click deselect gates on.
-    payload_held.0 = script.cursor_payload().is_some();
+    p.pointer.payload_held.0 = script.cursor_payload().is_some();
 
+    let mut script = script;
     let errors = script.take_errors();
     let tally = error_tally.get(&script);
     for err in errors {

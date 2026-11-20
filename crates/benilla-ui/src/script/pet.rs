@@ -52,7 +52,7 @@ pub enum PetMenuOutcome {
 
 /// A menu verb run inside the call when no earlier script call waits, as 12340's are done when they return; false leaves it to the queue behind that call.
 fn menu_in_call(lua: &Lua, verb: PetMenuVerb<'_>) -> bool {
-    if !crate::script::model_mut_of(lua).script_calls.is_empty() {
+    if !crate::script::calls::none_waiting(lua) {
         return false;
     }
     let Some(outcome) = super::live::write_live(|l| l.pet_menu_verb(verb)).flatten() else {
@@ -255,7 +255,7 @@ pub(crate) fn live_slots() -> Vec<PetActionView> {
 
 /// A press run inside the verb (`0x5d4210`) when no earlier script call waits, so it reads the selection those calls would move; its `PET_BAR_UPDATE` fires before the verb returns (`0x5d4530`). False leaves it to the script call: a spell or Attack, or a press behind a queued call.
 fn press_in_call(lua: &Lua, slot: u32, order: Option<u32>) -> bool {
-    if !crate::script::model_mut_of(lua).script_calls.is_empty() {
+    if !crate::script::calls::none_waiting(lua) {
         return false;
     }
     match super::live::write_live(|l| l.pet_press(slot, order)).flatten() {
@@ -435,9 +435,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CastPetAction",
         lua.create_function(|lua, i: u32| {
             if live_slot(lua, i).is_some_and(|s| s.name.is_some()) && !press_in_call(lua, i, None) {
-                crate::script::model_mut_of(lua)
-                    .script_calls
-                    .push(super::ScriptCall::PetAction(i));
+                crate::script::calls::make(lua, super::ScriptCall::PetAction(i));
             }
             Ok(())
         })?,
@@ -576,9 +574,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, ()| {
                 if live_bar().has_bar && !press_in_call(lua, 0, Some(packed)) {
-                    crate::script::model_mut_of(lua)
-                        .script_calls
-                        .push(super::ScriptCall::PetOrder(packed));
+                    crate::script::calls::make(lua, super::ScriptCall::PetOrder(packed));
                 }
                 Ok(())
             })?,

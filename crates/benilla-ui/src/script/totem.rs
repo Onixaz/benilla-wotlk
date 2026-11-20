@@ -154,8 +154,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "DestroyTotem",
         lua.create_function(|lua, v: Value| {
             let slot = slot_arg(lua, v, "Usage: DestroyTotem(slot)")?;
-            let queued = !crate::script::model_mut_of(lua).script_calls.is_empty();
-            if queued {
+            if !crate::script::calls::none_waiting(lua) {
                 crate::script::model_mut_of(lua)
                     .script_calls
                     .push(super::ScriptCall::DestroyTotem(slot as u8));

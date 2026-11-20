@@ -295,12 +295,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(verdict) = verdict else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
-            crate::script::model_mut_of(lua)
-                .script_calls
-                .push(super::ScriptCall::PlaceGlyph {
+            super::calls::make(
+                lua,
+                super::ScriptCall::PlaceGlyph {
                     socket: socket as u32,
                     verdict,
-                });
+                },
+            );
             Ok(MultiValue::from_vec(vec![flag(
                 verdict == GlyphPlacement::Bind && wants,
             )]))

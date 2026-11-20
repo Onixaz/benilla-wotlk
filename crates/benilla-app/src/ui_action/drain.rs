@@ -302,12 +302,13 @@ pub(crate) enum UseOutcome {
     Attack,
     /// A pet-action slot: the pet bar's action at this 0-based index is pressed.
     PetAction(u32),
+    /// A macro slot: the 1-based macro runs, its lines' calls applying inside it (`0x5abdbc`).
+    Macro(u32),
 }
 
 /// `UseAction` on the pressed slot: a cast, an item use or a macro run, at the selection as the
 /// calls before it left it, or the Attack slot, which it hands back for the player's Attack to run.
-/// A macro's lines run inside it, so the calls they make queue for [`crate::script_calls`] to apply
-/// next.
+/// A macro slot comes back for the caller to run once the press's borrows end.
 pub(crate) fn use_action(
     p: &mut ActionPress,
     script: &mut UiScript,
@@ -441,15 +442,8 @@ pub(crate) fn use_action(
                 );
             }
         }
-        // The macro arm: each body line goes through the chat input, as if typed.
-        Some(b) if b.kind == ACTION_KIND_MACRO => {
-            if !crate::ui_macro::run_macro(script, b.action) {
-                debug!(
-                    "ui_action: macro action {action} (macro {}) is empty",
-                    b.action
-                );
-            }
-        }
+        // The macro arm (`0x5abda2`): the macro runs once the press's borrows end.
+        Some(b) if b.kind == ACTION_KIND_MACRO => return UseOutcome::Macro(b.action),
         // A pet-action slot presses the pet bar's action by index, at no unit (`0x5ac000` →
         // `0x5d4210`).
         Some(b) if b.kind == super::ACTION_KIND_PET => return UseOutcome::PetAction(b.action),

@@ -1,11 +1,114 @@
-//! The script calls whose effects touch the selection, the player's cast or the targeting cursor,
-//! held in one queue in the order the script made them. In the reference each such call is done
-//! when it returns: the macro runner fires every line in one pass, `TargetUnit`, `TargetByName` and
-//! `ClearTarget` commit through the selection set before returning, and `CastSpellByName` casts at
-//! the selection as it stands then. So `/target Bob` then `/cast Flash Heal` heals Bob, and the app
-//! applies this queue front to back at one point in the frame.
+//! The script calls whose effects touch the selection, the player's cast or the targeting cursor.
+//! In the reference each such call is done when it returns: the macro runner fires every line in
+//! one pass, `TargetUnit`, `TargetByName` and `ClearTarget` commit through the selection set before
+//! returning, and `CastSpellByName` casts at the selection as it stands then. So a call goes
+//! through [`make`], which applies it inside the Lua call through the host's applier
+//! ([`set_apply`]) wherever the host's state is lent ([`super::world_loan`]); with none lent it
+//! waits in one queue, in call order.
 
-use super::{ActionUse, SelectionRequest, UiScript};
+use std::cell::{Cell, RefCell};
+
+use super::{world_loan, ActionUse, SelectionRequest, UiScript};
+
+/// The host's applier: one call applied with the lent state, inside the Lua call that made it;
+/// `false` when the host cannot apply it now, and it waits.
+pub type ApplyCall = fn(&mlua::Lua, ScriptCall) -> bool;
+
+thread_local! {
+    /// The host's applier, named once per thread.
+    static APPLY: Cell<Option<ApplyCall>> = const { Cell::new(None) };
+    /// The loan depths at which a call is applying with the lent state borrowed, innermost last.
+    static APPLYING: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Name the host's applier of every script call made on this thread.
+pub fn set_apply(apply: ApplyCall) {
+    APPLY.with(|a| a.set(Some(apply)));
+}
+
+/// Marks the innermost loan borrowed by a call's applier until it drops: a call made meanwhile
+/// under that loan waits its turn behind the applying one.
+pub struct Applying(());
+
+impl Applying {
+    /// The innermost loan is borrowed by an applier from now until the drop.
+    pub fn hold() -> Self {
+        APPLYING.with_borrow_mut(|a| a.push(world_loan::depth()));
+        Self(())
+    }
+}
+
+impl Drop for Applying {
+    fn drop(&mut self) {
+        APPLYING.with_borrow_mut(|a| {
+            a.pop();
+        });
+    }
+}
+
+/// Make `call`: applied before this returns where the host's state is lent, after the calls still
+/// queued; with none lent, or while an applier holds the loan, it waits in the queue. The caller
+/// holds no model borrow.
+pub(crate) fn make(lua: &mlua::Lua, call: ScriptCall) {
+    super::model_mut_of(lua).script_calls.push(call);
+    apply_queued(lua);
+}
+
+/// Apply the queued calls front to back through the host's applier; with nothing lent, they wait.
+/// A call made while one applies joins the back of the queue and applies in its turn here.
+pub fn apply_queued(lua: &mlua::Lua) {
+    let Some(apply) = APPLY.with(Cell::get) else {
+        return;
+    };
+    let depth = world_loan::depth();
+    if depth == 0 || APPLYING.with_borrow(|a| a.last() == Some(&depth)) {
+        return;
+    }
+    loop {
+        let call = {
+            let mut model = super::model_mut_of(lua);
+            if model.script_calls.is_empty() {
+                break;
+            }
+            model.script_calls.remove(0)
+        };
+        if !apply(lua, call.clone()) {
+            super::model_mut_of(lua).script_calls.insert(0, call);
+            break;
+        }
+    }
+}
+
+/// Whether no earlier call waits once the queued ones applied through the lent hook: a verb that
+/// runs inside its call does so only then, so it keeps its turn behind a waiting call.
+pub(crate) fn none_waiting(lua: &mlua::Lua) -> bool {
+    apply_queued(lua);
+    super::model_mut_of(lua).script_calls.is_empty()
+}
+
+impl UiScript {
+    /// Another handle on this VM (the same Lua state, counter and session), for a host that lends
+    /// its state into a call while the VM itself stays where it lives.
+    pub fn share(&self) -> UiScript {
+        UiScript {
+            lua: self.lua.clone(),
+            instructions: self.instructions.clone(),
+            session: self.session,
+        }
+    }
+
+    /// The host over `lua` for an apply inside a Lua call: the same VM, sharing its counters.
+    pub fn in_call(lua: &mlua::Lua) -> UiScript {
+        let ids = lua
+            .app_data_ref::<super::HostIds>()
+            .expect("host ids app_data");
+        UiScript {
+            lua: lua.clone(),
+            instructions: ids.instructions.clone(),
+            session: ids.session,
+        }
+    }
+}
 
 /// One queued call, in the reference's terms.
 #[derive(Clone, Debug, PartialEq)]

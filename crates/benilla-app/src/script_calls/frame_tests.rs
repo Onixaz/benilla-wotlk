@@ -848,8 +848,10 @@ fn a_binding_reads_the_world_on_its_press_and_its_release() {
 }
 
 /// A world click and a cast the script makes after it in the same frame (an `OnUpdate`'s): the
-/// cast goes to the unit the click selected, once.
+/// cast goes to the unit the click selected, once, as 12340's input pass selects before the
+/// paint runs the `OnUpdate` scripts (`0x480410`, `0x495320`).
 #[test]
+#[ignore = "#1376: the world click runs after the tick's OnUpdate"]
 fn a_world_click_selects_before_a_cast_a_script_makes_after_it() {
     let mut rig = rig_or_skip!(&[Step::WorldSelect, Step::ScriptCalls, Step::Tick]);
     rig.frame();
@@ -1160,4 +1162,238 @@ fn a_key_and_a_world_click_in_one_frame_cast_before_the_click_selects() {
     rig.frame();
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
     assert_eq!(rig.selected(), Some(NEW));
+}
+
+// ── C: a script call applies inside the Lua call that made it ──────────────────────────────────
+
+/// An `OnUpdate` that runs `TICK_DO` once, the next frame after it is set.
+const TICK_DO: &str = r#"
+    local f = CreateFrame("Frame")
+    f:SetScript("OnUpdate", function()
+        if TICK_DO then
+            local run = TICK_DO
+            TICK_DO = nil
+            run()
+        end
+    end)
+"#;
+
+/// `UseAction` then `GetActionCooldown` in one `OnUpdate`: the cast goes out and its GCD is armed
+/// inside the call (`0x80b583` → `0x805d70`), so the read after it sees the sweep.
+#[test]
+fn use_action_then_get_action_cooldown_reads_the_gcd_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() UseAction(1) READ = GetActionCooldown(1) end");
+    rig.frame();
+    assert_eq!(
+        rig.casts(),
+        [(BOLT, Some(OLD))],
+        "the cast went out in the call"
+    );
+    let start: f64 = rig.vm().eval("return READ").expect("a start");
+    assert!(start > 0.0, "the read after the call sees the GCD: {start}");
+}
+
+/// `TargetUnit` then the getters in one `OnUpdate`, with no token's snapshot naming the new target:
+/// the getters look the target global's object up (`0x524f38`), so they read it in the call.
+#[test]
+fn target_unit_then_unit_exists_reads_a_unit_no_snapshot_held() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"TICK_DO = function()
+            TargetUnit("party1")
+            READ = { UnitExists("target") and true or false, UnitGUID("target") }
+        end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.selected(), Some(NEW));
+    let (exists, guid): (bool, String) =
+        rig.vm().eval("return READ[1], READ[2]").expect("the reads");
+    assert!(exists, "the new target exists in the call");
+    assert_eq!(guid, format!("0x{NEW:016X}"));
+}
+
+/// The setter fires `PLAYER_TARGET_CHANGED` before it returns (`0x524f54`), after the usable
+/// update (`0x524f48`): a listener runs inside the `TargetUnit` call, once.
+#[test]
+fn target_unit_fires_player_target_changed_inside_the_call() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"ORDER = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("PLAYER_TARGET_CHANGED")
+        f:SetScript("OnEvent", function(self, event)
+            ORDER[#ORDER + 1] = event .. " " .. (UnitGUID("target") or "nil")
+        end)
+        TICK_DO = function()
+            TargetUnit("party1")
+            ORDER[#ORDER + 1] = "returned"
+        end"#,
+    );
+    rig.frame();
+    rig.frame();
+    let order: Vec<String> = rig.vm().eval("return ORDER").expect("the order");
+    assert_eq!(
+        order,
+        [
+            format!("PLAYER_TARGET_CHANGED 0x{NEW:016X}"),
+            "returned".into()
+        ]
+    );
+}
+
+/// A call made where no hook is lent waits; the next call made under one applies it first, so the
+/// two keep call order: the cast goes to the target the earlier call selected.
+#[test]
+fn a_queued_call_applies_before_the_in_call_one() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TargetUnit("party1")"#);
+    assert_eq!(rig.selected(), Some(OLD), "no hook lent: the call waits");
+    rig.lua(r#"TICK_DO = function() CastSpellByName("Bolt") end"#);
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(NEW))]);
+}
+
+/// A macro's lines each apply their call as the line runs (`0x564e5d`), so a line after `/target`
+/// reads the new target.
+#[test]
+fn a_macro_lines_cast_reads_back_in_the_next_line() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("EXECUTE_CHAT_LINE")
+        f:SetScript("OnEvent", function(self, event, arg1) RunScript(arg1) end)
+        MACRO_INDEX = CreateMacro("probe", 1,
+            'TargetUnit("party1")\nREAD = UnitGUID("target")\nUseAction(1)\nCD = GetActionCooldown(1)')"#,
+    );
+    let index: u32 = rig.vm().eval("return MACRO_INDEX").expect("an index");
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_action::ActionSlots>()
+        .buttons
+        .insert(
+            2,
+            ActionButton {
+                slot: 2,
+                action: index,
+                kind: ACTION_KIND_MACRO,
+            },
+        );
+    rig.lua("TICK_DO = function() UseAction(3) end");
+    rig.frame();
+    let read: String = rig.vm().eval("return READ").expect("a guid");
+    assert_eq!(
+        read,
+        format!("0x{NEW:016X}"),
+        "the line after /target reads it"
+    );
+    let cd: f64 = rig.vm().eval("return CD").expect("a start");
+    assert!(cd > 0.0, "the line after the cast reads its GCD: {cd}");
+    assert_eq!(rig.casts(), [(BOLT, Some(NEW))]);
+}
+
+/// The self-pressing macro below run once, on a thread with `stack` bytes of stack: the depth it
+/// reached, the depth one frame later, and the error the error handler saw.
+fn self_pressing_macro(stack: usize) -> Option<(u32, u32, String)> {
+    std::thread::Builder::new()
+        .stack_size(stack)
+        .spawn(|| {
+            let mut rig = Rig::new(&[Step::Tick])?;
+            rig.lua(TICK_DO);
+            rig.lua(
+                r#"local f = CreateFrame("Frame")
+                f:RegisterEvent("EXECUTE_CHAT_LINE")
+                f:SetScript("OnEvent", function(self, event, arg1) RunScript(arg1) end)
+                seterrorhandler(function(msg) ERR = ERR or tostring(msg) end)
+                DEPTH = 0
+                MACRO_INDEX = CreateMacro("probe", 1, 'DEPTH = DEPTH + 1\nUseAction(3)')"#,
+            );
+            let index: u32 = rig.vm().eval("return MACRO_INDEX").expect("an index");
+            rig.app
+                .world_mut()
+                .resource_mut::<crate::ui_action::ActionSlots>()
+                .buttons
+                .insert(
+                    2,
+                    ActionButton {
+                        slot: 2,
+                        action: index,
+                        kind: ACTION_KIND_MACRO,
+                    },
+                );
+            rig.lua("TICK_DO = function() UseAction(3) end");
+            rig.frame();
+            let depth: u32 = rig.vm().eval("return DEPTH").expect("a depth");
+            rig.frame();
+            let again: u32 = rig.vm().eval("return DEPTH").expect("a depth");
+            let err: String = rig.vm().eval("return ERR or ''").expect("an error");
+            Some((depth, again, err))
+        })
+        .expect("a thread")
+        .join()
+        .expect("no panic")
+}
+
+/// A macro that presses itself recurses as 12340's runner does, which keeps no depth of its own
+/// (`0x564db0` saves and restores the running macro, nothing more): Lua's C-call limit ends it
+/// with its stack error inside the call, on a stack the size of the client's main thread, and the
+/// frame goes on.
+#[test]
+fn a_self_pressing_macro_ends_in_the_lua_stack_error() {
+    let Some((depth, again, err)) = self_pressing_macro(crate::MAIN_THREAD_STACK) else {
+        eprintln!("skipped: this build carries no system names");
+        return;
+    };
+    // Lua 5.1 counts C calls in `nCcalls`; the next line's compile is the first past its limit.
+    assert!(
+        err.ends_with("chunk has too many syntax levels"),
+        "Lua's C-call limit: {err:?}"
+    );
+    assert!(depth > 8, "past the old cap: {depth}");
+    assert_eq!(again, depth, "nothing waits for the next frame");
+}
+
+/// The binary links the main thread's stack the self-pressing macro above runs on.
+#[test]
+fn the_binary_links_the_main_thread_stack() {
+    let build = include_str!("../../../benilla/build.rs");
+    let linked = build
+        .lines()
+        .find_map(|l| l.strip_prefix("const MAIN_THREAD_STACK: usize = "))
+        .and_then(|v| {
+            v.trim_end_matches(';')
+                .replace('_', "")
+                .parse::<usize>()
+                .ok()
+        });
+    assert_eq!(linked, Some(crate::MAIN_THREAD_STACK));
+}
+
+/// `PetAttack` then `IsPetAttackActive` in one `OnUpdate`: the order raises the attacking global
+/// inside the call (`0x5d4509`).
+#[test]
+fn pet_attack_then_is_pet_attack_active_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() PetAttack() READ = IsPetAttackActive() end");
+    rig.frame();
+    let read: bool = rig.vm().eval("return READ == true").expect("a flag");
+    assert!(read, "the attacking global is up before the verb returns");
+}
+
+/// `CastPetAction` then `GetPetActionCooldown` in one `OnUpdate`: the pet's cooldown starts and is
+/// flushed inside the press (`0x5d4427` → `0x805d70`, `0x805eda`).
+#[test]
+fn cast_pet_action_then_get_pet_action_cooldown_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() CastPetAction(1) READ = GetPetActionCooldown(1) end");
+    rig.frame();
+    let start: f64 = rig.vm().eval("return READ").expect("a start");
+    assert!(start > 0.0, "the pet's GCD reads in the same call: {start}");
 }

@@ -905,9 +905,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Arm::Took => {}
                     Arm::Pass => {
                         if !super::guild_bank::use_container_item(&mut model, bag, slot) {
-                            model
-                                .script_calls
-                                .push(super::ScriptCall::UseContainerItem { bag, slot });
+                            drop(model);
+                            super::calls::make(
+                                lua,
+                                super::ScriptCall::UseContainerItem { bag, slot },
+                            );
                         }
                     }
                 }

@@ -278,11 +278,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 match picked {
                     Err(spell_id) => {
                         // The spell cast at the null guid.
-                        model.script_calls.push(ScriptCall::CastSpell {
-                            spell_id,
-                            at: CastAt::Selection,
-                            via_book: false,
-                        });
+                        drop(model);
+                        super::calls::make(
+                            lua,
+                            ScriptCall::CastSpell {
+                                spell_id,
+                                at: CastAt::Selection,
+                                via_book: false,
+                            },
+                        );
                         return Ok(());
                     }
                     Ok(i) => {
@@ -388,11 +392,14 @@ impl super::UiScript {
                 .find(|&id| allowed(id))
         };
         if let Some(spell_id) = pick {
-            self.model_mut().script_calls.push(ScriptCall::CastSpell {
-                spell_id,
-                at: CastAt::Selection,
-                via_book: false,
-            });
+            super::calls::make(
+                self.lua(),
+                ScriptCall::CastSpell {
+                    spell_id,
+                    at: CastAt::Selection,
+                    via_book: false,
+                },
+            );
         }
     }
 

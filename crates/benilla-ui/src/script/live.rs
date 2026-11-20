@@ -1467,7 +1467,9 @@ pub(crate) fn money(model: &super::Model) -> u64 {
 
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
-    let ptr = SLOT.with(Cell::get)?;
+    let Some(ptr) = SLOT.with(Cell::get) else {
+        return super::world_loan::live(|l| f(l));
+    };
     let _held = Held::new(Hold::Shared);
     // SAFETY: a pointer in the slot is a mutable borrow held by an enclosing `with_live` or `LiveLoan`, which outlives this call; `_held` panics beside an owner's write, the view never calls back into Lua, and the reference cannot escape `f`.
     let live = unsafe { ptr.as_ref() };
@@ -1476,7 +1478,9 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
 
 /// `f` over the view lent right now, mutably, for a verb that writes the state it reads; `None` with none lent.
 pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
-    let mut ptr = SLOT.with(Cell::get)?;
+    let Some(mut ptr) = SLOT.with(Cell::get) else {
+        return super::world_loan::live(f);
+    };
     let _held = Held::new(Hold::Verb);
     // SAFETY: as `read_live`; `_held` panics beside any of the host's own borrows of the view, so nothing else reaches it for the length of `f`.
     let live = unsafe { ptr.as_mut() };

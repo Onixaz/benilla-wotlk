@@ -203,6 +203,7 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
+pub mod world_loan;
 pub use live::{
     owner_write, read_live, shared_read, write_live, GlobalStrings, LiveLoan, LiveState,
     OwnerWrite, SharedRead, ViewRef,
@@ -328,7 +329,7 @@ pub use battlefield_score::{
     BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
 };
 pub use bind_confirm::PendingEquipAnswer;
-pub use calls::{CastAt, NearestMode, ScriptCall};
+pub use calls::{apply_queued, set_apply, ApplyCall, Applying, CastAt, NearestMode, ScriptCall};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use channel_pane::ChannelSlotInfo;
@@ -832,6 +833,13 @@ pub struct UiScript {
     session: u64,
 }
 
+/// The host's counters, kept in the VM so [`UiScript::in_call`] builds the same host from `&Lua`.
+#[derive(Clone)]
+pub(crate) struct HostIds {
+    instructions: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    session: u64,
+}
+
 /// Hands out [`UiScript::session`] ids: process-global and monotone, so an id is never reused.
 static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -1275,10 +1283,15 @@ impl UiScript {
 
     fn host(lua: Lua) -> UiScript {
         item_stats::clear_fixture_player();
-        UiScript {
-            lua,
+        let ids = HostIds {
             instructions: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             session: NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
+        lua.set_app_data(ids.clone());
+        UiScript {
+            lua,
+            instructions: ids.instructions,
+            session: ids.session,
         }
     }
 

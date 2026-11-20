@@ -1456,7 +1456,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 } else {
                     ScriptCall::Select(SelectionRequest::Unit(token))
                 };
-                crate::script::model_mut_of(lua).script_calls.push(call);
+                crate::script::calls::make(lua, call);
             }
             Ok(())
         })?,
@@ -1469,12 +1469,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "AssistUnit",
         lua.create_function(|lua, token: Option<String>| {
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .script_calls
-                .push(ScriptCall::Select(SelectionRequest::Assist(
-                    token.unwrap_or_default(),
-                )));
+            crate::script::calls::make(
+                lua,
+                ScriptCall::Select(SelectionRequest::Assist(token.unwrap_or_default())),
+            );
             Ok(())
         })?,
     )?;
@@ -1484,20 +1482,14 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "TargetLastFriend",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .script_calls
-                .push(ScriptCall::Select(SelectionRequest::LastFriend));
+            crate::script::calls::make(lua, ScriptCall::Select(SelectionRequest::LastFriend));
             Ok(())
         })?,
     )?;
     g.set(
         "TargetLastEnemy",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .script_calls
-                .push(ScriptCall::Select(SelectionRequest::LastEnemy));
+            crate::script::calls::make(lua, ScriptCall::Select(SelectionRequest::LastEnemy));
             Ok(())
         })?,
     )?;
@@ -1521,10 +1513,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(Value::Number(n)) => n != 0.0,
                 Some(_) => true,
             };
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .script_calls
-                .push(ScriptCall::TargetByName { name, exact });
+            crate::script::calls::make(lua, ScriptCall::TargetByName { name, exact });
             Ok(())
         })?,
     )?;
@@ -1557,8 +1546,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             if !crate::script::spellbook::targeting().active {
                 return Ok(());
             }
-            let mut model = crate::script::model_mut_of(lua);
-            model.script_calls.push(ScriptCall::SpellTargetUnit(token));
+            crate::script::calls::make(lua, ScriptCall::SpellTargetUnit(token));
             Ok(())
         })?,
     )?;
@@ -1570,9 +1558,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClearTarget",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            let had = model.unit("target").is_some_and(|u| u.exists);
-            model.script_calls.push(ScriptCall::ClearTarget);
+            let had = crate::script::model_mut_of(lua)
+                .unit("target")
+                .is_some_and(|u| u.exists);
+            crate::script::calls::make(lua, ScriptCall::ClearTarget);
             Ok(flag(had))
         })?,
     )?;

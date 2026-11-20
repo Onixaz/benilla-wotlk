@@ -426,9 +426,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 super::equipment_manager::wear_set(lua, set);
                 return Ok(());
             }
-            model
-                .script_calls
-                .push(super::ScriptCall::UseAction(ActionUse { action, at }));
+            drop(model);
+            super::calls::make(lua, super::ScriptCall::UseAction(ActionUse { action, at }));
             Ok(())
         })?,
     )?;
