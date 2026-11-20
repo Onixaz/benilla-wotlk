@@ -103,8 +103,8 @@ impl crate::wdb::Persisted for GameObjectTemplates {
 impl crate::query_cache::AskOnce for GameObjectTemplates {
     fn clear_pending(&mut self) {
         self.templates.clear_pending();
-        // Guids are the connection's own.
-        self.entry_of.get_mut().unwrap().clear();
+        // `entry_of` is object state, not an ask: the world-entry clear runs after the drain that
+        // applied the entry's first creates, so clearing it here unkeyed those boats for good.
     }
 }
 
@@ -114,8 +114,13 @@ impl GameObjectTemplates {
     pub(crate) fn request(&self, guid: u64, entry: Option<u32>, commands: &NetCommands) {
         let entry = match entry.filter(|&e| e != 0) {
             Some(e) => {
+                // Every create rewrites the record, so one kept from an earlier session never
+                // outlives its guid's reuse.
+                let mut entry_of = self.entry_of.write().unwrap();
                 if guid::entry(guid) != Some(e) {
-                    self.entry_of.write().unwrap().insert(guid, e);
+                    entry_of.insert(guid, e);
+                } else {
+                    entry_of.remove(&guid);
                 }
                 e
             }
@@ -392,6 +397,44 @@ mod tests {
         // A chest doesn't.
         t.insert(2, 3, "Chest".into(), &data);
         assert!(t.templates.get(2).unwrap().mo_transport.is_none());
+    }
+
+    /// The world-entry clear lands after the drain that applied the entry's first creates, so a
+    /// boat created in that drain must stay keyed through it, or it never arms and stays hidden.
+    #[test]
+    fn a_boat_created_with_the_world_entry_keeps_its_entry() {
+        use crate::query_cache::AskOnce;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let mut t = GameObjectTemplates::default();
+        const BOAT: u64 = 0x1FC0_0000_0000_0007;
+        let mut data = [0i32; 24];
+        data[0] = 964;
+        t.insert(181688, 15, "Northspear".into(), &data);
+        t.request(BOAT, Some(181688), &commands);
+        t.clear_pending();
+        assert_eq!(
+            t.get(BOAT)
+                .and_then(|g| g.mo_transport)
+                .map(|m| m.taxi_path_id),
+            Some(964)
+        );
+    }
+
+    /// A create whose guid carries its own entry drops a record an earlier create left.
+    #[test]
+    fn a_create_rewrites_the_guid_entry_record() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let t = GameObjectTemplates::default();
+        // HIGHGUID_GAMEOBJECT with entry 1731 in bits 24..47.
+        let guid = 0xF110_0000_0000_0000 | (1731u64 << 24) | 0x40;
+        let own = guid::entry(guid).expect("a GameObject guid carries its entry");
+        t.request(guid, Some(own + 1), &commands);
+        assert_eq!(t.entry(guid), Some(own + 1));
+        t.request(guid, Some(own), &commands);
+        assert_eq!(t.entry(guid), Some(own));
+        assert!(t.entry_of.read().unwrap().is_empty());
     }
 
     /// An AzerothCore boat guid's low word is a counter: the query and the lookup key on the
