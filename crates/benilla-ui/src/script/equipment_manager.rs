@@ -69,6 +69,8 @@ pub(crate) struct EquipmentManager {
     pub(crate) ignored: [bool; EQUIPMENT_SET_SLOTS],
     /// A swap is out, refusing another until its result.
     swap_pending: bool,
+    /// The last answer of whether sets can be used (`0xc1e954`).
+    usable: bool,
     pending_set: u32,
 }
 
@@ -144,6 +146,8 @@ impl super::UiScript {
                 .unwrap_or_default();
             self.fire_event("UI_ERROR_MESSAGE", vec![super::ScriptValue::Str(text)]);
         }
+        // The swap is over: the bar's usable update closes the handler (`0x5af7be`).
+        self.update_bar_usable();
     }
 
     /// The sets as the client holds them, for the action bar's icons.
@@ -269,6 +273,32 @@ fn can_use(model: &super::Model) -> bool {
             .is_some_and(|c| super::cvars::sstr_to_int(&c.value) != 0)
 }
 
+/// The walk's own read (`0x5a9fe3` -> `0x5ad6b0` with no update): the answer, kept as the last one.
+pub(super) fn sets_usable_now(model: &mut super::Model) -> bool {
+    let usable = can_use(model);
+    if model.equipment_manager.usable != usable {
+        model.equipment_manager.usable = usable;
+    }
+    usable
+}
+
+/// The answer against the kept one (`0x5ad8ab`, `0x5ada7c`): a change is kept and runs the bar's usable update (`0x5ad8b9`, `0x5ada8a`).
+fn sets_usable_edge(model: &mut super::ModelGuard<'_>) -> bool {
+    let usable = can_use(model);
+    if model.equipment_manager.usable != usable {
+        model.equipment_manager.usable = usable;
+        super::cursor::update_bar_usable(model);
+    }
+    usable
+}
+
+impl super::UiScript {
+    /// Whether equipment sets can be used now (`0x5ad6b0`), for an app site's walk.
+    pub fn can_use_equipment_sets(&self) -> bool {
+        can_use(&self.model_ref())
+    }
+}
+
 /// The locked-item test (`0x5ad940`): an item of the set carries the lock flag. The buyback
 /// exception has no buyback items here to meet.
 fn contains_locked(model: &super::Model, set: &EquipmentSetView) -> bool {
@@ -370,7 +400,7 @@ fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
     };
     {
         let mut model = super::model_mut_of(lua);
-        if !can_use(&model) {
+        if !sets_usable_edge(&mut model) {
             if !model.equipment_manager.swap_pending {
                 drop(model);
                 crate::script::ui_errors::show_now(lua, "EQUIPMENT_MANAGER_IS_DISABLED");
@@ -417,6 +447,8 @@ fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
         model.equipment_manager.pending_set = set.id;
     }
     super::tick::fire_event_into(lua, "EQUIPMENT_SWAP_PENDING", Vec::new());
+    // The swap out blocks every set: the bar's usable update follows its signal (`0x5addf7`).
+    super::cursor::update_bar_usable(&mut super::model_mut_of(lua));
     true
 }
 
@@ -796,7 +828,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // CanUseEquipmentSets() (`0x5ad880`): 1 with no swap out and `equipmentManager` on, else 0.
     g.set(
         "CanUseEquipmentSets",
-        lua.create_function(|lua, _: MultiValue| Ok(if can_use(&read(lua)) { 1.0 } else { 0.0 }))?,
+        lua.create_function(|lua, _: MultiValue| {
+            let usable = sets_usable_edge(&mut super::model_mut_of(lua));
+            Ok(if usable { 1.0 } else { 0.0 })
+        })?,
     )?;
 
     install_item_verbs(lua)

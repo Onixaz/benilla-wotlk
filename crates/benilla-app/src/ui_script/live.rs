@@ -1771,6 +1771,10 @@ impl LiveState for LiveView<'_, '_> {
         self.write_slot_word(slot, word)
     }
 
+    fn bar_usable_update(&mut self, sets_usable: bool) -> Option<bool> {
+        self.bar_update(sets_usable)
+    }
+
     fn action_usable(&self, action: u32) -> Option<(bool, bool)> {
         let caches = self.usable.get()?;
         let cell = action

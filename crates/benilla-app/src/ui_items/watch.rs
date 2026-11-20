@@ -79,6 +79,18 @@ pub(crate) fn fire_lock_edge(ui: &mut UiEvents, locked: bool, args: Vec<ScriptVa
     }
 }
 
+/// The lock (`0x513740`) or unlock (`0x513770`) a caller holding the VM made: the edge's signals when the bit moved, then the bar's usable update either way (`0x51376b`, `0x51379b`).
+pub(crate) fn lock_moved_now(
+    script: &mut benilla_ui::script::UiScript,
+    locked: bool,
+    moved: Option<Vec<ScriptValue>>,
+) {
+    if let Some(args) = moved {
+        fire_lock_edge_now(script, locked, args);
+    }
+    script.update_bar_usable();
+}
+
 /// [`fire_lock_edge`] for a caller holding the VM.
 pub(crate) fn fire_lock_edge_now(
     script: &mut benilla_ui::script::UiScript,
@@ -93,8 +105,18 @@ pub(crate) fn fire_lock_edge_now(
     }
 }
 
-/// The item unlock (`0x513770` -> `0x707020`): a locked item unlocks and signals at its place; an unlocked or absent one does nothing.
+/// The item unlock (`0x513770`): a locked item unlocks and signals at its place (`0x707020`), then the bar's usable update runs, an item or none (`0x51379b`).
 pub(crate) fn unlock_item(world: &mut World, guid: u64) {
+    unlock_item_alone(world, guid);
+    // Its own step, so the unlock's signals fire ahead of it.
+    step(
+        world,
+        crate::ui_action::usable_cache::step(crate::ui_action::usable_cache::Pass::Bar),
+    );
+}
+
+/// The item's own unlock (`0x707020`), as the unlock of a kind calls it (`0x754004`): a locked item unlocks and signals at its place; an unlocked or absent one does nothing.
+pub(crate) fn unlock_item_alone(world: &mut World, guid: u64) {
     let unlocked = world
         .get_resource_mut::<PendingItemOps>()
         .is_some_and(|mut p| p.unlock(guid));
@@ -173,7 +195,7 @@ fn unlock_items_of_type(world: &mut World, entry: u32, bank: bool) {
         )
         .unwrap_or_default();
     for guid in found {
-        step(world, move |world| unlock_item(world, guid));
+        step(world, move |world| unlock_item_alone(world, guid));
     }
 }
 

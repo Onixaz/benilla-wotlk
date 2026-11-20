@@ -540,6 +540,11 @@ pub trait LiveState {
         false
     }
 
+    /// The bar's usable update at the call (`0x5aa470`), with whether equipment sets can be used (`0x5ad6b0`): whether a slot's bytes moved, `None` with no bar lent.
+    fn bar_usable_update(&mut self, _sets_usable: bool) -> Option<bool> {
+        None
+    }
+
     /// `IsUsableAction`'s pair for the 1-based `action` off the bar's usable cache (`0x5a7e60`);
     /// `None` without a view.
     fn action_usable(&self, _action: u32) -> Option<(bool, bool)> {

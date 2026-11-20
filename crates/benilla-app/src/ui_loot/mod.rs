@@ -1184,12 +1184,12 @@ struct LootUnlocks<'w, 's> {
 impl LootUnlocks<'_, '_> {
     fn flush(&mut self, loot: &mut LootState, mut script: Option<&mut UiScript>) {
         for guid in loot.take_unlocks() {
-            if !self.pending.write().unlock(guid) {
-                continue;
-            }
-            let args = crate::ui_items::watch::lock_args(&self.objects, guid);
-            if let (Some(script), Some(args)) = (script.as_deref_mut(), args) {
-                crate::ui_items::watch::fire_lock_edge_now(script, false, args);
+            let moved = self.pending.write().unlock(guid);
+            let args = moved
+                .then(|| crate::ui_items::watch::lock_args(&self.objects, guid))
+                .flatten();
+            if let Some(script) = script.as_deref_mut() {
+                crate::ui_items::watch::lock_moved_now(script, false, args);
             }
         }
     }

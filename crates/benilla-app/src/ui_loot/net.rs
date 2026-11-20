@@ -175,6 +175,10 @@ impl ItemUnlock<'_> {
             self.ui
                 .world(move |world| crate::ui_items::watch::signal_unlocked(world, guid));
         }
+        // The bar's usable update follows the unlock, an item or none (`0x51379b`).
+        self.ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Bar,
+        ));
     }
 }
 
@@ -858,8 +862,8 @@ mod tests {
         );
         assert_eq!(
             world.resource::<UiEvents>().names(),
-            ["<world>"],
-            "…and its unlock signals at the item's place in the handler's turn"
+            ["<world>", "<world>"],
+            "…and its unlock signals at the item's place in the handler's turn, the bar's usable update after it (`0x51379b`)"
         );
     }
 
@@ -1555,7 +1559,8 @@ mod tests {
             )
             .expect("the handler runs as a one-shot system");
         assert!(!world.resource::<PendingItemOps>().is_locked(LOCKBOX));
-        assert_eq!(world.resource::<UiEvents>().names(), ["<world>"]);
+        // The unlock's signals, then the bar's usable update (`0x51379b`).
+        assert_eq!(world.resource::<UiEvents>().names(), ["<world>", "<world>"]);
     }
 
     const ME: u64 = 0x0000_0000_0000_002A;

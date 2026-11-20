@@ -62,6 +62,7 @@ impl<'w, 's> LiveView<'w, 's> {
             objects,
             auras: &self.auras,
             place: self.place.get(),
+            pending: self.pending.get(),
             world: &self.usable_world,
             factions: self.factions.as_deref(),
             reputations: self.reputations.as_deref(),
@@ -476,6 +477,19 @@ impl<'w, 's> LiveView<'w, 's> {
 
     /// The slot write (`0x5aae80`, `0x5aaa90` for 0): stored and sent, then the slot's usable bytes
     /// recomputed (`0x5aa390`); `Some(false)` on a locked bar.
+    /// The bar's walk at a verb's site (`0x5aa470`), `sets_usable` as the verb reads it: whether a slot's bytes moved.
+    pub(super) fn bar_update(&mut self, sets_usable: bool) -> Option<bool> {
+        let mut caches = self.usable.get()?.clone();
+        caches.sets_usable = sets_usable;
+        let changed = self.usable_reads(|r| {
+            let mut out = Vec::new();
+            crate::ui_action::usable_cache::bar_pass(r, &mut caches, &mut out);
+            !out.is_empty()
+        })?;
+        *self.usable.get_mut()? = caches;
+        Some(changed)
+    }
+
     pub(super) fn write_slot_word(&mut self, slot: u32, word: u32) -> Option<bool> {
         let Ok(slot) = u8::try_from(slot) else {
             return Some(false);
@@ -486,7 +500,8 @@ impl<'w, 's> LiveView<'w, 's> {
         let net = self.commands.as_deref()?;
         let written = self.slots.get_mut()?.write_slot(slot, word, net);
         if written {
-            if let Some(fresh) = self.usable_reads(|r| r.slot(slot)) {
+            let sets_usable = self.usable.get().is_some_and(|c| c.sets_usable);
+            if let Some(fresh) = self.usable_reads(|r| r.slot(slot, sets_usable)) {
                 if let Some(caches) = self.usable.get_mut() {
                     caches.slots[usize::from(slot)] = fresh;
                 }

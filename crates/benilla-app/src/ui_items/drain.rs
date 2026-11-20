@@ -201,9 +201,8 @@ pub(crate) fn send_equip_to_slot(
         return;
     }
     // The lock before the send (`0x6e0136` -> `0x513740`), its edge signalled at its place.
-    if pending.write().lock(guid) {
-        super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
-    }
+    let moved = pending.write().lock(guid);
+    super::watch::lock_moved_now(script, true, moved.then(|| item_lock_args(bag, slot)));
     let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
         item: guid,
         slot: dst,
@@ -557,11 +556,11 @@ impl ScriptItemUse<'_, '_> {
             }
             // Each unlock signals at the item's place as it clears (`0x707020`).
             for item in loot.take_unlocks() {
-                if pending_items.write().unlock(item) {
-                    if let Some(args) = super::watch::lock_args(&ladder.objects, item) {
-                        super::watch::fire_lock_edge_now(script, false, args);
-                    }
-                }
+                let moved = pending_items.write().unlock(item);
+                let args = moved
+                    .then(|| super::watch::lock_args(&ladder.objects, item))
+                    .flatten();
+                super::watch::lock_moved_now(script, false, args);
             }
             let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
@@ -573,9 +572,8 @@ impl ScriptItemUse<'_, '_> {
                 .next()
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
-            if pending_items.write().lock(guid) {
-                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
-            }
+            let moved = pending_items.write().lock(guid);
+            super::watch::lock_moved_now(script, true, moved.then(|| item_lock_args(bag, slot)));
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
                 slot: wire_slot,
@@ -1432,11 +1430,11 @@ pub(super) fn drain_bind_confirm_answers(
         if !answer.accept {
             debug!("ui_items: pending equip {} cancelled", answer.index);
             for guid in cancel_occupants(store, &objects, &rec) {
-                if pending.write().unlock(guid) {
-                    if let Some(args) = super::watch::lock_args(&objects, guid) {
-                        super::watch::fire_lock_edge_now(&mut script, false, args);
-                    }
-                }
+                let moved = pending.write().unlock(guid);
+                let args = moved
+                    .then(|| super::watch::lock_args(&objects, guid))
+                    .flatten();
+                super::watch::lock_moved_now(&mut script, false, args);
             }
             continue;
         }

@@ -953,3 +953,190 @@ fn the_bar_pages_read_the_stored_offset_and_owners_at_the_call() {
     });
     assert_eq!(read(&mut app), [5, 1], "an owner pins the page");
 }
+
+/// A set slot is usable while sets can be used and neither an item of the set nor a slot it fills is locked (`0x5a9fe3`, `0x5aa00d`, `0x5aa01e`); the bar's update after a lock and an unlock (`0x51376b`, `0x51379b`) moves its bytes and signals `ACTIONBAR_UPDATE_USABLE` inside the verb that locked.
+#[test]
+fn a_lock_greys_a_set_slot_and_signals_the_bar_inside_the_verb() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_FLAGS, FIELD_OBJECT_ENTRY, FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::{ActionButton, EquipmentSet, ACTION_KIND_EQUIPMENT_SET};
+    use benilla_protocol::ObjectFields;
+
+    /// A helmet in the pack, which the set names for the head, and the one worn there.
+    const PACKED: u64 = 0x4000_0000_0000_0A01;
+    const WORN: u64 = 0x4000_0000_0000_0A02;
+
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut slots = crate::ui_action::ActionSlots::default();
+    slots.buttons.insert(
+        0,
+        ActionButton {
+            slot: 0,
+            action: 3,
+            kind: ACTION_KIND_EQUIPMENT_SET,
+        },
+    );
+    let mut items = [1u64; benilla_protocol::messages::EQUIPMENT_SET_SLOTS];
+    items[0] = PACKED;
+    let actions = PlayerActions {
+        equipment_sets: vec![EquipmentSet {
+            guid: 0x77,
+            id: 3,
+            name: "Tank".into(),
+            icon: "INV_Helmet_01".into(),
+            items,
+        }],
+        ..Default::default()
+    };
+    app.insert_resource(slots)
+        .insert_resource(actions)
+        .init_resource::<crate::ui_macro::MacroBoundSpells>()
+        .insert_resource(Spells::empty_for_tests())
+        .init_resource::<Cooldowns>()
+        .init_resource::<crate::spell::SpellModifiers>()
+        .init_resource::<crate::ui_script::UiClock>()
+        .init_resource::<AutoRepeatActive>()
+        .init_resource::<crate::spell::PendingCast>()
+        .init_resource::<crate::spell::QueuedMeleeSpell>()
+        .init_resource::<crate::spell::ActiveChannel>()
+        .init_resource::<crate::spell::SpellTargeting>()
+        .init_resource::<crate::spell::HeldForPick>()
+        .init_resource::<Selection>()
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<crate::net::Reputations>()
+        .init_resource::<crate::names::NameCache>()
+        .init_resource::<crate::pending_item_ops::PendingItemOps>()
+        .init_resource::<Items>()
+        .insert_resource(NetCommands(tx));
+    let mut fields = own_player_fields();
+    fields.extend([
+        (FIELD_PLAYER_PACK_SLOT_1, PACKED as u32),
+        (FIELD_PLAYER_PACK_SLOT_1 + 1, (PACKED >> 32) as u32),
+        (FIELD_PLAYER_INV_SLOT_HEAD, WORN as u32),
+        (FIELD_PLAYER_INV_SLOT_HEAD + 1, (WORN >> 32) as u32),
+    ]);
+    let me = app
+        .world_mut()
+        .spawn((SelfPlayer, ObjectStore(ObjectFields::from_pairs(&fields))))
+        .id();
+    register_self(&mut app, me);
+    for (guid, entry) in [(PACKED, 1001), (WORN, 1002)] {
+        crate::items::test_spawn_item(
+            app.world_mut(),
+            guid,
+            ObjectFields::from_pairs(&[(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_FLAGS, 0)]),
+            false,
+        );
+        app.world_mut().resource_mut::<Items>().insert_template(
+            entry,
+            Some(benilla_protocol::messages::ItemInfo {
+                inventory_type: 1,
+                ..crate::items::test_template("Helm")
+            }),
+        );
+    }
+    full_pass(&mut app);
+    let usable =
+        |app: &mut App| live_eval::<bool>(app, "return IsUsableAction(1) and true or false");
+    assert!(
+        !usable(&mut app),
+        "sets are off until `equipmentManager` is on"
+    );
+
+    // The cvar on: the next walk reads it (`0x5a9fe3`), here the one `CanUseEquipmentSets` runs on its edge (`0x5ad8b9`).
+    {
+        let script = app.world_mut().non_send_resource_mut::<UiScript>();
+        script.register_cvars([("equipmentManager", "1")]);
+        script
+            .run(
+                "LOG = {} local f = CreateFrame('Frame') \
+                 f:RegisterEvent('ACTIONBAR_UPDATE_USABLE') f:RegisterEvent('ITEM_LOCKED') f:RegisterEvent('ITEM_UNLOCKED') \
+                 f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e .. ':' .. tostring(IsUsableAction(1) and 1 or 0) end)",
+            )
+            .unwrap();
+    }
+    let log = |app: &mut App, lua: &str| {
+        live_eval::<String>(
+            app,
+            &format!("LOG = {{}} {lua} LOG[#LOG + 1] = 'after' return table.concat(LOG, ' ')"),
+        )
+    };
+    assert_eq!(
+        log(&mut app, "CanUseEquipmentSets()"),
+        "ACTIONBAR_UPDATE_USABLE:1 after"
+    );
+    assert_eq!(log(&mut app, "CanUseEquipmentSets()"), "after", "no edge");
+
+    // Picking the set's item up locks it: the slot greys, the bar signalling after the lock's own events and inside the call.
+    assert_eq!(
+        log(&mut app, "PickupContainerItem(0, 1)"),
+        "ITEM_LOCKED:1 ACTIONBAR_UPDATE_USABLE:0 after"
+    );
+    assert_eq!(
+        log(&mut app, "ClearCursor()"),
+        "ITEM_UNLOCKED:0 ACTIONBAR_UPDATE_USABLE:1 after"
+    );
+    // A locked item in a slot the set fills greys it too (`0x5aa01e`).
+    {
+        let mut worn: benilla_ui::script::InventorySlots = Default::default();
+        worn[1] = Some(benilla_ui::script::InvSlotView {
+            guid: WORN,
+            item_id: 1002,
+            count: 1,
+            equip_slots: vec![1],
+            ..Default::default()
+        });
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_inventory_slots(worn);
+    }
+    assert_eq!(
+        log(&mut app, "PickupInventoryItem(1)"),
+        "ITEM_LOCKED:1 ACTIONBAR_UPDATE_USABLE:0 after"
+    );
+    assert_eq!(
+        log(&mut app, "ClearCursor()"),
+        "ITEM_UNLOCKED:0 ACTIONBAR_UPDATE_USABLE:1 after"
+    );
+
+    // An app site's unlock runs the same update in its turn (`0x51379b`).
+    app.init_resource::<crate::ui_script::live::UiEvents>();
+    log(&mut app, "PickupContainerItem(0, 1)");
+    live_eval::<()>(&mut app, "LOG = {}");
+    crate::ui_items::watch::unlock_item(app.world_mut(), PACKED);
+    crate::ui_script::live::fire_handler_events(app.world_mut());
+    assert_eq!(
+        live_eval::<String>(&mut app, "return table.concat(LOG, ' ')"),
+        "ITEM_UNLOCKED:0 ACTIONBAR_UPDATE_USABLE:1"
+    );
+
+    // A swap out greys every set's slot after its own signal (`0x5addef`, `0x5addf7`), and its result restores them after its signals (`0x5af75d`, `0x5af7be`).
+    {
+        let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
+        script.set_equipment_set_list(vec![benilla_ui::script::EquipmentSetView {
+            guid: 0x77,
+            id: 3,
+            name: "Tank".into(),
+            icon: "INV_Helmet_01".into(),
+            items,
+        }]);
+        script
+            .run(
+                "local f = CreateFrame('Frame') f:RegisterEvent('EQUIPMENT_SWAP_PENDING') f:RegisterEvent('EQUIPMENT_SWAP_FINISHED')                  f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e .. ':' .. tostring(IsUsableAction(1) and 1 or 0) end)",
+            )
+            .unwrap();
+    }
+    log(&mut app, "ClearCursor()");
+    assert_eq!(
+        log(&mut app, "UseEquipmentSet('Tank')"),
+        "EQUIPMENT_SWAP_PENDING:1 ACTIONBAR_UPDATE_USABLE:0 after"
+    );
+    live_eval::<()>(&mut app, "LOG = {}");
+    crate::ui_script::live::with_live_world(app.world_mut(), |s| s.equipment_set_use_result(0));
+    assert_eq!(
+        live_eval::<String>(&mut app, "return table.concat(LOG, ' ')"),
+        "EQUIPMENT_SWAP_FINISHED:0 ACTIONBAR_UPDATE_USABLE:1"
+    );
+}

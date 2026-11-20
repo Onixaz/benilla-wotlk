@@ -287,16 +287,32 @@ pub(crate) fn set_item_lock(
             guid.is_some() && (at.is_some() || lent == Some(true))
         }
     };
-    if !moved {
-        return;
+    if moved {
+        model.raise("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+        let edge = if locked {
+            "ITEM_LOCKED"
+        } else {
+            "ITEM_UNLOCKED"
+        };
+        model.raise(edge, item_lock_args(bag, slot));
     }
-    model.raise("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
-    let edge = if locked {
-        "ITEM_LOCKED"
-    } else {
-        "ITEM_UNLOCKED"
-    };
-    model.raise(edge, item_lock_args(bag, slot));
+    // The bar's usable update follows every lock and unlock, an item or none (`0x51376b`, `0x51379b`).
+    update_bar_usable(model);
+}
+
+/// The bar's usable update (`0x5aa470`): every slot's bytes recomputed, the walk reading whether sets can be used (`0x5a9fe3`), and `ACTIONBAR_UPDATE_USABLE` if one moved (`0x5aa4cd`).
+pub(crate) fn update_bar_usable(model: &mut crate::script::ModelGuard<'_>) {
+    let sets_usable = super::equipment_manager::sets_usable_now(model);
+    if super::write_live(|l| l.bar_usable_update(sets_usable)).flatten() == Some(true) {
+        model.raise("ACTIONBAR_UPDATE_USABLE", Vec::new());
+    }
+}
+
+impl super::UiScript {
+    /// The bar's usable update from an app site holding the VM, in its turn (`0x5aa470`).
+    pub fn update_bar_usable(&mut self) {
+        update_bar_usable(&mut self.model_mut());
+    }
 }
 
 /// An item event's arguments for the item at `(bag, slot)`, as the item's event signal

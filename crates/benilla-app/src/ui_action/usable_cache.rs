@@ -6,16 +6,18 @@
 //! signals `SPELL_UPDATE_USABLE`; the power update (`0x53d1b0`), run when the player's or the
 //! pet's predicted power moves, re-tests the no-power byte of each usable entry alone.
 //!
-//! The bar-only sites that test what the walk does not model run nothing: the item lock and unlock
-//! (`0x513740`, `0x513770`) and the cursor delete (`0x522320`), as no slot reads a lock, and the
-//! equipment-set sites (`0x5ad6b0`-`0x5af710`), as no set slot is usable here.
+//! The bar's walk alone runs after every item lock and unlock (`0x51376b`, `0x51379b`), the cursor
+//! delete (`0x52244f`) and the equipment manager's sites (`0x5ad8b9`, `0x5ada8a`, `0x5addf7`,
+//! `0x5af7be`): a set slot reads the locks of its items and of the slots it fills.
 
 use std::collections::HashMap;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
+use benilla_protocol::messages::{
+    ACTION_KIND_EQUIPMENT_SET, ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
+};
 use benilla_ui::script::ScriptValue;
 
 use crate::items::Items;
@@ -72,6 +74,8 @@ pub(crate) struct UsableCaches {
     pub(crate) reactive: Vec<SpellUsable>,
     /// The stance bar (`[0xbe8e2c]`), in bar order.
     pub(crate) stances: Vec<SpellUsable>,
+    /// Whether equipment sets can be used (`0x5ad6b0`: no swap out and `equipmentManager` on), as the site running a walk last read it.
+    pub(crate) sets_usable: bool,
 }
 
 impl UsableCaches {
@@ -87,6 +91,7 @@ impl Default for UsableCaches {
             slots: [Usable::default(); BAR_SLOTS],
             reactive: Vec::new(),
             stances: Vec::new(),
+            sets_usable: false,
         }
     }
 }
@@ -191,6 +196,8 @@ pub(crate) struct UsableInputs<'w, 's> {
     objects: Objects<'w, 's>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     place: LentRef<'w, crate::area::PlayerPlace>,
+    /// The item locks a set slot reads (`0x5ad940`, `0x5ae040`).
+    pending: LentRef<'w, crate::pending_item_ops::PendingItemOps>,
     world: UsableWorld<'w>,
     tables: UsableTables<'w>,
 }
@@ -234,6 +241,7 @@ pub(crate) struct Sources<'a, 'w, 's> {
     pub(crate) objects: &'a Objects<'w, 's>,
     pub(crate) auras: &'a Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     pub(crate) place: Option<&'a crate::area::PlayerPlace>,
+    pub(crate) pending: Option<&'a crate::pending_item_ops::PendingItemOps>,
     pub(crate) world: &'a UsableWorld<'w>,
     pub(crate) factions: Option<&'a crate::target::Factions>,
     pub(crate) reputations: Option<&'a crate::net::Reputations>,
@@ -271,6 +279,7 @@ pub(crate) struct Reads<'a, 'w, 's> {
     place: (usable::UsablePlace, usable::UsablePlace),
     /// The player's and the pet's combo points on the target.
     combo: (u8, u8),
+    pending: Option<&'a crate::pending_item_ops::PendingItemOps>,
 }
 
 impl UsableWorld<'_> {
@@ -353,6 +362,7 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
             auto_unshift,
             place,
             combo,
+            pending: self.pending,
         })
     }
 }
@@ -366,6 +376,7 @@ impl UsableInputs<'_, '_> {
         let pet_bar = self.pet_bar.get();
         let bound = self.bound.get();
         let place = self.place.get();
+        let pending = self.pending.get();
         let t = &self.tables;
         let reads = Sources {
             spells: self.spells.as_deref(),
@@ -380,6 +391,7 @@ impl UsableInputs<'_, '_> {
             objects: &self.objects,
             auras: &self.auras,
             place: place.as_deref(),
+            pending: pending.as_deref(),
             world: &self.world,
             factions: t.factions.as_deref(),
             reputations: t.reputations.as_deref(),
@@ -453,13 +465,49 @@ impl Reads<'_, '_, '_> {
         }
     }
 
+    /// Whether an item of `set` is locked and not a buyback row (`0x5ad940`), or a slot the set fills holds a locked item (`0x5ae040`).
+    fn set_locked(
+        &self,
+        store: &ObjectStore,
+        set: &benilla_protocol::messages::EquipmentSet,
+    ) -> bool {
+        let locked = |guid: u64| self.pending.is_some_and(|p| p.is_locked(guid));
+        let buyback = |guid: u64| (0..12).any(|i| store.0.player_buyback_slot(i) == Some(guid));
+        let item = set.items.iter().any(|&guid| {
+            guid > 1 && self.objects.object(guid).is_some() && locked(guid) && !buyback(guid)
+        });
+        let slot = set.items.iter().enumerate().any(|(i, &guid)| {
+            guid != 1
+                && store
+                    .0
+                    .player_inv_slot(i as u8)
+                    .is_some_and(|worn| worn != 0 && locked(worn))
+        });
+        item || slot
+    }
+
     /// One bar slot's bytes (`0x5aa3b0`'s compute): the slot through its macro, a pet slot through
-    /// the pet bar, then the walk for a spell or an item.
-    pub(crate) fn slot(&self, slot: u8) -> Usable {
+    /// the pet bar, then the walk for a spell or an item; a set's slot with `sets_usable` (`0x5a9fe3`).
+    pub(crate) fn slot(&self, slot: u8, sets_usable: bool) -> Usable {
         use crate::ui_macro::BoundSpell;
         let Some(button) = self.slots.buttons.get(&slot) else {
             return Usable::default();
         };
+        if button.kind == ACTION_KIND_EQUIPMENT_SET {
+            // The sets usable, the set saved (`0x5ae5c0`), none of its items and none of its slots locked (`0x5aa00d`, `0x5aa01e`).
+            let usable = sets_usable
+                && self.me.is_some_and(|(_, store)| {
+                    self.actions
+                        .equipment_sets
+                        .iter()
+                        .find(|s| s.id == button.action)
+                        .is_some_and(|set| !self.set_locked(store, set))
+                });
+            return Usable {
+                usable,
+                no_power: false,
+            };
+        }
         let (kind, id) = match button.kind {
             ACTION_KIND_MACRO => match self.bound.and_then(|b| b.0.get(&button.action)) {
                 Some(BoundSpell::Spell(s)) => (ACTION_KIND_SPELL, *s),
@@ -625,10 +673,15 @@ impl Reads<'_, '_, '_> {
 }
 
 /// The bar's walk (`0x5aa470`): every slot recomputed, `ACTIONBAR_UPDATE_USABLE` on any change.
-fn bar_pass(r: &Reads<'_, '_, '_>, caches: &mut UsableCaches, out: &mut Vec<UsableEvent>) {
+pub(crate) fn bar_pass(
+    r: &Reads<'_, '_, '_>,
+    caches: &mut UsableCaches,
+    out: &mut Vec<UsableEvent>,
+) {
     let mut changed = false;
+    let sets_usable = caches.sets_usable;
     for (i, cell) in caches.slots.iter_mut().enumerate() {
-        let fresh = r.slot(i as u8);
+        let fresh = r.slot(i as u8, sets_usable);
         changed |= *cell != fresh;
         *cell = fresh;
     }
@@ -741,8 +794,9 @@ pub(crate) fn run(
                 out
             }
             Pass::Slot(slot) => {
+                let sets_usable = caches.sets_usable;
                 if let Some(cell) = caches.slots.get_mut(usize::from(slot)) {
-                    *cell = r.slot(slot);
+                    *cell = r.slot(slot, sets_usable);
                 }
                 Vec::new()
             }
@@ -780,6 +834,10 @@ impl UsableRun<'_, '_> {
 
     /// Run `pass` and fire what it signals into `script`, in order.
     pub(crate) fn fire(&mut self, script: &mut benilla_ui::script::UiScript, pass: Pass) {
+        let sets_usable = script.can_use_equipment_sets();
+        if self.caches.read().sets_usable != sets_usable {
+            self.caches.write().sets_usable = sets_usable;
+        }
         let events = run_into(&self.inputs, &mut self.caches, pass);
         fire_into(script, events);
     }
@@ -808,7 +866,14 @@ fn run_step(
     inputs: UsableInputs,
     mut caches: OwnedMut<UsableCaches>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    script: Option<NonSend<benilla_ui::script::UiScript>>,
 ) {
+    // The walk reads whether sets can be used as it runs (`0x5a9fe3`).
+    if let Some(sets_usable) = script.map(|s| s.can_use_equipment_sets()) {
+        if caches.read().sets_usable != sets_usable {
+            caches.write().sets_usable = sets_usable;
+        }
+    }
     let events = run_into(&inputs, &mut caches, pass);
     for e in events {
         let (event, args) = e.event();
