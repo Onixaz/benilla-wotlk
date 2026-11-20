@@ -20,7 +20,6 @@ use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, SelfG
 use crate::spell::Cooldowns;
 use crate::ui_action::Spells;
 
-use super::bar::{feed_pet_bar, fire_pet_cooldown_events};
 use super::drain::PetPress;
 use super::PetBar;
 
@@ -188,23 +187,19 @@ pub(super) fn rig(
         anchor: Instant::now(),
         ui_now: 10.0,
     });
-    // The order the plugin gives them: the feeds that push a pet cooldown, then the flush.
-    let mut feed = Schedule::default();
-    feed.add_systems(
-        (
-            crate::ui_pet_book::feed_pet_book,
-            feed_pet_bar,
-            fire_pet_cooldown_events,
-        )
-            .chain(),
-    );
+    // No pet feed is left: the bar's and the book's events fire where they land.
+    let feed = Schedule::default();
     let mut rig = Rig {
         app,
         commands,
         feed,
     };
-    // The bar arriving is `PET_BAR_UPDATE`'s; every test reads what a press adds to it.
-    assert_eq!(rig.frame(), ["PET_BAR_UPDATE"], "the bar arrives");
+    // The bar was written without its packet, so nothing has fired; every test reads what a press adds.
+    assert_eq!(
+        rig.frame(),
+        Vec::<String>::new(),
+        "the bar arrives silently"
+    );
     rig
 }
 
@@ -222,20 +217,47 @@ impl Rig {
         seen
     }
 
-    /// `CastPetAction(slot)`, applied.
+    /// `CastPetAction(slot)`, applied as the script call's applier applies it.
     pub(super) fn press(&mut self, slot: u32) -> super::PetCast {
-        self.app
-            .world_mut()
-            .run_system_once(move |mut press: PetPress| press.press_slot(slot))
-            .expect("the press applies as a one-shot system")
+        self.apply(move |p, s| p.press_slot(slot, s))
     }
 
     /// `PetAttack` and the other one-shot orders, as their slot's packed word, applied.
     pub(super) fn order(&mut self, packed: u32) {
+        self.apply(move |p, s| p.order(packed, s));
+    }
+
+    /// One press through the applier's path, its events fired as it returns.
+    fn apply(
+        &mut self,
+        f: impl FnOnce(&mut PetPress, &mut dyn crate::ui_action::signals::SignalSink) -> super::PetCast
+            + Send
+            + Sync
+            + 'static,
+    ) -> super::PetCast {
+        let mut f = Some(f);
         self.app
             .world_mut()
-            .run_system_once(move |mut press: PetPress| press.order(packed))
-            .expect("the order applies as a one-shot system");
+            .run_system_once(
+                move |(script, _live): (
+                    Option<NonSendMut<benilla_ui::script::UiScript>>,
+                    crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+                ),
+                      mut press: PetPress| {
+                    let mut script = script.expect("the rig's VM");
+                    let f = f.take().expect("one run");
+                    crate::script_calls::pet_press(&mut press, &mut script, f)
+                },
+            )
+            .expect("the press applies as a one-shot system")
+    }
+
+    /// `GetPetActionsUsable()` at the call, the world lent.
+    pub(super) fn actions_usable(&mut self) -> bool {
+        crate::ui_script::live::with_live_world(self.app.world_mut(), |s| {
+            s.eval::<bool>("return GetPetActionsUsable() == 1").unwrap()
+        })
+        .expect("the rig's VM")
     }
 
     /// The commands sent so far.
@@ -243,13 +265,13 @@ impl Rig {
         self.commands.try_iter().collect()
     }
 
-    /// `GetPetActionCooldown(slot)`, off what the last feed pushed: `(start, duration, enable)`.
+    /// `GetPetActionCooldown(slot)` at the call, the world lent: `(start, duration, enable)`.
     pub(super) fn cooldown(&mut self, slot: u32) -> (f64, f64, i32) {
-        self.app
-            .world_mut()
-            .non_send_resource_mut::<benilla_ui::script::UiScript>()
-            .eval(&format!("return GetPetActionCooldown({slot})"))
-            .unwrap()
+        crate::ui_script::live::with_live_world(self.app.world_mut(), |s| {
+            s.eval(&format!("return GetPetActionCooldown({slot})"))
+                .unwrap()
+        })
+        .expect("the rig's VM")
     }
 
     /// What the pet's own list reads for `spell_id`, as the bar's reader asks it.
@@ -325,6 +347,55 @@ fn a_spell_press_starts_the_pets_gcd_for_every_slot_sharing_its_category() {
         "the second slot sweeps the GCD: {duration}"
     );
     assert_eq!(rig.cooldown(3), (0.0, 0.0, 1), "Growl shows no sweep");
+}
+
+/// An on-hold spell's start (Attributes bit 25) runs the usable update inside the press, between
+/// the spellbook's cooldown signals and the pet bar's (`0x805ec3`, `0x805ed1`, `0x805eda`); an
+/// ordinary start runs none.
+#[test]
+fn an_on_hold_pet_start_runs_the_usable_update_inside_the_press() {
+    let on_hold = || SpellDisplay {
+        attributes: 0x0200_0000,
+        ..claw()
+    };
+    let mut rig = rig(
+        vec![(CLAW, on_hold()), (BITE, bite())],
+        &[CLAW, BITE],
+        Some(owned_pet()),
+    );
+    rig.app
+        .world_mut()
+        .non_send_resource_mut::<benilla_ui::script::UiScript>()
+        .run(
+            r#"
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("SPELL_UPDATE_USABLE")
+            f:SetScript("OnEvent", function() table.insert(SEEN, event) end)
+        "#,
+        )
+        .expect("the usable listener registers");
+
+    rig.press(1);
+    assert_eq!(
+        rig.frame(),
+        [
+            "ACTIONBAR_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_USABLE",
+            "PET_BAR_UPDATE_COOLDOWN"
+        ]
+    );
+
+    rig.press(2);
+    assert_eq!(
+        rig.frame(),
+        [
+            "ACTIONBAR_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_COOLDOWN",
+            "PET_BAR_UPDATE_COOLDOWN"
+        ],
+        "an ordinary start runs no usable update"
+    );
 }
 
 /// A spell with neither `StartRecovery*` field starts nothing.
@@ -461,8 +532,9 @@ fn a_spell_press_with_no_player_object_sends_nothing() {
         .resource_mut::<GuidIndex>()
         .0
         .remove(&ME);
-    // The bar greys as the player leaves, which is its own repaint.
-    assert_eq!(rig.frame(), ["PET_BAR_UPDATE"]);
+    // The bar greys at the next call, with no event: the predicate is read live (`0x5d53c0`).
+    assert!(rig.frame().is_empty());
+    assert!(!rig.actions_usable(), "the bar reads greyed");
     let before = latched(&rig);
 
     rig.press(1);
@@ -481,7 +553,8 @@ fn an_aura_cancel_press_with_no_player_object_sends_nothing() {
         .resource_mut::<GuidIndex>()
         .0
         .remove(&ME);
-    assert_eq!(rig.frame(), ["PET_BAR_UPDATE"], "the bar greys");
+    assert!(rig.frame().is_empty(), "the bar greys with no event");
+    assert!(!rig.actions_usable(), "the bar reads greyed");
     let before = latched(&rig);
 
     rig.press(1);
@@ -576,8 +649,7 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
 
     assert_press_refused(&mut rig, before);
 
-    // The same press with the pet streamed in goes out at the selection, and an ordinary pet's
-    // Attack raises no latch.
+    // The same press with the pet streamed in goes out at the selection and raises the latch (`0x5d4509`).
     let world = rig.app.world_mut();
     let pet = world
         .spawn((
@@ -600,5 +672,8 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
         ),
         "{sent:?}"
     );
-    assert!(!latched(&rig).2, "an ordinary pet's Attack raises no latch");
+    assert!(
+        latched(&rig).2,
+        "a hunter's pet raises the attacking global"
+    );
 }

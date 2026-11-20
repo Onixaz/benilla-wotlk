@@ -27,7 +27,6 @@ use crate::net::{ChatKind, ClientCommand, Guid, HomeBind, NetCommands, NetEntity
 use crate::player::Player;
 use crate::ui_binder::BinderState;
 use crate::ui_gossip::GossipState;
-use crate::ui_session::NpcSession;
 
 /// Innkeeper Keldamyr's spawn (vmangos `creature` guid 46343), the `.go xyz` target.
 const INNKEEPER_AT: [f32; 3] = [9802.21, 982.608, 1313.98];
@@ -164,12 +163,26 @@ fn vm_icon_type(script: &UiScript, pos: usize) -> String {
         .unwrap_or_default()
 }
 
-/// `BENILLA_GOSSIP_ICONS.binder` in the live VM, `""` when absent. The stock
-/// `GossipFrame.lua:123` builds the icon path from the type string and defines no such table.
-fn vm_binder_texture(script: &UiScript) -> String {
-    script
-        .eval::<String>("return (BENILLA_GOSSIP_ICONS and BENILLA_GOSSIP_ICONS.binder) or \"\"")
-        .unwrap_or_default()
+/// The icon texture the stock gossip frame drew beside the shown title button reading `label`,
+/// `""` when no button reads it: `GossipFrame.lua` sets it from the row's type string.
+fn vm_row_icon(script: &UiScript, label: &str) -> String {
+    let chunk = format!(
+        "for i = 1, NUMGOSSIPBUTTONS or 32 do \
+           local b = _G['GossipTitleButton' .. i] \
+           if b and b:IsShown() and b:GetText() == {label:?} then \
+             local t = _G[b:GetName() .. 'GossipIcon'] \
+             return (t and t:GetTexture()) or '' \
+           end \
+         end \
+         return ''"
+    );
+    script.eval::<String>(&chunk).unwrap_or_default()
+}
+
+/// Whether `texture` is the stock icon for gossip type `ty`, `Interface\GossipFrame\<Type>GossipIcon`.
+fn is_type_icon(texture: &str, ty: &str) -> bool {
+    let want = format!("interface\\gossipframe\\{ty}gossipicon");
+    texture.to_ascii_lowercase().replace('/', "\\") == want
 }
 
 /// The live VM's `GetBindLocation()`, the hearthstone's own answer.
@@ -182,11 +195,10 @@ fn vm_bind_location(script: &UiScript) -> String {
 fn binder_probe(
     time: ProbeClock,
     mut probe: ResMut<BinderProbe>,
-    gossip: Res<GossipState>,
     binder: Res<BinderState>,
-    mut home: ResMut<HomeBind>,
+    home: Res<HomeBind>,
     areas: Option<Res<AreaTableRes>>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
@@ -199,6 +211,8 @@ fn binder_probe(
     let Some(script) = script else {
         return; // no UI VM in this build, so nothing to drive
     };
+    // The gossip globals as the verbs read them, through the view this system lends.
+    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
     let now = time.elapsed_secs_f64();
     let phase = probe.phase;
 
@@ -278,7 +292,11 @@ fn binder_probe(
             let open = gossip.npc == Some(innkeeper) && !gossip.options.is_empty();
             // Wait for the feed's push as well as the parse: step 3 reads the icon type back out
             // of the VM, so the snapshot must already be there.
-            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2;
+            // The rows are drawn once the frame is shown (`GOSSIP_SHOW`), not when the menu reads.
+            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2
+                && script
+                    .eval::<bool>("return GossipFrame and GossipFrame:IsShown() and true or false")
+                    .unwrap_or(false);
             if open && pushed {
                 info!(
                     "PROBE_BINDER: PASS (2 menu) — {} option(s) open on {innkeeper:#x}: {}",
@@ -341,10 +359,9 @@ fn binder_probe(
         }
         Phase::Accept { since, sent } => {
             if !sent {
-                // Clear the bind before answering: a rebind to the same area re-sends an
-                // identical `SMSG_BINDPOINTUPDATE`, so only None → Some proves a fresh packet.
+                // A rebind to the same area re-sends an identical `SMSG_BINDPOINTUPDATE`, so the
+                // write after the answer, not the value, proves a fresh packet.
                 probe.baseline_area = home.0;
-                home.0 = None;
                 if let Err(e) = script.run("ConfirmBinder()") {
                     warn!(
                         "PROBE_BINDER: SKIP (6 bind) — ConfirmBinder() would not run in the live \
@@ -354,8 +371,8 @@ fn binder_probe(
                     return;
                 }
                 info!(
-                    "PROBE_BINDER: (6 bind) ConfirmBinder() run in the live VM — HomeBind cleared \
-                     from {:?}, waiting for a fresh SMSG_BINDPOINTUPDATE",
+                    "PROBE_BINDER: (6 bind) ConfirmBinder() run in the live VM — HomeBind was \
+                     {:?}, waiting for a fresh SMSG_BINDPOINTUPDATE",
                     probe.baseline_area
                 );
                 probe.phase = Phase::Accept {
@@ -370,7 +387,7 @@ fn binder_probe(
                 .unwrap_or_default()
                 .to_string();
             let vm = vm_bind_location(&script);
-            if !name.is_empty() && vm == name {
+            if home.is_changed() && !name.is_empty() && vm == name {
                 info!(
                     "PROBE_BINDER: PASS (6 bind) — HomeBind repopulated to area {:?} = {name:?} \
                      (was {:?}), and the VM's GetBindLocation() agrees: {vm:?}",
@@ -455,7 +472,7 @@ fn assert_icon_and_select(
         return;
     };
     let ty = vm_icon_type(script, pos + 1);
-    let texture = vm_binder_texture(script);
+    let texture = vm_row_icon(script, &opt.message);
     if ty == ICON_TYPE_REGRESSION {
         error!(
             "PROBE_BINDER: FAIL (3 icon) — the innkeeper's row {:?} (wire icon={ICON_INNKEEPER}) \
@@ -477,11 +494,10 @@ fn assert_icon_and_select(
         probe.phase = Phase::Done;
         return;
     }
-    if texture.is_empty() {
+    if !is_type_icon(&texture, ICON_TYPE_BINDER) {
         error!(
             "PROBE_BINDER: FAIL (3 icon) — the app maps the row to {ICON_TYPE_BINDER:?} but \
-             BENILLA_GOSSIP_ICONS.binder resolves to nothing in the live VM, so the row would \
-             still draw the fallback bubble"
+             the stock frame drew {texture:?} beside the row"
         );
         probe.fails += 1;
         probe.phase = Phase::Done;
@@ -489,7 +505,7 @@ fn assert_icon_and_select(
     }
     info!(
         "PROBE_BINDER: PASS (3 icon) — row {} {:?}: wire icon={ICON_INNKEEPER} index={} → type \
-         {ty:?}, BENILLA_GOSSIP_ICONS.binder = {texture:?}",
+         {ty:?}, the stock frame drew {texture:?}",
         pos + 1,
         opt.message,
         opt.index

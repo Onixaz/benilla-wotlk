@@ -4,6 +4,7 @@
 
 use benilla_ui::script::{ExtractedQuad, QuadContent, ScriptValue, UiScript, UnitCast, UnitGuids};
 
+use super::test_live::SpellAnswersExt;
 use super::test_ui::load_ui as load_xml;
 
 fn harness() -> UiScript {
@@ -347,7 +348,7 @@ fn the_flash_blooms_from_zero_only_on_completion() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Lesser Heal (1.5 s) as our cast, pushed as the unit-cast feed pushes it, then its
+/// Lesser Heal (1.5 s) as our cast, held on the unit as the live view answers it, then its
 /// `UNIT_SPELLCAST_START` with `castCount`.
 fn start_heal(s: &mut UiScript, cast_count: u8) {
     let now_ms = s.now() * 1000.0;
@@ -364,6 +365,7 @@ fn start_heal(s: &mut UiScript, cast_count: u8) {
             trade_skill: false,
             cast_count,
             not_interruptible: false,
+            channeling_text: false,
         }),
     );
     s.fire_event("UNIT_SPELLCAST_START", heal_args(cast_count));

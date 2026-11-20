@@ -7,6 +7,7 @@ use benilla_assets::AssetSet;
 use benilla_formats::{LightCatalog, LiquidKind};
 
 mod blob; // off-world light blobs (portrait booths, body panes, glue scene)
+mod character_ambient; // the area's ambient multiplier on units
 mod daynight; // the sun, moon and day/night curves
 mod global_light; // the shared global-light storage buffer
 mod overrides; // the server's light overrides
@@ -14,6 +15,8 @@ mod prop_probes; // the interior-prop SH probe table
 mod resolve; // the per-frame time-of-day resolve and the interior-fog crossfade
 mod sh; // the model SH probe fold
 pub use blob::LightBlob;
+pub(crate) use character_ambient::unit_ambient;
+pub use character_ambient::CharacterAmbient;
 pub use global_light::{new_shared_light_buffer, LightRooms, SharedLightBuffer, WorldPointLight};
 pub use overrides::LightOverrides;
 pub use prop_probes::{PropProbeSlot, PropProbes, MAX_PROP_PROBES};
@@ -35,13 +38,17 @@ pub struct WowLighting {
     pub sun_dir: Vec3,
     /// The visible sun, camera to sun in Bevy space; unlike the lighting sun it rises and sets.
     pub(crate) celestial_dir: Vec3,
-    /// Distance fog colour, `Light.dbc` IntBand row 7 raw, applied `GL_LINEAR` in-shader in gamma
-    /// space; Bevy's `DistanceFog` blends in linear and would break the gamma invariant.
+    /// Distance fog colour, `Light.dbc` IntBand row 7 raw, applied in-shader in gamma space through
+    /// the reference's curve ([`Self::fog_rate`]); Bevy's `DistanceFog` blends in linear and would
+    /// break the gamma invariant.
     pub fog_color: [f32; 3],
     /// The pushed fog pair from [`resolve::scene_fog`]: `end = min(band end, farclip)` and
     /// `start = frac × end` unclamped, negative under storm: the near veil in rain.
     pub(crate) fog_start: f32,
     pub(crate) fog_end: f32,
+    /// The fog curve's exponent, `factor = linear^rate` (`benilla_formats::FogLaw`): 1 in the old
+    /// world, 1.5 to 7 from map 530, doubled with the camera in liquid there. 0 reads as 1.
+    pub(crate) fog_rate: f32,
     /// The interior fog triple (`DNState+0x80/84/88`): the scene fog lerped toward the claimed
     /// WMO's MFOG by the 4 s [`WmoCrossfade`]. Only content tagged as in a room on the camera's
     /// portal chain reads it: the group's surfaces and liquid and the M2s in it; terrain, ADT
@@ -49,6 +56,8 @@ pub struct WowLighting {
     pub(crate) wmo_fog_color: [f32; 3],
     pub(crate) wmo_fog_start: f32,
     pub(crate) wmo_fog_end: f32,
+    /// The interior triple's rate, crossfaded with it.
+    pub(crate) wmo_fog_rate: f32,
     /// The five sky-dome stops, zenith to horizon (`Atmosphere.sky`, IntBand rows 2-6).
     pub(crate) sky: [[f32; 3]; 5],
     /// Per-kind water tint `[shallow, deep]`: IntBand rows 16/17 (river, lake) and 14/15 (ocean),
@@ -212,6 +221,7 @@ impl Plugin for LightingPlugin {
         // Readers of the resolve run after it.
         configure_lighting_sets(app);
         app.init_resource::<WowLighting>()
+            .init_resource::<CharacterAmbient>()
             .init_resource::<PropProbes>()
             .init_resource::<GameClock>()
             .init_resource::<WorldTime>()

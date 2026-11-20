@@ -63,7 +63,7 @@ use light::{model_pane_light, studio_light, BoothLight};
 pub(crate) mod test_bake;
 
 /// The round portrait slots, each with its own layer and camera. `"npc"` is an interaction
-/// window's NPC ([`crate::ui_session::InteractNpc`]); `"targettarget"` resolves only while drawn,
+/// interact target ([`crate::ui_session::InteractTarget`]); `"targettarget"` resolves only while drawn,
 /// and so do a party member's pet, `"partypetN"`, and the loot source `SetLootPortrait` binds
 /// ([`benilla_ui::script::LOOT_PORTRAIT_UNIT`]).
 const SLOTS: [&str; 14] = [
@@ -696,7 +696,6 @@ pub(crate) struct PartyBooths<'w, 's> {
     roster: Res<'w, crate::ui_party::GroupState>,
     index: Res<'w, crate::net::GuidIndex>,
     palettes: ResMut<'w, benilla_world::rig_palette::RigPalettes>,
-    pet_bar: Res<'w, crate::ui_pet::PetBar>,
     names: Res<'w, crate::names::NameCache>,
     /// What the UI drew last frame, read by `"targettarget"` and the loot source.
     panes: Res<'w, BoothPanes>,
@@ -1337,7 +1336,10 @@ fn sync_portraits(
     mut env_cache: Local<Option<bool>>,
     mut cams: Query<(&BoothCam, &mut Transform, &mut Projection)>,
     anim_data: Option<Res<crate::creature_anim::AnimData>>,
-    interact_npc: Res<crate::ui_session::InteractNpc>,
+    (interact, index): (
+        Res<crate::ui_session::InteractTarget>,
+        Res<crate::net::GuidIndex>,
+    ),
     mut party: PartyBooths,
 ) {
     if test_mode(&mut env_cache) {
@@ -1375,7 +1377,13 @@ fn sync_portraits(
                 })
                 .flatten(),
             "pet" => {
-                let guid = party.pet_bar.spells.pet_guid;
+                // The token's unit: our charm, else our summon (`0x60acc3`-`0x60acd3`).
+                let guid = self_q
+                    .iter()
+                    .next()
+                    .and_then(|e| stores_q.get(e).ok())
+                    .and_then(|s| s.0.unit_pet_guid())
+                    .unwrap_or(0);
                 let entity = (guid != 0)
                     .then(|| party.index.0.get(&guid))
                     .flatten()
@@ -1385,7 +1393,7 @@ fn sync_portraits(
                 }
                 entity
             }
-            "npc" => interact_npc.0,
+            "npc" => crate::ui_session::interact_entity(&interact, &index),
             // Gated on the UI drawing it, as `"targettarget"`: no stock file binds it.
             benilla_ui::script::LOOT_PORTRAIT_UNIT => party
                 .panes

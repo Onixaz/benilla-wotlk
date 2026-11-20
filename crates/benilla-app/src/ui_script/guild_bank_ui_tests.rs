@@ -76,8 +76,6 @@ fn guild() -> GuildState {
             bank_money_per_day: 2_000_000,
             bank_tabs: vec![(0x7, 100); 6],
         }],
-        bank_money: 50_000,
-        bank_withdraw_money: -1,
         tabard: Some([1, 2, 3, 4, 5]),
         ..Default::default()
     }
@@ -95,7 +93,7 @@ fn the_stock_guild_bank_opens_and_withdraws_money_onto_a_bag_slot() {
     let mut s = load("guildbank");
     s.set_container(0, container(16, &[]));
     s.set_guild(guild());
-    s.set_guild_bank(guild_bank());
+    let _bank = super::test_ui::lend_guild_bank(guild_bank(), 50_000);
     s.fire_event("GUILDBANKFRAME_OPENED", vec![]);
     s.fire_event("GUILDBANK_UPDATE_TABS", vec![]);
     s.fire_event("GUILDBANKBAGSLOTS_CHANGED", vec![]);

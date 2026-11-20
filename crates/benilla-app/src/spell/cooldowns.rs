@@ -110,8 +110,6 @@ struct Record {
     on_hold: bool,
     gcd_category: u32,
     gcd: Timer,
-    /// Every timer has run out: the record reads cold and stays until [`Cooldowns::collect`].
-    spent: bool,
     /// When the record was inserted, the stamp the recent-cast test reads.
     time: Instant,
 }
@@ -151,18 +149,14 @@ impl CooldownInfo {
 
 /// One cooldown list, the client's spell history: the player's is this resource, the pet's is
 /// [`crate::ui_pet::PetBar::cooldowns`], which the pet bar, the pet book and the pet's
-/// `SMSG_SPELL_GO` leg read and write. Each list's edge feeds its own events: the player's
-/// `feed_action_state`, the pet's `ui_pet::bar::fire_pet_cooldown_events`.
+/// `SMSG_SPELL_GO` leg read and write. Each site that writes a list signals it
+/// ([`crate::ui_action::signals`]).
 #[derive(Resource, Default)]
 pub(crate) struct Cooldowns {
     records: Vec<Record>,
     /// Bumped on every mutation the reference flushes, the flush's edge. Only counts up, across
     /// [`Self::clear_silent`] too, so a watcher reads a reset as no mutation.
     pub(crate) generation: u64,
-    /// Bumped when [`Self::prune`] marks records spent or [`Self::collect`] drops them. Kept
-    /// apart from [`Self::generation`]: gated feeds must see an expiry, but the reference never
-    /// fires the event for one.
-    expiry_epoch: u64,
     /// When the next spell go collects both lists (`0xd3f608`), `None` before the first.
     next_collect: Option<Instant>,
 }
@@ -189,33 +183,10 @@ impl Cooldowns {
         self.records.len()
     }
 
-    /// How many records [`Self::prune`] has not marked spent.
-    #[cfg(test)]
-    pub(crate) fn live_count(&self) -> usize {
-        self.records.iter().filter(|r| !r.spent).count()
-    }
-
-    /// The counter a gated feed watches: moves on any mutation or pruned expiry.
-    pub(crate) fn feed_epoch(&self) -> u64 {
-        self.generation.wrapping_add(self.expiry_epoch)
-    }
-
-    /// An elapsed record awaits its prune. The feeds run before `feed_action_state`'s prune, so
-    /// on the frame a timer crosses zero the read changes a frame before [`Self::feed_epoch`].
-    pub(crate) fn sweep_pending(&self, now: Instant) -> bool {
-        self.records.iter().any(|r| {
-            !r.spent
-                && !r.on_hold
-                && r.recovery.remaining(now).is_zero()
-                && r.category_recovery.remaining(now).is_zero()
-                && r.gcd.remaining(now).is_zero()
-        })
-    }
-
     /// The cooldown add: always appends, never matching by id, so one spell holds separate nodes
     /// for its cast-send GCD and its SPELL_GO recovery. Replacing by id would let the GO insert
-    /// wipe the running GCD. Spent records stay until [`Self::collect`]; whether the insert stored
-    /// anything is returned.
+    /// wipe the running GCD. Elapsed records stay until [`Self::collect`]; whether the insert
+    /// stored anything is returned.
     fn add(
         &mut self,
         now: Instant,
@@ -237,7 +208,6 @@ impl Cooldowns {
         {
             return false;
         }
-        self.prune(now);
         self.records.push(Record {
             spell_id,
             item_id,
@@ -248,7 +218,6 @@ impl Cooldowns {
             on_hold,
             gcd_category,
             gcd,
-            spent: false,
             time: now,
         });
         self.bump();
@@ -265,39 +234,15 @@ impl Cooldowns {
         })
     }
 
-    /// Mark the fully elapsed records that are not on hold spent; invisible to reads, it is the
-    /// expiry edge the gated feeds watch. Bumps [`Self::expiry_epoch`], not [`Self::generation`],
-    /// so it flushes no event. [`Self::add`] runs it at every insert, and the player's feed each
-    /// frame, which the gated feeds need to see an expiry with no insert.
-    pub(crate) fn prune(&mut self, now: Instant) {
-        let mut ran_out = false;
-        for r in self.records.iter_mut().filter(|r| !r.spent && !r.on_hold) {
-            if r.recovery.remaining(now).is_zero()
-                && r.category_recovery.remaining(now).is_zero()
-                && r.gcd.remaining(now).is_zero()
-            {
-                r.spent = true;
-                ran_out = true;
-            }
-        }
-        if ran_out {
-            self.expiry_epoch = self.expiry_epoch.wrapping_add(1);
-        }
-    }
-
     /// The history sweep (`0x802b00`): drop every record not on hold whose own and category
     /// recoveries have run out. The GCD is not read, so a record holding only a running GCD goes
     /// too.
     pub(crate) fn collect(&mut self, now: Instant) {
-        let before = self.records.len();
         self.records.retain(|r| {
             r.on_hold
                 || !r.recovery.remaining(now).is_zero()
                 || !r.category_recovery.remaining(now).is_zero()
         });
-        if self.records.len() != before {
-            self.expiry_epoch = self.expiry_epoch.wrapping_add(1);
-        }
     }
 
     /// Whether a spell go collects the history now: the first one does, then one every 120 s
@@ -408,6 +353,7 @@ impl Cooldowns {
     /// 0, then with op 21 applied and nothing armed for a zero result. A negative one arms nothing
     /// either, where the reference inserts a record no reader shows. `on_hold` is Attributes
     /// bit 25. `cast_speed` is the caster's `UNIT_MOD_CAST_SPEED`, which scales the standard GCD.
+    /// Answers whether it armed: an on-hold start runs the usable update only then (`0x805e42`).
     pub(crate) fn start_gcd(
         &mut self,
         spell_id: u32,
@@ -415,9 +361,9 @@ impl Cooldowns {
         now: Instant,
         mods: &SpellModifiers,
         cast_speed: f32,
-    ) {
+    ) -> bool {
         if spell.start_recovery_category == 0 && spell.start_recovery_ms == 0 {
-            return;
+            return false;
         }
         // The GCD start: op 21 before the zero-duration exit.
         let duration_ms = hasted_gcd(
@@ -426,7 +372,7 @@ impl Cooldowns {
             cast_speed,
         );
         if duration_ms <= 0 {
-            return;
+            return false;
         }
         if benilla_assets::trace::enabled() {
             benilla_assets::trace::line(
@@ -452,15 +398,15 @@ impl Cooldowns {
                 duration: Duration::from_millis(duration_ms as u64),
             },
         );
+        true
     }
 
-    /// Clear the GCD of a spell's records on a failed cast, then collect the history (`0x804720`,
-    /// `0x804768`).
-    pub(crate) fn clear_gcd(&mut self, spell_id: u32, now: Instant) {
+    /// Clear the GCD of a spell's records on a failed cast and, when one matched, collect the history and answer true for the spellbook's flush (`0x804748`-`0x80476d`).
+    pub(crate) fn clear_gcd(&mut self, spell_id: u32, now: Instant) -> bool {
         let mut touched = false;
         for r in &mut self.records {
-            if r.spell_id == spell_id && !r.gcd.duration.is_zero() {
-                // The reference zeroes both the category and the time.
+            // Any record of the spell matches, its start cooldown armed or not (`0x804748`, `0x804756`).
+            if r.spell_id == spell_id {
                 r.gcd_category = 0;
                 r.gcd = Timer::none(now);
                 touched = true;
@@ -476,6 +422,12 @@ impl Cooldowns {
             self.collect(now);
             self.bump();
         }
+        touched
+    }
+
+    /// Whether any record names `spell_id`, which [`Self::clear_gcd`] would clear.
+    pub(crate) fn has_spell(&self, spell_id: u32) -> bool {
+        self.records.iter().any(|r| r.spell_id == spell_id)
     }
 
     /// `SMSG_COOLDOWN_EVENT` (force 0): an on-hold record's timers start now.
@@ -506,7 +458,7 @@ impl Cooldowns {
     /// `SMSG_MODIFY_COOLDOWN` (`0x802a10`): every record of the spell has its recovery and category
     /// starts moved by `delay_ms`, negative sooner; the GCD stays. Its wrapper (`0x802bf0`) flushes
     /// whether or not a record matched.
-    pub(crate) fn delay(&mut self, spell_id: u32, delay_ms: i32, now: Instant) {
+    pub(crate) fn delay(&mut self, spell_id: u32, delay_ms: i32) {
         let by = Duration::from_millis(u64::from(delay_ms.unsigned_abs()));
         let shift = |t: &mut Timer| {
             if delay_ms >= 0 {
@@ -521,10 +473,6 @@ impl Cooldowns {
         for r in self.records.iter_mut().filter(|r| r.spell_id == spell_id) {
             shift(&mut r.recovery);
             shift(&mut r.category_recovery);
-            // A later start can bring a spent record back.
-            r.spent &= r.recovery.remaining(now).is_zero()
-                && r.category_recovery.remaining(now).is_zero()
-                && r.gcd.remaining(now).is_zero();
         }
         self.bump();
     }
@@ -1344,27 +1292,6 @@ mod tests {
         assert_eq!(other.remaining_ms, 45_000);
     }
 
-    #[test]
-    fn prune_marks_only_fully_elapsed_records_spent() {
-        let t0 = Instant::now();
-        let mut cds = Cooldowns::default();
-        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
-        cds.start_spell(100, &charge(), 0, t0, None);
-        assert_eq!(cds.live_count(), 2);
-
-        // Past the 1.5 s GCD, inside Charge's 15 s.
-        cds.prune(t0 + Duration::from_secs(5));
-        assert_eq!(cds.live_count(), 1);
-        assert!(!cds.records[1].spent, "Charge runs");
-
-        cds.prune(t0 + Duration::from_secs(20));
-        assert_eq!(
-            (cds.live_count(), cds.record_count()),
-            (0, 2),
-            "kept until a collection"
-        );
-    }
-
     /// The history sweep (`0x802b00`) keeps a running recovery and a parked record, and drops the
     /// rest, a record holding only a running GCD among them.
     #[test]
@@ -1378,15 +1305,13 @@ mod tests {
         cds.start_spell(400, &spell(0, 2_000, 0, (0, 0), 0), 0, t0, None);
         let later = t0 + Duration::from_secs(5);
         cds.start_gcd(133, &fireball(), later, &mods, 1.0);
-        let epoch = cds.feed_epoch();
         cds.collect(later);
         let kept: Vec<u32> = cds.records.iter().map(|r| r.spell_id).collect();
         assert_eq!(
             kept,
             [100, 300],
-            "the spent recovery and the GCD-only record go"
+            "the elapsed recovery and the GCD-only record go"
         );
-        assert_ne!(cds.feed_epoch(), epoch, "the gated feeds see the drop");
     }
 
     /// The first spell go collects, then one every 120 s (`0x80fe50`).
@@ -1446,12 +1371,10 @@ mod tests {
         ]));
         let mods = SpellModifiers::default();
         // Both frost runes spent, at 50.0 s and 52.0 s, ten seconds a rune.
-        let mut state = RuneState {
-            regen: [0.1; RUNE_KINDS],
-            ..Default::default()
-        };
-        state.set_predicted(0x3f, 0x2f, None, 50_000);
-        state.set_predicted(0x2f, 0x0f, None, 52_000);
+        let mut state = RuneState::default();
+        let regen = [0.1; RUNE_KINDS];
+        state.set_predicted(0x3f, 0x2f, None, 50_000, &regen);
+        state.set_predicted(0x2f, 0x0f, None, 52_000, &regen);
         let leg = RuneLeg {
             runes: super::super::usable::RuneCheck {
                 state: &state,
@@ -1518,27 +1441,26 @@ mod tests {
         let before = at(&cds);
         let generation = cds.generation;
 
-        cds.delay(100, -5_000, t0);
+        cds.delay(100, -5_000);
         let sooner = at(&cds);
         assert_eq!(sooner.duration_ms, before.duration_ms);
         assert_eq!(sooner.remaining_ms, before.remaining_ms - 5_000);
         assert!(cds.generation > generation);
 
-        cds.delay(100, 5_000, t0);
+        cds.delay(100, 5_000);
         assert_eq!(at(&cds).remaining_ms, before.remaining_ms);
 
         let generation = cds.generation;
-        cds.delay(999, 1_000, t0);
+        cds.delay(999, 1_000);
         assert!(
             cds.generation > generation,
             "an unmatched spell still flushes"
         );
     }
 
-    /// Spent records stay until a collection: a GCD every 2 s for a minute leaves every record,
-    /// the live ones being Charge while it runs and the newest GCD.
+    /// Elapsed records stay until a collection: a GCD every 2 s for a minute leaves every record.
     #[test]
-    fn spent_records_stay_until_a_collection() {
+    fn elapsed_records_stay_until_a_collection() {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
         let mods = super::SpellModifiers::default();
@@ -1547,20 +1469,14 @@ mod tests {
         for i in 0..30u64 {
             let now = t0 + Duration::from_secs(2 * i);
             cds.start_gcd(133, &fireball(), now, &mods, 1.0);
-            let charge_live = usize::from(2 * i < 15);
-            assert_eq!(
-                cds.live_count(),
-                1 + charge_live,
-                "insert {i}: Charge if it still runs, and the new GCD"
-            );
         }
         assert_eq!(cds.record_count(), 31);
         cds.collect(t0 + Duration::from_secs(58));
         assert_eq!(cds.record_count(), 0, "nothing but a running GCD was left");
     }
 
-    /// An insert marks the records that have run out and only those: a running timer and a parked
-    /// record stay live, no read changes, and the insert is the one mutation.
+    /// An insert changes no other read: a running timer and a parked record answer as before, and
+    /// the insert is the one mutation.
     #[test]
     fn an_insert_keeps_a_running_and_a_parked_record_and_changes_no_read() {
         let t0 = Instant::now();
@@ -1599,12 +1515,6 @@ mod tests {
         cds.start_spell(500, &spell(99, 5_000, 0, (0, 0), 0), 0, now, None);
 
         assert_eq!(
-            cds.live_count(),
-            3,
-            "Charge, the parked record and the new one"
-        );
-        assert!(!cds.sweep_pending(now), "nothing that ran out is left");
-        assert_eq!(
             reads(&cds),
             before,
             "the records that stay read as they did"
@@ -1614,88 +1524,6 @@ mod tests {
             generation + 1,
             "one mutation, the insert's own"
         );
-    }
-
-    /// An elapsed record answers no read, so a prune cannot change one: what it keeps, a running
-    /// timer and a parked record whose own timers have run down, answers as before.
-    #[test]
-    fn a_prune_changes_no_read() {
-        let t0 = Instant::now();
-        let mut cds = Cooldowns::default();
-        let mods = super::SpellModifiers::default();
-        let brief = || spell(7, 2_000, 0, (0, 0), 0);
-        // Parked: `Attributes` bit 25, its timers wait for `SMSG_COOLDOWN_EVENT`.
-        let parked = || spell(9, 1_000, 0, (0, 0), 1 << 25);
-        cds.start_gcd(133, &fireball(), t0, &mods, 1.0);
-        cds.start_spell(100, &brief(), 0, t0, None);
-        cds.start_spell(200, &charge(), 0, t0, None);
-        cds.start_spell(300, &parked(), 0, t0, None);
-        assert_eq!(cds.records.len(), 4);
-
-        let now = t0 + Duration::from_secs(5);
-        let asks = [
-            (133, fireball()),
-            (100, brief()),
-            (200, charge()),
-            // Another spell of Charge's category, and one of the parked spell's.
-            (201, spell(44, 0, 0, (0, 0), 0)),
-            (300, parked()),
-            (301, spell(9, 0, 0, (0, 0), 0)),
-            (999, spell(0, 0, 0, (0, 0), 0)),
-        ];
-        let reads = |cds: &Cooldowns| {
-            asks.iter()
-                .map(|(id, d)| cds.info(*id, 0, Some(d), now))
-                .collect::<Vec<_>>()
-        };
-        let before = reads(&cds);
-        assert!(cds.sweep_pending(now), "the GCD and Brief have run out");
-        assert_eq!(before[2].remaining_ms, 10_000, "Charge runs");
-        assert!(!before[4].enabled, "and the parked spell reads disabled");
-
-        cds.prune(now);
-
-        assert_eq!(cds.live_count(), 2, "the GCD and Brief are spent");
-        assert!(!cds.sweep_pending(now));
-        assert_eq!(reads(&cds), before);
-    }
-
-    /// A prune that removes nothing must not move the epoch, or the per-frame prune would hold
-    /// every gated feed open.
-    #[test]
-    fn the_feed_epoch_moves_on_expiry_but_an_empty_prune_is_silent() {
-        let t0 = Instant::now();
-        let mut cds = Cooldowns::default();
-        let e0 = cds.feed_epoch();
-        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
-        let armed = cds.feed_epoch();
-        assert_ne!(e0, armed, "a mutation moves the epoch (generation)");
-
-        cds.prune(t0 + Duration::from_millis(100));
-        assert_eq!(
-            cds.feed_epoch(),
-            armed,
-            "nothing elapsed — the prune is silent"
-        );
-
-        cds.prune(t0 + Duration::from_secs(5));
-        let expired = cds.feed_epoch();
-        assert_ne!(
-            armed, expired,
-            "the expiry IS a feed edge (the triple flips to None)"
-        );
-        assert_eq!(
-            cds.generation,
-            {
-                let mut probe = Cooldowns::default();
-                probe.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
-                probe.generation
-            },
-            "…but the event-edge generation never saw it (the reference is silent on expiry)"
-        );
-
-        cds.prune(t0 + Duration::from_secs(6));
-        assert_eq!(cds.feed_epoch(), expired, "an empty prune stays silent");
     }
 
     /// A fail-clear and re-arm between two feeds must still read as a new start.

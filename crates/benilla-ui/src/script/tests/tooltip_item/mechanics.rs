@@ -703,8 +703,8 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
         })],
         fishing: false,
     }));
-    s.set_random_properties(
-        [(
+    let _tables = lend_tables(ItemTables {
+        random_properties: [(
             584,
             RandomPropertyView {
                 suffix: "of the Monkey".into(),
@@ -724,7 +724,8 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
         )]
         .into_iter()
         .collect(),
-    );
+        ..Default::default()
+    });
     s.run(
         r#"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -920,8 +921,8 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
             ..Default::default()
         },
     );
-    s.set_random_properties(
-        [(
+    let _tables = lend_tables(ItemTables {
+        random_properties: [(
             584,
             RandomPropertyView {
                 suffix: "of the Monkey".into(),
@@ -934,7 +935,8 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
         )]
         .into_iter()
         .collect(),
-    );
+        ..Default::default()
+    });
     s.run(
         r#"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1055,18 +1057,18 @@ fn a_linked_suffix_fills_its_amount_and_its_enchant_prints() {
             },
         )
     };
-    s.set_enchant_rows(HashMap::from([
-        row(2802, "+$i Stamina"),
-        row(1900, "Crusader"),
-    ]));
-    s.set_random_suffixes(HashMap::from([(
-        39,
-        RandomSuffixView {
-            name: "of the Bear".into(),
-            enchants: [2802, 0, 0, 0, 0],
-            allocation: [6666, 0, 0, 0, 0],
-        },
-    )]));
+    let _tables = lend_tables(ItemTables {
+        enchant_rows: HashMap::from([row(2802, "+$i Stamina"), row(1900, "Crusader")]),
+        random_suffixes: HashMap::from([(
+            39,
+            RandomSuffixView {
+                name: "of the Bear".into(),
+                enchants: [2802, 0, 0, 0, 0],
+                allocation: [6666, 0, 0, 0, 0],
+            },
+        )]),
+        ..Default::default()
+    });
     s.run(
         r#"
         ITEM_SUFFIX_TEMPLATE = "%s %s"
@@ -1148,4 +1150,12 @@ fn a_retrieving_link_fires_and_its_landing_does_not_toggle() {
         s.eval::<String>("return TTTextLeft1:GetText()").unwrap(),
         "Late Loop"
     );
+}
+
+/// Lend `tables` as the client's item tables.
+fn lend_tables(tables: ItemTables) -> crate::script::live::LiveLoan<crate::script::live::TestView> {
+    crate::script::live::lend_test(crate::script::live::TestView {
+        item_tables: Some(tables),
+        ..Default::default()
+    })
 }

@@ -246,7 +246,8 @@ impl Default for RangeInputs {
 /// Everything a cast-sending system needs to build a [`CastContext`].
 #[derive(SystemParam)]
 pub(crate) struct CastTargeting<'w, 's> {
-    pub(crate) selection: Res<'w, Selection>,
+    /// Read beside the press appliers' own write of it, at each call.
+    selection: crate::ui_script::LentRef<'w, Selection>,
     pub(crate) self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     pub(crate) self_auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
     /// Any caster's auras, for a cast as the pet.
@@ -278,13 +279,26 @@ pub(crate) struct CastTargeting<'w, 's> {
 }
 
 impl CastTargeting<'_, '_> {
+    /// The selection as it stands now: `(entity, guid)`.
+    pub(crate) fn selected(&self) -> (Option<Entity>, Option<u64>) {
+        self.selection
+            .get()
+            .map_or((None, None), |s| (s.target, s.guid))
+    }
+
+    /// The selection as it stands now, for a token's resolve.
+    pub(crate) fn selection(&self) -> Selection {
+        self.selection.get().map(|s| s.clone()).unwrap_or_default()
+    }
+
     /// This frame's [`CastContext`].
     pub(crate) fn context(&self) -> CastContext<'_> {
-        let target_store = self.selection.target.and_then(|e| self.stores.get(e).ok());
+        let (selected, selection_guid) = self.selected();
+        let target_store = selected.and_then(|e| self.stores.get(e).ok());
         let owner_store = |store| owner_store(store, self.index.as_deref(), &self.stores);
         let self_store = self.self_store.iter().next();
         CastContext {
-            selection_guid: self.selection.guid,
+            selection_guid,
             self_guid: self.self_guid.0,
             auto_self_cast: self.auto_self_cast.0,
             rel: TargetRelations {
@@ -299,20 +313,18 @@ impl CastTargeting<'_, '_> {
                 },
                 group: GroupInputs {
                     self_guid: self.self_guid.0,
-                    target_guid: self.selection.guid,
+                    target_guid: selection_guid,
                     self_owner_store: owner_store(self_store),
                     roster: self.roster.as_deref(),
                 },
             },
             range: RangeInputs {
                 self_pos: self.self_transform.iter().next().map(|t| t.translation),
-                target_pos: self
-                    .selection
-                    .target
+                target_pos: selected
                     .and_then(|e| self.transforms.get(e).ok())
                     .map(|t| t.translation),
                 caster: self.range_units.caster(),
-                target: self.selection.target.and_then(|e| self.range_units.unit(e)),
+                target: selected.and_then(|e| self.range_units.unit(e)),
             },
             main_hand_item: self
                 .self_store
@@ -337,10 +349,7 @@ impl CastTargeting<'_, '_> {
                 self.auto.unshift(s, row.map_or(0, |f| f.flags))
             }),
             self_auras: self.self_auras.iter().next(),
-            target_auras: self
-                .selection
-                .target
-                .and_then(|e| self.unit_auras.get(e).ok()),
+            target_auras: selected.and_then(|e| self.unit_auras.get(e).ok()),
             combo_points: self.combo_on(false, 0),
         }
     }
@@ -350,7 +359,7 @@ impl CastTargeting<'_, '_> {
     fn combo_on(&self, pet: bool, target: u64) -> u8 {
         self.combo.as_deref().map_or(0, |c| {
             let bank = if pet { c.pet } else { c.player };
-            bank.on(target, self.selection.guid.unwrap_or(0))
+            bank.on(target, self.selected().1.unwrap_or(0))
         })
     }
 
@@ -378,28 +387,6 @@ impl CastTargeting<'_, '_> {
         ctx.range.target = entity.and_then(|e| self.range_units.unit(e));
         ctx.target_auras = entity.and_then(|e| self.unit_auras.get(e).ok());
         ctx
-    }
-
-    /// The unit `guid` as the range check reads it ([`super::range_check::RangeFacts`]), `None`
-    /// before it streams.
-    pub(crate) fn range_facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
-        let ctx = self.context_at(Aim::Unit(Some(guid)));
-        let rel = &ctx.rel;
-        let store = rel.target_store?;
-        let is_self = self.self_guid.0 == Some(guid);
-        Some(super::range_check::RangeFacts {
-            unit: ctx.range.target?,
-            pos: ctx.range.target_pos?,
-            flags: store.0.unit_flags(),
-            alive: super::bind_gates::unit_alive(&store.0),
-            dead_flag: store.0.unit_dynflag_dead(),
-            creature_type: rel.types.of(store),
-            pet_number: store.0.unit_pet_number(),
-            attackable: rel.attackable(is_self),
-            in_party: rel.in_party(is_self),
-            in_group: rel.in_group(is_self),
-            target: store.0.unit_target().filter(|&g| g != 0),
-        })
     }
 
     /// The [`CastContext`] of a cast with the pet as caster (the spell-cast entry `0x80cce0` called
@@ -443,12 +430,20 @@ impl CastTargeting<'_, '_> {
     }
 
     /// Resolve a cast verb's target where its call takes effect, after the calls before it
-    /// committed: the selection, the active player, or the unit a token names (`None`, nobody).
-    pub(crate) fn aim(&self, tokens: &crate::ui_unit::UnitTokens, at: &CastAt) -> Aim {
+    /// committed: the selection, the active player, or the unit a token names (`None`, nobody),
+    /// `vm` answering the focus and a name.
+    pub(crate) fn aim(
+        &self,
+        tokens: &crate::ui_unit::UnitTokens,
+        at: &CastAt,
+        vm: crate::ui_unit::VmUnits<'_>,
+    ) -> Aim {
         match at {
             CastAt::Selection => Aim::Selection,
             CastAt::Player => Aim::Unit(self.self_guid.0),
-            CastAt::Unit(token) => Aim::Unit(tokens.resolve(token, &self.selection).map(|u| u.1)),
+            CastAt::Unit(token) => {
+                Aim::Unit(tokens.resolve(token, &self.selection(), vm).map(|u| u.1))
+            }
         }
     }
 }
@@ -1139,5 +1134,113 @@ mod tests {
             types: Default::default(),
             group: Default::default(),
         }
+    }
+}
+
+/// A unit's range facts from its relations to us, its store, and its reach and position: the one builder the cast's and the quest item's range checks share.
+fn range_facts_of(
+    rel: &TargetRelations<'_>,
+    store: &ObjectStore,
+    (unit, pos): (benilla_formats::RangeUnit, Vec3),
+    is_self: bool,
+) -> super::range_check::RangeFacts {
+    super::range_check::RangeFacts {
+        unit,
+        pos,
+        flags: store.0.unit_flags(),
+        alive: unit_alive(&store.0),
+        dead_flag: store.0.unit_dynflag_dead(),
+        creature_type: rel.types.of(store),
+        pet_number: store.0.unit_pet_number(),
+        attackable: rel.attackable(is_self),
+        in_party: rel.in_party(is_self),
+        in_group: rel.in_group(is_self),
+        target: store.0.unit_target().filter(|&g| g != 0),
+    }
+}
+
+/// The range check's inputs alone, read at the call: our reach and position, and each unit's facts.
+#[derive(SystemParam)]
+pub(crate) struct RangeFactsView<'w, 's> {
+    stores: Query<'w, 's, &'static ObjectStore>,
+    self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    index: Option<Res<'w, GuidIndex>>,
+    self_guid: Option<Res<'w, SelfGuid>>,
+    factions: Option<Res<'w, Factions>>,
+    reputations: Option<Res<'w, Reputations>>,
+    /// The group the party and raid tables read at the call.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+    names: Option<Res<'w, NameCache>>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    self_transform: Query<'w, 's, &'static Transform, (With<SelfPlayer>, With<ObjectStore>)>,
+    transforms: Query<'w, 's, &'static Transform, With<ObjectStore>>,
+    range_units: super::RangeUnits<'w, 's>,
+}
+
+impl RangeFactsView<'_, '_> {
+    /// The units' reaches, motion and auto-attack targets.
+    pub(crate) fn range_units(&self) -> &super::RangeUnits<'_, '_> {
+        &self.range_units
+    }
+
+    /// The unit `entity`'s reach and position now, `None` before it streams.
+    pub(crate) fn at(&self, entity: Entity) -> Option<(benilla_formats::RangeUnit, Vec3)> {
+        Some((
+            self.range_units.unit(entity)?,
+            self.transforms.get(entity).ok()?.translation,
+        ))
+    }
+
+    /// The unit `guid` as the range check reads it now, as [`CastTargeting::range_facts`] builds it; `None` before it streams.
+    pub(crate) fn facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
+        let entity = *self.index.as_deref()?.0.get(&guid)?;
+        let store = self.stores.get(entity).ok()?;
+        let self_guid = self.self_guid.as_deref().and_then(|g| g.0);
+        let self_store = self.self_store.iter().next();
+        let owner = |s| owner_store(s, self.index.as_deref(), &self.stores);
+        let roster = self.group.as_deref().map(|g| GroupRoster::of(g, self_guid));
+        let rel = TargetRelations {
+            target_store: Some(store),
+            target_owner_store: owner(Some(store)),
+            self_store,
+            factions: self.factions.as_deref(),
+            reputations: self.reputations.as_deref()?,
+            types: CreatureTypeSources {
+                names: self.names.as_deref(),
+                forms: self.spells.as_deref().map(|s| &s.forms),
+            },
+            group: GroupInputs {
+                self_guid,
+                target_guid: Some(guid),
+                self_owner_store: owner(self_store),
+                roster: roster.as_ref(),
+            },
+        };
+        let is_self = self_guid == Some(guid);
+        let at = (
+            self.range_units.unit(entity)?,
+            self.transforms.get(entity).ok()?.translation,
+        );
+        Some(range_facts_of(&rel, store, at, is_self))
+    }
+
+    /// The range check of `def` from our player toward `target` at the call (`0x809610`), as the item range verbs run it.
+    pub(crate) fn player_range_check(
+        &self,
+        def: &SpellDisplay,
+        row: Option<&benilla_formats::SpellRange>,
+        mods: &super::SpellModifiers,
+        target: u64,
+    ) -> Option<bool> {
+        let pos = self.self_transform.iter().next()?.translation;
+        super::range_check(
+            def,
+            row,
+            mods,
+            (self.range_units.caster(), pos),
+            target,
+            None,
+            |guid| self.facts(guid),
+        )
     }
 }

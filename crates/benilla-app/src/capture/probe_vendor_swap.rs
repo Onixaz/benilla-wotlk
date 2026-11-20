@@ -14,6 +14,8 @@
 //! 4. title: a second later the window still shows his name.
 //! 5. clear: `HideUIPanel(MerchantFrame)` (stock OnHide calls `CloseMerchant`); once the session
 //!    is gone `UnitExists("npc")` is nil.
+//! 6. closed: every `MERCHANT_CLOSED` since the swap, the swap's and the hide's, read `UnitName("npc")`
+//!    as nil inside the dispatch.
 //!
 //! The event readings are taken inside the event by a hook frame registered after the stock one,
 //! so a later `MERCHANT_UPDATE` repaint cannot mask what the open left. Non-combat, nothing bought
@@ -29,7 +31,6 @@ use crate::names::NameCache;
 use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::player::Player;
 use crate::portrait::{BoothPanes, PortraitImages, PortraitSource};
-use crate::ui_merchant::MerchantOpen;
 
 /// Brog Hamfist `<General Supplies>`: `creature_template.entry = 151`, `npc_flags = 4`.
 const BROG_ENTRY: u32 = 151;
@@ -141,8 +142,7 @@ fn clear_log(script: &UiScript) {
 fn vendor_swap_probe(
     time: ProbeClock,
     mut probe: ResMut<VendorSwapProbe>,
-    merchant: Res<MerchantOpen>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     names: Res<NameCache>,
     panes: Res<BoothPanes>,
     images: Res<PortraitImages>,
@@ -222,7 +222,7 @@ fn vendor_swap_probe(
         Phase::Open { since } => {
             let brog = probe.brog.expect("set at Settle");
             let expect = names.peek(brog).unwrap_or("").to_string();
-            match (merchant.vendor == Some(brog), first_show(&script)) {
+            match (live.merchant_vendor() == Some(brog), first_show(&script)) {
                 (true, Some((npc, title))) => {
                     if npc == expect && title == expect {
                         info!(
@@ -243,7 +243,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: open FAIL — no merchant window + MERCHANT_SHOW on \
                          Brog within {WINDOW_TIMEOUT_SECS}s (vendor = {:?})",
-                        merchant.vendor
+                        live.merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -280,7 +280,7 @@ fn vendor_swap_probe(
         Phase::Swap { since } => {
             let dobbins = probe.dobbins.expect("set at Settle");
             let expect = names.peek(dobbins).unwrap_or("").to_string();
-            match (merchant.vendor == Some(dobbins), first_show(&script)) {
+            match (live.merchant_vendor() == Some(dobbins), first_show(&script)) {
                 (true, Some((npc, title))) => {
                     if npc == expect && title == expect {
                         info!(
@@ -301,7 +301,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: swap FAIL — no window swap + MERCHANT_SHOW on \
                          Dobbins within {WINDOW_TIMEOUT_SECS}s (vendor = {:?})",
-                        merchant.vendor
+                        live.merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -338,7 +338,7 @@ fn vendor_swap_probe(
         }
         Phase::Clear { since, closed_at } => {
             match closed_at {
-                None if merchant.vendor.is_none() => {
+                None if live.merchant_vendor().is_none() => {
                     probe.phase = Phase::Clear {
                         since,
                         closed_at: Some(now),
@@ -348,7 +348,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: clear FAIL — the session never cleared after \
                          HideUIPanel (vendor = {:?})",
-                        merchant.vendor
+                        live.merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -369,6 +369,23 @@ fn vendor_swap_probe(
                     } else {
                         info!("PROBE_VENDOR_SWAP: clear PASS — UnitExists(\"npc\") is nil");
                         probe.passes += 1;
+                    }
+                    // The close zeroes the interact target before its walk (`0x512e89`), so every
+                    // `MERCHANT_CLOSED`, the swap's and the hide's, reads `"npc"` as nobody.
+                    let log: Vec<String> =
+                        script.eval("return ProbeVendorSwapLog").unwrap_or_default();
+                    let closed: Vec<&String> = log
+                        .iter()
+                        .filter(|l| l.starts_with("MERCHANT_CLOSED|"))
+                        .collect();
+                    if !closed.is_empty()
+                        && closed.iter().all(|l| l.starts_with("MERCHANT_CLOSED|nil|"))
+                    {
+                        info!("PROBE_VENDOR_SWAP: closed PASS — {closed:?}");
+                        probe.passes += 1;
+                    } else {
+                        error!("PROBE_VENDOR_SWAP: closed FAIL — {log:?}");
+                        probe.fails += 1;
                     }
                     probe.phase = Phase::Done;
                 }

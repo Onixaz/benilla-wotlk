@@ -30,6 +30,9 @@ pub struct AreaTableRow {
     pub exploration_level: i32,
     /// The localized display name ("Elwynn Forest").
     pub name: String,
+    /// `AmbientMultiplier` (`AreaTable+0x48`): a unit in this area takes `1 + 2 × m` times the
+    /// scene ambient ([`AreaTableCatalog::character_ambient_row`]).
+    pub ambient_multiplier: f32,
 }
 
 /// `AreaTable.dbc` rows keyed by id, and the ids in record order.
@@ -84,6 +87,17 @@ impl AreaTableCatalog {
             self.by_id.get(&leaf.zone_id).unwrap_or(leaf)
         };
         row.flags & 0x1 != 0
+    }
+
+    /// The row whose `AmbientMultiplier` lights units in `area_id` (`0x7831a0`): the leaf when it
+    /// sets bit `0x2000` or has no parent, else its parent, one hop. `None` when that row is absent.
+    pub fn character_ambient_row(&self, area_id: u32) -> Option<&AreaTableRow> {
+        let leaf = self.by_id.get(&area_id)?;
+        if leaf.flags & 0x2000 == 0 && leaf.zone_id != 0 {
+            self.by_id.get(&leaf.zone_id)
+        } else {
+            Some(leaf)
+        }
     }
 
     /// Every row with its id in the file's record order, the walk `GetRecordByIndex` makes
@@ -142,6 +156,8 @@ pub fn load_area_table_catalog(chain: &mut Chain) -> Result<AreaTableCatalog> {
             continue;
         };
         let faction_group_mask = u32_at(r, layout.faction_group_mask).unwrap_or(0);
+        // A float column read through its bits; absent, it multiplies by 1 + 2 × 0.
+        let ambient_multiplier = u32_at(r, layout.ambient_multiplier).map_or(0.0, f32::from_bits);
         // Signed; an absent column reads as `-1`, no exploration gate.
         let exploration_level = u32_at(r, 10).map_or(-1, |v| v as i32);
         order.push(id);
@@ -155,6 +171,7 @@ pub fn load_area_table_catalog(chain: &mut Chain) -> Result<AreaTableCatalog> {
                 faction_group_mask,
                 exploration_level,
                 name,
+                ambient_multiplier,
             },
         );
     }
@@ -195,6 +212,45 @@ mod tests {
         // The FFA-pit bit is on the pit row, not the enclosing arena row.
         assert_ne!(cat.get(2177).expect("Battle Ring").flags & 0x80, 0);
         assert_eq!(cat.get(1741).expect("Gurubashi Arena").flags & 0x80, 0);
+
+        // Hellfire Peninsula lights its units at 1 + 2 × 0.6; Honor Hold inherits it through its
+        // parent, and Elwynn sets none.
+        let hellfire = cat.character_ambient_row(3483).expect("Hellfire Peninsula");
+        assert!((hellfire.ambient_multiplier - 0.6).abs() < 1e-6);
+        assert_eq!(
+            cat.character_ambient_row(3538).map(|r| r.name.as_str()),
+            Some("Hellfire Peninsula")
+        );
+        assert_eq!(cat.get(12).expect("Elwynn").ambient_multiplier, 0.0);
+    }
+
+    /// One hop up unless the leaf sets `0x2000`; a missing parent row is no answer.
+    #[test]
+    fn the_character_ambient_row_is_the_leaf_or_its_parent() {
+        let row = |zone_id, flags, m| AreaTableRow {
+            map_id: 0,
+            zone_id,
+            explore_flag: 0,
+            flags,
+            faction_group_mask: 0,
+            exploration_level: 0,
+            name: String::new(),
+            ambient_multiplier: m,
+        };
+        let cat = AreaTableCatalog::from_rows(vec![
+            (1, row(0, 0, 0.6)),
+            (2, row(1, 0, 0.0)),
+            (3, row(1, 0x2000, 0.3)),
+            (4, row(99, 0, 0.1)),
+            (5, row(2, 0, 0.2)),
+        ]);
+        let m = |id| cat.character_ambient_row(id).map(|r| r.ambient_multiplier);
+        assert_eq!(m(1), Some(0.6), "a zone is its own row");
+        assert_eq!(m(2), Some(0.6), "a sub-area reads its parent");
+        assert_eq!(m(3), Some(0.3), "0x2000 keeps the leaf");
+        assert_eq!(m(4), None, "a missing parent row answers nothing");
+        assert_eq!(m(5), Some(0.0), "one hop, never a chain walk");
+        assert_eq!(m(77), None);
     }
 
     /// The sub-areas carry `0x40`, so only the one-hop inheritance makes them cold.

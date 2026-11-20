@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use benilla_ui::script::{ActionSlot, ScriptValue, UiScript, UnitState};
 
+use crate::net::NetHandlerApp;
 use crate::ui_unit::UnitFeed;
 use benilla_world::schedule::WorldStage;
 
@@ -22,7 +23,10 @@ pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
-pub(crate) use live::LendLive;
+pub(crate) use live::{
+    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending, OwnsPlace,
+    OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
+};
 #[cfg(test)]
 pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
@@ -258,9 +262,13 @@ pub(crate) struct UiPress;
 /// The player-UI feed phase, after [`UiPress`] and ungated (`UnitFeed` is the gated sub-phase):
 /// every push this frame's tick must see, as in the reference's frame, where packet dispatch
 /// precedes every script event signal and both precede `OnUpdate`. Every VM holder in `Update` is
-/// in this set, in [`UiPress`] or in [`UiDrain`], as `game_plugins::schedule_tests` checks.
+/// in this set, in [`UiPress`], [`UiSignals`] or [`UiDrain`], as `game_plugins::schedule_tests` checks.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiFeed;
+
+/// The game UI's idle tail, after the whole [`UiFeed`] phase and before the tick: the watch timers and the frame's unique signals fire after every handler's events (`0x52b229`, `0x52b247`).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct UiSignals;
 
 /// The player-UI paint pass, after the camera so world-anchored widgets use this frame's view.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -497,6 +505,7 @@ impl Plugin for UiScriptPlugin {
                 (
                     UiPress.after(WorldStage::Net),
                     UiFeed,
+                    UiSignals,
                     UiInput.before(WorldStage::Input),
                     UiDrain.before(WorldStage::Input),
                     UiPaint,
@@ -512,6 +521,18 @@ impl Plugin for UiScriptPlugin {
             )
             // In the feed phase, so an `OnUpdate` reads this frame's `GetFramerate()`.
             .add_systems(Update, feed_framerate.in_set(UiFeed))
+            // The frame's unique signals, after every handler and feed (`0x614760`); a signal queued before the interface is up waits for it.
+            .init_non_send_resource::<live::UniqueSignals>()
+            .net_handler(
+                benilla_protocol::SessionEventKind::Disconnected,
+                live::clear_unique_signals,
+            )
+            .add_systems(
+                Update,
+                live::flush_unique_signals
+                    .in_set(UiSignals)
+                    .run_if(ingame_ui_up),
+            )
             // The press hit-tests the rects the last tick resolved, the ones on screen, in-world
             // or on the stock glue screens.
             .init_resource::<UiPassState>()
@@ -575,9 +596,9 @@ fn arbitrate_pointer_over_ui(
 /// The session lifecycle: the VM's birth, identity, death and reload.
 mod lifecycle;
 pub(crate) use lifecycle::{
-    end_ui_session, fire_armed_player_login, ingame_ui_up, run_pending_reload, setup_script,
-    strings_vm, AddOnIdentity, LeaveWorldSweep, LeavingWorldArmed, PendingEntryUiLoad, ReloadEntry,
-    ReloadUiPending, WorldLeaveSweepMessage,
+    end_ui_session, fire_armed_player_login, ingame_ui_up, ingame_ui_up_in, run_pending_reload,
+    setup_script, strings_vm, AddOnIdentity, LeaveWorldSweep, LeavingWorldArmed,
+    PendingEntryUiLoad, ReloadEntry, ReloadUiPending, WorldLeaveSweepMessage,
 };
 // Test-only: other modules' tests consume these, and a plain re-export would warn unused.
 #[cfg(test)]
@@ -683,11 +704,14 @@ fn demo_unit_feed(
     );
     // The combo dots need a rogue and banked points, seeded only for `ui-combopoints`.
     if std::env::var("WOW_CAPTURE").as_deref() == Ok("ui-combopoints") {
-        script.set_player_req_state(benilla_ui::script::PlayerReqState {
-            level: 12,
-            class_id: 4, // rogue
-            ..Default::default()
-        });
+        crate::dev::set_fixture_player(
+            &mut script,
+            benilla_ui::script::PlayerReqState {
+                level: 12,
+                class_id: 4, // rogue
+                ..Default::default()
+            },
+        );
         script.set_combo_points(4, DEMO_TARGET_GUID);
         script.fire_event(
             "UNIT_COMBO_POINTS",
@@ -1069,15 +1093,11 @@ mod instance_tests;
 mod static_popup_tests;
 
 #[cfg(test)]
-mod binder_tests;
-
+mod npc_characterization_tests;
 #[cfg(test)]
 mod summon_tests;
 #[cfg(test)]
-mod test_live;
-
-#[cfg(test)]
-mod talent_wipe_tests;
+pub(crate) mod test_live;
 
 #[cfg(test)]
 mod death_tests;
@@ -1248,8 +1268,6 @@ mod quiver_tests;
 mod world_entry_tests;
 
 /// The guild tabard designer: the stock `TabardFrame.xml` off the chain.
-#[cfg(test)]
-mod tabard_tests;
 /// The stock world map: its POI pool, unit blips, player arrow and full-screen quads.
 #[cfg(test)]
 mod world_map_tests;

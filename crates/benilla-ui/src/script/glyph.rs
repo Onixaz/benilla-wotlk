@@ -152,17 +152,6 @@ impl super::UiScript {
     }
 }
 
-/// The spells of every glyph the talent groups hold, whose descriptions the tooltip reads.
-pub(super) fn glyph_spells(model: &Model) -> impl Iterator<Item = u32> + '_ {
-    model
-        .talents
-        .groups
-        .iter()
-        .flat_map(|g| g.glyphs)
-        .filter_map(|id| model.glyph_catalog.glyph(id))
-        .map(|g| g.spell)
-}
-
 /// The player object exists, as every glyph verb but the count first asks.
 fn has_player(model: &Model) -> bool {
     model.unit("player").is_some_and(|u| u.exists)
@@ -380,7 +369,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(flag(
-                model.spell_targeting && model.glyph_targeting.is_some_and(|t| t.wants_socket),
+                super::spellbook::targeting().active
+                    && model.glyph_targeting.is_some_and(|t| t.wants_socket),
             ))
         })?,
     )?;
@@ -542,6 +532,7 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script::live::TestTargeting;
     use crate::script::{TalentGroupView, TalentUiState, UiScript, UnitState};
 
     const ICON: &str = r"Interface\Icons\INV_Glyph_MajorHunter";

@@ -60,7 +60,6 @@ fn model() -> QuestLogState {
     };
     QuestLogState {
         entries: vec![header, kill, done],
-        num_quests: 2,
         daily_completed: 0,
     }
 }
@@ -80,7 +79,7 @@ fn the_stock_quest_log_draws_the_model() {
     // among them) count with the load's errors.
     s.resolve();
     let _ = s.take_errors();
-    s.set_quest_log(model());
+    s.seed_quest_log(model());
     s.fire_event(
         "QUEST_LOG_UPDATE",
         Vec::<benilla_ui::script::ScriptValue>::new(),

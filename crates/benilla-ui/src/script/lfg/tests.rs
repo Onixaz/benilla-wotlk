@@ -245,9 +245,9 @@ fn the_selection_and_collapse_states_live_in_their_cvars() {
 fn join_refuses_an_empty_selection_and_sends_a_valid_one() {
     let mut s = script(WARRIOR);
     s.run("JoinLFG()").unwrap();
-    assert_eq!(s.take_ui_errors(), ["ERR_LFG_NO_SLOTS_SELECTED"]);
+    assert_eq!(s.take_shown(), ["ERR_LFG_NO_SLOTS_SELECTED"]);
     s.run("SetLFGDungeon(261) JoinLFG()").unwrap();
-    assert_eq!(s.take_ui_errors(), ["ERR_LFG_NO_ROLES_SELECTED"]);
+    assert_eq!(s.take_shown(), ["ERR_LFG_NO_ROLES_SELECTED"]);
     assert!(s.take_lfg_requests().is_empty());
     s.run("SetLFGRoles(false, true, false, false) JoinLFG() JoinLFG()")
         .unwrap();
@@ -323,6 +323,19 @@ fn player_info_builds_the_random_list_and_its_rewards() {
         "the name waits for the template"
     );
     assert_eq!(s.take_item_stat_asks(), [29434]);
+    // Each read of the uncached reward left its own callback (`0x557c8d`, no once flag); the record's answer runs both (`0x552950`).
+    s.eval::<()>("GetLFGDungeonRewardInfo(261, 1)").unwrap();
+    s.set_item_template(
+        29434,
+        crate::script::ItemTemplateView {
+            name: "Badge of Justice".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        log(&mut s),
+        ["LFG_UPDATE_RANDOM_INFO", "LFG_UPDATE_RANDOM_INFO"]
+    );
     let (lock, reason): (i32, i32) = s
         .eval(
             "local t = GetLFDChoiceLockedState() return t[202], select(2, GetLFDLockInfo(202, 1))",
@@ -523,7 +536,7 @@ fn the_teleport_gates_on_the_player() {
     };
     s.set_unit("player", Some(player(true)));
     assert!(!s.eval::<bool>("return LFGTeleport(false)").unwrap());
-    assert_eq!(s.take_ui_errors(), ["ERR_NOT_IN_COMBAT"]);
+    assert_eq!(s.take_shown(), ["ERR_NOT_IN_COMBAT"]);
     s.set_unit("player", Some(player(false)));
     assert!(s.eval::<bool>("return LFGTeleport(true)").unwrap());
     assert_eq!(s.take_lfg_requests(), [LfgRequest::Teleport(true)]);

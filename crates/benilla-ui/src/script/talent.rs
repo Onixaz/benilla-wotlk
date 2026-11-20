@@ -19,7 +19,7 @@
 
 use mlua::{Lua, MultiValue, Table, Value};
 
-use super::tooltip_spell::{spell_view_of, TalentHint, TalentLines};
+use super::tooltip_spell::{TalentHint, TalentLines};
 use super::{Model, ScriptValue};
 
 /// The dual-spec activation spells `SetActiveTalentGroup` casts, by group (`0xad05e8`).
@@ -202,21 +202,6 @@ impl super::UiScript {
     /// body's list (`0x5c6ab4`); the app adds the pet guid.
     pub fn take_pet_talent_preview_learns(&mut self) -> Vec<Vec<(u32, u32)>> {
         drain_field!(self, pet_talent_preview_learns)
-    }
-
-    /// Drain the count of `ConfirmTalentWipe()` calls, each an outbound `MSG_TALENT_WIPE_CONFIRM`;
-    /// a count, since the app holds the trainer's guid.
-    pub fn take_talent_wipe_confirms(&mut self) -> u32 {
-        drain_field!(self, talent_wipe_confirms)
-    }
-
-    /// Push whether a trainer's respec question is live and in range, which
-    /// `CheckTalentMasterDist()` answers; false for none pending or walked away.
-    pub fn set_talent_master_pending(&mut self, pending: bool) {
-        if self.model_ref().talent_master_pending == pending {
-            return;
-        }
-        self.model_mut().talent_master_pending = pending;
     }
 }
 
@@ -526,14 +511,8 @@ fn tooltip_lines(
     } else {
         0
     };
-    let next_desc = (next_spell != 0)
-        .then(|| {
-            model
-                .spell_tooltips
-                .get(&next_spell)
-                .map(|v| v.description.clone())
-        })
-        .flatten();
+    // Built at the call once the model's borrow ends ([`super::tooltip_spell::spell_view_of`]).
+    let next_desc = None;
     let get = |key: &str| crate::strings::global(lua, key);
     let rank_line = get("TOOLTIP_TALENT_RANK").map(|tmpl| {
         crate::strings::fill(
@@ -1042,25 +1021,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ConfirmTalentWipe(): the `CONFIRM_TALENT_WIPE` Accept, the one call that unlearns talents.
-    // No argument: the reference sends the trainer guid it latched; the app holds it.
+    // ConfirmTalentWipe(): the dialog's Accept, the talent master talk with no guid (`0x51bf84`); its refusal line shows from the call (`0x6db2b0`).
     g.set(
         "ConfirmTalentWipe",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.talent_wipe_confirms += 1;
+            if let Some(key) = super::read_live(|l| l.confirm_talent_wipe()).flatten() {
+                super::ui_errors::show_now(lua, key);
+            }
             Ok(())
         })?,
     )?;
 
-    // CheckTalentMasterDist(): polled by that dialog's OnUpdate, false hides it; no packet.
+    // CheckTalentMasterDist(): polled by that dialog's OnUpdate, 1 or nil (`0x51b740`).
     g.set(
         "CheckTalentMasterDist",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(super::binding_abi::flag(model.talent_master_pending))
+        lua.create_function(|_, ()| {
+            Ok(super::binding_abi::flag(
+                super::read_live(|l| l.talent_master_in_reach()).unwrap_or(false),
+            ))
         })?,
     )?;
 
@@ -1140,7 +1118,7 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetTalent",
         lua.create_function(|lua, (this, args): (Table, MultiValue)| {
-            let (display, lines) = {
+            let (display, mut lines) = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
@@ -1166,17 +1144,14 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     flag_arg(args.get(5)),
                 )
             };
+            if lines.next_spell != 0 {
+                lines.next_desc = super::tooltip_spell::spell_view_of(lua, lines.next_spell, false)
+                    .map(|v| v.description);
+            }
             super::tooltip_spell::set_spell_with_talent(lua, &this, display, lines)
         })?,
     )?;
     Ok(())
-}
-
-/// Ask the spell store for the next rank's description; a miss queues it as a primary view's does.
-pub(super) fn ask_next_rank(lua: &Lua, next_spell: u32) {
-    if next_spell != 0 {
-        let _ = spell_view_of(lua, next_spell, false); // a miss records the ask as a side effect
-    }
 }
 
 #[cfg(test)]

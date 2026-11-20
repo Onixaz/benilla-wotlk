@@ -1,8 +1,10 @@
-//! The trainer bindings the stock `Blizzard_TrainerUI` window calls, over the snapshot the app
-//! pushes ([`UiScript::set_trainer`]). The reference's trainer keeps one array of service and
-//! header records, re-sorted by its filter-and-sort (`0x594ba0`) with the visible rows first; every
-//! Lua index is 1-based into that whole array, and `GetNumTrainerServices` (`0x593d10`) counts only
-//! the visible rows.
+//! The trainer bindings the stock `Blizzard_TrainerUI` window calls. The app's list handler builds
+//! the window (`0x596450`) and its re-evaluator re-sorts it (`0x596b00`); the verbs read it through
+//! the lent view at the call, the player-side answers too (`0x595470`, `0x5955e0`, `0x5959d0`),
+//! and the filter, collapse, select, buy and close verbs act inside their call. The window keeps
+//! one array of service and header records, re-sorted by its filter-and-sort (`0x594ba0`) with the
+//! visible rows first; every Lua index is 1-based into that whole array, and
+//! `GetNumTrainerServices` (`0x593d10`) counts only the visible rows.
 
 use std::collections::HashSet;
 
@@ -159,19 +161,66 @@ pub struct TrainerState {
     pub groups: Vec<TrainerGroup>,
 }
 
+/// What a service's getters read off the player and the item cache at the call: the skill and
+/// ability gates' met flags (`0x595470`, `0x5955e0`) and a recipe's cached product link
+/// (`0x596290`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrainerServiceLive {
+    pub skill_req: Option<TrainerSkillReq>,
+    pub ability_reqs: [Option<TrainerAbilityReq>; 3],
+    pub item_link: Option<String>,
+}
+
+/// The trainer window's globals: the records and their tree, the line filter and collapse masks,
+/// the `serviceTypeFilter` value the last filter-and-sort read (`0x594ba0`), the visible count it
+/// left, which `GetNumTrainerServices` answers (`0x593d10`) and the setter's zero keeps, and the
+/// selection.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrainerWindow {
+    pub state: TrainerState,
+    pub selection: Option<u32>,
+    pub collapsed: HashSet<u32>,
+    pub lines_off: HashSet<u32>,
+    pub filter: u32,
+    pub filtered: usize,
+}
+
+impl TrainerWindow {
+    /// The list build (`0x596450`): the tree from each service's group key, every line passing the
+    /// line filter and expanded, then the filter-and-sort over `filter`.
+    pub fn listed(mut state: TrainerState, filter: u32) -> Self {
+        state.groups = build_groups(&state.services, state.trainer_type);
+        let mut w = TrainerWindow {
+            state,
+            ..Default::default()
+        };
+        w.filter_and_sort(filter);
+        w
+    }
+
+    /// The filter-and-sort (`0x594ba0`): the type filter read now, then the selection's pick, which
+    /// every list, re-evaluation and mask commit runs.
+    pub fn filter_and_sort(&mut self, filter: u32) {
+        self.filter = filter;
+        pick_selection(self);
+    }
+}
+
+/// `serviceTypeFilter` as the filter-and-sort reads it (`0x594ba0`).
+pub fn trainer_type_filter(script: &super::UiScript) -> u32 {
+    type_filter(&script.model_ref())
+}
+
 impl super::UiScript {
-    /// Push the open trainer, or clear it with `None`. A push builds the tree ([`build_groups`]);
-    /// one whose services or states moved re-runs the filter-and-sort's selection pick, as the
-    /// list builder and the re-evaluator (`0x596b00`) both do.
+    /// A test's trainer, which the verbs read where the lent view does not answer it: a push builds
+    /// the tree ([`build_groups`]) and keeps the masks; one whose services or states moved re-runs
+    /// the selection pick.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_trainer(&mut self, state: Option<TrainerState>) {
+        let filter = type_filter(&self.model_ref());
         let mut model = self.model_mut();
         match state {
-            None => {
-                model.trainer_selection = None;
-                model.trainer_collapsed.clear();
-                model.trainer_lines_off.clear();
-                model.trainer = None;
-            }
+            None => model.trainer = None,
             Some(mut s) => {
                 s.groups = build_groups(&s.services, s.trainer_type);
                 let key = |t: &TrainerState| -> Vec<(u32, TrainerServiceCategory)> {
@@ -180,32 +229,66 @@ impl super::UiScript {
                         .map(|v| (v.spell_id, v.category))
                         .collect()
                 };
-                let moved = model.trainer.as_ref().is_none_or(|old| key(old) != key(&s));
-                model.trainer = Some(s);
+                let fresh = model.trainer.is_none();
+                let w = model.trainer.get_or_insert_with(TrainerWindow::default);
+                let moved = fresh || key(&w.state) != key(&s);
+                w.state = s;
+                w.filter = filter;
                 if moved {
-                    pick_selection(&mut model);
+                    pick_selection(w);
                 }
+                w.filtered = rows(w).1;
             }
         }
     }
 
-    /// Reset what each `SMSG_TRAINER_LIST` resets (`0x596450`): every skill line
-    /// expanded and passing the line filter. The state filter is the `serviceTypeFilter` CVar,
-    /// which no list touches. Call it per packet, never per snapshot.
+    /// A test's list reset (`0x596450`): every skill line expanded and passing the line filter.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn reset_trainer_list_state(&mut self) {
-        let mut model = self.model_mut();
-        model.trainer_collapsed.clear();
-        model.trainer_lines_off.clear();
+        if let Some(w) = self.model_mut().trainer.as_mut() {
+            w.collapsed.clear();
+            w.lines_off.clear();
+        }
     }
+}
 
-    /// Drain the spell ids `BuyTrainerService` queued, each already resolved from its row.
-    pub fn take_trainer_buys(&mut self) -> Vec<u32> {
-        drain_field!(self, trainer_buys)
+/// The window: the lent view's at the call; with none, a test's, else none.
+fn with_window<R>(lua: &Lua, f: impl FnOnce(Option<&TrainerWindow>) -> R) -> R {
+    let mut f = Some(f);
+    if let Some(Some(r)) =
+        super::live::read_live(|l| l.trainer().map(|w| (f.take().expect("once"))(w)))
+    {
+        return r;
     }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let model = read(lua);
+        (f.take().expect("once"))(model.trainer.as_ref())
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = lua;
+        (f.take().expect("once"))(None)
+    }
+}
 
-    /// Whether `CloseTrainer` was called since the last drain; the close sends no packet.
-    pub fn take_trainer_close(&mut self) -> bool {
-        drain_field!(self, trainer_close)
+/// The window mutably inside the call: the lent view's; with none, a test's, else none.
+fn with_window_mut<R>(lua: &Lua, f: impl FnOnce(Option<&mut TrainerWindow>) -> R) -> R {
+    let mut f = Some(f);
+    if let Some(Some(r)) =
+        super::live::write_live(|l| l.trainer_mut().map(|w| (f.take().expect("once"))(w)))
+    {
+        return r;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        (f.take().expect("once"))(model.trainer.as_mut())
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = lua;
+        (f.take().expect("once"))(None)
     }
 }
 
@@ -308,18 +391,15 @@ fn type_filter(model: &Model) -> u32 {
 /// service shows when its state passes and its line shows and is expanded; visible records sort
 /// first, by line, header first. The hidden tail's order is tree order, which `qsort` leaves
 /// unspecified.
-fn rows(model: &Model) -> (Vec<Row>, usize) {
-    let Some(t) = model.trainer.as_ref() else {
-        return (Vec::new(), 0);
-    };
-    let filter = type_filter(model);
+fn rows(w: &TrainerWindow) -> (Vec<Row>, usize) {
+    let t = &w.state;
+    let filter = w.filter;
     let passes = |si: usize| filter & (1 << t.services[si].category.state()) != 0;
     let mut shown = Vec::new();
     let mut tail = Vec::new();
     for (gi, g) in t.groups.iter().enumerate() {
-        let line_shown =
-            !model.trainer_lines_off.contains(&g.key) && g.services.iter().any(|&si| passes(si));
-        let expanded = !model.trainer_collapsed.contains(&g.key);
+        let line_shown = !w.lines_off.contains(&g.key) && g.services.iter().any(|&si| passes(si));
+        let expanded = !w.collapsed.contains(&g.key);
         if line_shown {
             shown.push(Row::Header(gi));
         } else {
@@ -340,12 +420,10 @@ fn rows(model: &Model) -> (Vec<Row>, usize) {
 
 /// The filter-and-sort's selection (`0x594ba0`): the first visible available service, else
 /// the record at array index 1, none when that is a header.
-fn pick_selection(model: &mut Model) {
-    let (all, visible) = rows(model);
-    let Some(t) = model.trainer.as_ref() else {
-        model.trainer_selection = None;
-        return;
-    };
+fn pick_selection(w: &mut TrainerWindow) {
+    let (all, visible) = rows(w);
+    w.filtered = visible;
+    let t = &w.state;
     let service = |r: &Row| match r {
         Row::Service(si) => Some(&t.services[*si]),
         Row::Header(_) => None,
@@ -355,25 +433,47 @@ fn pick_selection(model: &mut Model) {
         .filter_map(service)
         .find(|s| s.category == TrainerServiceCategory::Available && s.spell_id > 0);
     let pick = first.or_else(|| all.get(1).and_then(service));
-    model.trainer_selection = pick.map(|s| s.spell_id);
+    w.selection = pick.map(|s| s.spell_id);
 }
 
-/// The service at a 1-based record index; `None` for a header or past the end.
-/// `GameTooltip:SetTrainerService` resolves its index through this too.
-pub(super) fn service(model: &Model, index: i64) -> Option<&TrainerService> {
+/// The service and its place in [`TrainerState::services`] at a 1-based record index; `None` for
+/// a header or past the end.
+fn service(w: &TrainerWindow, index: i64) -> Option<(usize, &TrainerService)> {
     let n = usize::try_from(index.checked_sub(1)?).ok()?;
-    match rows(model).0.get(n)? {
-        Row::Service(si) => model.trainer.as_ref()?.services.get(*si),
+    match rows(w).0.get(n)? {
+        Row::Service(si) => Some((*si, w.state.services.get(*si)?)),
         Row::Header(_) => None,
     }
 }
 
+/// The service at a 1-based record index, read at the call, with its place.
+fn service_of(lua: &Lua, index: i64) -> Option<(usize, TrainerService)> {
+    with_window(lua, |w| service(w?, index).map(|(si, s)| (si, s.clone())))
+}
+
+/// `GameTooltip:SetTrainerService`'s subject at a 1-based record index (`0x62e900`).
+pub(super) fn service_tooltip(lua: &Lua, index: i64) -> Option<TrainerTooltip> {
+    service_of(lua, index).map(|(_, s)| s.tooltip)
+}
+
+/// A service's player-side answers at the call: the lent view's, else a test's resolved fields.
+fn service_live(si: usize, s: &TrainerService) -> TrainerServiceLive {
+    super::live::read_live(|l| l.trainer_service_live(si))
+        .flatten()
+        .flatten()
+        .unwrap_or_else(|| TrainerServiceLive {
+            skill_req: s.skill_req.clone(),
+            ability_reqs: s.ability_reqs.clone(),
+            item_link: s.item_link.clone(),
+        })
+}
+
 /// `GetTrainerSelectionIndex` (`0x594430`): the selected spell's 1-based record index, which may
 /// sit in the hidden tail; `None` when nothing is selected or it left the list.
-fn selected_row(model: &Model) -> Option<usize> {
-    let want = model.trainer_selection?;
-    let t = model.trainer.as_ref()?;
-    rows(model)
+fn selected_row(w: &TrainerWindow) -> Option<usize> {
+    let want = w.selection?;
+    let t = &w.state;
+    rows(w)
         .0
         .iter()
         .position(|r| match r {
@@ -383,13 +483,23 @@ fn selected_row(model: &Model) -> Option<usize> {
         .checked_add(1)
 }
 
-/// Re-sort and signal `TRAINER_UPDATE`, as every mask commit does (`0x594fe0`, `0x595010`, the
-/// collapse verbs).
-fn filter_and_sort(model: &mut Model) {
-    pick_selection(model);
-    model
-        .pending_events
-        .push(("TRAINER_UPDATE".to_string(), Vec::new()));
+/// A mask commit's tail (`0x594fe0`, `0x595010`, the collapse verbs): `edit` on the window, the
+/// filter-and-sort over the type filter now, then `TRAINER_UPDATE` inside the call.
+fn commit(
+    lua: &Lua,
+    edit: impl FnOnce(&mut TrainerWindow) -> mlua::Result<()>,
+) -> mlua::Result<()> {
+    let filter = type_filter(&read(lua));
+    with_window_mut(lua, |w| match w {
+        Some(w) => {
+            edit(w)?;
+            w.filter_and_sort(filter);
+            Ok(())
+        }
+        None => edit(&mut TrainerWindow::default()),
+    })?;
+    super::tick::fire_event_into(lua, "TRAINER_UPDATE", Vec::new());
+    Ok(())
 }
 
 /// A number argument read with `lua_tonumber`, raising `usage` on anything else.
@@ -413,33 +523,28 @@ fn exclusive_arg(v: &Value) -> bool {
 }
 
 /// The group key of the header at a 1-based record index, `None` when the record is no header.
-fn header_key(model: &Model, index: i64) -> Option<u32> {
+fn header_key(w: &TrainerWindow, index: i64) -> Option<u32> {
     let n = usize::try_from(index.checked_sub(1)?).ok()?;
-    match rows(model).0.get(n)? {
-        Row::Header(gi) => model.trainer.as_ref()?.groups.get(*gi).map(|g| g.key),
+    match rows(w).0.get(n)? {
+        Row::Header(gi) => w.state.groups.get(*gi).map(|g| g.key),
         Row::Service(_) => None,
     }
 }
 
 /// A skill line's key by its 1-based line index, in skill-line order.
-fn line_key(model: &Model, index: i64) -> Option<u32> {
+fn line_key(w: &TrainerWindow, index: i64) -> Option<u32> {
     let n = usize::try_from(index.checked_sub(1)?).ok()?;
-    model.trainer.as_ref()?.groups.get(n).map(|g| g.key)
+    w.state.groups.get(n).map(|g| g.key)
 }
 
 /// Every line key but `keep`.
-fn other_lines(model: &Model, keep: Option<u32>) -> HashSet<u32> {
-    model
-        .trainer
-        .as_ref()
-        .map(|t| {
-            t.groups
-                .iter()
-                .map(|g| g.key)
-                .filter(|&k| Some(k) != keep)
-                .collect()
-        })
-        .unwrap_or_default()
+fn other_lines(w: &TrainerWindow, keep: Option<u32>) -> HashSet<u32> {
+    w.state
+        .groups
+        .iter()
+        .map(|g| g.key)
+        .filter(|&k| Some(k) != keep)
+        .collect()
 }
 
 fn opt_str(lua: &Lua, s: Option<&str>) -> mlua::Result<Value> {
@@ -454,19 +559,34 @@ fn read(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {
         .expect("model app_data")
 }
 
-/// Register a getter over the service at its 1-based index argument.
-fn getter(
-    lua: &Lua,
-    name: &str,
-    usage: &'static str,
-    f: fn(&Lua, Option<&TrainerService>) -> mlua::Result<Value>,
-) -> mlua::Result<()> {
+/// The setter's zero leg (`0x5940e0`) on an open trainer: `TRAINER_CLOSED` (`0x594108`), the
+/// interact target cleared, whose interaction close runs this leg again when the trainer held it
+/// (`0x594113` -> `0x512f80`), then the zero (`0x59411b`).
+fn set_none(lua: &Lua, open: bool) {
+    if !open {
+        return;
+    }
+    super::tick::fire_event_into(lua, "TRAINER_CLOSED", Vec::new());
+    if super::live::write_live(|l| l.trainer_release_target()) == Some(true) {
+        let open = super::live::read_live(|l| l.trainer_open())
+            .flatten()
+            .unwrap_or(false);
+        set_none(lua, open);
+    }
+    super::live::write_live(|l| l.trainer_zero());
+}
+
+/// A getter over a service and its place in [`TrainerState::services`].
+type Getter = fn(&Lua, Option<(usize, &TrainerService)>) -> mlua::Result<Value>;
+
+/// Register a getter over the service at its 1-based index argument, read at the call.
+fn getter(lua: &Lua, name: &str, usage: &'static str, f: Getter) -> mlua::Result<()> {
     lua.globals().set(
         name,
         lua.create_function(move |lua, index: Value| {
             let index = number_arg(&index, usage)?;
-            let model = read(lua);
-            f(lua, service(&model, index))
+            let s = service_of(lua, index);
+            f(lua, s.as_ref().map(|(si, s)| (*si, s)))
         })?,
     )
 }
@@ -477,7 +597,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "GetNumTrainerServices",
-        lua.create_function(|lua, ()| Ok(rows(&read(lua)).1 as i64))?,
+        lua.create_function(
+            |lua, ()| Ok(with_window(lua, |w| w.map_or(0, |w| w.filtered)) as i64),
+        )?,
     )?;
 
     // GetTrainerServiceInfo(index) → name, subText, serviceType, isExpanded (`0x595090`): a header
@@ -486,26 +608,39 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTrainerServiceInfo",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(&index, "Usage: GetTrainerServiceInfo(index)")?;
-            let model = read(lua);
-            let row = usize::try_from(index - 1)
-                .ok()
-                .and_then(|n| rows(&model).0.get(n).copied());
-            let (name, sub, kind, expanded) = match (row, model.trainer.as_ref()) {
-                (Some(Row::Header(gi)), Some(t)) => {
-                    let g = &t.groups[gi];
-                    let expanded = !model.trainer_collapsed.contains(&g.key);
-                    (Some(g.name.as_str()), Some(""), Some("header"), expanded)
+            type Info = (Option<String>, Option<String>, Option<&'static str>, bool);
+            let (name, sub, kind, expanded): Info = with_window(lua, |w| {
+                let Some(w) = w else {
+                    return (None, None, None, true);
+                };
+                let row = usize::try_from(index - 1)
+                    .ok()
+                    .and_then(|n| rows(w).0.get(n).copied());
+                match row {
+                    Some(Row::Header(gi)) => {
+                        let g = &w.state.groups[gi];
+                        let expanded = !w.collapsed.contains(&g.key);
+                        (
+                            Some(g.name.clone()),
+                            Some(String::new()),
+                            Some("header"),
+                            expanded,
+                        )
+                    }
+                    Some(Row::Service(si)) => {
+                        let s = &w.state.services[si];
+                        let sub = s
+                            .name
+                            .as_ref()
+                            .map(|_| s.subtext.clone().unwrap_or_default());
+                        (s.name.clone(), sub, Some(s.category.type_str()), true)
+                    }
+                    None => (None, None, None, true),
                 }
-                (Some(Row::Service(si)), Some(t)) => {
-                    let s = &t.services[si];
-                    let sub = s.name.as_ref().map(|_| s.subtext.as_deref().unwrap_or(""));
-                    (s.name.as_deref(), sub, Some(s.category.type_str()), true)
-                }
-                _ => (None, None, None, true),
-            };
+            });
             Ok(MultiValue::from_vec(vec![
-                opt_str(lua, name)?,
-                opt_str(lua, sub)?,
+                opt_str(lua, name.as_deref())?,
+                opt_str(lua, sub.as_deref())?,
                 opt_str(lua, kind)?,
                 binding_abi::flag(expanded),
             ]))
@@ -516,32 +651,42 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua,
         "GetTrainerServiceSkillLine",
         "Usage: GetTrainerServiceSkillLine(index)",
-        |lua, s| opt_str(lua, s.and_then(|s| s.skill_line.as_deref())),
+        |lua, s| opt_str(lua, s.and_then(|(_, s)| s.skill_line.as_deref())),
     )?;
     getter(
         lua,
         "GetTrainerServiceIcon",
         "Usage: GetTrainerServiceIcon(index)",
-        |lua, s| opt_str(lua, s.and_then(|s| s.texture.as_deref())),
+        |lua, s| opt_str(lua, s.and_then(|(_, s)| s.texture.as_deref())),
     )?;
+    // `0x5959d0`: the description parsed at the call, a recipe's product asked with the trainer's
+    // record callback.
     getter(
         lua,
         "GetTrainerServiceDescription",
         "Usage: GetTrainerServiceDescription(index)",
-        |lua, s| opt_str(lua, s.and_then(|s| s.description.as_deref())),
+        |lua, s| {
+            let global = |key: &str| crate::strings::global(lua, key);
+            let text = s.and_then(|(si, s)| {
+                super::live::write_live(|l| l.trainer_description(si, &global))
+                    .flatten()
+                    .unwrap_or_else(|| s.description.clone())
+            });
+            opt_str(lua, text.as_deref())
+        },
     )?;
     getter(
         lua,
         "GetTrainerServiceLevelReq",
         "Usage: GetTrainerServiceLevelReq(index)",
-        |_, s| Ok(Value::Integer(s.map_or(0, |s| i64::from(s.level_req)))),
+        |_, s| Ok(Value::Integer(s.map_or(0, |(_, s)| i64::from(s.level_req)))),
     )?;
     getter(
         lua,
         "GetTrainerServiceNumAbilityReq",
         "Usage: GetTrainerServiceAbilityReq(index)",
         |_, s| {
-            let n = s.map_or(0, |s| s.ability_reqs.iter().flatten().count());
+            let n = s.map_or(0, |(_, s)| s.ability_reqs.iter().flatten().count());
             Ok(Value::Integer(n as i64))
         },
     )?;
@@ -549,7 +694,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua,
         "IsTrainerServiceSkillStep",
         "Usage: IsTrainerServiceSkillStep(index)",
-        |_, s| Ok(binding_abi::flag(s.is_some_and(|s| s.skill_step))),
+        |_, s| Ok(binding_abi::flag(s.is_some_and(|(_, s)| s.skill_step))),
     )?;
     // Nil for a known step: `0x595c40` gates on state 2.
     getter(
@@ -558,16 +703,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "Usage: GetTrainerServiceStepIncrease(index)",
         |lua, s| {
             let text = s
-                .filter(|s| s.category != TrainerServiceCategory::Used)
-                .and_then(|s| s.step_increase.as_deref());
+                .filter(|(_, s)| s.category != TrainerServiceCategory::Used)
+                .and_then(|(_, s)| s.step_increase.as_deref());
             opt_str(lua, text)
         },
     )?;
+    // `0x596290`: a recipe's product link off the item cache at the call.
     getter(
         lua,
         "GetTrainerServiceItemLink",
         "Usage: GetTrainerServiceItemLink(index)",
-        |lua, s| opt_str(lua, s.and_then(|s| s.item_link.as_deref())),
+        |lua, s| {
+            let link = s.and_then(|(si, s)| service_live(si, s).item_link);
+            opt_str(lua, link.as_deref())
+        },
     )?;
 
     // GetTrainerServiceCost(index) → money, talentCost, professionCost, the wire's words raw.
@@ -575,9 +724,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTrainerServiceCost",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(&index, "Usage: GetTrainerServiceCost(index)")?;
-            let model = read(lua);
-            let (money, talent, prof) = service(&model, index)
-                .map(|s| (s.cost, s.talent_cost, s.profession_cost))
+            let (money, talent, prof) = service_of(lua, index)
+                .map(|(_, s)| (s.cost, s.talent_cost, s.profession_cost))
                 .unwrap_or((0, 0, 0));
             Ok(MultiValue::from_vec(vec![
                 Value::Integer(i64::from(money)),
@@ -587,13 +735,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetTrainerServiceSkillReq(index) → skill, rank, hasReq; (nil, 0, 1) with no gate.
+    // GetTrainerServiceSkillReq(index) → skill, rank, hasReq; (nil, 0, 1) with no gate; met read
+    // off our skill slot at the call (`0x595470`).
     g.set(
         "GetTrainerServiceSkillReq",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(&index, "Usage: GetTrainerServiceSkillReq(index)")?;
-            let model = read(lua);
-            let req = service(&model, index).and_then(|s| s.skill_req.as_ref());
+            let req = service_of(lua, index).and_then(|(si, s)| service_live(si, &s).skill_req);
             Ok(MultiValue::from_vec(match req {
                 Some(r) if !r.name.is_empty() => vec![
                     Value::String(lua.create_string(&r.name)?),
@@ -610,22 +758,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetTrainerServiceAbilityReq(index, slot) → name, hasReq over the raw wire slot, so an empty
-    // slot reads (nil, 1).
+    // slot reads (nil, 1); met read off our book at the call (`0x5955e0`).
     g.set(
         "GetTrainerServiceAbilityReq",
         lua.create_function(|lua, (index, slot): (Value, Value)| {
             const USAGE: &str = "Usage: GetTrainerServiceAbilityReq(index)";
             let index = number_arg(&index, USAGE)?;
             let slot = number_arg(&slot, USAGE)?;
-            let model = read(lua);
-            let req = service(&model, index).and_then(|s| {
-                usize::try_from(slot - 1)
-                    .ok()
-                    .and_then(|n| s.ability_reqs.get(n))
-                    .and_then(Option::as_ref)
+            let req = service_of(lua, index).and_then(|(si, s)| {
+                let n = usize::try_from(slot - 1).ok()?;
+                service_live(si, &s).ability_reqs.get(n).cloned().flatten()
             });
             Ok(MultiValue::from_vec(vec![
-                opt_str(lua, req.and_then(|r| r.name.as_deref()))?,
+                opt_str(lua, req.as_ref().and_then(|r| r.name.as_deref()))?,
                 binding_abi::flag(req.is_none_or(|r| r.met)),
             ]))
         })?,
@@ -647,9 +792,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsTradeskillTrainer",
         lua.create_function(|lua, ()| {
-            let model = read(lua);
-            Ok(binding_abi::flag(model.trainer.as_ref().is_some_and(|t| {
-                t.trainer_type == TRAINER_TYPE_TRADESKILL
+            Ok(binding_abi::flag(with_window(lua, |w| {
+                w.is_some_and(|w| w.state.trainer_type == TRAINER_TYPE_TRADESKILL)
             })))
         })?,
     )?;
@@ -657,8 +801,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerGreetingText",
         lua.create_function(|lua, ()| {
-            let model = read(lua);
-            lua.create_string(model.trainer.as_ref().map_or("", |t| t.greeting.as_str()))
+            let text = with_window(lua, |w| w.map(|w| w.state.greeting.clone()));
+            lua.create_string(text.unwrap_or_default())
         })?,
     )?;
 
@@ -688,29 +832,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             };
             let kind = kind.to_string_lossy();
-            let mut model = crate::script::model_mut_of(lua);
-            let value = if kind.eq_ignore_ascii_case("all") {
-                7
-            } else {
-                let bit = type_from_str(&kind).ok_or_else(|| {
-                    mlua::Error::runtime("Bad service type in SetTrainerServiceTypeFilter")
-                })?;
-                let on = number_arg(
-                    &on,
-                    "Missing on/off parameter in SetTrainerServiceTypeFilter",
-                )?;
-                let filter = type_filter(&model);
-                if on == 0 {
-                    filter & !(1 << bit)
-                } else if exclusive_arg(&exclusive) {
-                    1 << bit
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                let value = if kind.eq_ignore_ascii_case("all") {
+                    7
                 } else {
-                    filter | (1 << bit)
-                }
-            };
-            super::cvars::set_from_engine(&mut model, "serviceTypeFilter", value.to_string());
-            filter_and_sort(&mut model);
-            Ok(())
+                    let bit = type_from_str(&kind).ok_or_else(|| {
+                        mlua::Error::runtime("Bad service type in SetTrainerServiceTypeFilter")
+                    })?;
+                    let on = number_arg(
+                        &on,
+                        "Missing on/off parameter in SetTrainerServiceTypeFilter",
+                    )?;
+                    let filter = type_filter(&model);
+                    if on == 0 {
+                        filter & !(1 << bit)
+                    } else if exclusive_arg(&exclusive) {
+                        1 << bit
+                    } else {
+                        filter | (1 << bit)
+                    }
+                };
+                super::cvars::set_from_engine(&mut model, "serviceTypeFilter", value.to_string());
+            }
+            commit(lua, |_| Ok(()))
         })?,
     )?;
 
@@ -719,14 +864,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetTrainerSkillLines",
         lua.create_function(|lua, ()| {
-            let model = read(lua);
-            let Some(t) = model.trainer.as_ref() else {
-                return Ok(MultiValue::new());
-            };
-            let tradeskill = t.trainer_type == TRAINER_TYPE_TRADESKILL;
-            t.groups
+            let names: Vec<Option<String>> = with_window(lua, |w| {
+                let Some(w) = w else {
+                    return Vec::new();
+                };
+                let tradeskill = w.state.trainer_type == TRAINER_TYPE_TRADESKILL;
+                w.state
+                    .groups
+                    .iter()
+                    .map(|g| (!tradeskill).then(|| g.name.clone()))
+                    .collect()
+            });
+            names
                 .iter()
-                .map(|g| opt_str(lua, (!tradeskill).then_some(g.name.as_str())))
+                .map(|n| opt_str(lua, n.as_deref()))
                 .collect::<mlua::Result<Vec<_>>>()
                 .map(MultiValue::from_vec)
         })?,
@@ -737,14 +888,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTrainerSkillLineFilter",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(&index, "Usage: GetTrainerSkillLineFilter(index)")?;
-            let model = read(lua);
-            if index < 1 {
-                return Ok(binding_abi::flag(model.trainer_lines_off.is_empty()));
-            }
-            let key = line_key(&model, index).ok_or_else(|| {
-                mlua::Error::runtime("Bad skill line in GetTrainerSkillLineFilter")
-            })?;
-            Ok(binding_abi::flag(!model.trainer_lines_off.contains(&key)))
+            let empty = TrainerWindow::default();
+            with_window(lua, |w| {
+                let w = w.unwrap_or(&empty);
+                if index < 1 {
+                    return Ok(binding_abi::flag(w.lines_off.is_empty()));
+                }
+                let key = line_key(w, index).ok_or_else(|| {
+                    mlua::Error::runtime("Bad skill line in GetTrainerSkillLineFilter")
+                })?;
+                Ok(binding_abi::flag(!w.lines_off.contains(&key)))
+            })
         })?,
     )?;
 
@@ -757,11 +911,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 &index,
                 "Usage: SetTrainerSkillLineFilter(index [, on\\off, exclusive])",
             )?;
-            let mut model = crate::script::model_mut_of(lua);
-            if index < 1 {
-                model.trainer_lines_off.clear();
-            } else {
-                let key = line_key(&model, index).ok_or_else(|| {
+            commit(lua, |w| {
+                if index < 1 {
+                    w.lines_off.clear();
+                    return Ok(());
+                }
+                let key = line_key(w, index).ok_or_else(|| {
                     mlua::Error::runtime("Bad skill line in SetTrainerSkillLineFilter")
                 })?;
                 let on = number_arg(
@@ -769,15 +924,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Missing on//off parameter in SetTrainerSkillLineFilter",
                 )?;
                 if on == 0 {
-                    model.trainer_lines_off.insert(key);
+                    w.lines_off.insert(key);
                 } else if exclusive_arg(&exclusive) {
-                    model.trainer_lines_off = other_lines(&model, Some(key));
+                    w.lines_off = other_lines(w, Some(key));
                 } else {
-                    model.trainer_lines_off.remove(&key);
+                    w.lines_off.remove(&key);
                 }
-            }
-            filter_and_sort(&mut model);
-            Ok(())
+                Ok(())
+            })
         })?,
     )?;
 
@@ -801,23 +955,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, index: Value| {
                 let index = number_arg(&index, usage)?;
-                let mut model = crate::script::model_mut_of(lua);
-                if index < 1 {
-                    model.trainer_collapsed = if collapse {
-                        other_lines(&model, None)
-                    } else {
-                        HashSet::new()
-                    };
-                } else {
-                    let key = header_key(&model, index).ok_or_else(|| mlua::Error::runtime(bad))?;
-                    if collapse {
-                        model.trainer_collapsed.insert(key);
-                    } else {
-                        model.trainer_collapsed.remove(&key);
+                commit(lua, |w| {
+                    if index < 1 {
+                        w.collapsed = if collapse {
+                            other_lines(w, None)
+                        } else {
+                            HashSet::new()
+                        };
+                        return Ok(());
                     }
-                }
-                filter_and_sort(&mut model);
-                Ok(())
+                    let key = header_key(w, index).ok_or_else(|| mlua::Error::runtime(bad))?;
+                    if collapse {
+                        w.collapsed.insert(key);
+                    } else {
+                        w.collapsed.remove(&key);
+                    }
+                    Ok(())
+                })
             })?,
         )?;
     }
@@ -827,41 +981,46 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SelectTrainerService",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(&index, "Usage: SelectTrainerService(index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            model.trainer_selection = service(&model, index).map(|s| s.spell_id);
+            with_window_mut(lua, |w| {
+                if let Some(w) = w {
+                    w.selection = service(w, index).map(|(_, s)| s.spell_id);
+                }
+            });
             Ok(())
         })?,
     )?;
 
     g.set(
         "GetTrainerSelectionIndex",
-        lua.create_function(|lua, ()| Ok(selected_row(&read(lua)).map(|r| r as i64)))?,
+        lua.create_function(|lua, ()| {
+            Ok(with_window(lua, |w| w.and_then(selected_row)).map(|r| r as i64))
+        })?,
     )?;
 
-    // BuyTrainerService(index): queue the record's spell id when its state is 0
-    // (`TrainerBuySpell` `0x594da0`). Deviation: 0 or below is a no-op, because one stray call
-    // would spend the purse; the reference buys every visible service (`0x594e50`).
+    // BuyTrainerService(index): `CMSG_TRAINER_BUY_SPELL` inside the call for a record in state 0
+    // (`0x594da0`). Deviation: 0 or below is a no-op, because one stray call would spend the
+    // purse; the reference buys every visible service (`0x594e50`).
     g.set(
         "BuyTrainerService",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(&index, "Usage: BuyTrainerService(index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            let buyable = service(&model, index)
-                .filter(|s| s.category == TrainerServiceCategory::Available)
-                .map(|s| s.spell_id);
+            let buyable = service_of(lua, index)
+                .filter(|(_, s)| s.category == TrainerServiceCategory::Available)
+                .map(|(_, s)| s.spell_id);
             if let Some(spell_id) = buyable {
-                model.trainer_buys.push(spell_id);
+                super::live::write_live(|l| l.trainer_buy(spell_id));
             }
             Ok(())
         })?,
     )?;
 
-    // CloseTrainer(): sends no packet; the app clears its state on the flag.
+    // CloseTrainer() (`0x594370`): the setter's zero leg inside the call.
     g.set(
         "CloseTrainer",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.trainer_close = true;
+            if let Some(open) = super::live::read_live(|l| l.trainer_open()).flatten() {
+                set_none(lua, open);
+            }
             Ok(())
         })?,
     )?;

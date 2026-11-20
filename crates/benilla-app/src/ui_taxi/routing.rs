@@ -16,8 +16,6 @@ use benilla_ui::script::{TaxiNodeType, TaxiUiNode};
 
 use benilla_assets::{LockRecover, WorldAssets};
 
-use super::TaxiOpen;
-
 /// `TaxiNodes.dbc`, `TaxiPath.dbc` (the direct hops and their fares), `TaxiPathNode.dbc` (each
 /// hop's points, which its length sums), `WorldMapContinent.dbc`
 /// (each continent's taxi-map rect, its `taxi_min`/`taxi_max`), `WorldMapTransforms.dbc` (the
@@ -269,16 +267,33 @@ fn shown_fare(price: u32, discount: f64) -> u32 {
     f64::from(product).round_ties_even() as u32
 }
 
-/// A listed node's chain from the nearest node (the node alone for `Current`) and its fare, for
-/// `drain_taxi`.
-pub(super) struct ResolvedTaxiNode {
-    pub(super) chain: Vec<u32>,
-    pub(super) cost: u32,
+/// What a listed node's fare and activate read, as the setup leaves it on its record: its id, the
+/// direct `TaxiPath` hop's fare from the current node, the walked chain and its five tier fares.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ResolvedTaxiNode {
+    pub(crate) id: u32,
+    /// The direct hop's fare from the current node (`0x590b60`).
+    pub(crate) direct: Option<u32>,
+    /// The walked chain from the current node; `None` for a node the walk never reached.
+    pub(crate) path: Option<Vec<u32>>,
+    /// The walked chain's fare at each tier, 999999 unwalked (`0x5936a6`).
+    pub(crate) costs: [i32; 5],
+    /// The chain the activate flies: the direct hop, else the walked chain; empty unreached.
+    pub(crate) chain: Vec<u32>,
+    /// The raw fare, the direct hop's or the chain's tier-0 sum.
+    pub(crate) cost: u32,
 }
 
-/// The pushed node list's routes, index for index, so `TakeTaxiNode(i)` finds its route.
-#[derive(Resource, Default)]
-pub(super) struct TaxiRouteCache(pub(super) Vec<ResolvedTaxiNode>);
+impl ResolvedTaxiNode {
+    /// `TaxiNodeCost`'s fare (`0x591350`): the direct hop's less the discount, else the walked
+    /// fare at the tier, 999999 for a node the walk never reached.
+    pub(super) fn fare(&self, fares: TaxiFares) -> i64 {
+        match self.direct {
+            Some(direct) => i64::from(shown_fare(direct, fares.discount)),
+            None => i64::from(self.costs[fares.tier.min(4)]),
+        }
+    }
+}
 
 /// What the Lua `TaxiNodeCost`'s fare (`0x591350`) reads besides the route, known only once the
 /// flight master and the player resolve: the flight master's price discount for the player, which
@@ -311,8 +326,8 @@ impl TaxiFares {
 /// The routes are the walk's ([`walk_routes`]). Each listed node then reads as the stock Lua
 /// queries read it:
 /// - The current node is `Current`, with no segment and fare 0.
-/// - A node the walk never reached is left out, where the reference keeps it typed `NONE`, which
-///   stock `TaxiFrame.lua` hides. Its `DISTANT` type is never produced.
+/// - A node the walk never reached is typed `NONE` (`0x590cae`), which stock `TaxiFrame.lua`
+///   hides, with no route line (`0x591afc`). Its `DISTANT` type is never produced.
 /// - A node with a direct `TaxiPath` hop from the current one draws that one segment (`0x591ad0`;
 ///   `GetNumRoutes` is 1), costs that hop's fare less the discount, and flies it (`TakeTaxiNode`,
 ///   `0x5914b0`), whatever chain the walk found shorter.
@@ -327,13 +342,14 @@ impl TaxiFares {
 /// ([`barred_for_team`]), and `account_expansion` the account's expansion byte from
 /// `SMSG_AUTH_RESPONSE`.
 pub(super) fn build_nodes(
-    open: &TaxiOpen,
+    current: u32,
+    known: &benilla_protocol::messages::TaxiMask,
     cat: &TaxiCatalogs,
     fares: Option<TaxiFares>,
     player_group: Option<u32>,
     account_expansion: u8,
 ) -> Option<(u32, Vec<TaxiUiNode>, Vec<ResolvedTaxiNode>)> {
-    let (map_id, _, _) = cat.node_on_map(cat.nodes.get(open.nearest_node)?);
+    let (map_id, _, _) = cat.node_on_map(cat.nodes.get(current)?);
     let cont = cat.continents.get(map_id)?;
     if cont.taxi_max.0 - cont.taxi_min.0 == 0.0 || cont.taxi_max.1 - cont.taxi_min.1 == 0.0 {
         return None;
@@ -342,7 +358,7 @@ pub(super) fn build_nodes(
     let mut rows: Vec<(&TaxiNode, (f32, f32))> = cat
         .nodes
         .rows()
-        .filter(|n| open.known.is_known(n.id))
+        .filter(|n| known.is_known(n.id))
         .filter(|n| cat.maps.expansion(n.map_id) <= u32::from(account_expansion))
         .filter_map(|n| {
             let (on, x, y) = cat.node_on_map(n);
@@ -375,10 +391,9 @@ pub(super) fn build_nodes(
             length: &length,
             barred: &barred,
         },
-        open.nearest_node,
+        current,
     );
 
-    let current = open.nearest_node;
     let segment = |a: u32, b: u32| {
         let ((ax, ay), (bx, by)) = (pos.get(&a)?, pos.get(&b)?);
         Some([*ax, *ay, *bx, *by])
@@ -386,50 +401,48 @@ pub(super) fn build_nodes(
     let mut ui = Vec::new();
     let mut resolved = Vec::new();
     for ((n, _), walk) in rows.iter().zip(walked) {
-        let at = pos[&n.id];
-        if n.id == current {
-            ui.push(TaxiUiNode {
-                name: n.name.clone(),
-                node_type: TaxiNodeType::Current,
-                pos: at,
-                cost: 0,
-                routes: Vec::new(),
-            });
-            resolved.push(ResolvedTaxiNode {
-                chain: vec![n.id],
-                cost: 0,
-            });
-            continue;
-        }
-        let Some(path) = walk.path else {
-            continue; // never reached: `NONE`, left out
+        let direct = cat.paths.between(current, n.id).map(|p| p.cost);
+        let node_type = if n.id == current {
+            TaxiNodeType::Current
+        } else if walk.path.is_none() {
+            TaxiNodeType::Unreached
+        } else {
+            TaxiNodeType::Reachable
         };
-        let (routes, shown, chain, cost) = match cat.paths.between(current, n.id) {
-            // The direct hop: one segment, its own fare, flown as `CMSG_ACTIVATETAXI`.
-            Some(direct) => (
-                segment(current, n.id).into_iter().collect(),
-                fares.map_or(0, |f| shown_fare(direct.cost, f.discount)),
-                vec![current, n.id],
-                direct.cost,
-            ),
-            // The chain, hop by hop (`0x590c30`: one fewer segment than nodes).
-            None => (
-                path.windows(2)
-                    .filter_map(|w| segment(w[0], w[1]))
-                    .collect(),
-                fares.map_or(0, |f| tier_fare(&walk.costs, f.tier)),
-                path,
-                tier_fare(&walk.costs, 0),
-            ),
+        // The line count (`0x5911c0`): 1 over a direct hop, else the hops less one, 999999 hops unwalked.
+        let hops = walk.path.as_ref().map_or(999_999, |p| p.len() as i64);
+        let num_routes = if direct.is_some() { 1 } else { hops - 1 };
+        // The route lines (`0x591ad0`): none unreached, the one hop over a direct one, else the chain's.
+        let routes: Vec<[f32; 4]> = match (&walk.path, direct) {
+            (None, _) => Vec::new(),
+            (Some(_), Some(_)) => segment(current, n.id).into_iter().collect(),
+            (Some(path), None) => path
+                .windows(2)
+                .filter_map(|w| segment(w[0], w[1]))
+                .collect(),
+        };
+        let chain = match (&walk.path, direct) {
+            (_, Some(_)) => vec![current, n.id],
+            (Some(path), None) => path.clone(),
+            (None, None) => Vec::new(),
+        };
+        let row = ResolvedTaxiNode {
+            id: n.id,
+            direct,
+            cost: direct.unwrap_or_else(|| tier_fare(&walk.costs, 0)),
+            path: walk.path,
+            costs: walk.costs,
+            chain,
         };
         ui.push(TaxiUiNode {
             name: n.name.clone(),
-            node_type: TaxiNodeType::Reachable,
-            pos: at,
-            cost: shown,
+            node_type,
+            pos: pos[&n.id],
+            cost: fares.map_or(0, |f| u32::try_from(row.fare(f)).unwrap_or(0)),
             routes,
+            num_routes,
         });
-        resolved.push(ResolvedTaxiNode { chain, cost });
+        resolved.push(row);
     }
     Some((map_id, ui, resolved))
 }
@@ -711,13 +724,8 @@ mod tests {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
-        let open = TaxiOpen {
-            flightmaster: 0x42,
-            nearest_node: 2,
-            known: mask_of(&[2, 4]),
-        };
         let (map_id, ui, resolved) =
-            build_nodes(&open, &cat, NEUTRAL, None, 2).expect("map builds");
+            build_nodes(2, &mask_of(&[2, 4]), &cat, NEUTRAL, None, 2).expect("map builds");
         assert_eq!(map_id, 0, "the continent is the nearest node's own map");
         assert_eq!(ui.len(), 2, "only the two known EK nodes are visible");
 
@@ -726,7 +734,7 @@ mod tests {
             .position(|n| n.name == "Stormwind, Elwynn")
             .expect("Stormwind visible");
         assert_eq!(ui[sw_idx].node_type, TaxiNodeType::Current);
-        assert_eq!(resolved[sw_idx].chain, vec![2]);
+        assert_eq!(resolved[sw_idx].id, 2);
 
         let sh_idx = ui
             .iter()
@@ -738,21 +746,25 @@ mod tests {
         assert_eq!(resolved[sh_idx].chain, vec![2, 4]);
         assert_eq!(resolved[sh_idx].cost, 110);
 
-        // Every node known: the Horde-only stops (Grom'gol, Kargath) have no route from Stormwind.
+        // Every node known: the Horde-only stops (Grom'gol, Kargath) have no route from Stormwind,
+        // listed but typed `NONE`, with no line and the unwalked fare.
         let all_known = TaxiMask(vec![u64::MAX; 7]);
-        let open = TaxiOpen {
-            flightmaster: 0x42,
-            nearest_node: 2,
-            known: all_known,
-        };
-        let (_, ui, _) = build_nodes(&open, &cat, NEUTRAL, None, 2).expect("map builds");
-        let ek_known_total = cat.nodes.rows().filter(|n| n.map_id == 0).count();
+        let (_, ui, resolved) =
+            build_nodes(2, &all_known, &cat, NEUTRAL, None, 2).expect("map builds");
+        let unreached: Vec<usize> = (0..ui.len())
+            .filter(|&i| ui[i].node_type == TaxiNodeType::Unreached)
+            .collect();
         assert!(
-            ui.len() < ek_known_total,
-            "some all-known EK nodes are unroutable from Stormwind and must be dropped \
-             ({} shown of {ek_known_total})",
-            ui.len()
+            !unreached.is_empty(),
+            "some all-known EK nodes are unroutable from Stormwind"
         );
+        for i in unreached {
+            assert!(ui[i].routes.is_empty() && resolved[i].path.is_none());
+            if resolved[i].direct.is_none() {
+                assert_eq!(ui[i].num_routes, 999_998, "the unwalked hop count less one");
+                assert_eq!(ui[i].cost, 999_999, "the unwalked fare");
+            }
+        }
         assert!(
             ui.iter().all(|n| n.node_type != TaxiNodeType::Distant),
             "the DISTANT classification is a dead branch — never produced"
@@ -783,17 +795,12 @@ mod tests {
         let blood_watch = node_named(&cat, "Blood Watch, Bloodmyst Isle");
         let shattrath = node_named(&cat, "Shattrath, Terokkar Forest");
         let all_known = TaxiMask(vec![u64::MAX; cat.mask_words()]);
-        let open_at = |node: u32, known: &TaxiMask| TaxiOpen {
-            flightmaster: 0x42,
-            nearest_node: node,
-            known: known.clone(),
-        };
         let names = |ui: &[TaxiUiNode]| ui.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
 
         // Silvermoon: the Eastern Kingdoms, Tranquillien reachable, at its transformed spot.
         let known = mask_of(&[silvermoon, tranquillien]);
         let (map_id, ui, resolved) =
-            build_nodes(&open_at(silvermoon, &known), &cat, NEUTRAL, None, 2).expect("map builds");
+            build_nodes(silvermoon, &known, &cat, NEUTRAL, None, 2).expect("map builds");
         assert_eq!(
             map_id, 0,
             "Silvermoon's map 530 position draws on the Eastern Kingdoms"
@@ -824,21 +831,21 @@ mod tests {
         );
 
         // Every node known from Silvermoon: Outland's stay off the Eastern Kingdoms map.
-        let (_, ui, _) = build_nodes(&open_at(silvermoon, &all_known), &cat, NEUTRAL, None, 2)
-            .expect("map builds");
+        let (_, ui, _) =
+            build_nodes(silvermoon, &all_known, &cat, NEUTRAL, None, 2).expect("map builds");
         assert!(!names(&ui).contains(&"Shattrath, Terokkar Forest".to_string()));
 
         // The Exodar: Kalimdor, Blood Watch reachable.
         let known = mask_of(&[exodar, blood_watch]);
         let (map_id, ui, _) =
-            build_nodes(&open_at(exodar, &known), &cat, NEUTRAL, None, 2).expect("map builds");
+            build_nodes(exodar, &known, &cat, NEUTRAL, None, 2).expect("map builds");
         assert_eq!(map_id, 1, "the Exodar's map 530 position draws on Kalimdor");
         assert_eq!(names(&ui), ["Blood Watch, Bloodmyst Isle", "The Exodar"]);
         assert_eq!(ui[0].node_type, TaxiNodeType::Reachable);
 
         // Shattrath, every node known: Outland, with none of the transformed nodes.
-        let (map_id, ui, _) = build_nodes(&open_at(shattrath, &all_known), &cat, NEUTRAL, None, 2)
-            .expect("map builds");
+        let (map_id, ui, _) =
+            build_nodes(shattrath, &all_known, &cat, NEUTRAL, None, 2).expect("map builds");
         assert_eq!(map_id, 530);
         let listed = names(&ui);
         for gone in [
@@ -865,16 +872,13 @@ mod tests {
         let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
         let silvermoon = node_named(&cat, "Silvermoon City");
         let tranquillien = node_named(&cat, "Tranquillien, Ghostlands");
-        let open = TaxiOpen {
-            flightmaster: 0x42,
-            nearest_node: silvermoon,
-            known: mask_of(&[silvermoon, tranquillien]),
-        };
+        let known = mask_of(&[silvermoon, tranquillien]);
         assert!(
-            build_nodes(&open, &cat, NEUTRAL, None, 0).is_none(),
+            build_nodes(silvermoon, &known, &cat, NEUTRAL, None, 0).is_none(),
             "map 530 is expansion 1, so nothing is listed and the map does not open"
         );
-        let (_, ui, _) = build_nodes(&open, &cat, NEUTRAL, None, 1).expect("map builds");
+        let (_, ui, _) =
+            build_nodes(silvermoon, &known, &cat, NEUTRAL, None, 1).expect("map builds");
         assert!(ui.iter().any(|n| n.name == "Tranquillien, Ghostlands"));
     }
 
@@ -889,21 +893,14 @@ mod tests {
         let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
         let (ironforge, stormwind) = (6, 2);
         let all_known = TaxiMask(vec![u64::MAX; cat.mask_words()]);
-        let open = TaxiOpen {
-            flightmaster: 0x42,
-            nearest_node: ironforge,
-            known: all_known,
-        };
-        let (_, ui, resolved) = build_nodes(&open, &cat, NEUTRAL, None, 2).expect("map builds");
+        let (_, ui, resolved) =
+            build_nodes(ironforge, &all_known, &cat, NEUTRAL, None, 2).expect("map builds");
         let at = |name: &str| ui.iter().position(|n| n.name == name).expect(name);
         let (if_idx, sw_idx) = (at("Ironforge, Dun Morogh"), at("Stormwind, Elwynn"));
 
         // The walk itself detours.
         // Each listed node's id is its chain's last; names repeat (two Thorium Points).
-        let ids: Vec<u32> = resolved
-            .iter()
-            .map(|r| *r.chain.last().expect("a chain"))
-            .collect();
+        let ids: Vec<u32> = resolved.iter().map(|r| r.id).collect();
         let hop = |a: u32, b: u32| cat.paths.between(a, b).map(|p| p.cost);
         let length = |a: u32, b: u32| cat.path_length(a, b);
         let walked = walk_routes(
@@ -952,12 +949,9 @@ mod tests {
         let cat = TaxiCatalogs::load(&mut chain).expect("taxi DBCs");
         let shattrath = node_named(&cat, "Shattrath, Terokkar Forest");
         let sanctum = node_named(&cat, "Sanctum of the Stars, Shadowmoon Valley");
-        let open = TaxiOpen {
-            flightmaster: 0x42,
-            nearest_node: shattrath,
-            known: TaxiMask(vec![u64::MAX; cat.mask_words()]),
-        };
-        let (_, ui, resolved) = build_nodes(&open, &cat, NEUTRAL, None, 2).expect("map builds");
+        let all_known = TaxiMask(vec![u64::MAX; cat.mask_words()]);
+        let (_, ui, resolved) =
+            build_nodes(shattrath, &all_known, &cat, NEUTRAL, None, 2).expect("map builds");
         let i = ui
             .iter()
             .position(|n| n.name == "Sanctum of the Stars, Shadowmoon Valley")

@@ -205,12 +205,9 @@ fn effects(rig: &Rig, sent: Vec<ClientCommand>) -> Vec<&'static str> {
     out
 }
 
+/// `f` on the rig's VM with the world lent, as every call into Lua is.
 fn ui<R>(rig: &mut Rig, f: impl FnOnce(&mut benilla_ui::script::UiScript) -> R) -> R {
-    let mut script = rig
-        .app
-        .world_mut()
-        .non_send_resource_mut::<benilla_ui::script::UiScript>();
-    f(&mut script)
+    crate::ui_script::live::with_live_world(rig.app.world_mut(), f).expect("the rig's VM")
 }
 
 /// `GetPetActionsUsable()` as the Lua reads it after the feed ran.
@@ -289,7 +286,7 @@ fn each_exit_alone_stops_a_press_and_every_order() {
     }
 }
 
-/// `0x5d66f0`: the bar's `TogglePetAutocast` flips the word and sends only for a usable pet.
+/// `0x5d66f0`: the bar toggle flips and sends inside the call, only for a usable pet.
 #[test]
 fn each_exit_alone_stops_the_bars_autocast_toggle() {
     for Case {
@@ -305,10 +302,6 @@ fn each_exit_alone_stops_the_bars_autocast_toggle() {
         let word = rig.app.world().resource::<PetBar>().spells.bar[0];
 
         ui(&mut rig, |s| s.run("TogglePetAutocast(1)").unwrap());
-        rig.app
-            .world_mut()
-            .run_system_once(super::drain::drain_pet_actions)
-            .expect("the drain runs");
 
         let sent = rig.sent();
         let flipped = rig.app.world().resource::<PetBar>().spells.bar[0] != word;
@@ -323,8 +316,7 @@ fn each_exit_alone_stops_the_bars_autocast_toggle() {
     }
 }
 
-/// `0x5d5e10`: the pet book's `ToggleSpellAutocast` flips the word, repaints and sends only for a
-/// usable pet.
+/// `0x5d5e10`: the book toggle flips, sends and repaints inside the call, only for a usable pet.
 #[test]
 fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
     for Case {
@@ -337,20 +329,14 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
         let mut rig = scene();
         apply(&mut rig);
         rig.frame();
-        let (word, signals) = {
-            let bar = rig.app.world().resource::<PetBar>();
-            (bar.spells.spells[0], bar.bar_signals)
-        };
+        let word = rig.app.world().resource::<PetBar>().spells.spells[0];
 
         ui(&mut rig, |s| {
             s.run("ToggleSpellAutocast(1, BOOKTYPE_PET)").unwrap()
         });
-        rig.app
-            .world_mut()
-            .run_system_once(crate::ui_pet_book::drain_pet_book)
-            .expect("the drain runs");
 
         let sent = rig.sent();
+        let repainted = rig.frame().iter().any(|e| e == "PET_BAR_UPDATE");
         let bar = rig.app.world().resource::<PetBar>();
         assert_eq!(
             bar.spells.spells[0] != word,
@@ -358,9 +344,8 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
             "{name}: the book's word flips only when usable"
         );
         assert_eq!(
-            bar.bar_signals != signals,
-            usable,
-            "{name}: the bar repaints only when usable"
+            repainted, usable,
+            "{name}: the bar repaints only when usable (`0x5d5fe8`)"
         );
         assert_eq!(
             sent.iter()
@@ -368,6 +353,56 @@ fn each_exit_alone_stops_the_pet_books_autocast_toggle() {
                 .count(),
             usize::from(usable),
             "{name}: the toggle is sent only when usable"
+        );
+    }
+}
+
+/// Both toggles send, then signal inside the call (`0x5d5deb` then `0x5d5e01`, `0x5d5fdc` then `0x5d5fe8`): the next verb reads the new bit, and a handler's own send follows on the wire.
+#[test]
+fn both_toggles_send_then_signal_inside_the_call() {
+    for (toggle, read, nested, first) in [
+        (
+            "ToggleSpellAutocast(1, BOOKTYPE_PET)",
+            "select(2, GetSpellAutocast(1, BOOKTYPE_PET))",
+            "TogglePetAutocast(1)",
+            "book",
+        ),
+        (
+            "TogglePetAutocast(1)",
+            "select(7, GetPetActionInfo(1))",
+            "ToggleSpellAutocast(1, BOOKTYPE_PET)",
+            "bar",
+        ),
+    ] {
+        let mut rig = scene();
+        rig.frame();
+        let _ = rig.sent();
+        let (before, in_handler) = ui(&mut rig, |s| {
+            s.run(&format!(
+                "NESTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE')                  f:SetScript('OnEvent', function() if NESTED == nil then NESTED = {read} or 0 {nested} end end)"
+            ))
+            .unwrap();
+            s.eval::<(i64, i64)>(&format!("local b = {read} or 0 {toggle} return b, NESTED"))
+                .unwrap()
+        });
+        assert_ne!(
+            before, in_handler,
+            "{first}: the handler inside the call reads the new bit"
+        );
+        let kinds: Vec<&str> = rig
+            .sent()
+            .iter()
+            .filter_map(|c| match c {
+                ClientCommand::PetSpellAutocast { .. } => Some("book"),
+                ClientCommand::PetSetAction { .. } => Some("bar"),
+                _ => None,
+            })
+            .collect();
+        let second = if first == "book" { "bar" } else { "book" };
+        assert_eq!(
+            kinds,
+            vec![first, second],
+            "the toggle's packet leads its handler's"
         );
     }
 }
@@ -422,10 +457,6 @@ fn each_exit_alone_stops_the_drags_writes() {
         ui(&mut rig, |s| {
             s.run("PickupPetAction(1) PickupPetAction(2)").unwrap();
         });
-        rig.app
-            .world_mut()
-            .run_system_once(super::drain::drain_pet_actions)
-            .expect("the drain runs");
 
         let sent = rig.sent();
         let bar = rig.app.world().resource::<PetBar>().spells.bar;
@@ -487,17 +518,9 @@ fn a_held_action_stays_held_while_the_pet_is_out_of_view() {
         .0
         .remove(&PET);
     rig.frame();
-    rig.app
-        .world_mut()
-        .run_system_once(super::drain::drain_pet_actions)
-        .expect("the drain runs");
     let _ = rig.sent();
 
     ui(&mut rig, |s| s.run("PickupPetAction(2)").unwrap());
-    rig.app
-        .world_mut()
-        .run_system_once(super::drain::drain_pet_actions)
-        .expect("the drain runs");
 
     assert!(
         matches!(
@@ -522,9 +545,29 @@ fn with_stock_ui(rig: &mut Rig) {
     // The in-game UI loads on world entry, so a player exists.
     crate::ui_script::test_ui::load_stock_ui(&mut script);
     rig.app.world_mut().insert_non_send_resource(script);
-    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`), so the
-    // `"pet"` token's feed runs beside the bar's.
+    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`): our summon names the pet (`0x60acd0`), and the token's fan-out runs as the units' feed.
+    set_player(
+        rig,
+        &guid_pair(benilla_protocol::field::FIELD_UNIT_SUMMON, PET),
+    );
     rig.feed.add_systems(super::unit::feed_pet_unit);
+    // The bar arrives by its packet, whose setter fires `UNIT_PET` and `PET_BAR_UPDATE`.
+    let spells = std::mem::take(&mut rig.app.world_mut().resource_mut::<PetBar>().spells);
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::PetSpells(Box::new(spells))],
+    );
+}
+
+/// The pet's flags field moved: its unit watch fires `UNIT_FLAGS` for the `"pet"` token (#1266 builds it from the values update), and the stock bar repaints off it, reading at that call.
+fn flags_moved(rig: &mut Rig) {
+    rig.feed.run(rig.app.world_mut());
+    ui(rig, |s| {
+        s.fire_event(
+            "UNIT_FLAGS",
+            vec![benilla_ui::script::ScriptValue::Str("pet".into())],
+        );
+    });
 }
 
 /// The feeds, then the VM's clock and layout, so the bar's slide and repaint have happened.
@@ -599,8 +642,8 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
     );
 
     set_pet(&mut rig, &[(FLAGS, 0x0004_0000)]);
+    flags_moved(&mut rig);
     settle(&mut rig);
-
     assert!(icon_is_grey(&mut rig, ICON), "a stunned pet's bar greys");
     let before = latched(&rig);
     click_first_button(&mut rig);
@@ -612,6 +655,7 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
 
     // The same click again once the stun ends.
     set_pet(&mut rig, &[]);
+    flags_moved(&mut rig);
     settle(&mut rig);
     assert!(!icon_is_grey(&mut rig, ICON));
     click_first_button(&mut rig);
@@ -834,4 +878,186 @@ fn an_abandon_at_a_stable_master_lists_the_stable_again() {
             .any(|c| matches!(c, ClientCommand::ListStabledPets { npc } if *npc == MASTER));
         assert_eq!(relisted, at_stable, "at a stable master: {at_stable}");
     }
+}
+
+/// The bar's words with `word` in slot 3 and `state` as the pet's mode and orders word, fed once.
+fn scene_with(word: u32, state: u32) -> Rig {
+    let mut rig = scene();
+    let mut bar = rig.app.world_mut().resource_mut::<PetBar>();
+    bar.spells.bar[2] = PetActionEntry::from(word);
+    bar.spells.state = state;
+    rig.frame();
+    let _ = rig.sent();
+    rig
+}
+
+/// A Stay, Follow or reaction order latches, signals and sends inside the call (`0x5d453b`, `0x5d448e`, `0x5d4530`, `0x5d4556`): a handler of its `PET_BAR_UPDATE` and the next verb in the chunk both read the new word, and the packet is out before the verb returns.
+#[test]
+fn an_order_latches_signals_and_sends_inside_the_call() {
+    let follow_state = PET_COMMAND_FOLLOW << 8;
+    for (verb, word, state) in [
+        ("PetFollow()", FOLLOW, 0),
+        ("PetWait()", STAY, follow_state),
+        ("PetAggressiveMode()", AGGRESSIVE, 0),
+        ("CastPetAction(3)", FOLLOW, 0),
+    ] {
+        let mut rig = scene_with(word, state);
+        let read = "(select(5, GetPetActionInfo(3)) and 1 or 0)";
+        let (before, nested, after, queued) = ui(&mut rig, |s| {
+            s.run(&format!(
+                "NESTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE') f:SetScript('OnEvent', function() if NESTED == nil then NESTED = {read} end end)"
+            ))
+            .unwrap();
+            let got = s
+                .eval::<(i64, i64, i64)>(&format!(
+                    "local b = {read} {verb} return b, NESTED or -1, {read}"
+                ))
+                .unwrap();
+            (got.0, got.1, got.2, s.take_script_calls().len())
+        });
+        assert_eq!((before, nested, after), (0, 1, 1), "{verb}");
+        assert_eq!(queued, 0, "{verb}: nothing is left to the script calls");
+        let sent = rig.sent();
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [ClientCommand::PetAction { pet_guid: PET, packed, target_guid: FOE }] if *packed == word
+            ),
+            "{verb}: {sent:?}"
+        );
+    }
+}
+
+/// A press behind a queued call keeps its turn, so `/target` then `/petfollow` sends at the new selection (`0x5d4240` reads it as the earlier call left it).
+#[test]
+fn an_order_behind_a_queued_select_keeps_its_turn() {
+    let mut rig = scene_with(FOLLOW, 0);
+    let queued = ui(&mut rig, |s| {
+        s.run("TargetUnit('player') PetFollow()").unwrap();
+        s.take_script_calls()
+    });
+    assert_eq!(queued.len(), 2, "{queued:?}");
+    assert!(
+        rig.sent().is_empty(),
+        "nothing goes before the select applies"
+    );
+    ui(&mut rig, |s| s.requeue_script_calls(queued));
+    rig.app
+        .world_mut()
+        .run_system_once(crate::script_calls::apply_script_calls)
+        .unwrap();
+    let sent = rig.sent();
+    assert!(
+        sent.iter().any(|c| matches!(
+            c,
+            ClientCommand::PetAction {
+                packed: FOLLOW,
+                target_guid: ME,
+                ..
+            }
+        )),
+        "{sent:?}"
+    );
+}
+
+/// Attack keeps its script call turn: its validator's pick writes the selection and the TAB history, applied in call order with the player's own casts and selects (#1235); applied, any pet's pass raises the global (`0x5d4509`).
+#[test]
+fn an_attack_order_is_applied_in_call_order_and_raises_the_global() {
+    let mut rig = scene_with(ATTACK, 0);
+    let (in_call, queued) = ui(&mut rig, |s| {
+        let a = s
+            .eval::<bool>("PetAttack() return IsPetAttackActive()")
+            .unwrap();
+        (a, s.take_script_calls())
+    });
+    assert!(!in_call);
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    ui(&mut rig, |s| s.requeue_script_calls(queued));
+    rig.app
+        .world_mut()
+        .run_system_once(crate::script_calls::apply_script_calls)
+        .unwrap();
+    assert!(rig.app.world().resource::<PetBar>().attacking);
+    let sent = rig.sent();
+    assert!(
+        sent.iter().any(|c| matches!(
+            c,
+            ClientCommand::PetAction {
+                packed: ATTACK,
+                target_guid: FOE,
+                ..
+            }
+        )),
+        "{sent:?}"
+    );
+}
+
+/// `PetDismiss` acts inside its call (`0x5d46f0`): the Dismiss order is out and `PET_DISMISS_START` fired, with its 10 s, before the verb returns (`0x5d48be`, `0x5d48c3`); `PetAbandon` sends under the head and `PetRename` checks and sends inside theirs (`0x5d4900`, `0x5d5670`), and a refused rename's message is queued in the call.
+#[test]
+fn the_menu_verbs_act_inside_the_call() {
+    let mut rig = scene();
+    let _ = rig.sent();
+    let (started, queued) = ui(&mut rig, |s| {
+        s.run("STARTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_DISMISS_START') f:SetScript('OnEvent', function(_, _, ms) STARTED = ms end)")
+            .unwrap();
+        let started = s
+            .eval::<Option<i64>>("PetDismiss() return STARTED")
+            .unwrap();
+        (started, s.take_pet_gives_up())
+    });
+    assert_eq!(started, Some(10_000));
+    assert_eq!(queued, (0, 0), "nothing is left to the drain");
+    let dismiss = 3 | ((PET_ACT_COMMAND as u32) << 24);
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetAction { pet_guid: PET, packed, target_guid: 0 }] if *packed == dismiss
+        ),
+        "{sent:?}"
+    );
+
+    ui(&mut rig, |s| s.run("PetAbandon()").unwrap());
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetAbandon { pet_guid: PET }]
+        ),
+        "{sent:?}"
+    );
+
+    // Not renameable: the pet-flags byte's bit 0 is clear (`0x5d5710`).
+    ui(&mut rig, |s| s.run("PetRename('Bruce')").unwrap());
+    assert!(rig.sent().is_empty());
+    set_pet(
+        &mut rig,
+        &[(benilla_protocol::field::FIELD_UNIT_BYTES_2, 0x01 << 16)],
+    );
+    ui(&mut rig, |s| {
+        s.run("PetRename('Bruce') PetRename('')").unwrap()
+    });
+    let sent = rig.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ClientCommand::PetRename { pet_guid: PET, name }] if name == "Bruce"
+        ),
+        "{sent:?}"
+    );
+    assert!(ui(&mut rig, |s| s.take_pet_renames()).is_empty());
+}
+
+/// A menu verb behind a queued call waits for it, as a press does: the drain runs it after the call applied.
+#[test]
+fn a_menu_verb_behind_a_queued_call_waits() {
+    let mut rig = scene();
+    let _ = rig.sent();
+    let (queued, gives_up) = ui(&mut rig, |s| {
+        s.run("TargetUnit('player') PetDismiss()").unwrap();
+        (s.take_script_calls(), s.take_pet_gives_up())
+    });
+    assert_eq!(queued.len(), 1);
+    assert_eq!(gives_up, (0, 1));
+    assert!(rig.sent().is_empty());
 }

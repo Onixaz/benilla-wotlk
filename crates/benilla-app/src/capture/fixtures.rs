@@ -53,6 +53,14 @@ fn seed_template(commands: &mut Commands, entry: u32, t: benilla_protocol::messa
     });
 }
 
+/// A landed quest template, written with the fixture's commands for the same reason.
+fn seed_quest(commands: &mut Commands, t: benilla_protocol::messages::QuestTemplate) {
+    commands.queue(move |w: &mut World| {
+        w.resource_mut::<crate::ui_quest_log::QuestLog>()
+            .insert_template(t);
+    });
+}
+
 /// An item object in the index, spawned as the wire does, with the fixture's commands.
 fn seed_item(
     commands: &mut Commands,
@@ -75,21 +83,19 @@ pub(super) fn seed_ui_fixture(
     mut ctx: ResMut<CaptureCtx>,
     mut commands: Commands,
     progress: Res<WorldLoadProgress>,
-    mut merchant: ResMut<crate::ui_merchant::MerchantOpen>,
-    mut gossip: ResMut<crate::ui_gossip::GossipState>,
-    mut quest: ResMut<crate::ui_quest::QuestGiver>,
-    mut quest_log: ResMut<crate::ui_quest_log::QuestLog>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
-    (mut script, _live): (
+    (mut script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsSelection,
+            crate::ui_script::OwnsActions,
+        )>,
     ),
-    mut selection: ResMut<crate::target::Selection>,
+    mut selection: crate::ui_script::OwnedMut<crate::target::Selection>,
     // A nested tuple, one param under Bevy's 16-param cap.
-    (mut actions, mut bank, mut exit, mut loading): (
-        ResMut<crate::ui_action::PlayerActions>,
-        ResMut<crate::ui_bank::BankOpen>,
+    (mut actions, mut exit, mut loading): (
+        crate::ui_script::OwnedMut<crate::ui_action::PlayerActions>,
         MessageWriter<AppExit>,
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
@@ -249,10 +255,13 @@ pub(super) fn seed_ui_fixture(
                         extended_cost: 0,
                     }
                 })
-                .collect();
-            merchant.open(NPC_GUID, rows);
-            // The usable gate's player half, by hand: with no SelfPlayer in capture,
-            // `feed_player_req` never runs to overwrite it. A level-12 human warrior.
+                .collect::<Vec<_>>();
+            // The list's handler leg: the vendor set and `MERCHANT_SHOW` in its turn.
+            commands.queue(move |w: &mut World| {
+                crate::ui_merchant::set_merchant(w, NPC_GUID, rows);
+                crate::ui_script::live::fire_handler_events(w);
+            });
+            // The usable gate's player half: with no active player in capture, the fixture's level-12 human warrior stands in.
             if let Some(s) = script.as_mut() {
                 s.set_player_req_state(benilla_ui::script::PlayerReqState {
                     level: 12,
@@ -279,16 +288,12 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 }),
             );
-            gossip.npc = Some(NPC_GUID);
-            gossip.text_id = 1;
             // A greeting long enough that the wrapped options below run past the parchment.
-            gossip.greeting = Some(
-                "A man has been caught stealing corn from the fields of a noble, a lord known \
-                 for his harsh taxes throughout the land.$B$BMake your choice!"
-                    .into(),
-            );
+            let greeting =
+                "A man has been caught stealing corn from the fields of a noble, a lord \
+                 known for his harsh taxes throughout the land.$B$BMake your choice!";
             // An available quest row above the options, for the quest-row icon and text seating.
-            gossip.quests = vec![benilla_protocol::messages::QuestOption {
+            let quests = vec![benilla_protocol::messages::QuestOption {
                 quest_id: 783,
                 icon: 0,
                 level: 5,
@@ -308,7 +313,7 @@ pub(super) fn seed_ui_fixture(
                 "I allow the man to take enough corn to feed his family for a couple of days, \
                  encouraging him to leave the land.",
             ];
-            gossip.options = vec![benilla_protocol::messages::GossipOption {
+            let mut options = vec![benilla_protocol::messages::GossipOption {
                 index: 0,
                 icon: 1,
                 coded: false,
@@ -316,22 +321,33 @@ pub(super) fn seed_ui_fixture(
                 message: "Let me browse your goods.".into(),
                 box_text: None,
             }];
-            gossip
-                .options
-                .extend(judgement.iter().enumerate().map(|(i, message)| {
-                    benilla_protocol::messages::GossipOption {
-                        index: i as u32 + 1,
-                        icon: 0,
-                        coded: false,
-                        box_money: 0,
-                        message: (*message).into(),
-                        box_text: None,
-                    }
-                }));
+            options.extend(judgement.iter().enumerate().map(|(i, message)| {
+                benilla_protocol::messages::GossipOption {
+                    index: i as u32 + 1,
+                    icon: 0,
+                    coded: false,
+                    box_money: 0,
+                    message: (*message).into(),
+                    box_text: None,
+                }
+            }));
+            // The menu as the wire would read it, its greeting drawn and `GOSSIP_SHOW` fired in turn.
+            commands.queue(move |world: &mut World| {
+                crate::ui_gossip::seed_drawn(
+                    world,
+                    benilla_protocol::messages::GossipMenu {
+                        npc: NPC_GUID,
+                        menu_id: 0,
+                        text_id: 1,
+                        options,
+                        quests,
+                    },
+                    greeting.into(),
+                );
+            });
         }
         UiFixture::Bank => {
-            // A pure banker and the vault, fed through the descriptor and caches that `feed_bank`
-            // and `ui_items` push into the VM as live wire data would.
+            // A pure banker and the vault, in the descriptor and caches the bank verbs read and `ui_items` pushes, as live wire data would.
             use benilla_protocol::messages::ObjectFields;
             names.insert_creature(
                 NPC_ENTRY,
@@ -428,8 +444,11 @@ pub(super) fn seed_ui_fixture(
                 crate::net::SelfPlayer,
                 crate::net::Guid(PLAYER_GUID),
             ));
-            // `feed_bank` then fires BANKFRAME_OPENED as a live SMSG_SHOW_BANK would.
-            bank.open(NPC_GUID);
+            // The banker set and `BANKFRAME_OPENED` fired as a live `SMSG_SHOW_BANK`'s handler does.
+            commands.queue(|world: &mut World| {
+                crate::ui_bank::open_bank(world, NPC_GUID);
+                crate::ui_script::live::fire_handler_events(world);
+            });
             // Opens bank bag 1 once its container feed lands (`GetContainerNumSlots(5) > 0`);
             // `BankFrameBag1`'s `GetID()` is 5, the container id its handler passes to `ToggleBag`.
             if let Some(s) = script.as_mut() {
@@ -473,27 +492,31 @@ pub(super) fn seed_ui_fixture(
                 count: 1,
                 display_id: disp,
             };
-            quest.open(
-                NPC_GUID,
-                crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
-                    npc: NPC_GUID,
-                    quest_id: 783,
-                    title: "A Threat Within".into(),
-                    details:
-                        "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
+            live.with_giver_mut(|g| {
+                g.expect("the quest window").open(
+                    NPC_GUID,
+                    crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
+                        npc: NPC_GUID,
+                        quest_id: 783,
+                        title: "A Threat Within".into(),
+                        details:
+                            "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
                               and return to me."
-                            .into(),
-                    objectives: "Kill 8 Kobold Vermin.".into(),
-                    auto_launched: true,
-                    choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
-                    rewards: vec![choice(92_003, DISP_SHIELD)],
-                    extra: benilla_protocol::messages::QuestExtraRewards {
-                        money: 1234, // 12s 34c
+                                .into(),
+                        objectives: "Kill 8 Kobold Vermin.".into(),
+                        auto_launched: true,
+                        choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
+                        rewards: vec![choice(92_003, DISP_SHIELD)],
+                        extra: benilla_protocol::messages::QuestExtraRewards {
+                            money: 1234, // 12s 34c
+                            ..Default::default()
+                        },
                         ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-            );
+                    }),
+                )
+            });
+            // The panel's publish and event, as its packet's handler runs them.
+            commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestGreeting => {
             names.insert_creature(
@@ -513,36 +536,40 @@ pub(super) fn seed_ui_fixture(
                 }),
             );
             // The multi-quest greeting: two available quests, bullet rows under "Available Quests".
-            quest.open(
-                NPC_GUID,
-                crate::ui_quest::QuestView::Greeting(benilla_protocol::messages::QuestGiverList {
-                    npc: NPC_GUID,
-                    greeting: "Greetings, $N. The town of Goldshire needs able hands.".into(),
-                    emote_delay: 0,
-                    emote: 0,
-                    quests: vec![
-                        benilla_protocol::messages::QuestListEntry {
-                            quest_id: 84,
-                            icon: 0,
-                            level: 4,
-                            title: "Brotherhood of Thieves".into(),
-                            ..Default::default()
+            live.with_giver_mut(|g| {
+                g.expect("the quest window").open(
+                    NPC_GUID,
+                    crate::ui_quest::QuestView::Greeting(
+                        benilla_protocol::messages::QuestGiverList {
+                            npc: NPC_GUID,
+                            greeting: "Greetings, $N. The town of Goldshire needs able hands."
+                                .into(),
+                            emote_delay: 0,
+                            emote: 0,
+                            quests: vec![
+                                benilla_protocol::messages::QuestListEntry {
+                                    quest_id: 84,
+                                    icon: 0,
+                                    level: 4,
+                                    title: "Brotherhood of Thieves".into(),
+                                    ..Default::default()
+                                },
+                                benilla_protocol::messages::QuestListEntry {
+                                    quest_id: 40,
+                                    icon: 0,
+                                    level: 3,
+                                    title: "Eagan Peltskinner".into(),
+                                    ..Default::default()
+                                },
+                            ],
                         },
-                        benilla_protocol::messages::QuestListEntry {
-                            quest_id: 40,
-                            icon: 0,
-                            level: 3,
-                            title: "Eagan Peltskinner".into(),
-                            ..Default::default()
-                        },
-                    ],
-                }),
-            );
+                    ),
+                )
+            });
+            commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestLog => {
-            // The log reads the self player's PLAYER_QUEST_LOG slots, so a synthetic self player
-            // carries two and `feed_quest_log` runs the real chain. A slot is id, state, two words
-            // of `u16` counters, and timer.
+            // A synthetic self player carries two PLAYER_QUEST_LOG slots (id, state, two `u16` counter words, timer), so the slot watch (`0x6df370`) rebuilds the real rows.
             use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1 as LOG;
             use benilla_protocol::messages::{
                 ObjectFields, QuestObjective, QuestTemplate, QUEST_LOG_SLOT_FIELDS,
@@ -579,58 +606,66 @@ pub(super) fn seed_ui_fixture(
             // Entry 1, auto-selected: a creature objective at 3/10, an item objective at 0/5,
             // rewards and money. `quest_type: 1` is `QuestInfo.dbc`'s "Elite", though the real 783
             // is plain, so a row tag is in the shot.
-            quest_log.insert_template(QuestTemplate {
-                quest_id: 783,
-                method: 2,
-                level: 2,
-                zone_or_sort: 12,
-                quest_type: 1,
-                money: 150, // 1s 50c
-                rewards: [(93_003, 1), (0, 0), (0, 0), (0, 0)],
-                choices: [(93_002, 1), (93_001, 3), (0, 0), (0, 0), (0, 0), (0, 0)],
-                title: "A Threat Within".into(),
-                objectives_text: "Slay 10 Kobold Vermin and recover 5 Chipped Boar Tusks, then \
+            seed_quest(
+                &mut commands,
+                QuestTemplate {
+                    quest_id: 783,
+                    method: 2,
+                    level: 2,
+                    zone_or_sort: 12,
+                    quest_type: 1,
+                    money: 150, // 1s 50c
+                    rewards: [(93_003, 1), (0, 0), (0, 0), (0, 0)],
+                    choices: [(93_002, 1), (93_001, 3), (0, 0), (0, 0), (0, 0), (0, 0)],
+                    title: "A Threat Within".into(),
+                    objectives_text:
+                        "Slay 10 Kobold Vermin and recover 5 Chipped Boar Tusks, then \
                                   return to Marshal McBride."
-                    .into(),
-                details: "Your first task is one of cleansing. A clan of kobolds have infested \
+                            .into(),
+                    details:
+                        "Your first task is one of cleansing. A clan of kobolds have infested \
                           the woods to the north. Go there and fight the kobold vermin you find. \
                           Reduce their numbers so that we may one day drive them from Northshire."
-                    .into(),
-                objectives: [
-                    QuestObjective {
-                        creature_or_go: KOBOLD_ENTRY,
-                        required_count: 10,
-                        ..Default::default()
-                    },
-                    QuestObjective::default(),
-                    QuestObjective::default(),
-                    QuestObjective::default(),
-                ],
-                required_items: [(93_001, 5), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
-                ..Default::default()
-            });
+                            .into(),
+                    objectives: [
+                        QuestObjective {
+                            creature_or_go: KOBOLD_ENTRY,
+                            required_count: 10,
+                            ..Default::default()
+                        },
+                        QuestObjective::default(),
+                        QuestObjective::default(),
+                        QuestObjective::default(),
+                    ],
+                    required_items: [(93_001, 5), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+                    ..Default::default()
+                },
+            );
             // Entry 2: complete, for the row's "(Complete)" tag.
-            quest_log.insert_template(QuestTemplate {
-                quest_id: 7,
-                method: 2,
-                level: 3,
-                zone_or_sort: 12,
-                money: 25,
-                title: "Kobold Camp Cleanup".into(),
-                objectives_text: "Kill 10 kobold workers.".into(),
-                details: "The kobold infestation grows.".into(),
-                objectives: [
-                    QuestObjective {
-                        creature_or_go: KOBOLD_ENTRY,
-                        required_count: 10,
-                        ..Default::default()
-                    },
-                    QuestObjective::default(),
-                    QuestObjective::default(),
-                    QuestObjective::default(),
-                ],
-                ..Default::default()
-            });
+            seed_quest(
+                &mut commands,
+                QuestTemplate {
+                    quest_id: 7,
+                    method: 2,
+                    level: 3,
+                    zone_or_sort: 12,
+                    money: 25,
+                    title: "Kobold Camp Cleanup".into(),
+                    objectives_text: "Kill 10 kobold workers.".into(),
+                    details: "The kobold infestation grows.".into(),
+                    objectives: [
+                        QuestObjective {
+                            creature_or_go: KOBOLD_ENTRY,
+                            required_count: 10,
+                            ..Default::default()
+                        },
+                        QuestObjective::default(),
+                        QuestObjective::default(),
+                        QuestObjective::default(),
+                    ],
+                    ..Default::default()
+                },
+            );
 
             // Slot 0 is quest 783 (counter 0 at 3), slot 1 quest 7 (counter 0 at 10, state
             // COMPLETE).
@@ -1104,8 +1139,9 @@ pub(super) fn seed_ui_fixture(
             // As the V binding does, so FrameXML's replay at `PLAYER_ENTERING_WORLD` agrees.
             set_enemy_plates(script.as_deref(), true);
             // The wolf is the target, so its plate draws lit with the target ring.
-            selection.target = Some(wolf);
-            selection.guid = Some(WOLF_GUID);
+            let mut selected = selection.write();
+            selected.target = Some(wolf);
+            selected.guid = Some(WOLF_GUID);
         }
         UiFixture::Options => {
             let Some(script) = script else {
@@ -1226,7 +1262,7 @@ pub(super) fn seed_ui_fixture(
             let Some(script) = script.as_mut() else {
                 return;
             };
-            actions.spells.extend([
+            actions.write().spells.extend([
                 // The auto-attack shows the equipped sword's icon, not the placeholder of spell 6603,
                 // in General (no skill line).
                 6603, // Attack

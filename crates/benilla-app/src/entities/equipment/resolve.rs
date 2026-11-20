@@ -315,8 +315,8 @@ pub(in crate::entities) fn resolve_equipment(
     mut last_epochs: Local<Option<(u64, u64)>>,
     // The object lookup and the item entities' change watch, one param under Bevy's limit of 16.
     item_objects: (crate::net::Objects, crate::items::ItemChanges),
-    // Mutable because a miss sends the `CMSG_GUILD_QUERY` whose answer paints the tabard.
-    mut guilds: Option<ResMut<crate::ui_guild::GuildState>>,
+    // A miss sends the `CMSG_GUILD_QUERY` whose answer paints the tabard.
+    guilds: Option<Res<crate::ui_guild::GuildCache>>,
     tabard_design: Option<Res<crate::ui_tabard::TabardDesign>>,
     barber: Option<Res<crate::ui_barber::BarberBody>>,
     mut swap_edges: SwapEdges,
@@ -329,7 +329,7 @@ pub(in crate::entities) fn resolve_equipment(
     // A guild query answered after a player spawned changes their tabard, not their descriptor.
     let epochs = (
         templates.template_epoch(),
-        guilds.as_ref().map_or(0, |g| g.identity_generation()),
+        guilds.as_ref().map_or(0, |g| g.generation()),
     );
     // Drained every run, gate or not: `moved` consumes the removals.
     let (objects, mut item_changes) = item_objects;
@@ -501,7 +501,7 @@ pub(in crate::entities) fn resolve_equipment(
             dress_swaps(&mut eq, swapped);
             // The emblem, for every player; the composite paints it only on a flagged tabard.
             eq.emblem = guilds
-                .as_deref_mut()
+                .as_deref()
                 .and_then(|g| crate::ui_guild::unit_guild_emblem(s, g, &net));
             // The designer's preview, our own body only (`[cc+0xc]`).
             if is_self {
@@ -913,15 +913,15 @@ pub(in crate::entities) fn resolve_corpse_equipment(
     held: Option<ResMut<ItemDisplays>>,
     asset_server: Res<AssetServer>,
     net: Res<NetCommands>,
-    // Mutable because a miss sends the `CMSG_GUILD_QUERY` whose answer paints the crest.
-    mut guilds: Option<ResMut<crate::ui_guild::GuildState>>,
+    // A miss sends the `CMSG_GUILD_QUERY` whose answer paints the crest.
+    guilds: Option<Res<crate::ui_guild::GuildCache>>,
     mut last_guild_epoch: Local<Option<u64>>,
 ) {
     let Some(mut held) = held else {
         return;
     };
     // A guild answer landing after the corpse streamed in changes its tabard, not its descriptor.
-    let epoch = guilds.as_ref().map_or(0, |g| g.identity_generation());
+    let epoch = guilds.as_ref().map_or(0, |g| g.generation());
     let guilds_moved = last_guild_epoch.replace(epoch) != Some(epoch);
     for (entity, net_entity, store, current) in &corpses {
         if net_entity.kind != EntityKind::Corpse {
@@ -950,7 +950,7 @@ pub(in crate::entities) fn resolve_corpse_equipment(
             // The crest off the corpse's own `CORPSE_FIELD_GUILD` (at tabard slot 0x12 when its
             // display has flag bit 0), through the living body's guild cache.
             eq.emblem = guilds
-                .as_deref_mut()
+                .as_deref()
                 .and_then(|g| crate::ui_guild::corpse_guild_emblem(s, g, &net));
         }
         if current != Some(&eq) {

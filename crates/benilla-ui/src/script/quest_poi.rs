@@ -4,8 +4,6 @@
 //! and the POI leaderboard and drop lines the map's tooltips read (`0x5e6650`, `0x5e4260`,
 //! `0x5e60d0`), which the app builds per quest ([`QuestPoiLines`]).
 
-use std::collections::HashMap;
-
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{coerced_number, flag, number_arg};
@@ -32,7 +30,7 @@ pub(crate) struct PoiIcon {
     y: i32,
 }
 
-/// The per-quest lines the POI verbs read, built by the app beside the leaderboard.
+/// The per-quest lines the POI verbs read, built at the call beside the leaderboard.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestPoiLines {
     /// `GetQuestPOILeaderBoard`'s lines by index (`0x5e58c0`): 0-3 the objectives, 4-9 the
@@ -51,7 +49,6 @@ pub struct QuestPoiLines {
 /// The POI verbs' state beside the POI store.
 #[derive(Debug)]
 pub(crate) struct QuestPoiState {
-    pub(crate) lines: HashMap<u32, QuestPoiLines>,
     overlap: f32,
     /// Kept as the reference keeps it, which reads it nowhere else.
     #[allow(dead_code)]
@@ -61,27 +58,24 @@ pub(crate) struct QuestPoiState {
 impl Default for QuestPoiState {
     fn default() -> Self {
         Self {
-            lines: HashMap::new(),
             overlap: OVERLAP_DISTANCE,
             push: OVERLAP_PUSH_DISTANCE,
         }
     }
 }
 
-impl super::UiScript {
-    /// Push each logged quest's POI lines, replaced only when they moved.
-    pub fn set_quest_poi_lines(&mut self, lines: HashMap<u32, QuestPoiLines>) {
-        if self.model_ref().quest_poi.lines != lines {
-            self.model_mut().quest_poi.lines = lines;
-        }
-    }
+/// One quest's POI lines read at the call; none where no view lends them.
+fn poi_lines(quest_id: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<QuestPoiLines> {
+    super::read_live(|l| l.quest_poi_lines(quest_id, get))
+        .flatten()
+        .flatten()
 }
 
 /// The quest at a 1-based log row, 0 for a header or no row.
 fn quest_at_row(model: &Model, row: i64) -> u32 {
     usize::try_from(row - 1)
         .ok()
-        .and_then(|i| model.quest_log.entries.get(i))
+        .and_then(|i| model.quest_log.get(i))
         .filter(|e| !e.is_header)
         .map_or(0, |e| e.quest_id)
 }
@@ -148,12 +142,8 @@ fn update_icons(model: &mut Model) {
             x: r.center.0,
             y: r.center.1,
         }));
-        let done = model
-            .quest_log
-            .entries
-            .iter()
-            .find(|e| !e.is_header && e.quest_id == slot.quest_id)
-            .is_some_and(|e| e.complete == 1);
+        let done =
+            super::quest_log::quest_numbers(model, slot.quest_id).is_some_and(|e| e.complete == 1);
         if done {
             complete.push(i);
         } else {
@@ -334,11 +324,7 @@ fn quest_area(model: &Model, quest_id: u32) -> (u32, i32) {
             return found;
         }
     }
-    let top = model
-        .quest_poi
-        .lines
-        .get(&quest_id)
-        .map_or(0, |l| l.top_area);
+    let top = poi_lines(quest_id, &|_| None).map_or(0, |l| l.top_area);
     if top == 0 {
         return (0, 0);
     }
@@ -434,14 +420,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if quest == 0 {
                 quest = selected_quest(&model);
             }
-            let line = usize::try_from(index).ok().and_then(|i| {
-                model
-                    .quest_poi
-                    .lines
-                    .get(&quest)
-                    .and_then(|l| l.board.get(i))
-                    .and_then(Option::as_ref)
-            });
+            let get = |key: &str| crate::strings::global(lua, key);
+            let lines = poi_lines(quest, &get);
+            let line = usize::try_from(index)
+                .ok()
+                .and_then(|i| lines.as_ref()?.board.get(i)?.as_ref());
             line_values(lua, line)
         })?,
     )?;
@@ -457,12 +440,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(n) => quest_at_row(&model, n as i64),
                 None => selected_quest(&model),
             };
+            let get = |key: &str| crate::strings::global(lua, key);
             Ok(i64::from(
-                model
-                    .quest_poi
-                    .lines
-                    .get(&quest)
-                    .map_or(0, |l| l.drops_needed),
+                poi_lines(quest, &get).map_or(0, |l| l.drops_needed),
             ))
         })?,
     )?;
@@ -480,13 +460,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if quest == 0 {
                 quest = selected_quest(&model);
             }
-            let line = usize::try_from(index - 1).ok().and_then(|i| {
-                model
-                    .quest_poi
-                    .lines
-                    .get(&quest)
-                    .and_then(|l| l.drops.get(i))
-            });
+            let get = |key: &str| crate::strings::global(lua, key);
+            let lines = poi_lines(quest, &get);
+            let line = usize::try_from(index - 1)
+                .ok()
+                .and_then(|i| lines.as_ref()?.drops.get(i));
             line_values(lua, line)
         })?,
     )?;
@@ -566,11 +544,13 @@ mod tests {
         assert_eq!(icons[1].unwrap().x, 1, "POIShiftComplete 0 leaves them");
     }
 
-    fn with_lines() -> UiScript {
+    fn with_lines() -> (
+        UiScript,
+        crate::script::LiveLoan<crate::script::live::TestView>,
+    ) {
         use crate::script::{QuestLogEntryView, QuestLogState};
         let mut s = UiScript::new().unwrap();
-        s.set_quest_log(QuestLogState {
-            num_quests: 1,
+        s.seed_quest_log(QuestLogState {
             entries: vec![
                 QuestLogEntryView {
                     title: "Elwynn Forest".into(),
@@ -593,8 +573,8 @@ mod tests {
         let mut board = vec![None; 18];
         board[4] = Some(line("Diseased Wolf Pelt: 3/8", "item", false));
         board[16] = Some(line("Return to Eagan.", "event", true));
-        s.set_quest_poi_lines(
-            [(
+        let view = crate::script::live::TestView {
+            poi_lines: [(
                 33,
                 QuestPoiLines {
                     board,
@@ -604,14 +584,15 @@ mod tests {
                 },
             )]
             .into(),
-        );
-        s
+            ..Default::default()
+        };
+        (s, crate::script::live::lend_test(view))
     }
 
     /// `0x5e6650` reads `index` as is; `0x5e60d0` minus one; both fall back to the selection.
     #[test]
     fn the_poi_lines_answer_by_row_or_selection() {
-        let s = with_lines();
+        let (s, _lines) = with_lines();
         assert_eq!(
             s.eval::<(String, String, Option<i64>)>("return GetQuestPOILeaderBoard(4, 2)")
                 .unwrap(),

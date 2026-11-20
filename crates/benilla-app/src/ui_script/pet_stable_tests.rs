@@ -2,6 +2,7 @@
 //! `UnitName("pet")` into `STABLE_PET_INFO_TEXT` (`PetStable.lua`); until the pet name query
 //! answers, `UnitName` reads `UNKNOWNOBJECT`, as in the reference.
 
+use super::test_live::PetAnswersExt;
 use benilla_ui::script::{PetStats, ScriptValue, UiScript, UnitState};
 
 /// The stock interface with a hunter seated.
@@ -136,30 +137,35 @@ fn dismissing_the_pet_empties_the_closed_stable_without_raising() {
 /// four stable buttons in list order.
 #[test]
 fn a_full_stable_opens_the_window_with_four_stabled_pets() {
-    use benilla_ui::script::{StablePetSlot, StableState};
+    use benilla_ui::script::{StableFamily, StableList, StableRow};
 
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = load_stable();
-    let pet = |n: u32, name: &str| StablePetSlot {
+    let pet = |n: u32, name: &str| StableRow {
         pet_number: n,
-        icon: Some(r"Interface\Icons\Ability_Hunter_Pet_Wolf".into()),
+        entry: 299,
         name: name.into(),
         level: 70,
-        family: Some("Wolf".into()),
+    };
+    let wolf = StableFamily {
+        icon: r"Interface\Icons\Ability_Hunter_Pet_Wolf".into(),
+        name: "Wolf".into(),
         talent_tree: Some("Ferocity".into()),
         diet: vec!["Meat".into()],
     };
-    s.set_stable(Some(StableState {
-        num_stable_slots: 4,
-        next_slot_cost: 0,
-        current: Some(pet(1, "Rex")),
-        stabled: ["Bruiser", "Nibbles", "Ghost", "Fang"]
-            .iter()
-            .zip(2..)
-            .map(|(name, n)| pet(n, name))
-            .collect(),
-        has_live_pet: false,
-    }));
+    s.set_stable(
+        StableList {
+            master: 0x42,
+            num_slots: 4,
+            current: pet(1, "Rex"),
+            stabled: ["Bruiser", "Nibbles", "Ghost", "Fang"]
+                .iter()
+                .zip(2..)
+                .map(|(name, n)| pet(n, name))
+                .collect(),
+        },
+        vec![(299, wolf)],
+    );
     s.fire_event("PET_STABLE_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(s.eval::<bool>("return PetStableFrame:IsShown()").unwrap());

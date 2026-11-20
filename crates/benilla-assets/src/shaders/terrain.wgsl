@@ -46,7 +46,7 @@ struct TerrainParams {
 // The shared global light (`lighting::global_light`), updated in place once a frame; this mirrors
 // its row layout, which must match.
 struct WowLight {
-    light_ambient: vec4<f32>, // rgb = row 1 ambient; w = Mod2x scale (×1).
+    light_ambient: vec4<f32>, // rgb = row 1 ambient; w = the character ambient (unread here).
     light_diffuse: vec4<f32>, // rgb = row 0 sun diffuse; w = clamp-light flag (>0.5 ⇒ saturate).
     light_sun: vec4<f32>,     // xyz = world-space sun travel direction (to-light = −xyz); w unused.
     light_spec: vec4<f32>,    // rgb = row 9 specular color; w = shininess (20). rgb == 0 disables.
@@ -238,6 +238,15 @@ fn vertex(in: TerrainVertex) -> TerrainVsOut {
     return out;
 }
 
+// The reference's fog curve (every world vertex program, `0x7ecd80`): the linear factor
+// `(end - z) / (end - start)` clamped to [0, 1], raised to the rate (row 20; 0 reads as 1). The
+// reference raises per vertex and interpolates; per pixel here, which agrees exactly only at rate 1.
+fn fog_curve(span: vec2<f32>, rate: f32, eye_z: f32) -> f32 {
+    let linear = clamp((span.y - eye_z) / max(span.y - span.x, 0.001), 0.0, 1.0);
+    let r = select(1.0, rate, rate > 0.0);
+    return select(pow(linear, r), linear, r == 1.0);
+}
+
 @fragment
 fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     // The far-clip wall: the reference clips the detailed world per pixel at its far plane
@@ -326,12 +335,11 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     let spec_term = in.specular * specmask * shadow_lit * wow_light.terrain_opts.z;
     var tuned = clamp(diffuse_term + spec_term, vec3<f32>(0.0), vec3<f32>(1.0));
 
-    // Gamma-space GL_LINEAR fog on planar eye-Z, as the reference computes `fogcoord`, not radial
-    // distance. Per pixel matches its per-vertex fog, since a linear factor interpolates exactly.
+    // Gamma-space fog on planar eye-Z, as the reference computes `fogcoord`, not radial distance,
+    // through its curve ([`fog_curve`]).
     if (wow_light.fog_color.w > 0.5) {
         let eye_z = -(view.view_from_world * vec4<f32>(in.world_position.xyz, 1.0)).z;
-        let denom = max(wow_light.fog_params.y - wow_light.fog_params.x, 0.001);
-        let factor = clamp((wow_light.fog_params.y - eye_z) / denom, 0.0, 1.0);
+        let factor = fog_curve(wow_light.fog_params.xy, wow_light.point_count.z, eye_z);
         tuned = mix(wow_light.fog_color.xyz, tuned, factor);
     }
 

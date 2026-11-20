@@ -343,6 +343,14 @@ pub(crate) fn ingame_ui_up(
     pending.is_none() && state.is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld)
 }
 
+/// [`ingame_ui_up`] read off the `World`, for a handler's step.
+pub(crate) fn ingame_ui_up_in(world: &World) -> bool {
+    world.get_resource::<PendingEntryUiLoad>().is_none()
+        && world
+            .get_resource::<State<crate::char_select::ClientState>>()
+            .is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld)
+}
+
 /// `PreUpdate`, after [`run_pending_reload`] so a reload never interleaves an armed entry load:
 /// run the armed entry load once the cover has presented, at once when there is no cover (a
 /// capture booting straight `InWorld`). Leaving the world first drops the latch unrun, and
@@ -387,6 +395,15 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
     world.remove_resource::<PendingEntryUiLoad>();
     let start = std::time::Instant::now();
     load_ingame_ui_on_world_entry(world);
+    // The UI init's world entry with our player seated (`0x52ae7b`-`0x52ae84`): the drain waits for its step.
+    if world
+        .query_filtered::<(), With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .is_some()
+    {
+        crate::net::hold_for_entry(world);
+    }
     // Every entry logs the load's cost, whether the cover hid it, and the session every
     // `VmMemo` keys on.
     info!(
@@ -918,6 +935,7 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     if seated {
         world.write_message(crate::net::WorldEnterCascadeMessage);
         world.get_resource_or_init::<ReloadEntry>().0 = true;
+        crate::net::hold_for_entry(world);
     }
 }
 
@@ -1168,28 +1186,49 @@ mod tests {
     fn a_reload_keeps_the_closed_currency_categories() {
         use benilla_ui::script::CurrencyTypeView;
         use benilla_ui::script::{CurrencyCatalogView, CurrencyCategoryView, CurrencyHoldings};
-        let feed = |script: &mut UiScript| {
-            script.set_currency_catalog(CurrencyCatalogView {
-                types: vec![CurrencyTypeView {
-                    item_id: 29434,
-                    category_id: 2,
-                    bit_index: 1,
-                }],
-                categories: vec![CurrencyCategoryView {
-                    id: 2,
-                    flags: 0,
-                    name: "Dungeon".into(),
-                }],
-            });
-            script.set_currency_holdings(Some(CurrencyHoldings {
-                known: 1,
-                ..Default::default()
-            }));
-        };
+        /// The tables and our currencies a trigger's build reads.
+        struct Held(CurrencyCatalogView);
+        impl benilla_ui::script::LiveState for Held {
+            fn unit_flags(&self, _: u64) -> Option<u32> {
+                None
+            }
+            fn unit_health(&self, _: u64) -> Option<u32> {
+                None
+            }
+            fn active_player(&self) -> Option<u64> {
+                None
+            }
+            fn has_control(&self) -> bool {
+                true
+            }
+            fn far_sight(&self) -> bool {
+                false
+            }
+            fn currency_catalog(&self) -> Option<&CurrencyCatalogView> {
+                Some(&self.0)
+            }
+            fn currency_holdings(&self) -> Option<CurrencyHoldings> {
+                Some(CurrencyHoldings {
+                    known: 1,
+                    ..Default::default()
+                })
+            }
+        }
+        let mut held = Held(CurrencyCatalogView {
+            types: vec![CurrencyTypeView {
+                item_id: 29434,
+                category_id: 2,
+                bit_index: 1,
+            }],
+            categories: vec![CurrencyCategoryView {
+                id: 2,
+                flags: 0,
+                name: "Dungeon".into(),
+            }],
+        });
         let expanded = |world: &mut World| {
-            let mut script = world.non_send_resource_mut::<UiScript>();
-            feed(&mut script);
-            script
+            world
+                .non_send_resource::<UiScript>()
                 .eval::<bool>("return select(3, GetCurrencyListInfo(1))")
                 .unwrap()
         };
@@ -1200,11 +1239,15 @@ mod tests {
         world.init_resource::<Messages<WorldLeaveSweepMessage>>();
         world.init_resource::<LeavingWorldArmed>();
         world.insert_non_send_resource(UiScript::new().unwrap());
-        assert!(expanded(&mut world), "a category starts open");
+        // The world entry's build (`0x528299`), then the fold, which rebuilds in its call.
         world
             .non_send_resource_mut::<UiScript>()
-            .run("ExpandCurrencyList(1, 0)")
+            .with_live(&mut held, |s| {
+                s.rebuild_currency_list();
+                s.run("ExpandCurrencyList(1, 0)")
+            })
             .unwrap();
+        assert!(!expanded(&mut world), "folded");
         let before = world.non_send_resource::<UiScript>().session();
         world.insert_resource(ReloadUiPending(true));
         run_pending_reload(&mut world);
@@ -1213,7 +1256,10 @@ mod tests {
             before,
             "a new VM"
         );
-        assert!(!expanded(&mut world), "still closed after the reload");
+        assert!(
+            !expanded(&mut world),
+            "the list and its fold outlive the reload, as the list lives outside the Lua state"
+        );
     }
 
     /// The IO thread's roster policy follows the VM that came up: the screen asks only when the

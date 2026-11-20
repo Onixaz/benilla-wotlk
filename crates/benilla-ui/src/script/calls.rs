@@ -62,8 +62,12 @@ pub enum ScriptCall {
     /// `UseAction(slot [, unit [, button]])` (`0x5ac000` → `0x5abbc0`); a macro slot runs its
     /// lines inside it.
     UseAction(ActionUse),
+    /// `DestroyTotem(slot)` behind a queued call, the 0-based slot (`0x5197d0`).
+    DestroyTotem(u8),
     /// `UseContainerItem(bag, slot)` outside repair mode.
     UseContainerItem { bag: i64, slot: u32 },
+    /// A questgiver GameObject's use from `DeclineQuest`, its right-click (`0x58ceb2` -> `0x711140`).
+    InteractObject(u64),
     /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`0x708c20`), past the right-click's
     /// merchant, bank and equip arms.
     UseItem { bag: i64, slot: u32 },
@@ -94,7 +98,7 @@ pub enum CastAt {
     Selection,
     /// The active player: `CastSpell`'s `onSelf` (`0x541296`).
     Player,
-    /// A token the resolver knows, resolved where the call takes effect, after the calls before
+    /// A token the resolver answers, resolved where the call takes effect, after the calls before
     /// it: `/target Bob` then `/cast [target=target] Heal` heals Bob. One naming nobody leaves
     /// guid `0xffffffff_fffffffe` (`0x60b00c`), which no object answers, so the cast binds no unit.
     Unit(String),
@@ -102,7 +106,7 @@ pub enum CastAt {
 
 /// A cast verb's unit argument as `0x60abf0` reads it, `lua_tolstring` first (`0x84e0e0`): a
 /// value with no string form, an absent one or `""` is the selection (`0x60b029`). `None` is a
-/// token the resolver does not know, where the verb casts nothing (`0x54037b`, `0x5ac043`,
+/// token no base reads and no name lookup finds, where the verb casts nothing (`0x54037b`, `0x5ac043`,
 /// `0x53e0cb`).
 pub(crate) fn cast_at_arg(lua: &mlua::Lua, v: Option<&mlua::Value>) -> Option<CastAt> {
     let token = match v {
@@ -118,10 +122,11 @@ pub(crate) fn cast_at_arg(lua: &mlua::Lua, v: Option<&mlua::Value>) -> Option<Ca
     if token.is_empty() {
         return Some(CastAt::Selection);
     }
-    match super::parse_unit_token(&token) {
-        super::UnitTokenParse::Unknown => None,
-        _ => Some(CastAt::Unit(token)),
-    }
+    let unknown = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .token_unknown(&token);
+    (!unknown).then_some(CastAt::Unit(token))
 }
 
 /// The mode the four `TargetNearest*` shims hand the TAB cycler, the only byte that differs between

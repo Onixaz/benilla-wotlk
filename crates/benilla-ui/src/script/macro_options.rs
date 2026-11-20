@@ -33,6 +33,9 @@ pub struct OptionState {
     pub northrend: bool,
     /// `flying`: the mover's `0x2000000` (`0x5efaa0`).
     pub flying: bool,
+    /// While the player is seated in a vehicle (passenger state 3), the vehicle's `0x2000000`,
+    /// which `IsFlying` reads instead of the player's (`0x612500`); the macro condition does not.
+    pub seated_vehicle_flying: Option<bool>,
     /// `indoors`, and `outdoors` its opposite: the object's WMO test (`0x71b7f0`).
     pub indoors: bool,
     /// `stealth`: `UNIT_FIELD_BYTES_1` byte 2 bit `0x2` (`0x5efb70`).
@@ -81,7 +84,8 @@ impl super::UiScript {
         set_field!(self, option_state, state);
     }
 
-    /// Whether the book holds Cold Weather Flying.
+    /// Whether the book holds Cold Weather Flying, with no view lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_knows_cold_weather_flying(&mut self, knows: bool) {
         set_field!(self, knows_cold_weather_flying, knows);
     }
@@ -196,7 +200,8 @@ fn button_name(n: i64) -> String {
 /// Evaluate one condition against `token`, the group's unit (`target` when it named none).
 fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
     let unit = model.unit(token);
-    let guid = model.unit_guids.guid_of(token);
+    // The token resolves off the pushed unit guids until the unit tokens read live (#1289).
+    let guid = model.token_guid(token);
     let args = &c.args[..];
     let in_party = |g: u64| g == model.unit_guids.player || model.unit_guids.party.contains(&g);
     let in_raid = |g: u64| model.unit_guids.raid.contains(&g);
@@ -245,10 +250,14 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
                 // The name or the creature family, each without regard to case (`0x5efbd0`).
                 Some(p) => args.iter().any(|a| {
                     let a = a.to_lowercase();
-                    [p.name.as_deref(), model.pet_bar.stats.family.as_deref()]
+                    let family = model
+                        .token_guid("pet")
+                        .and_then(|g| super::read_live(|l| l.creature_family(g)).flatten());
+                    let matched = [p.name.as_deref(), family.as_deref()]
                         .into_iter()
                         .flatten()
-                        .any(|n| n.to_lowercase() == a)
+                        .any(|n| n.to_lowercase() == a);
+                    matched
                 }),
             }
         }
@@ -276,12 +285,16 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         // The main bar's page (`[0xc1e598] + 1`, `0x5ef204`).
         "actionbar" | "bar" => any_number(i64::from(model.action_bar_page) + 1, args, false),
         // The bonus bar offset (`[0xc1e59c]`).
-        "bonusbar" => any_number(i64::from(model.bonus_bar_offset), args, false),
+        "bonusbar" => any_number(
+            i64::from(super::action::bonus_bar_offset(model)),
+            args,
+            false,
+        ),
         // The player's running channel, by spell name when arguments say (`0x5efeb0`).
         "channeling" => {
-            let channel = model
-                .unit_casts
-                .channel_of(model.unit_guids.player)
+            let player = model.unit_guids.player;
+            let channel = super::live::read_live(|l| l.unit_cast(player, true))
+                .flatten()
                 .filter(|c| model.now * 1000.0 < c.end_ms);
             match channel {
                 None => false,
@@ -298,11 +311,7 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         // (`0x5ef470`).
         "vehicleui" => super::vehicle::has_vehicle_ui(model, "player"),
         "unithasvehicleui" => super::vehicle::has_vehicle_ui(model, token),
-        "flyable" => boolean(
-            model.option_state.flyable
-                && (!model.option_state.northrend || model.knows_cold_weather_flying),
-            args,
-        ),
+        "flyable" => boolean(flyable(model), args),
         "flying" => boolean(model.option_state.flying, args),
         "indoors" => boolean(model.option_state.indoors, args),
         "outdoors" => boolean(!model.option_state.indoors, args),
@@ -376,6 +385,31 @@ pub(crate) fn parse(model: &mut Model, options: &str) -> Option<(String, Option<
     }
 }
 
+/// The area's flying flag, and in Northrend the training too (`0x7261b0` with its flag set), the
+/// book read at the call.
+fn flyable(model: &Model) -> bool {
+    model.option_state.flyable
+        && (!model.option_state.northrend || knows_cold_weather_flying(model))
+}
+
+/// Whether the book holds Cold Weather Flying: the app's at the call, or the stand-in.
+fn knows_cold_weather_flying(model: &Model) -> bool {
+    match super::live::read_live(|l| l.knows_cold_weather_flying()).flatten() {
+        Some(knows) => knows,
+        None => stand_in_cold_weather(model),
+    }
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+fn stand_in_cold_weather(model: &Model) -> bool {
+    model.knows_cold_weather_flying
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn stand_in_cold_weather(_: &Model) -> bool {
+    false
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `IsMounted()` (`0x6125a0`): the active player's mount, 1 or nil.
     lua.globals().set(
@@ -389,6 +423,36 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(super::binding_abi::flag(mounted))
         })?,
     )?;
+    // The player-state predicates, 1 or nil, each reading the state its macro condition reads:
+    // `IsSwimming` (`0x6124a0`, the mover's `0x200000`), `IsFlying` (`0x612500`, `0x2000000`),
+    // `IsStealthed` (`0x612610`, `UNIT_FIELD_BYTES_1` byte 2 bit `0x2`), `IsIndoors` and
+    // `IsOutdoors` (`0x612300`, `0x612360`, the WMO test), and `IsFlyableArea` (`0x612260`), the
+    // area's flag with Northrend's training, as `flyable` passes it (`0x7261b0` with 1). Seated in
+    // a vehicle, `IsFlying` asks the vehicle's word, where the `flying` condition asks ours.
+    type Pick = fn(&Model) -> bool;
+    let predicates: [(&str, Pick); 6] = [
+        ("IsSwimming", |m| m.option_state.swimming),
+        ("IsFlying", |m| {
+            m.option_state
+                .seated_vehicle_flying
+                .unwrap_or(m.option_state.flying)
+        }),
+        ("IsStealthed", |m| m.option_state.stealthed),
+        ("IsIndoors", |m| m.option_state.indoors),
+        ("IsOutdoors", |m| !m.option_state.indoors),
+        ("IsFlyableArea", flyable),
+    ];
+    for (name, pick) in predicates {
+        lua.globals().set(
+            name,
+            lua.create_function(move |lua, _: mlua::MultiValue| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                Ok(super::binding_abi::flag(pick(&model)))
+            })?,
+        )?;
+    }
     // SecureCmdOptionParse("options"): the option text and its target (nil when none), or nothing
     // when no option passes (`0x564b3f`). A non-string raises (`0x564b00`).
     lua.globals().set(

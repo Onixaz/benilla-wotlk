@@ -351,9 +351,13 @@ pub(super) fn drive_animations(
         MessageReader<BaseAnimRecompute>,
         // A rider's mount child, where a full-set request goes.
         Query<(&ObjectStore, &crate::entities::mount::MountChild)>,
-        // The open NPC session's unit: its state emote is passed over when the row's `EmoteFlags`
-        // carry `0x2000`.
-        Option<Res<crate::ui_session::InteractNpc>>,
+        // The interact target, whose state emote is passed over when the row's `EmoteFlags` carry
+        // `0x2000`, and the base re-picks its set and clear call (`0x51fdaf`, `0x518db0`).
+        (
+            Option<Res<crate::ui_session::InteractTarget>>,
+            Option<Res<crate::net::GuidIndex>>,
+            MessageReader<crate::ui_session::InteractCue>,
+        ),
         // The units' sheath-swap messages, written after the parallel pass.
         Local<bevy::utils::Parallel<Vec<SheathSwapMessage>>>,
         // Server-pushed kits and their anims, for the stage-0 special idle latch.
@@ -471,6 +475,16 @@ pub(super) fn drive_animations(
     for (child, req) in to_mount {
         pending.entry(child).or_default().push(req);
     }
+    let (interact, index, mut cues) = interact;
+    let entity_of = |guid: u64| index.as_deref().and_then(|i| i.0.get(&guid).copied());
+    let interact = interact.as_deref().and_then(|t| t.0).and_then(entity_of);
+    let repicks: bevy::ecs::entity::EntityHashSet = cues
+        .read()
+        .filter_map(|c| match *c {
+            crate::ui_session::InteractCue::RePick(guid) => entity_of(guid),
+            _ => None,
+        })
+        .collect();
     // In `PlaySeq` order.
     for reqs in pending.values_mut() {
         reqs.sort_by_key(|&(_, seq)| seq);
@@ -515,7 +529,8 @@ pub(super) fn drive_animations(
         emote_sounds: emote_sounds.as_deref(),
         loot_kneel: loot_kneel.as_deref(),
         names: names.as_deref(),
-        interact: interact.as_deref(),
+        interact,
+        repicks: &repicks,
         session_rng: &session_rng,
         dt,
         anim_cost,
@@ -554,7 +569,10 @@ struct UnitCx<'a, 'w, 's> {
     emote_sounds: Option<&'a EmoteSounds>,
     loot_kneel: Option<&'a crate::ui_loot::LootKneel>,
     names: Option<&'a crate::names::NameCache>,
-    interact: Option<&'a crate::ui_session::InteractNpc>,
+    /// The interact target's unit.
+    interact: Option<Entity>,
+    /// The units whose base the interact target's set or clear re-picked this frame.
+    repicks: &'a bevy::ecs::entity::EntityHashSet,
     session_rng: &'a benilla_assets::AnimRng,
     dt: f32,
     anim_cost: bool,
@@ -592,6 +610,7 @@ fn drive_unit(
         loot_kneel,
         names,
         interact,
+        repicks,
         session_rng,
         dt,
         anim_cost,
@@ -1447,18 +1466,13 @@ fn drive_unit(
         }
     }
 
-    // The interact-NPC setter re-picks the base at once on open and on clear, over a live one-shot
-    // as any base arm; in Gait the per-frame pick already follows. A player's open and clear skip
-    // it, a pose under the one-shot re-picks to its own id and an airborne unit to the freeze,
-    // which cut nothing.
-    let target = interact.as_ref().filter(|i| i.0 == Some(entity));
-    let interacting = target.is_some();
-    if let Some(guid) = target.and_then(|i| i.1) {
-        drv.interact_player = benilla_protocol::guid::is_player(guid);
-    }
-    if std::mem::replace(&mut drv.interacting, interacting) != interacting && !drv.interact_player {
-        // Opening re-picks with the NPC named, so it ends a hold; clearing re-picks with it
-        // still named, so the state stays passed over until the next re-pick.
+    // The interact target's set and clear re-pick the base at once (`0x51fdaf`, `0x518db0`), over a
+    // live one-shot as any base arm; in Gait the per-frame pick already follows. A pose under the
+    // one-shot re-picks to its own id and an airborne unit to the freeze, which cut nothing.
+    let interacting = interact == Some(entity);
+    if repicks.contains(&entity) {
+        // The set re-picks with the NPC named, so it ends a hold; the clear re-picks with it still
+        // named, so the state stays passed over until the next re-pick.
         drv.interact_hold = !interacting;
         if matches!(drv.mode, Mode::Swing { under: None, .. }) && !airborne_frozen {
             drv.deferred = None;

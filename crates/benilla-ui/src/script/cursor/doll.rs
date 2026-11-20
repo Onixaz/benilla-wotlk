@@ -26,11 +26,12 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
         model.cursor,
         Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
     );
-    if !placing && (model.item_pick_armed || model.repair_mode) {
+    let picking = crate::script::spellbook::targeting().wants_item;
+    if !placing && (picking || crate::script::merchant::repair_mode(model)) {
         let usable = model
             .inv_slot("player", id as usize)
             .is_some_and(|s| s.item_id != 0 && !s.locked);
-        if usable && model.item_pick_armed {
+        if usable && picking {
             model.item_picks.push((EQUIPMENT_BAG, id));
         } else if usable && (1..=19).contains(&id) {
             model.inventory_repairs.push(id);
@@ -95,14 +96,23 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
         // the server equips or refuses. A stale row buys nothing: of the reference's three drop
         // sites only this one checks it; the other two dereference it.
         Some(CursorPayload::Merchant(held)) => {
-            let row = model
-                .merchant
-                .as_ref()
-                .and_then(|m| m.items.get(held.row as usize))
-                .filter(|it| it.item_id == held.item_id)
-                .map(|_| held.row + 1);
+            let row = crate::script::merchant::merchant_row(
+                model,
+                crate::script::MerchantList::Items,
+                held.row as usize,
+                false,
+            )
+            .filter(|it| it.item_id == held.item_id)
+            .map(|_| held.row);
             if let Some(row) = row {
-                model.merchant_slot_buys.push((EQUIPMENT_BAG, id, row));
+                crate::script::merchant::merchant_act(
+                    model,
+                    crate::script::MerchantAct::BuyInSlot {
+                        bag: EQUIPMENT_BAG,
+                        slot: id,
+                        row,
+                    },
+                );
             }
             queue_cursor_update(model);
             true
@@ -176,7 +186,7 @@ pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
 /// mode a worn item is repaired, locked or not.
 pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
     super::clear_cursor(model);
-    if !model.repair_mode {
+    if !crate::script::merchant::repair_mode(model) {
         model
             .script_calls
             .push(crate::script::ScriptCall::UseInventoryItem(id));
@@ -281,6 +291,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::script::cursor::{CursorAction, CursorPayload, CursorSpell, EQUIPMENT_BAG};
+    use crate::script::live::TestTargeting;
     use crate::script::{ContainerMove, ContainerSlot, ContainerState, InvSlotView, UiScript};
 
     /// Head (1), a ring in finger slot 11 that also fits 12, and Tabard (19).

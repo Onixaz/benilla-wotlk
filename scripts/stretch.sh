@@ -7,7 +7,9 @@
 # The character must be a Death Knight on the checkout's probe account: WOW_PROBE_AS names the
 # .probe-identity entry, STRETCH_CHAR the character on it (default the entry's). WOW_HOST and
 # WOW_DATA as for any run. --watch slows each step by STRETCH_BEAT seconds (default 1.5) so the run
-# can be followed; keep the mouse off the window, as a real pointer overrides the probe's.
+# can be followed; keep the mouse off the window, as a real pointer overrides the probe's. Each quest
+# window stays up STRETCH_DIALOG seconds (default 5, 0 answers at once) before its answer, and the
+# setup resets the character to level STRETCH_LEVEL (default 60).
 #
 # Each run boots the stock interface on a fresh config root (no third-party addons, default
 # bindings) and writes target/stretch/<name>-<stamp>/: client.log, trace.txt, the filmstrip (one shot
@@ -70,7 +72,12 @@ shared="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/../
 [ -f "$shared" ] && grep -i '^SET realmName' "$shared" >"$home/WTF/Config.wtf"
 beat=""
 [ -n "$watch" ] && beat="STRETCH_BEAT = ${STRETCH_BEAT:-1.5}"
+knobs=""
+[ -n "${STRETCH_DIALOG:-}" ] && knobs="STRETCH_DIALOG = $STRETCH_DIALOG"
+[ -n "${STRETCH_LEVEL:-}" ] && knobs="$knobs
+STRETCH_LEVEL = $STRETCH_LEVEL"
 chunk="$beat
+$knobs
 $(cat scripts/stretches/lib.lua)
 $(cat "$script")"
 

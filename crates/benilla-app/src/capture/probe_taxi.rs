@@ -207,28 +207,28 @@ fn taxi_probe(
             sent_at,
             retried,
         } => {
-            if let Some(open) = &taxi.open {
+            if let (Some(unit), Some(open)) = (taxi.unit, &taxi.table) {
                 let known = open.known.count();
                 let past_256 = (257..=64 * open.known.0.len() as u32)
                     .filter(|&id| open.known.is_known(id))
                     .count();
                 info!(
-                    "PROBE taxi: map open — flight master {:#x}, nearest node {}, {known} known \
-                     nodes ({past_256} past id 256) in {} mask words",
-                    open.flightmaster,
-                    open.nearest_node,
-                    open.known.0.len()
+                    "PROBE taxi: map open — flight master {unit:#x}, nearest node {}, {known} \
+                     known nodes ({past_256} past id 256) in {} mask words, {} listed",
+                    open.current,
+                    open.known.0.len(),
+                    open.ui.nodes.len()
                 );
-                if open.nearest_node != SRC_NODE {
+                if open.current != SRC_NODE {
                     warn!(
                         "PROBE taxi: nearest node {} != expected {SRC_NODE} (flying anyway)",
-                        open.nearest_node
+                        open.current
                     );
                 }
                 info!("PROBE taxi: activating {SRC_NODE} -> {DEST_NODE} (TaxiPath {TAXI_PATH})");
                 let _ = net.0.send(ClientCommand::ActivateTaxi {
                     guid: flightmaster,
-                    source_node: open.nearest_node,
+                    source_node: open.current,
                     dest_node: DEST_NODE,
                 });
                 probe.phase = Phase::Activated { sent_at: now };
@@ -250,7 +250,7 @@ fn taxi_probe(
             }
         }
         Phase::Activated { sent_at } => {
-            if let Some(code) = taxi.reply {
+            if let Some(code) = taxi.last_reply {
                 if code == benilla_protocol::messages::taxi_reply::OK {
                     info!("PROBE taxi: ACTIVATETAXIREPLY OK");
                 } else {
@@ -275,7 +275,7 @@ fn taxi_probe(
             } else if now - sent_at > 8.0 {
                 error!(
                     "PROBE taxi: FAILURE — activate sent but no self-spline arrived (reply: {:?})",
-                    taxi.reply
+                    taxi.last_reply
                 );
                 probe.phase = Phase::Done;
             }

@@ -933,13 +933,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, unit: Value| {
             let token = super::binding_abi::optional_string(lua, &unit);
             let mut model = super::model_mut_of(lua);
-            let guid = token.map_or(0, |t| {
-                model
-                    .unit_guids
-                    .guid_of(&t)
-                    .or_else(|| super::unit_menu::guid_of(&model, &t))
-                    .unwrap_or(0)
-            });
+            let guid = token.map_or(0, |t| model.token_guid(&t).unwrap_or(0));
             model.combat_log.text_unit = Some(guid);
             Ok(())
         })?,

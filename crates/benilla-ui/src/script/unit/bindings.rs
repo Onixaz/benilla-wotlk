@@ -305,7 +305,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             Ok(if u.level == 0 {
                 0
-            } else if level_reads_unknown(u, model.player_req.level) {
+            } else if level_reads_unknown(u, crate::script::item_stats::player_level()) {
                 -1
             } else {
                 i64::from(u.level)
@@ -349,11 +349,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // the table's first entry, 4.
     g.set(
         "GetQuestGreenRange",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(grey_band(model.player_req.level)))
+        lua.create_function(|_, ()| {
+            Ok(i64::from(grey_band(
+                crate::script::item_stats::player_level(),
+            )))
         })?,
     )?;
 
@@ -451,7 +450,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let player_level = model.player_req.level;
+            let player_level = crate::script::item_stats::player_level();
             Ok(flag(
                 unit.and_then(|u| model.unit(&u))
                     .is_some_and(|u| super::is_civilian_kill(u, player_level)),
@@ -489,11 +488,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: UnitIsTrivial("unit")"#,
             )?);
-            let player_level = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .player_req
-                .level;
+            let player_level = crate::script::item_stats::player_level();
             let hit = with_unit(lua, &token, false, |u| {
                 u.has_object && !u.is_player && unit_is_grey(player_level, u.level)
             })?;
@@ -559,8 +554,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let guid = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
-                .unit_guids
-                .guid_of(&token);
+                .token_guid(&token);
             let hot = crate::script::read_live(|live| {
                 guid.and_then(|g| live.unit_flags(g))
                     .is_some_and(|f| f & UNIT_FLAG_IN_COMBAT != 0)
@@ -693,8 +687,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 parse_unit_token(&t),
                 UnitTokenParse::Unit {
                     base: UnitBase::Party(_),
-                    hops: 0
-                }
+                    hops
+                } if hops.is_empty()
             );
             let hit = party_slot
                 || t.eq_ignore_ascii_case("player")
@@ -838,6 +832,46 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 r#"Usage: UnitIsPVPFreeForAll("unit")"#,
             )?);
             unit_predicate(lua, &token, |u| u.is_pvp_ffa)
+        })?,
+    )?;
+    // UnitIsPVPSanctuary(unit) (`0x60cf20`): the held unit's sanctuary bit, 1 or nil. The reference
+    // reads its argument with no type check, so anything that names no unit is a miss, unraised.
+    g.set(
+        "UnitIsPVPSanctuary",
+        lua.create_function(|lua, token: Value| {
+            let token = lua.coerce_string(token)?.map(|s| s.to_string_lossy());
+            let hit = with_unit(lua, &token, false, |u| u.has_object && u.pvp_sanctuary)?;
+            Ok(flag(hit))
+        })?,
+    )?;
+    // UnitIsFeignDeath(unit) (`0x60f3d0`): 1 when a held unit of the player's own group shows dead
+    // by its dynamic flags (`UNIT_DYNAMIC_FLAGS` bit `0x20`), else nil. The group test
+    // (`0x512a30`) takes the player, a party or raid member, or a pet of one; a feigning stranger
+    // reads nil.
+    g.set(
+        "UnitIsFeignDeath",
+        lua.create_function(|lua, token: Value| {
+            let token = crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsFeignDeath("unit")"#,
+            )?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let Some(u) = model.unit(&token).filter(|u| u.exists && u.has_object) else {
+                return Ok(Value::Nil);
+            };
+            let me = model.party.own_guid;
+            let ours = |guid: u64| {
+                guid != 0
+                    && (guid == me
+                        || model.party.members.iter().any(|m| m.guid == guid)
+                        || model.party.raid.iter().any(|m| m.guid == guid))
+            };
+            Ok(flag(
+                (ours(u.guid) || ours(u.owner)) && u.dynamic_flags & 0x20 != 0,
+            ))
         })?,
     )?;
     // UnitFactionGroup(unit) → FactionGroup.dbc's `InternalName` (field 2), which stock FrameXML
@@ -1116,7 +1150,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let resolve = |v: &Value| -> mlua::Result<Option<u64>> {
                 crate::script::binding_abi::optional_string(lua, v)
-                    .and_then(|t| model.unit_guids.resolve(&t).ok())
+                    .and_then(|t| model.resolve_token(&t).ok())
                     .ok_or_else(|| mlua::Error::runtime(USAGE))
             };
             let Some(guid) = resolve(&unit)? else {
@@ -1151,7 +1185,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut guids = [0u64; 2];
             for (slot, v) in guids.iter_mut().zip([&unit, &mob]) {
                 *slot = crate::script::binding_abi::optional_string(lua, v)
-                    .and_then(|t| model.unit_guids.resolve(&t).ok())
+                    .and_then(|t| model.resolve_token(&t).ok())
                     .ok_or_else(|| mlua::Error::runtime(USAGE))?
                     .unwrap_or(0);
             }
@@ -1263,7 +1297,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.money as i64)
+            Ok(crate::script::live::money(&model) as i64)
         })?,
     )?;
 
@@ -1283,7 +1317,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let guid_of = |token: &str| model.unit_guids.guid_of(token).unwrap_or(0);
+            let guid_of = |token: &str| model.token_guid(token).unwrap_or(0);
             let unit = guid_of(&unit);
             let target = match target.as_deref().map(guid_of).unwrap_or(0) {
                 0 => model.unit("target").map_or(0, |u| u.guid),
@@ -1292,7 +1326,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let bank = |points: u8, on: u64| if on == target { points } else { 0 };
             let player = guid_of("player");
             let points = if unit != 0 && unit == player {
-                let class = model.player_req.class_id;
+                let class =
+                    crate::script::ReqFields::class_id(&crate::script::item_stats::player_req());
                 if class == CLASS_ROGUE || class == CLASS_DRUID {
                     bank(model.combo_points, model.combo_target)
                 } else {
@@ -1404,16 +1439,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;
 
-    // TargetUnit(unit or name [, exact]) (`0x525a30`): a token queues for the app to resolve and
-    // select, and one naming no unit is a no-op; anything else is the closest name match
-    // (`0x520190`), which `/target <name>` reaches.
+    // TargetUnit(unit or name [, exact]) (`0x525a30`): a token, or the name of a group
+    // member or pet, queues for the app to resolve and select, and one naming no unit is
+    // a no-op; anything else is the closest name match (`0x520190`), which `/target <name>`
+    // reaches.
     g.set(
         "TargetUnit",
         lua.create_function(|lua, (token, exact): (Option<String>, Option<Value>)| {
             if let Some(token) = token {
-                let call = if super::resolve::parse_unit_token(&token)
-                    == super::resolve::UnitTokenParse::Unknown
-                {
+                let unknown = crate::script::model_mut_of(lua).token_unknown(&token);
+                let call = if unknown {
                     ScriptCall::TargetByName {
                         name: token,
                         exact: bool_or_default(exact.as_ref(), false),
@@ -1519,11 +1554,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: SpellTargetUnit("unit")"#,
             )?;
-            if !lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_targeting
-            {
+            if !crate::script::spellbook::targeting().active {
                 return Ok(());
             }
             let mut model = crate::script::model_mut_of(lua);
@@ -1598,7 +1629,7 @@ fn unit_reads_dead(lua: &Lua, token: &str, ask: DeathAsk) -> bool {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let guid = model.unit_guids.guid_of(token);
+    let guid = model.token_guid(token);
     let live = crate::script::read_live(|live| {
         let guid = guid?;
         let health = live.unit_health(guid)?;

@@ -86,8 +86,9 @@ pub struct CensusReport {
     /// The eye the portal authority computed [`Self::room`], [`Self::windows`] and the PVS from,
     /// the last propagated camera transform; after a teleport it lags the drawn eye.
     pub pvs_eye: Option<Vec3>,
-    /// The backdrop: `"dome"` for the `Light.dbc` gradient, else the WMO skybox model (whose
-    /// batches carry no [`ModelPart`], so no other count sees them); `None` without that lane.
+    /// The backdrop: `"dome"` for the `Light.dbc` gradient alone, else the drawn sky models and
+    /// their weights (whose batches carry no [`ModelPart`], so no other count sees them); `None`
+    /// without that lane.
     pub sky: Option<String>,
     /// What the exterior cull did this frame, `None` if it did not run.
     pub cull: Option<CullTerms>,
@@ -244,8 +245,8 @@ impl WorldCensus<'_, '_> {
         };
 
         let sky = self.skybox.as_ref().map(|s| {
-            s.0.as_deref()
-                .map_or_else(|| "dome".to_string(), str::to_ascii_lowercase)
+            s.summary()
+                .map_or_else(|| "dome".to_string(), |s| s.to_ascii_lowercase())
         });
 
         CensusReport {

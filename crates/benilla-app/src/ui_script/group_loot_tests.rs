@@ -5,6 +5,7 @@ use benilla_ui::script::{
     DressUpIntent, ExtractedQuad, LootRollEntry, LootRollsState, QuadContent, ScriptValue, UiScript,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::{load_ui as load_xml, load_ui_no_warnings as load_xml_no_warnings};
 
 /// The centre of the first texture quad whose path contains `needle`, for clicking it.
@@ -561,12 +562,13 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
         "the rolled item's full escaped link landed in the chat box"
     );
 
+    s.record_writes();
     s.set_modifiers(false, true, false);
     s.mouse_button(x, y, "LeftButton", true);
     s.mouse_button(x, y, "LeftButton", false);
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![DressUpIntent::Dress, DressUpIntent::TryOn(25, [0; 4])],
         "re-dress first, then try the rolled item on"
     );

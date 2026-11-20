@@ -82,9 +82,9 @@ fn on_next_mail_time(In(ev): In<SessionEvent>, mut pending: ResMut<MailPending>)
 }
 
 /// `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the server opens the window, as the mailbox open does.
-fn on_show_mailbox(In(ev): In<SessionEvent>, mut mail: ResMut<MailOpen>) {
+fn on_show_mailbox(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::ShowMailbox { mailbox } = ev {
-        mail.click(mailbox);
+        ui.world(move |w| super::talk_to_mailbox(w, mailbox));
     }
 }
 

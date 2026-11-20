@@ -127,11 +127,7 @@ impl ItemQuery {
 
 /// The items in Lua container `bag`, in slot order; the currency container reads the token slots.
 fn contents(model: &Model, bag: i64, out: &mut Vec<Held>) {
-    let c = match bag {
-        CURRENCY => model.token_slots.as_ref(),
-        _ => model.containers.get(&bag),
-    };
-    let Some(c) = c else {
+    let Some(c) = super::container::live_bag(model, bag) else {
         return;
     };
     for slot in 1..=c.num_slots {
@@ -220,21 +216,12 @@ pub(super) fn find_item(model: &Model, query: &ItemQuery, flags: u32) -> Option<
     walk(model, flags).into_iter().find(|h| query.matches(h))
 }
 
-/// An item id by a Lua number, link or name (`0x709de0`): a name a held item or a cached template
-/// carries.
+/// An item id by a Lua number, link or name (`0x709de0`): a name only a held item carries.
 fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
     Ok(match ItemQuery::of(lua, v, ItemQuery::Name)? {
         Some(ItemQuery::Id(id)) => id,
         Some(ItemQuery::Link(fields)) => fields[0] as u32,
-        Some(ItemQuery::Name(name)) => super::socket::item_id_by_name(model, &name)
-            .or_else(|| {
-                model
-                    .item_templates
-                    .iter()
-                    .find(|(_, t)| t.name.eq_ignore_ascii_case(&name))
-                    .map(|(&id, _)| id)
-            })
-            .unwrap_or(0),
+        Some(ItemQuery::Name(name)) => super::socket::item_id_by_name(model, &name).unwrap_or(0),
         _ => 0,
     })
 }
@@ -242,7 +229,7 @@ fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
 /// `PickupItem(item)` (`0x522fb0`): the cursor clears, then holds the id as an action-bar item, no
 /// bag slot behind it.
 fn pickup_item(model: &mut Model, id: u32) {
-    let texture = model.item_templates.get(&id).and_then(|t| t.icon.clone());
+    let texture = super::item_stats::item_record(model, id).and_then(|t| t.icon);
     super::cursor::clear_cursor(model);
     if id == 0 {
         return;
@@ -258,31 +245,22 @@ fn pickup_item(model: &mut Model, id: u32) {
     super::cursor::queue_cursor_update(model);
 }
 
-/// The first on-use spell a template names (`0x706b90`).
+/// The first on-use spell a template names (`0x706b90`): the first block with a spell and trigger 0, its text unread (`0x706bc8`-`0x706bd1`).
 fn use_spell(model: &Model, item_id: u32) -> Option<u32> {
-    let view = model.item_templates.get(&item_id)?;
-    let spells = view.spell_triggers.iter();
-    spells
-        .filter(|(t, _, _)| *t == 0)
-        .map(|(_, s, _)| *s)
-        .next()
+    let view = super::item_stats::item_record(model, item_id)?;
+    view.item_spells
+        .iter()
+        .find(|s| s.trigger == 0)
+        .map(|s| s.spell)
 }
 
-/// The item's use spell, as `GetItemSpell` picks it, and the VM's spell source.
-#[allow(clippy::type_complexity)]
-fn item_range_spell(
-    lua: &Lua,
-    item: &Value,
-) -> mlua::Result<(
-    Option<u32>,
-    Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
-)> {
+/// The item's use spell, as `GetItemSpell` picks it.
+fn item_range_spell(lua: &Lua, item: &Value) -> mlua::Result<Option<u32>> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
     let id = item_id_of(lua, &model, item)?;
-    let spell = use_spell(&model, id).or_else(|| enchant_use_spell(&model, id));
-    Ok((spell, model.spell_info.clone()))
+    Ok(use_spell(&model, id).or_else(|| enchant_use_spell(&model, id)))
 }
 
 /// With no on-use spell, the use spell of an enchant on the worn item (`0x5a86b0`, `0x707c60`).
@@ -430,10 +408,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ItemHasRange",
         lua.create_function(|lua, item: Value| {
-            let (spell, source) = item_range_spell(lua, &item)?;
-            let has = spell
-                .zip(source)
-                .is_some_and(|(id, s)| s.spell_has_range(id, false));
+            let spell = item_range_spell(lua, &item)?;
+            let has = spell.is_some_and(|id| {
+                super::spell_info::with_spell_source(lua, |s| s.spell_has_range(id, false))
+                    == Some(true)
+            });
             Ok(if has { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;
@@ -442,12 +421,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "IsItemInRange",
         lua.create_function(|lua, (item, unit): (Value, Value)| {
-            let (spell, source) = item_range_spell(lua, &item)?;
+            let spell = item_range_spell(lua, &item)?;
             let target = super::spell_info::range_unit(lua, &unit);
-            let near = spell
-                .zip(source)
-                .zip(target)
-                .and_then(|((id, s), guid)| s.spell_in_range(id, false, guid));
+            let near = spell.zip(target).and_then(|(id, guid)| {
+                super::spell_info::with_spell_source(lua, |s| s.spell_in_range(id, false, guid))
+                    .flatten()
+            });
             Ok(super::spell_info::range_answer(near))
         })?,
     )?;
@@ -461,10 +440,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let id = item_id_of(lua, &model, &item)?;
             Ok(flag(
-                model
-                    .item_templates
-                    .get(&id)
-                    .is_some_and(|t| t.inventory_type != 0),
+                super::item_stats::item_record(&model, id).is_some_and(|t| t.inventory_type != 0),
             ))
         })?,
     )?;
@@ -522,11 +498,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             if model.unit_guids.player == 0
                 || !(-1..=11).contains(&bag)
-                || (bag == BANK as i32 && model.bank.is_none())
+                || (bag == BANK as i32 && !super::bank::bank_open())
             {
                 return Ok(Value::Nil);
             }
-            let held = model.containers.get(&i64::from(bag));
+            let held = super::container::index_bag(&model, i64::from(bag));
+            let held = held.as_ref();
             let size = match bag {
                 0 => 16,
                 -1 => 28,

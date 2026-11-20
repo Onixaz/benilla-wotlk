@@ -14,7 +14,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore, SelfGuid};
 use crate::sound::MessageSounds;
 use crate::ui_action::{UiError, UiErrorKeys};
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::QuestStatuses;
 use crate::unit_auras::UnitAuras;
 use benilla_protocol::messages::{party_operation, party_result};
 
@@ -221,13 +221,14 @@ fn on_list(
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
     mut sounds: ResMut<MessageSounds>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: ResMut<QuestStatuses>,
     self_guid: Res<SelfGuid>,
     names: Res<NameCache>,
     index: Res<GuidIndex>,
     commands: Res<NetCommands>,
     // Real: the stale window is wall-clock seconds (`0x6d8945`).
     clock: Res<Time<Real>>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::GroupList {
         group_type,
@@ -251,6 +252,7 @@ fn on_list(
         group.own_roles = own_roles;
         group.apply_list_tail(difficulties, lfg_restricted);
         let rows = members.len();
+        let list_leader = leader;
         list(
             &mut group,
             &mut errors,
@@ -267,14 +269,23 @@ fn on_list(
             &commands,
         );
         if !battleground {
-            group.set_real_counts(group_type == GROUPTYPE_RAID, rows);
+            group.set_real_counts(group_type == GROUPTYPE_RAID, rows, list_leader);
         }
+        // The list ends in the bar's refresh (`0x6d91ef`).
+        ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Bar,
+        ));
     }
 }
 
 fn on_real_group_update(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
-    if let SessionEvent::RealGroupUpdate { flags, count, .. } = ev {
-        group.apply_real_group_update(flags, count);
+    if let SessionEvent::RealGroupUpdate {
+        flags,
+        count,
+        leader,
+    } = ev
+    {
+        group.apply_real_group_update(flags, count, leader);
     }
 }
 
@@ -417,7 +428,7 @@ fn list(
     group: &mut GroupState,
     errors: &mut UiErrorKeys,
     sounds: &mut MessageSounds,
-    quest: &mut QuestGiver,
+    quest: &mut QuestStatuses,
     group_type: u8,
     own_flags: u8,
     members: Vec<GroupMemberEntry>,
@@ -583,7 +594,7 @@ mod tests {
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
             UiErrorKeys::default(),
-            QuestGiver::default(),
+            QuestStatuses::default(),
         );
         let mut names = NameCache::default();
         // A player guid, `counter | (high << 48)`, the shape `NameCache::resolve` routes on.
@@ -653,7 +664,7 @@ mod tests {
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
             UiErrorKeys::default(),
-            QuestGiver::default(),
+            QuestStatuses::default(),
         );
         let mut names = NameCache::default();
         let player_guid = |counter: u64| counter | (u64::from(guid::HIGH_PLAYER) << 48);
@@ -715,7 +726,7 @@ mod tests {
             GroupState::default(),
             UiErrorKeys::default(),
             MessageSounds::default(),
-            QuestGiver::default(),
+            QuestStatuses::default(),
         );
         let names = NameCache::default();
         let mut send = |sounds: &mut MessageSounds, members: Vec<GroupMemberEntry>| {
@@ -914,7 +925,7 @@ mod tests {
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
             UiErrorKeys::default(),
-            QuestGiver::default(),
+            QuestStatuses::default(),
         );
         let names = NameCache::default();
         let (near, far) = (0x11u64, 0x22u64);
@@ -989,7 +1000,7 @@ mod tests {
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
             UiErrorKeys::default(),
-            QuestGiver::default(),
+            QuestStatuses::default(),
         );
         let names = NameCache::default();
         let far = 0x22u64;
@@ -1224,7 +1235,7 @@ mod tests {
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
             UiErrorKeys::default(),
-            QuestGiver::default(),
+            QuestStatuses::default(),
         );
         let names = NameCache::default();
         let mut send = |group: &mut GroupState, group_type, members, leader| {

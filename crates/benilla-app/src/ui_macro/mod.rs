@@ -218,12 +218,15 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 }
 
 /// Recompute every macro's bound spell when the macro table or the spell book changes: gated on
-/// the engine's macro generation and on change detection over the action store.
+/// the engine's macro generation and on change detection over the book.
 fn rebind_macro_spells(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    actions: Res<crate::ui_action::PlayerActions>,
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsMacros>,
+    ),
+    book: Res<crate::ui_spellbook::SpellBook>,
     table: Option<Res<crate::ui_chat::commands::SlashCommands>>,
-    mut bound: ResMut<MacroBoundSpells>,
+    mut bound: crate::ui_script::OwnedMut<MacroBoundSpells>,
     mut last_generation: Local<crate::ui_script::VmMemo<Option<u64>>>,
 ) {
     let (Some(mut script), Some(table)) = (script, table) else {
@@ -232,18 +235,18 @@ fn rebind_macro_spells(
     // Per VM: a fresh VM restarts its generation at 0, which a bare memo would gate off for good.
     let last_generation = last_generation.get(&script);
     let generation = script.macros_generation();
-    if *last_generation == Some(generation) && !actions.is_changed() {
+    if *last_generation == Some(generation) && !book.is_changed() {
         return;
     }
     *last_generation = Some(generation);
 
-    let (macros, book) = (script.macros(), script.spellbook());
+    let (macros, book) = (script.macros(), &book.live.book);
     let mut fresh = std::collections::HashMap::new();
     for index in 1..=benilla_ui::script::MAX_MACRO_INDEX as u32 {
         let Some(m) = macros.get(index as usize) else {
             continue;
         };
-        fresh.insert(index, run::bound_spell(&table, &m.body, &book));
+        fresh.insert(index, run::bound_spell(&table, &m.body, book));
     }
     // The engine's copy, for `GetActionAutocast`, re-pushed on every recompute so a fresh VM has
     // it. The book flag stays the player's: `run::bound_spell` resolves the player's book only.
@@ -266,7 +269,7 @@ fn rebind_macro_spells(
             })
             .collect(),
     );
-    if fresh != bound.0 {
+    if fresh != bound.read().0 {
         let spells = fresh
             .values()
             .filter(|b| matches!(b, BoundSpell::Spell(_)))
@@ -275,7 +278,7 @@ fn rebind_macro_spells(
             "ui_macro: {} macro(s), {spells} bound to a spell",
             fresh.len()
         );
-        bound.0 = fresh;
+        bound.write().0 = fresh;
     }
 }
 

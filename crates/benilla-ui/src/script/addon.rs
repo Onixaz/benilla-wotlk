@@ -447,6 +447,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // UpdateAddOnCPUUsage() (`0x511640`): refreshes the per-addon times, which accrue only under
+    // `scriptProfile` (see `debug_verbs`), so there is nothing to refresh.
+    g.set(
+        "UpdateAddOnCPUUsage",
+        lua.create_function(|_, _: MultiValue| Ok(()))?,
+    )?;
+    // GetAddOnCPUUsage(index or "name") (`0x511660`): the addon's milliseconds at the last update,
+    // 0 with profiling off; an index out of range raises as `GetAddOnMemoryUsage` does.
+    g.set(
+        "GetAddOnCPUUsage",
+        lua.create_function(|lua, key: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            addon_key(
+                lua,
+                &model,
+                &key,
+                "Usage: GetAddOnCPUUsage(index or \"name\")",
+            )?;
+            Ok(0.0)
+        })?,
+    )?;
+
     g.set(
         "LoadAddOn",
         lua.create_function(|lua, key: Value| {

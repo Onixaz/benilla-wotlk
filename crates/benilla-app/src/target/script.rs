@@ -27,8 +27,9 @@ pub(crate) struct ScriptSelect<'w, 's> {
     scan: scan::TargetScan<'w, 's>,
     history: ResMut<'w, scan::TabHistory>,
     time: Res<'w, Time>,
-    /// `AssistUnit`'s miss lines.
-    errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
+    /// A questgiver GameObject's use from `DeclineQuest`, its right-click (`0x711140`).
+    interacts: Option<MessageWriter<'w, super::Interact>>,
+    index: Res<'w, crate::net::GuidIndex>,
 }
 
 /// `AssistUnit`'s and `FollowUnit`'s line for a unit they cannot use: an empty or `"target"` token
@@ -42,6 +43,13 @@ pub(super) fn unit_miss_key(token: &str) -> &'static str {
 }
 
 impl ScriptSelect<'_, '_> {
+    /// A questgiver GameObject's right-click from `DeclineQuest` (`0x58ceb2` -> `0x711140`), classified as a press over it.
+    pub(crate) fn interact_object(&mut self, guid: u64) {
+        if let (Some(&entity), Some(out)) = (self.index.0.get(&guid), self.interacts.as_mut()) {
+            out.write(super::Interact(entity));
+        }
+    }
+
     /// `TargetUnit`, `TargetLastEnemy` and `TargetLastFriend` share the reference's helper
     /// (`0x5259e0`): a held unit, else a group member or pet by its guid alone, is committed;
     /// anything else is a no-op, never a deselect. An unheld pick plays its select sound
@@ -49,7 +57,12 @@ impl ScriptSelect<'_, '_> {
     pub(crate) fn select(&mut self, request: SelectionRequest, script: &mut UiScript) {
         match request {
             SelectionRequest::Unit(token) => {
-                if let Some(guid) = self.tokens.guid_of(&token, &self.commit.selection) {
+                let guid = self.tokens.guid_of(
+                    &token,
+                    &self.commit.selection.read(),
+                    crate::ui_unit::VmUnits::of(script),
+                );
+                if let Some(guid) = guid {
                     self.target_if_valid(guid, script);
                 }
             }
@@ -57,17 +70,24 @@ impl ScriptSelect<'_, '_> {
             // shows `ERR_UNIT_NOT_FOUND` (`0x525f87`), or `ERR_GENERIC_NO_TARGET` for an empty or
             // `"target"` token (`0x525f9c`).
             SelectionRequest::Assist(token) => {
-                match self.tokens.resolve(&token, &self.commit.selection) {
+                let basis = self.tokens.resolve(
+                    &token,
+                    &self.commit.selection.read(),
+                    crate::ui_unit::VmUnits::of(script),
+                );
+                match basis {
                     Some((basis, _)) => {
-                        if self.commit.assist(basis, "AssistUnit") {
+                        if self.commit.assist(basis, "AssistUnit", script) {
                             script.queue_sound_kit("igCharacterSelect");
                         }
                     }
                     None => {
                         info!("assist (AssistUnit): \"{token}\" names no held unit");
-                        self.errors
-                            .0
-                            .push(crate::ui_action::UiError::key(unit_miss_key(&token)));
+                        // The miss line shows inside the call (`0x525f87`, `0x525f9c`).
+                        crate::ui_action::signals::SignalSink::line(
+                            script,
+                            crate::ui_action::UiError::key(unit_miss_key(&token)),
+                        );
                     }
                 }
             }
@@ -78,6 +98,7 @@ impl ScriptSelect<'_, '_> {
                     &mut self.commit,
                     Some(&name),
                     "AssistByName",
+                    script,
                 ) {
                     script.queue_sound_kit("igCharacterSelect");
                 }
@@ -99,34 +120,47 @@ impl ScriptSelect<'_, '_> {
 
     /// The shared helper's commit, with the unheld branch's `igCharacterSelect`.
     fn target_if_valid(&mut self, guid: u64, script: &mut UiScript) {
-        if self.commit.target_if_valid(guid) {
+        if self.commit.target_if_valid(guid, script) {
             script.queue_sound_kit("igCharacterSelect");
         }
     }
 
     /// `TargetUnit(name, exact)`, the stock `/target`, with the unheld branch's sound.
     pub(crate) fn target_by_name(&mut self, name: &str, exact: bool, script: &mut UiScript) {
-        if by_name::target_named(&self.by_name, &mut self.commit, name, exact) {
+        if by_name::target_named(&self.by_name, &mut self.commit, name, exact, script) {
             script.queue_sound_kit("igCharacterSelect");
         }
     }
 
     /// `StartAttack`'s named unit (`0x523090`): a token, else the closest attackable name, as a
     /// unit to commit once the actor checks pass.
-    pub(crate) fn attack_unit(&self, unit: &str, exact: bool) -> Option<(Entity, u64)> {
-        self.tokens
-            .resolve(unit, &self.commit.selection)
-            .or_else(|| self.by_name.attackable(unit, exact))
+    pub(crate) fn attack_unit(
+        &self,
+        unit: &str,
+        exact: bool,
+        vm: &UiScript,
+    ) -> Option<(Entity, u64)> {
+        let named = self.tokens.resolve(
+            unit,
+            &self.commit.selection.read(),
+            crate::ui_unit::VmUnits::of(vm),
+        );
+        named.or_else(|| self.by_name.attackable(unit, exact))
     }
 
     /// Commit the unit [`Self::attack_unit`] named.
-    pub(crate) fn select_for_attack(&mut self, entity: Entity, guid: u64) {
-        self.commit.commit(entity, guid);
+    pub(crate) fn select_for_attack(&mut self, entity: Entity, guid: u64, script: &mut UiScript) {
+        self.commit.commit(entity, guid, script);
     }
 
     /// `TargetNearest*([reverse])`, one cycle of the cycler the TAB key runs, called with
     /// `(reverse, mode)`.
-    pub(crate) fn target_nearest(&mut self, mode: benilla_ui::script::NearestMode, reverse: bool) {
+    pub(crate) fn target_nearest(
+        &mut self,
+        mode: benilla_ui::script::NearestMode,
+        reverse: bool,
+        script: &mut UiScript,
+    ) {
         let engaged = self.commit.engaged();
         scan::cycle(
             scan::ScanSide::of(mode),
@@ -134,9 +168,10 @@ impl ScriptSelect<'_, '_> {
             self.time.elapsed_secs_f64(),
             &self.scan,
             &mut self.history,
-            &mut self.commit.selection,
+            &mut self.commit.selection.write(),
             &mut self.commit.seam,
             engaged,
+            script,
         );
     }
 
@@ -144,7 +179,8 @@ impl ScriptSelect<'_, '_> {
     /// unit or a group member is committed (which stamps the outgoing target, swapping the two)
     /// and anything else is a no-op; an empty pair deselects.
     pub(crate) fn target_last_target(&mut self, script: &mut UiScript) {
-        match self.commit.selection.last {
+        let last = self.commit.selection.read().last;
+        match last {
             Some(guid) => self.target_if_valid(guid, script),
             None => self.commit.clear(),
         }
@@ -162,10 +198,16 @@ pub(super) fn target_by_name_requests(
     mut requests: MessageReader<by_name::TargetByNameRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (mut script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
+    ),
 ) {
     for request in requests.read() {
-        if by_name::target_named(&scan_params, &mut commit, &request.name, false) {
+        let unheld = with_sink(script.as_deref_mut(), |sink| {
+            by_name::target_named(&scan_params, &mut commit, &request.name, false, sink)
+        });
+        if unheld {
             select_sound(script.as_deref_mut());
         }
     }
@@ -176,17 +218,35 @@ pub(super) fn assist_requests(
     mut requests: MessageReader<by_name::AssistRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (mut script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
+    ),
 ) {
     for request in requests.read() {
-        if by_name::assist_named(
-            &scan_params,
-            &mut commit,
-            request.name.as_deref(),
-            "/assist",
-        ) {
+        let unheld = with_sink(script.as_deref_mut(), |sink| {
+            by_name::assist_named(
+                &scan_params,
+                &mut commit,
+                request.name.as_deref(),
+                "/assist",
+                sink,
+            )
+        });
+        if unheld {
             select_sound(script.as_deref_mut());
         }
+    }
+}
+
+/// Run `f` with the held VM as its signal sink, or with none.
+fn with_sink<R>(
+    script: Option<&mut UiScript>,
+    f: impl FnOnce(&mut dyn crate::ui_action::signals::SignalSink) -> R,
+) -> R {
+    match script {
+        Some(script) => f(script),
+        None => f(&mut Vec::new()),
     }
 }
 
@@ -705,8 +765,14 @@ mod tests {
             (sel.target, sel.guid)
         };
         let sounds = |world: &mut World| world.non_send_resource_mut::<UiScript>().take_sounds();
-        let errors = |world: &mut World| {
-            std::mem::take(&mut world.resource_mut::<crate::ui_action::UiErrorKeys>().0)
+        // The lines shown in the call.
+        let errors = |world: &mut World| -> Vec<crate::ui_action::UiError> {
+            world
+                .non_send_resource_mut::<UiScript>()
+                .take_shown_keys()
+                .into_iter()
+                .map(crate::ui_action::UiError::key)
+                .collect()
         };
 
         select(&mut world, Some((basis, BASIS)));
@@ -892,11 +958,10 @@ mod tests {
             run(&mut world, r#"TargetUnit("PARTY1TARGET")"#),
             Some(VICTIM)
         );
+        // A hop off us reads the target global, not our `UNIT_FIELD_TARGET` (`0x60aae3`): with
+        // the selection cleared, nobody.
         reset(&mut world);
-        assert_eq!(
-            run(&mut world, r#"TargetUnit("playertarget")"#),
-            Some(VICTIM)
-        );
+        assert_eq!(run(&mut world, r#"TargetUnit("playertarget")"#), None);
         reset(&mut world);
         assert_eq!(run(&mut world, r#"TargetUnit("pettarget")"#), Some(THIRD));
         reset(&mut world);
@@ -924,7 +989,7 @@ mod tests {
     #[test]
     fn target_and_assist_unit_name_the_interaction_npc() {
         use crate::net::{Guid, ObjectStore, SelfPlayer};
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
         use benilla_ui::script::UiScript;
         use bevy::ecs::system::RunSystemOnce;
 
@@ -950,7 +1015,7 @@ mod tests {
         let index = &mut world.resource_mut::<crate::net::GuidIndex>().0;
         index.insert(VENDOR, vendor);
         index.insert(GUARD, guard);
-        world.insert_resource(InteractNpc(Some(vendor), Some(VENDOR)));
+        world.insert_resource(InteractTarget::holding(VENDOR));
 
         let run = |world: &mut World, lua: &str| {
             world
@@ -959,7 +1024,11 @@ mod tests {
                 .expect("the binding runs");
             world
                 .run_system_once(
-                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                    |(mut script, _live): (
+                        NonSendMut<UiScript>,
+                        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
+                    ),
+                     mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
                             select.select(request, &mut script);
                         }
@@ -992,7 +1061,7 @@ mod tests {
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(VENDOR, vendor);
-        world.insert_resource(InteractNpc::default());
+        world.insert_resource(InteractTarget::default());
         assert_eq!(run(&mut world, r#"TargetUnit("npc")"#), Some(GUARD));
     }
 
@@ -1004,7 +1073,7 @@ mod tests {
     fn typing_target_unit_npc_in_the_stock_chat_box_selects_the_vendor() {
         benilla_formats::wow_data_or_skip!();
         use crate::net::{Guid, ObjectStore, SelfPlayer};
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
         use benilla_ui::script::UiScript;
         use bevy::ecs::system::RunSystemOnce;
 
@@ -1025,7 +1094,7 @@ mod tests {
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(VENDOR, vendor);
-        world.insert_resource(InteractNpc(Some(vendor), Some(VENDOR)));
+        world.insert_resource(InteractTarget::holding(VENDOR));
 
         let mut script = world.non_send_resource_mut::<UiScript>();
         assert!(script.focus_editbox("ChatFrameEditBox"));
@@ -1204,7 +1273,9 @@ mod tests {
 
         // `StartAttack`'s name (filter mode 1) skips the group scans.
         let attack = world
-            .run_system_once(|select: ScriptSelect| select.attack_unit("Clara", false))
+            .run_system_once(|select: ScriptSelect, script: NonSend<UiScript>| {
+                select.attack_unit("Clara", false, &script)
+            })
             .expect("the resolve runs as a one-shot system");
         assert_eq!(attack, None);
 

@@ -1,5 +1,6 @@
 //! The stock spellbook window (`SpellBookFrame.xml`) over a small synthetic book, engine only.
 
+use crate::ui_script::test_live::PetAnswersExt;
 use benilla_ui::script::{CastAt, SpellBookState, SpellSlotView, SpellTabView, UiScript};
 
 use super::test_ui::load_ui as load_xml;
@@ -502,7 +503,7 @@ fn the_pet_tab_switches_books_and_renders_the_pets_spells() {
     assert!(s.errors().is_empty(), "click errors: {:?}", s.errors());
     assert_eq!(s.take_pet_spell_casts(), vec![(2649, false)]);
     assert!(s.take_spell_casts().is_empty());
-    assert!(s.take_pet_spell_autocasts().is_empty());
+    assert!(s.take_pet_writes().spell_autocasts.is_empty());
 
     // Right: autocast, never a cast (`SpellBookFrame.lua:284-285`).
     click(&mut s, "SpellButton3", "RightButton");
@@ -511,7 +512,7 @@ fn the_pet_tab_switches_books_and_renders_the_pets_spells() {
         "right-click errors: {:?}",
         s.errors()
     );
-    assert_eq!(s.take_pet_spell_autocasts(), vec![16827]);
+    assert_eq!(s.take_pet_writes().spell_autocasts, vec![(16827, true)]);
     assert!(
         s.take_pet_spell_casts().is_empty(),
         "a right-click on the pet page must not also cast"

@@ -1,80 +1,57 @@
-//! The bank's packet handlers: they fill [`BankOpen`] and [`BankErrors`] for the bank feed.
+//! The bank's packet handlers: `SMSG_SHOW_BANK` sets the banker and `SMSG_BUY_BANK_SLOT_RESULT` shows its refusal, each in its handler's turn (`0x6e352a`, `0x6e355d`).
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{BankErrors, BankOpen};
-use crate::net::NetHandlerApp;
-use crate::ui_gossip::GossipState;
-use crate::ui_quest::QuestGiver;
+use super::BankOpen;
+use crate::net::{GuidIndex, NetHandlerApp, ObjectStore};
 
 /// Register the bank handlers and the session-end listener.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::ShowBank, on_show_bank)
         .net_handler(K::BuyBankSlotResult, on_buy_slot_result)
+        .net_handler(K::DestroyedOnDeath, on_destroyed_on_death)
         .net_handler(K::Disconnected, on_session_end);
 }
 
-fn on_show_bank(
-    In(ev): In<SessionEvent>,
-    mut bank: ResMut<BankOpen>,
-    mut gossip: ResMut<GossipState>,
-    mut quest: ResMut<QuestGiver>,
-) {
+fn on_show_bank(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::ShowBank { banker } = ev {
-        show_bank(banker, &mut bank, &mut gossip, &mut quest);
+        ui.world(move |world| super::open_bank(world, banker));
     }
 }
 
-fn on_buy_slot_result(In(ev): In<SessionEvent>, mut errors: ResMut<BankErrors>) {
+/// `SMSG_DESTROY_OBJECT`'s death byte on a unit above 0 health runs its death in the handler (`0x4d7661`-`0x4d7682`), whose interact-target clear with its guid (`0x7293bf`) closes the window on it.
+fn on_destroyed_on_death(
+    In(ev): In<SessionEvent>,
+    index: Option<Res<GuidIndex>>,
+    stores: Query<&ObjectStore>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    let SessionEvent::DestroyedOnDeath(guid) = ev else {
+        return;
+    };
+    let alive = index
+        .as_deref()
+        .and_then(|i| i.0.get(&guid))
+        .and_then(|&e| stores.get(e).ok())
+        .is_some_and(|s| s.0.is_unit() && s.0.unit_health().unwrap_or(0) > 0);
+    if alive {
+        ui.world(move |world| crate::ui_session::clear_interact_target(world, guid));
+    }
+}
+
+/// `SMSG_BUY_BANK_SLOT_RESULT` (`0x6e354c`): a code below 3 shows its line in the handler's turn.
+fn on_buy_slot_result(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::BuyBankSlotResult { result } = ev {
-        bank_buy_slot_result(result, &mut errors);
+        debug!("net: bank slot purchase refused (code {result})");
+        if let Some(key) = super::bank_slot_error_key(result) {
+            crate::ui_action::show_in_turn(&mut ui, "ui_bank", crate::ui_action::UiError::key(key));
+        }
     }
 }
 
 /// The bank window closes with the connection.
-fn on_session_end(In(_): In<SessionEvent>, mut bank: ResMut<BankOpen>) {
-    bank.clear_session();
-}
-
-/// `SMSG_SHOW_BANK`, sent for `CMSG_BANKER_ACTIVATE` and unprompted for the gossip bank option.
-/// It ends an open gossip interaction: vmangos sends no `SMSG_GOSSIP_COMPLETE` for that option
-/// (`Player::OnGossipSelect`), and the bank's `pushable = 6` (`UIParent.lua:28`) would open beside
-/// the gossip frame rather than replace it. The reference's gossip menu is gone once the vault
-/// shows; its mechanism for that is untraced.
-fn show_bank(banker: u64, bank: &mut BankOpen, gossip: &mut GossipState, quest: &mut QuestGiver) {
-    debug!("net: bank opened at {banker:#x}");
-    if gossip.npc.is_some() {
-        crate::ui_gossip::end_interaction(gossip, quest);
-    }
-    bank.open(banker);
-}
-
-/// `SMSG_BUY_BANK_SLOT_RESULT`, a refusal: vmangos sends it only on failure.
-fn bank_buy_slot_result(result: u32, errors: &mut BankErrors) {
-    debug!("net: bank slot purchase refused (code {result})");
-    errors.0.push(result);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn show_bank_ends_the_gossip_interaction() {
-        let mut bank = BankOpen::default();
-        let mut gossip = GossipState::default();
-        let mut quest = QuestGiver::default();
-        gossip.npc = Some(0x42);
-
-        show_bank(0x42, &mut bank, &mut gossip, &mut quest);
-        assert_eq!(bank.banker, Some(0x42));
-        assert_eq!(gossip.npc, None, "the gossip session ended with the menu");
-
-        // No gossip open: a plain open, nothing else touched.
-        bank.clear();
-        show_bank(0x43, &mut bank, &mut gossip, &mut quest);
-        assert_eq!(bank.banker, Some(0x43));
-    }
+fn on_session_end(In(_): In<SessionEvent>, mut bank: NonSendMut<BankOpen>) {
+    bank.clear();
 }

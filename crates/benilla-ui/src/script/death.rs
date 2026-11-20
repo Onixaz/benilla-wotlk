@@ -60,6 +60,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // ResurrectGetOfferer() (`0x515950`): the caster's name, or nil.
+    g.set(
+        "ResurrectGetOfferer",
+        lua.create_function(|_, _: mlua::MultiValue| {
+            Ok(read_live(|l| l.resurrect_offerer()).flatten())
+        })?,
+    )?;
+
     // Whole seconds, truncated (`0x516280`).
     g.set(
         "GetCorpseRecoveryDelay",

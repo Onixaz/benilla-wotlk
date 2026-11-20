@@ -1,37 +1,67 @@
-//! The stable master's packet handlers: they fill [`StableOpen`] and [`StableErrors`].
+//! The stable master's packet handlers: they write [`StableOpen`] and fire the window's events once their changes apply.
 
 use benilla_protocol::messages::StabledPet;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{StableErrors, StableOpen};
+use super::{StableOpen, SPELL_AURA_OPEN_STABLE};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfPlayer};
-use crate::ui_action::{PetTameFailures, Spells};
+use crate::ui_action::{Spells, UiError, UiErrorKeys};
+use crate::ui_script::live::UiEvents;
+use crate::ui_session::NpcSession;
 use crate::unit_auras::UnitAuras;
 
-/// `SPELL_AURA_OPEN_STABLE`: while one is up, a stable success re-lists with no master held
-/// (`0x5a1872`).
-const SPELL_AURA_OPEN_STABLE: u32 = 292;
-
-/// Register the stable handlers and the session-end listener.
+/// Register the stable handlers, the creature answer's callbacks and the session-end listener.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::ListStabledPets, on_list)
         .net_handler(K::StableResult, on_result)
+        .net_handler(K::CreatureName, on_creature_answer)
         .net_handler(K::Disconnected, on_session_end);
 }
 
-/// The stable closes with the connection; the range guard cannot close it, as it has no self
-/// player to measure from after the drop.
-fn on_session_end(In(_): In<SessionEvent>, mut stable_open: ResMut<StableOpen>) {
+/// The connection's end leaves the world (`0x528d5a`): a held master closes as the world leave closes it, then the globals and the record asks go with the session.
+fn on_session_end(
+    In(_): In<SessionEvent>,
+    mut stable_open: ResMut<StableOpen>,
+    ui: Option<ResMut<UiEvents>>,
+) {
+    // Its close re-enters through the stable leg of the interaction close it runs (`0x5a0f2c`, `0x513065`).
+    if stable_open.close() {
+        if let Some(mut ui) = ui {
+            ui.fire("PET_STABLE_CLOSED", vec![]);
+            ui.fire("PET_STABLE_CLOSED", vec![]);
+        }
+    }
     stable_open.clear();
+    stable_open.drop_asks();
+}
+
+/// A creature record's answer runs the stable verbs' callbacks queued on it, in order; an unknown entry fails them, which fires nothing (`0x5a0e80`, `0x5a0ea0`).
+fn on_creature_answer(
+    In(ev): In<SessionEvent>,
+    mut stable_open: ResMut<StableOpen>,
+    names: Res<NameCache>,
+    ui: Option<ResMut<UiEvents>>,
+) {
+    let SessionEvent::CreatureName { entry, .. } = ev else {
+        return;
+    };
+    let callbacks = stable_open.take_asks(entry);
+    let (Some(mut ui), true) = (ui, names.creature_record(entry).is_some()) else {
+        return;
+    };
+    for callback in callbacks {
+        ui.fire(callback.event(), vec![]);
+    }
 }
 
 fn on_list(
     In(ev): In<SessionEvent>,
     mut stable_open: ResMut<StableOpen>,
     mut names: ResMut<NameCache>,
+    ui: Option<ResMut<UiEvents>>,
 ) {
     if let SessionEvent::ListStabledPets {
         npc,
@@ -39,18 +69,33 @@ fn on_list(
         pets,
     } = ev
     {
-        list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
+        let Some(mut ui) = ui else {
+            list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
+            return;
+        };
+        // Another master than the held one takes the interact target before the list is stored (`0x5a11d9`).
+        ui.world(move |world| crate::ui_stable::set_master(world, npc));
+        ui.world(move |world| {
+            world.resource_scope(|world, mut names: Mut<NameCache>| {
+                if let Some(mut open) = world.get_resource_mut::<StableOpen>() {
+                    list_stabled_pets(npc, num_stable_slots, pets, &mut open, &mut names);
+                }
+            });
+        });
+        // The selection resets with the list, then `PET_STABLE_SHOW` (`0x5a11fa`, `0x5a131a`).
+        ui.write(benilla_ui::script::UiScript::reset_stable_selection);
+        ui.fire("PET_STABLE_SHOW", vec![]);
     }
 }
 
 fn on_result(
     In(ev): In<SessionEvent>,
-    mut stable_open: ResMut<StableOpen>,
-    mut errors: ResMut<StableErrors>,
-    mut tame_failures: ResMut<PetTameFailures>,
+    stable_open: ResMut<StableOpen>,
+    mut errors: ResMut<UiErrorKeys>,
     commands: Res<NetCommands>,
     self_auras: Query<&UnitAuras, With<SelfPlayer>>,
     spells: Option<Res<Spells>>,
+    ui: Option<ResMut<UiEvents>>,
 ) {
     if let SessionEvent::StableResult { result } = ev {
         let open_stable_aura = || {
@@ -67,14 +112,29 @@ fn on_result(
                     })
                 })
         };
-        stable_result(
+        let mut tame_failures = Vec::new();
+        let update = stable_result(
             result,
-            &mut stable_open,
+            stable_open,
             &mut errors,
             &mut tame_failures,
             &commands,
             open_stable_aura,
         );
+        let Some(mut ui) = ui else {
+            return;
+        };
+        // The exotic refusal's line shows in the handler's turn, as the tame failure's does.
+        for reason in tame_failures {
+            crate::ui_action::show_in_turn(
+                &mut ui,
+                "ui_stable",
+                crate::ui_pet::tame_failure_line(reason),
+            );
+        }
+        if update {
+            ui.fire("PET_STABLE_UPDATE", vec![]);
+        }
     }
 }
 
@@ -103,19 +163,15 @@ fn list_stabled_pets(
     stable_open.open(npc, num_stable_slots, pets);
 }
 
-/// `SMSG_STABLE_RESULT`, handled as the reference's jump table does (`0x5a181a`): 1 shows
-/// `ERR_NOT_ENOUGH_MONEY`, 8 and 9 re-request the list, as no success carries one, 10 counts a
-/// bought slot and re-requests, 11 fires `PET_STABLE_UPDATE`, 12 shows the exotic tame failure,
-/// and 2-7 show nothing. With no stable master held, the re-request goes out only under an
-/// open-stable aura, aimed at no master (`0x5a1879`).
+/// `SMSG_STABLE_RESULT`, handled as the reference's jump table does (`0x5a181a`): 1 shows `ERR_NOT_ENOUGH_MONEY`, 8 and 9 re-request the list, as no success carries one, 10 counts a bought slot and re-requests, 11 owes `PET_STABLE_UPDATE` (`0x5a1904`), 12 shows the exotic tame failure, and 2-7 show nothing. With no stable master held, the re-request goes out only under an open-stable aura, aimed at no master (`0x5a1879`). Whether the update is owed.
 fn stable_result(
     result: u8,
-    stable_open: &mut StableOpen,
-    errors: &mut StableErrors,
-    tame_failures: &mut PetTameFailures,
+    mut stable_open: impl std::ops::DerefMut<Target = StableOpen>,
+    errors: &mut UiErrorKeys,
+    tame_failures: &mut Vec<u8>,
     net_commands: &NetCommands,
     open_stable_aura: impl FnOnce() -> bool,
-) {
+) -> bool {
     use benilla_protocol::messages::stable_result as code;
     // Before the guid test, as in the reference: the count moves even with no stable open.
     if result == code::SUCCESS_BUY_SLOT {
@@ -124,24 +180,25 @@ fn stable_result(
     match result {
         code::ERR_MONEY => {
             debug!("net: stable purchase refused — not enough money");
-            errors.0.push("ERR_NOT_ENOUGH_MONEY");
+            errors.0.push(UiError::key("ERR_NOT_ENOUGH_MONEY"));
         }
         code::SUCCESS_STABLE | code::SUCCESS_UNSTABLE | code::SUCCESS_BUY_SLOT => {
-            let npc = match stable_open.npc {
+            let npc = match stable_open.npc() {
                 Some(npc) => npc,
                 None if open_stable_aura() => 0,
                 None => {
                     debug!("net: stable success {result} with no stable master — no re-list");
-                    return;
+                    return false;
                 }
             };
             debug!("net: stable action succeeded (code {result}) — re-listing");
             let _ = net_commands.0.send(ClientCommand::ListStabledPets { npc });
         }
-        code::UPDATE => stable_open.update_owed = true,
-        code::ERR_EXOTIC => tame_failures.0.push(result),
+        code::UPDATE => return true,
+        code::ERR_EXOTIC => tame_failures.push(result),
         _ => debug!("net: stable result {result} — no client-visible effect"),
     }
+    false
 }
 
 #[cfg(test)]
@@ -153,27 +210,27 @@ mod tests {
         result: u8,
         open: &mut StableOpen,
         aura: bool,
-    ) -> (StableErrors, PetTameFailures, Vec<ClientCommand>) {
+    ) -> (bool, UiErrorKeys, Vec<u8>, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let mut errors = StableErrors::default();
-        let mut tame = PetTameFailures::default();
-        stable_result(result, open, &mut errors, &mut tame, &commands, || aura);
-        (errors, tame, rx.try_iter().collect())
+        let mut errors = UiErrorKeys::default();
+        let mut tame = Vec::new();
+        let update = stable_result(result, open, &mut errors, &mut tame, &commands, || aura);
+        (update, errors, tame, rx.try_iter().collect())
     }
 
     #[test]
     fn a_success_re_lists_with_the_master_or_under_the_open_stable_aura() {
         let mut open = StableOpen::default();
-        let (_, _, sent) = run(code::SUCCESS_STABLE, &mut open, false);
+        let (_, _, _, sent) = run(code::SUCCESS_STABLE, &mut open, false);
         assert!(sent.is_empty(), "no master, no aura");
-        let (_, _, sent) = run(code::SUCCESS_UNSTABLE, &mut open, true);
+        let (_, _, _, sent) = run(code::SUCCESS_UNSTABLE, &mut open, true);
         assert!(matches!(
             sent[..],
             [ClientCommand::ListStabledPets { npc: 0 }]
         ));
-        open.npc = Some(0x42);
-        let (_, _, sent) = run(code::SUCCESS_BUY_SLOT, &mut open, false);
+        open.open(0x42, 0, Vec::new());
+        let (_, _, _, sent) = run(code::SUCCESS_BUY_SLOT, &mut open, false);
         assert!(matches!(
             sent[..],
             [ClientCommand::ListStabledPets { npc: 0x42 }]
@@ -184,10 +241,13 @@ mod tests {
     #[test]
     fn eleven_owes_the_update_and_twelve_is_the_exotic_tame_failure() {
         let mut open = StableOpen::default();
-        let (_, tame, sent) = run(code::UPDATE, &mut open, false);
-        assert!(open.update_owed && tame.0.is_empty() && sent.is_empty());
-        let (errors, tame, _) = run(code::ERR_EXOTIC, &mut open, false);
-        assert_eq!(tame.0, vec![12]);
+        let (update, _, tame, sent) = run(code::UPDATE, &mut open, false);
+        assert!(update && tame.is_empty() && sent.is_empty());
+        let (update, errors, tame, _) = run(code::ERR_EXOTIC, &mut open, false);
+        assert!(!update);
+        assert_eq!(tame, vec![12]);
         assert!(errors.0.is_empty());
+        let (_, errors, _, _) = run(code::ERR_MONEY, &mut open, false);
+        assert_eq!(errors.0[0].key, "ERR_NOT_ENOUGH_MONEY");
     }
 }

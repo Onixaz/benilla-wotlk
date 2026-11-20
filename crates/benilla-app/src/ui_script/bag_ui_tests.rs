@@ -85,12 +85,11 @@ fn push_bags(s: &mut UiScript) {
             bag_family: 0,
         }),
     );
-    s.set_quest_log(QuestLogState {
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 456,
             ..Default::default()
         }],
-        num_quests: 1,
         ..Default::default()
     });
 }

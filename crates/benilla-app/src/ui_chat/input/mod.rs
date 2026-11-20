@@ -61,6 +61,21 @@ pub(super) fn emote_target(
     guid.filter(|&guid| Some(guid) != me).unwrap_or(0)
 }
 
+/// `/partytest raid`'s writes, applied off the VM's systems so the lent view reads the group and the name cache: the 25 synthetic rows, each member's name record, and the roster lines.
+fn party_test_raid(world: &mut World, me: Option<u64>) {
+    world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
+        let lines = crate::ui_party::synthetic_raid(
+            &mut world.resource_mut::<crate::ui_party::GroupState>(),
+            &mut names,
+            me,
+        );
+        world
+            .resource_mut::<crate::ui_action::UiErrorKeys>()
+            .0
+            .extend(lines);
+    });
+}
+
 /// The inputs of `/shot`, `/liquid` and `/reaction`, bundled because [`drain_chat_input`] is at
 /// Bevy's 16-parameter ceiling.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -539,19 +554,9 @@ pub(super) fn drain_chat_input(
                     // The wire arm's by-key queue, so the lines resolve from GlobalStrings with
                     // each row's surface and sound.
                     let me = self_guid.0;
-                    chat_out.console.queue(move |world: &mut World| {
-                        world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
-                            let lines = crate::ui_party::synthetic_raid(
-                                &mut world.resource_mut::<crate::ui_party::GroupState>(),
-                                &mut names,
-                                me,
-                            );
-                            world
-                                .resource_mut::<crate::ui_action::UiErrorKeys>()
-                                .0
-                                .extend(lines);
-                        });
-                    });
+                    chat_out
+                        .console
+                        .queue(move |world: &mut World| party_test_raid(world, me));
                 }
                 "invite" => chat_out.console.queue(|world: &mut World| {
                     world
@@ -1416,6 +1421,34 @@ pub(super) fn drain_addon_message_sends(
         };
         if commands.0.send(cmd).is_err() {
             warn!("chat: not connected; addon broadcast dropped");
+        }
+    }
+}
+
+#[cfg(test)]
+mod party_test_raid_tests {
+    use super::*;
+
+    /// The queued `/partytest raid` seats every synthetic member with its name record, which the raid rows read from the name cache (#1304).
+    #[test]
+    fn the_party_test_raid_rows_carry_their_names() {
+        let mut world = World::new();
+        world.init_resource::<crate::ui_party::GroupState>();
+        world.init_resource::<crate::names::NameCache>();
+        world.init_resource::<crate::ui_action::UiErrorKeys>();
+        party_test_raid(&mut world, Some(0x19));
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let commands = crate::net::NetCommands(tx);
+        let group = world.resource::<crate::ui_party::GroupState>();
+        let names = world.resource::<crate::names::NameCache>();
+        assert_eq!(group.members.len(), 24, "every synthetic member, us aside");
+        for m in &group.members {
+            assert_eq!(
+                names.resolve(m.guid, &commands),
+                Some(m.name.as_str()),
+                "{:#x}",
+                m.guid
+            );
         }
     }
 }

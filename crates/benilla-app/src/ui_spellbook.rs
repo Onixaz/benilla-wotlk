@@ -1,5 +1,6 @@
-//! The spellbook feed: builds the book from the known spells and the `SpellCatalog` ×
-//! `SkillLineCatalog` join, behind the stock `SpellBookFrame.xml`. A known spell is booked when
+//! The player's spellbook: the book update (`0x53ca70`) builds the sorted slots and tabs from the
+//! known spells and the `SpellCatalog` × `SkillLineCatalog` join, and the verbs read it through
+//! the live view. A known spell is booked when
 //! [`SpellDisplay::in_spellbook`](benilla_formats::SpellDisplay::in_spellbook) passes (`0x542030`);
 //! a companion, a mount or an `AttributesEx4 & 0x8000` spell is named but listed in no tab.
 //!
@@ -12,18 +13,15 @@
 //! and the `SpellLevel` fallback for a digit-less rank (the rank string breaks ties).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 
 use benilla_formats::{SkillLineCatalog, SpellCatalog, SummonPropertiesCatalog};
-use benilla_ui::script::{ScriptValue, SpellBookState, SpellSlotView, SpellTabView, UiScript};
+use benilla_ui::script::{PlayerBook, ScriptValue, SpellBookState, SpellSlotView, SpellTabView};
 
-use crate::entities::ItemDisplays;
-use crate::items::Items;
-use crate::net::NetCommands;
-use crate::ui_action::{melee_auto_attack_icon, ranged_weapon_icon, PlayerActions, Spells};
-use crate::ui_script::gate;
-use crate::ui_unit::UnitFeed;
+use crate::ui_action::Spells;
+use crate::ui_script::live::UiEvents;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
 /// `SkillLine.dbc` × `SkillLineAbility.dbc`; absent when the data failed to load.
@@ -40,35 +38,148 @@ const NO_LINE: u32 = 0;
 /// Hardcoded in the reference, extensionless for the loader; key 0 has no DBC row.
 const GENERAL_TAB_ICON: &str = "Interface\\Icons\\Ability_Kick";
 
-/// Spells learned mid-session, queued for `LEARNED_SPELL_IN_TAB` (event 510). Filled by the learn
-/// and rank-up arms (`crate::spell::net`), never the `SMSG_INITIAL_SPELLS` load, which the
-/// reference passes with its tab builder's live-mutation flag clear. A queue because the event
-/// follows the tab re-sort and `SPELLS_CHANGED`.
-#[derive(Resource, Default)]
+/// The spells a handler's learn reached the book update with, for `LEARNED_SPELL_IN_TAB`, which
+/// follows the update's `SPELLS_CHANGED` (`0x542cd4`, `0x542d16`). The `SMSG_INITIAL_SPELLS` load
+/// and a learn before our object exists pass the registrar with its live flag clear and reach
+/// neither.
+#[derive(Default)]
 pub(crate) struct LearnedInTab(pub(crate) Vec<u32>);
+
+/// The player's book as the last book update built it (`0x53ca70`), which the verbs read.
+#[derive(Resource, Default)]
+pub(crate) struct SpellBook {
+    pub(crate) live: Arc<PlayerBook>,
+    /// The skill line behind each tab, in order, which `LEARNED_SPELL_IN_TAB` indexes.
+    tab_lines: Vec<u32>,
+    /// Our race and class, from our object's init on, which the General collapse reads.
+    race_class: (u8, u8),
+}
+
+/// What a book update reads besides the book.
+pub(crate) struct BookInputs<'a> {
+    pub(crate) known: &'a BTreeSet<u32>,
+    pub(crate) spells: Option<&'a Spells>,
+    pub(crate) summons: &'a SummonPropertiesCatalog,
+    pub(crate) skill_lines: Option<&'a SkillLineCatalog>,
+}
+
+impl SpellBook {
+    /// The book update (`0x53ca70`) with its re-sort and its school-mask rebuild, as the learn,
+    /// the removal and our object's init run it: the book rebuilt, the masks (`0x53cd48`), then
+    /// `SPELLS_CHANGED` (`0x53ceae`).
+    pub(crate) fn update(
+        &mut self,
+        inputs: &BookInputs,
+        schools: &mut crate::ui_cast::InterruptSchools,
+        ui: &mut UiEvents,
+    ) {
+        if let Some(spells) = inputs.spells {
+            let (race, class) = self.race_class;
+            let (book, tab_lines) = build_book(
+                inputs.known,
+                &spells.catalog,
+                inputs.summons,
+                inputs.skill_lines,
+                race,
+                class,
+            );
+            let tracking = tracking_of(&book, &spells.catalog);
+            debug!(
+                "ui_spellbook: book update, {} tab(s), {} spell(s)",
+                book.tabs.len(),
+                book.slots.len()
+            );
+            self.live = Arc::new(PlayerBook::new(book, tracking));
+            self.tab_lines = tab_lines;
+        }
+        crate::ui_cast::book_updated(schools, inputs.known, inputs.spells);
+        ui.fire("SPELLS_CHANGED", Vec::new());
+    }
+
+    /// `LEARNED_SPELL_IN_TAB` with the 1-based index of each learned spell's tab in the book the
+    /// update just built (`0x542d16`), which `SpellBookFrame.lua` flashes.
+    pub(crate) fn flash(&self, learned: &LearnedInTab, inputs: &BookInputs, ui: &mut UiEvents) {
+        let Some(spells) = inputs.spells else {
+            return;
+        };
+        let (race, class) = self.race_class;
+        for &spell_id in &learned.0 {
+            let Some(index) = tab_flash_index(
+                spell_id,
+                &self.tab_lines,
+                spells,
+                inputs.summons,
+                inputs.skill_lines,
+                race,
+                class,
+            ) else {
+                continue;
+            };
+            debug!("ui_spellbook: spell {spell_id} landed in tab {index} — flash");
+            ui.fire("LEARNED_SPELL_IN_TAB", vec![ScriptValue::Int(index)]);
+        }
+    }
+
+    /// A book built from `book`, for a test.
+    #[cfg(test)]
+    pub(crate) fn of(book: SpellBookState) -> Self {
+        Self {
+            live: Arc::new(PlayerBook::new(book, Vec::new())),
+            ..Default::default()
+        }
+    }
+
+    /// Our object's race and class, set by its init before its book update (`0x6e7f50`).
+    pub(crate) fn set_race_class(&mut self, race: u8, class: u8) {
+        self.race_class = (race, class);
+    }
+}
+
+/// The book's known tracking spells in display order (`0x53cab5`, filled by `0x7fdf60`).
+fn tracking_of(
+    book: &SpellBookState,
+    catalog: &SpellCatalog,
+) -> Vec<benilla_ui::script::TrackingSpell> {
+    book.named()
+        .filter_map(|slot| {
+            let d = catalog.get(slot.spell_id)?;
+            d.tracking_aura()
+                .then(|| benilla_ui::script::TrackingSpell {
+                    spell_id: slot.spell_id,
+                    name: d.name.clone(),
+                    icon: d.icon.clone(),
+                    active_icon: d.active_icon.clone(),
+                })
+        })
+        .collect()
+}
+
+/// A book spell's texture at the call (`0x53dc20`): the melee auto-attack's face alone
+/// (`Effect[0] == SPELL_EFFECT_ATTACK`, `0x53dc8c`), nil with no player; a ranged shot's
+/// (`Attributes & 0x2` and `AttributesEx2 & 0x20`, `0x53dcb7`) while there is a ranged weapon;
+/// else the record's icon.
+pub(crate) fn book_texture(
+    d: &benilla_formats::SpellDisplay,
+    attack_icon: impl FnOnce() -> Option<String>,
+    ranged_icon: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    if d.is_melee_auto_attack() {
+        return attack_icon();
+    }
+    if d.ranged_icon_substitution() {
+        if let Some(icon) = ranged_icon() {
+            return Some(icon);
+        }
+    }
+    d.icon.clone()
+}
 
 pub(crate) struct UiSpellbookPlugin;
 
-/// The book's feed, which the companion feed follows (a learn's book change before its line).
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct BookFeed;
-
 impl Plugin for UiSpellbookPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LearnedInTab>()
-            .add_systems(Startup, load_skill_lines.after(AssetSet::Open))
-            .add_systems(
-                Update,
-                // The feed precedes the bar's identity feed (the registrar's order: the book and
-                // its events, then the placed slot's `ACTIONBAR_SLOT_CHANGED`) and
-                // `CooldownEvents`, whose `SPELL_UPDATE_COOLDOWN` makes the book re-read its
-                // cooldowns. A click's cast is a script call (`cast_spell`).
-                feed_spellbook
-                    .in_set(UnitFeed)
-                    .in_set(BookFeed)
-                    .before(crate::ui_action::SlotIdentityFeed)
-                    .before(crate::ui_action::CooldownEvents),
-            );
+        app.init_resource::<SpellBook>()
+            .add_systems(Startup, load_skill_lines.after(AssetSet::Open));
     }
 }
 
@@ -92,290 +203,6 @@ fn load_skill_lines(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
             "ui_spellbook: SkillLine.dbc failed to load — every spell falls into one \
              fallback tab: {e:#}"
         ),
-    }
-}
-
-/// The feed's memory of what it last pushed, for the `SPELLS_CHANGED` diff.
-#[derive(Default)]
-pub(crate) struct FeedMemory {
-    pushed: SpellBookState,
-    /// Counter watches for stores whose lazy resolves defeat `is_changed` (template asks, the
-    /// cooldown prune), and for the self store's presence: a despawn flips the weapon icons unseen.
-    items_templates: gate::Watch,
-    cooldown_epoch: gate::Watch,
-    rune_epoch: gate::Watch,
-    self_present: gate::Watch,
-    /// The race and class whose rank table the script holds.
-    next_ranks_for: Option<(u8, u8)>,
-    /// The known-spell set the script holds.
-    known_pushed: BTreeSet<u32>,
-}
-
-pub(crate) fn feed_spellbook(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    actions: Res<PlayerActions>,
-    spells: Option<Res<Spells>>,
-    skill_lines: Option<Res<SkillLines>>,
-    mut inv: crate::items::Inventory,
-    items: Res<Items>,
-    icons: Option<Res<ItemDisplays>>,
-    commands: Res<NetCommands>,
-    cooldowns: Res<crate::spell::Cooldowns>,
-    clock: Res<crate::ui_script::UiClock>,
-    mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
-    mut learned: ResMut<LearnedInTab>,
-    summons: Res<crate::spell::SummonSlots>,
-    // The rune table and costs, and the cost modifiers, that a rune spell's cooldown reads.
-    (runes, rune_costs, spell_mods): (
-        Option<Res<crate::ui_rune::Runes>>,
-        Option<Res<crate::ui_rune::RuneCosts>>,
-        Res<crate::spell::SpellModifiers>,
-    ),
-    weapon_icons: Option<ResMut<crate::ui_spell_info::WeaponActionIcons>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let (memory, vm_reset) = memory.get_reset(&script);
-    // The book depends on these inputs alone. `UiClock` is not one: `ui_triple` is frame-stable
-    // per arm, and expiry moves the store's `feed_epoch`.
-    let objects_moved = inv.changes.moved();
-    let templates_moved = memory.items_templates.moved(items.template_epoch());
-    let cooldowns_moved = memory.cooldown_epoch.moved(cooldowns.feed_epoch());
-    let runes_moved = memory
-        .rune_epoch
-        .moved(runes.as_deref().map_or(0, |r| r.epoch));
-    let presence_moved = memory
-        .self_present
-        .moved(u64::from(!inv.self_store.is_empty()));
-    // The frame a timer crosses zero, before the prune moves the epoch.
-    let sweep = cooldowns.sweep_pending(clock.anchor);
-    let self_changed = !inv.self_changed.is_empty();
-    let actions_changed = actions.is_changed();
-    let spells_changed = spells.as_ref().is_some_and(|r| r.is_changed());
-    let lines_changed = skill_lines.as_ref().is_some_and(|r| r.is_changed());
-    let summons_changed = summons.is_changed();
-    // `is_added`: only the load-once icon column is read; the model cache churns every frame.
-    let icons_added = icons.as_ref().is_some_and(|r| r.is_added());
-    gate::trace(
-        "feed_spellbook",
-        &[
-            ("vm_reset", vm_reset),
-            ("objects", objects_moved),
-            ("templates", templates_moved),
-            ("cooldowns", cooldowns_moved),
-            ("runes", runes_moved),
-            ("sweep", sweep),
-            ("presence", presence_moved),
-            ("self", self_changed),
-            ("actions", actions_changed),
-            ("spells", spells_changed),
-            ("skill_lines", lines_changed),
-            ("summons", summons_changed),
-            ("icons", icons_added),
-            // A queued learn never waits behind a skipped frame.
-            ("learned", !learned.0.is_empty()),
-        ],
-    );
-    let gate = gate::Gate::new(
-        vm_reset
-            || objects_moved
-            || templates_moved
-            || cooldowns_moved
-            || runes_moved
-            || sweep
-            || presence_moved
-            || self_changed
-            || actions_changed
-            || spells_changed
-            || lines_changed
-            || summons_changed
-            || icons_added
-            || !learned.0.is_empty(),
-    );
-    if gate.skip() {
-        return;
-    }
-    // Drained before a later return can strand it; an unresolved id fires nothing, as in 1.12.
-    let learned = std::mem::take(&mut learned.0);
-    let Some(spells) = spells.as_deref() else {
-        return;
-    };
-    // Race and class drive the General collapse; 0/0 before the descriptor skips it.
-    let store = inv.self_store.single().ok();
-    let (race, class) = store
-        .map(|s| (s.0.unit_race().unwrap_or(0), s.0.unit_class().unwrap_or(0)))
-        .unwrap_or((0, 0));
-    // The known test reads the bitmap, set ahead of the registrar's book gates (`0x54208a`).
-    if memory.known_pushed != actions.spells {
-        memory.known_pushed.clone_from(&actions.spells);
-        script.set_known_spells(actions.spells.iter().copied());
-    }
-    // The item tests' rank walk reads the abilities the player's race and class admit (`0x71a6e6`).
-    if let Some(lines) = skill_lines.as_deref().filter(|_| race != 0 && class != 0) {
-        if memory.next_ranks_for != Some((race, class)) {
-            memory.next_ranks_for = Some((race, class));
-            script.set_next_ranks(lines.catalog.next_ranks(race, class));
-        }
-    }
-    // The melee auto-attack shows the main-hand weapon, or Spell-Reset unarmed, not its `Temp`.
-    let attack_icon = store.map(|s| {
-        melee_auto_attack_icon(
-            s,
-            &spells.forms,
-            &inv.objects,
-            &items,
-            icons.as_deref(),
-            &commands,
-        )
-    });
-    // Auto Shot and wand Shoot show the ranged weapon; without one, their own icon.
-    let ranged_icon = store
-        .and_then(|s| ranged_weapon_icon(s, &inv.objects, &items, icons.as_deref(), &commands));
-    // `GetSpellInfo` substitutes the same two.
-    if let Some(mut published) = weapon_icons {
-        published.set_if_neq(crate::ui_spell_info::WeaponActionIcons {
-            attack: attack_icon.clone(),
-            ranged: ranged_icon.clone(),
-        });
-    }
-    let (mut fresh, tab_lines) = build_book(
-        &actions.spells,
-        &spells.catalog,
-        &summons.0,
-        skill_lines.as_deref().map(|s| &*s.catalog),
-        race,
-        class,
-        attack_icon,
-        ranged_icon,
-    );
-    // The book's `IsSelectedSpell`, not the action bar's, with two arms: a form spell is current
-    // while the form byte is its form, and the open trade-skill window, not built. It has no
-    // casting-now arm, so a book slot never lights during a cast.
-    let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
-    if form_byte != 0 {
-        for slot in &mut fresh.slots {
-            slot.current = spells
-                .catalog
-                .get(slot.spell_id)
-                .is_some_and(|d| d.shapeshift_form == Some(u32::from(form_byte)));
-        }
-    }
-    // Each slot's cooldown (the reference's cooldown lookup: id, category and GCD alike) on the
-    // `GetTime` clock, frame-stable per arm, so a running cooldown never churns the diff.
-    let (anchor, ui_now) = (clock.anchor, clock.ui_now);
-    let rune_check =
-        runes
-            .as_deref()
-            .zip(rune_costs.as_deref())
-            .zip(store)
-            .map(|((runes, costs), store)| crate::spell::usable::RuneCheck {
-                state: &runes.state,
-                costs: &costs.0,
-                player: &store.0,
-            });
-    let now_ms = (ui_now * 1000.0).floor() as i64;
-    for slot in &mut fresh.slots {
-        let d = spells.catalog.get(slot.spell_id);
-        slot.cooldown = cooldowns
-            .info(slot.spell_id, 0, d, anchor)
-            .ui_triple(anchor, ui_now);
-        // `GetSpellCooldown` (`0x540e80`) reads the history's rune leg too.
-        if let (Some(check), Some(d)) = (rune_check, d) {
-            let leg = crate::spell::cooldowns::RuneLeg {
-                runes: check,
-                catalog: &spells.catalog,
-                mods: &spell_mods,
-            };
-            slot.cooldown = cooldowns.with_rune_leg(slot.spell_id, d, slot.cooldown, &leg, now_ms);
-        }
-    }
-    // The known tracking spells (`0x542030` → `0x7fdf60`), in the book's display order.
-    let tracking = fresh
-        .named()
-        .filter_map(|slot| {
-            let d = spells.catalog.get(slot.spell_id)?;
-            d.tracking_aura()
-                .then(|| benilla_ui::script::TrackingSpell {
-                    spell_id: slot.spell_id,
-                    name: d.name.clone(),
-                    icon: d.icon.clone(),
-                    active_icon: d.active_icon.clone(),
-                })
-        })
-        .collect();
-    script.set_tracking_spells(tracking, class);
-    if fresh != memory.pushed {
-        gate.audit("feed_spellbook", "the spellbook snapshot");
-        // A checked-ring move fires `CURRENT_SPELL_CAST_CHANGED`, a book change `SPELLS_CHANGED`.
-        let ring_moved = fresh.slots.len() != memory.pushed.slots.len()
-            || fresh
-                .slots
-                .iter()
-                .zip(&memory.pushed.slots)
-                .any(|(a, b)| a.current != b.current);
-        let book_changed = fresh.tabs != memory.pushed.tabs
-            || fresh.slots.len() != memory.pushed.slots.len()
-            || fresh.slots.iter().zip(&memory.pushed.slots).any(|(a, b)| {
-                (a.spell_id, &a.name, &a.rank, &a.texture, a.passive)
-                    != (b.spell_id, &b.name, &b.rank, &b.texture, b.passive)
-            });
-        debug!(
-            "ui_spellbook: fed {} tab(s), {} spell(s) (book {book_changed}, ring {ring_moved})",
-            fresh.tabs.len(),
-            fresh.slots.len()
-        );
-        script.set_spellbook(fresh.clone());
-        memory.pushed = fresh;
-        // A companion's learn leaves the book as it was (`0x5427a4` returns before `0x542cd4`).
-        if book_changed {
-            script.fire_event("SPELLS_CHANGED", vec![]);
-        }
-        if ring_moved {
-            script.fire_event("CURRENT_SPELL_CAST_CHANGED", vec![]);
-        }
-    }
-    // The tab flash after `SPELLS_CHANGED`, outside the diff: the reference fires on the packet, so
-    // a re-learn that changes nothing still flashes.
-    fire_tab_flashes(
-        &mut script,
-        &learned,
-        &tab_lines,
-        spells,
-        &summons.0,
-        skill_lines.as_deref().map(|s| &*s.catalog),
-        race,
-        class,
-    );
-}
-
-/// Fire `LEARNED_SPELL_IN_TAB` with the 1-based index of each learned spell's tab in the strip
-/// `build_book` just published (`0x542d16`), which `SpellBookFrame.lua` flashes. The registrar's
-/// exits before it are `in_spellbook`.
-fn fire_tab_flashes(
-    script: &mut UiScript,
-    learned: &[u32],
-    tab_lines: &[u32],
-    spells: &Spells,
-    summons: &SummonPropertiesCatalog,
-    skill_lines: Option<&SkillLineCatalog>,
-    race: u8,
-    class: u8,
-) {
-    for &spell_id in learned {
-        let Some(index) = tab_flash_index(
-            spell_id,
-            tab_lines,
-            spells,
-            summons,
-            skill_lines,
-            race,
-            class,
-        ) else {
-            continue;
-        };
-        debug!("ui_spellbook: spell {spell_id} landed in tab {index} — flash");
-        script.fire_event("LEARNED_SPELL_IN_TAB", vec![ScriptValue::Int(index)]);
     }
 }
 
@@ -410,8 +237,6 @@ fn build_book(
     skill_lines: Option<&SkillLineCatalog>,
     race: u8,
     class: u8,
-    attack_icon: Option<String>,
-    ranged_icon: Option<String>,
 ) -> (SpellBookState, Vec<u32>) {
     let mut by_line: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut unlisted = Vec::new();
@@ -466,26 +291,15 @@ fn build_book(
         let num_spells = spell_ids.len() as u32;
         for spell_id in spell_ids {
             let d = catalog.get(spell_id);
-            // Keyed on the effect type, as the action bar's substitution is.
-            let texture = if d.is_some_and(|d| d.is_melee_auto_attack()) {
-                attack_icon
-                    .clone()
-                    .or_else(|| d.and_then(|d| d.icon.clone()))
-            } else if d.is_some_and(|d| d.ranged_icon_substitution()) {
-                // Without a ranged weapon, or with a thrown one, the spell's own.
-                ranged_icon
-                    .clone()
-                    .or_else(|| d.and_then(|d| d.icon.clone()))
-            } else {
-                d.and_then(|d| d.icon.clone())
-            };
+            // The record's icon; the weapon faces are swapped in at the call ([`book_texture`]).
+            let texture = d.and_then(|d| d.icon.clone());
             slots.push(SpellSlotView {
                 spell_id,
                 name: d.map(|d| d.name.clone()).unwrap_or_default(),
                 rank: d.and_then(|d| d.rank.clone()),
                 texture,
                 passive: d.is_some_and(|d| d.passive),
-                // Stamped by the feed after the build, from live state.
+                // Read at the call (`0x53d350`, `0x809000`).
                 current: false,
                 cooldown: None,
                 // `GetSpellAutocast` answers (nil, nil) for the player book, and a known spell has
@@ -547,6 +361,7 @@ pub(crate) fn cast_spell(
     spell_id: u32,
     at: benilla_ui::script::CastAt,
     via_book: bool,
+    vm: &benilla_ui::script::UiScript,
 ) {
     let crate::spell::ScriptCast {
         targeting,
@@ -593,9 +408,9 @@ pub(crate) fn cast_spell(
     }
     debug!(
         "ui_spellbook: cast {spell_id} at {at:?} (selection {:?})",
-        targeting.selection.guid
+        targeting.selected().1
     );
-    let aim = targeting.aim(tokens, &at);
+    let aim = targeting.aim(tokens, &at, crate::ui_unit::VmUnits::of(vm));
     ladder.send_spell(spell_id, &targeting.context_at(aim), aim.passed());
 }
 
@@ -660,8 +475,6 @@ mod tests {
             None,
             1,
             1,
-            None,
-            None,
         );
 
         assert_eq!(
@@ -746,8 +559,6 @@ mod tests {
             None,
             1,
             1,
-            None,
-            None,
         );
         let ids = |slots: &[SpellSlotView]| slots.iter().map(|s| s.spell_id).collect::<Vec<_>>();
         assert_eq!(ids(&book.slots), [133]);
@@ -776,8 +587,6 @@ mod tests {
             None,
             1,
             1,
-            None,
-            None,
         )
         .0;
 
@@ -800,109 +609,46 @@ mod tests {
         );
     }
 
-    /// Keyed on `Effect[0] == SPELL_EFFECT_ATTACK`, not the id; `None` keeps the spell's icon.
+    /// Keyed on `Effect[0] == SPELL_EFFECT_ATTACK`, not the id: the resolved face stands in for the
+    /// record's `Temp`, and with no player there is none (`0x53dc8c`).
     #[test]
-    fn build_book_attack_shows_the_resolved_icon_by_effect() {
-        const ATTACK: u32 = 6603;
+    fn the_attack_shows_the_resolved_face_by_effect() {
         let mut attack = spell("Attack", None, 0x10);
         attack.icon = Some("Interface\\Icons\\Temp".into()); // the real DBC placeholder
         attack.effects[0] = 78; // SPELL_EFFECT_ATTACK
-        let catalog = SpellCatalog::from_displays(HashMap::from([(ATTACK, attack)]));
-        let known: BTreeSet<u32> = [ATTACK].into_iter().collect();
-
-        // The feed's resolved icon, the weapon or Spell-Reset, wins over Temp.
         for resolved in [
             "Interface\\Icons\\INV_Sword_04",
             "Interface\\Buttons\\Spell-Reset",
         ] {
-            let book = build_book(
-                &known,
-                &catalog,
-                &SummonPropertiesCatalog::default(),
-                None,
-                1,
-                1,
-                Some(resolved.into()),
-                None,
-            )
-            .0;
-            assert_eq!(book.slots.len(), 1);
-            assert_eq!(book.slots[0].spell_id, ATTACK);
-            assert_eq!(book.slots[0].texture.as_deref(), Some(resolved));
+            let t = book_texture(&attack, || Some(resolved.into()), || None);
+            assert_eq!(t.as_deref(), Some(resolved));
         }
-
-        // No character: the spell's own icon.
-        let bare = build_book(
-            &known,
-            &catalog,
-            &SummonPropertiesCatalog::default(),
-            None,
-            1,
-            1,
-            None,
-            None,
-        )
-        .0;
         assert_eq!(
-            bare.slots[0].texture.as_deref(),
-            Some("Interface\\Icons\\Temp")
+            book_texture(&attack, || None, || None),
+            None,
+            "no player answers no texture"
         );
     }
 
     /// Both bits (`Attributes & 0x2`, `AttributesEx2 & 0x20`) substitute; Throw's `0x2` alone does
-    /// not, and without a weapon the spell keeps its own icon, never Spell-Reset.
+    /// not, and without a ranged weapon the spell keeps its own icon (`0x53dcb7`).
     #[test]
-    fn build_book_ranged_shots_borrow_the_ranged_weapon_icon() {
-        const AUTO_SHOT: u32 = 75;
-        const THROW: u32 = 2764;
+    fn ranged_shots_borrow_the_ranged_weapon_face() {
         let mut auto_shot = spell("Auto Shot", None, 0x2);
         auto_shot.icon = Some("Interface\\Icons\\Ability_AutoShot".into());
         auto_shot.attributes_ex2 = 0x20;
         let mut throw = spell("Throw", None, 0x2);
         throw.icon = Some("Interface\\Icons\\Ability_Throw".into());
-        let catalog =
-            SpellCatalog::from_displays(HashMap::from([(AUTO_SHOT, auto_shot), (THROW, throw)]));
-        let known: BTreeSet<u32> = [AUTO_SHOT, THROW].into_iter().collect();
-
         let bow = "Interface\\Icons\\INV_Weapon_Bow_02";
-        let book = build_book(
-            &known,
-            &catalog,
-            &SummonPropertiesCatalog::default(),
-            None,
-            1,
-            1,
-            None,
-            Some(bow.into()),
-        )
-        .0;
-        let icon_of = |b: &SpellBookState, id: u32| {
-            b.slots
-                .iter()
-                .find(|s| s.spell_id == id)
-                .and_then(|s| s.texture.clone())
-        };
-        assert_eq!(icon_of(&book, AUTO_SHOT).as_deref(), Some(bow));
+        let with_bow = |d| book_texture(d, || None, || Some(bow.into()));
+        assert_eq!(with_bow(&auto_shot).as_deref(), Some(bow));
         assert_eq!(
-            icon_of(&book, THROW).as_deref(),
+            with_bow(&throw).as_deref(),
             Some("Interface\\Icons\\Ability_Throw"),
             "ranged-slot alone (no auto-repeat bit) keeps the spell icon"
         );
-
-        // No ranged weapon: Auto Shot keeps its own icon.
-        let bare = build_book(
-            &known,
-            &catalog,
-            &SummonPropertiesCatalog::default(),
-            None,
-            1,
-            1,
-            None,
-            None,
-        )
-        .0;
         assert_eq!(
-            icon_of(&bare, AUTO_SHOT).as_deref(),
+            book_texture(&auto_shot, || None, || None).as_deref(),
             Some("Interface\\Icons\\Ability_AutoShot")
         );
     }

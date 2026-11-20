@@ -1,621 +1,349 @@
-//! The NPC-session range guard: a window bound to a live NPC (merchant, gossip, questgiver and the
-//! rest) closes client-side, sending nothing as 1.12 does, when the player walks out of range or
-//! the NPC despawns; the window's feed then fires its `*_CLOSED`.
-//!
-//! The reference's watchdog, run every frame from the world frame's layer update. The NPC range is
-//! the cursor's own 50/9 yd service gate ([`SERVICE_RANGE_SQ`], 5.5556 yd centre to centre), and
-//! the leash belongs to the latched object, 14 yd for a player ([`leash_sq`]).
+//! The interact target (`0xbd07a8`), the one NPC, player or GameObject every NPC window is bound
+//! to: a window's open sets it (`0x51fce0`), whose clear of the held one runs the interaction close
+//! (`0x512e60`) and so closes the window bound to it; a window's close clears it (`0x518d50`); and
+//! the watchdog (`0x51fde0`), run every frame, clears it when the player leaves its reach or it
+//! goes.
 
 use bevy::prelude::*;
 
-use crate::net::{ClientCommand, GuidIndex, NetCommands, SelfPlayer};
-use crate::target::SERVICE_RANGE_SQ;
-use benilla_world::schedule::WorldStage;
+use crate::net::{GuidIndex, ObjectStore, SelfPlayer};
 
-/// Owns [`InteractNpc`] and its feed, read by the `"npc"` portrait and the interaction face-me.
+/// Owns [`InteractTarget`], its watchdog and its cues.
 pub(crate) struct UiSessionPlugin;
 
 impl Plugin for UiSessionPlugin {
     fn build(&self, app: &mut App) {
-        // Inside the net chain, after the apply pass that opens and swaps sessions and before the
-        // facing chain: a `MERCHANT_SHOW` handler reads `UnitName("NPC")` the frame it opens.
-        app.init_resource::<InteractNpc>()
+        app.init_resource::<InteractTarget>()
+            .init_resource::<InteractRange>()
+            .add_message::<InteractCue>()
             .add_systems(
                 Update,
-                feed_interact_npc
-                    .in_set(WorldStage::Net)
-                    .after(crate::net::apply_net_updates)
-                    .before(crate::net::drive_display_facing),
-            )
-            // After every window's close in the frame, which it detects against the last frame.
-            .add_systems(PostUpdate, close_interaction);
+                (
+                    // Ahead of the press, as the world frame's update runs before input.
+                    update_interact_target
+                        .after(crate::net::apply_net_updates)
+                        .before(crate::ui_script::UiPress),
+                    deliver_interact_cues.before(benilla_world::schedule::WorldStage::Present),
+                ),
+            );
     }
 }
 
-/// A UI session bound to a live NPC, or a GameObject for the mailbox: what the range guard closes.
-/// The binder and talent-wipe questions are sessions too, as the reference re-runs its
-/// interact-range test against a latched guid. Each NPC window registers
-/// [`close_npc_session_out_of_range::<T>`] ahead of its feed so the close fires its `*_CLOSED` the
-/// same frame; trade does not, as its cancel is server-driven.
-pub(crate) trait NpcSession: Resource {
+/// A window bound to the interact target: its NPC, and its client-side close.
+pub(crate) trait NpcSession {
     /// The bound NPC's guid; `None` when no window is open.
     fn npc(&self) -> Option<u64>;
     /// The window's client-side close, with no packet: the same clear its close button does.
     fn close(&mut self);
-    /// What a walk-away close sends first, if anything. The reference's watchdog calls the quest
-    /// session's end directly, not `DeclineQuest`, so walking away from an NPC's quest panel sends
-    /// nothing, while a shared quest still owes the sharer `MSG_QUEST_PUSH_RESULT{DECLINE_QUEST}`.
-    fn walk_away_send(&self, _npc: u64) -> Option<ClientCommand> {
+}
+
+/// The reach the watchdog holds the target to, squared (`0xbd0798`), written by the set when the target resolves: `(100/9)²` for a player (`0x51fd71`), `(combat reach + 4)²` for a unit (`0x51fd84`-`0x51fd96`), the type's interact distance squared for a GameObject (`0x51fdc9`); zero or less is never watched (`0x51fe09`).
+#[derive(Resource, Default, Debug, PartialEq)]
+pub(crate) struct InteractRange(pub(crate) f32);
+
+/// A player target's reach squared, `(100/9)²` (`0xac8a68`).
+const PLAYER_INTERACT_SQ: f32 = 123.456_78;
+
+/// A unit target's reach past its combat reach (`0x9e8d2c`).
+const UNIT_REACH_PAD: f32 = 4.0;
+
+/// The reach the set stores for `guid`, `None` when it does not resolve (the stored reach stays, `0x51fd58`).
+fn interact_range_sq(store: &ObjectStore, guid: u64) -> Option<f32> {
+    let f = &store.0;
+    if benilla_protocol::guid::is_player(guid) {
+        Some(PLAYER_INTERACT_SQ)
+    } else if f.is_unit() {
+        let reach = f.unit_combat_reach() + UNIT_REACH_PAD;
+        Some(reach * reach)
+    } else if benilla_protocol::guid::is_gameobject(guid) {
+        Some(crate::target::cursor_mode::go_interact_range_sq(
+            f.gameobject_type_id(),
+        ))
+    } else {
         None
     }
 }
 
-/// The walk-away leash, set by the latched object's type, not the window: the reference's stores
-/// the opener's range and overwrites it for an object with the PLAYER typemask bit. Thirteen of the
-/// client's fourteen arming sites push 50/9 yd ([`SERVICE_RANGE_SQ`]); a player gets
-/// `10.0 + 4.0 = 14.0` yd, which here means a shared quest's sharer.
-fn leash_sq(npc: u64) -> f32 {
-    if benilla_protocol::guid::is_player(npc) {
-        PLAYER_LEASH_SQ
-    } else {
-        SERVICE_RANGE_SQ
-    }
-}
-
-/// `14.0²`, the leash for a session latched onto a player.
-const PLAYER_LEASH_SQ: f32 = 196.0;
-
-/// Whether an open NPC window switched to a different NPC (`Some(a)` to `Some(b)`). Stock
-/// `ShowUIPanel` returns early for a visible frame (`UIParent.lua:650`), so the client fires
-/// `*_CLOSED` then `*_SHOW`, both sounds; each feed does the same, then consumes the close intent
-/// its own `*_CLOSED` queued so the drain does not wipe the new session.
-pub(crate) fn npc_switched(prev: Option<u64>, now: Option<u64>) -> bool {
-    matches!((prev, now), (Some(a), Some(b)) if a != b)
-}
-
-/// Close `T`'s open session when the player leaves the leash or the NPC despawns.
-pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
-    mut session: ResMut<T>,
+/// The interact target's watchdog (`0x51fde0`): a held target with a reach is cleared with the goodbye (`0x51ff05`) when it is gone (`0x51fe2e`) or disabled (`0x51fe34`, which benilla's disable meets by taking the guid out of the index at once), when we are (`0x51fe5c`), when a GameObject we cannot interact with (`0x51fe77`: a ghost, or its reaction below neutral) or out of its reach (`0x51fe86`), when a player we cannot cooperate with (`0x51feba`) or a unit we cannot interact with (`0x51fed4`), or when either is past the stored reach (`0x51fef4`); an item is never watched (`0x51fe4f`).
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+pub(crate) fn update_interact_target(
+    target: Res<InteractTarget>,
+    range: Res<InteractRange>,
     index: Res<GuidIndex>,
-    commands: Res<NetCommands>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
+    me: Query<(Entity, &Transform, Option<&ObjectStore>), With<SelfPlayer>>,
+    objects: Query<(&Transform, Option<&ObjectStore>)>,
+    factions: Option<Res<crate::target::Factions>>,
+    reputations: Option<Res<crate::net::Reputations>>,
+    party: Option<Res<crate::ui_party::GroupState>>,
+    mut queue: Commands,
 ) {
-    let Some(npc) = session.npc() else { return };
-    let Some(self_tf) = self_q.iter().next() else {
+    let Some(guid) = target.0 else {
         return;
     };
-    // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's
-    // compare.
-    let out = match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
-        Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
-        None => true, // the NPC despawned out from under the window
-    };
-    if out {
-        debug!("ui_session: NPC {npc:#x} out of range/gone — client-side close");
-        if let Some(cmd) = session.walk_away_send(npc) {
-            let _ = commands.0.send(cmd);
-        }
-        session.close();
+    if range.0 <= 0.0 || benilla_protocol::guid::is_item(guid) {
+        return;
     }
-}
-
-/// The windows the interaction close `0x512e60` walks, in its order; trade, the item text, the mail
-/// and the guild bank close by their own paths.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct InteractWindows<'w> {
-    gossip: Option<ResMut<'w, crate::ui_gossip::GossipState>>,
-    quest: Option<ResMut<'w, crate::ui_quest::QuestGiver>>,
-    merchant: Option<ResMut<'w, crate::ui_merchant::MerchantOpen>>,
-    taxi: Option<ResMut<'w, crate::ui_taxi::TaxiState>>,
-    trainer: Option<ResMut<'w, crate::ui_trainer::TrainerOpen>>,
-    bank: Option<ResMut<'w, crate::ui_bank::BankOpen>>,
-    registrar: Option<ResMut<'w, crate::ui_petition::GuildRegistrarState>>,
-    tabard: Option<ResMut<'w, crate::ui_tabard::TabardOpen>>,
-    auction: Option<ResMut<'w, crate::ui_auction::AuctionOpen>>,
-    stable: Option<ResMut<'w, crate::ui_stable::StableOpen>>,
-    petition_vendor: Option<ResMut<'w, crate::ui_petition::PetitionVendorState>>,
-    battlemaster: Option<ResMut<'w, crate::ui_battlefield::Battlefield>>,
-}
-
-/// [`InteractWindows`]' count; the gossip menu is first.
-const INTERACT_WINDOWS: usize = 12;
-
-impl InteractWindows<'_> {
-    fn npcs(&self) -> [Option<u64>; INTERACT_WINDOWS] {
-        fn npc<T: NpcSession>(s: &Option<ResMut<T>>) -> Option<u64> {
-            s.as_ref().and_then(|s| s.npc())
-        }
-        [
-            npc(&self.gossip),
-            npc(&self.quest),
-            npc(&self.merchant),
-            npc(&self.taxi),
-            npc(&self.trainer),
-            npc(&self.bank),
-            npc(&self.registrar),
-            npc(&self.tabard),
-            npc(&self.auction),
-            npc(&self.stable),
-            npc(&self.petition_vendor),
-            npc(&self.battlemaster),
-        ]
-    }
-
-    fn close(&mut self, window: usize) {
-        fn close<T: NpcSession>(s: &mut Option<ResMut<T>>) {
-            if let Some(s) = s.as_mut() {
-                s.close();
+    let object = index.0.get(&guid).copied();
+    let clear = match (object.and_then(|e| objects.get(e).ok()), me.single().ok()) {
+        (None, _) | (_, None) => true,
+        (Some((tf, store)), Some((me_entity, me_tf, me_store))) => {
+            let dist_sq = tf.translation.distance_squared(me_tf.translation);
+            if benilla_protocol::guid::is_gameobject(guid) {
+                let type_id = store.map_or(0, |s| s.0.gameobject_type_id());
+                let empty = crate::net::Reputations::default();
+                let creator = store
+                    .and_then(|s| s.0.gameobject_created_by())
+                    .and_then(|g| index.0.get(&g))
+                    .and_then(|&e| objects.get(e).ok())
+                    .and_then(|(_, s)| s);
+                let reaction = crate::target::ring::gameobject_reaction(
+                    factions.as_deref(),
+                    reputations.as_deref().unwrap_or(&empty),
+                    crate::target::party_of(party.as_deref()),
+                    creator,
+                    store.map_or(0, |s| s.0.gameobject_faction()),
+                    me_store,
+                );
+                !crate::target::ring::can_interact_with_gameobject(me_store, reaction)
+                    || dist_sq > crate::target::cursor_mode::go_interact_range_sq(type_id)
+            } else {
+                let refused = if benilla_protocol::guid::is_player(guid) {
+                    Some(me_entity) != object
+                        && !crate::target::ring::can_cooperate_with_player(
+                            factions.as_deref(),
+                            store,
+                            me_store,
+                        )
+                } else if store.is_some_and(|s| s.0.is_unit()) {
+                    let empty = crate::net::Reputations::default();
+                    !crate::target::can_interact(
+                        store,
+                        factions.as_deref(),
+                        reputations.as_deref().unwrap_or(&empty),
+                        crate::target::party_of(party.as_deref()),
+                        me_store,
+                    )
+                } else {
+                    false
+                };
+                refused || dist_sq > range.0
             }
         }
-        match window {
-            0 => close(&mut self.gossip),
-            1 => close(&mut self.quest),
-            2 => close(&mut self.merchant),
-            3 => close(&mut self.taxi),
-            4 => close(&mut self.trainer),
-            5 => close(&mut self.bank),
-            6 => close(&mut self.registrar),
-            7 => close(&mut self.tabard),
-            8 => close(&mut self.auction),
-            9 => close(&mut self.stable),
-            10 => close(&mut self.petition_vendor),
-            _ => close(&mut self.battlemaster),
-        }
+    };
+    if clear {
+        debug!("ui_session: interact target {guid:#x} out of reach or gone — clearing it");
+        queue.queue(move |world: &mut World| {
+            clear_interact_target(world, guid);
+            crate::ui_script::live::fire_handler_events(world);
+        });
     }
 }
 
-/// The interact slot's clear (`0x518d50`): a window closing on an NPC closes the first window, in
-/// the interaction close's order, still open on it. A lone-option gossip that handed off to a
-/// trainer, vendor or flight master is that window, so closing the hand-off's window frees the
-/// re-click gate. The gossip menu's own close finds itself first (`0x58a576`).
-pub(crate) fn close_interaction(
-    mut windows: InteractWindows,
-    mut last: Local<[Option<u64>; INTERACT_WINDOWS]>,
-) {
-    let now = windows.npcs();
-    for (window, (was, is)) in last.iter().zip(now).enumerate() {
-        let (Some(npc), None) = (*was, is) else {
-            continue;
-        };
-        if window == 0 {
-            continue;
-        }
-        if let Some(other) = now.iter().position(|n| *n == Some(npc)) {
-            debug!("ui_session: window {window} closed on {npc:#x} — closing window {other} too");
-            windows.close(other);
-        }
-    }
-    *last = windows.npcs();
+/// What the interact target's set and clear do to the object they name, past the window walk: the NPC sound, the base re-pick and the GameObject's own interaction legs.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InteractCue {
+    /// The NPC sound's hello on a set to a new unit (`0x51fda4`) or goodbye on a clear with no new target (`0x518da5`).
+    Sound { guid: u64, hello: bool },
+    /// The base animation's re-pick (`0x51fdaf`, `0x518db0`).
+    RePick(u64),
+    /// The GameObject's interaction start (`0x51fdc2` -> `0x70bab0`) or close (`0x5130c4` -> `0x70bac0`).
+    GameObject { guid: u64, start: bool },
 }
 
-/// The `"npc"` unit: the open [`NpcSession`]'s world entity and guid, read by the portrait booth
-/// as it reads [`crate::target::Selection`] for `"target"`. Only one session is open in play.
-#[derive(Resource, Default, PartialEq, Eq)]
-pub(crate) struct InteractNpc(pub(crate) Option<Entity>, pub(crate) Option<u64>);
+/// The interact target (`0xbd07a8`): every NPC window's open sets it (`0x51fce0`) and the interaction close zeroes it first (`0x512e89`); the `"npc"` token, the portrait, the face-me and the animation read it. Field 1 holds the cues a set or clear made inside a Lua call, played once the call returns.
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub(crate) struct InteractTarget(pub(crate) Option<u64>, pub(crate) Vec<InteractCue>);
 
-/// Collapse the portrait-bound sessions into [`InteractNpc`]: they are mutually exclusive, so the
-/// first open one in the chain wins. `Option<Res<_>>` lets a test mount it without every window.
-pub(crate) fn feed_interact_npc(
-    gossip: Option<Res<crate::ui_gossip::GossipState>>,
-    quest: Option<Res<crate::ui_quest::QuestGiver>>,
-    merchant: Option<Res<crate::ui_merchant::MerchantOpen>>,
-    trainer: Option<Res<crate::ui_trainer::TrainerOpen>>,
-    taxi: Option<Res<crate::ui_taxi::TaxiState>>,
-    // Trade's "npc" is the partner, a live player.
-    trade: Option<Res<crate::ui_trade::TradeSession>>,
-    bank: Option<Res<crate::ui_bank::BankOpen>>,
-    auction: Option<Res<crate::ui_auction::AuctionOpen>>,
-    // Not covered by the gossip arm: vmangos closes the gossip menu before it sends
-    // `SMSG_PETITION_SHOWLIST` (`Player.cpp:12428-12431`).
-    registrar: Option<Res<crate::ui_petition::GuildRegistrarState>>,
-    // A menuless stable master is asked for its list straight from the interact, the reference's
-    // path, with no gossip session behind it.
-    stable: Option<Res<crate::ui_stable::StableOpen>>,
-    tabard: Option<Res<crate::ui_tabard::TabardOpen>>,
-    // The arena registrar's vendor and the battlemaster each set the interact target
-    // (`0x5a22a0`, `0x5496d0`).
-    petition_vendor: Option<Res<crate::ui_petition::PetitionVendorState>>,
-    battlemaster: Option<Res<crate::ui_battlefield::Battlefield>>,
-    index: Option<Res<GuidIndex>>,
-    mut out: ResMut<InteractNpc>,
+impl InteractTarget {
+    /// A target holding `guid`.
+    #[cfg(test)]
+    pub(crate) fn holding(guid: u64) -> Self {
+        Self(Some(guid), Vec::new())
+    }
+
+    /// The clear's own legs on a held `guid` (`0x518d50`): a non-player unit plays the goodbye unless a new target follows (`0x518d9b`-`0x518da5`) and re-picks its base (`0x518db0`); then the zero (`0x512e89`) and, past the walk, a GameObject's close (`0x5130c4`). Whether `guid` was held.
+    fn clear_held(&mut self, guid: u64, replaced: bool) -> bool {
+        if self.0 != Some(guid) {
+            return false;
+        }
+        if benilla_protocol::guid::is_creature_or_pet(guid) {
+            if !replaced {
+                self.1.push(InteractCue::Sound { guid, hello: false });
+            }
+            self.1.push(InteractCue::RePick(guid));
+        }
+        self.0 = None;
+        self.close_cue(guid);
+        true
+    }
+
+    /// The interaction close's GameObject leg (`0x5130b5`-`0x5130c4`).
+    fn close_cue(&mut self, guid: u64) {
+        if benilla_protocol::guid::is_gameobject(guid) {
+            self.1.push(InteractCue::GameObject { guid, start: false });
+        }
+    }
+
+    /// The clear inside a Lua call (`0x518d50` with 0): the held `guid`'s legs and zero, the window's own leg left to the caller; whether it was held.
+    pub(crate) fn clear_in_call(&mut self, guid: u64) -> bool {
+        self.clear_held(guid, false)
+    }
+
+    /// The interaction close run straight, with no clear ahead of it (the world leave's `0x528dce`): the zero and the GameObject leg; the old target.
+    pub(crate) fn close_interaction(&mut self) -> Option<u64> {
+        let old = self.0.take()?;
+        self.close_cue(old);
+        Some(old)
+    }
+}
+
+/// Hand the cues the target's set and clear made to their players.
+fn flush_cues(world: &mut World) {
+    let cues = match world.get_resource_mut::<InteractTarget>() {
+        Some(mut t) if !t.1.is_empty() => std::mem::take(&mut t.1),
+        _ => return,
+    };
+    if world.contains_resource::<Messages<InteractCue>>() {
+        world.write_message_batch(cues);
+    }
+}
+
+/// The cues a set or clear made inside a Lua call, played after the call.
+pub(crate) fn deliver_interact_cues(
+    mut target: ResMut<InteractTarget>,
+    mut out: MessageWriter<InteractCue>,
 ) {
-    let guid = gossip
-        .and_then(|s| s.npc())
-        .or_else(|| quest.and_then(|s| s.npc()))
-        .or_else(|| merchant.and_then(|s| s.npc()))
-        .or_else(|| trainer.and_then(|s| s.npc()))
-        .or_else(|| taxi.and_then(|s| s.npc()))
-        .or_else(|| trade.and_then(|s| s.npc()))
-        .or_else(|| bank.and_then(|s| s.npc()))
-        .or_else(|| auction.and_then(|s| s.npc()))
-        .or_else(|| registrar.and_then(|s| s.npc()))
-        .or_else(|| stable.and_then(|s| s.npc()))
-        .or_else(|| tabard.and_then(|s| s.npc()))
-        .or_else(|| petition_vendor.and_then(|s| s.npc()))
-        .or_else(|| battlemaster.and_then(|s| s.npc()));
-    // Field 0 is the entity the booth bakes and the facing chain steers by; field 1 is the guid
-    // `crate::ui_unit` names the token by, which holds even when the entity is not streamed.
-    // Written only on a change: the unit feed's dirty gate reads `is_changed()` on it.
-    let next = InteractNpc(
-        guid.and_then(|g| index.and_then(|i| i.0.get(&g).copied())),
-        guid,
-    );
-    out.set_if_neq(next);
+    if !target.1.is_empty() {
+        out.write_batch(std::mem::take(&mut target.1));
+    }
+}
+
+/// The interact target's world entity, for the readers that steer or bake by it.
+pub(crate) fn interact_entity(target: &InteractTarget, index: &GuidIndex) -> Option<Entity> {
+    target.0.and_then(|g| index.0.get(&g).copied())
+}
+
+/// The interact target's set (`0x51fce0`): a held one, even the same guid, is cleared first with "a new one follows" (`0x51fd08`-`0x51fd1c`), whose interaction close takes the window bound to it; then the new one is stored (`0x51fd26`), a different non-player unit plays its hello and re-picks its base (`0x51fd82`-`0x51fdaf`), and a GameObject starts its interaction (`0x51fdc2`).
+pub(crate) fn set_interact_target(world: &mut World, guid: u64) {
+    let held = world.get_resource::<InteractTarget>().and_then(|t| t.0);
+    if let Some(old) = held {
+        clear_with(world, old, guid != 0);
+    }
+    let same = held == Some(guid);
+    // Stored once the close's events have fired (`0x51fd24`).
+    crate::ui_script::live::in_turn(world, move |w| {
+        if let Some(mut t) = w.get_resource_mut::<InteractTarget>() {
+            t.0 = Some(guid);
+            if benilla_protocol::guid::is_creature_or_pet(guid) && !same {
+                t.1.push(InteractCue::Sound { guid, hello: true });
+                t.1.push(InteractCue::RePick(guid));
+            } else if benilla_protocol::guid::is_gameobject(guid) {
+                t.1.push(InteractCue::GameObject { guid, start: true });
+            }
+        }
+        flush_cues(w);
+        let reach = w
+            .get_resource::<GuidIndex>()
+            .and_then(|i| i.0.get(&guid).copied())
+            .and_then(|e| w.get::<ObjectStore>(e))
+            .and_then(|s| interact_range_sq(s, guid));
+        if let (Some(reach), Some(mut range)) = (reach, w.get_resource_mut::<InteractRange>()) {
+            range.0 = reach;
+        }
+        if w.contains_non_send::<benilla_ui::script::UiScript>() {
+            if let Err(e) = w.run_system_cached_with(crate::ui_unit::push_npc_unit, guid) {
+                warn!("ui_session: the \"npc\" unit was not pushed: {e}");
+            }
+        }
+    });
+}
+
+/// The interact target's clear (`0x518d50` with 0): a held target equal to `guid` runs the interaction close (`0x518db7` -> `0x512e60`), the goodbye played.
+pub(crate) fn clear_interact_target(world: &mut World, guid: u64) {
+    clear_with(world, guid, false);
+}
+
+/// The clear with its second argument: `replaced` is the setter's "a new target follows" (`0x51fd0c`-`0x51fd16`), which keeps the goodbye quiet.
+fn clear_with(world: &mut World, guid: u64, replaced: bool) {
+    let cleared = world
+        .get_resource_mut::<InteractTarget>()
+        .is_some_and(|mut t| t.clear_held(guid, replaced));
+    if cleared {
+        close_window_on(world, guid);
+        flush_cues(world);
+    }
+}
+
+/// The interact target's clear on whatever it holds (`0x518d50` passed `0xbd07a8` itself): the interaction close always runs.
+pub(crate) fn clear_held_interact_target(world: &mut World) {
+    if let Some(held) = world.get_resource::<InteractTarget>().and_then(|t| t.0) {
+        clear_interact_target(world, held);
+    }
+}
+
+/// An open window's NPC, read from its resource.
+fn npc_of<T: NpcSession + Resource>(world: &World) -> Option<u64> {
+    world.get_resource::<T>().and_then(|s| s.npc())
+}
+
+/// The interaction close's walk (`0x512e60`) with the target already zeroed: the first window bound to `old`, in its order, closes through its leg.
+fn close_window_on(world: &mut World, old: u64) {
+    let on = |npc: Option<u64>| npc == Some(old);
+    if on(npc_of::<crate::ui_trade::TradeSession>(world)) {
+        // `0x512ea4`.
+        crate::ui_trade::close_by_interaction(world);
+    } else if crate::ui_item_text::close_by_interaction(world, old) {
+        // `0x512ecf`.
+    } else if on(npc_of::<crate::ui_gossip::GossipState>(world)) {
+        // `0x512ef6`.
+        crate::ui_gossip::set_npc(world, 0);
+    } else if on(world
+        .get_non_send_resource::<crate::ui_quest::QuestGiver>()
+        .and_then(|q| q.npc()))
+    {
+        // `0x512f1a`.
+        crate::ui_quest::close_interaction(world);
+    } else if on(npc_of::<crate::ui_merchant::MerchantOpen>(world)) {
+        // `0x512f3a`.
+        crate::ui_merchant::close_by_interaction(world);
+    } else if on(npc_of::<crate::ui_taxi::TaxiState>(world)) {
+        // `0x512f58`.
+        crate::ui_taxi::close_by_interaction(world);
+    } else if on(npc_of::<crate::ui_trainer::TrainerOpen>(world)) {
+        // `0x512f80`.
+        crate::ui_trainer::set_none(world);
+    } else if on(world
+        .get_non_send_resource::<crate::ui_bank::BankOpen>()
+        .and_then(|b| b.banker))
+    {
+        // `0x512fa7`.
+        crate::ui_bank::bank_leg(world);
+    } else if on(crate::ui_guild_bank::banker(world)) {
+        // `0x512fd1`.
+        crate::ui_guild_bank::guild_bank_leg(world);
+    } else if on(npc_of::<crate::ui_petition::GuildRegistrarState>(world)) {
+        // `0x512ff1`.
+        crate::ui_petition::close_registrar_by_interaction(world);
+    } else if on(npc_of::<crate::ui_tabard::TabardOpen>(world)) {
+        // `0x51300e`.
+        crate::ui_tabard::close_by_interaction(world);
+    } else if on(npc_of::<crate::ui_mail::MailOpen>(world)) {
+        // `0x51302d`.
+        crate::ui_mail::close_by_interaction(world);
+    } else if on(npc_of::<crate::ui_auction::AuctionOpen>(world)) {
+        // `0x51304a`.
+        crate::ui_auction::close_by_interaction(world);
+    } else if on(npc_of::<crate::ui_stable::StableOpen>(world)) {
+        // `0x513065`.
+        crate::ui_stable::close_by_interaction(world);
+    } else if on(npc_of::<crate::ui_petition::PetitionVendorState>(world)) {
+        // `0x513083`.
+        crate::ui_petition::close_vendor_by_interaction(world);
+    } else if on(npc_of::<crate::ui_battlefield::Battlefield>(world)) {
+        // `0x51309f`.
+        crate::ui_battlefield::close_by_interaction(world);
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ui_merchant::MerchantOpen;
-
-    /// A `HIGHGUID_UNIT` guid: a bare `0x42` would be a player's (`guid::is_player`) and get the
-    /// 14 yd leash.
-    const VENDOR: u64 = 0xF130_0000_0000_0042;
-
-    #[test]
-    fn out_of_range_or_despawned_npc_closes_the_session() {
-        let mut app = App::new();
-        app.init_resource::<MerchantOpen>();
-        app.init_resource::<GuidIndex>();
-        // The merchant owes no walk-away send, but the system needs the channel.
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        app.insert_resource(NetCommands(tx));
-        app.add_systems(Update, close_npc_session_out_of_range::<MerchantOpen>);
-        app.world_mut()
-            .spawn((SelfPlayer, Transform::from_xyz(0.0, 0.0, 0.0)));
-        let vendor = app
-            .world_mut()
-            .spawn(Transform::from_xyz(5.0, 0.0, 0.0))
-            .id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(VENDOR, vendor);
-
-        // 5.0 yd < the 5.5556 yd service gate: stays open.
-        app.world_mut()
-            .resource_mut::<MerchantOpen>()
-            .open(VENDOR, vec![]);
-        app.update();
-        assert!(app.world().resource::<MerchantOpen>().is_open());
-
-        // 6 yd: past the gate, so it closes.
-        *app.world_mut()
-            .entity_mut(vendor)
-            .get_mut::<Transform>()
-            .unwrap() = Transform::from_xyz(6.0, 0.0, 0.0);
-        app.update();
-        assert!(!app.world().resource::<MerchantOpen>().is_open());
-
-        // Re-open, then the NPC despawns out from under the window: closes too.
-        app.world_mut()
-            .resource_mut::<MerchantOpen>()
-            .open(VENDOR, vec![]);
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .remove(&VENDOR);
-        app.update();
-        assert!(!app.world().resource::<MerchantOpen>().is_open());
-    }
-
-    /// The stock lone-option shortcut (`GOSSIP_SHOW` → `SelectGossipOption(1)`) leaves the gossip
-    /// session open behind the trainer list; closing the trainer closes it too, so the gate reads
-    /// no NPC and the next right-click goes out.
-    #[test]
-    fn closing_a_hand_off_window_closes_the_gossip_behind_it() {
-        use crate::ui_gossip::GossipState;
-        use crate::ui_trainer::TrainerOpen;
-        const TRAINER: u64 = 0xF130_0000_0000_0911;
-        const OTHER: u64 = 0xF130_0000_0000_0912;
-
-        let mut app = App::new();
-        app.init_resource::<GossipState>()
-            .init_resource::<MerchantOpen>()
-            .init_resource::<TrainerOpen>()
-            .init_resource::<InteractNpc>()
-            .add_systems(Update, (close_interaction, feed_interact_npc).chain());
-        app.world_mut().resource_mut::<GossipState>().npc = Some(TRAINER);
-        app.world_mut().resource_mut::<TrainerOpen>().trainer = Some(TRAINER);
-        app.update();
-        assert_eq!(app.world().resource::<InteractNpc>().1, Some(TRAINER));
-
-        // `CloseTrainer()`.
-        app.world_mut().resource_mut::<TrainerOpen>().close();
-        app.update();
-        assert_eq!(app.world().resource::<GossipState>().npc, None);
-        app.update();
-        assert_eq!(
-            app.world().resource::<InteractNpc>().1,
-            None,
-            "the re-click gate is free"
-        );
-
-        // A vendor hand-off the same way.
-        app.world_mut().resource_mut::<GossipState>().npc = Some(TRAINER);
-        app.world_mut()
-            .resource_mut::<MerchantOpen>()
-            .open(TRAINER, vec![]);
-        app.update();
-        app.world_mut().resource_mut::<MerchantOpen>().clear();
-        app.update();
-        assert_eq!(app.world().resource::<GossipState>().npc, None);
-
-        // The gossip menu closing leaves another window on the same NPC open, and a window
-        // closing on another NPC leaves the gossip alone.
-        app.world_mut().resource_mut::<GossipState>().npc = Some(TRAINER);
-        app.world_mut()
-            .resource_mut::<MerchantOpen>()
-            .open(TRAINER, vec![]);
-        app.update();
-        app.world_mut().resource_mut::<GossipState>().npc = None;
-        app.update();
-        assert!(app.world().resource::<MerchantOpen>().is_open());
-        app.world_mut().resource_mut::<MerchantOpen>().clear();
-        app.world_mut().resource_mut::<GossipState>().npc = Some(OTHER);
-        app.world_mut().resource_mut::<TrainerOpen>().trainer = Some(TRAINER);
-        app.update();
-        app.world_mut().resource_mut::<TrainerOpen>().close();
-        app.update();
-        assert_eq!(app.world().resource::<GossipState>().npc, Some(OTHER));
-    }
-
-    /// A player-latched quest panel is leashed at 14 yd and an NPC-latched one at 5.56 yd; walking
-    /// away from a share still declines it, from an NPC's panel it sends nothing.
-    #[test]
-    fn the_walk_away_leash_is_the_givers_own_and_a_share_still_answers() {
-        use crate::ui_quest::{QuestGiver, QuestView};
-
-        fn detail(npc: u64) -> QuestView {
-            QuestView::Detail(benilla_protocol::messages::QuestDetails {
-                npc,
-                quest_id: 1,
-                title: "A Threat Within".into(),
-                details: String::new(),
-                objectives: String::new(),
-                auto_launched: false,
-                choices: Vec::new(),
-                rewards: Vec::new(),
-                ..Default::default()
-            })
-        }
-
-        const SHARER: u64 = 0x0000_0000_0000_002A; // HIGHGUID_PLAYER: a zero high word
-        const NPC: u64 = 0xF130_0000_0000_0007; // HIGHGUID_UNIT
-
-        /// One guard pass with the panel on `giver` at `dist` yd: whether it stays, what is sent.
-        fn walk(giver: u64, dist: f32) -> (bool, Vec<ClientCommand>) {
-            let (tx, rx) = crossbeam_channel::unbounded();
-            let mut app = App::new();
-            app.insert_resource(NetCommands(tx));
-            app.init_resource::<QuestGiver>();
-            app.init_resource::<GuidIndex>();
-            app.add_systems(Update, close_npc_session_out_of_range::<QuestGiver>);
-            app.world_mut()
-                .spawn((SelfPlayer, Transform::from_xyz(0.0, 0.0, 0.0)));
-            let e = app
-                .world_mut()
-                .spawn(Transform::from_xyz(dist, 0.0, 0.0))
-                .id();
-            app.world_mut()
-                .resource_mut::<GuidIndex>()
-                .0
-                .insert(giver, e);
-            app.world_mut()
-                .resource_mut::<QuestGiver>()
-                .open(giver, detail(giver));
-            app.update();
-            (
-                app.world().resource::<QuestGiver>().is_open(),
-                rx.try_iter().collect(),
-            )
-        }
-
-        // A share at 10 yd: past the NPC gate, inside the player leash.
-        let (open, sent) = walk(SHARER, 10.0);
-        assert!(open, "a share is leashed at 14 yd, not 5.56");
-        assert!(sent.is_empty(), "still in range, nothing owed: {sent:?}");
-
-        // Past 14 yd it closes and answers the sharer.
-        let (open, sent) = walk(SHARER, 15.0);
-        assert!(!open, "past the player leash the panel closes");
-        assert!(
-            matches!(
-                sent.as_slice(),
-                [ClientCommand::QuestPushResult {
-                    sharer: SHARER,
-                    quest: 0,
-                    msg: benilla_protocol::messages::QuestShareMsg::DECLINE_QUEST,
-                }]
-            ),
-            "walking away from a share declines it with quest 0, as `0x512f16` does: {sent:?}"
-        );
-
-        // An NPC giver at 10 yd: closed, silently.
-        let (open, sent) = walk(NPC, 10.0);
-        assert!(!open, "an NPC giver is still leashed at 5.56 yd");
-        assert!(
-            sent.is_empty(),
-            "the walk-away skips the giver re-open the button does: {sent:?}"
-        );
-
-        // Boundary-inclusive: exactly on the leash keeps the window (`dist² <= leash²`).
-        assert!(walk(SHARER, 14.0).0, "14.0 yd exactly is still in range");
-    }
-
-    /// No window is `None`, an unstreamed NPC is `None` and never a stale entity, and gossip wins
-    /// the chain when two sessions hold a guid (the same NPC on a browse-goods hop).
-    #[test]
-    fn interact_npc_resolves_the_open_session_to_its_entity() {
-        use crate::ui_gossip::GossipState;
-
-        let mut app = App::new();
-        app.init_resource::<GossipState>();
-        app.init_resource::<MerchantOpen>();
-        app.init_resource::<GuidIndex>();
-        app.init_resource::<InteractNpc>();
-        app.add_systems(Update, feed_interact_npc);
-
-        let npc = app.world_mut().spawn_empty().id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(VENDOR, npc);
-
-        app.update();
-        assert_eq!(app.world().resource::<InteractNpc>().0, None);
-
-        app.world_mut()
-            .resource_mut::<MerchantOpen>()
-            .open(VENDOR, vec![]);
-        app.update();
-        assert_eq!(app.world().resource::<InteractNpc>().0, Some(npc));
-
-        // A browse-goods hop: gossip holds the same guid and wins the chain.
-        app.world_mut().resource_mut::<GossipState>().npc = Some(VENDOR);
-        app.update();
-        assert_eq!(app.world().resource::<InteractNpc>().0, Some(npc));
-
-        // A guid with no index entry, an NPC not streamed.
-        app.world_mut().resource_mut::<GossipState>().npc = Some(0xdead);
-        app.update();
-        assert_eq!(app.world().resource::<InteractNpc>().0, None);
-
-        // A session missing from the chain renders a black disc where the NPC's face goes.
-        app.world_mut().resource_mut::<GossipState>().npc = None;
-        app.world_mut().resource_mut::<MerchantOpen>().close();
-        app.init_resource::<crate::ui_auction::AuctionOpen>();
-        app.world_mut()
-            .resource_mut::<crate::ui_auction::AuctionOpen>()
-            .open(VENDOR, 1);
-        app.update();
-        assert_eq!(
-            app.world().resource::<InteractNpc>().0,
-            Some(npc),
-            "the auctioneer's own portrait"
-        );
-
-        app.world_mut()
-            .resource_mut::<crate::ui_auction::AuctionOpen>()
-            .clear();
-
-        // The stable master: no gossip session carries it.
-        app.init_resource::<crate::ui_stable::StableOpen>();
-        app.world_mut()
-            .resource_mut::<crate::ui_stable::StableOpen>()
-            .open(VENDOR, 2, vec![]);
-        app.update();
-        assert_eq!(
-            app.world().resource::<InteractNpc>().0,
-            Some(npc),
-            "the stable master's own portrait"
-        );
-
-        app.world_mut().resource_mut::<GossipState>().close();
-        app.world_mut().resource_mut::<MerchantOpen>().close();
-        app.world_mut()
-            .resource_mut::<crate::ui_stable::StableOpen>()
-            .clear();
-        app.update();
-        assert_eq!(app.world().resource::<InteractNpc>().0, None);
-    }
-
-    /// Every `NpcSession` implementor in the app's sources must be in [`feed_interact_npc`]'s
-    /// chain or on the exclusion list with a reason; one missing renders a black portrait disc.
-    #[test]
-    fn every_npc_session_is_portrait_bound_or_explicitly_excluded() {
-        use std::path::Path;
-
-        /// Sessions that do not own the `"npc"` portrait token, each with its reason.
-        const EXCLUDED: &[(&str, &str)] = &[
-            // Its icon is art, not a unit bake, and must not take a portrait window's token.
-            ("MailOpen", "its window icon is art, not a unit bake"),
-            // The guild bank's window shows the guild's tabard (`GetGuildTabardFileNames`).
-            (
-                "GuildBankState",
-                "its window shows the guild tabard, not a unit bake",
-            ),
-            // Reached from an open gossip menu, which stays open behind it and heads the chain;
-            // unlike the registrar's, the server does not close it first.
-            ("TalentWipeState", "rides the still-open gossip session"),
-            ("BinderState", "rides the still-open gossip session"),
-            // The pet trainer's question, reached the same way.
-            ("PetUnlearnState", "rides the still-open gossip session"),
-        ];
-
-        // The chain's own source says what is wired.
-        // A Windows checkout may carry CRLF; the split below reads LF.
-        let this_file = include_str!("ui_session.rs").replace("\r\n", "\n");
-        let chain = this_file
-            .split_once("pub(crate) fn feed_interact_npc")
-            .expect("feed_interact_npc")
-            .1
-            .split_once("\n}\n")
-            .expect("end of feed_interact_npc")
-            .0;
-
-        let mut missing = Vec::new();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut stack = vec![root];
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).expect("read_dir") {
-                let path = entry.expect("dir entry").path();
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
-                if path.extension().is_none_or(|e| e != "rs") {
-                    continue;
-                }
-                // This file defines the trait and no session, but its own text spells the pattern.
-                if path.file_name().is_some_and(|f| f == "ui_session.rs") {
-                    continue;
-                }
-                let src = std::fs::read_to_string(&path).expect("read source");
-                for (_, rest) in src
-                    .match_indices("impl NpcSession for ")
-                    .map(|(i, _)| (i, &src[i + "impl NpcSession for ".len()..]))
-                {
-                    let ty: String = rest
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect();
-                    if ty.is_empty() || EXCLUDED.iter().any(|(name, _)| *name == ty) {
-                        continue;
-                    }
-                    // Wired means the chain's text names the type, as its `Res<...>` parameter
-                    // does; a comment naming it counts too.
-                    if !chain.contains(&ty) {
-                        missing.push(format!("{ty} (in {})", path.display()));
-                    }
-                }
-            }
-        }
-        assert!(
-            missing.is_empty(),
-            "these NpcSession windows own no `\"npc\"` portrait and are not on the exclusion \
-             list, so each renders a BLACK DISC where the NPC's face goes — wire them into \
-             `feed_interact_npc`'s chain, or add them to EXCLUDED with a reason: {missing:#?}"
-        );
-    }
-
-    #[test]
-    fn the_interact_npc_writer_is_seated_between_the_net_apply_and_the_facing_chain() {
-        use crate::test_support::runs_before;
-        let mut app = App::new();
-        app.add_plugins((crate::net::NetPlugin { connect: false }, UiSessionPlugin));
-        assert!(
-            runs_before(&mut app, crate::net::apply_net_updates, feed_interact_npc),
-            "feed_interact_npc must run after apply_net_updates"
-        );
-        assert!(
-            runs_before(
-                &mut app,
-                feed_interact_npc,
-                crate::net::drive_display_facing
-            ),
-            "drive_display_facing must run after feed_interact_npc"
-        );
-    }
-}
+mod tests;

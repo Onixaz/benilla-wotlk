@@ -3,6 +3,7 @@
 //! six sockets AzerothCore opens at level 80 (`GlyphSlot.dbc` 21-26, all unlocked) and one major
 //! glyph inscribed in socket 1 of the active group.
 
+use super::test_live::SpellAnswersExt;
 use std::collections::{BTreeSet, HashMap};
 
 use benilla_ui::script::{

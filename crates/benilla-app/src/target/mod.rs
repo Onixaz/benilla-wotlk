@@ -72,7 +72,7 @@ pub(crate) use flash::CombatFlash;
 // The discount the repair cost and the taxi fare take off their DBC prices.
 pub(crate) use price_discount::vendor_price_discount;
 #[cfg(test)]
-pub(crate) use price_discount::{stormwind_fixture, HUMAN_WARRIOR};
+pub(crate) use price_discount::{human_warrior_fields, stormwind_fixture, HUMAN_WARRIOR};
 pub(crate) use relations::{
     can_assist, can_assist_dir, can_attack, can_interact, corpse_friendly, highlight_variant,
     is_friendly, is_possessed_by, selection_color, selection_color_unheld, Assist,
@@ -101,7 +101,7 @@ pub use click::Interact;
 /// Our target, set the instant we click, as the 1.12 client does without waiting for the server,
 /// and cleared on deselect or when it streams out. `CMSG_SET_SELECTION` carries the guid, which the
 /// server records in our `UNIT_FIELD_TARGET`.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct Selection {
     pub(crate) target: Option<Entity>,
     pub(crate) guid: Option<u64>,
@@ -449,12 +449,11 @@ impl Plugin for TargetPlugin {
                     // The loot close's guid-scoped deselect.
                     click::clear_target_requests,
                     // The chat layer's by-name asks: `/target` and `/assist` commit through
-                    // `scan::commit`; `/follow` hands its subject to `crate::player`, after the
-                    // quest drain closes a giver, so `FollowUnit("questnpc")` reads this frame's.
+                    // `scan::commit`; `/follow` hands its subject to `crate::player`.
                     (
                         script::target_by_name_requests,
                         script::assist_requests,
-                        by_name::follow_requests.after(crate::ui_quest::drain_quest),
+                        by_name::follow_requests,
                     )
                         .chain(),
                     scan::auto_acquire_attacker,

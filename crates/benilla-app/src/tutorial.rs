@@ -36,7 +36,6 @@ pub(crate) mod id {
     pub(crate) const TARGETING: u32 = 0x03;
     pub(crate) const LOOTING: u32 = 0x06;
     pub(crate) const BACKPACK: u32 = 0x07;
-    pub(crate) const TRAINERS: u32 = 0x0d;
     pub(crate) const GROUPING: u32 = 0x11;
     pub(crate) const VENDORS: u32 = 0x13;
     pub(crate) const QUEST_LOG: u32 = 0x14;
@@ -65,6 +64,10 @@ pub(crate) mod id {
     pub(crate) const KEYRINGS: u32 = 0x31;
     /// The player joins a threat list, warning on, at level 14 or more (`0x52b370`).
     pub(crate) const THREAT: u32 = 0x35;
+    /// A critter joins its companion list (`0x542751`).
+    pub(crate) const COMPANION_CRITTER: u32 = 0x33;
+    /// A mount joins its companion list (`0x54275a`).
+    pub(crate) const COMPANION_MOUNT: u32 = 0x34;
     /// The bag-full line is displayed (`0x52170c`).
     pub(crate) const BAG_FULL: u32 = 0x39;
 }
@@ -548,38 +551,19 @@ impl InputHooks<'_> {
     }
 }
 
-/// The window edges the reference's handlers fire from: the trainer list (Trainers acknowledged),
-/// the vendor list (Vendors), the taxi map (Travel), and the group turning raid (Raid Groups, taken
-/// as the raid-type edge).
+/// The group turning raid (Raid Groups, taken as the raid-type edge); the vendor's open triggers
+/// Vendors itself (`0x584537`), the taxi map's Travel (`0x593792`), and the trainer list flags
+/// nothing (`0x596450`).
 #[derive(Default)]
 struct WindowWatch {
-    trainer: Option<u64>,
-    vendor: Option<u64>,
-    taxi: bool,
     raid: Option<bool>,
 }
 
 fn watch_windows(
-    trainer: Res<crate::ui_trainer::TrainerOpen>,
-    merchant: Res<crate::ui_merchant::MerchantOpen>,
-    taxi: Res<crate::ui_taxi::TaxiState>,
     group: Res<crate::ui_party::GroupState>,
     mut watch: Local<WindowWatch>,
     mut asks: MessageWriter<TutorialEvent>,
 ) {
-    if trainer.trainer.is_some() && trainer.trainer != watch.trainer {
-        asks.write(TutorialEvent::Acknowledge { id: id::TRAINERS });
-    }
-    watch.trainer = trainer.trainer;
-    if merchant.vendor.is_some() && merchant.vendor != watch.vendor {
-        asks.write(TutorialEvent::trigger(id::VENDORS));
-    }
-    watch.vendor = merchant.vendor;
-    let taxi_open = taxi.open.is_some();
-    if taxi_open && !watch.taxi {
-        asks.write(TutorialEvent::trigger(id::TRAVEL));
-    }
-    watch.taxi = taxi_open;
     let raid = group.in_group && group.group_type == crate::ui_party::GROUPTYPE_RAID;
     if raid && watch.raid == Some(false) {
         asks.write(TutorialEvent::trigger(id::RAID_GROUPS));

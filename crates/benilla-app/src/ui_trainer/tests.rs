@@ -1,5 +1,6 @@
-//! The trainer feed's tests: the laws, service resolution, the snapshot and the re-evaluator.
+//! The trainer's tests: the laws, service resolution, the list build and the re-evaluator.
 
+use super::law::{description_product, service_item_link};
 use super::*;
 use benilla_formats::{
     ItemDisplay, ItemDisplayCatalog, SpellDisplay, SPELL_ATTR_IS_TRADESKILL,
@@ -47,7 +48,6 @@ fn resolve_service(
     skill_lines: Option<&SkillLineCatalog>,
     player: &reeval::PlayerView,
 ) -> TrainerService {
-    let deps = Deps::new();
     super::resolve_service(
         wire,
         &ResolveCtx {
@@ -57,11 +57,8 @@ fn resolve_service(
             race_class: (1, 1),
             player,
             icons: None,
-            items: &deps.items,
-            commands: &deps.commands,
-            descriptions: &HashMap::from([(78, Some("Teaches a strike.".to_string()))]),
-            get: &probe_strings,
         },
+        &probe_strings,
     )
 }
 
@@ -80,8 +77,7 @@ fn wire(spell: u32, state: u8, cost: u32, req_level: u8, req_skill: u32) -> Trai
 }
 
 /// [`snapshot`] with no icon sources.
-fn snap(open: &TrainerOpen, spells: &SpellCatalog) -> Option<TrainerState> {
-    let deps = Deps::new();
+fn snap(open: &TrainerOpen, spells: &SpellCatalog) -> TrainerState {
     let player = warrior(&[]);
     snapshot(
         open,
@@ -92,11 +88,8 @@ fn snap(open: &TrainerOpen, spells: &SpellCatalog) -> Option<TrainerState> {
             race_class: (0, 0),
             player: &player,
             icons: None,
-            items: &deps.items,
-            commands: &deps.commands,
-            descriptions: &HashMap::from([(78, Some("Teaches a strike.".to_string()))]),
-            get: &probe_strings,
         },
+        &probe_strings,
     )
 }
 
@@ -361,26 +354,21 @@ fn a_passive_tradeskill_service_files_under_the_passive_header() {
     );
 }
 
-/// `GetTrainerServiceDescription` (`0x5959d0`): the parsed spell text, else a recipe's product
-/// description from the item cache.
+/// `GetTrainerServiceDescription` (`0x5959d0`): the list build leaves it to the call; a recipe with
+/// no text of its own reads its product, a spell without the tradeskill bit has no product leg.
 #[test]
-fn the_description_is_the_spell_text_else_the_recipes_product() {
+fn the_description_is_read_at_the_call_and_a_recipe_reads_its_product() {
     let spells = icon_catalog();
     let w = wire(78, trainer_spell_state::GREEN, 10, 1, 0);
     let svc = resolve_service(&w, 0, &spells, None, &warrior(&[]));
-    assert_eq!(svc.description.as_deref(), Some("Teaches a strike."));
-
-    let mut deps = Deps::new();
-    let mut t = crate::items::test_template("Copper Shortsword");
-    t.description = "A sword.".into();
-    deps.items.insert_template(777, Some(t));
     assert_eq!(
-        service_item_description(100, &spells, &deps.items, &deps.commands).as_deref(),
-        Some("A sword."),
-        "recipe 100 has no description of its own"
+        svc.description, None,
+        "parsed at the call, never at the list"
     );
+    assert_eq!(svc.item_link, None, "read off the cache at the call");
+    assert_eq!(description_product(100, &spells), Some(777));
     assert_eq!(
-        service_item_description(200, &spells, &deps.items, &deps.commands),
+        description_product(200, &spells),
         None,
         "no tradeskill bit, no product leg"
     );
@@ -410,42 +398,16 @@ fn the_description_names_the_bind_point() {
         global: &|_| None,
         printf: &crate::ui_script::token_printf,
     };
-    let mut texts = HashMap::new();
-    let services = [wire(556, trainer_spell_state::GREEN, 0, 30, 0)];
-    describe_services(&mut texts, &services, &spells, &ctx);
-    let text = texts
-        .get(&556)
-        .cloned()
-        .flatten()
-        .expect("Astral Recall has a description");
+    let d = spells.get(556).expect("Astral Recall");
+    let text = benilla_formats::substitute(
+        d.description
+            .as_deref()
+            .expect("Astral Recall has a description"),
+        d,
+        &ctx,
+    );
     assert!(text.contains("Stormwind City"), "{text}");
     assert!(!text.contains("$z"), "{text}");
-}
-
-/// A landed product record moves only the pane's fields, which `TRAINER_DESCRIPTION_UPDATE`
-/// answers; any other change is a `TRAINER_UPDATE`.
-#[test]
-fn only_an_item_record_landing_is_a_pane_update() {
-    let mut open = TrainerOpen::default();
-    open.open(
-        0x42,
-        TRAINER_TYPE_TRADESKILL,
-        vec![wire(100, trainer_spell_state::GREEN, 10, 1, 0)],
-        String::new(),
-    );
-    let before = snap(&open, &icon_catalog()).unwrap();
-    let mut landed = before.clone();
-    landed.services[0].texture = Some("ITEM".into());
-    landed.services[0].item_link = Some("link".into());
-    landed.services[0].description = Some("A sword.".into());
-    assert!(only_pane_moved(&before, &landed));
-    assert!(!only_pane_moved(&before, &before), "nothing moved");
-    let mut learned = landed.clone();
-    learned.services[0].category = TrainerServiceCategory::Used;
-    assert!(
-        !only_pane_moved(&landed, &learned),
-        "a state change re-sorts"
-    );
 }
 
 #[test]
@@ -566,11 +528,9 @@ fn ability_req_shows_the_required_rank_and_tracks_known_spells_on_real_data() {
 }
 
 #[test]
-fn snapshot_is_none_when_closed_and_lists_services_when_open() {
+fn the_list_build_lists_every_record_and_a_close_empties_them() {
     let spells = empty_catalog();
     let mut open = TrainerOpen::default();
-    assert!(snap(&open, &spells).is_none());
-
     open.open(
         0x42,
         0,
@@ -580,7 +540,7 @@ fn snapshot_is_none_when_closed_and_lists_services_when_open() {
         ],
         "Learn from me.".into(),
     );
-    let state = snap(&open, &spells).expect("open, so Some");
+    let state = snap(&open, &spells);
     assert_eq!(state.greeting, "Learn from me.");
     assert_eq!(state.services.len(), 2);
     assert_eq!(
@@ -589,9 +549,14 @@ fn snapshot_is_none_when_closed_and_lists_services_when_open() {
     );
     assert_eq!(state.services[1].category, TrainerServiceCategory::Used);
 
+    open.window = TrainerWindow::listed(state, 3);
     open.clear();
-    assert!(snap(&open, &spells).is_none());
     assert_eq!(open.trainer, None);
+    assert!(open.services.is_empty() && open.window.state.services.is_empty());
+    assert_eq!(
+        open.window.state.greeting, "Learn from me.",
+        "the zero leg keeps the greeting (`0x59411b`)"
+    );
 }
 
 /// A wrapper spell whose slot `slot` carries `effect` and triggers `trigger`.
@@ -728,40 +693,6 @@ fn tooltip_falls_back_to_the_wire_spell() {
             alt_caster: false,
         },
     );
-}
-
-/// Every list resets the lines (`0x596450`), and an open window repaints through the
-/// re-evaluator (`0x596b00`), never a second list, so every list opens and resets.
-#[test]
-fn every_list_packet_begins_a_window_session() {
-    const TRAINER: u64 = 0xabc;
-    let list = || vec![wire(1, trainer_spell_state::GREEN, 10, 1, 0)];
-    let mut open = TrainerOpen::default();
-
-    open.open(TRAINER, 0, list(), "Greetings".into());
-    assert!(open.fresh_list, "a first list opens the window: reset");
-    open.fresh_list = false; // the feed consumes it
-
-    open.open(TRAINER, 0, list(), "Greetings".into());
-    assert!(
-        open.fresh_list,
-        "the same trainer's list again is a session start again"
-    );
-
-    // A pending re-derivation never survives a list: the packet carries the server's own states.
-    open.fresh_list = false;
-    open.trigger_re_derive();
-    assert!(open.re_derive);
-    open.open(TRAINER, 0, list(), "Greetings".into());
-    assert!(
-        !open.re_derive,
-        "a fresh list is the server's states, nothing pending against it"
-    );
-
-    // A trigger with no window open does nothing.
-    open.clear();
-    open.trigger_re_derive();
-    assert!(!open.re_derive);
 }
 
 mod re_derive {

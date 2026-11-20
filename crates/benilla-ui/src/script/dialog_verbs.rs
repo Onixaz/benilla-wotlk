@@ -1,118 +1,54 @@
-//! The verbs the stock `StaticPopup.lua` dialogs call: the instance-boot and area spirit healer
-//! clocks and the pet untrain pair; the battlefield port answer is
-//! `battlefield_queue`'s.
+//! The verbs the stock `StaticPopup.lua` dialogs call for the instance-boot and area spirit healer clocks, each read live at the call; the battlefield port answer is `battlefield_queue`'s.
 
 use mlua::Lua;
-
-use super::binding_abi::flag;
-
-/// The area spirit healer's aura (`0xA18`), the only cancel-aura spell that also fires
-/// `AREA_SPIRIT_HEALER_OUT_OF_RANGE`.
-pub const AREA_SPIRIT_HEALER_SPELL: u32 = 2584;
-
-impl super::UiScript {
-    /// `ConfirmPetUnlearn()` calls since the last drain.
-    pub fn take_pet_unlearn_confirms(&mut self) -> u32 {
-        drain_field!(self, pet_unlearn_confirms)
-    }
-
-    /// What `CheckPetUntrainerDist()` answers: a pending question whose trainer is in reach.
-    pub fn set_pet_untrainer_pending(&mut self, pending: bool) {
-        set_field!(self, pet_untrainer_pending, pending);
-    }
-
-    /// `GetInstanceBootTimeRemaining()`'s answer, whole seconds (0 idle).
-    pub fn set_instance_boot_secs(&mut self, secs: u32) {
-        set_field!(self, instance_boot_secs, secs);
-    }
-
-    /// The area spirit healer: whether one is cached, and the seconds to its next wave.
-    pub fn set_area_spirit_healer(&mut self, cached: bool, secs: u32) {
-        {
-            let m = self.model_ref();
-            if m.area_spirit_healer_cached == cached && m.area_spirit_secs == secs {
-                return;
-            }
-        }
-        let mut model = self.model_mut();
-        model.area_spirit_healer_cached = cached;
-        model.area_spirit_secs = secs;
-    }
-
-    /// `AcceptAreaSpiritHeal()` calls since the last drain, each a `0x2E3` to send.
-    pub fn take_area_spirit_accepts(&mut self) -> u32 {
-        drain_field!(self, area_spirit_accepts)
-    }
-}
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `max(deadline - now, 0) / 1000`, truncated.
     g.set(
         "GetInstanceBootTimeRemaining",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.instance_boot_secs))
+        lua.create_function(|_, ()| {
+            Ok(i64::from(
+                super::read_live(|l| l.instance_boot_secs()).unwrap_or(0),
+            ))
         })?,
     )?;
 
-    // Silent with no healer cached, else `0x2E3` with the cached guid.
+    // The poll up to its drop's cancel, the cancel's event inside the call while the deadline still reads, then the rest of the poll and the queue send naming the healer it left (`0x524b60`).
     g.set(
         "AcceptAreaSpiritHeal",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.area_spirit_healer_cached {
-                model.area_spirit_accepts += 1;
+            let Some(cancelled) = super::write_live(|l| l.area_spirit_poll_drop()).flatten() else {
+                return Ok(());
+            };
+            if cancelled {
+                super::tick::fire_event_into(lua, "AREA_SPIRIT_HEALER_OUT_OF_RANGE", Vec::new());
             }
+            super::write_live(|l| l.accept_area_spirit_heal(cancelled));
             Ok(())
         })?,
     )?;
-    // The reference runs the generic cancel-aura: the event, then `0x136` with `u32 2584`, no guid.
-    // Its refusal gate (`AttributesEx` bit 13 set, bit 2 clear) never trips for 2584 in the shipped
-    // `Spell.dbc` (the app's `spell_2584_never_trips_the_cancel_gate`), so the send is
-    // unconditional.
+    // The reference's aura cancel for 2584 (`0x522fa0` -> `0x51f710`): nothing without our body
+    // (`0x51f75c`), else the event inside the call (`0x803290`), then `0x136` with `u32 2584`, the
+    // wave deadline untouched. Its refusal gate (`AttributesEx` bit 13 set, bit 2 clear) never trips
+    // for 2584 in the shipped `Spell.dbc` (the app's `spell_2584_never_trips_the_cancel_gate`).
     g.set(
         "CancelAreaSpiritHeal",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .pending_events
-                .push(("AREA_SPIRIT_HEALER_OUT_OF_RANGE".to_string(), Vec::new()));
-            model.cancel_aura_requests.push(AREA_SPIRIT_HEALER_SPELL);
+            if !super::read_live(|l| l.spirit_cancel_has_body()).unwrap_or(false) {
+                return Ok(());
+            }
+            super::tick::fire_event_into(lua, "AREA_SPIRIT_HEALER_OUT_OF_RANGE", Vec::new());
+            super::read_live(|l| l.cancel_area_spirit_heal());
             Ok(())
         })?,
     )?;
-    // Whole seconds: `max(0, - now) / 1000`.
     g.set(
         "GetAreaSpiritHealerTime",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.area_spirit_secs))
-        })?,
-    )?;
-
-    // `1` or nil, never `0`; the app tests the range to the latched trainer.
-    g.set(
-        "CheckPetUntrainerDist",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.pet_untrainer_pending))
-        })?,
-    )?;
-    // The app holds the latch and the money gate, and sends `0x2F0`.
-    g.set(
-        "ConfirmPetUnlearn",
-        lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.pet_unlearn_confirms += 1;
-            Ok(())
+        lua.create_function(|_, ()| {
+            Ok(i64::from(
+                super::read_live(|l| l.area_spirit_healer_secs()).unwrap_or(0),
+            ))
         })?,
     )?;
 
@@ -124,8 +60,8 @@ mod tests {
     use crate::script::UiScript;
 
     #[test]
-    fn the_clocks_read_what_the_app_feeds() {
-        let mut s = UiScript::new().unwrap();
+    fn the_clocks_read_zero_with_no_view_lent() {
+        let s = UiScript::new().unwrap();
         assert_eq!(
             s.eval::<i64>("return GetInstanceBootTimeRemaining()")
                 .unwrap(),
@@ -135,63 +71,64 @@ mod tests {
             s.eval::<i64>("return GetAreaSpiritHealerTime()").unwrap(),
             0
         );
-        s.set_instance_boot_secs(42);
-        s.set_area_spirit_healer(true, 17);
-        assert_eq!(
-            s.eval::<i64>("return GetInstanceBootTimeRemaining()")
-                .unwrap(),
-            42
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetAreaSpiritHealerTime()").unwrap(),
-            17
-        );
-    }
-
-    #[test]
-    fn accept_area_spirit_heal_is_silent_without_a_cached_healer() {
-        let mut s = UiScript::new().unwrap();
         s.run("AcceptAreaSpiritHeal()").unwrap();
-        assert_eq!(
-            s.take_area_spirit_accepts(),
-            0,
-            "no healer cached: nothing sent"
-        );
-        s.set_area_spirit_healer(true, 5);
-        s.run("AcceptAreaSpiritHeal() AcceptAreaSpiritHeal()")
-            .unwrap();
-        assert_eq!(s.take_area_spirit_accepts(), 2);
     }
 
-    #[test]
-    fn cancel_area_spirit_heal_cancels_the_aura_and_fires_out_of_range() {
+    /// A view that holds our body or not.
+    struct Body(bool);
+
+    impl crate::script::LiveState for Body {
+        fn unit_flags(&self, _guid: u64) -> Option<u32> {
+            None
+        }
+
+        fn unit_health(&self, _guid: u64) -> Option<u32> {
+            None
+        }
+
+        fn active_player(&self) -> Option<u64> {
+            self.0.then_some(1)
+        }
+
+        fn has_control(&self) -> bool {
+            true
+        }
+
+        fn far_sight(&self) -> bool {
+            false
+        }
+
+        fn spirit_cancel_has_body(&self) -> bool {
+            self.0
+        }
+    }
+
+    /// `CancelAreaSpiritHeal` once under a view holding our body or not; the event as the handler saw it by the verb's return.
+    fn cancel_with_body(body: bool) -> Option<String> {
         let mut s = UiScript::new().unwrap();
         s.run(
             r#"F = CreateFrame("Frame") F:RegisterEvent("AREA_SPIRIT_HEALER_OUT_OF_RANGE")
-               F:SetScript("OnEvent", function() GOT = event end) CancelAreaSpiritHeal()"#,
+               F:SetScript("OnEvent", function() GOT = event end)"#,
         )
         .unwrap();
-        s.tick(0.0);
-        assert_eq!(
-            s.eval::<String>("return GOT").unwrap(),
-            "AREA_SPIRIT_HEALER_OUT_OF_RANGE"
-        );
-        assert_eq!(
-            s.take_cancel_aura_requests(),
-            vec![super::AREA_SPIRIT_HEALER_SPELL]
-        );
+        s.with_live(&mut Body(body), |s| {
+            s.run("CancelAreaSpiritHeal() AT_RETURN = GOT").unwrap()
+        });
+        s.eval::<Option<String>>("return AT_RETURN").unwrap()
     }
 
     #[test]
-    fn the_pet_pair_counts_and_answers_one_or_nil() {
-        let mut s = UiScript::new().unwrap();
-        assert!(s
-            .eval::<bool>("return CheckPetUntrainerDist() == nil")
-            .unwrap());
-        s.set_pet_untrainer_pending(true);
-        assert_eq!(s.eval::<i64>("return CheckPetUntrainerDist()").unwrap(), 1);
-        s.run("ConfirmPetUnlearn() ConfirmPetUnlearn()").unwrap();
-        assert_eq!(s.take_pet_unlearn_confirms(), 2);
-        assert!(s.errors().is_empty(), "{:?}", s.errors());
+    fn cancel_area_spirit_heal_fires_out_of_range_inside_its_call() {
+        assert_eq!(
+            cancel_with_body(true).as_deref(),
+            Some("AREA_SPIRIT_HEALER_OUT_OF_RANGE"),
+            "the event has run by the time the verb returns, no tick between"
+        );
+    }
+
+    /// `0x51f710` skips the aura cancel when it finds no player object (`0x51f75c`).
+    #[test]
+    fn cancel_area_spirit_heal_does_nothing_without_our_body() {
+        assert_eq!(cancel_with_body(false), None);
     }
 }

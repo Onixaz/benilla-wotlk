@@ -177,7 +177,10 @@ fn item_set_block_counts_and_colors() {
     );
     s.run(r#"TT:SetOwner(Slot10, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 9999)"#)
         .unwrap();
-    assert_eq!(s.take_item_set_asks(), vec![1], "the set ask recorded");
+    assert!(
+        !lines_of(&mut s).iter().any(|(t, _)| t.contains("SET_NAME")),
+        "a set with no row prints no set block"
+    );
     assert!(s.take_errors().is_empty());
 }
 
@@ -299,7 +302,7 @@ fn quest_item_hovers_render_the_rows_item_by_id() {
         .unwrap();
     assert_eq!(s.eval::<i64>("return TT:NumLines()").unwrap(), 0);
 
-    s.set_quest_log(QuestLogState {
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 7,
             detail: Some(QuestLogDetail {

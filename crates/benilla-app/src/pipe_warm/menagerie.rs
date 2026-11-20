@@ -12,7 +12,7 @@ use bevy::render::render_resource::Buffer;
 use benilla_assets::materials::{LiquidMaterial, WowModelMaterial};
 use benilla_world::clouds::CloudMaterial;
 use benilla_world::model_render::{
-    far_twin_of, model_material, zfill_material, MaterialCache, ShadeSel,
+    far_twin_of, model_material, skybox_order, zfill_material, MaterialCache, ShadeSel,
 };
 use benilla_world::sky::SkyMaterial;
 use benilla_world::sun::{CelestialMaterial, StarMaterial};
@@ -190,45 +190,49 @@ pub(super) fn spawn_menagerie(
                 cache, materials, None, two_sided, cutout, light,
             ));
         }
-        // The WMO-skybox lane: `sky_depth` is a `WowModelKey` axis (the forced-far-depth branch).
-        // Built as `M2BatchMaterials::skybox` builds it: depth-write off, depth-test on, every
-        // blend and sidedness.
-        for blend in [
-            ModelBlend::Opaque,
-            ModelBlend::AlphaTest,
-            ModelBlend::Blend,
-            ModelBlend::Mod,
-            ModelBlend::Mod2x,
-        ] {
-            for additive in [false, true] {
-                sky_mats.push(model_material(
-                    cache,
-                    materials,
-                    None,
-                    blend,
-                    two_sided,
-                    false,
-                    false,
-                    true, // every shipped skybox batch is unlit
-                    additive,
-                    false,
-                    true,  // depth-write off
-                    false, // depth-test on
-                    FogPolicy::Off,
-                    false,
-                    ShadeSel::Lit,
-                    0,
-                    None,
-                    None,
-                    None,
-                    None,
-                    false,
-                    None,
-                    true, // the sky lane
-                    light,
-                    None, // the shared lane
-                    None,
-                ));
+        // The skybox lane: `sky_depth` is a `WowModelKey` axis (the forced-far-depth branch), and
+        // each draw rung its own `depth_bias` integer. Built as `M2BatchMaterials::skybox` builds
+        // it: depth-write off, depth-test on, every blend and sidedness, steady and fade twin.
+        for rung in 0..benilla_world::skybox::SKY_RUNGS {
+            for blend in [
+                ModelBlend::Opaque,
+                ModelBlend::AlphaTest,
+                ModelBlend::Blend,
+                ModelBlend::Mod,
+                ModelBlend::Mod2x,
+            ] {
+                for additive in [false, true] {
+                    for fade in [false, true] {
+                        sky_mats.push(model_material(
+                            cache,
+                            materials,
+                            None,
+                            blend,
+                            two_sided,
+                            false,
+                            false,
+                            true, // every shipped skybox batch is unlit
+                            additive,
+                            fade,
+                            true,  // depth-write off
+                            false, // depth-test on
+                            FogPolicy::Off,
+                            false,
+                            ShadeSel::Lit,
+                            skybox_order(rung, 0),
+                            None,
+                            None,
+                            None,
+                            None,
+                            false,
+                            None,
+                            true, // the sky lane
+                            light,
+                            None, // the shared lane
+                            None,
+                        ));
+                    }
+                }
             }
         }
     }
@@ -453,12 +457,16 @@ pub(super) fn spawn_menagerie(
         }
     }
 
-    // The WMO-skybox rows: `skybox::build_skybox` inserts POSITION + NORMAL + UV_0, exactly
-    // `layouts[0]`, on the world camera only.
+    // The skybox rows: `skybox::sky_mesh` inserts POSITION + NORMAL + UV_0 + UV_1 + COLOR for every
+    // sky batch, on the world camera only.
     {
-        let (plain_mesh, plain_aabb, _) = &layouts[0];
+        let sky_mesh = meshes.add(benilla_world::skybox::warm_mesh());
+        let sky_aabb = Some(bevy::camera::primitives::Aabb::from_min_max(
+            Vec3::ZERO,
+            Vec3::new(1.0, 1.0, 0.0),
+        ));
         for mat in &sky_mats {
-            spawn_model_rig(commands, cam, None, plain_mesh, plain_aabb, false, mat);
+            spawn_model_rig(commands, cam, None, &sky_mesh, &sky_aabb, false, mat);
             count += 1;
         }
     }

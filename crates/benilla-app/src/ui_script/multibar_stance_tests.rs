@@ -1398,12 +1398,11 @@ fn the_middle_strip_tiles_along_its_length_only() {
 /// The reference fires `UPDATE_SHAPESHIFT_FORMS` only when the form list changes: its
 /// `ShapeshiftBar_Update` re-shows the middle strip with no manage pass
 /// (BonusActionBarFrame.lua:170, 177), so a state change sent as one would draw the strip over the
-/// raised bar. Driven through [`crate::ui_shapeshift::push_forms`].
+/// raised bar.
 #[test]
 #[ignore = "the stance feed repaints on 1.12's events (#577)"]
 fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     benilla_formats::wow_data_or_skip!();
-    use crate::ui_shapeshift::{push_forms, FormsEdge, StanceMemory};
     use benilla_ui::script::ShapeshiftFormView;
 
     let mut s = UiScript::new().unwrap();
@@ -1445,18 +1444,35 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
         castable,
         cooldown,
     };
-    let mut memory = StanceMemory::default();
+    // The stand-in list, and what the reference signals for it: the registrar's list edit fires
+    // `UPDATE_SHAPESHIFT_FORMS`, the usable update `SPELL_UPDATE_USABLE`, a state move nothing.
+    #[derive(Debug, PartialEq)]
+    enum FormsEdge {
+        List,
+        Usable,
+        Silent,
+        Unchanged,
+    }
+    let push_forms = |s: &mut UiScript, edge: FormsEdge, forms: Vec<ShapeshiftFormView>| {
+        s.set_shapeshift_forms(forms);
+        match edge {
+            FormsEdge::List => s.fire_event("UPDATE_SHAPESHIFT_FORMS", vec![]),
+            FormsEdge::Usable => s.fire_event("SPELL_UPDATE_USABLE", vec![]),
+            FormsEdge::Silent | FormsEdge::Unchanged => {}
+        }
+        edge
+    };
 
     // Login: the list arrives, a list edge, with Battle Stance active.
     assert_eq!(
         push_forms(
             &mut s,
-            &mut memory,
+            FormsEdge::List,
             vec![
                 stance(2457, true, true, None),
                 stance(71, false, true, None),
                 stance(2458, false, true, None),
-            ],
+            ]
         ),
         FormsEdge::List
     );
@@ -1475,7 +1491,7 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     let cd = Some((0, 1000, true));
     let edge = push_forms(
         &mut s,
-        &mut memory,
+        FormsEdge::Silent,
         vec![
             stance(2457, false, true, cd),
             stance(71, true, true, cd),
@@ -1512,12 +1528,12 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(
         push_forms(
             &mut s,
-            &mut memory,
+            FormsEdge::Silent,
             vec![
                 stance(2457, false, true, None),
                 stance(71, true, true, None),
                 stance(2458, false, true, None),
-            ],
+            ]
         ),
         FormsEdge::Silent
     );
@@ -1528,12 +1544,12 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(
         push_forms(
             &mut s,
-            &mut memory,
+            FormsEdge::Usable,
             vec![
                 stance(2457, false, false, None),
                 stance(71, true, true, None),
                 stance(2458, false, true, None),
-            ],
+            ]
         ),
         FormsEdge::Usable
     );
@@ -1551,12 +1567,12 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(
         push_forms(
             &mut s,
-            &mut memory,
+            FormsEdge::Unchanged,
             vec![
                 stance(2457, false, false, None),
                 stance(71, true, true, None),
                 stance(2458, false, true, None),
-            ],
+            ]
         ),
         FormsEdge::Unchanged
     );
@@ -1567,13 +1583,13 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(
         push_forms(
             &mut s,
-            &mut memory,
+            FormsEdge::List,
             vec![
                 stance(2457, false, false, None),
                 stance(71, true, true, None),
                 stance(2458, false, true, None),
                 stance(768, false, true, None),
-            ],
+            ]
         ),
         FormsEdge::List
     );

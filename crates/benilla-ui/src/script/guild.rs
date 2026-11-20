@@ -181,10 +181,6 @@ pub struct GuildState {
     pub selection: u32,
     /// Changes [`Self::num_members`] only, never [`Self::roster`].
     pub show_offline: bool,
-    /// `GetGuildBankMoney`: the guild bank's copper, 0 before any bank-money event.
-    pub bank_money: u64,
-    /// `GetGuildBankWithdrawMoney`: today's remaining withdrawal in copper, -1 unlimited.
-    pub bank_withdraw_money: i32,
     /// The tabard as emblem style and colour, border style and colour, and background; `-1` is
     /// undesigned. `None` until the guild query answers.
     pub tabard: Option<[i32; 5]>,
@@ -376,20 +372,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // values as numbers.
     g.set(
         "GetGuildBankMoney",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.guild.bank_money as f64)
-        })?,
+        lua.create_function(|_, ()| Ok(super::guild_bank::bank_money() as f64))?,
     )?;
     g.set(
         "GetGuildBankWithdrawMoney",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(i64::from(model.guild.bank_withdraw_money))
+        lua.create_function(|_, ()| {
+            Ok(i64::from(
+                super::read_live(|l| l.guild_bank_withdraw_money()).unwrap_or(0),
+            ))
         })?,
     )?;
 
@@ -632,9 +622,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             global,
             lua.create_function(move |lua, name: Value| {
                 let Some(name) = lua.coerce_string(name)? else {
-                    crate::script::model_mut_of(lua)
-                        .ui_errors
-                        .push("ERR_COMMAND_NEEDS_TARGET");
+                    crate::script::ui_errors::show_now(lua, "ERR_COMMAND_NEEDS_TARGET");
                     return Ok(());
                 };
                 if name.as_bytes().len() > 48 {
@@ -1197,11 +1185,15 @@ mod tests {
             0
         );
 
+        // Both values read the bank at the call (`0xc1dc20`, `0xc1dc34`).
+        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+            guild_bank_money: 12_345_678,
+            guild_bank_withdraw_money: -1,
+            ..Default::default()
+        });
         s.set_guild(GuildState {
             in_guild: true,
             rights: 0x0004_0003,
-            bank_money: 12_345_678,
-            bank_withdraw_money: -1,
             ..Default::default()
         });
         assert!(s.eval::<bool>("return CanGuildBankRepair() == 1").unwrap());
@@ -1542,7 +1534,7 @@ mod tests {
                 GuildRequest::SetLeader(String::new()),
             ]
         );
-        assert_eq!(s.take_ui_errors(), vec!["ERR_COMMAND_NEEDS_TARGET"]);
+        assert_eq!(s.take_shown(), vec!["ERR_COMMAND_NEEDS_TARGET"]);
         assert!(s.run(r#"GuildPromote(string.rep("a", 49))"#).is_err());
         s.run(r#"GuildDemote(string.rep("a", 48))"#).unwrap();
         assert_eq!(s.take_guild_requests().len(), 1);

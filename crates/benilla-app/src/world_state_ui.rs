@@ -10,11 +10,10 @@
 //! The scope is the server's last `SMSG_INIT_WORLD_STATES`, not the player's position; the phase
 //! mask is the server's last `SMSG_SET_PHASE_SHIFT` ([`WorldStates::phase_mask`]).
 
-use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
 use benilla_formats::{WorldStateUiCatalog, WorldStateUiRow};
-use benilla_ui::script::{UiScript, WorldStateUiView};
+use benilla_ui::script::WorldStateUiView;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
@@ -88,6 +87,7 @@ fn expand(text: &str, states: &WorldStates) -> String {
 }
 
 /// The admitted rows for the current scope, resolved as `GetWorldStateUIInfo` answers them.
+#[cfg(test)]
 fn build(catalog: &WorldStateUiCatalog, states: &WorldStates) -> Vec<WorldStateUiView> {
     let Some(scope) = states.scope() else {
         // Before an init the reference never rebuilds.
@@ -127,45 +127,48 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
     }
 }
 
-/// Pushes the readout when a world-state packet arrives, the reference's rebuild trigger, then the
-/// events the packets owe, in their order.
-pub(crate) fn feed_world_state_ui(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    catalog: Option<Res<WorldStateUiRes>>,
-    states: Res<WorldStates>,
-    mut owed: ResMut<WorldStateOwed>,
-    mut last: Local<crate::ui_script::VmMemo<Option<u64>>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let key = states.generation();
-    if let Some(catalog) = catalog {
-        if *last.get(&script) != Some(key) {
-            *last.get(&script) = Some(key);
-            script.set_world_state_ui(build(&catalog.0, &states));
-        }
-    }
-    for event in owed.take() {
-        script.queue_event(event.name(), Vec::new());
-    }
+/// The readout as the verbs read it at the call: `GetNumWorldStateUI` counts the rows the builder admits (`0x548720`) and `GetWorldStateUIInfo` resolves one (`0x548d40`). The builder's inputs, the scope and the phase mask, move only where it reruns (`0x548970`, `0x513973`), so the rows admitted at the call are the ones it would hold.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct WorldStateUiLive<'w> {
+    catalog: Option<Res<'w, WorldStateUiRes>>,
+    states: Option<Res<'w, WorldStates>>,
 }
 
-/// The world-state events owed, moved off the table so the VM's lenders only read it.
-#[derive(Resource, Default)]
-pub(crate) struct WorldStateOwed(Vec<crate::world_state::WorldStateEvent>);
-
-impl WorldStateOwed {
-    /// The events owed, in packet order.
-    fn take(&mut self) -> Vec<crate::world_state::WorldStateEvent> {
-        std::mem::take(&mut self.0)
+impl WorldStateUiLive<'_> {
+    /// The admitted rows' count; `None` without the table or the states.
+    pub(crate) fn count(&self) -> Option<usize> {
+        let (catalog, states) = (self.catalog.as_ref()?, self.states.as_ref()?);
+        let Some(scope) = states.scope() else {
+            return Some(0);
+        };
+        Some(
+            catalog
+                .0
+                .rows()
+                .filter(|(_, row)| admits(row, scope, states.phase_mask()))
+                .count(),
+        )
     }
-}
 
-/// Move what the table owes into [`WorldStateOwed`], leaving the table's change detection alone.
-fn take_world_state_owed(mut states: ResMut<WorldStates>, mut owed: ResMut<WorldStateOwed>) {
-    if states.has_owed() {
-        owed.0.extend(states.bypass_change_detection().take_owed());
+    /// The `index`th admitted row resolved now; `Some(None)` past the end.
+    pub(crate) fn info(&self, index: usize) -> Option<Option<WorldStateUiView>> {
+        let (catalog, states) = (self.catalog.as_ref()?, self.states.as_ref()?);
+        let Some(scope) = states.scope() else {
+            return Some(None);
+        };
+        Some(
+            catalog
+                .0
+                .rows()
+                .filter(|(_, row)| admits(row, scope, states.phase_mask()))
+                .nth(index)
+                .map(|(_, row)| resolve(row, states)),
+        )
+    }
+
+    /// One world state's value now (`0x549440`'s table), `None` without the states.
+    pub(crate) fn value(&self, key: u32) -> Option<i32> {
+        Some(self.states.as_ref()?.get(key))
     }
 }
 
@@ -173,17 +176,7 @@ pub(crate) struct WorldStateUiPlugin;
 
 impl Plugin for WorldStateUiPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldStateOwed>()
-            .add_systems(Startup, load_world_state_ui.after(AssetSet::Open))
-            .add_systems(
-                Update,
-                (
-                    take_world_state_owed
-                        .in_set(benilla_world::schedule::WorldStage::Net)
-                        .after(crate::net::apply_net_updates),
-                    feed_world_state_ui.in_set(crate::ui_script::UiDrain),
-                ),
-            );
+        app.add_systems(Startup, load_world_state_ui.after(AssetSet::Open));
     }
 }
 

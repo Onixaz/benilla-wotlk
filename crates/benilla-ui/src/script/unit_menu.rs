@@ -119,14 +119,12 @@ fn flag_value(b: bool) -> Value {
     }
 }
 
-/// The spell's book slot is cooling down, as the spell cooldown read answers non-zero.
+/// The spell is cooling down, as the player's history read answers non-zero (`0x809000`).
 fn spell_cooling(model: &Model, spell: u32, now: f64) -> bool {
-    model
-        .spellbook
-        .slots
-        .iter()
-        .find(|s| spell != 0 && s.spell_id == spell)
-        .and_then(|s| s.cooldown)
+    let (anchor, ui_now) = (model.clock_wall.get(), model.now);
+    (spell != 0)
+        .then(|| super::read_live(|l| l.spell_cooldown(spell, anchor, ui_now)).flatten())
+        .flatten()
         .is_some_and(|(start_ms, duration_ms, enabled)| {
             !enabled || start_ms as f64 / 1000.0 + f64::from(duration_ms) / 1000.0 > now
         })
@@ -208,31 +206,10 @@ pub(super) fn grant_level_refusal(model: &Model, token: &str) -> u8 {
     }
 }
 
-/// A token or a roster name to its guid, as the token-to-guid read with its flag false
+/// A token or a group member's name to its guid, as the token-to-guid read with its flag false
 /// (`0x60abf0`).
 pub(super) fn guid_of(model: &Model, unit: &str) -> Option<u64> {
-    if let Some(u) = model.unit(unit).filter(|u| u.exists) {
-        return Some(u.guid);
-    }
-    let raid = model
-        .party
-        .raid
-        .iter()
-        .find(|m| m.name.eq_ignore_ascii_case(unit));
-    if let Some(m) = raid {
-        return Some(m.guid);
-    }
-    (1..=4).find_map(|i| {
-        model
-            .unit(&format!("party{i}"))
-            .filter(|u| {
-                u.exists
-                    && u.name
-                        .as_deref()
-                        .is_some_and(|n| n.eq_ignore_ascii_case(unit))
-            })
-            .map(|u| u.guid)
-    })
+    model.token_guid(unit)
 }
 
 fn model_of(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {
@@ -308,10 +285,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "GetPartyAssignment(): Invalid party assignment",
             )?;
             let named = optional_string(lua, &member);
-            let mut model = crate::script::model_mut_of(lua);
+            let model = crate::script::model_mut_of(lua);
             if let Some(name) = named {
                 let Some(guid) = guid_of(&model, &name).filter(|&g| in_my_group(&model, g)) else {
-                    model.ui_errors_s.push(("ERR_TARGET_NOT_IN_GROUP_S", name));
+                    drop(model);
+                    crate::script::ui_errors::show_now_s(lua, "ERR_TARGET_NOT_IN_GROUP_S", name);
                     return Ok(MultiValue::new());
                 };
                 let held = assignments_of(&model, guid) & flag != 0;
@@ -346,16 +324,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             binding,
             lua.create_function(move |lua, (assignment, member): (Value, Value)| {
-                let mut model = crate::script::model_mut_of(lua);
+                let model = crate::script::model_mut_of(lua);
                 if model.party.members.is_empty() && model.party.raid.is_empty() {
-                    model.ui_errors.push("ERR_NOT_IN_GROUP");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_NOT_IN_GROUP");
                     return Ok(());
                 }
                 let own = model.party.own_guid;
                 let leads = own != 0 && model.party.leader_guid == own;
                 let officer = model.party.raid.iter().any(|m| m.guid == own && m.rank > 0);
                 if !leads && !officer {
-                    model.ui_errors.push("ERR_NOT_LEADER");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_NOT_LEADER");
                     return Ok(());
                 }
                 drop(model);
@@ -378,7 +358,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                                     } else {
                                         "ERR_UNIT_NOT_FOUND"
                                     };
-                                model.ui_errors.push(error);
+                                drop(model);
+                                crate::script::ui_errors::show_now(lua, error);
                                 return Ok(());
                             }
                         }

@@ -5,7 +5,44 @@ use benilla_ui::script::{
     GossipQuestRow, QuestItemView, QuestPanel, QuestState, ScriptValue, SoundRequest, UiScript,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::stock_ui;
+
+/// A view that records the questgiver buttons' calls, each answering as a window left open.
+#[derive(Default)]
+struct Buttons(Vec<benilla_ui::script::QuestAction>);
+
+impl benilla_ui::script::LiveState for Buttons {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn quest_action(
+        &mut self,
+        action: benilla_ui::script::QuestAction,
+    ) -> Option<benilla_ui::script::QuestActOutcome> {
+        self.0.push(action);
+        Some(Default::default())
+    }
+}
+
+/// The questgiver calls `chunk` makes, in order.
+fn button_calls(s: &mut UiScript, chunk: &str) -> Vec<benilla_ui::script::QuestAction> {
+    let mut view = Buttons::default();
+    s.with_live(&mut view, |s| s.run(chunk).unwrap());
+    view.0
+}
 
 /// The questgiver, `QuestFrame_SetPortrait`'s `"questnpc"` unit (`QuestFrame.lua:63`).
 fn seat_giver(s: &mut UiScript, name: &str) {
@@ -246,9 +283,8 @@ fn reward_panel_choice_click_selects_and_completes_with_zero_based_index() {
         "no row picked yet"
     );
     // No choice picked: `QuestChooseRewardError()` instead.
-    s.run("QuestFrameCompleteQuestButton:Click()").unwrap();
     assert!(
-        s.take_quest_actions().is_empty(),
+        button_calls(&mut s, "QuestFrameCompleteQuestButton:Click()").is_empty(),
         "must pick a choice first"
     );
 
@@ -264,9 +300,8 @@ fn reward_panel_choice_click_selects_and_completes_with_zero_based_index() {
         2
     );
 
-    s.run("QuestFrameCompleteQuestButton:Click()").unwrap();
     assert_eq!(
-        s.take_quest_actions(),
+        button_calls(&mut s, "QuestFrameCompleteQuestButton:Click()"),
         vec![benilla_ui::script::QuestAction::Reward(1)],
         "row 2 (1-based) -> wire index 1 (0-based)"
     );
@@ -284,14 +319,14 @@ fn greeting_goodbye_button_closes_the_window() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(s.eval::<bool>("return QuestFrame:IsVisible()").unwrap());
 
-    s.run("QuestFrameGreetingGoodbyeButton:Click()").unwrap();
+    let calls = button_calls(&mut s, "QuestFrameGreetingGoodbyeButton:Click()");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
         !s.eval::<bool>("return QuestFrame:IsVisible()").unwrap(),
         "Goodbye closes the questgiver window"
     );
     assert_eq!(
-        s.take_quest_actions(),
+        calls,
         vec![benilla_ui::script::QuestAction::Close],
         "only `QuestFrame_OnHide`'s `CloseQuest()`, never a decline"
     );
@@ -583,6 +618,7 @@ fn greeting_panel_title_rows_grow_to_their_wrapped_titles() {
 fn reward_rows_preview_and_post_without_selecting_the_choice() {
     benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
+    s.record_writes();
 
     const SWORD: &str = "|cffffffff|Hitem:2299:0:0:0:0:0:0:0:0|h[Worn Sword]|h|r";
     const MACE: &str = "|cffffffff|Hitem:2300:0:0:0:0:0:0:0:0|h[Worn Mace]|h|r";
@@ -628,7 +664,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
         .eval::<bool>("return QuestInfoItemHighlight:IsShown()")
         .unwrap());
     assert!(
-        s.take_dressup_intents().is_empty(),
+        s.take_dressup_edits().is_empty(),
         "a plain click never opens the dressing room"
     );
 
@@ -659,7 +695,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
     s.run("QuestInfoItem1:Click()").unwrap();
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![
             benilla_ui::script::DressUpIntent::Dress,
             benilla_ui::script::DressUpIntent::TryOn(2299, [0; 4])

@@ -688,20 +688,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
-    // `GetMovieResolution` (`0x4dd610`): `gxResolution`'s width.
     g.set(
         "GetMovieResolution",
-        lua.create_function(|lua, _: MultiValue| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let width = model
-                .cvars
-                .get("gxresolution")
-                .and_then(|s| s.value.split('x').next().map(super::glue_core::leading_int))
-                .unwrap_or(0);
-            Ok(width as f64)
-        })?,
+        lua.create_function(|lua, _: MultiValue| Ok(movie_resolution(lua)))?,
     )?;
 
     // The patch download (`0x4dda90`, `0x4dc540`, `0x4dc550`): benilla downloads no patch, so
@@ -780,4 +769,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     Ok(())
+}
+
+/// `GetMovieResolution()` (`0x4dd610`, bound in the glue and in game): `gxResolution`'s width.
+pub(super) fn movie_resolution(lua: &Lua) -> f64 {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    let width = model
+        .cvars
+        .get("gxresolution")
+        .and_then(|s| s.value.split('x').next().map(super::glue_core::leading_int))
+        .unwrap_or(0);
+    width as f64
 }

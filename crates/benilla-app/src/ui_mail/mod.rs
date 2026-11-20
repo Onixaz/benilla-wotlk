@@ -23,9 +23,8 @@ use crate::entities::ItemDisplays;
 use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
-use crate::ui_items::{EquipError, EquipErrors};
 use crate::ui_script::{UiDrain, UiFeed};
-use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
+use crate::ui_session::NpcSession;
 
 mod invoice;
 mod net;
@@ -204,6 +203,23 @@ impl NpcSession for MailOpen {
     }
 }
 
+/// The mailbox open (`0x56da60`, `0x56dbc0`): the interact target set on the mailbox first (`0x56da67`, `0x56dbe2`), whose interaction close takes the window bound to the old one, then the mailbox stored and `MAIL_SHOW` owed.
+pub(crate) fn talk_to_mailbox(world: &mut World, mailbox: u64) {
+    crate::ui_session::set_interact_target(world, mailbox);
+    crate::ui_script::live::in_turn(world, move |w| {
+        if let Some(mut mail) = w.get_resource_mut::<MailOpen>() {
+            mail.click(mailbox);
+        }
+    });
+}
+
+/// The interaction close's mail leg (`0x51302d` -> `0x571730` with 0), its target already zeroed: the window closes and `MAIL_CLOSED` is owed.
+pub(crate) fn close_by_interaction(world: &mut World) {
+    if let Some(mut mail) = world.get_resource_mut::<MailOpen>() {
+        NpcSession::close(&mut *mail);
+    }
+}
+
 pub(crate) struct UiMailPlugin;
 
 impl Plugin for UiMailPlugin {
@@ -216,7 +232,6 @@ impl Plugin for UiMailPlugin {
                 (
                     // Range-close, feed, then drain after input, so each edge lands the same
                     // frame; the feed runs after `UnitFeed` so a row's tooltip reads the template.
-                    close_npc_session_out_of_range::<MailOpen>.before(feed_mail),
                     feed_mail.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
                     drain_mail
                         .in_set(UiDrain)
@@ -667,7 +682,6 @@ fn feed_mail(
     mut pending: ResMut<MailPending>,
     look: MailLookups,
     mut sink: crate::ui_action::MessageSink,
-    mut equip_errors: ResMut<EquipErrors>,
     time: Res<Time>,
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut memos: Local<crate::ui_script::VmMemo<MailMemos>>,
@@ -707,6 +721,8 @@ fn feed_mail(
     }
 
     if std::mem::take(&mut mail.open_requested) {
+        // The mailbox open takes the interact target before `MAIL_SHOW` (`0x56da67`).
+        script.close_bank_interaction();
         script.open_mailbox();
     }
     if std::mem::take(&mut mail.close_requested) {
@@ -744,12 +760,12 @@ fn feed_mail(
                 let line = crate::ui_action::keyed_line(&script, key);
                 crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
             }
-            MailEffect::EquipError(reason) => equip_errors.0.push(EquipError {
-                reason,
-                required_level: None,
-                // The result names no bag slot: 255 is the wire's "own array" sentinel.
-                bag_slot: 255,
-            }),
+            // The result names no bag, so the plain line.
+            MailEffect::EquipError(reason) => {
+                let key = crate::ui_items::equip_error_key(reason);
+                let line = crate::ui_action::keyed_line(&script, key);
+                crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
+            }
             MailEffect::Sent => script.mail_sent(),
             MailEffect::CloseInboxItem(index) => {
                 script.fire_event("CLOSE_INBOX_ITEM", vec![ScriptValue::Int(i64::from(index))]);
@@ -844,7 +860,7 @@ fn drain_mail(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut mail: ResMut<MailOpen>,
     mut pending: ResMut<MailPending>,
-    commands: Res<NetCommands>,
+    (commands, mut queue): (Res<NetCommands>, Commands),
     (social, mut complaints): (
         Res<crate::ui_social::SocialState>,
         MessageWriter<crate::ui_social::Complained>,
@@ -861,6 +877,13 @@ fn drain_mail(
         if let MailCommand::Close = command {
             // `CloseMail(false)`'s tail (`0x571a99`): a read or an arrival while open re-asks.
             debug!("ui_mail: the window closed");
+            // The close clears the interact target on the mailbox (`0x571778`).
+            if let Some(mailbox) = mail.mailbox {
+                queue.queue(move |w: &mut World| {
+                    crate::ui_session::clear_interact_target(w, mailbox);
+                    crate::ui_script::live::fire_handler_events(w);
+                });
+            }
             mail.mailbox = None;
             mail.auto_looting = None;
             if pending.take_do_pending_query() {

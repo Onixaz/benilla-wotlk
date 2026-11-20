@@ -1,5 +1,4 @@
-//! `GetNumWorldStateUI` and `GetWorldStateUIInfo`, behind the always-up PvP readout, over rows the
-//! app resolves; the reference re-walks the admitted DBC row ids on demand. The info is eleven
+//! `GetNumWorldStateUI` and `GetWorldStateUIInfo`, behind the always-up PvP readout, over the rows the live view admits and resolves at the call, as the reference resolves its admitted ids. The info is eleven
 //! values, `uiType` first (`0x548d40`, `mov eax,0xb` at `0x548f22`).
 
 use mlua::{Lua, MultiValue, Value};
@@ -31,8 +30,7 @@ pub(crate) struct WorldStateUiState {
 }
 
 impl super::UiScript {
-    /// Push the readout's rows. The app owes `UPDATE_WORLD_STATES` per packet, as the reference's
-    /// handler fires it (`0x526530`), so a push fires nothing.
+    /// Set the readout's rows where no live view lends them; a set fires nothing.
     pub fn set_world_state_ui(&mut self, rows: Vec<WorldStateUiView>) {
         self.model_mut().worldstate.rows = rows;
     }
@@ -45,6 +43,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumWorldStateUI",
         lua.create_function(|lua, ()| {
+            if let Some(n) = super::read_live(|l| l.world_state_ui_count()).flatten() {
+                return Ok(n as i64);
+            }
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -67,15 +68,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 },
                 _ => return Err(mlua::Error::runtime("Usage: GetWorldStateUIInfo(index)")),
             };
-            let row = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                // Truncated toward zero by `__ftol`, then 1-based.
-                usize::try_from(index.trunc() as i64)
-                    .ok()
-                    .and_then(|i| i.checked_sub(1))
-                    .and_then(|i| model.worldstate.rows.get(i).cloned())
+            // Truncated toward zero by `__ftol`, then 1-based.
+            let at = usize::try_from(index.trunc() as i64)
+                .ok()
+                .and_then(|i| i.checked_sub(1));
+            let row = match at {
+                None => None,
+                Some(i) => match super::read_live(|l| l.world_state_ui_info(i)).flatten() {
+                    Some(row) => row,
+                    None => lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data")
+                        .worldstate
+                        .rows
+                        .get(i)
+                        .cloned(),
+                },
             };
             let Some(r) = row else {
                 return Ok(MultiValue::from_vec(vec![Value::Integer(0)]));
