@@ -69,7 +69,7 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) actions: Slot<'w, crate::ui_action::PlayerActions>,
     /// The bar's slots, which every loan owns: the bar verbs write them in the call.
     pub(crate) slots: Slot<'w, crate::ui_action::ActionSlots>,
-    /// The items a send locked (`item+0x314` bit 0), read into each slot's `locked`.
+    /// The item locks (`item+0x394` bit 0), which every loan owns: a verb locks and unlocks in the call (`0x513740`, `0x513770`).
     pub(crate) pending: Slot<'w, crate::pending_item_ops::PendingItemOps>,
     /// The open trade-skill book (`[0xc235a4]`), the current and selected tests' trade arm.
     pub(crate) trade: Slot<'w, crate::ui_tradeskill::TradeSkillOpen>,
@@ -516,7 +516,6 @@ pub(crate) trait Owns: 'static {
     const COOLDOWNS: bool = false;
     const SELECTION: bool = false;
     const PLACE: bool = false;
-    const PENDING: bool = false;
     const TRADE: bool = false;
     const MACROS: bool = false;
     const ACTIONS: bool = false;
@@ -531,7 +530,6 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const COOLDOWNS: bool = A::COOLDOWNS || B::COOLDOWNS;
     const SELECTION: bool = A::SELECTION || B::SELECTION;
     const PLACE: bool = A::PLACE || B::PLACE;
-    const PENDING: bool = A::PENDING || B::PENDING;
     const TRADE: bool = A::TRADE || B::TRADE;
     const MACROS: bool = A::MACROS || B::MACROS;
     const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
@@ -554,12 +552,6 @@ impl Owns for OwnsSelection {
 pub(crate) struct OwnsActions;
 impl Owns for OwnsActions {
     const ACTIONS: bool = true;
-}
-
-/// The system writes [`crate::pending_item_ops::PendingItemOps`].
-pub(crate) struct OwnsPending;
-impl Owns for OwnsPending {
-    const PENDING: bool = true;
 }
 
 /// The system writes [`crate::ui_tradeskill::TradeSkillOpen`].
@@ -598,8 +590,8 @@ impl Owns for OwnsExpiries {
     const LENT: u16 = lent::EXPIRIES;
 }
 
-/// A script-call applier owns what its calls write: the cooldowns, the selection and the item locks.
-pub(crate) type OwnsScriptCalls = ((OwnsCooldowns, OwnsSelection), OwnsPending);
+/// A script-call applier owns what its calls write: the cooldowns and the selection.
+pub(crate) type OwnsScriptCalls = (OwnsCooldowns, OwnsSelection);
 
 /// An exclusive lender owns what the verbs write: the cooldowns (and the pet's words every loan owns).
 pub(crate) struct OwnsVerbWrites;
@@ -2078,6 +2070,19 @@ impl LiveState for LiveView<'_, '_> {
         self.guild_bank.as_ref()?.texture(s.item_id)
     }
 
+    fn item_locked(&self, guid: u64) -> Option<bool> {
+        Some(self.pending.get()?.is_locked(guid))
+    }
+
+    fn set_item_lock(&mut self, guid: u64, locked: bool) -> Option<bool> {
+        let pending = self.pending.get_mut()?;
+        Some(if locked {
+            pending.lock(guid)
+        } else {
+            pending.unlock(guid)
+        })
+    }
+
     fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
         self.lent
             .guild_bank
@@ -2923,7 +2928,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             world,
         );
         type Pending = crate::pending_item_ops::PendingItemOps;
-        slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set, world);
+        slot_access::<Pending>(true, state.1 .5, system_meta, set, world);
         let [pending, melee, repeat, targeting, casts] = state.1 .6;
         slot_access::<crate::spell::PendingCast>(true, pending, system_meta, set, world);
         slot_access::<crate::spell::QueuedMeleeSpell>(true, melee, system_meta, set, world);
@@ -3031,7 +3036,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, actions), own(O::ACTIONS, actions));
             view.slots.set(slot_fetch(world, slots), own(true, slots));
             view.pending
-                .set(slot_fetch(world, pending), own(O::PENDING, pending));
+                .set(slot_fetch(world, pending), own(true, pending));
             view.trade
                 .set(slot_fetch(world, trade), own(O::TRADE, trade));
             view.usable

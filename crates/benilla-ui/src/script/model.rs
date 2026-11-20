@@ -705,8 +705,10 @@ pub(crate) struct Model {
     pub(crate) cursor: Option<cursor::CursorPayload>,
     /// A cursor setter showed a drop grid, the action bar's or the pet bar's (`0xbd074c`): the clear hides it.
     pub(crate) cursor_grid_shown: bool,
-    /// The clear has unlocked the held item and not yet zeroed it (`0x5192c9` to `0x519301`): the cursor still reads it, its slot no longer reads locked.
-    pub(crate) cursor_item_unlocked: bool,
+    /// The payload mode (`0xbd0748`) standing over zeroed fields, 0 for none: the clear zeroes the fields first and the mode after its grid hide (`0x519301`..`0x519470`).
+    pub(crate) cursor_standing: u8,
+    /// The item lock bit (`item+0x394` bit 0) by `(bag, slot)`, kept here only while no item store is lent.
+    pub(crate) item_locks: Vec<(i64, u32)>,
     /// The world pick under the cursor (`[this+0x350]`): a world click drops no payload on an
     /// object, only an item on terrain, and anything over nothing.
     /// Held-item bag moves, sent as `CMSG_SWAP_INV_ITEM` or `CMSG_SPLIT_ITEM`.
@@ -1665,7 +1667,8 @@ impl Model {
             has_key: false,
             cursor: None,
             cursor_grid_shown: false,
-            cursor_item_unlocked: false,
+            cursor_standing: 0,
+            item_locks: Vec::new(),
             container_moves: Vec::new(),
             container_repairs: Vec::new(),
             item_picks: Vec::new(),

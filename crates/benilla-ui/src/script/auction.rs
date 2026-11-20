@@ -412,11 +412,11 @@ impl super::UiScript {
         let old = model.auction_locked.clone();
         for held in old.iter().filter(|s| !slots.contains(s)) {
             model.auction_locked.retain(|s| s != held);
-            cursor::raise_lock_edge(&mut model, held.0, held.1, false);
+            cursor::set_item_lock(&mut model, held.0, held.1, false);
         }
         for &(bag, slot) in slots.iter().filter(|s| !old.contains(s)) {
             model.auction_locked.push((bag, slot));
-            cursor::raise_lock_edge(&mut model, bag, slot, true);
+            cursor::set_item_lock(&mut model, bag, slot, true);
         }
         model.auction_locked = slots;
     }
@@ -487,18 +487,9 @@ impl super::UiScript {
         }
         let mut model = self.model_mut();
         if let Some(it) = model.auction_sell_item.take() {
-            cursor::raise_lock_edge(&mut model, it.bag, it.slot, false);
+            cursor::set_item_lock(&mut model, it.bag, it.slot, false);
         }
     }
-}
-
-/// Whether `(bag, slot)` reads locked for the auction house: the sell slot or a multi-sell item.
-pub(super) fn holds_slot(model: &Model, bag: i64, slot: u32) -> bool {
-    model
-        .auction_sell_item
-        .as_ref()
-        .is_some_and(|it| it.bag == bag && it.slot == slot)
-        || model.auction_locked.contains(&(bag, slot))
 }
 
 fn row_at<'a>(model: &'a Model, kind: &str, index: usize) -> Option<&'a AuctionItemRow> {
@@ -1343,7 +1334,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // A multi-sell keeps the slot until its last stack is out.
             if direct || num_stacks <= 1 || model.auction_start.is_none() {
                 model.auction_sell_item = None;
-                cursor::raise_lock_edge(&mut model, it.bag, it.slot, false);
+                cursor::set_item_lock(&mut model, it.bag, it.slot, false);
             }
             Ok(())
         })?,
@@ -1550,10 +1541,9 @@ pub(super) fn use_container_item(
         return Arm::Refused(key);
     }
     if let Some(prev) = model.auction_sell_item.take() {
-        cursor::raise_lock_edge(model, prev.bag, prev.slot, false);
+        cursor::set_item_lock(model, prev.bag, prev.slot, false);
     }
     // The lock signals only on its edge (`0x706fe0`).
-    let was_locked = super::container::slot_held(model, bag, slot);
     model.auction_sell_item = Some(CursorItem {
         bag,
         slot,
@@ -1565,9 +1555,7 @@ pub(super) fn use_container_item(
         equip_slots: s.equip_slots.clone(),
         bar_placeable: s.bar_placeable,
     });
-    if !was_locked {
-        cursor::raise_lock_edge(model, bag, slot, true);
-    }
+    cursor::set_item_lock(model, bag, slot, true);
     Arm::Took
 }
 

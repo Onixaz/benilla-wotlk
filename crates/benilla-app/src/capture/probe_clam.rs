@@ -174,7 +174,7 @@ fn clam_probe(
     mut cfg: ResMut<LootConfig>,
     loot: Res<LootState>,
     latch: Res<LootLatch>,
-    pending: Res<PendingItemOps>,
+    pending: crate::ui_script::LentRef<PendingItemOps>,
     net: Res<NetCommands>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -234,7 +234,9 @@ fn clam_probe(
         Phase::WaitOpen { since, round } => {
             if window_open(&script, &loot) {
                 let source = loot.source();
-                let grey = probe.clam.is_some_and(|g| pending.is_locked(g));
+                let grey = probe
+                    .clam
+                    .is_some_and(|g| pending.get().is_some_and(|p| p.is_locked(g)));
                 info!(
                     "PROBE_CLAM: round {round} — window up on {:?} (latch {:?}, slot grey {grey})",
                     source.map(|g| format!("{g:#x}")),
@@ -245,7 +247,9 @@ fn clam_probe(
                 let _ = script.eval::<()>("CloseLoot()");
                 probe.phase = Phase::WaitClosed { since: now, round };
             } else if now - since > OPEN_TIMEOUT_SECS {
-                let grey = probe.clam.is_some_and(|g| pending.is_locked(g));
+                let grey = probe
+                    .clam
+                    .is_some_and(|g| pending.get().is_some_and(|p| p.is_locked(g)));
                 error!(
                     "PROBE_CLAM: round {round} FAIL — no loot window within {OPEN_TIMEOUT_SECS}s \
                      of the click (latch {:?}, slot grey {grey}). A grey slot with no window is \

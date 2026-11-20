@@ -1217,6 +1217,16 @@ pub trait LiveState {
         self.guild_bank_slot(tab, slot).and_then(|s| s.texture)
     }
 
+    /// The item lock (`item+0x394` bit 0) of `guid`; `None` with no item store lent.
+    fn item_locked(&self, _guid: u64) -> Option<bool> {
+        None
+    }
+
+    /// Lock (`0x706fe0`) or unlock (`0x707020`) the item `guid`: whether its bit moved; `None` with no item store lent.
+    fn set_item_lock(&mut self, _guid: u64, _locked: bool) -> Option<bool> {
+        None
+    }
+
     /// Whether slot `(tab, slot)` holds `item_id` locked (`0x5a4c40`).
     fn guild_bank_locked(&self, _tab: u8, _slot: u8, _item_id: u32) -> bool {
         false

@@ -1043,7 +1043,7 @@ pub(crate) fn feed_char(
     commands: Res<NetCommands>,
     mut feed: ResMut<CharFeedState>,
     mut booth: ResMut<PaperDollBooth>,
-    pending: Res<PendingItemOps>,
+    pending: crate::ui_script::LentRef<PendingItemOps>,
     names: Res<crate::names::NameCache>,
     // `ItemSubClass.dbc`, for `GetInventoryItemCount`'s container count bit.
     sub_classes: Option<Res<crate::ui_items::ItemSubClasses>>,
@@ -1093,6 +1093,8 @@ pub(crate) fn feed_char(
     // Both catalogs load once at startup; one input covers the pair.
     let enchants_changed = enchants.as_ref().is_some_and(|r| r.is_changed())
         || props.as_ref().is_some_and(|r| r.is_changed());
+    // The locks as this feed starts, read beside the loan that owns them.
+    let pending = pending.get().map(|p| (*p).clone()).unwrap_or_default();
     let pending_held = !pending.is_empty();
     let pending_moved = memo.pending_epoch.moved(pending.epoch());
     // Both load once at startup, after the first snapshot can already be out.

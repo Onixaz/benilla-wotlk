@@ -148,6 +148,8 @@ pub enum MerchantAct {
     Sell { bag: i64, slot: u32 },
     /// A held vendor row dropped into a Lua slot: `CMSG_BUY_ITEM_IN_SLOT`, count 1.
     BuyInSlot { bag: i64, slot: u32, row: u32 },
+    /// A held vendor row dropped on a bag's own button (`0x5e79d0`): the same send into Lua container `bag`, its slot `0xFF`.
+    BuyInBag { bag: i64, row: u32 },
     /// `CloseMerchant` (`0x584600`).
     Close,
 }
@@ -380,6 +382,9 @@ pub(crate) fn merchant_act(model: &mut super::Model, act: MerchantAct) -> Mercha
         MerchantAct::Sell { bag, slot } => model.merchant_cursor_sells.push((bag, slot)),
         MerchantAct::BuyInSlot { bag, slot, row } => {
             model.merchant_slot_buys.push((bag, slot, row + 1));
+        }
+        MerchantAct::BuyInBag { bag, row } => {
+            model.merchant_slot_buys.push((bag, 0xff, row + 1));
         }
         MerchantAct::Close => model.merchant_close = true,
     }

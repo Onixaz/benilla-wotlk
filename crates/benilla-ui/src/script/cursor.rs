@@ -1,7 +1,8 @@
 //! The cursor payload: the client's payload-mode global as a typed enum, and the drag gestures
 //! ([`drag`]) that change it. Bags, the paper doll ([`doll`]), the action bars ([`bar`]) and the
-//! spellbook all transition it through [`raise_cursor_update`] and [`raise_lock_changed`], so
-//! sounds, `CURSOR_UPDATE`, grid events and lock display fire from one place.
+//! spellbook all transition it through the setters and the clear ([`set_cursor`],
+//! [`clear_cursor_with`]) and lock their items through [`set_item_lock`], so `CURSOR_UPDATE`, the
+//! grid events and the lock's signals fire from one place.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -238,13 +239,57 @@ pub(crate) fn set_cursor_with(
     }
 }
 
-/// An item's lock edge at its place: `ITEM_LOCK_CHANGED`, then `ITEM_LOCKED` (`0x706ff0`, `0x707001`) or `ITEM_UNLOCKED` (`0x707030`, `0x707041`).
-pub(crate) fn raise_lock_edge(
+/// The guid of the item at `(bag, slot)`, a worn slot or a bag slot read at the call; 0 for none.
+fn guid_at(model: &Model, bag: i64, slot: u32) -> Option<u64> {
+    if bag == EQUIPMENT_BAG {
+        let worn = model.inv_slot("player", usize::try_from(slot).ok()?)?;
+        return (worn.item_id != 0).then_some(worn.guid);
+    }
+    let held = super::container::live_slot(model, bag, slot)?;
+    (held.item_id != 0).then_some(held.guid)
+}
+
+/// Whether the item at `(bag, slot)` is locked (`item+0x394` bit 0), beside what its slot's own read reports.
+pub(crate) fn item_locked(model: &Model, bag: i64, slot: u32) -> bool {
+    model.item_locks.contains(&(bag, slot))
+        || guid_at(model, bag, slot).is_some_and(|guid| {
+            guid != 0
+                && super::read_live(|l| l.item_locked(guid))
+                    .flatten()
+                    .unwrap_or(false)
+        })
+}
+
+/// The item lock (`0x513740` -> `0x706fe0`) or unlock (`0x513770` -> `0x707020`) of the item at `(bag, slot)`: its bit moves, then `ITEM_LOCK_CHANGED` and `ITEM_LOCKED` (`0x706ff0`, `0x707001`) or `ITEM_UNLOCKED` (`0x707030`, `0x707041`); no item, or a bit already there, signals nothing (`0x513761`, `0x706feb`, `0x70702b`).
+pub(crate) fn set_item_lock(
     model: &mut crate::script::ModelGuard<'_>,
     bag: i64,
     slot: u32,
     locked: bool,
 ) {
+    let guid = guid_at(model, bag, slot);
+    let lent = guid
+        .filter(|&guid| guid != 0)
+        .and_then(|guid| super::write_live(|l| l.set_item_lock(guid, locked)).flatten());
+    // A bit kept here from a call no store was lent to counts beside the store's.
+    let at = model.item_locks.iter().position(|&p| p == (bag, slot));
+    let moved = match (locked, lent) {
+        (true, Some(moved)) => moved && at.is_none(),
+        (true, None) if at.is_none() && guid.is_some() => {
+            model.item_locks.push((bag, slot));
+            true
+        }
+        (true, None) => false,
+        (false, lent) => {
+            if let Some(at) = at {
+                model.item_locks.swap_remove(at);
+            }
+            guid.is_some() && (at.is_some() || lent == Some(true))
+        }
+    };
+    if !moved {
+        return;
+    }
     model.raise("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
     let edge = if locked {
         "ITEM_LOCKED"
@@ -304,7 +349,29 @@ pub(crate) fn clear_cursor(model: &mut crate::script::ModelGuard<'_>) {
     clear_cursor_with(model, true, true);
 }
 
-/// The cursor clear (`0x519280`): an armed gift wrap is cancelled, the payload goes by its mode (an item's source unlocks only with `unlock`, coins signal their frame only with `signal`), a shown grid hides, and `CURSOR_UPDATE` fires on every call, an empty cursor included.
+/// A payload's mode (`0xbd0748`): a bar slot's action goes up as what it holds, an item as mode 7 (`0x5abf3b`-`0x5abfd6`).
+fn mode_of(payload: &CursorPayload) -> u8 {
+    match payload {
+        CursorPayload::Item(_) => 1,
+        CursorPayload::Money(_) => 2,
+        CursorPayload::Spell(_) => 3,
+        CursorPayload::PetAction(_) => 4,
+        CursorPayload::Merchant(_) => 5,
+        CursorPayload::Action(a) => match a.kind & 0xf0 {
+            super::action::ACTION_KIND_ITEM => 7,
+            super::action::ACTION_KIND_MACRO => 8,
+            super::action::ACTION_KIND_SPELL => 3,
+            _ => 13,
+        },
+        CursorPayload::Macro(_) => 8,
+        CursorPayload::StablePet(_) => 10,
+        CursorPayload::GuildBankItem(_) => 11,
+        CursorPayload::GuildBankMoney(_) => 12,
+        CursorPayload::EquipmentSet(_) => 13,
+    }
+}
+
+/// The cursor clear (`0x519280`): an armed gift wrap is cancelled; the payload's fields zero by its mode (an item's source unlocking first, only with `unlock`; coins signalling their frame, only with `signal`); a shown grid hides under the mode still standing; then the mode zeroes and `CURSOR_UPDATE` fires, on every call, an empty cursor included.
 pub(crate) fn clear_cursor_with(
     model: &mut crate::script::ModelGuard<'_>,
     unlock: bool,
@@ -312,19 +379,16 @@ pub(crate) fn clear_cursor_with(
 ) {
     // The wrap's cancel unlocks the paper, then puts the cursor mode back (`0x6cef8d`, `0x6cefa0`).
     if let Some(wrap) = model.pending_wrap.take() {
-        raise_lock_edge(model, wrap.bag, wrap.slot, false);
+        set_item_lock(model, wrap.bag, wrap.slot, false);
         model.ui_cursor = None;
         model.ui_cursor_dirty = true;
     }
-    match model.cursor.clone() {
+    let held = model.cursor.clone();
+    let mode = held.as_ref().map_or(0, mode_of);
+    match held {
         // The item unlocks while the cursor still holds it (`0x5192c9`), then its fields zero (`0x519301`).
-        Some(CursorPayload::Item(item)) => {
-            if unlock {
-                model.cursor_item_unlocked = true;
-                raise_lock_edge(model, item.bag, item.slot, false);
-                model.cursor_item_unlocked = false;
-            }
-            model.cursor = None;
+        Some(CursorPayload::Item(item)) if unlock => {
+            set_item_lock(model, item.bag, item.slot, false);
         }
         // The coins zero under their mode, then signal (`0x51932c` -> `0x519349`, `0x51935e` -> `0x51937b`).
         Some(CursorPayload::Money(_)) => {
@@ -340,17 +404,18 @@ pub(crate) fn clear_cursor_with(
             }
         }
         // Mode 11 unlocks its slot with its event (`0x519406` -> `0x519411`), then zeroes.
-        Some(CursorPayload::GuildBankItem(held)) => {
-            if unlock {
-                super::guild_bank::unlock_held(model, &held);
-            }
-            model.cursor = None;
+        Some(CursorPayload::GuildBankItem(held)) if unlock => {
+            super::guild_bank::unlock_held(model, &held);
         }
+        // A spell, a pet action, a macro, a stabled pet and a set only zero (`0x519388`, `0x519393`, `0x5193d0`, `0x5193d8`, `0x51942d`), a vendor row and a bar item with theirs (`0x5193b4`).
         _ => {}
     }
-    // One flag serves both grids; the mode, still standing, picks which hides (`0x519447`-`0x519464`).
+    // The fields are zero and the mode stands (`0x519447`): the grid's listeners read the mode alone.
+    model.cursor = None;
+    model.cursor_standing = mode;
+    // One flag serves both grids; the mode picks which hides (`0x51944f`-`0x51945f`), then the flag drops (`0x519464`).
     if model.cursor_grid_shown {
-        let event = if matches!(model.cursor, Some(CursorPayload::PetAction(_))) {
+        let event = if mode == 4 {
             "PET_BAR_HIDEGRID"
         } else {
             "ACTIONBAR_HIDEGRID"
@@ -358,7 +423,8 @@ pub(crate) fn clear_cursor_with(
         model.raise(event, Vec::new());
         model.cursor_grid_shown = false;
     }
-    model.cursor = None;
+    // The mode zeroes just before the signal (`0x519470`, `0x519476`).
+    model.cursor_standing = 0;
     raise_cursor_update(model);
 }
 
@@ -451,22 +517,27 @@ pub(crate) fn split_container_item(
     };
     clear_cursor(model);
     set_cursor(model, CursorPayload::Item(item));
-    raise_lock_edge(model, bag, slot, true);
+    set_item_lock(model, bag, slot, true);
     true
 }
 
-/// `DeleteCursorItem()`, the delete popup's accept: a held item queues its `(bag, slot, count)`
-/// destroy, count 0 for the whole stack, and clears; anything else is a no-op.
-pub(crate) fn delete_cursor_item(model: &mut crate::script::ModelGuard<'_>) {
+/// `DeleteCursorItem()` (`0x522320`), the delete popup's accept: a held item queues its `(bag, slot, count)` destroy, count 0 for the whole stack, the cursor clears with both flags (`0x522429`) and the item locks again until the answer (`0x52244a`); an item whose template is flagged `0x20` is refused with its message, still held (`0x5223b5`). Anything else is a no-op.
+pub(crate) fn delete_cursor_item(
+    model: &mut crate::script::ModelGuard<'_>,
+) -> Result<(), &'static str> {
     let Some(CursorPayload::Item(item)) = &model.cursor else {
-        return;
+        return Ok(());
     };
     let item = item.clone();
+    if super::item_stats::item_record(model, item.item_id).is_some_and(|t| t.flags & 0x20 != 0) {
+        return Err("ERR_ITEM_CANT_BE_DESTROYED");
+    }
     model
         .container_destroys
         .push((item.bag, item.slot, item.count.unwrap_or(0)));
-    // The destroy goes out, then the clear with both flags (`0x522429`).
     clear_cursor(model);
+    set_item_lock(model, item.bag, item.slot, true);
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -581,6 +652,11 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
         Ok(vec![str("spell")?, int(index), str(book)?])
     };
     let values = match &model.cursor {
+        // A mode standing over zeroed fields, as a grid hide's listener finds it: a spell answers its zero id's slot (`0x5153bd`), a macro the first empty slot (`0x51542d` -> `0x564ab0`), the rest find no object or record and answer nothing.
+        None if model.cursor_standing == 3 => vec![str("spell")?, int(0), str("spell")?],
+        None if model.cursor_standing == 8 => {
+            vec![str("macro")?, int(model.macros.first_empty_index())]
+        }
         None | Some(CursorPayload::PetAction(_) | CursorPayload::StablePet(_)) => Vec::new(),
         Some(CursorPayload::Item(item)) => vec![
             str("item")?,
@@ -665,10 +741,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(super::binding_abi::flag(matches!(
-                model.cursor,
-                Some(CursorPayload::Item(_))
-            )))
+            // The mode alone (`0x515108`), which stands through the clear's grid hide.
+            Ok(super::binding_abi::flag(
+                matches!(model.cursor, Some(CursorPayload::Item(_))) || model.cursor_standing == 1,
+            ))
         })?,
     )?;
     g.set(
@@ -677,10 +753,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(super::binding_abi::flag(matches!(
-                model.cursor,
-                Some(CursorPayload::Spell(_))
-            )))
+            // The mode alone (`0x515143`): a spell off the book or off a bar slot, and the mode standing through the clear's grid hide.
+            let mode = model.cursor.as_ref().map_or(model.cursor_standing, mode_of);
+            Ok(super::binding_abi::flag(mode == 3))
         })?,
     )?;
     g.set(
@@ -702,8 +777,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "DeleteCursorItem",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            delete_cursor_item(&mut model);
+            let refused = delete_cursor_item(&mut crate::script::model_mut_of(lua));
+            if let Err(key) = refused {
+                crate::script::ui_errors::show_now(lua, key);
+            }
             Ok(())
         })?,
     )?;
@@ -868,7 +945,10 @@ mod tests {
             texture: None,
         }));
         assert!(!s.eval::<bool>("return CursorHasItem()").unwrap());
-        assert!(!s.eval::<bool>("return CursorHasSpell()").unwrap());
+        assert!(
+            s.eval::<bool>("return CursorHasSpell()").unwrap(),
+            "a bar slot's spell goes up through the spell setter, mode 3 (`0x5abf66`, `0x515143`)"
+        );
     }
 
     #[test]
@@ -1114,6 +1194,21 @@ mod tests {
         end)
     "#;
 
+    /// A logger on the same events: each entry is the event and its arguments.
+    const ARG_LOGGER: &str = r#"
+        Log = {}
+        local f = CreateFrame("Frame")
+        for _, e in ipairs({"CURSOR_UPDATE", "ITEM_LOCK_CHANGED", "ITEM_LOCKED", "ITEM_UNLOCKED",
+                "ACTIONBAR_SHOWGRID", "ACTIONBAR_HIDEGRID"}) do
+            f:RegisterEvent(e)
+        end
+        f:SetScript("OnEvent", function(_, ...)
+            local t = {...}
+            for i = 1, #t do t[i] = tostring(t[i]) end
+            Log[#Log + 1] = table.concat(t, " ")
+        end)
+    "#;
+
     /// The log since the last read.
     fn step_log(s: &UiScript) -> Vec<String> {
         s.eval::<Vec<String>>("local l = Log Log = {} return l")
@@ -1154,15 +1249,15 @@ mod tests {
             step_log(&s),
             [
                 "CURSOR_UPDATE empty free",
-                "ACTIONBAR_SHOWGRID held locked",
-                "CURSOR_UPDATE held locked",
+                "ACTIONBAR_SHOWGRID held free",
+                "CURSOR_UPDATE held free",
                 "ITEM_LOCK_CHANGED held locked",
                 "ITEM_LOCKED held locked",
             ]
         );
     }
 
-    /// The clear: the item unlocks while the cursor still holds it (`0x5192c9`), the grid hides once its fields are zeroed (`0x51945f`), and `CURSOR_UPDATE` is last (`0x519476`).
+    /// The clear: the item unlocks while the cursor still holds it (`0x5192c9`), the grid hides over zeroed fields with the mode still standing, which is all `CursorHasItem` reads (`0x51945f`, `0x515108`), and `CURSOR_UPDATE` follows the mode's zeroing (`0x519470`, `0x519476`).
     #[test]
     fn the_clear_unlocks_the_item_then_hides_the_grid_then_signals() {
         let mut s = UiScript::new().unwrap();
@@ -1175,10 +1270,115 @@ mod tests {
             [
                 "ITEM_LOCK_CHANGED held free",
                 "ITEM_UNLOCKED held free",
-                "ACTIONBAR_HIDEGRID empty free",
+                "ACTIONBAR_HIDEGRID held free",
                 "CURSOR_UPDATE empty free",
             ]
         );
+    }
+
+    /// The fields zero before the grid hides (`0x519301`, `0x519388`, `0x5193d0`): its listener finds no item behind mode 1 (`0x515243`), a spell's mode over id 0 (`0x5153bd`), and a macro's over the first empty slot (`0x564ab0`).
+    #[test]
+    fn the_grid_hide_reads_the_mode_over_zeroed_fields() {
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_item_backpack()));
+        s.run(
+            r#"local f = CreateFrame("Frame") f:RegisterEvent("ACTIONBAR_HIDEGRID")
+               f:SetScript("OnEvent", function()
+                   local t = {tostring(CursorHasItem()), tostring(CursorHasSpell()), GetCursorInfo()}
+                   for i = 1, #t do t[i] = tostring(t[i]) end
+                   Seen = table.concat(t, " ")
+               end)"#,
+        )
+        .unwrap();
+        s.run("PickupContainerItem(0, 1) ClearCursor()").unwrap();
+        assert_eq!(s.eval::<String>("return Seen").unwrap(), "1 nil");
+        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
+            passive: false,
+            book_slot: 3,
+            book_type: "spell".into(),
+            spell_id: 133,
+            texture: None,
+        }));
+        s.model_mut().cursor_grid_shown = true;
+        s.run("ClearCursor()").unwrap();
+        assert_eq!(
+            s.eval::<String>("return Seen").unwrap(),
+            "nil 1 spell 0 spell"
+        );
+        s.set_cursor_for_test(CursorPayload::Macro(super::CursorMacro {
+            index: 4,
+            texture: None,
+        }));
+        s.model_mut().cursor_grid_shown = true;
+        s.run("ClearCursor()").unwrap();
+        assert_eq!(s.eval::<String>("return Seen").unwrap(), "nil nil macro 1");
+        assert!(s
+            .eval::<bool>("return GetCursorInfo() == nil and not CursorHasSpell()")
+            .unwrap());
+    }
+
+    /// A bag put-down: the slot's item locks with its two signals (`0x5d82af`), then the swap's clear hides the grid and signals with no unlock (`0x6dfc0d`); both items read locked after.
+    #[test]
+    fn a_put_down_locks_the_slots_item_and_never_unlocks_the_held_one() {
+        let mut s = UiScript::new().unwrap();
+        let mut bag = one_item_backpack();
+        let other = bag.slots[&1].clone();
+        bag.slots.insert(2, other);
+        s.set_container(0, Some(bag));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        s.run(ARG_LOGGER).unwrap();
+        s.run("PickupContainerItem(0, 2)").unwrap();
+        assert_eq!(
+            step_log(&s),
+            [
+                "ITEM_LOCK_CHANGED 0 2",
+                "ITEM_LOCKED 0 2",
+                "ACTIONBAR_HIDEGRID",
+                "CURSOR_UPDATE",
+            ]
+        );
+        assert!(s
+            .eval::<bool>("return select(3, GetContainerItemInfo(0, 1)) and select(3, GetContainerItemInfo(0, 2))")
+            .unwrap());
+    }
+
+    /// The delete: the clear unlocks the item with both flags (`0x522429`), then the item locks again until the answer (`0x52244a` -> `0x706ff0`, `0x707001`).
+    #[test]
+    fn a_delete_clears_then_locks_the_item_again() {
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_item_backpack()));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        s.run(ARG_LOGGER).unwrap();
+        s.run("DeleteCursorItem()").unwrap();
+        assert_eq!(
+            step_log(&s),
+            [
+                "ITEM_LOCK_CHANGED 0 1",
+                "ITEM_UNLOCKED 0 1",
+                "ACTIONBAR_HIDEGRID",
+                "CURSOR_UPDATE",
+                "ITEM_LOCK_CHANGED 0 1",
+                "ITEM_LOCKED 0 1",
+            ]
+        );
+        assert!(s
+            .eval::<bool>("return select(3, GetContainerItemInfo(0, 1)) and not CursorHasItem()")
+            .unwrap());
+    }
+
+    /// An item already locked signals nothing on a second lock, an unlocked one nothing on an unlock (`0x706feb`, `0x70702b`).
+    #[test]
+    fn a_lock_signals_only_on_its_edge() {
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_item_backpack()));
+        s.run(ARG_LOGGER).unwrap();
+        for (locked, signals) in [(false, 0), (true, 2), (true, 0), (false, 2), (false, 0)] {
+            super::set_item_lock(&mut s.model_mut(), 0, 1, locked);
+            assert_eq!(step_log(&s).len(), signals, "lock {locked}");
+        }
+        // No item, no lock (`0x513761`).
+        super::set_item_lock(&mut s.model_mut(), 0, 9, true);
+        assert!(step_log(&s).is_empty() && !super::item_locked(&s.model_ref(), 0, 9));
     }
 
     /// The coins' clear zeroes them under their mode before `PLAYER_MONEY` (`0x51932c`, `0x519349`): the listener reads no cursor money and still a money cursor.
@@ -1197,7 +1397,7 @@ mod tests {
         assert!(s.eval::<bool>("return CursorHasMoney() == nil").unwrap());
     }
 
-    /// A listener's write inside a verb's event is what the rest of the verb reads: a `CURSOR_UPDATE` listener that drops the item the setter just placed leaves the lock's signals reading an empty cursor.
+    /// A listener's write inside a verb's event is what the rest of the verb reads: a `CURSOR_UPDATE` listener that drops the item the setter just placed leaves the lock's signals reading an empty cursor, and the item locked by its guid all the same (`0x5d822f`).
     #[test]
     fn a_listeners_write_reaches_the_rest_of_the_verb() {
         let mut s = UiScript::new().unwrap();
@@ -1212,7 +1412,7 @@ mod tests {
         let log = step_log(&s);
         assert_eq!(
             log.last().map(String::as_str),
-            Some("ITEM_LOCKED empty free"),
+            Some("ITEM_LOCKED empty locked"),
             "{log:?}"
         );
         assert!(s.cursor_payload().is_none());

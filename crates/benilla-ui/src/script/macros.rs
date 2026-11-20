@@ -67,6 +67,17 @@ pub(crate) struct MacroIndex {
     pos: usize,
 }
 
+impl MacroState {
+    /// The 1-based index of the first slot holding no macro, as the id lookup finds id 0 (`0x564ab0`): the account list's end, else the character list's.
+    pub(crate) fn first_empty_index(&self) -> u32 {
+        if self.account.len() < MAX_ACCOUNT_MACROS {
+            self.account.len() as u32 + 1
+        } else {
+            (MAX_ACCOUNT_MACROS + self.character.len()) as u32 + 1
+        }
+    }
+}
+
 impl MacroIndex {
     /// `None` outside 1..=54; not checked against the lists, which [`MacroState::get`] does.
     fn split(index: usize) -> Option<Self> {

@@ -7,7 +7,7 @@ use crate::script::binding_abi::flag;
 use crate::script::container::ContainerMove;
 use crate::script::Model;
 
-use super::{clear_cursor, raise_lock_edge, set_cursor, CursorItem, CursorPayload, EQUIPMENT_BAG};
+use super::{clear_cursor, set_cursor, set_item_lock, CursorItem, CursorPayload, EQUIPMENT_BAG};
 
 /// `PickupInventoryItem(id)`, the doll slot's click, on the bag click's model: a fitting whole item
 /// moves in and the cursor clears, with no hop; a misfit on the doll's 23 slots auto-equips
@@ -30,7 +30,8 @@ pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, i
     if !placing && (picking || crate::script::merchant::repair_mode(model)) {
         let usable = model
             .inv_slot("player", id as usize)
-            .is_some_and(|s| s.item_id != 0 && !s.locked);
+            .is_some_and(|s| s.item_id != 0)
+            && !is_inventory_item_locked(model, id);
         if usable && picking {
             model.item_picks.push((EQUIPMENT_BAG, id));
         } else if usable && (1..=19).contains(&id) {
@@ -42,7 +43,7 @@ pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, i
         None => {
             let picked = model
                 .inv_slot("player", id as usize)
-                .filter(|s| s.item_id != 0 && !s.locked)
+                .filter(|s| s.item_id != 0 && !is_inventory_item_locked(model, id))
                 .map(|s| CursorItem {
                     bag: EQUIPMENT_BAG,
                     slot: id,
@@ -58,7 +59,7 @@ pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, i
                 // The setter, then the lock (`0x5e893a`).
                 Some(item) => {
                     set_cursor(model, CursorPayload::Item(item));
-                    raise_lock_edge(model, EQUIPMENT_BAG, id, true);
+                    set_item_lock(model, EQUIPMENT_BAG, id, true);
                     true
                 }
                 None => false,
@@ -78,6 +79,10 @@ pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, i
             if !super::bag_verbs::fits_slot(&held, id) {
                 return auto_equip_cursor_item(model);
             }
+            // A locked item in the slot refuses the swap, the cursor as it was (`0x5e8976`).
+            if is_inventory_item_locked(model, id) {
+                return false;
+            }
             model.container_moves.push(ContainerMove {
                 src_bag: held.bag,
                 src_slot: held.slot,
@@ -85,7 +90,9 @@ pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, i
                 dst_slot: id,
                 count: None,
             });
-            clear_cursor(model);
+            // The swap's clear leaves the held item locked (`0x6dfc0d`), then the slot's item locks (`0x5e89c7`).
+            super::clear_cursor_with(model, false, true);
+            set_item_lock(model, EQUIPMENT_BAG, id, true);
             true
         }
         // Mode 5, a buy into this slot: the reference sends `CMSG_BUY_ITEM_IN_SLOT` (`0x1a3`) and
@@ -159,9 +166,10 @@ pub(super) fn auto_equip_cursor_item(model: &mut crate::script::ModelGuard<'_>) 
             clear_cursor(model);
             true
         }
+        // The equip goes out and the cursor clears, its item still locked until the answer (`0x6dfe81`, `0x6dfebd`).
         Some(CursorPayload::Item(item)) if item.bag >= 0 && item.count.is_none() => {
             model.container_autoequips.push((item.bag, item.slot));
-            clear_cursor(model);
+            super::clear_cursor_with(model, false, true);
             true
         }
         _ => false,
@@ -189,17 +197,13 @@ pub(super) fn use_inventory_item(model: &mut crate::script::ModelGuard<'_>, id: 
     }
 }
 
-/// `IsInventoryItemLocked(id)`: true while `id` is the held item's source or the app reports a
-/// pending operation on it. Reads [`Model::inv_slot`], since `BankFrameItemButton_UpdateLock`
-/// asks about bank slots too.
+/// `IsInventoryItemLocked(id)`: the item's lock bit (`item+0x394` bit 0), read at the call beside the slot's fed one. Reads [`Model::inv_slot`], since `BankFrameItemButton_UpdateLock` asks about bank slots too.
 pub(in crate::script) fn is_inventory_item_locked(model: &Model, id: u32) -> bool {
-    let held_here = matches!(&model.cursor, Some(CursorPayload::Item(c)) if c.bag == EQUIPMENT_BAG && c.slot == id && !model.cursor_item_unlocked)
-        || crate::script::socket::holds_slot(model, EQUIPMENT_BAG, id);
     let fed = usize::try_from(id)
         .ok()
         .and_then(|i| model.inv_slot("player", i))
         .is_some_and(|s| s.locked);
-    held_here || fed
+    fed || super::item_locked(model, EQUIPMENT_BAG, id)
 }
 
 /// A verb's slot argument as the live id, through the registrar's reader (`0x5e7c00`).
@@ -823,9 +827,17 @@ mod tests {
             "a click while carrying an item is a place, not a bind"
         );
 
-        // Armed with an empty cursor: both seams bind and leave the cursor empty.
-        s.run("ClearCursor()").unwrap();
+        // Armed with an empty cursor: both seams bind and leave the cursor empty. A fresh pair of items: the place left its two locked (`0x5d82af`, `0x6dfc0d`), and a locked item does not bind (`0x5e882c`).
         assert!(s.cursor_item().is_none());
+        assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
+        assert!(
+            s.take_item_picks().is_empty(),
+            "a locked item does not bind"
+        );
+        let mut s = UiScript::new().unwrap();
+        s.set_inventory_slots(doll_slots());
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_item_pick_armed(true);
         assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
         s.run("PickupContainerItem(0, 1)").unwrap();
         assert_eq!(

@@ -1197,10 +1197,7 @@ impl LootUnlocks<'_, '_> {
 
 /// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`).
 fn drain_loot(
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     commands: Res<NetCommands>,

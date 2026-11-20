@@ -693,15 +693,11 @@ struct Clicked {
 /// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, the moves
 /// through [`send_container_move`].
 pub(super) fn drain_container_moves(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     items: Res<Items>,
-    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     let Some(mut script) = script else {
@@ -739,7 +735,6 @@ pub(super) fn drain_container_moves(
             &items,
             &commands,
             store,
-            &mut pending,
             mv,
             false,
         );
@@ -753,7 +748,7 @@ fn is_equip_position(bag_index: u8, slot: u8) -> bool {
     bag_index == BAG_PLAYER_INVENTORY && (slot <= 22 || bank_bags.contains(&slot))
 }
 
-/// One container move: the soulbind deferral, then the send and a lock on both ends. A whole stack
+/// One container move: the soulbind deferral, then the send; the verb locked its items at its own steps (`0x5d82af`, `0x5d822f`). A whole stack
 /// is `CMSG_SWAP_INV_ITEM` when both ends are in the player's own array, else `CMSG_SWAP_ITEM`
 /// (destination first, `Server/Packets/Item.cpp:30-36`); a split is `CMSG_SPLIT_ITEM`. The
 /// accept's re-issue runs it with `suppress`. False when deferred behind `EQUIP_BIND_CONFIRM`.
@@ -764,7 +759,6 @@ pub(crate) fn send_container_move(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     mv: benilla_ui::script::ContainerMove,
     suppress: bool,
 ) -> bool {
@@ -846,33 +840,19 @@ pub(crate) fn send_container_move(
                 });
             }
         }
-        // The item at each end locks, its edge signalled at its place (`0x706fe0`).
-        for (bag, slot) in [(mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)] {
-            let (guid, _) = slot_guid_count(store, bag, slot, objects);
-            if pending.write().lock(guid) {
-                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
-            }
-        }
     }
     true
 }
 
 /// Sends the destroys `DeleteCursorItem` queued as `CMSG_DESTROYITEM` (count 0 is the whole stack
-/// on both sides) and locks the one slot.
+/// on both sides); the verb locked the item after its clear (`0x52244a`).
 pub(super) fn drain_container_destroys(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     commands: Res<NetCommands>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    objects: Objects,
-    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    let store = self_q.iter().next();
     for (bag, slot, count) in script.take_container_destroys() {
         let Some((bag_index, wire_slot)) = wire_pos(bag, slot) else {
             debug!("ui_items: destroy ({bag}, {slot}) out of range — ignored");
@@ -885,10 +865,6 @@ pub(super) fn drain_container_destroys(
             slot: wire_slot,
             count,
         });
-        let (guid, _) = slot_guid_count(store, bag, slot, &objects);
-        if pending.write().lock(guid) {
-            super::watch::fire_lock_edge_now(&mut script, true, item_lock_args(bag, slot));
-        }
     }
 }
 
@@ -903,10 +879,7 @@ fn run_container_clicks(world: &mut World) {
         .run_system_once(
             |(mut script, _live): (
                 NonSendMut<UiScript>,
-                crate::ui_script::LendLive<(
-                    crate::ui_script::OwnsCooldowns,
-                    crate::ui_script::OwnsPending,
-                )>,
+                crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
             ),
              mut items: ScriptItemUse| {
                 crate::script_calls::in_call_order(&mut script, |script, call| {
@@ -1343,12 +1316,9 @@ fn cancel_occupants(
     }
 }
 
-/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants, which its deferral never locked, so only an item another send locked fires.
+/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants (`0x6e0273`, `0x6e02cd`), each signalling only if locked.
 pub(super) fn drain_bind_confirm_answers(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     objects: Objects,
@@ -1394,7 +1364,6 @@ pub(super) fn drain_bind_confirm_answers(
                     &items,
                     &commands,
                     store,
-                    &mut pending,
                     benilla_ui::script::ContainerMove {
                         src_bag,
                         src_slot,

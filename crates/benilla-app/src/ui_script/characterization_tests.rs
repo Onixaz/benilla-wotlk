@@ -5955,6 +5955,67 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
     );
 }
 
+/// A verb's lock is the item's own bit, written through the lent view: the pickup locks (`0x5d822f`), the delete's clear unlocks (`0x522429`) and the delete locks again (`0x52244a`), each edge read at its event, and the send adds none.
+#[test]
+fn a_delete_locks_the_item_again_in_the_item_store() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const ARROWS: u64 = 0x4000_0000_0000_0400;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let pairs = [
+        (FIELD_OBJECT_ENTRY, 2512),
+        (FIELD_ITEM_OWNER, ME as u32),
+        (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+        (FIELD_ITEM_CONTAINED, ME as u32),
+        (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+        (FIELD_ITEM_STACK_COUNT, 20),
+    ];
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: ARROWS,
+                container: false,
+                fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+            },
+            self_values(&[
+                (FIELD_PLAYER_PACK_SLOT_1, ARROWS as u32),
+                (FIELD_PLAYER_PACK_SLOT_1 + 1, (ARROWS >> 32) as u32),
+            ]),
+        ],
+        2,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("PickupContainerItem(0, 1) DeleteCursorItem()")
+    })
+    .expect("a VM")
+    .expect("the delete runs");
+    let seen = rig.packets(Vec::new(), 2);
+    assert_eq!(
+        pin(
+            &seen,
+            &["ITEM_LOCK_CHANGED", "ITEM_LOCKED", "ITEM_UNLOCKED"],
+            &["lock01"]
+        ),
+        [
+            "ITEM_LOCK_CHANGED 0 1 | lock01=1",
+            "ITEM_LOCKED 0 1 | lock01=1",
+            "ITEM_LOCK_CHANGED 0 1 | lock01=nil",
+            "ITEM_UNLOCKED 0 1 | lock01=nil",
+            "ITEM_LOCK_CHANGED 0 1 | lock01=1",
+            "ITEM_LOCKED 0 1 | lock01=1",
+        ]
+    );
+    assert!(rig
+        .app
+        .world()
+        .resource::<crate::pending_item_ops::PendingItemOps>()
+        .is_locked(ARROWS));
+}
+
 /// The bag watches fire from the update's handler in field order, each read at its own event: a pack slot's watch (`0x5d9790`) unlocks the moved item (`0x5d9863`) before our `BAG_UPDATE`s (`0x5d98e3` -> `0x5d7070`); a bag slot's inventory watch (`0x6dedd0`) runs ahead of the containers' (`0x5d9b40`), whose refresh closes the old bag before the new one's update (`0x5d9a87`, `0x5d9b16`); a vault or bank-bag slot fires its bank slot (`0x6deed6`).
 #[test]
 fn the_bag_watches_fire_from_the_update_in_field_order() {
@@ -6019,7 +6080,7 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
         "a pack slot's watch, read at its event"
     );
 
-    // The move's send locks the item at its one held end (`0x706fe0`).
+    // The pickup locks the item (`0x5d822f`); the put-down's clear leaves it locked and signals no unlock (`0x6dfc0d`), and the send locks nothing more.
     super::live::with_live_world(rig.app.world_mut(), |s| {
         s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
     })
@@ -6029,12 +6090,12 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
     let lock_events = &["ITEM_LOCK_CHANGED", "ITEM_LOCKED", "ITEM_UNLOCKED"];
     let locks = pin(&seen, lock_events, &["lock01"]);
     assert_eq!(
-        locks[locks.len().saturating_sub(2)..],
+        locks,
         [
             "ITEM_LOCK_CHANGED 0 1 | lock01=1",
             "ITEM_LOCKED 0 1 | lock01=1"
         ],
-        "the send's lock reads locked at its events: {locks:?}"
+        "one lock edge, read locked at its events"
     );
     // Slot 1's watch unlocks its new item, none (`0x5d9863` -> `0x513770`), then our updates; slot 2's unlocks the arrows at their new place, then ours again.
     let mut words = slot(FIELD_PLAYER_PACK_SLOT_1, 0).to_vec();
@@ -6390,7 +6451,7 @@ fn a_bag_slot_count_and_enchant_watch_each_run_their_own_handler() {
         2,
     );
 
-    // A swap inside the worn bag locks both items; the bag's two slot fields then run its slot watch twice, each unlocking its own new item.
+    // A swap inside the worn bag locks the held item at its pickup and the slot's at the put-down (`0x5d822f`, `0x5d82af`), with no unlock between (`0x6dfc0d`); the bag's two slot fields then run its slot watch twice, each unlocking its own new item.
     super::live::with_live_world(rig.app.world_mut(), |s| {
         s.run("PickupContainerItem(1, 1) PickupContainerItem(1, 2)")
     })
@@ -6399,7 +6460,7 @@ fn a_bag_slot_count_and_enchant_watch_each_run_their_own_handler() {
     let seen = rig.packets(Vec::new(), 2);
     let locks = pin(&seen, lock_events, &["lock11", "lock12"]);
     assert_eq!(
-        locks[locks.len().saturating_sub(4)..],
+        locks,
         [
             "ITEM_LOCK_CHANGED 1 1 | lock11=1 lock12=nil",
             "ITEM_LOCKED 1 1 | lock11=1 lock12=nil",

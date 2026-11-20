@@ -227,7 +227,7 @@ pub enum MailCommand {
 fn clear_send_mail(model: &mut crate::script::ModelGuard<'_>, signal: bool) {
     for i in 0..model.mail_send_items.len() {
         if let Some(item) = model.mail_send_items[i].take() {
-            cursor::raise_lock_edge(model, item.bag, item.slot, false);
+            cursor::set_item_lock(model, item.bag, item.slot, false);
         }
     }
     model.mail_send_money = 0;
@@ -325,11 +325,8 @@ fn add_item_to_outgoing(
     item.count = None;
     let (bag, bag_slot) = (item.bag, item.slot);
     // The lock signals only on its edge (`0x5701cb` -> `0x706fe0`): an item the cursor holds is locked already.
-    let was_locked = super::container::slot_held(model, bag, bag_slot);
     model.mail_send_items[slot] = Some(item);
-    if !was_locked {
-        cursor::raise_lock_edge(model, bag, bag_slot, true);
-    }
+    cursor::set_item_lock(model, bag, bag_slot, true);
     signal_event(model, "MAIL_SEND_INFO_UPDATE", vec![]);
     Ok(())
 }
@@ -363,15 +360,6 @@ pub(super) fn use_container_item(
         },
     );
     added.map_or_else(Arm::Refused, |()| Arm::Took)
-}
-
-/// A bag slot attached to the outgoing mail reads locked.
-pub(super) fn holds_slot(model: &Model, bag: i64, slot: u32) -> bool {
-    model
-        .mail_send_items
-        .iter()
-        .flatten()
-        .any(|it| it.bag == bag && it.slot == slot)
 }
 
 /// The attachment in send slot `index`, for the tooltip.
@@ -1265,7 +1253,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .filter(|&s| s < MAIL_SEND_SLOTS)
                     .and_then(|s| model.mail_send_items[s].take());
                 if let Some(it) = taken {
-                    cursor::raise_lock_edge(&mut model, it.bag, it.slot, false);
+                    cursor::set_item_lock(&mut model, it.bag, it.slot, false);
                 }
                 signal_event(&mut model, "MAIL_SEND_INFO_UPDATE", vec![]);
             }
@@ -1441,7 +1429,7 @@ fn click_send_mail_item(
             .filter(|&s| s < SEND_ARRAY)
             .and_then(|s| model.mail_send_items[s].take());
         if let Some(it) = taken {
-            cursor::raise_lock_edge(model, it.bag, it.slot, false);
+            cursor::set_item_lock(model, it.bag, it.slot, false);
             signal_event(model, "MAIL_SEND_INFO_UPDATE", vec![]);
         }
         return None;

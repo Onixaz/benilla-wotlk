@@ -138,6 +138,7 @@ fn click_trade_button(model: &mut crate::script::ModelGuard<'_>, id: u32) {
     match model.cursor.clone() {
         Some(CursorPayload::Item(item)) => {
             model.trade_set_items.push((id, item.bag, item.slot));
+            // Deviation: the reference's clear leaves a placed item locked (`0x587c4f`) until its slot clears or the trade ends (`0x587a58`, `0x5864b3`); no trade slot holds a lock here, so the item unlocks at the drop.
             cursor::clear_cursor(model);
         }
         None => {

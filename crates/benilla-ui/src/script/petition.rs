@@ -560,15 +560,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Whether the button holds the item in `(bag, slot)`, which stays locked as the pickup left it.
-pub(super) fn holds_slot(model: &super::Model, bag: i64, slot: u32) -> bool {
-    model.petition_button.is_some_and(|b| {
-        b.bag == bag
-            && b.slot == slot
-            && super::container::live_slot(model, bag, slot).is_some_and(|s| s.guid == b.item)
-    })
-}
-
 /// The button's click (`0x5a2140`): no vendor, or a cursor item without the petition flag, does
 /// nothing. An empty cursor empties the button; either way the cursor clears without unlocking
 /// its item (`ClearCursor(0, 1)`) and the previous item goes back onto it.
