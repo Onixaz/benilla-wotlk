@@ -880,6 +880,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Arm::Pass => super::auction::use_container_item(&mut model, bag, slot),
                     took => took,
                 };
+                // Then an open trade takes it (`0x5d896d`), ahead of the guild bank.
+                let arm = match arm {
+                    Arm::Pass => super::trade::use_container_item(&mut model, bag, slot),
+                    took => took,
+                };
                 match arm {
                     Arm::Refused(key) => {
                         drop(model);

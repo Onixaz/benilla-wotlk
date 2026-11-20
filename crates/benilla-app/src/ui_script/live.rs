@@ -2281,6 +2281,36 @@ impl LiveState for LiveView<'_, '_> {
         Some(held.then(|| records.view(item)).flatten())
     }
 
+    fn trade_item_facts(&self, item: u64) -> Option<benilla_ui::script::TradeItemFacts> {
+        let index = self.index.as_ref()?;
+        let fields = index
+            .0
+            .get(&item)
+            .and_then(|&e| self.stores.get(e).ok())
+            .map(|s| &s.0);
+        let held = |guid: u64| {
+            index
+                .0
+                .get(&guid)
+                .and_then(|&e| self.stores.get(e).ok())
+                .is_some()
+        };
+        let template = fields
+            .and_then(|f| f.object_entry())
+            .zip(self.items.as_deref())
+            .and_then(|(entry, items)| items.template_cached(entry));
+        Some(fields.map_or_else(Default::default, |f| {
+            crate::ui_trade::item_facts(
+                f,
+                template,
+                self.active_player(),
+                self.enchants.as_deref(),
+                self.spells.as_deref(),
+                &held,
+            )
+        }))
+    }
+
     fn bound_trade_stamp(&self, item: u64) -> Option<Option<u32>> {
         let index = self.index.as_ref()?;
         let fields = index

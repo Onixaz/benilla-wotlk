@@ -240,7 +240,7 @@ pub(crate) fn set_cursor_with(
 }
 
 /// The guid of the item at `(bag, slot)`, a worn slot or a bag slot read at the call; 0 for none.
-fn guid_at(model: &Model, bag: i64, slot: u32) -> Option<u64> {
+pub(crate) fn guid_at(model: &Model, bag: i64, slot: u32) -> Option<u64> {
     if bag == EQUIPMENT_BAG {
         let worn = model.inv_slot("player", usize::try_from(slot).ok()?)?;
         return (worn.item_id != 0).then_some(worn.guid);

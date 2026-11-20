@@ -53,8 +53,8 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "UPDATE_BINDINGS",
         "benilla-app/src/bindings.rs",
     ),
-    // The trade drain applies the accept, the unaccept or the close to the session at once, and
-    // the trade feed fires on the change it reads.
+    // The trade drain applies the accept or the unaccept to the session at once, and the trade
+    // feed fires on the change it reads.
     (
         "AcceptTrade",
         "TRADE_ACCEPT_UPDATE",
@@ -63,11 +63,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     (
         "CancelTradeAccept",
         "TRADE_ACCEPT_UPDATE",
-        "benilla-app/src/ui_trade/mod.rs",
-    ),
-    (
-        "CloseTrade",
-        "TRADE_CLOSED",
         "benilla-app/src/ui_trade/mod.rs",
     ),
     // The direct RSVP (`direct_rsvp`) marks the action pending and signals it.
@@ -114,23 +109,13 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
 ];
 
 /// Pairs nothing fires on the verb's path, each with its reason.
-const GAP: &[(&str, &str, &str)] = &[
-    (
-        "CloseTrade",
-        "PLAYER_TRADE_MONEY",
-        "fired only when the trade did not complete, \
-         zeroing the cancelled offer under a frame TRADE_CLOSED \
-         hides; here `TradeSession::begin` resets the whole session at the next trade, so the \
-         next window opens at zero either way",
-    ),
-    (
-        "PetRename",
-        "PET_FORCE_NAME_DECLENSION",
-        "fired from the verb (`0x5d5670`) only when the client's locale declines names and the \
+const GAP: &[(&str, &str, &str)] = &[(
+    "PetRename",
+    "PET_FORCE_NAME_DECLENSION",
+    "fired from the verb (`0x5d5670`) only when the client's locale declines names and the \
          call carries fewer than five forms; benilla's name check declines no name, and the \
          server's refusal with its forms fires it from the app's pet feed",
-    ),
-];
+)];
 
 fn table() -> Vec<Pair> {
     let tsv = concat!(

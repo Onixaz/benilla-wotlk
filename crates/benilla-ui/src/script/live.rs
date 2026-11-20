@@ -900,6 +900,11 @@ pub trait LiveState {
         None
     }
 
+    /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
+    fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
+        None
+    }
+
     /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
     fn ask_refund_record(&mut self, _item: u64) {}
 
