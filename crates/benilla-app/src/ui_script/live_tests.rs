@@ -167,11 +167,24 @@ fn an_unwinding_call_puts_the_vm_and_the_view_back() {
 /// system's `&mut Option<NonSendMut<UiScript>>` does not count).
 fn takes_vm(params: &str) -> bool {
     let flat: String = params.split_whitespace().collect();
+    // `NonSend[Mut]<UiScript>`, its path written out or not; a reference to one is a helper's.
     flat.match_indices("UiScript>").any(|(at, _)| {
         let head = &flat[..at];
-        let ty = &head[head.rfind(':').map_or(0, |c| c + 1)..];
-        let ty = ty.trim_start_matches('(');
-        !ty.starts_with('&') && ty.contains("NonSend")
+        let Some(open) = head.rfind('<') else {
+            return false;
+        };
+        let path = &head[open + 1..];
+        // A lifetime first: `NonSendMut<'w, UiScript>`.
+        let path = match path.strip_prefix('\'') {
+            Some(rest) => rest.split_once(',').map_or("", |(_, p)| p),
+            None => path,
+        };
+        let wrapper = &head[..open];
+        let ty = &wrapper[wrapper.rfind([':', ',', '(']).map_or(0, |c| c + 1)..];
+        path.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+            && (ty.ends_with("NonSend") || ty.ends_with("NonSendMut"))
+            && !ty.starts_with('&')
     })
 }
 
