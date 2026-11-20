@@ -98,6 +98,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("ext_shadow::ExtShadowQuality", "record"),
     ("doodad_anim::AnimMatPart", "record"),
     ("doodad_anim::DoodadAnimHost", "record"),
+    ("doodad_anim::HostSequence", "record"),
     ("doodad_anim::MatAnim", "record"),
     ("doodad_anim::TintLoop", "record"),
     ("doodad_anim::UvLoops", "record"),

@@ -9,6 +9,7 @@
 
 use bevy::animation::graph::AnimationNodeIndex;
 use bevy::app::AnimationSystems;
+use bevy::ecs::schedule::common_conditions::any_match_filter;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 
@@ -229,6 +230,48 @@ pub struct DoodadAnimHost {
     pub active: bool,
     /// `Time::elapsed_secs` when `active` last went false: the reaper demotes the longest-parked.
     pub(crate) parked_at: f32,
+    /// The clip a [`HostSequence`] change is blending out of; `None` outside a blend.
+    pub(crate) fade_out: Option<SequenceFade>,
+}
+
+/// The outgoing clip of a blended re-arm, the reference's secondary sequence (`0x826c40`, blend
+/// on): its weight falls as `smoothstep((end − now) / duration)` over the new sequence's
+/// `blendTime`, the incoming clip taking the rest.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SequenceFade {
+    node: AnimationNodeIndex,
+    end: f32,
+    duration: f32,
+}
+
+impl SequenceFade {
+    /// The outgoing weight at `now`, 1 at the blend's start and 0 at its end.
+    fn weight(&self, now: f32) -> f32 {
+        let t = ((self.end - now) / self.duration).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+}
+
+/// A request on an anim host root to play this animation id in place of its loader-idle arm: a
+/// moving map object sets its ship state on every set-0 doodad (`0x7b45f0` -> `0x7b4170`, each
+/// prop's `0x832ab0` with variation -1 and blend on). The caller resolves the id on the model; the
+/// next re-roll picks its variation and blends to it over the new sequence's `blendTime`, drawn or
+/// not.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HostSequence(pub u16);
+
+/// Re-arm each host whose requested sequence changed: its window expires now, so
+/// [`reroll_doodad_variation`] rolls the new id this frame, blending as the request changed.
+fn apply_host_sequence(
+    mut hosts: Query<(&HostSequence, &mut DoodadAnimHost), Changed<HostSequence>>,
+) {
+    for (seq, mut host) in &mut hosts {
+        if host.anim_id == Some(seq.0) {
+            continue; // already looping it: a repeat request does not restart the clip
+        }
+        host.anim_id = Some(seq.0);
+        host.window_hi = f32::NEG_INFINITY;
+    }
 }
 
 /// On the anim root of a prop that rides a moving entity (a transport's cargo): the draw gate's
@@ -278,17 +321,23 @@ impl DoodadAnimHost {
 /// Deviation: this runs for every resident host, where the reference stops a doodad culled out of
 /// its scene list (scene `[+0x20]`) and re-arms it at once on re-link, because gating it so would
 /// re-roll the whole field on the frame the camera turns back.
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn reroll_doodad_variation(
     time: Res<Time>,
     mut rng: ResMut<benilla_assets::AnimRng>,
     mut hosts: Query<(
+        Entity,
         &mut DoodadAnimHost,
         &ModelAnimations,
         Option<&mut AnimationPlayer>,
+        Option<Ref<HostSequence>>,
     )>,
 ) {
     let now = time.elapsed_secs();
-    for (mut host, anims, player) in &mut hosts {
+    for (entity, mut host, anims, mut player, request) in &mut hosts {
+        if let Some(fade) = host.fade_out {
+            advance_fade(&mut host, fade, player.as_deref_mut(), now);
+        }
         let Some(anim_id) = host.anim_id else {
             continue; // gseq-only: never armed
         };
@@ -300,18 +349,76 @@ fn reroll_doodad_variation(
             host.anim_id = None;
             continue;
         };
-        let (node, duration) = (clip.node, clip.duration);
+        let (node, duration, blend) = (clip.node, clip.duration, clip.blend_time);
         let replay = rng.replay_count(clip.replay);
+        let outgoing = host.clip.map(|(n, _)| n);
         host.armed_at = now;
         // `span · R`, one loop for `replay = (0, 0)`; a zero-duration clip gets a minimum window.
         host.window_hi = now + (duration * replay as f32).max(f32::EPSILON);
         host.clip = Some((node, duration));
-        if host.active {
-            if let Some(mut p) = player {
+        let Some(mut p) = player.filter(|_| host.active) else {
+            continue;
+        };
+        // A re-arm on a changed request blends (`0x7b4170` sets blend on); the window's own
+        // variation re-roll snaps (`blendFlag = 0`).
+        let blended = request.is_some_and(|r| r.is_changed()) && blend > 0.0;
+        match outgoing.filter(|&o| blended && o != node) {
+            Some(out) => {
+                // A blend still past half weight keeps its outgoing clip, as the reference keeps
+                // its secondary; the clip it was blending into is dropped.
+                let keep = host
+                    .fade_out
+                    .filter(|f| f.weight(now) > 0.5 && f.node != node);
+                let fade = keep.unwrap_or(SequenceFade {
+                    node: out,
+                    end: now + blend,
+                    duration: blend,
+                });
+                let playing: Vec<_> = p.playing_animations().map(|(&n, _)| n).collect();
+                for n in playing.into_iter().filter(|&n| n != fade.node) {
+                    p.stop(n);
+                }
+                p.play(node).repeat();
+                if benilla_assets::trace::enabled_for("ship") {
+                    let line = format!(
+                        "prop {entity} blends {:?} -> {:?} ({anim_id}) over {:.3} s",
+                        fade.node, node, fade.duration
+                    );
+                    benilla_assets::trace::line("ship", &line);
+                }
+                host.fade_out = Some(fade);
+                advance_fade(&mut host, fade, Some(&mut p), now);
+            }
+            None => {
                 p.stop_all(); // the snap
                 p.play(node).repeat();
+                host.fade_out = None;
             }
         }
+    }
+}
+
+/// Weigh a blend's outgoing clip against the armed one, and drop it once its weight reaches 0.
+fn advance_fade(
+    host: &mut DoodadAnimHost,
+    fade: SequenceFade,
+    player: Option<&mut AnimationPlayer>,
+    now: f32,
+) {
+    let Some(p) = player else {
+        host.fade_out = None;
+        return;
+    };
+    let w = fade.weight(now);
+    let current = host.clip.map(|(n, _)| n);
+    if w <= 0.0 {
+        p.stop(fade.node);
+        host.fade_out = None;
+    } else if let Some(out) = p.animation_mut(fade.node) {
+        out.set_weight(w);
+    }
+    if let Some(a) = current.and_then(|n| p.animation_mut(n)) {
+        a.set_weight(1.0 - w);
     }
 }
 
@@ -421,6 +528,8 @@ fn gate_doodad_anim(
             continue;
         }
         host.active = drawn;
+        // An edge stops or restarts the player on the armed clip alone: a blend in flight ends.
+        host.fade_out = None;
         // `AnimParked` holds the pose evaluation, compose and finalize; these commands apply
         // before `AnimationSystems`, so a resume's re-arm evaluates the frame the marker drops.
         if drawn {
@@ -468,7 +577,12 @@ impl Plugin for DoodadAnimPlugin {
         // resumes the old variation for a frame.
         app.add_systems(
             PostUpdate,
-            (reroll_doodad_variation, gate_doodad_anim)
+            (
+                // Only a new or changed ship-state request has work: skip every other frame.
+                apply_host_sequence.run_if(any_match_filter::<Changed<HostSequence>>),
+                reroll_doodad_variation,
+                gate_doodad_anim,
+            )
                 .chain()
                 .before(AnimationSystems),
         );
@@ -761,11 +875,167 @@ mod tests {
                     anim_id: Some(0),
                     active: true,
                     parked_at: 0.0,
+                    fade_out: None,
                 },
                 lightning_anims(),
                 AnimationPlayer::default(),
             ))
             .id()
+    }
+
+    /// A ship's state change blends out of the old clip over the new sequence's `blendTime`, its
+    /// weight falling as smoothstep of the time left, and stops it at the end.
+    #[test]
+    fn a_changed_request_blends_out_of_the_old_clip() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.init_resource::<benilla_assets::AnimRng>();
+        app.add_systems(
+            Update,
+            (apply_host_sequence, reroll_doodad_variation).chain(),
+        );
+        // The sails' pair: Stand (node 1) and ShipStart (node 2), both 40 s with a 0.5 s blend.
+        let mut a = anims(vec![seq_clip(0, 0, 1), seq_clip(162, 1, 2)], None, true);
+        for c in &mut a.clips {
+            c.duration = 40.0;
+            c.blend_time = 0.5;
+        }
+        let host = app
+            .world_mut()
+            .spawn((
+                DoodadAnimHost {
+                    meshes: Vec::new(),
+                    fade: crate::particles::EmitterFade::sphere(1.0, Vec3::ZERO),
+                    clip: None,
+                    armed_at: 0.0,
+                    window_hi: f32::NEG_INFINITY,
+                    anim_id: None,
+                    active: true,
+                    parked_at: 0.0,
+                    fade_out: None,
+                },
+                a,
+                AnimationPlayer::default(),
+                HostSequence(0),
+            ))
+            .id();
+        app.update();
+        let (stand, start) = (AnimationNodeIndex::new(1), AnimationNodeIndex::new(2));
+        let weights = |app: &App| {
+            let p = app.world().entity(host).get::<AnimationPlayer>().unwrap();
+            let w = |n| p.animation(n).map(|a| a.weight());
+            (w(stand), w(start))
+        };
+        // The first arm has nothing to blend out of.
+        assert_eq!(weights(&app), (Some(1.0), None));
+
+        let step = |app: &mut App, ms| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(ms));
+        };
+        step(&mut app, 100);
+        app.world_mut().entity_mut(host).insert(HostSequence(162));
+        app.update();
+        assert_eq!(
+            weights(&app),
+            (Some(1.0), Some(0.0)),
+            "the blend starts on Stand"
+        );
+
+        step(&mut app, 250);
+        app.update();
+        let (out, inn) = weights(&app);
+        assert!(
+            (out.unwrap() - 0.5).abs() < 1e-4,
+            "smoothstep(0.5): {out:?}"
+        );
+        assert!((inn.unwrap() - 0.5).abs() < 1e-4, "{inn:?}");
+
+        step(&mut app, 300);
+        app.update();
+        assert_eq!(
+            weights(&app),
+            (None, Some(1.0)),
+            "Stand stopped at the blend's end"
+        );
+        let h = app.world().entity(host).get::<DoodadAnimHost>().unwrap();
+        assert!(h.fade_out.is_none());
+    }
+
+    /// A ship's state change re-arms its prop at once on the requested id, mid-window, and a
+    /// repeat of the same request leaves the running clip alone.
+    #[test]
+    fn a_host_sequence_request_rearms_the_prop_on_that_id() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.init_resource::<benilla_assets::AnimRng>();
+        app.add_systems(
+            Update,
+            (apply_host_sequence, reroll_doodad_variation).chain(),
+        );
+        // Stand (slot 0, node 1) and ShipMoving (slot 1, node 2), the paddle wheel's pair.
+        let mut a = anims(vec![seq_clip(0, 0, 1), seq_clip(163, 1, 2)], None, true);
+        a.clips[0].duration = 0.333;
+        a.clips[1].duration = 13.333;
+        let host = app
+            .world_mut()
+            .spawn((
+                DoodadAnimHost {
+                    meshes: Vec::new(),
+                    fade: crate::particles::EmitterFade::sphere(1.0, Vec3::ZERO),
+                    clip: None,
+                    armed_at: 0.0,
+                    // A gseq-only host: never armed until a sequence is asked for.
+                    window_hi: f32::NEG_INFINITY,
+                    anim_id: None,
+                    active: true,
+                    parked_at: 0.0,
+                    fade_out: None,
+                },
+                a,
+                AnimationPlayer::default(),
+                HostSequence(0),
+            ))
+            .id();
+        app.update();
+        let armed = |app: &App| {
+            let h = app.world().entity(host).get::<DoodadAnimHost>().unwrap();
+            (h.anim_id, h.clip.map(|(n, _)| n), h.window_hi)
+        };
+        assert_eq!(armed(&app).0, Some(0));
+        assert_eq!(
+            armed(&app).1,
+            Some(AnimationNodeIndex::new(1)),
+            "Stand armed"
+        );
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(100));
+        app.world_mut().entity_mut(host).insert(HostSequence(163));
+        app.update();
+        let (id, node, window) = armed(&app);
+        assert_eq!(id, Some(163));
+        assert_eq!(
+            node,
+            Some(AnimationNodeIndex::new(2)),
+            "ShipMoving armed mid-window"
+        );
+        let player = app.world().entity(host).get::<AnimationPlayer>().unwrap();
+        assert!(player.is_playing_animation(AnimationNodeIndex::new(2)));
+
+        // The same request again, a second later: the 13 s loop keeps its window.
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(1000));
+        app.world_mut().entity_mut(host).insert(HostSequence(163));
+        app.update();
+        assert_eq!(
+            armed(&app).2,
+            window,
+            "a repeat request does not restart the clip"
+        );
     }
 
     #[test]
@@ -833,6 +1103,7 @@ mod tests {
                     anim_id: None,
                     active: true,
                     parked_at: 0.0,
+                    fade_out: None,
                 },
                 anims(Vec::new(), None, true),
                 AnimationPlayer::default(),
@@ -929,6 +1200,7 @@ mod tests {
                     anim_id: Some(0),
                     active: true,
                     parked_at: 0.0,
+                    fade_out: None,
                 },
                 player,
                 drive,
@@ -1042,6 +1314,7 @@ mod tests {
                     anim_id: Some(0),
                     active: false,
                     parked_at: 0.0,
+                    fade_out: None,
                 })
                 .id()
         };
@@ -1117,6 +1390,7 @@ mod tests {
                     anim_id: Some(0),
                     active,
                     parked_at: 0.0,
+                    fade_out: None,
                 })
                 .id()
         };
@@ -1184,6 +1458,7 @@ mod tests {
                         anim_id: Some(0),
                         active: true,
                         parked_at: 0.0,
+                        fade_out: None,
                     },
                     MoverGate {
                         center: Vec3::ZERO,
@@ -1238,6 +1513,7 @@ mod tests {
             // Parked, and the clock still answers: honouring the animate set is the caller's job.
             active: false,
             parked_at: 0.0,
+            fade_out: None,
         };
 
         let (_, seek) = host.arm_clock(10.0).expect("armed");

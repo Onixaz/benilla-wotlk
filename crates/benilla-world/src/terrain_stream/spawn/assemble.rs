@@ -32,6 +32,11 @@ pub struct PlacementHost {
 }
 
 impl PlacementHost {
+    /// The anim root, where a caller asks for a sequence ([`crate::doodad_anim::HostSequence`]).
+    pub fn root(&self) -> Entity {
+        self.root
+    }
+
     /// The anchor for `bone`; `None` when nothing this placement spawns rides it.
     pub fn anchor(&self, bone: u16) -> Option<Entity> {
         self.anchors
@@ -809,6 +814,7 @@ pub fn spawn_model_entities(
             // first real one decides the slot.
             active: false,
             parked_at: now,
+            fade_out: None,
         });
         // On a mover `fade` is host-relative (`transform` is the prop's local placement), so the
         // gate re-places the model-space sphere through the root each frame. Tested against the

@@ -22,7 +22,20 @@ pub struct TransportSample {
     pub heading: f32,
     /// False while parked at a stop or on a keyframe's zero-width instant.
     pub moving: bool,
+    /// The `AnimationData.dbc` id the ship hands its world object's props: [`SHIP_STAND`] at a
+    /// stop, [`SHIP_START`] on the ramp up, [`SHIP_MOVING`] at cruise, [`SHIP_STOP`] on the ramp
+    /// down (`0x7f82b0`).
+    pub sequence: u16,
 }
+
+/// A ship at rest (`0x7f82b0`'s default, and a stop's delay).
+pub const SHIP_STAND: u16 = 0;
+/// Accelerating out of a stop (`0x7f76f0`, the last leg's tail at `0x7f82b0`).
+pub const SHIP_START: u16 = 162;
+/// At cruise speed between the ramps.
+pub const SHIP_MOVING: u16 = 163;
+/// Decelerating into a stop (`0x7f7660`, `0x7f76f0`).
+pub const SHIP_STOP: u16 = 164;
 
 /// A keyframe that survives the map-change skip (`TransportMgr.cpp:128-152`), with what `sample`
 /// needs. Stop and teleport are implicit: a non-stop window is zero-width, and a teleport's
@@ -669,6 +682,7 @@ impl TransportTimetable {
                 pos: [0.0; 3],
                 heading: 0.0,
                 moving: false,
+                sequence: SHIP_STAND,
             };
         }
         let cycle_ms = cycle_ms.min(self.period_ms.saturating_sub(1));
@@ -688,6 +702,13 @@ impl TransportTimetable {
                 pos: frame.pos,
                 heading: frame.initial_orientation,
                 moving: false,
+                // Only a stop's delay is Stand: a teleport frame's zero-width instant, the cycle's
+                // wrap among them, is passed through at speed, as the reference's tail is.
+                sequence: if cycle_ms < frame.departure_time {
+                    SHIP_STAND
+                } else {
+                    SHIP_MOVING
+                },
             };
         }
 
@@ -697,6 +718,19 @@ impl TransportTimetable {
         let since_departure = now - frame.departure_time as f32 * 0.001;
         let time_since_stop = frame.time_from + since_departure;
         let time_until_stop = frame.time_to - since_departure;
+        // The reference's ramps are `min(v/a, segment/2)` wide (`0x7f76f0`): the nearer stop's
+        // side of the segment, within the acceleration time of it.
+        let sequence = if time_since_stop < time_until_stop {
+            if time_since_stop < self.accel_time {
+                SHIP_START
+            } else {
+                SHIP_MOVING
+            }
+        } else if time_until_stop < self.accel_time {
+            SHIP_STOP
+        } else {
+            SHIP_MOVING
+        };
         let dist = if time_since_stop < time_until_stop {
             let d = if time_since_stop < self.accel_time {
                 0.5 * self.accel_rate * time_since_stop * time_since_stop
@@ -724,6 +758,7 @@ impl TransportTimetable {
             pos,
             heading,
             moving: true,
+            sequence,
         }
     }
 }
