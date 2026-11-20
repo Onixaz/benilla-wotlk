@@ -15,6 +15,7 @@ mod aim;
 mod camera;
 mod control;
 mod override_bar;
+pub(crate) use override_bar::update_override_bar;
 mod passenger;
 mod ride;
 mod seats;
@@ -208,10 +209,6 @@ impl Plugin for VehiclePlugin {
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_signals)
                         .before(send_vehicle_requests),
-                    // Ahead of every VM holder, whose lent view reads the slots it writes.
-                    override_bar::update_override_bar
-                        .after(crate::ui_action::ActionRanks)
-                        .before(crate::ui_script::UiPress),
                     // With the entity visuals, after the rigs are built and any mount re-seat.
                     (
                         transit::ride_transits,

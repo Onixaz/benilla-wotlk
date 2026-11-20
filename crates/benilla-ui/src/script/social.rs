@@ -377,7 +377,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             match friend_named(&model.social.friends, &name.to_string_lossy()) {
                 Some(row) => model.social_requests.push(SocialRequest::RemoveFriend(row)),
-                None => model.ui_errors.push("ERR_FRIEND_NOT_FOUND"),
+                None => {
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_FRIEND_NOT_FOUND");
+                }
             }
             Ok(())
         })?,
@@ -400,7 +403,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 } else if let Value::String(name) = &who {
                     let row = friend_named(&model.social.friends, &name.to_string_lossy());
                     if row.is_none() {
-                        model.ui_errors.push("ERR_FRIEND_NOT_FOUND");
+                        drop(model);
+                        crate::script::ui_errors::show_now(lua, "ERR_FRIEND_NOT_FOUND");
+                        return Ok(());
                     }
                     row
                 } else {
@@ -748,7 +753,10 @@ fn add_listed(
     match row_named(list(&model.social), &name) {
         Some(row) => {
             let listed = list(&model.social)[row as usize - 1].clone();
-            model.ui_errors_s.push((already, listed));
+            {
+                drop(model);
+                crate::script::ui_errors::show_now_s(lua, already, listed);
+            }
         }
         None => model.social_requests.push(add(name)),
     }
@@ -789,7 +797,10 @@ fn del_listed(
     let mut model = crate::script::model_mut_of(lua);
     match row_named(list(&model.social), &name) {
         Some(row) => model.social_requests.push(del(row)),
-        None => model.ui_errors.push(missing),
+        None => {
+            drop(model);
+            crate::script::ui_errors::show_now(lua, missing);
+        }
     }
     Ok(())
 }
@@ -970,7 +981,7 @@ mod tests {
                 SocialRequest::RemoveFriend(1)
             ]
         );
-        assert_eq!(s.take_ui_errors(), vec!["ERR_FRIEND_NOT_FOUND"]);
+        assert_eq!(s.take_shown(), vec!["ERR_FRIEND_NOT_FOUND"]);
         let err = s.run("RemoveFriend()").unwrap_err().to_string();
         assert!(
             err.contains(r#"Usage: RemoveFriend(["name"] or [index])"#),
@@ -1032,7 +1043,7 @@ mod tests {
         assert!(s
             .eval::<bool>("return select(7, GetFriendInfo(1)) == nil")
             .unwrap());
-        assert_eq!(s.take_ui_errors(), vec!["ERR_FRIEND_NOT_FOUND"]);
+        assert_eq!(s.take_shown(), vec!["ERR_FRIEND_NOT_FOUND"]);
         let err = s.run("SetFriendNotes(1)").unwrap_err().to_string();
         assert!(err.contains("Usage: SetFriendNotes"), "{err}");
     }
@@ -1072,11 +1083,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            s.take_ui_errors(),
+            s.take_shown(),
             vec!["ERR_IGNORE_NOT_FOUND", "ERR_VOICE_IGNORE_NOT_FOUND"]
         );
         assert_eq!(
-            s.take_ui_errors_s(),
+            s.take_shown_s(),
             vec![
                 ("ERR_IGNORE_ALREADY_S", "Spammer".to_string()),
                 ("ERR_VOICE_IGNORE_ALREADY_S", "Loud".to_string())

@@ -220,6 +220,7 @@ fn feed_zone_events(
     roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
     mut place: crate::ui_script::OwnedMut<PlayerPlace>,
+    mut usable: Option<crate::ui_action::usable_cache::UsableRun>,
 ) {
     let (Some(mut script), Some(areas)) = (script, areas) else {
         return;
@@ -389,6 +390,10 @@ fn feed_zone_events(
     }
     if minimap_changed {
         debug!("area: minimap zone text → {minimap_text:?}");
+    }
+    // The zone feedback ends in the usable update (`0x5206d9`).
+    if let Some(usable) = usable.as_mut() {
+        usable.fire(&mut script, crate::ui_action::usable_cache::Pass::Full);
     }
     cache.zone_id = Some(signal.zone_id);
     cache.zone_text = signal.zone_text;

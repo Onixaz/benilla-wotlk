@@ -11,25 +11,29 @@ use bevy::prelude::*;
 
 use benilla_protocol::messages::ACTION_KIND_SPELL;
 
-use super::PlayerActions;
+use super::{ActionSlots, PlayerActions};
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_spellbook::SkillLines;
 
 /// Re-points each spell slot at the highest known rank of its chain and sends the move, so the
-/// server's stored copy is fixed too. Runs on `dirty`, before the feed consumes it.
+/// server's stored copy is fixed too, and signals each slot it moves. Runs on `dirty`.
 pub(super) fn normalize_action_ranks(
     mut actions: ResMut<PlayerActions>,
+    mut bar: ResMut<ActionSlots>,
     skill_lines: Option<Res<SkillLines>>,
     commands: Res<NetCommands>,
+    (mut ui, mut ecs): (Option<ResMut<crate::ui_script::live::UiEvents>>, Commands),
 ) {
     let Some(skill_lines) = skill_lines else {
         return;
     };
-    if !actions.dirty {
+    if !actions.dirty && !bar.dirty {
         return;
     }
+    actions.dirty = false;
+    bar.dirty = false;
     // Resolve, then write. An empty book yields no fixes, so a bar arriving first is harmless.
-    let fixes: Vec<(u8, u32)> = actions
+    let fixes: Vec<(u8, u32)> = bar
         .buttons
         .values()
         .filter(|b| b.kind == ACTION_KIND_SPELL)
@@ -41,7 +45,7 @@ pub(super) fn normalize_action_ranks(
         })
         .collect();
     for (slot, top) in fixes {
-        let Some(button) = actions.buttons.get_mut(&slot) else {
+        let Some(button) = bar.buttons.get_mut(&slot) else {
             continue;
         };
         let was = button.action;
@@ -52,6 +56,12 @@ pub(super) fn normalize_action_ranks(
             button: slot,
             packed,
         });
+        if let Some(ui) = ui.as_deref_mut() {
+            super::slots::changed_in_turn(ui, slot);
+        }
+    }
+    if ui.as_ref().is_some_and(|ui| !ui.is_empty()) {
+        ecs.queue(crate::ui_script::live::fire_handler_events);
     }
 }
 
@@ -84,16 +94,19 @@ mod tests {
         data: &std::path::Path,
         buttons: &[ActionButton],
         spells: &[u32],
-    ) -> (PlayerActions, Vec<(u8, u32)>) {
+    ) -> (ActionSlots, Vec<(u8, u32)>) {
         let mut chain = benilla_formats::open_chain(data).expect("open chain");
         let catalog = benilla_formats::load_skill_line_catalog(&mut chain).expect("skill lines");
 
         let (tx, rx): (_, Receiver<ClientCommand>) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.insert_resource(PlayerActions {
-            buttons: buttons.iter().map(|b| (b.slot, *b)).collect(),
             spells: spells.iter().copied().collect(),
             dirty: true,
+            ..Default::default()
+        })
+        .insert_resource(ActionSlots {
+            buttons: buttons.iter().map(|b| (b.slot, *b)).collect(),
             ..Default::default()
         })
         .insert_resource(SkillLines {
@@ -110,7 +123,7 @@ mod tests {
                 _ => panic!("the rank pass sends nothing but SetActionButton"),
             })
             .collect();
-        let store = app.world_mut().remove_resource::<PlayerActions>().unwrap();
+        let store = app.world_mut().remove_resource::<ActionSlots>().unwrap();
         (store, sent)
     }
 
@@ -119,7 +132,6 @@ mod tests {
         let Some(data) = client_data() else { return };
         let (store, sent) = normalize(&data, &[spell_button(0, 1752)], &[11294]);
         assert_eq!(store.buttons[&0].action, 11294, "slot 1 holds rank 8");
-        assert!(store.dirty, "the feed still re-resolves the slot");
         assert_eq!(sent, vec![(0, 11294)]);
     }
 

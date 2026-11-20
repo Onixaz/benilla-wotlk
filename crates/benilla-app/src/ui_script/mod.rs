@@ -24,8 +24,8 @@ pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
 pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsPending, OwnsPetitions, OwnsPlace,
-    OwnsSelection,
+    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending,
+    OwnsPetitions, OwnsPlace, OwnsSelection, OwnsTradeSkill,
 };
 #[cfg(test)]
 pub(crate) mod live_tests;

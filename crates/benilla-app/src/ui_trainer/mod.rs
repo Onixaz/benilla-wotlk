@@ -9,7 +9,7 @@ use benilla_formats::{SkillLineCatalog, SpellCatalog, SPELL_EFFECT_SKILL_STEP};
 use benilla_protocol::messages::TrainerSpell;
 use bevy::prelude::*;
 
-use benilla_ui::script::{ScriptValue, TrainerService, TrainerState, TrainerTooltip, UiScript};
+use benilla_ui::script::{ScriptValue, TrainerService, TrainerState, UiScript};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -97,18 +97,6 @@ impl TrainerOpen {
 #[derive(Resource, Default)]
 pub(crate) struct TrainerErrors(pub Vec<u32>);
 
-/// The spells the open trainer's services show as tooltips, which the spell-tooltip feed pushes: a
-/// pet-learn service's view is built against the pet (the builder's unit selector).
-#[derive(Resource, Default, PartialEq)]
-pub(crate) struct TrainerTooltipSubjects {
-    pub(crate) player: Vec<u32>,
-    pub(crate) pet: Vec<u32>,
-}
-
-/// The trainer feed, which the spell-tooltip feed runs after.
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TrainerFeed;
-
 mod net;
 mod reeval;
 
@@ -121,7 +109,6 @@ impl Plugin for UiTrainerPlugin {
             .init_resource::<TrainerAsked>()
             .init_resource::<UnlearnedSpells>()
             .init_resource::<TrainerErrors>()
-            .init_resource::<TrainerTooltipSubjects>()
             .add_systems(
                 Update,
                 (
@@ -129,10 +116,7 @@ impl Plugin for UiTrainerPlugin {
                     close_npc_session_out_of_range::<TrainerOpen>.before(feed_trainer),
                     // The unit feeds share the VM and the player's stores with it; either order
                     // reads the same state, but the schedule check wants one declared.
-                    feed_trainer
-                        .in_set(UiFeed)
-                        .in_set(TrainerFeed)
-                        .after(crate::ui_unit::UnitFeed),
+                    feed_trainer.in_set(UiFeed).after(crate::ui_unit::UnitFeed),
                     drain_trainer.in_set(UiDrain),
                 ),
             );
@@ -358,7 +342,6 @@ pub(crate) fn feed_trainer(
     mut errors: ResMut<TrainerErrors>,
     commands: Res<NetCommands>,
     names: Res<NameCache>,
-    mut tooltip_subjects: ResMut<TrainerTooltipSubjects>,
     mut desc: DescriptionInputs,
     mut last: Local<crate::ui_script::VmMemo<Option<TrainerState>>>,
     mut last_trainer: Local<crate::ui_script::VmMemo<Option<u64>>>,
@@ -508,32 +491,6 @@ pub(crate) fn feed_trainer(
             get: &get,
         },
     );
-    // A spell subject's view must be in the store before the detail icon is hovered.
-    let mut fresh_tooltip_subjects = TrainerTooltipSubjects::default();
-    for service in fresh.iter().flat_map(|state| &state.services) {
-        if let TrainerTooltip::Spell {
-            spell_id,
-            alt_caster,
-        } = service.tooltip
-        {
-            let subjects = if alt_caster {
-                &mut fresh_tooltip_subjects.pet
-            } else {
-                &mut fresh_tooltip_subjects.player
-            };
-            subjects.push(spell_id);
-        }
-    }
-    for subjects in [
-        &mut fresh_tooltip_subjects.player,
-        &mut fresh_tooltip_subjects.pet,
-    ] {
-        subjects.sort_unstable();
-        subjects.dedup();
-    }
-    if *tooltip_subjects != fresh_tooltip_subjects {
-        *tooltip_subjects = fresh_tooltip_subjects;
-    }
     // A name-only change re-fires `TRAINER_UPDATE`, so the title's `UnitName("npc")` repaints.
     // The name rides as arg1, which the 1.12 trainer events do not carry.
     let trainer_name = open

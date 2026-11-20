@@ -880,11 +880,11 @@ fn a_dead_player_opens_only_whiledead_windows() {
         s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
         "the refused window took no slot"
     );
-    // `NotWhileDeadError` (error 0x7e) queues its key for the app to show.
+    // `NotWhileDeadError` (error 0x7e) shows its line through the display inside the call.
     assert_eq!(
-        s.take_ui_errors(),
+        s.take_message_sounds(),
         vec!["ERR_PLAYER_DEAD"],
-        "the dead refusal queued its error key"
+        "the dead refusal went through the display"
     );
 
     s.run("ShowUIPanel(QuestLogFrame)").unwrap();
@@ -899,7 +899,7 @@ fn a_dead_player_opens_only_whiledead_windows() {
         "and it seats normally, in the doublewide slot"
     );
     assert!(
-        s.take_ui_errors().is_empty(),
+        s.take_message_sounds().is_empty(),
         "an admitted open raises no error"
     );
 }

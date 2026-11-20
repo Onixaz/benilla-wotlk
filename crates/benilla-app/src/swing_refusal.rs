@@ -38,7 +38,8 @@ use bevy::prelude::*;
 
 use crate::creature_anim::{AttackSeam, Engaged};
 use crate::net::SelfPlayer;
-use crate::ui_action::{UiError, UiErrorKeys};
+use crate::ui_action::signals::{QueuedSignals, SignalSink};
+use crate::ui_action::UiError;
 
 /// The reference's re-arm interval.
 const REPEAT: Duration = Duration::from_millis(0xfa0);
@@ -131,7 +132,8 @@ fn show_swing_refusal(
     time: Res<Time>,
     mut refusal: ResMut<SwingRefusal>,
     engaged: Query<(), (With<SelfPlayer>, With<Engaged>)>,
-    mut errors: ResMut<UiErrorKeys>,
+    mut lines: QueuedSignals,
+    mut ecs: Commands,
 ) {
     let Some((code, due)) = refusal.0 else {
         return;
@@ -144,7 +146,9 @@ fn show_swing_refusal(
         return;
     }
     refusal.0 = Some((code, now + REPEAT));
-    errors.0.push(UiError::key(code.key()));
+    // The tick's line shows in the tick, as its message display runs there.
+    lines.line(UiError::key(code.key()));
+    lines.flush(&mut ecs);
 }
 
 /// Entering the world drops the latch: the reference clears it from the game's initialization,

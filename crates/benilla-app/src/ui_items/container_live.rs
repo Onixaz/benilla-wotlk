@@ -35,6 +35,18 @@ pub(crate) struct ContainerLive<'w, 's> {
     watched: Option<Res<'w, super::watch::WatchedBags>>,
 }
 
+impl<'w, 's> ContainerLive<'w, 's> {
+    /// The object index, the item cache and the wire a spell view's item and reagent lines read.
+    pub(crate) fn item_reads(&self) -> (&Objects<'w, 's>, &Items, &NetCommands) {
+        (&self.objects, &self.items, &self.commands)
+    }
+
+    /// `ItemDisplayInfo.dbc`'s icons, `None` before it loads.
+    pub(crate) fn icons(&self) -> Option<&ItemDisplays> {
+        self.icons.as_deref()
+    }
+}
+
 /// The lent state a bag read takes: the cooldown history, the item locks, the charter records and whether a banker is set (`0xbeb9a0`).
 pub(crate) struct ContainerLent<'a> {
     pub(crate) cooldowns: Option<&'a crate::spell::Cooldowns>,
@@ -59,6 +71,34 @@ struct Layout {
 }
 
 impl ContainerLive<'_, '_> {
+    /// The melee auto-attack's face at the call (`0x5a84d0`): the form's attack icon, `Spell-Reset`
+    /// while disarmed or empty-handed, else the main hand's icon.
+    pub(crate) fn attack_texture(
+        &self,
+        me: &crate::net::ObjectStore,
+        forms: &std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>,
+    ) -> String {
+        crate::ui_action::melee_auto_attack_icon(
+            me,
+            forms,
+            &self.objects,
+            &self.items,
+            self.icons.as_deref(),
+            &self.commands,
+        )
+    }
+
+    /// The ranged weapon's face at the call (`0x5a85e0`), `None` disarmed, thrown or empty.
+    pub(crate) fn ranged_texture(&self, me: &crate::net::ObjectStore) -> Option<String> {
+        crate::ui_action::ranged_weapon_icon(
+            me,
+            &self.objects,
+            &self.items,
+            self.icons.as_deref(),
+            &self.commands,
+        )
+    }
+
     /// The active player's fields, `None` with none held.
     fn me(&self) -> Option<&ObjectFields> {
         self.objects.player_object()

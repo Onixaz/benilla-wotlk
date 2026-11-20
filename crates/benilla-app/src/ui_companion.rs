@@ -184,6 +184,10 @@ fn tutorial_of(kind: CompanionKind) -> u32 {
 #[derive(Resource, Default)]
 pub(crate) struct KnownSpellBuffer(pub(crate) Vec<u32>);
 
+/// No summon rows, before the catalog loads.
+pub(crate) static EMPTY_SUMMONS: std::sync::LazyLock<benilla_formats::SummonPropertiesCatalog> =
+    std::sync::LazyLock::new(Default::default);
+
 /// What the active player's init reads to replay the buffer into the lists.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct CompanionInit<'w> {
@@ -196,10 +200,14 @@ pub(crate) struct CompanionInit<'w> {
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     ui: ResMut<'w, UiEvents>,
     tutorials: Option<ResMut<'w, Messages<crate::tutorial::TutorialEvent>>>,
+    /// The book its update rebuilds between the adds and the companion update (`0x6e7fdb`).
+    book: ResMut<'w, crate::ui_spellbook::SpellBook>,
+    schools: ResMut<'w, crate::ui_cast::InterruptSchools>,
+    actions: Res<'w, crate::ui_action::PlayerActions>,
 }
 
-/// The active player's init (`0x6e7f50`), run as our object is created with its race and class: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, then one update (`0x6e7fe3`).
-pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: CompanionInit) {
+/// The active player's init (`0x6e7f50`), run as our object is created with its race, class and form byte: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the stance list among them, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`); shapeshifted, the usable update (`0x6e8059`), the selection update (`0x6e805e`), the form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`), then `UPDATE_SHAPESHIFT_FORM` (`0x6e8074`).
+pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init: CompanionInit) {
     let CompanionInit {
         buffer,
         mut lists,
@@ -210,7 +218,43 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         skill_lines,
         mut ui,
         mut tutorials,
+        mut book,
+        mut schools,
+        actions,
     } = init;
+    book.set_race_class(race, class);
+    {
+        use crate::ui_action::usable_cache::{edit_step, ListEdit};
+        ui.world(edit_step(ListEdit::Rebuild));
+    }
+    // Shapeshifted only (`0x6e8050`-`0x6e8057`): a form row that is no stance; a form the table
+    // lacks is none.
+    let shifted = spells
+        .as_deref()
+        .and_then(|s| s.forms.get(&u32::from(form)))
+        .is_some_and(|row| crate::spell::validator::is_shapeshifted(form, row.flags));
+    // The stored action table goes on the bar (`0x6e8000`-`0x6e8046`), then the shapeshifted tail.
+    let tail = move |ui: &mut UiEvents| {
+        ui.world(crate::spell::net::put_action_table);
+        if shifted {
+            ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            ));
+            crate::ui_action::signals::selection(ui);
+            // The form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`).
+            ui.world(crate::ui_action::bonus::form_changed);
+            ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+        }
+    };
+    let mut update_book = |ui: &mut UiEvents| {
+        let inputs = crate::ui_spellbook::BookInputs {
+            known: &actions.spells,
+            spells: spells.as_deref(),
+            summons: summons.as_deref().map_or(&EMPTY_SUMMONS, |s| &s.0),
+            skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
+        };
+        book.update(&inputs, &mut schools, ui);
+    };
     let (Some(spells), Some(summons), Some(names), Some(commands)) = (
         spells.as_deref(),
         summons.as_deref(),
@@ -218,6 +262,8 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands.as_deref(),
     ) else {
         *lists = CompanionLists::default();
+        update_book(&mut ui);
+        tail(&mut ui);
         return;
     };
     let line_of = |id: u32| {
@@ -233,7 +279,9 @@ pub(crate) fn active_player_init(In((race, class)): In<(u8, u8)>, init: Companio
         commands,
         ui: &mut ui,
     };
-    for id in add_initial(&mut lists, known, &mut cx) {
+    let tutorial_ids = add_initial(&mut lists, known, &mut cx, update_book);
+    tail(&mut ui);
+    for id in tutorial_ids {
         if let Some(t) = tutorials.as_mut() {
             t.write(crate::tutorial::TutorialEvent::trigger(id));
         }
@@ -245,12 +293,14 @@ pub(crate) fn add_initial(
     lists: &mut CompanionLists,
     known: impl IntoIterator<Item = (u32, Option<u32>)>,
     cx: &mut CompanionCx,
+    before_update: impl FnOnce(&mut UiEvents),
 ) -> Vec<u32> {
     *lists = CompanionLists::default();
     let tutorials = known
         .into_iter()
         .filter_map(|(spell_id, line)| add_known(lists, spell_id, false, line, cx))
         .collect();
+    before_update(cx.ui);
     cx.update(lists, None);
     tutorials
 }

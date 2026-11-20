@@ -535,23 +535,20 @@ fn header_refuses(tree: &FactionTree, faction: i64) -> bool {
 
 /// The at-war set (`0x5d0a10`): peace needs standing of -3000 or better and no combat; the local
 /// flag takes war only when peace is not forced, and the send carries the asked state either way.
-fn set_at_war(model: &mut Model, faction: i64, at_war: bool) {
+/// The combat refusal is handed back for the caller to show at once.
+#[must_use]
+fn set_at_war(model: &mut Model, faction: i64, at_war: bool) -> Option<&'static str> {
     let tree = &model.reputation_tree;
     if header_refuses(tree, faction) {
-        return;
+        return None;
     }
-    let Some(&i) = tree.index.get(&faction) else {
-        return;
-    };
-    let Some(e) = model.reputation.entries.get(i) else {
-        return;
-    };
+    let &i = tree.index.get(&faction)?;
+    let e = model.reputation.entries.get(i)?;
     if !at_war && e.standing < -3000 {
-        return;
+        return None;
     }
     if !at_war && model.unit("player").is_some_and(|u| u.in_combat) {
-        model.ui_errors.push("ERR_NOT_IN_COMBAT");
-        return;
+        return Some("ERR_NOT_IN_COMBAT");
     }
     let e = &mut model.reputation.entries[i];
     e.at_war = at_war && !e.peace_forced;
@@ -560,6 +557,7 @@ fn set_at_war(model: &mut Model, faction: i64, at_war: bool) {
         at_war,
     };
     model.reputation_sends.push(send);
+    None
 }
 
 /// `SetFactionInactive` (`0x5d1c10`): the flag is local first, then the list re-sorts. `false`
@@ -695,7 +693,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .reputation_tree
                 .record(&model.reputation, faction)
                 .is_some_and(|e| e.at_war);
-            set_at_war(&mut model, faction, !at_war);
+            if let Some(key) = set_at_war(&mut model, faction, !at_war) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, key);
+            }
             Ok(())
         })?,
     )?;
@@ -1179,7 +1180,7 @@ mod tests {
         );
         s.run("FactionToggleAtWar(4)").unwrap();
         assert!(at_war(&s, 4));
-        assert_eq!(s.take_ui_errors(), ["ERR_NOT_IN_COMBAT"]);
+        assert_eq!(s.take_shown(), ["ERR_NOT_IN_COMBAT"]);
         s.set_unit("player", None);
 
         // So is peace below -3000.

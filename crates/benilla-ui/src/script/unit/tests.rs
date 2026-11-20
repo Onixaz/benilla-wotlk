@@ -1,5 +1,6 @@
 //! The `Unit*` binding tests.
 
+use crate::script::live::TestTargeting;
 use crate::script::{PartyState, PlayerRecord, UiScript, UnitGuids, UnitState};
 
 fn player() -> UnitState {
@@ -62,6 +63,7 @@ fn spell_can_target_unit_answers_per_validated_token() {
         target: 0x30,
         ..Default::default()
     });
+    s.set_spell_targeting(true);
     s.set_spell_targetable_units([0x10, 0x21]);
     assert!(s
         .eval::<bool>(r#"return SpellCanTargetUnit("player") == 1"#)

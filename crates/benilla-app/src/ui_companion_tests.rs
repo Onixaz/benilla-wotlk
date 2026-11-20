@@ -110,6 +110,7 @@ fn init(pending: Option<u32>) -> (CompanionLists, Vec<&'static str>) {
         &mut lists,
         known().into_iter().map(|id| (id, None)),
         &mut cx,
+        |_| {},
     );
     (lists, ui.names())
 }

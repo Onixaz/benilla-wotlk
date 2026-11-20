@@ -1,25 +1,21 @@
-//! The player's four totem slots (12340 `0xbd0b00`) and their tools, fed to the totem verbs.
-
-use std::time::Instant;
+//! The player's four totem slots (12340 `0xbd0b00`): `SMSG_TOTEM_CREATED` stores a slot, the
+//! totem unit's create and its record answers name it and fire `PLAYER_TOTEM_UPDATE`, and its
+//! disable destroys the slot, each in its handler; the totem verbs read and write the table through
+//! the live view when called.
 
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::TotemCategoryCatalog;
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{
-    MultiCastView, ScriptValue, TotemSlots, TotemView, UiScript, MAX_TOTEM_SLOTS,
-};
+use benilla_ui::script::{ScriptValue, TotemView, MAX_TOTEM_SLOTS};
 
 use crate::items::Items;
 use crate::names::NameCache;
-use crate::net::{
-    ClientCommand, EnteredWorldMessage, GuidIndex, NetCommands, NetHandlerApp, ObjectStore,
-    Objects, SelfPlayer,
-};
+use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
 use crate::ui_action::Spells;
 use crate::ui_items::{tool_categories, InventoryScope};
-use crate::ui_unit::UnitFeed;
+use crate::ui_script::live::UiEvents;
 
 /// Each slot's tool row, as `GetTotemInfo` asks for it (`0x51d3c9`): fire, earth, water, air.
 const SLOT_TOOLS: [u32; MAX_TOTEM_SLOTS] = [4, 2, 5, 3];
@@ -29,22 +25,45 @@ const SLOT_TOOLS: [u32; MAX_TOTEM_SLOTS] = [4, 2, 5, 3];
 struct Totem {
     guid: u64,
     duration_ms: u32,
-    /// When the packet arrived; the feed turns it into `GetTime` seconds once.
-    arrived: Instant,
-    start: Option<f64>,
+    /// When the packet was handled, on the `GetTime` clock in milliseconds (`+0x18`).
+    start_ms: u32,
     icon: Option<String>,
     /// The unit's name; a re-summon keeps the old one until the new unit streams (`+0x10`).
     name: Option<String>,
-    /// The unit was seen streamed; its sighting announced the slot.
-    sighted: bool,
 }
 
-/// The four slots.
+/// The four slots, written by the handlers and the destroy alone.
 #[derive(Resource, Default)]
 pub(crate) struct Totems {
     slots: [Option<Totem>; MAX_TOTEM_SLOTS],
-    /// Slots whose `PLAYER_TOTEM_UPDATE` waits for the feed, 0-based.
-    announce: Vec<usize>,
+}
+
+impl Totems {
+    /// The slot holding `guid` (`0x5139b0`); a zero guid holds none.
+    fn slot_of(&self, guid: u64) -> Option<usize> {
+        (guid != 0)
+            .then(|| {
+                self.slots
+                    .iter()
+                    .position(|s| s.as_ref().is_some_and(|t| t.guid == guid))
+            })
+            .flatten()
+    }
+
+    /// The destroy (`0x5197d0`): `CMSG_TOTEM_DESTROYED`, then the slot cleared; false for an empty
+    /// slot, which sends nothing. The caller fires `PLAYER_TOTEM_UPDATE` (`0x51986a`).
+    fn destroy(&mut self, slot: usize, commands: Option<&NetCommands>) -> bool {
+        let Some(cell) = self.slots.get_mut(slot).filter(|c| c.is_some()) else {
+            return false;
+        };
+        if let Some(commands) = commands {
+            let _ = commands
+                .0
+                .send(ClientCommand::TotemDestroyed { slot: slot as u8 });
+        }
+        *cell = None;
+        true
+    }
 }
 
 /// `TotemCategory.dbc`; empty without client data.
@@ -58,21 +77,10 @@ impl Plugin for UiTotemPlugin {
         app.init_resource::<Totems>()
             .init_resource::<TotemCategories>()
             .net_handler(SessionEventKind::TotemCreated, on_totem_created)
-            .add_systems(Startup, load_totem_categories.after(AssetSet::Open))
-            .add_systems(
-                Update,
-                (
-                    clear_at_session_start.after(benilla_world::schedule::WorldStage::Net),
-                    feed_totems
-                        .in_set(UnitFeed)
-                        .after(clear_at_session_start)
-                        .before(crate::ui_unit::EnterWorldFeed),
-                    // Before `PLAYER_ENTERING_WORLD`, whose stock handler builds the bar.
-                    feed_multicast
-                        .in_set(UnitFeed)
-                        .before(crate::ui_unit::EnterWorldFeed),
-                ),
-            );
+            .net_handler(SessionEventKind::ObjectCreate, on_unit_create)
+            .net_handler(SessionEventKind::CreatureName, on_record_answer)
+            .net_handler(SessionEventKind::PlayerName, on_record_answer)
+            .add_systems(Startup, load_totem_categories.after(AssetSet::Open));
     }
 }
 
@@ -88,11 +96,13 @@ fn load_totem_categories(mut commands: Commands, assets: Option<Res<WorldAssets>
     }
 }
 
-/// `SMSG_TOTEM_CREATED` (`0x526530` arm `0x413`): stores the slot, ignoring a zero guid.
+/// `SMSG_TOTEM_CREATED` (`0x526530` arm `0x413`): stores the slot's guid, duration, start and
+/// icon, keeping its name, and fires nothing; a zero guid is ignored.
 fn on_totem_created(
     In(ev): In<SessionEvent>,
     mut totems: ResMut<Totems>,
     spells: Option<Res<Spells>>,
+    clock: Res<crate::ui_script::UiClock>,
 ) {
     let SessionEvent::TotemCreated(t) = ev else {
         return;
@@ -115,179 +125,206 @@ fn on_totem_created(
     *cell = Some(Totem {
         guid: t.guid,
         duration_ms: t.duration_ms,
-        arrived: Instant::now(),
-        start: None,
+        start_ms: (clock.ui_now * 1000.0) as u32,
         icon,
         name,
-        sighted: false,
     });
 }
 
-/// The session's first world entry empties the table (`0x5280dd`); a later worldport keeps it.
-fn clear_at_session_start(
-    mut entered: MessageReader<EnteredWorldMessage>,
-    mut totems: ResMut<Totems>,
+/// Name the slot `guid` holds from its unit and fire `PLAYER_TOTEM_UPDATE`; nothing for a guid no
+/// slot holds.
+fn name_slot(
+    guid: u64,
+    totems: &mut Totems,
+    names: &NameCache,
+    store: Option<&ObjectStore>,
+    commands: &NetCommands,
+    ui: &mut UiEvents,
 ) {
-    if entered.read().count() > 0 {
-        *totems = Totems::default();
+    let Some(slot) = totems.slot_of(guid) else {
+        return;
+    };
+    let name = names.resolve_unit(guid, store, commands).map(str::to_owned);
+    if let Some(t) = totems.slots[slot].as_mut() {
+        t.name = name;
+    }
+    ui.fire(
+        "PLAYER_TOTEM_UPDATE",
+        vec![ScriptValue::Int(slot as i64 + 1)],
+    );
+}
+
+/// A unit's create: its post-init names the slot holding it and fires `PLAYER_TOTEM_UPDATE`
+/// (`0x740140`), once the create has spawned it.
+fn on_unit_create(
+    In(ev): In<SessionEvent>,
+    mut totems: ResMut<Totems>,
+    index: Res<GuidIndex>,
+    units: Query<&ObjectStore>,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    mut ui: ResMut<UiEvents>,
+) {
+    let SessionEvent::ObjectCreate { guid, .. } = ev else {
+        return;
+    };
+    let store = index.0.get(&guid).and_then(|&e| units.get(e).ok());
+    name_slot(guid, &mut totems, &names, store, &commands, &mut ui);
+}
+
+/// A name or creature record answered: each held unit's callback re-names the slot holding it
+/// and fires `PLAYER_TOTEM_UPDATE` (`0x728ce3`, `0x72ce73`).
+fn on_record_answer(
+    In(ev): In<SessionEvent>,
+    mut totems: ResMut<Totems>,
+    index: Res<GuidIndex>,
+    units: Query<&ObjectStore>,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    mut ui: ResMut<UiEvents>,
+) {
+    if !matches!(
+        ev,
+        SessionEvent::CreatureName { .. } | SessionEvent::PlayerName { .. }
+    ) {
+        return;
+    }
+    for slot in 0..MAX_TOTEM_SLOTS {
+        let Some(t) = totems.slots[slot].as_ref() else {
+            continue;
+        };
+        let guid = t.guid;
+        let Some(store) = index.0.get(&guid).and_then(|&e| units.get(e).ok()) else {
+            continue;
+        };
+        // A callback fires only for the record its unit waited on, which this answer settled.
+        let name = names.resolve_unit(guid, Some(store), &commands);
+        if name.is_none() || name == totems.slots[slot].as_ref().and_then(|t| t.name.as_deref()) {
+            continue;
+        }
+        name_slot(guid, &mut totems, &names, Some(store), &commands, &mut ui);
     }
 }
 
-/// The view, the sightings and the destroys.
-#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
-fn feed_totems(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+/// A unit's entry watch (`0x72ceb0`): with its new creature record cached, the slot holding it is
+/// renamed and fires `PLAYER_TOTEM_UPDATE` (`0x72cf2b`); a miss asks, and the answer renames it.
+pub(crate) fn entry_changed(world: &mut World, guid: u64) {
+    if let Err(e) = world.run_system_cached_with(entry_rename, guid) {
+        warn!("ui_totem: the entry watch did not run: {e}");
+    }
+}
+
+fn entry_rename(
+    In(guid): In<u64>,
     mut totems: ResMut<Totems>,
-    categories: Res<TotemCategories>,
     index: Res<GuidIndex>,
     units: Query<&ObjectStore>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    objects: Objects,
-    items: Res<Items>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
-    clock: Res<crate::ui_script::UiClock>,
-    mut pushed: Local<crate::ui_script::VmMemo<Option<TotemSlots>>>,
+    mut ui: ResMut<UiEvents>,
 ) {
-    let Some(mut script) = script else {
+    if totems.slot_of(guid).is_none() {
+        return;
+    }
+    let store = index.0.get(&guid).and_then(|&e| units.get(e).ok());
+    if names.resolve_unit(guid, store, &commands).is_some() {
+        name_slot(guid, &mut totems, &names, store, &commands, &mut ui);
+    }
+}
+
+/// A unit's disable destroys the slot holding it (`0x73574a` -> `0x5197d0`): sent, cleared and
+/// announced in the turn of the handler that removed it, on DESTROY, OUT_OF_RANGE and the world
+/// leave alike.
+pub(crate) fn unit_disabled(world: &mut World, guid: u64) {
+    if !world.contains_resource::<Totems>() {
+        return;
+    }
+    let slot = world.resource_scope(|world, mut totems: Mut<Totems>| {
+        let slot = totems.slot_of(guid)?;
+        totems.destroy(slot, world.get_resource::<NetCommands>());
+        Some(slot)
+    });
+    let Some(slot) = slot else {
         return;
     };
-
-    // `DestroyTotem` cleared and announced the slot in the VM; send it and forget it here.
-    for slot in script.take_totem_destroys() {
-        let _ = commands.0.send(ClientCommand::TotemDestroyed { slot });
-        if let Some(cell) = totems.slots.get_mut(usize::from(slot)) {
-            *cell = None;
-        }
-    }
-
-    // The unit announces its slot on streaming (`0x73fcc0`) and on its name (`0x72cde0`); its
-    // disable (destroy or out of range) destroys the slot it holds (`0x73574a` → `0x5197d0`).
-    let Totems { slots, announce } = &mut *totems;
-    for (i, cell) in slots.iter_mut().enumerate() {
-        let Some(totem) = cell else { continue };
-        if totem.sighted && !index.0.contains_key(&totem.guid) {
-            let _ = commands
-                .0
-                .send(ClientCommand::TotemDestroyed { slot: i as u8 });
-            *cell = None;
-            announce.push(i);
-            continue;
-        }
-        if totem.start.is_none() {
-            let (anchor, ui_now) = (clock.anchor, clock.ui_now);
-            totem.start = Some(match totem.arrived.checked_duration_since(anchor) {
-                Some(ahead) => ui_now + ahead.as_secs_f64(),
-                None => ui_now - anchor.duration_since(totem.arrived).as_secs_f64(),
-            });
-        }
-        let Some(store) = index.0.get(&totem.guid).and_then(|&e| units.get(e).ok()) else {
-            continue;
-        };
-        let name = names
-            .resolve_unit(totem.guid, Some(store), &commands)
-            .map(str::to_owned);
-        if !totem.sighted || (name.is_some() && name != totem.name) {
-            totem.sighted = true;
-            if name.is_some() {
-                totem.name = name;
-            }
-            announce.push(i);
-        }
-    }
-
-    let tools = match self_q.iter().next() {
-        Some(me) if !categories.0.is_empty() => {
-            let carried =
-                tool_categories(&me.0, &objects, &items, &commands, InventoryScope::TOOLS);
-            SLOT_TOOLS.map(|row| categories.0.covered_by(row, carried.iter().copied()))
-        }
-        _ => [false; MAX_TOTEM_SLOTS],
-    };
-    let view = TotemSlots {
-        live: std::array::from_fn(|i| {
-            totems.slots[i].as_ref().map(|t| TotemView {
-                name: t.name.clone(),
-                start: t.start.unwrap_or(clock.ui_now),
-                duration_ms: t.duration_ms,
-                icon: t.icon.clone(),
-            })
-        }),
-        tools,
-    };
-    let last = pushed.get(&script);
-    if last.as_ref() != Some(&view) {
-        script.set_totems(view.clone());
-        *last = Some(view);
-    }
-    for slot in totems.announce.drain(..) {
-        script.fire_event(
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.fire(
             "PLAYER_TOTEM_UPDATE",
             vec![ScriptValue::Int(slot as i64 + 1)],
         );
     }
 }
 
-/// What the bar feed last pushed, and the spell table it built once per catalog.
-#[derive(Default)]
-struct MultiCastMemo {
-    pushed: Option<MultiCastView>,
-    spell_categories: Option<std::collections::HashMap<u32, [u32; 2]>>,
+/// What the totem verbs read and write when called, part of the VM's live view.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct TotemLive<'w, 's> {
+    /// Cleared inside `DestroyTotem` through the lent view.
+    totems: Option<ResMut<'w, Totems>>,
+    categories: Option<Res<'w, TotemCategories>>,
+    me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    objects: Option<crate::net::Objects<'w, 's>>,
+    items: Option<Res<'w, Items>>,
+    commands: Option<Res<'w, NetCommands>>,
+    /// The totem bar's element lists, which the learn and unlearn handlers file.
+    lists: Option<Res<'w, crate::spell::multicast::MultiCastLists>>,
+    spells: Option<Res<'w, Spells>>,
 }
 
-/// The element rows `SetMultiCastSpell` and `PlaceAction` test a totem slot against.
-const ELEMENT_ROWS: [u32; 5] = [2, 3, 4, 5, 21];
-
-/// The totem bar's lists and tables, and `UPDATE_MULTI_CAST_ACTIONBAR` after a refill.
-fn feed_multicast(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut lists: ResMut<crate::spell::multicast::MultiCastLists>,
-    spells: Option<Res<Spells>>,
-    categories: Res<TotemCategories>,
-    mut memo: Local<crate::ui_script::VmMemo<MultiCastMemo>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let (memo, vm_reset) = memo.get_reset(&script);
-    let inputs = [
-        ("vm_reset", vm_reset),
-        ("lists", lists.is_changed()),
-        ("categories", categories.is_changed()),
-        ("spells", spells.as_ref().is_some_and(|s| s.is_changed())),
-    ];
-    crate::ui_script::gate::trace("feed_multicast", &inputs);
-    let gate = crate::ui_script::gate::Gate::new(inputs.iter().any(|&(_, open)| open));
-    if gate.skip() {
-        return;
-    }
-    let spell_categories = memo
-        .spell_categories
-        .get_or_insert_with(|| {
-            spells.as_deref().map_or_else(Default::default, |s| {
-                s.catalog
-                    .iter()
-                    .filter(|(_, d)| d.totem_categories.iter().any(|c| ELEMENT_ROWS.contains(c)))
-                    .map(|(id, d)| (id, d.totem_categories))
-                    .collect()
-            })
+impl TotemLive<'_, '_> {
+    pub(crate) fn slot(&self, slot: usize) -> Option<TotemView> {
+        let t = self.totems.as_ref()?.slots.get(slot)?.as_ref()?;
+        Some(TotemView {
+            name: t.name.clone(),
+            start: f64::from(t.start_ms) / 1000.0,
+            duration_ms: t.duration_ms,
+            icon: t.icon.clone(),
         })
-        .clone();
-    let view = MultiCastView {
-        lists: lists.lists.clone(),
-        spell_categories,
-        category_names: [2, 3, 4, 5]
-            .into_iter()
-            .filter_map(|row| Some((row, categories.0.get(row)?.name.clone())))
-            .collect(),
-    };
-    if memo.pushed.as_ref() != Some(&view) {
-        gate.audit("feed_multicast", "the view");
-        script.set_multicast(view.clone());
-        memo.pushed = Some(view);
     }
-    if std::mem::take(&mut lists.announce) {
-        script.fire_event("UPDATE_MULTI_CAST_ACTIONBAR", vec![]);
+
+    /// The bag search for the slot's tool row with flag 8, the player held (`0x51d42f`, `0x51d457`-`0x51d496`).
+    pub(crate) fn tool(&self, slot: usize) -> bool {
+        let (Some(me), Some(objects), Some(categories), Some(items), Some(commands)) = (
+            self.me.iter().next(),
+            self.objects.as_ref(),
+            self.categories.as_deref(),
+            self.items.as_deref(),
+            self.commands.as_deref(),
+        ) else {
+            return false;
+        };
+        let Some(&row) = SLOT_TOOLS.get(slot) else {
+            return false;
+        };
+        if categories.0.is_empty() {
+            return false;
+        }
+        let carried = tool_categories(&me.0, objects, items, commands, InventoryScope::TOOLS);
+        categories.0.covered_by(row, carried.iter().copied())
+    }
+
+    /// The element list `element` (`0xbe8ea0`).
+    pub(crate) fn list(&self, element: usize) -> Vec<u32> {
+        self.lists
+            .as_ref()
+            .and_then(|l| l.lists.get(element).cloned())
+            .unwrap_or_default()
+    }
+
+    /// The spell record's `TotemCategory` pair (`0x5a7bc0`).
+    pub(crate) fn spell_categories(&self, spell: u32) -> Option<[u32; 2]> {
+        Some(self.spells.as_ref()?.catalog.get(spell)?.totem_categories)
+    }
+
+    /// The `TotemCategory.dbc` row's name.
+    pub(crate) fn category_name(&self, row: u32) -> Option<String> {
+        Some(self.categories.as_ref()?.0.get(row)?.name.clone())
+    }
+
+    pub(crate) fn destroy(&mut self, slot: usize) -> bool {
+        let commands = self.commands.as_deref();
+        self.totems
+            .as_mut()
+            .is_some_and(|t| t.destroy(slot, commands))
     }
 }
 
@@ -295,96 +332,62 @@ fn feed_multicast(
 mod tests {
     use super::*;
 
-    /// A streamed totem's unit leaving the index (Totemic Recall's despawn) destroys its slot as
-    /// `0x73574a` does: `CMSG_TOTEM_DESTROYED`, the slot emptied, `PLAYER_TOTEM_UPDATE`.
-    #[test]
-    fn a_despawned_totem_unit_destroys_its_slot() {
-        const TOTEM: u64 = 0xF130_0000_0000_0050;
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let mut app = App::new();
-        app.insert_non_send_resource(UiScript::new().unwrap())
-            .init_resource::<Totems>()
-            .init_resource::<TotemCategories>()
-            .init_resource::<GuidIndex>()
-            .init_resource::<Items>()
-            .init_resource::<NameCache>()
-            .init_resource::<crate::ui_script::UiClock>()
-            .insert_resource(NetCommands(tx))
-            .add_systems(Update, feed_totems);
-        let unit = app.world_mut().spawn(ObjectStore::default()).id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(TOTEM, unit);
-        app.world_mut().resource_mut::<Totems>().slots[0] = Some(Totem {
+    const TOTEM: u64 = 0xF130_0000_0000_0050;
+
+    /// A world with slot 1 holding `TOTEM`, its unit held with `entry`, and `entry`'s record cached
+    /// as `name` unless `None`.
+    fn with_slot(entry: u32, name: Option<&str>) -> World {
+        let mut world = World::new();
+        let unit = world
+            .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, entry),
+            ])))
+            .id();
+        let mut index = GuidIndex::default();
+        index.0.insert(TOTEM, unit);
+        world.insert_resource(index);
+        let mut names = NameCache::default();
+        if let Some(name) = name {
+            names.insert_creature(
+                entry,
+                Some(crate::names::CreatureRecord {
+                    name: name.into(),
+                    ..Default::default()
+                }),
+            );
+        }
+        world.insert_resource(names);
+        world.insert_resource(NetCommands(crossbeam_channel::unbounded().0));
+        world.init_resource::<UiEvents>();
+        let mut totems = Totems::default();
+        totems.slots[1] = Some(Totem {
             guid: TOTEM,
-            duration_ms: 300_000,
-            arrived: Instant::now(),
-            start: None,
+            duration_ms: 60_000,
+            start_ms: 0,
             icon: None,
             name: None,
-            sighted: false,
         });
-        app.world()
-            .non_send_resource::<UiScript>()
-            .run(
-                "UPDATES = 0; local f = CreateFrame('Frame'); f:RegisterEvent('PLAYER_TOTEM_UPDATE')
-                 f:SetScript('OnEvent', function(_, _, slot) UPDATES = UPDATES + 1; LAST = slot end)",
-            )
-            .unwrap();
-        let live = |app: &App| {
-            app.world()
-                .non_send_resource::<UiScript>()
-                .eval::<bool>("return (GetTotemInfo(1))")
-                .unwrap()
-        };
-        app.update();
-        assert!(live(&app), "the streamed totem holds its slot");
-        app.world_mut().resource_mut::<GuidIndex>().0.remove(&TOTEM);
-        app.update();
-        assert!(!live(&app), "the despawn empties the slot");
-        assert!(app.world().resource::<Totems>().slots[0].is_none());
-        let sent: Vec<_> = rx
-            .try_iter()
-            .filter(|c| matches!(c, ClientCommand::TotemDestroyed { .. }))
-            .collect();
-        assert!(
-            matches!(sent[..], [ClientCommand::TotemDestroyed { slot: 0 }]),
-            "{sent:?}"
-        );
-        let script = app.world().non_send_resource::<UiScript>();
-        assert_eq!(script.eval::<i64>("return UPDATES").unwrap(), 2);
-        assert_eq!(script.eval::<i64>("return LAST").unwrap(), 1);
+        world.insert_resource(totems);
+        world
     }
 
-    /// The view rebuilds only when an input moves: a list edit that marks nothing is not read
-    /// (the gate holds), and the same edit marked is.
+    /// The unit's entry watch renames the slot it holds and fires `PLAYER_TOTEM_UPDATE` when the new
+    /// record is cached (`0x72cf2b`); a miss asks and fires nothing, the answer renaming it later.
     #[test]
-    fn a_quiet_frame_rebuilds_no_multicast_view() {
-        let mut app = App::new();
-        app.insert_non_send_resource(UiScript::new().unwrap())
-            .init_resource::<crate::spell::multicast::MultiCastLists>()
-            .init_resource::<TotemCategories>()
-            .add_systems(Update, feed_multicast);
-        let fire_spells = |app: &App| {
-            app.world()
-                .non_send_resource::<UiScript>()
-                .eval::<i64>("return select('#', GetMultiCastTotemSpells(1))")
-                .unwrap()
-        };
-        app.update();
-        assert_eq!(fire_spells(&app), 0);
-        app.world_mut()
-            .resource_mut::<crate::spell::multicast::MultiCastLists>()
-            .bypass_change_detection()
-            .lists[0]
-            .push(3599);
-        app.update();
-        assert_eq!(fire_spells(&app), 0, "an unmarked edit is not read");
-        app.world_mut()
-            .resource_mut::<crate::spell::multicast::MultiCastLists>()
-            .set_changed();
-        app.update();
-        assert_eq!(fire_spells(&app), 1, "a marked edit is");
+    fn an_entry_change_renames_the_slot_when_the_record_is_cached() {
+        let mut world = with_slot(5925, Some("Earthbind Totem"));
+        entry_changed(&mut world, TOTEM);
+        assert_eq!(
+            world.resource::<UiEvents>().names(),
+            ["PLAYER_TOTEM_UPDATE"]
+        );
+        let name = world.resource::<Totems>().slots[1]
+            .as_ref()
+            .and_then(|t| t.name.clone());
+        assert_eq!(name.as_deref(), Some("Earthbind Totem"));
+
+        let mut world = with_slot(5925, None);
+        entry_changed(&mut world, TOTEM);
+        assert!(world.resource::<UiEvents>().is_empty());
     }
 }
