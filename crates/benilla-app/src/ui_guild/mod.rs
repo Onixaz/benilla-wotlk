@@ -89,11 +89,6 @@ pub(crate) struct GuildState {
     guild_id: u32,
     /// Our `PLAYER_GUILDRANK`, 0-based, `0` = guild master.
     rank_index: u32,
-    /// Guild id to identity, asked once, negatives included; keyed by id because `PLAYER_GUILDID`
-    /// is public, so any visible player's guild is nameable ([`unit_guild`]).
-    identities: QueryCache<u32, Identity>,
-    /// Bumped when an identity lands or is evicted, never by an ask; the unit feeds watch it.
-    identity_generation: u64,
     /// Apart from the roster: `GE_MOTD` sets it alone, and at login vmangos sends that event before
     /// any roster (`CharacterHandler.cpp:558`).
     motd: String,
@@ -132,9 +127,120 @@ pub(crate) struct GuildState {
     permissions_ask: bool,
 }
 
-impl crate::query_cache::AskOnce for GuildState {
+/// The guild cache (`0xc5d9c0`): each guild's record by id, asked once, negatives included; keyed by id because `PLAYER_GUILDID` is public, so any visible player's guild is nameable ([`unit_guild`]). Apart from [`GuildState`], as 12340 keeps it apart from the roster, so the verbs read it at the call.
+#[derive(Resource, Default)]
+pub(crate) struct GuildCache {
+    identities: QueryCache<u32, Identity>,
+    /// Bumped when an identity lands or is evicted, never by an ask; the unit feeds watch it.
+    generation: u64,
+    /// Each guild's last seen timestamp, the watch's table (`0xc9eb5c`).
+    stamps: Vec<(u32, u32)>,
+    /// The guilds asked by the timestamp watch, one entry per ask, whose answer runs its walk (`0x6e1b90`).
+    stamp_asks: Vec<u32>,
+}
+
+impl crate::query_cache::AskOnce for GuildCache {
     fn clear_pending(&mut self) {
         self.identities.clear_pending();
+    }
+}
+
+impl GuildCache {
+    /// Send `CMSG_GUILD_QUERY` for a guild we hold nothing for, a negative counting as held.
+    fn request(&self, guild_id: u32, commands: &NetCommands) {
+        if guild_id != 0 {
+            self.identities.get_or_ask(guild_id, || {
+                let _ = commands.0.send(ClientCommand::GuildQuery { guild_id });
+            });
+        }
+    }
+
+    /// A guild's identity if we hold a real one; `None` while in flight and for no such guild.
+    fn identity(&self, guild_id: u32) -> Option<&Identity> {
+        self.identities.get(guild_id).filter(|i| i.exists())
+    }
+
+    /// The read that also asks: `None` on a miss, which sends the query, as the reference's
+    /// `GetGuildRosterInfo` answers nil and queries inline.
+    fn resolve(&self, guild_id: u32, commands: &NetCommands) -> Option<&Identity> {
+        self.request(guild_id, commands);
+        self.identity(guild_id)
+    }
+
+    /// A guild's designed crest read with no ask; `None` for guild 0, no record or an undesigned crest.
+    pub(crate) fn cached_emblem(&self, guild_id: u32) -> Option<GuildEmblem> {
+        let emblem = self.identity(guild_id)?.emblem;
+        emblem.is_designed().then_some(emblem)
+    }
+
+    /// The landed-identity counter the unit feeds watch.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// A guild's record read with no ask, as `CanSaveTabardNow`, the seed and the save read it (`0x6de20c`; a miss with no callback asks nothing, `0x67d95d`): its five tabard fields, `-1`s when undesigned; `None` for guild 0 (`0x67d93c`) or no record.
+    pub(crate) fn emblem_record(&self, guild_id: u32) -> Option<[i32; 5]> {
+        if guild_id == 0 {
+            return None;
+        }
+        let e = &self.identity(guild_id)?.emblem;
+        Some([
+            e.emblem_style,
+            e.emblem_color,
+            e.border_style,
+            e.border_color,
+            e.background_color,
+        ])
+    }
+
+    /// A guild's record dropped with no ask (`0x67a5f0`); whether one was held. A pending one runs its callbacks unfound (`0x67a61f` -> `0x67a533`), which the timestamp walk skips (`0x6e1b93`), so its asks go.
+    pub(crate) fn evict(&mut self, guild_id: u32) -> bool {
+        self.stamp_asks.retain(|g| *g != guild_id);
+        let evicted = self.identities.evict(guild_id);
+        if evicted {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        evicted
+    }
+
+    /// The guild timestamp's watch (`0x6e1c60`): a stamp already held for the guild does nothing (`0x6e1ccc`); else it is stored, the record dropped and asked again with the walk's callback (`0x6e1d47`, `0x6e1d5f`).
+    pub(crate) fn stamp_changed(&mut self, guild_id: u32, stamp: u32, commands: &NetCommands) {
+        match self.stamps.iter_mut().find(|(g, _)| *g == guild_id) {
+            Some((_, held)) if *held == stamp => return,
+            Some((_, held)) => *held = stamp,
+            None => self.stamps.push((guild_id, stamp)),
+        }
+        self.evict(guild_id);
+        if guild_id != 0 {
+            self.request(guild_id, commands);
+            self.stamp_asks.push(guild_id);
+        }
+    }
+
+    /// The timestamp watch's callbacks the answer for `guild_id` runs, taken in ask order.
+    fn take_stamp_asks(&mut self, guild_id: u32) -> usize {
+        let before = self.stamp_asks.len();
+        self.stamp_asks.retain(|g| *g != guild_id);
+        before - self.stamp_asks.len()
+    }
+
+    /// `SMSG_GUILD_QUERY_RESPONSE`'s record, an empty name as a negative.
+    fn insert(&mut self, response: &GuildQueryResponse) {
+        self.identities.insert(
+            response.guild_id,
+            Some(Identity {
+                name: response.name.clone(),
+                rank_names: response.rank_names.clone(),
+                emblem: GuildEmblem {
+                    emblem_style: response.emblem_style,
+                    emblem_color: response.emblem_color,
+                    border_style: response.border_style,
+                    border_color: response.border_color,
+                    background_color: response.background_color,
+                },
+            }),
+        );
+        self.generation = self.generation.wrapping_add(1);
     }
 }
 
@@ -210,64 +316,17 @@ impl GuildState {
         self.dirty = true;
     }
 
-    /// Send `CMSG_GUILD_QUERY` for a guild we hold nothing for, a negative counting as held.
-    fn request_identity(&self, guild_id: u32, commands: &NetCommands) {
-        if guild_id != 0 {
-            self.identities.get_or_ask(guild_id, || {
-                let _ = commands.0.send(ClientCommand::GuildQuery { guild_id });
-            });
-        }
-    }
-
-    /// A guild's identity if we hold a real one; `None` while in flight and for no such guild.
-    fn identity(&self, guild_id: u32) -> Option<&Identity> {
-        self.identities.get(guild_id).filter(|i| i.exists())
-    }
-
-    /// The read that also asks: `None` on a miss, which sends the query, as the reference's
-    /// `GetGuildRosterInfo` answers nil and queries inline.
-    fn resolve_identity(&self, guild_id: u32, commands: &NetCommands) -> Option<&Identity> {
-        self.request_identity(guild_id, commands);
-        self.identity(guild_id)
-    }
-
-    /// The landed-identity counter the unit feeds watch.
-    pub(crate) fn identity_generation(&self) -> u64 {
-        self.identity_generation
-    }
-
-    /// Our guild's five tabard fields for the tabard designer, `-1`s when undesigned as the wire
-    /// carries them; a miss sends the query.
-    pub(crate) fn own_emblem_record(
-        &self,
-        guild_id: u32,
-        commands: &NetCommands,
-    ) -> Option<[i32; 5]> {
-        let e = self.resolve_identity(guild_id, commands)?.emblem;
-        Some([
-            e.emblem_style,
-            e.emblem_color,
-            e.border_style,
-            e.border_color,
-            e.background_color,
-        ])
-    }
-
-    /// Drop our guild's cached record after a saved emblem, so the next read re-fetches it and
-    /// every member in sight re-dresses, as in the reference.
-    pub(crate) fn evict_own_identity(&mut self) {
-        if self.identities.evict(self.guild_id) {
-            self.identity_generation = self.identity_generation.wrapping_add(1);
-            self.dirty = true;
-        }
-    }
-
     /// `SMSG_INVALIDATE_PLAYER` (`0x635400`): a guild guid drops that guild's record; a member's
     /// guid re-asks the roster at once and restarts the `GuildRoster()` throttle (`0x5cab49`).
-    fn invalidate_player(&mut self, guid: u64, now: f64, commands: &NetCommands) {
+    fn invalidate_player(
+        &mut self,
+        cache: &mut GuildCache,
+        guid: u64,
+        now: f64,
+        commands: &NetCommands,
+    ) {
         if benilla_protocol::guid::is_guild(guid) {
-            if self.identities.evict(guid as u32) {
-                self.identity_generation = self.identity_generation.wrapping_add(1);
+            if cache.evict(guid as u32) {
                 self.dirty = true;
             }
         } else if self.members.iter().any(|m| m.guid == guid) {
@@ -277,25 +336,10 @@ impl GuildState {
     }
 
     /// `SMSG_GUILD_QUERY_RESPONSE`: fill the identity cache, an empty name as a negative.
-    fn apply_query_response(&mut self, response: GuildQueryResponse) {
-        let ours = response.guild_id == self.guild_id;
-        self.identities.insert(
-            response.guild_id,
-            Some(Identity {
-                name: response.name,
-                rank_names: response.rank_names,
-                emblem: GuildEmblem {
-                    emblem_style: response.emblem_style,
-                    emblem_color: response.emblem_color,
-                    border_style: response.border_style,
-                    border_color: response.border_color,
-                    background_color: response.background_color,
-                },
-            }),
-        );
-        self.identity_generation = self.identity_generation.wrapping_add(1);
+    fn apply_query_response(&mut self, cache: &mut GuildCache, response: &GuildQueryResponse) {
+        cache.insert(response);
         self.dirty = true;
-        if ours {
+        if response.guild_id == self.guild_id {
             // Our rank names landed: repaint, never re-request, as the reference's cache callback
             // does.
             self.note_roster_update(RosterUpdate::Applied);
@@ -317,7 +361,7 @@ impl GuildState {
     }
 
     /// `SMSG_GUILD_EVENT`'s effect on the mirror; its line is [`lines`]'.
-    fn apply_event(&mut self, notice: &GuildEventNotice) {
+    fn apply_event(&mut self, cache: &mut GuildCache, notice: &GuildEventNotice) {
         match notice.event {
             guild_event::MOTD => {
                 // Stored so `GetGuildRosterMOTD` agrees with the event before the next roster.
@@ -329,7 +373,8 @@ impl GuildState {
                 // as text, then the name (vmangos `Guild/Guild.h:133`).
                 let rank = notice.params.first().and_then(|p| p.parse::<usize>().ok());
                 let name = notice.params.get(1).cloned().unwrap_or_default();
-                if let (Some(rank), Some(identity)) = (rank, self.identities.get_mut(self.guild_id))
+                if let (Some(rank), Some(identity)) =
+                    (rank, cache.identities.get_mut(self.guild_id))
                 {
                     if let Some(slot) = identity.rank_names.get_mut(rank) {
                         *slot = name;
@@ -437,18 +482,6 @@ impl GuildState {
             .unwrap_or((0, 0))
     }
 
-    /// Our own guild's tabard, `None` until its query answers.
-    pub(crate) fn own_tabard(&self) -> Option<[i32; 5]> {
-        let e = &self.identities.get(self.guild_id)?.emblem;
-        Some([
-            e.emblem_style,
-            e.emblem_color,
-            e.border_style,
-            e.border_color,
-            e.background_color,
-        ])
-    }
-
     /// Our rank's rights word, which every `Can*` predicate tests; `0` (none) before a roster.
     fn own_rights(&self) -> u32 {
         self.rank_rights
@@ -488,12 +521,12 @@ pub(crate) fn last_online(days: f32) -> LastOnline {
 /// reference.
 pub(crate) fn unit_guild(
     fields: &ObjectFields,
-    guild: &mut GuildState,
+    guild: &GuildCache,
     commands: &NetCommands,
 ) -> Option<UnitGuild> {
     let guild_id = fields.player_guild_id();
     let rank_index = fields.player_guild_rank();
-    let identity = guild.resolve_identity(guild_id, commands)?;
+    let identity = guild.resolve(guild_id, commands)?;
     Some(UnitGuild {
         name: identity.name.clone(),
         rank_name: identity.rank_name(rank_index).to_string(),
@@ -506,11 +539,11 @@ pub(crate) fn unit_guild(
 /// [`crate::nameplates::drive_nameplates`] reads it per frame.
 pub(crate) fn unit_guild_name<'a>(
     fields: &ObjectFields,
-    guild: &'a mut GuildState,
+    guild: &'a GuildCache,
     commands: &NetCommands,
 ) -> Option<&'a str> {
     guild
-        .resolve_identity(fields.player_guild_id(), commands)
+        .resolve(fields.player_guild_id(), commands)
         .map(|identity| identity.name.as_str())
 }
 
@@ -518,22 +551,22 @@ pub(crate) fn unit_guild_name<'a>(
 /// `GetPlayerGuildNameText` (`0x6db6a0`), `None` for no guild or a query in flight.
 pub(crate) fn player_guild_name<'a>(
     fields: &ObjectFields,
-    guild: &'a GuildState,
+    guild: &'a GuildCache,
     commands: &NetCommands,
 ) -> Option<&'a str> {
     guild
-        .resolve_identity(fields.player_guild_id(), commands)
+        .resolve(fields.player_guild_id(), commands)
         .map(|identity| identity.name.as_str())
 }
 
 /// A unit's guild crest for the body composite, off its public `PLAYER_GUILDID`, asking on a miss
 /// like [`unit_guild`]. `None` keeps a Guild Tabard's own `Tabard_A_05Default` art, as the
 /// reference never enters its install for a guildless wearer, a creature, a query in flight
-/// (re-dressed when [`GuildState::identity_generation`] moves) or an undesigned `-1` crest, which
+/// (re-dressed when [`GuildCache::generation`] moves) or an undesigned `-1` crest, which
 /// would paint blank.
 pub(crate) fn unit_guild_emblem(
     fields: &ObjectFields,
-    guild: &mut GuildState,
+    guild: &GuildCache,
     commands: &NetCommands,
 ) -> Option<GuildEmblem> {
     guild_emblem(fields.player_guild_id(), guild, commands)
@@ -543,18 +576,14 @@ pub(crate) fn unit_guild_emblem(
 /// same `None` cases.
 pub(crate) fn corpse_guild_emblem(
     fields: &ObjectFields,
-    guild: &mut GuildState,
+    guild: &GuildCache,
     commands: &NetCommands,
 ) -> Option<GuildEmblem> {
     guild_emblem(fields.corpse_guild(), guild, commands)
 }
 
-fn guild_emblem(
-    guild_id: u32,
-    guild: &mut GuildState,
-    commands: &NetCommands,
-) -> Option<GuildEmblem> {
-    let emblem = guild.resolve_identity(guild_id, commands)?.emblem;
+fn guild_emblem(guild_id: u32, guild: &GuildCache, commands: &NetCommands) -> Option<GuildEmblem> {
+    let emblem = guild.resolve(guild_id, commands)?.emblem;
     emblem.is_designed().then_some(emblem)
 }
 
@@ -586,17 +615,41 @@ pub(crate) mod net {
     fn on_invalidate_player(
         In(ev): In<SessionEvent>,
         mut guild: ResMut<GuildState>,
+        mut cache: ResMut<GuildCache>,
         commands: Res<NetCommands>,
         time: Res<Time<Real>>,
     ) {
         if let SessionEvent::InvalidatePlayer { guid } = ev {
-            guild.invalidate_player(guid, time.elapsed_secs_f64(), &commands);
+            guild.invalidate_player(&mut cache, guid, time.elapsed_secs_f64(), &commands);
         }
     }
 
-    fn on_query_response(In(ev): In<SessionEvent>, mut guild: ResMut<GuildState>) {
+    fn on_query_response(
+        In(ev): In<SessionEvent>,
+        mut guild: ResMut<GuildState>,
+        mut cache: ResMut<GuildCache>,
+        players: Query<&crate::net::ObjectStore, With<crate::net::NetEntity>>,
+        ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+    ) {
         if let SessionEvent::GuildQueryResponse(response) = ev {
-            query_response(&mut guild, response);
+            let guild_id = response.guild_id;
+            let found = !response.name.is_empty();
+            let walks = cache.take_stamp_asks(guild_id);
+            query_response(&mut guild, &mut cache, response);
+            // The timestamp watch's callback, on a found record (`0x6e1b93`): each visible player in that guild runs its guild change (`0x6e1b7a` -> `0x6df7a0`).
+            let Some(mut ui) = ui.filter(|_| found) else {
+                return;
+            };
+            let members = players
+                .iter()
+                .filter(|s| {
+                    s.0.object_type() == Some(benilla_protocol::messages::ObjectType::Player)
+                        && s.0.player_guild_id() == guild_id
+                })
+                .count();
+            for _ in 0..walks * members {
+                ui.fire("TABARD_CANSAVE_CHANGED", vec![]);
+            }
         }
     }
 
@@ -616,6 +669,7 @@ pub(crate) mod net {
     fn on_event(
         In(ev): In<SessionEvent>,
         mut guild: ResMut<GuildState>,
+        mut cache: ResMut<GuildCache>,
         mut errors: ResMut<UiErrorKeys>,
         social: Res<SocialState>,
         notify: Res<GuildMemberNotify>,
@@ -624,6 +678,7 @@ pub(crate) mod net {
         if let SessionEvent::GuildEvent(notice) = ev {
             event(
                 &mut guild,
+                &mut cache,
                 &mut errors,
                 &social,
                 &notify,
@@ -668,8 +723,13 @@ pub(crate) mod net {
     /// Reset at session end: the next login may be another character. The identity cache goes
     /// too, as 12340 builds `guildcache` with persistence off and clears it at world entry
     /// (`0x52b7c4`).
-    fn on_session_end(In(_): In<SessionEvent>, mut guild: ResMut<GuildState>) {
+    fn on_session_end(
+        In(_): In<SessionEvent>,
+        mut guild: ResMut<GuildState>,
+        mut cache: ResMut<GuildCache>,
+    ) {
         *guild = GuildState::default();
+        *cache = GuildCache::default();
     }
 
     /// Queue the message ids [`lines`] named.
@@ -678,8 +738,12 @@ pub(crate) mod net {
     }
 
     /// `SMSG_GUILD_QUERY_RESPONSE`.
-    pub(crate) fn query_response(guild: &mut GuildState, response: GuildQueryResponse) {
-        guild.apply_query_response(response);
+    pub(crate) fn query_response(
+        guild: &mut GuildState,
+        cache: &mut GuildCache,
+        response: GuildQueryResponse,
+    ) {
+        guild.apply_query_response(cache, &response);
     }
 
     /// `SMSG_GUILD_ROSTER`.
@@ -698,6 +762,7 @@ pub(crate) mod net {
     ///    `SMSG_FRIEND_STATUS` prints the same line ungated.
     pub(crate) fn event(
         guild: &mut GuildState,
+        cache: &mut GuildCache,
         errors: &mut UiErrorKeys,
         social: &SocialState,
         notify: &GuildMemberNotify,
@@ -705,7 +770,7 @@ pub(crate) mod net {
         notice: GuildEventNotice,
     ) {
         let announce = announce_signon(social, notify, self_guid, notice.guid);
-        guild.apply_event(&notice);
+        guild.apply_event(cache, &notice);
         push_lines(errors, lines::event_line(&notice, announce));
     }
 
@@ -783,8 +848,9 @@ impl Plugin for UiGuildPlugin {
         net::register(app);
         event_log::register(app);
         app.add_observer(on_cvar);
-        crate::query_cache::register::<GuildState>(app);
+        crate::query_cache::register::<GuildCache>(app);
         app.init_resource::<GuildState>()
+            .init_resource::<GuildCache>()
             .init_resource::<GuildMemberNotify>()
             .add_systems(
                 Update,
@@ -972,20 +1038,24 @@ mod tests {
     fn an_empty_query_name_is_a_negative_not_a_blank_guild() {
         let (commands, rx) = net_commands();
         let mut guild = GuildState::default();
+        let mut cache = GuildCache::default();
 
-        assert!(guild.resolve_identity(7, &commands).is_none());
-        assert!(guild.resolve_identity(7, &commands).is_none());
+        assert!(cache.resolve(7, &commands).is_none());
+        assert!(cache.resolve(7, &commands).is_none());
         assert_eq!(rx.try_iter().count(), 1, "asked exactly once");
 
-        guild.apply_query_response(GuildQueryResponse {
-            guild_id: 7,
-            name: String::new(),
-            ..Default::default()
-        });
-        assert!(guild.identities.answered(7), "cached as a negative");
-        assert!(!guild.identities.is_pending(7), "and no longer in flight");
+        guild.apply_query_response(
+            &mut cache,
+            &GuildQueryResponse {
+                guild_id: 7,
+                name: String::new(),
+                ..Default::default()
+            },
+        );
+        assert!(cache.identities.answered(7), "cached as a negative");
+        assert!(!cache.identities.is_pending(7), "and no longer in flight");
         assert!(
-            guild.resolve_identity(7, &commands).is_none(),
+            cache.resolve(7, &commands).is_none(),
             "an empty name is not a guild"
         );
         assert_eq!(rx.try_iter().count(), 0, "and is never re-asked");
@@ -994,8 +1064,9 @@ mod tests {
     #[test]
     fn a_guild_event_asks_again_and_a_local_resort_does_not() {
         let mut guild = GuildState::default();
+        let mut cache = GuildCache::default();
 
-        guild.apply_event(&event(guild_event::JOINED, &["Furor"], None));
+        guild.apply_event(&mut cache, &event(guild_event::JOINED, &["Furor"], None));
         assert_eq!(guild.roster_event.take(), Some(RosterUpdate::Stale));
         assert!(RosterUpdate::Stale.arg1(), "the pane re-requests");
 
@@ -1018,20 +1089,24 @@ mod tests {
 
         // Both in one frame: the re-request subsumes the repaint.
         guild.apply_roster(GuildRoster::default());
-        guild.apply_event(&event(guild_event::PROMOTION, &["A", "B", "Officer"], None));
+        guild.apply_event(
+            &mut cache,
+            &event(guild_event::PROMOTION, &["A", "B", "Officer"], None),
+        );
         assert_eq!(guild.roster_event.take(), Some(RosterUpdate::Stale));
     }
 
     #[test]
     fn signing_on_and_off_does_not_re_request() {
         let mut guild = GuildState::default();
+        let mut cache = GuildCache::default();
         for ev in [guild_event::SIGNED_ON, guild_event::SIGNED_OFF] {
             guild.roster_event = None;
-            guild.apply_event(&event(ev, &["Tigole"], Some(9)));
+            guild.apply_event(&mut cache, &event(ev, &["Tigole"], Some(9)));
             assert_eq!(guild.roster_event, None, "event {ev:#04x}");
         }
         // The case just below them does.
-        guild.apply_event(&event(guild_event::UPDATE_ROSTER, &[], None));
+        guild.apply_event(&mut cache, &event(guild_event::UPDATE_ROSTER, &[], None));
         assert_eq!(guild.roster_event, Some(RosterUpdate::Stale));
     }
 
@@ -1069,7 +1144,8 @@ mod tests {
     fn an_invalidated_guild_guid_drops_its_record_and_a_member_re_asks_the_roster() {
         let (commands, rx) = net_commands();
         let mut guild = GuildState::default();
-        guild
+        let mut cache = GuildCache::default();
+        cache
             .identities
             .insert(7, Some(identity("Legacy", &["GM"])));
         assert!(guild.mirror_self(7, 0));
@@ -1079,14 +1155,14 @@ mod tests {
             ..Default::default()
         });
 
-        guild.invalidate_player(0x1FF6_0000_0000_0007, 100.0, &commands);
-        assert!(!guild.identities.answered(7), "the guild record is gone");
+        guild.invalidate_player(&mut cache, 0x1FF6_0000_0000_0007, 100.0, &commands);
+        assert!(!cache.identities.answered(7), "the guild record is gone");
         assert_eq!(rx.try_iter().count(), 0, "a guild guid asks nothing");
 
-        guild.invalidate_player(0x99, 100.0, &commands);
+        guild.invalidate_player(&mut cache, 0x99, 100.0, &commands);
         assert_eq!(rx.try_iter().count(), 0, "a non-member asks nothing");
 
-        guild.invalidate_player(0x2A, 100.0, &commands);
+        guild.invalidate_player(&mut cache, 0x2A, 100.0, &commands);
         assert!(matches!(
             rx.try_iter().collect::<Vec<_>>().as_slice(),
             [ClientCommand::GuildRosterRequest]
@@ -1100,7 +1176,8 @@ mod tests {
     #[test]
     fn leaving_the_guild_drops_the_roster_but_not_the_identities() {
         let mut guild = GuildState::default();
-        guild
+        let mut cache = GuildCache::default();
+        cache
             .identities
             .insert(7, Some(identity("Legacy", &["GM"])));
         assert!(guild.mirror_self(7, 0), "joined");
@@ -1118,7 +1195,7 @@ mod tests {
         assert!(guild.members.is_empty());
         assert!(guild.motd.is_empty());
         assert_eq!(guild.selection, 0);
-        assert!(guild.identities.answered(7), "identities survive");
+        assert!(cache.identities.answered(7), "identities survive");
 
         assert!(!guild.mirror_self(0, 0), "no edge when nothing moved");
     }
@@ -1127,11 +1204,11 @@ mod tests {
     #[test]
     fn learning_our_own_guild_id_is_not_leaving_a_guild() {
         let mut guild = GuildState::default();
-        guild.apply_event(&event(
-            guild_event::MOTD,
-            &["Raid Wednesday at eight."],
-            None,
-        ));
+        let mut cache = GuildCache::default();
+        guild.apply_event(
+            &mut cache,
+            &event(guild_event::MOTD, &["Raid Wednesday at eight."], None),
+        );
         assert!(!guild.in_guild(), "the descriptor has not said yet");
 
         assert!(
@@ -1178,16 +1255,16 @@ mod tests {
     #[test]
     fn a_rank_rename_patches_the_identity_cache() {
         let mut guild = GuildState::default();
+        let mut cache = GuildCache::default();
         guild.mirror_self(7, 0);
-        guild
+        cache
             .identities
             .insert(7, Some(identity("Legacy", &["GM", "Off"])));
-        guild.apply_event(&event(
-            guild_event::UPDATE_RANK_NAME,
-            &["1", "Officer"],
-            None,
-        ));
-        assert_eq!(guild.identities.get(7).unwrap().rank_name(1), "Officer");
+        guild.apply_event(
+            &mut cache,
+            &event(guild_event::UPDATE_RANK_NAME, &["1", "Officer"], None),
+        );
+        assert_eq!(cache.identities.get(7).unwrap().rank_name(1), "Officer");
         assert!(guild.dirty);
     }
 
@@ -1249,14 +1326,14 @@ mod tests {
     #[test]
     fn unit_guild_asks_on_a_miss_and_never_names_a_blank_guild() {
         let (commands, rx) = net_commands();
-        let mut guild = GuildState::default();
-        guild
+        let mut cache = GuildCache::default();
+        cache
             .identities
             .insert(7, Some(identity("Legacy", &["GM", "Off"])));
 
         // A creature or a guildless player: no `PLAYER_GUILDID`.
         let guildless = ObjectFields::from_pairs(&[]);
-        assert!(unit_guild(&guildless, &mut guild, &commands).is_none());
+        assert!(unit_guild(&guildless, &cache, &commands).is_none());
         assert_eq!(rx.try_iter().count(), 0, "guild id 0 asks nothing");
 
         // Fields 191/192 = PLAYER_GUILDID/PLAYER_GUILDRANK.
@@ -1265,7 +1342,7 @@ mod tests {
             (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 1),
         ]);
         assert!(
-            unit_guild(&unknown, &mut guild, &commands).is_none(),
+            unit_guild(&unknown, &cache, &commands).is_none(),
             "a query in flight is not a blank-named guild"
         );
         assert_eq!(rx.try_iter().count(), 1, "and the miss asked for it");
@@ -1274,7 +1351,7 @@ mod tests {
             (benilla_protocol::field::FIELD_PLAYER_GUILDID, 7),
             (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 1),
         ]);
-        let resolved = unit_guild(&member, &mut guild, &commands).expect("cached");
+        let resolved = unit_guild(&member, &cache, &commands).expect("cached");
         assert_eq!(resolved.name, "Legacy");
         assert_eq!(resolved.rank_name, "Off");
         assert_eq!(resolved.rank_index, 1);
@@ -1285,9 +1362,7 @@ mod tests {
             (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 99),
         ]);
         assert_eq!(
-            unit_guild(&odd_rank, &mut guild, &commands)
-                .unwrap()
-                .rank_name,
+            unit_guild(&odd_rank, &cache, &commands).unwrap().rank_name,
             ""
         );
     }
@@ -1295,28 +1370,28 @@ mod tests {
     #[test]
     fn unit_guild_name_is_unit_guilds_name_on_every_leg() {
         let (commands, rx) = net_commands();
-        let mut guild = GuildState::default();
-        guild
+        let mut cache = GuildCache::default();
+        cache
             .identities
             .insert(7, Some(identity("Legacy", &["GM", "Off"])));
         // The negative cache: an empty answer is no such guild.
-        guild.identities.insert(8, Some(identity("", &[])));
+        cache.identities.insert(8, Some(identity("", &[])));
 
         let guildless = ObjectFields::from_pairs(&[]);
-        assert_eq!(unit_guild_name(&guildless, &mut guild, &commands), None);
+        assert_eq!(unit_guild_name(&guildless, &cache, &commands), None);
         assert_eq!(rx.try_iter().count(), 0, "guild id 0 asks nothing");
 
         let unknown =
             ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 9)]);
         assert_eq!(
-            unit_guild_name(&unknown, &mut guild, &commands),
+            unit_guild_name(&unknown, &cache, &commands),
             None,
             "a query in flight draws no line"
         );
         assert_eq!(rx.try_iter().count(), 1, "and the miss asked for it");
 
         let blank = ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 8)]);
-        assert_eq!(unit_guild_name(&blank, &mut guild, &commands), None);
+        assert_eq!(unit_guild_name(&blank, &cache, &commands), None);
         assert_eq!(
             rx.try_iter().count(),
             0,
@@ -1327,12 +1402,9 @@ mod tests {
             (benilla_protocol::field::FIELD_PLAYER_GUILDID, 7),
             (benilla_protocol::field::FIELD_PLAYER_GUILDRANK, 1),
         ]);
-        assert_eq!(
-            unit_guild_name(&member, &mut guild, &commands),
-            Some("Legacy")
-        );
-        let via_line = unit_guild_name(&member, &mut guild, &commands).map(str::to_owned);
-        let via_api = unit_guild(&member, &mut guild, &commands).map(|g| g.name);
+        assert_eq!(unit_guild_name(&member, &cache, &commands), Some("Legacy"));
+        let via_line = unit_guild_name(&member, &cache, &commands).map(str::to_owned);
+        let via_api = unit_guild(&member, &cache, &commands).map(|g| g.name);
         assert_eq!(via_line, via_api, "the two readers of one cache disagree");
     }
 

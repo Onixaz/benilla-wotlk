@@ -25,7 +25,7 @@ pub struct UnitGuids {
     pub target: u64,
     /// The mouseover global, read only while it is a held unit.
     pub mouseover: u64,
-    /// The interaction NPC.
+    /// The interact target as last pushed, which `"npc"` names when no view is lent.
     pub npc: u64,
     /// The focus `[0xbd07d0]`, which `FocusUnit` sets in the VM; a push keeps the VM's.
     pub focus: u64,
@@ -378,7 +378,8 @@ impl UnitGuids {
             UnitBase::Pet if self.player == 0 => 0,
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
-            UnitBase::Npc => self.npc,
+            // The interact target read at the call (`0x60af67`); with none held, nobody.
+            UnitBase::Npc => self.npc_guid(),
             // Deviation: the reference's party-pet lookup has no bound and reads past its
             // four-entry table, which is stale memory, not a mechanism; past it, nobody.
             UnitBase::PartyPet(row) => at(&self.party_pets, row),
@@ -545,10 +546,19 @@ impl UnitGuids {
         if self.focus == guid {
             out.push("focus".into());
         }
-        if self.npc == guid {
+        // The fan-out's compare is against the interact target itself (`0x60bece`).
+        if self.npc_guid() == guid {
             out.push("npc".into());
         }
         out
+    }
+
+    /// The `"npc"` guid: the interact target read at the call (`0x60af67`), 0 with none held; with no view lent, the one last pushed.
+    pub fn npc_guid(&self) -> u64 {
+        match read_live(|l| l.interact_target()) {
+            Some(held) => held.unwrap_or(0),
+            None => self.npc,
+        }
     }
 }
 

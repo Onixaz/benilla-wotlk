@@ -21,10 +21,8 @@
 //! another target plays the new hello with no goodbye for the old one. Every NPC window opener sets
 //! the target, the taxi map's `SMSG_SHOWTAXINODES` open (`0x5932e0`) among them, and the NPC sound
 //! itself stays silent while the player is dead or a ghost or the NPC reads dead
-//! ([`npc_sound_silenced`]). Here the interact target is [`InteractNpc`], the union of every
-//! NPC-bound session that also drives the `"npc"` unit. A flight master with no gossip flag (most
-//! of Northrend's) opens its taxi map directly, with no gossip session in front of it, so only the
-//! taxi session carries the vocal.
+//! ([`npc_sound_silenced`]). The set and the clear hand their line here as an
+//! [`InteractCue::Sound`].
 
 use bevy::prelude::*;
 
@@ -32,7 +30,7 @@ use benilla_formats::NpcGreetingCatalog;
 use benilla_protocol::EntityKind;
 
 use crate::net::{GuidIndex, NetEntity, ObjectStore, SelfPlayer};
-use crate::ui_session::InteractNpc;
+use crate::ui_session::InteractCue;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_protocol::field::UNIT_DYNFLAG_DEAD;
 use benilla_protocol::ObjectFields;
@@ -85,25 +83,6 @@ fn greet_line(seq: usize, pissed_variations: usize) -> (GreetLine, usize) {
             // edi >= count: hello, variation -1, counter reset.
             (GreetLine::Hello, 0)
         }
-    }
-}
-
-/// The vocal an interact-target change produces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WindowVocal {
-    Hello(u64),
-    Goodbye(u64),
-    None,
-}
-
-/// The interact target's vocal (`0x51fce0`): a different target plays its hello with no goodbye
-/// for the old (`0x518d50` told the new guid is non-zero); clearing to nothing plays the goodbye.
-fn window_vocal(prev: Option<u64>, active: Option<u64>) -> WindowVocal {
-    match (prev, active) {
-        (p, a) if p == a => WindowVocal::None,
-        (_, Some(new)) => WindowVocal::Hello(new),
-        (Some(old), None) => WindowVocal::Goodbye(old),
-        (None, None) => WindowVocal::None,
     }
 }
 
@@ -242,11 +221,11 @@ fn npc_sound_silenced(player: Option<&ObjectFields>, npc: Option<&ObjectFields>)
         })
 }
 
-/// The window hello and goodbye, from the interact target's change.
+/// The window hello and goodbye, as the interact target's set and clear call them (`0x51fda4`, `0x518da5`).
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 fn play_window_greetings(
-    interact: Res<InteractNpc>,
+    mut cues: MessageReader<InteractCue>,
     index: Res<GuidIndex>,
-    mut prev_active: Local<Option<u64>>,
     units: Query<(&NetEntity, &Transform, Option<&ObjectStore>)>,
     greetings: Option<Res<NpcGreetings>>,
     kits: Option<ResMut<SoundKits>>,
@@ -256,42 +235,35 @@ fn play_window_greetings(
     cam: Query<&Transform, (With<WorldCamera>, Without<NetEntity>)>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
-    // `InteractNpc` is fed in `WorldStage::Net`, ahead of this `Present` system, so a window's
-    // open and its hello land on the same frame.
-    let active = interact.1;
-    let vocal = window_vocal(*prev_active, active);
-    if matches!(vocal, WindowVocal::None) {
-        return;
-    }
-    *prev_active = active;
-
+    let lines: Vec<(u64, bool)> = cues
+        .read()
+        .filter_map(|c| match *c {
+            InteractCue::Sound { guid, hello } => Some((guid, hello)),
+            _ => None,
+        })
+        .collect();
     let (Some(greetings), Some(mut kits), Some(assets)) = (greetings, kits, assets) else {
         return;
     };
     let listener = cam.single().map(|t| t.translation).unwrap_or(Vec3::ZERO);
-
-    // A despawned NPC resolves nothing: the reference's teardown clear is silent. A player target
-    // (trade) resolves nothing either, as the NPC sound (`0x720860`) returns for a player.
-    let (guid, hello) = match vocal {
-        WindowVocal::Hello(g) => (g, true),
-        WindowVocal::Goodbye(g) => (g, false),
-        WindowVocal::None => return,
-    };
-    let Some(&npc) = index.0.get(&guid) else {
-        return;
-    };
-    let Some((row, pos)) = resolve(npc, &units, &greetings) else {
-        return;
-    };
-    let npc_fields = units.get(npc).ok().and_then(|(_, _, s)| s).map(|s| &s.0);
-    if npc_sound_silenced(self_q.single().ok().map(|s| &s.0), npc_fields) {
-        return;
+    for (guid, hello) in lines {
+        // A despawned NPC resolves nothing: the reference's sound needs the held unit (`0x518d8b`).
+        let Some(&npc) = index.0.get(&guid) else {
+            continue;
+        };
+        let Some((row, pos)) = resolve(npc, &units, &greetings) else {
+            continue;
+        };
+        let npc_fields = units.get(npc).ok().and_then(|(_, _, s)| s).map(|s| &s.0);
+        if npc_sound_silenced(self_q.single().ok().map(|s| &s.0), npc_fields) {
+            continue;
+        }
+        let kit_id = if hello { row.hello } else { row.goodbye };
+        // Both window lines free-pick their take (`variation = -1`).
+        play_line(
+            npc, kit_id, None, pos, listener, &mut kits, &assets, &mut out, &config,
+        );
     }
-    let kit_id = if hello { row.hello } else { row.goodbye };
-    // Both window lines free-pick their take (`variation = -1`).
-    play_line(
-        npc, kit_id, None, pos, listener, &mut kits, &assets, &mut out, &config,
-    );
 }
 
 /// A despawning unit stops its greeting.
@@ -333,123 +305,6 @@ mod tests {
         assert_eq!(greet_line(5, 0), (GreetLine::Hello, 0));
     }
 
-    #[test]
-    fn window_vocal_opens_closes_and_suppresses_swap_goodbye() {
-        assert_eq!(window_vocal(None, Some(0x1)), WindowVocal::Hello(0x1)); // open
-        assert_eq!(window_vocal(Some(0x1), None), WindowVocal::Goodbye(0x1)); // close to nothing
-        assert_eq!(window_vocal(Some(0x1), Some(0x2)), WindowVocal::Hello(0x2)); // swap: no goodbye
-        assert_eq!(window_vocal(Some(0x1), Some(0x1)), WindowVocal::None); // no change
-        assert_eq!(window_vocal(None, None), WindowVocal::None);
-    }
-
-    use crate::ui_gossip::GossipState;
-    use crate::ui_session::{close_interaction, feed_interact_npc};
-    use crate::ui_taxi::TaxiState;
-    use crate::ui_trainer::TrainerOpen;
-    use benilla_protocol::messages::TaxiMask;
-
-    /// A `HIGHGUID_UNIT` guid, so the sessions treat it as an NPC.
-    const NPC: u64 = 0xF130_0000_0000_0042;
-
-    /// The windows a flight master and a trainer open, the interaction close and the interact
-    /// target's feed, in the order the plugins run them.
-    fn interact_app() -> App {
-        let mut app = App::new();
-        app.init_resource::<GossipState>()
-            .init_resource::<TaxiState>()
-            .init_resource::<TrainerOpen>()
-            .init_resource::<InteractNpc>()
-            .add_systems(Update, feed_interact_npc)
-            .add_systems(PostUpdate, close_interaction);
-        app
-    }
-
-    /// One frame: the vocal the interact target's change produces, as `play_window_greetings`
-    /// derives it.
-    fn step(app: &mut App, prev: &mut Option<u64>) -> WindowVocal {
-        app.update();
-        let active = app.world().resource::<InteractNpc>().1;
-        let vocal = window_vocal(*prev, active);
-        *prev = active;
-        vocal
-    }
-
-    /// A flight master with no gossip flag (most of Northrend's) opens `SMSG_SHOWTAXINODES` with
-    /// no gossip session in front: the taxi map alone sets the interact target (`0x5932e0`), so it
-    /// alone plays the hello and, on close, the goodbye.
-    #[test]
-    fn a_pure_flight_masters_taxi_map_plays_hello_and_goodbye() {
-        let mut app = interact_app();
-        let mut prev = None;
-
-        app.world_mut()
-            .resource_mut::<TaxiState>()
-            .open(NPC, 2, TaxiMask(vec![0b10]));
-        assert_eq!(step(&mut app, &mut prev), WindowVocal::Hello(NPC));
-        assert_eq!(
-            step(&mut app, &mut prev),
-            WindowVocal::None,
-            "no repeat while open"
-        );
-
-        app.world_mut().resource_mut::<TaxiState>().clear();
-        assert_eq!(step(&mut app, &mut prev), WindowVocal::Goodbye(NPC));
-    }
-
-    /// A gossip flight master's "Show me where I can fly" hands off to the taxi map on the same
-    /// NPC: the same target (`0x51fce0`), so no second hello and no goodbye; closing the map
-    /// closes the gossip behind it and plays the one goodbye.
-    #[test]
-    fn a_gossip_to_taxi_hand_off_on_one_npc_is_a_silent_swap() {
-        let mut app = interact_app();
-        let mut prev = None;
-
-        app.world_mut().resource_mut::<GossipState>().npc = Some(NPC);
-        assert_eq!(step(&mut app, &mut prev), WindowVocal::Hello(NPC));
-
-        app.world_mut()
-            .resource_mut::<TaxiState>()
-            .open(NPC, 2, TaxiMask(vec![0b10]));
-        assert_eq!(step(&mut app, &mut prev), WindowVocal::None);
-
-        // `CloseTaxiMap()`: the interaction close takes the gossip with it this frame, and the
-        // target reads clear on the next.
-        app.world_mut().resource_mut::<TaxiState>().clear();
-        let closing = step(&mut app, &mut prev);
-        let cleared = step(&mut app, &mut prev);
-        assert_eq!(app.world().resource::<GossipState>().npc, None);
-        assert_eq!(
-            [closing, cleared]
-                .into_iter()
-                .filter(|v| *v != WindowVocal::None)
-                .collect::<Vec<_>>(),
-            vec![WindowVocal::Goodbye(NPC)],
-            "exactly one goodbye",
-        );
-    }
-
-    /// A gossip→trainer handoff on one NPC is a silent swap, not a close with a goodbye.
-    #[test]
-    fn gossip_to_trainer_on_one_npc_is_a_silent_swap() {
-        let mut app = interact_app();
-        let mut prev = None;
-
-        app.world_mut().resource_mut::<GossipState>().npc = Some(NPC);
-        assert_eq!(step(&mut app, &mut prev), WindowVocal::Hello(NPC));
-
-        // The gossip closes as the trainer opens on the same NPC.
-        app.world_mut().resource_mut::<GossipState>().npc = None;
-        app.world_mut().resource_mut::<TrainerOpen>().trainer = Some(NPC);
-        assert_eq!(
-            step(&mut app, &mut prev),
-            WindowVocal::None,
-            "gossip→trainer on one NPC is a silent swap — no goodbye",
-        );
-    }
-
-    /// The NPC sound's gates (`0x720860`): a living player and a living NPC hear it; no player, a
-    /// dead or ghost player, an NPC at health 0 or one with `UNIT_DYNFLAG_DEAD` (feign death) do
-    /// not.
     #[test]
     fn the_npc_sound_is_silent_for_a_dead_player_or_a_dead_npc() {
         use benilla_protocol::field::{

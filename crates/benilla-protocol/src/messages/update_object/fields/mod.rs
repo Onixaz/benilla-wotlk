@@ -137,6 +137,9 @@ struct Shadow {
     power: [Option<u32>; 7],
     health: Option<u32>,
     dismounted: bool,
+    /// The mount a dismount kept while passengers ride (`[unit+0xa30]` bit `0x10000000` set, its
+    /// display left in `[unit+0x9c0]`), 0 when the bit is clear.
+    mount_kept: u32,
 }
 
 /// An object's descriptor length in dwords: the `*_END` of its innermost block, so a Player spans
@@ -471,6 +474,27 @@ impl ObjectFields {
         true
     }
 
+    /// A dismount held while passengers ride (`0x741a7f`, `0x74046f`): `mount`, the unit's own
+    /// copy, stays and the unit reads unmounted until the field moves to another display.
+    pub fn hold_mount(&mut self, mount: u32) {
+        if mount != 0 {
+            self.shadow.get_or_insert_default().mount_kept = mount;
+        }
+    }
+
+    /// The unit's own mount copy (`[unit+0x9c0]`): a held mount, else the field less a dropped one.
+    pub fn unit_mount_copy(&self) -> u32 {
+        match self.shadow.as_deref().map_or(0, |s| s.mount_kept) {
+            0 => self.unit_mount_display_id(),
+            kept => kept,
+        }
+    }
+
+    /// Mounted (`0x51a230`): a mount copy and no held dismount.
+    pub fn unit_is_mounted(&self) -> bool {
+        self.shadow.as_deref().is_none_or(|s| s.mount_kept == 0) && self.unit_mount_display_id() > 0
+    }
+
     /// The predicted power of type `ty` while one stands.
     fn predicted_power(&self, ty: u8) -> Option<u32> {
         self.shadow
@@ -501,6 +525,10 @@ fn follow_shadow(shadow: &mut Option<Box<Shadow>>, index: u16, new: u32) {
     }
     if index == FIELD_UNIT_MOUNTDISPLAYID {
         s.dismounted = false;
+        // The change handler is a no-op on the copy it holds, and clears the hold on any other (`0x740450`).
+        if new != s.mount_kept {
+            s.mount_kept = 0;
+        }
     }
     if index == FIELD_UNIT_HEALTH {
         s.health = None;

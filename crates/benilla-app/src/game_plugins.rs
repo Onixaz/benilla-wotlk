@@ -78,10 +78,8 @@ use crate::ui_quest_share::QuestSharePlugin;
 use crate::ui_quest_watch::UiQuestWatchPlugin;
 use crate::ui_saved::UiSavedPlugin;
 use crate::ui_script::UiScriptPlugin;
-use crate::ui_shapeshift::UiShapeshiftPlugin;
 use crate::ui_social::UiSocialPlugin;
 use crate::ui_socket::UiSocketPlugin;
-use crate::ui_spell_info::UiSpellInfoPlugin;
 use crate::ui_spellbook::UiSpellbookPlugin;
 use crate::ui_stable::UiStablePlugin;
 use crate::ui_summon::UiSummonPlugin;
@@ -230,12 +228,10 @@ impl PluginGroup for GamePlugins {
             .add(UiSocketPlugin)
             .add(UiTitlePlugin)
             .add(UiCurrencyPlugin)
-            .add(UiSpellInfoPlugin)
             .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)
             // The form list by the reference's admission and order; after UiActionPlugin (`Spells`)
             // and SpellPlugin (the cast tail).
-            .add(UiShapeshiftPlugin)
             // The companion lists; after UiSpellbookPlugin, whose feed it follows.
             .add(crate::ui_companion::UiCompanionPlugin)
             // The totem slots; after UiActionPlugin, whose `Spells` names each totem's icon.
@@ -695,7 +691,7 @@ pub(crate) mod schedule_tests {
     /// - A non-`Send` owner (the Lua VM, the audio handles): its systems run on the main thread
     ///   one at a time, so no order among them is a race; which feed fires first is the `UiFeed`
     ///   phase's job. Derived: every registration that is not `Send + Sync`.
-    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, `PendingItemOps`, `PetitionState`): every VM holder reaches it
+    /// - The VM's lent state (`StableOpen`, `Cooldowns`, `PetBar`, `PlayerActions`, the bar's slots and usable bytes, the cast state, `Totems`, the selection, the place, the open trade skill, the macros' bound spells, `PendingItemOps`, the charter windows, the NPC service windows and the interact target): every VM holder reaches it
     ///   through its lent view and runs on the main thread, so two VM holders fighting over it
     ///   and the VM alone are the VM's pair; against any other system it is actionable.
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
@@ -727,6 +723,37 @@ pub(crate) mod schedule_tests {
             ("StableOpen", TypeId::of::<crate::ui_stable::StableOpen>),
             ("Cooldowns", TypeId::of::<crate::spell::Cooldowns>),
             ("PetBar", TypeId::of::<crate::ui_pet::PetBar>),
+            // What every loan owns besides the pet's words: the bar's slots and their usable
+            // bytes, and the player's cast state, which the verbs write inside their call.
+            ("ActionSlots", TypeId::of::<crate::ui_action::ActionSlots>),
+            (
+                "UsableCaches",
+                TypeId::of::<crate::ui_action::usable_cache::UsableCaches>,
+            ),
+            ("PendingCast", TypeId::of::<crate::spell::PendingCast>),
+            (
+                "QueuedMeleeSpell",
+                TypeId::of::<crate::spell::QueuedMeleeSpell>,
+            ),
+            (
+                "AutoRepeatActive",
+                TypeId::of::<crate::spell::AutoRepeatActive>,
+            ),
+            ("SpellTargeting", TypeId::of::<crate::spell::SpellTargeting>),
+            ("UnitCasts", TypeId::of::<crate::ui_cast::UnitCasts>),
+            // `DestroyTotem` clears a slot through the lent view.
+            ("Totems", TypeId::of::<crate::ui_totem::Totems>),
+            // The loan's slots a system owns by its `Owns`, as `Cooldowns`.
+            ("Selection", TypeId::of::<crate::target::Selection>),
+            ("PlayerPlace", TypeId::of::<crate::area::PlayerPlace>),
+            (
+                "TradeSkillOpen",
+                TypeId::of::<crate::ui_tradeskill::TradeSkillOpen>,
+            ),
+            (
+                "MacroBoundSpells",
+                TypeId::of::<crate::ui_macro::MacroBoundSpells>,
+            ),
             (
                 "PlayerActions",
                 TypeId::of::<crate::ui_action::PlayerActions>,
@@ -736,9 +763,35 @@ pub(crate) mod schedule_tests {
                 "PendingItemOps",
                 TypeId::of::<crate::pending_item_ops::PendingItemOps>,
             ),
+            // The charter windows, which their verbs read and write at the call.
             (
                 "PetitionState",
                 TypeId::of::<crate::ui_petition::PetitionState>,
+            ),
+            (
+                "GuildRegistrarState",
+                TypeId::of::<crate::ui_petition::GuildRegistrarState>,
+            ),
+            (
+                "PetitionVendorState",
+                TypeId::of::<crate::ui_petition::PetitionVendorState>,
+            ),
+            // The NPC service windows and the one interact target, which their verbs read and write at the call.
+            ("GossipState", TypeId::of::<crate::ui_gossip::GossipState>),
+            (
+                "MerchantOpen",
+                TypeId::of::<crate::ui_merchant::MerchantOpen>,
+            ),
+            ("TrainerOpen", TypeId::of::<crate::ui_trainer::TrainerOpen>),
+            ("TaxiState", TypeId::of::<crate::ui_taxi::TaxiState>),
+            ("TabardOpen", TypeId::of::<crate::ui_tabard::TabardOpen>),
+            ("TabardDesign", TypeId::of::<crate::ui_tabard::TabardDesign>),
+            ("BarberShop", TypeId::of::<crate::ui_barber::BarberShop>),
+            ("BarberBody", TypeId::of::<crate::ui_barber::BarberBody>),
+            ("ItemText", TypeId::of::<crate::ui_item_text::ItemText>),
+            (
+                "InteractTarget",
+                TypeId::of::<crate::ui_session::InteractTarget>,
             ),
         ];
         const CACHES: &[ClassRow] = &[
@@ -878,9 +931,7 @@ pub(crate) mod schedule_tests {
     ///   `ground_deck_riders`), the booth billboards and the world camera's gate: a press's range,
     ///   facing and nearest-unit reads see a rider's pose or the camera a frame late at worst, as
     ///   the range compare's readers do;
-    /// - the range compare's readers (`ui_action::state::feed_action_state`,
-    ///   `ui_tooltip::spell_feed::feed_spell_tooltips`, `spell::targeting::feed_targeting_to_vm`,
-    ///   the targeting cursor and the object-click commit) against the writers of `Player` and
+    /// - the range compare's readers (the targeting cursor and the object-click commit) against the writers of `Player` and
     ///   `RemoteMotion` (`world_focus`'s focus publish and settle release,
     ///   `transport::compose_riders` and `ground_deck_riders`): the readers take the
     ///   movement flags of the caster (`Player::move_flags`) and its target
@@ -903,13 +954,8 @@ pub(crate) mod schedule_tests {
     /// - `area_trigger::check_area_triggers` against the readers of `Player`: its heartbeat
     ///   writes only the stream's send bookkeeping (`last_pos`, `last_heartbeat`), which only the
     ///   controller, ordered before it, reads.
-    /// - `close_npc_session_out_of_range::<PetitionVendorState>` against the motion and booth
-    ///   writers of `Transform`: it reads the NPC's position once per frame to close on a walk-away,
-    ///   as the guild registrar's close beside it does.
-    /// - `ui_spell_info::feed_spell_info`, `GetSpellInfo`'s caster snapshot, is a range compare's
-    ///   reader against the same `Player` and `RemoteMotion` writers, and against
-    ///   `ui_pet::drain::pet_stop_on_old_target_clear` over `PetBar`: it reads the pet's guid,
-    ///   which that system never writes.
+    /// - `ui_petition::close_out_of_range` against the motion and booth writers of `Transform`:
+    ///   it reads the registrar's and vendor's positions once per frame to close on a walk-away.
     /// - `ui_glyph::drain_glyph_removes`, an `.after(UiInput)` drain of the VM's own sends, against
     ///   `terrain_stream::collider::finish_colliders`, as the other such drains pair.
     ///
@@ -989,11 +1035,10 @@ pub(crate) mod schedule_tests {
     /// - Socketing and refunds (#202, #206) add 1: `ui_socket::drain_item_sends`, an
     ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
     ///   such drains pair; the refund feed's pairs left when its verbs began reading the records at the call (#1278).
-    /// - The small notices (#641) add 2: `ui_notices::drain_level_grant`, an `.after(UiInput)`
-    ///   drain, against `finish_colliders`, as the other such drains pair; and
-    ///   `ui_notices::feed_notices` against `feed_spell_tooltips` over `Items`: it only reads
-    ///   templates; its pair against the item-tooltip feed left when the item verbs began reading
-    ///   the cache at the call (#1278).
+    /// - The small notices (#641) add 1: `ui_notices::drain_level_grant`, an `.after(UiInput)`
+    ///   drain, against `finish_colliders`, as the other such drains pair; `ui_notices::feed_notices`'
+    ///   pairs left when the item verbs (#1278) and the spell tooltip (#1281) began reading the
+    ///   cache at the call.
     /// - The quest progress lines (#638) added 1, which left when the lines moved into their packets' handlers (#1276).
     /// - The quest panels and the world map's quest lines add 11: the NPC emote queue's
     ///   `set_emote_queues` and `drive_emote_queues` against `finish_colliders`, as the other
@@ -1219,9 +1264,9 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 699, 691),
-        // 184: `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
-        ("PostUpdate", 184, 142),
+        ("Update", 643, 635),
+        // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
+        ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
         ("RunFixedMainLoop", 7, 7),
@@ -1624,6 +1669,8 @@ pub(crate) mod schedule_tests {
          "`pending` holds only the VM's own `Screenshot()` asks, and the take spawns a capture, publishing nothing"),
         ("screenshot.rs", "report_captures", Because::FilledByVm,
          "the outcome chain starts with the VM's own `Screenshot()` call"),
+        ("script_calls.rs", "apply_script_calls", Because::FilledByVm,
+         "the queue holds only the VM's own script calls; the `PLAYER_TOTEM_UPDATE` it fires is a queued `DestroyTotem`'s, in that call's turn"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
@@ -1634,10 +1681,6 @@ pub(crate) mod schedule_tests {
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
         ("ui_guild_bank/mod.rs", "drain_guild_bank", Because::FilledByVm,
          "the requests are the VM's own guild bank verbs, and the auto-store's event answers one"),
-        ("ui_battlefield.rs", "drain_battlefield", Because::PlayerRoundTrip,
-         "`closed` ends a battlemaster session, which only a list packet answering a click on a battlemaster opens"),
-        ("ui_binder.rs", "feed_binder", Because::PlayerRoundTrip,
-         "`SMSG_BINDER_CONFIRM` only answers the innkeeper's gossip line"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
@@ -1648,10 +1691,6 @@ pub(crate) mod schedule_tests {
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,
          "the token is latched only by Lua's `NotifyInspect`, and the diffs ride a `VmMemo`"),
-        ("ui_item_text.rs", "drain_item_text", Because::FilledByVm,
-         "page turns and close are Lua intents"),
-        ("ui_item_text.rs", "feed_item_text", Because::MemoLatched,
-         "`told` is a `VmMemo` inside the session (a fresh VM re-begins), and the open is a player click"),
         ("ui_items/drain.rs", "drain_bind_confirm_answers", Because::FilledByVm,
          "`take_pending_equip_answers` is a VM-owned queue filled by Lua's `EquipPendingItem`/`CancelPendingEquip`"),
         ("ui_items/drain.rs", "drain_container_destroys", Because::FilledByVm,
@@ -1672,26 +1711,12 @@ pub(crate) mod schedule_tests {
          "`take_macros_dirty` is raised only by the macro window's Lua"),
         ("ui_mail/mod.rs", "feed_mail", Because::SelfHealing,
          "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
-        ("ui_merchant/mod.rs", "feed_merchant", Because::PlayerRoundTrip,
-         "a buy/sell refusal answers a click on an open merchant; show/update ride `VmMemo`s"),
-        ("ui_petition/feed.rs", "feed_petition", Because::PlayerRoundTrip,
-         "every line answers a charter action of ours; the window edges ride the `fed` memo"),
         ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
          "runs in the progress packet's handler turn, as 12340's handler shows its line (`0x6d82e9`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_script/extract/mod.rs", "paint_script", Because::Deliberate,
          "per-frame paint and cost state, not a queue"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,
          "acts on the glue VM alone, which the lifecycle installs with its GlueXML loaded and seated, so there is no frameless window; its takes are the manager's own flags and outbox"),
-        ("ui_tabard.rs", "drain_tabard", Because::FilledByVm,
-         "the intents are Lua's; the event answers a Save intent"),
-        ("ui_tabard.rs", "feed_tabard", Because::PlayerRoundTrip,
-         "every latch follows a tabard-vendor click, and `reset_on_world_enter` zeroes the resource on entry"),
-        ("ui_talent_wipe.rs", "feed_talent_wipe", Because::PlayerRoundTrip,
-         "`MSG_TALENT_WIPE_CONFIRM` answers the trainer's gossip option"),
-        ("ui_taxi/mod.rs", "feed_taxi", Because::PlayerRoundTrip,
-         "both packets follow talking to a flight master"),
-        ("ui_trainer/mod.rs", "feed_trainer", Because::PlayerRoundTrip,
-         "a refusal answers a Train click and a list answers a trainer gossip click; the edges ride `VmMemo`s"),
     ];
 
     /// `ui_chat/feed.rs` → `ui_chat::feed`; `target/mod.rs` → `target`; `lib.rs` → ``.

@@ -5,6 +5,8 @@
 
 use bevy::prelude::*;
 
+use crate::ui_action::CastRefusals;
+
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_ui::script::{DeathAction, ScriptValue, UiScript};
 
@@ -394,8 +396,8 @@ const PLAYER_FLAGS_GHOST: u32 = 0x10;
 fn on_death(fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
     if !dead_flag {
         cx.globals.update_repop_timer(fields, cx.now);
-        // The interact target's clear (`0x6dc17a` -> `0x512e60`), its bank leg (`0x512fa7`).
-        cx.ui.world(crate::ui_bank::close_by_interaction);
+        // The interact target's clear (`0x6dc17a` -> `0x512e60`): the window holding it closes.
+        cx.ui.world(crate::ui_session::clear_held_interact_target);
     }
     refresh_active_player(fields.unit_health().unwrap_or(0), cx.ui);
 }
@@ -892,7 +894,7 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 
 /// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
 fn drain_death(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<UiScript>>,
         crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
@@ -901,7 +903,6 @@ fn drain_death(
     net: Res<NetCommands>,
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
-    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
     self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
@@ -950,7 +951,7 @@ fn drain_death(
                         match refusal {
                             // The check's custom line; nothing goes out.
                             Some(id) => {
-                                ladder.cast_errors.push_local_arg(
+                                ladder.press.push_local_arg(
                                     spell,
                                     crate::ui_action::cast_fail::CUSTOM_ERROR,
                                     id as u32,
@@ -989,7 +990,6 @@ fn drain_death(
                             &mut script,
                             &mut gate,
                             false,
-                            &mut ui_errors,
                         );
                         Ok(())
                     }
@@ -998,6 +998,8 @@ fn drain_death(
                 }
             }
         };
+        // The press's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script, &mut live);
     }
 }
 

@@ -740,7 +740,6 @@ pub(crate) struct UnitTokens<'w, 's> {
     index: Option<Res<'w, crate::net::GuidIndex>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
@@ -844,8 +843,8 @@ impl UnitTokens<'_, '_> {
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            // The interaction NPC's guid.
-            UnitBase::Npc => self.interact.as_ref()?.1,
+            // The interact target (`0x60af67`), read through the view every resolving system lends; with none lent, nobody.
+            UnitBase::Npc => crate::ui_script::live::interact_target().flatten(),
             // The quest window's source (`0x6081b0`), read through the view lent to the call.
             UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
             // The encounter's slot (`0x5ed710`).
@@ -1566,16 +1565,88 @@ pub(crate) fn push_arena_units(
     }
 }
 
+/// The `"npc"` unit, pushed as the interact target is stored (`0x51fd26`) so the window's show handler reads the object it names (`0x60af67`); per-token pushes are #1289.
+pub(crate) fn push_npc_unit(
+    In(guid): In<u64>,
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    tables: SnapshotTables,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    index: Option<Res<crate::net::GuidIndex>>,
+    stores: Query<&ObjectStore>,
+    names: Res<NameCache>,
+    commands: Res<NetCommands>,
+    factions: Option<Res<Factions>>,
+    reputations: Res<Reputations>,
+    group: Res<crate::ui_party::GroupState>,
+    instance: crate::ui_arena::ArenaInstance,
+    go_templates: Option<Res<crate::go_templates::GameObjectTemplates>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let held = held::HeldUnits {
+        names: &names,
+        commands: &commands,
+        factions: factions.as_deref(),
+        reputations: &reputations,
+        group: &group,
+        self_store: self_q.iter().next(),
+        classes: tables.classes(),
+        types: tables.types(&names),
+        loot_lists: tables.loot_lists(),
+        arena: instance.active(),
+    };
+    // An unheld guid leaves the last push: the getters' object lookup misses it either way.
+    if let Some(state) = index
+        .as_ref()
+        .and_then(|i| i.0.get(&guid))
+        .and_then(|&e| stores.get(e).ok())
+        .map(|store| npc_state(&held, store, guid, go_templates.as_deref()))
+    {
+        script.set_unit("npc", Some(state));
+    }
+}
+
+/// The `"npc"` snapshot: a unit's as any held unit's; a GameObject is no unit to the getters (`UnitExists` asks its targetable slot `0x60c2f8`, which answers 0 for a GameObject, `0x8e5250`) and `UnitName` reads its template's name, `""` until cached (`0x60e838` -> `0x70cdf0`).
+fn npc_state(
+    held: &held::HeldUnits,
+    store: &ObjectStore,
+    guid: u64,
+    go_templates: Option<&crate::go_templates::GameObjectTemplates>,
+) -> UnitState {
+    if store.0.is_unit() || !benilla_protocol::guid::is_gameobject(guid) {
+        return held.state(store, guid);
+    }
+    let name = go_templates
+        .and_then(|t| t.get(guid))
+        .map_or_else(String::new, |t| t.name.clone());
+    UnitState {
+        guid,
+        name: Some(name),
+        ..UnitState::default()
+    }
+}
+
 /// The sources `feed_units` snapshots besides the selection: the `"npc"` and `"questnpc"` units,
 /// the encounter's `"bossN"` and the arena's `"arenaN"` and `"arenapetN"`.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Interactions<'w> {
-    npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     /// The active battlefield's arena test, which drops the selection colour's PvP flag.
     instance: crate::ui_arena::ArenaInstance<'w>,
+    /// A GameObject interact target's name.
+    go_templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
 }
+
+/// The world entry's inputs and the new target's cast re-read, one parameter under Bevy's 16.
+type EntryAndTarget<'w, 's> = (
+    Option<MessageReader<'w, 's, crate::net::EnteredWorldMessage>>,
+    Commands<'w, 's>,
+    Option<ResMut<'w, crate::net::EntryHold>>,
+    Option<crate::ui_cast::TargetReread<'w, 's>>,
+    Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
+);
 
 fn feed_units(
     (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
@@ -1595,16 +1666,13 @@ fn feed_units(
     group: Res<crate::ui_party::GroupState>,
     // Chat and the message-sound queue, for the rest and PvP lines.
     mut sink: crate::ui_action::MessageSink,
-    // `ResMut` because the guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
-    mut guild: ResMut<crate::ui_guild::GuildState>,
+    // The guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
+    guild: Res<crate::ui_guild::GuildCache>,
     mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
-    // The commands carry the world-enter cascade's death part.
-    (entered_world, mut deferred, mut hold): (
-        Option<MessageReader<crate::net::EnteredWorldMessage>>,
-        Commands,
-        Option<ResMut<crate::net::EntryHold>>,
-    ),
+    // The commands carry the world-enter cascade's death part. The new target's cast re-read rides
+    // `PLAYER_TARGET_CHANGED`.
+    (entered_world, mut deferred, mut hold, mut target_cast, mut usable): EntryAndTarget,
 ) {
     let Some(mut script) = script else {
         return;
@@ -1643,7 +1711,7 @@ fn feed_units(
 
     // The gate: every input read below, despawns included (invisible to `Changed`).
     let names_moved = memo.names_generation.moved(names.generation());
-    let guild_moved = memo.guild_generation.moved(guild.identity_generation());
+    let guild_moved = memo.guild_generation.moved(guild.generation());
     let focus_guid = script.focus_guid();
     let focus_moved = memo.focus_guid.moved(focus_guid);
     let selection_changed = selection.is_changed();
@@ -1655,11 +1723,16 @@ fn feed_units(
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     // The drain waits on this pass's world entry, so it runs whatever else moved.
     let entry_owed = hold.as_ref().is_some_and(|h| h.0);
-    let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
+    let (interact_guid, target_changed) = live.interact_target();
+    let interact_changed = target_changed
         || live.giver_changed()
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
         || interact.arena.as_ref().is_some_and(|r| r.is_changed())
-        || interact.instance.is_changed();
+        || interact.instance.is_changed()
+        || interact
+            .go_templates
+            .as_ref()
+            .is_some_and(|t| interact_guid.is_some() && t.is_changed());
     gate::trace(
         "feed_units",
         &[
@@ -1722,7 +1795,7 @@ fn feed_units(
         s.faction_group = side.and_then(|(c, m)| c.faction_group_internal_name(m).map(Into::into));
         s.faction_group_localized = side.and_then(|(c, m)| c.faction_group_name(m).map(Into::into));
         // `GetGuildInfo`: the public guild fields (191/192) joined against the lazy guild cache.
-        s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+        s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
         s
     });
     // What the three snapshots below (target, target-of-target, NPC) read besides a descriptor.
@@ -1741,7 +1814,7 @@ fn feed_units(
     let target = match (selection.target, selection.guid) {
         (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {
             let mut s = held.state(store, guid);
-            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+            s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
             s
         }),
         // A group member or pet selected by guid alone reads its roster record.
@@ -1762,7 +1835,7 @@ fn feed_units(
         .and_then(|&e| stores.all.get(e).ok())
         .map(|store| {
             let mut s = held.state(store, focus_guid);
-            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+            s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
             s
         });
 
@@ -1814,13 +1887,17 @@ fn feed_units(
         script.set_unit("focus", focus.clone());
     }
 
-    // `"npc"`: the interaction NPC, the reference's global that the interact-NPC setter writes,
-    // which `InteractNpc` models. No guild leg, as for `"targettarget"`.
-    let npc = interact
-        .npc
-        .as_deref()
-        .and_then(|i| Some((i.0?, i.1?)))
-        .and_then(|(entity, guid)| Some(held.state(stores.all.get(entity).ok()?, guid)));
+    // `"npc"`: the interact target (`0xbd07a8`). No guild leg, as for `"targettarget"`.
+    let npc = interact_guid.and_then(|guid| {
+        let entity = index.as_deref()?.0.get(&guid).copied()?;
+        let store = stores.all.get(entity).ok()?;
+        Some(npc_state(
+            &held,
+            store,
+            guid,
+            interact.go_templates.as_deref(),
+        ))
+    });
     // Closing the window must clear the token, so the memo is written here, not only read. No
     // `fire_transitions`: nothing draws `"npc"` as a unit frame.
     let npc_dirty = match (&npc, memo.last.get("npc")) {
@@ -1979,6 +2056,8 @@ fn feed_units(
             });
             // The battlefield entry (`0x528230`), ahead of the corpse reset (`0x528362`) and our create's refresh (`0x6e818b`).
             crate::ui_battlefield::queue_enter_world(&mut deferred);
+            // The rune table's reset (`0x528294`), ahead of the corpse step.
+            deferred.queue(crate::ui_rune::enter_world);
             crate::death::queue_enter_world(&mut deferred);
             memo.entered_world = true;
         }
@@ -2102,6 +2181,16 @@ fn feed_units(
     if selection.guid != memo.target_guid {
         gate.audit("feed_units", "the PLAYER_TARGET_CHANGED edge");
         memo.target_guid = selection.guid;
+        // The target set re-reads the new target's not-interruptible bit, with no event
+        // (`0x524dbc`), ahead of the change's event.
+        if let (Some(target), Some(reread)) = (selection.guid, target_cast.as_mut()) {
+            reread.reread(target);
+        }
+        // The target set and clear run the usable update ahead of the event (`0x524f48`,
+        // `0x524316`).
+        if let Some(usable) = usable.as_mut() {
+            usable.fire(&mut script, crate::ui_action::usable_cache::Pass::Full);
+        }
         script.fire_event("PLAYER_TARGET_CHANGED", vec![]);
     }
 
@@ -2202,12 +2291,15 @@ fn feed_combo_points(
 }
 
 /// `SMSG_POWER_UPDATE` (`0x7236c0`): the unit's predicted power, which `UnitPower` reads until the
-/// field moves ([`benilla_protocol::ObjectFields::set_predicted_power`]). The reference signals
+/// field moves ([`benilla_protocol::ObjectFields::set_predicted_power`]); ours or our pet's moving
+/// runs the power-only usable update. The reference signals
 /// `UNIT_<POWER>` from here only at the maximum (`0x722ca9`); the feed's diff fires on any move.
 fn on_power_update(
     In(ev): In<benilla_protocol::SessionEvent>,
     index: Res<crate::net::GuidIndex>,
     mut stores: Query<&mut ObjectStore>,
+    self_guid: Option<Res<crate::net::SelfGuid>>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     let benilla_protocol::SessionEvent::PowerUpdate {
         guid,
@@ -2220,12 +2312,24 @@ fn on_power_update(
     let Some(mut store) = index.0.get(&guid).and_then(|&e| stores.get_mut(e).ok()) else {
         return;
     };
-    if store
+    if !store
         .bypass_change_detection()
         .0
         .set_predicted_power(power_type, value)
     {
-        store.set_changed();
+        return;
+    }
+    store.set_changed();
+    // Ours or our pet's moved: the power-only usable update (`0x722cd4` -> `0x53d1b0`).
+    let me = self_guid.and_then(|g| g.0);
+    let pet = me
+        .and_then(|g| index.0.get(&g))
+        .and_then(|&e| stores.get(e).ok())
+        .and_then(|s| s.0.unit_pet_guid());
+    if me == Some(guid) || pet == Some(guid) {
+        ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Power,
+        ));
     }
 }
 
@@ -3822,7 +3926,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             // The feed's `MessageSink` reads chat and sounds: a message key's row carries its cue.
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_guild::GuildState>();
+            .init_resource::<crate::ui_guild::GuildCache>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
         let script = UiScript::new().unwrap();
@@ -4345,7 +4449,7 @@ mod tests {
     /// would hold the gate open.
     #[test]
     fn the_npc_token_follows_the_interaction_npc_and_clears_with_it() {
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
         use benilla_protocol::messages::ObjectFields;
 
         const FIELD_UNIT_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
@@ -4362,8 +4466,9 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             // `show_messages`' sink is the chat log and the message-sound queue.
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_guild::GuildState>()
-            .init_resource::<InteractNpc>();
+            .init_resource::<crate::ui_guild::GuildCache>()
+            .init_resource::<InteractTarget>()
+            .init_resource::<crate::net::GuidIndex>();
         app.add_message::<FieldChanged>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
@@ -4380,6 +4485,9 @@ mod tests {
         };
         let brog = vendor(7);
         let dobbins = vendor(9);
+        let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
+        index.0.insert(BROG, brog);
+        index.0.insert(DOBBINS, dobbins);
         let eval = |app: &mut App, expr: &str| -> i64 {
             app.world_mut()
                 .non_send_resource_mut::<UiScript>()
@@ -4392,7 +4500,7 @@ mod tests {
         app.update();
         assert!(!exists(&mut app), "no window open, yet UnitExists(\"npc\")");
 
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc(Some(brog), Some(BROG));
+        app.world_mut().resource_mut::<InteractTarget>().0 = Some(BROG);
         app.update();
         assert_eq!(
             level(&mut app),
@@ -4401,7 +4509,7 @@ mod tests {
         );
 
         // Dobbins' window opens over it: the interaction NPC is the only thing that moved.
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc(Some(dobbins), Some(DOBBINS));
+        app.world_mut().resource_mut::<InteractTarget>().0 = Some(DOBBINS);
         app.update();
         assert_eq!(
             level(&mut app),
@@ -4409,7 +4517,7 @@ mod tests {
             "a second vendor over an open window swaps the token"
         );
 
-        *app.world_mut().resource_mut::<InteractNpc>() = InteractNpc::default();
+        app.world_mut().resource_mut::<InteractTarget>().0 = None;
         app.update();
         assert!(
             !exists(&mut app),
@@ -4460,7 +4568,7 @@ mod tests {
             .init_resource::<crate::ui_party::GroupState>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<crate::ui_guild::GuildState>();
+            .init_resource::<crate::ui_guild::GuildCache>();
         app.add_message::<FieldChanged>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));

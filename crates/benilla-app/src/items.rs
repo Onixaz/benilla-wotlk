@@ -482,8 +482,26 @@ pub(crate) enum RecordWait {
     QuestReward(u32),
     /// The guild bank's slots' or log's count (`0x5a7664` -> `0x5a47a0`, `0x5a489c` -> `0x5a47d0`).
     GuildBank(crate::ui_guild_bank::Callback),
+    /// The item-text reader's, from its page-id call (`0x707180` -> `0x58a450`).
+    ItemText(u64),
+    /// The merchant rows', from a row's record read (`0x584680` -> `0x5844c0`).
+    Merchant,
+    /// The buyback rows', from a buyback row's record read (`0x58515d` -> `0x5840b0`).
+    Buyback,
+    /// The trainer's, from a recipe's description read (`0x595b02` -> `0x593ca0`).
+    Trainer,
+    /// The petition vendor's, from a row's read (`0x5a1fb0` -> `0x5a1f30`).
+    PetitionVendor,
+    /// A dressing-room pane's try-on, from its record read (`0x5980fa` -> `0x5980b0`).
+    DressUp(crate::ui_dressup::Pane),
     /// A callback the UI left inside a verb's call.
     Ui(benilla_ui::script::ItemRecordWait),
+    /// The bar's item update, linked once by a table put's slot set (`0x5aaee6`-`0x5aaf0f` ->
+    /// `0x5aadb0`).
+    ActionBar,
+    /// A refusal's line that named the item, linked each time (`0x8086bc`, `0x80874e` ->
+    /// `0x7fea80`, `0x7feb50`): it shows again, unlogged.
+    CastFailure(crate::ui_action::CastFail),
 }
 
 impl RecordWaits {

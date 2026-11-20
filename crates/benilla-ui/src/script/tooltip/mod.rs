@@ -416,7 +416,6 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         t.world_owned = false;
     }
     // New content replaces a spell or item render still waiting on its record.
-    model.spell_tooltip_waits.remove(&h);
     model.item_tooltip_waits.remove(&h);
     model.quest_tooltip_waits.remove(&h);
     model.achievement.tooltips.remove(&h);

@@ -62,12 +62,40 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
     pub(crate) selection: Slot<'w, crate::target::Selection>,
     pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
-    /// The action bar's store: the spell book, the bar's slots and the equipment sets.
+    /// The player's cast state, which every loan owns: the pending cast (`0x805f30`), the queued
+    /// on-swing strike, the auto-repeating spell (`0x7fe130`) and the ground-targeting cursor.
+    pub(crate) cast: CastSlots<'w>,
+    /// The spell book and the equipment sets.
     pub(crate) actions: Slot<'w, crate::ui_action::PlayerActions>,
+    /// The bar's slots, which every loan owns: the bar verbs write them in the call.
+    pub(crate) slots: Slot<'w, crate::ui_action::ActionSlots>,
     /// The items a send locked (`item+0x314` bit 0), read into each slot's `locked`.
     pub(crate) pending: Slot<'w, crate::pending_item_ops::PendingItemOps>,
-    /// The charter records a bag slot's charter reads.
-    pub(crate) petitions: Slot<'w, crate::ui_petition::PetitionState>,
+    /// The open trade-skill book (`[0xc235a4]`), the current and selected tests' trade arm.
+    pub(crate) trade: Slot<'w, crate::ui_tradeskill::TradeSkillOpen>,
+    /// The usable caches (`0x53cf10`), which every loan owns: a verb's site refreshes them.
+    pub(crate) usable: Slot<'w, crate::ui_action::usable_cache::UsableCaches>,
+    /// The macros' bound spells, a macro slot's spell (`0x5a89f0`), which the rebind owns.
+    pub(crate) bound: Slot<'w, crate::ui_macro::MacroBoundSpells>,
+    /// The usable walk's reads beside the player's own state (`0x80b5d0`).
+    usable_world: crate::ui_action::usable_cache::UsableWorld<'w>,
+    /// The bar's pages: the temporary bar's owners and the bonus offset.
+    pages: Option<Res<'w, crate::ui_action::TempActionBar>>,
+    /// The talent tables a talent link's rank reads.
+    talents: Option<Res<'w, crate::ui_talent::Talents>>,
+    /// The bind point and subclass names a spell tooltip reads.
+    tooltip: crate::ui_tooltip::spell_view::TooltipTables<'w>,
+    /// Our auto-attack lock (`[player+0xa20]`) and auras, the current-spell test's reads.
+    engaged: Query<
+        'w,
+        's,
+        (),
+        (
+            With<crate::net::SelfPlayer>,
+            With<crate::creature_anim::Engaged>,
+        ),
+    >,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     /// The wire, for the sends a verb makes inside its call.
     commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
@@ -82,6 +110,22 @@ pub(crate) struct LiveView<'w, 's> {
     mover: Query<'w, 's, &'static crate::net::Guid, With<crate::net::ActiveMover>>,
     /// `ChrClasses.dbc`, the pet book's token and the requirement state's class flags.
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
+    /// The rune table, which only the handlers and the regen tick write.
+    runes: Option<Res<'w, crate::ui_rune::Runes>>,
+    /// The rune costs and cost modifiers the cooldown read's rune leg takes (`0x807c37`).
+    rune_costs: Option<Res<'w, crate::ui_rune::RuneCosts>>,
+    spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    /// The player's book, which the book update builds (`0x53ca70`), and the rank chains.
+    book: Option<Res<'w, crate::ui_spellbook::SpellBook>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    /// The totem table and the tool search's inputs.
+    totems: crate::ui_totem::TotemLive<'w, 's>,
+    /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
+    bind: Option<crate::spell::targeting::BindChecks<'w, 's>>,
+    /// The book update's school masks (`0x53cd48`), which the not-interruptible test reads.
+    schools: Option<Res<'w, crate::ui_cast::InterruptSchools>>,
+    /// Each unit's cast state on the unit, the in-flight test's started spell.
+    casting: Query<'w, 's, &'static crate::creature_anim::Casting>,
     /// The requirement state's proficiency masks, standings and faction table.
     proficiencies: Option<Res<'w, crate::net::Proficiencies>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
@@ -90,14 +134,70 @@ pub(crate) struct LiveView<'w, 's> {
     currency: crate::ui_currency::CurrencyLive<'w>,
     /// The bags' objects, item cache and catalogs, read at the call.
     containers: Option<crate::ui_items::ContainerLive<'w, 's>>,
+    /// The innkeeper and talent master latches and their reach.
+    talk: crate::ui_binder::TalkView<'w, 's>,
+    /// The instance boot deadline and the healer poll's inputs.
+    dialogs: crate::ui_dialog_verbs::DialogView<'w, 's>,
     /// `ItemSet.dbc`, the name cache and the bonuses' token inputs, read at the call.
     item_sets: Option<crate::ui_items::ItemSetLive<'w, 's>>,
     /// The item cache and the catalogs a record's names resolve through, read at the call.
     item_records: Option<crate::ui_items::ItemRecordLive<'w, 's>>,
     /// The caches a guild bank slot and log row resolve through at the call.
     guild_bank: Option<crate::ui_guild_bank::BankCatalogs<'w>>,
+    /// The tabard designer's vendor, save latch and our guild's record.
+    pub(crate) tabard: crate::ui_tabard::TabardView<'w, 's>,
+    /// The barber shop, our body's dials and the catalogs its verbs read.
+    barber: crate::ui_barber::BarberLive<'w, 's>,
+    /// The gossip globals, the NPC's record and our coinage.
+    gossip: crate::ui_gossip::GossipView<'w, 's>,
+    /// The item-text reader's globals and what its draw reads.
+    item_text: crate::ui_item_text::ItemTextLive<'w, 's>,
+    /// The merchant globals and what its rows, costs and sends read.
+    merchant: Option<crate::ui_merchant::MerchantLive<'w, 's>>,
+    /// The taxi map's globals and what its fares and activates read.
+    taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
+    /// The trainer window and what its gates, descriptions and buys read.
+    trainer: Option<crate::ui_trainer::TrainerLive<'w, 's>>,
+    /// The charter windows and what their walks and sends read.
+    petition: Option<crate::ui_petition::PetitionLive<'w, 's>>,
+    /// Every dressing-room pane's model and what a try-on reads.
+    pub(crate) dressup: crate::ui_dressup::DressUpLive<'w>,
     _mark: Option<Res<'w, LendsLive>>,
 }
+
+/// The player's cast state as the view lends it, owned by every loan as the pet's words are: a VM
+/// holder writes it through [`OwnedMut`], and a verb through [`Slot::get_mut`].
+#[derive(Default)]
+pub(crate) struct CastSlots<'w> {
+    pub(crate) pending: Slot<'w, crate::spell::PendingCast>,
+    pub(crate) queued_melee: Slot<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) auto_repeat: Slot<'w, crate::spell::AutoRepeatActive>,
+    pub(crate) targeting: Slot<'w, crate::spell::SpellTargeting>,
+    /// Each unit's running cast and channel and its not-interruptible bit (`+0xa34 & 8`).
+    pub(crate) unit_casts: Slot<'w, crate::ui_cast::UnitCasts>,
+}
+
+// SAFETY: it registers no access and fetches nothing; `LendLive` fills it under its own access.
+unsafe impl SystemParam for CastSlots<'_> {
+    type State = ();
+    type Item<'w, 's> = CastSlots<'w>;
+
+    fn init_state(_: &mut World) -> Self::State {}
+
+    fn init_access(_: &(), _: &mut SystemMeta, _: &mut FilteredAccessSet, _: &mut World) {}
+
+    unsafe fn get_param<'w, 's>(
+        _: &'s mut (),
+        _: &SystemMeta,
+        _: UnsafeWorldCell<'w>,
+        _: Tick,
+    ) -> Self::Item<'w, 's> {
+        CastSlots::default()
+    }
+}
+
+// SAFETY: it accesses nothing.
+unsafe impl ReadOnlySystemParam for CastSlots<'_> {}
 
 /// The main-thread state a verb writes inside its call, as 12340's verbs write the game's globals: each lent mutably beside the [`LiveView`], by [`LendLive`] or by the system that owns the borrow ([`LendLive::lending`]).
 #[derive(Default)]
@@ -110,24 +210,28 @@ pub(crate) struct Lent<'w> {
     pub(crate) bank: LentSlot<'w, BankOpen>,
     pub(crate) refunds: LentSlot<'w, crate::ui_socket::RefundRecords>,
     pub(crate) guild_bank: LentSlot<'w, crate::ui_guild_bank::GuildBankState>,
+    pub(crate) spirit: LentSlot<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
 }
 
 /// The bits a system's [`LendLive`] names the [`Lent`] state it writes itself by.
+mod actions;
+
 pub(crate) mod lent {
-    pub(crate) const SIGNALS: u8 = 1;
-    pub(crate) const ASKS: u8 = 2;
-    pub(crate) const MARKS: u8 = 4;
-    pub(crate) const EXPIRIES: u8 = 8;
-    pub(crate) const GIVER: u8 = 16;
-    pub(crate) const BANK: u8 = 32;
-    pub(crate) const REFUNDS: u8 = 64;
-    pub(crate) const GUILD_BANK: u8 = 128;
+    pub(crate) const SIGNALS: u16 = 1;
+    pub(crate) const ASKS: u16 = 2;
+    pub(crate) const MARKS: u16 = 4;
+    pub(crate) const EXPIRIES: u16 = 8;
+    pub(crate) const GIVER: u16 = 16;
+    pub(crate) const BANK: u16 = 32;
+    pub(crate) const REFUNDS: u16 = 64;
+    pub(crate) const GUILD_BANK: u16 = 128;
+    pub(crate) const SPIRIT: u16 = 256;
 }
 
 /// One kind of [`Lent`] state.
 pub(crate) trait Lendable: Sized + 'static {
     /// Its bit in [`lent`].
-    const BIT: u8;
+    const BIT: u16;
     /// Its slot.
     fn slot<'a, 'w>(lent: &'a mut Lent<'w>) -> &'a mut LentSlot<'w, Self>;
 }
@@ -135,7 +239,7 @@ pub(crate) trait Lendable: Sized + 'static {
 macro_rules! lendable {
     ($ty:ty, $field:ident, $bit:path) => {
         impl Lendable for $ty {
-            const BIT: u8 = $bit;
+            const BIT: u16 = $bit;
             fn slot<'a, 'w>(lent: &'a mut Lent<'w>) -> &'a mut LentSlot<'w, Self> {
                 &mut lent.$field
             }
@@ -153,6 +257,11 @@ lendable!(
     crate::ui_guild_bank::GuildBankState,
     guild_bank,
     lent::GUILD_BANK
+);
+lendable!(
+    crate::ui_dialog_verbs::AreaSpiritHealer,
+    spirit,
+    lent::SPIRIT
 );
 
 /// One piece of [`Lent`] state: the borrow [`LendLive`] took, or the one its owner lends for the call in progress.
@@ -238,12 +347,18 @@ impl LiveView<'_, '_> {
         Some((fields.unit_race()?, fields.unit_class()?))
     }
 
+    /// Our player's entity and store.
+    fn me(&self) -> Option<(Entity, &crate::net::ObjectStore)> {
+        let entity = self.player_entity(self.self_guid.as_ref()?.0?)?;
+        Some((entity, self.stores.get(entity).ok()?))
+    }
+
     /// The lent state a bag read takes.
     fn container_lent(&self) -> crate::ui_items::ContainerLent<'_> {
         crate::ui_items::ContainerLent {
             cooldowns: self.cooldowns.get(),
             pending: self.pending.get(),
-            petitions: self.petitions.get(),
+            petitions: self.petition.as_ref().map(|p| p.records()),
             banker: self.lent.bank.get().is_some_and(|b| b.banker.is_some()),
         }
     }
@@ -256,12 +371,93 @@ impl LiveView<'_, '_> {
     }
 }
 
+/// The spell answers' reads at the call: our player and pet off the object stores, the cast state
+/// off the lent slots.
+impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
+    fn spell_usable(&self, spell_id: u32, pet: bool) -> Option<(bool, bool)> {
+        self.usable_reads(|r| r.spell_usable(spell_id, pet).pair())
+    }
+
+    fn caster(&self, pet: bool) -> Option<crate::ui_spell_info::Caster<'_>> {
+        let entity = if pet {
+            let guid = self.pet_bar.get()?.spells.pet_guid;
+            *self.index.as_ref()?.0.get(&guid).filter(|_| guid != 0)?
+        } else {
+            self.me()?.0
+        };
+        let store = self.stores.get(entity).ok()?;
+        let (unit, pos) = self.item_range.facts().at(entity)?;
+        Some(crate::ui_spell_info::Caster {
+            guid: store.0.object_guid()?,
+            pos,
+            store,
+            level: store.0.unit_level().unwrap_or(0),
+            unit,
+        })
+    }
+
+    fn mods(&self) -> Option<&crate::spell::SpellModifiers> {
+        self.spell_mods.as_deref()
+    }
+
+    fn weapon_icon(&self, ranged: bool) -> Option<String> {
+        let (containers, (_, me)) = (self.containers.as_ref()?, self.me()?);
+        if ranged {
+            containers.ranged_texture(me)
+        } else {
+            Some(containers.attack_texture(me, &self.spells.as_deref()?.forms))
+        }
+    }
+
+    fn cast_now(&self) -> crate::ui_spell_info::CastNow<'_> {
+        let mut now = crate::ui_spell_info::CastNow::none();
+        let me = self.me();
+        let store = me.map(|(_, s)| s);
+        let clock = std::time::Instant::now();
+        if let (Some(pending), Some(melee)) =
+            (self.cast.pending.get(), self.cast.queued_melee.get())
+        {
+            let casting = me.and_then(|(e, _)| self.casting.get(e).ok());
+            now.pending = crate::ui_spell_info::pending_spell(pending, melee, casting, clock);
+            now.item = pending.current_item(clock);
+        }
+        now.auto_repeat = self.cast.auto_repeat.get().and_then(|a| a.0);
+        now.attacking = !self.engaged.is_empty();
+        now.trade_line = self.trade.get().and_then(|t| t.line);
+        now.race_class = crate::spell::race_class(store);
+        now.critter = store.and_then(|s| s.0.unit_critter());
+        now.auras = me.and_then(|(e, _)| self.auras.get(e).ok());
+        now.guid = store.and_then(|s| s.0.object_guid()).unwrap_or(0);
+        if let Some(actions) = self.actions.get() {
+            now.known = &actions.spells;
+        }
+        if let Some(summons) = self.summons.as_deref() {
+            now.summons = &summons.0;
+        }
+        now
+    }
+
+    fn unit_facts(&self, guid: u64) -> Option<crate::spell::RangeFacts> {
+        self.item_range.facts().facts(guid)
+    }
+}
+
 /// A resource a VM holder may write, read by the verbs through its storage pointer at the call.
 pub(crate) struct Slot<'w, X: Resource> {
     ptr: Option<NonNull<X>>,
     /// The lending system's world and `X`'s id when it writes `X` itself, so a verb's write marks it.
     owner: Option<(UnsafeWorldCell<'w>, ComponentId)>,
     _life: PhantomData<&'w X>,
+}
+
+impl<X: Resource> Default for Slot<'_, X> {
+    fn default() -> Self {
+        Slot {
+            ptr: None,
+            owner: None,
+            _life: PhantomData,
+        }
+    }
 }
 
 impl<'w, X: Resource> Slot<'w, X> {
@@ -320,11 +516,12 @@ pub(crate) trait Owns: 'static {
     const COOLDOWNS: bool = false;
     const SELECTION: bool = false;
     const PLACE: bool = false;
-    const ACTIONS: bool = false;
     const PENDING: bool = false;
-    const PETITIONS: bool = false;
+    const TRADE: bool = false;
+    const MACROS: bool = false;
+    const ACTIONS: bool = false;
     /// The [`Lent`] state, by [`lent`] bits, the system lends from its own borrow ([`LendLive::lending`]).
-    const LENT: u8 = 0;
+    const LENT: u16 = 0;
 }
 
 impl Owns for () {}
@@ -334,10 +531,11 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const COOLDOWNS: bool = A::COOLDOWNS || B::COOLDOWNS;
     const SELECTION: bool = A::SELECTION || B::SELECTION;
     const PLACE: bool = A::PLACE || B::PLACE;
-    const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
     const PENDING: bool = A::PENDING || B::PENDING;
-    const PETITIONS: bool = A::PETITIONS || B::PETITIONS;
-    const LENT: u8 = A::LENT | B::LENT;
+    const TRADE: bool = A::TRADE || B::TRADE;
+    const MACROS: bool = A::MACROS || B::MACROS;
+    const ACTIONS: bool = A::ACTIONS || B::ACTIONS;
+    const LENT: u16 = A::LENT | B::LENT;
 }
 
 /// The system writes [`crate::area::PlayerPlace`].
@@ -364,10 +562,16 @@ impl Owns for OwnsPending {
     const PENDING: bool = true;
 }
 
-/// The system writes [`crate::ui_petition::PetitionState`].
-pub(crate) struct OwnsPetitions;
-impl Owns for OwnsPetitions {
-    const PETITIONS: bool = true;
+/// The system writes [`crate::ui_tradeskill::TradeSkillOpen`].
+pub(crate) struct OwnsTradeSkill;
+impl Owns for OwnsTradeSkill {
+    const TRADE: bool = true;
+}
+
+/// The system writes [`crate::ui_macro::MacroBoundSpells`].
+pub(crate) struct OwnsMacros;
+impl Owns for OwnsMacros {
+    const MACROS: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -379,14 +583,23 @@ impl Owns for OwnsCooldowns {
 /// The system lends the frame's [`UniqueSignals`] from its own borrow.
 pub(crate) struct OwnsSignals;
 impl Owns for OwnsSignals {
-    const LENT: u8 = lent::SIGNALS;
+    const LENT: u16 = lent::SIGNALS;
+}
+
+/// The system lends the area spirit healer from its own borrow.
+pub(crate) struct OwnsSpirit;
+impl Owns for OwnsSpirit {
+    const LENT: u16 = lent::SPIRIT;
 }
 
 /// The system lends the quest timers' [`QuestExpiries`] from its own borrow.
 pub(crate) struct OwnsExpiries;
 impl Owns for OwnsExpiries {
-    const LENT: u8 = lent::EXPIRIES;
+    const LENT: u16 = lent::EXPIRIES;
 }
+
+/// A script-call applier owns what its calls write: the cooldowns, the selection and the item locks.
+pub(crate) type OwnsScriptCalls = ((OwnsCooldowns, OwnsSelection), OwnsPending);
 
 /// An exclusive lender owns what the verbs write: the cooldowns (and the pet's words every loan owns).
 pub(crate) struct OwnsVerbWrites;
@@ -502,11 +715,13 @@ unsafe impl<X: Resource> SystemParam for LentRef<'_, X> {
         &(id, loan, owner): &Self::State,
         _: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
-        _: &mut World,
+        world: &mut World,
     ) {
         let access = component_access_set.combined_access();
         if !access.has_resource_write(id) {
+            // Marked, so an owner's write registered after it is taken as its pair's.
             component_access_set.add_unfiltered_resource_read(id);
+            component_access_set.add_unfiltered_resource_read(lent_read_mark::<X>(world));
             return;
         }
         assert!(
@@ -536,6 +751,18 @@ unsafe impl<X: Resource> SystemParam for LentRef<'_, X> {
     }
 }
 
+/// Never inserted: read beside a [`LentRef`]'s read of `X`, which its counted borrow guards
+/// whatever the order the system's parameters register in, so an owner's write may follow it.
+struct LentReadMark<X>(PhantomData<fn() -> X>);
+impl<X: 'static> Resource for LentReadMark<X> {}
+
+/// The [`LentReadMark`] of `X`.
+fn lent_read_mark<X: Resource>(world: &mut World) -> ComponentId {
+    world
+        .components_registrator()
+        .register_resource::<LentReadMark<X>>()
+}
+
 /// Never inserted: read by a [`LendLive`] that owns `X`, so its [`OwnedMut`] knows its partner.
 struct LoanMark<X>(PhantomData<fn() -> X>);
 impl<X: 'static> Resource for LoanMark<X> {}
@@ -547,9 +774,8 @@ impl<X: 'static> Resource for OwnerMark<X> {}
 /// Register an owner's write of lendable `id`, one half of the pair a [`LendLive`] owning it and its [`OwnedMut`] make: an earlier access to it must be the partner's (`partner` marked, `mine` not), else it is refused (B0002) as `ResMut` refuses it.
 fn owned_access(
     name: &str,
-    id: ComponentId,
-    mine: ComponentId,
-    partner: ComponentId,
+    (id, mine, partner): SlotIds,
+    lent_read: ComponentId,
     set: &mut FilteredAccessSet,
 ) {
     let access = set.combined_access();
@@ -558,9 +784,11 @@ fn owned_access(
         "error[B0002]: {name} is lent or written twice in one system"
     );
     assert!(
-        !access.has_resource_read(id) || access.has_resource_read(partner),
+        !access.has_resource_read(id)
+            || access.has_resource_read(partner)
+            || access.has_resource_read(lent_read),
         "error[B0002]: {name} is borrowed beside its owner's lent view: read it through the view \
-         or a `LentRef` taken after the loan, and write it through `OwnedMut`"
+         or a `LentRef`, and write it through `OwnedMut`"
     );
     set.add_unfiltered_resource_write(id);
     set.add_unfiltered_resource_read(mine);
@@ -577,17 +805,17 @@ unsafe impl<X: Resource> SystemParam for OwnedMut<'_, X> {
     }
 
     fn init_access(
-        &(id, mine, partner): &Self::State,
+        &ids: &Self::State,
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
-        _: &mut World,
+        world: &mut World,
     ) {
-        // Beside its loan's access alone: the view reads through the same pointer, between writes.
+        // Beside its loan's access and counted reads alone: the view reads through the same
+        // pointer, between writes.
         owned_access(
             &format!("{} in {}", std::any::type_name::<X>(), system_meta.name()),
-            id,
-            mine,
-            partner,
+            ids,
+            lent_read_mark::<X>(world),
             component_access_set,
         );
     }
@@ -873,21 +1101,27 @@ impl LiveState for LiveView<'_, '_> {
             ..
         } = self;
         let giver = lent.giver.get_mut()?;
-        let npc_flags = giver
-            .npc
+        let held = giver.npc;
+        let npc_flags = held
             .and_then(|npc| index.as_ref()?.0.get(&npc).copied())
             .and_then(|e| stores.get(e).ok())
             .map(|s| s.0.unit_npc_flags());
-        Some(crate::ui_quest::act(
-            giver,
-            action,
-            net.as_deref()?,
-            npc_flags,
-        ))
+        let out = crate::ui_quest::act(giver, action, net.as_deref()?, npc_flags);
+        // A finish with no gossip menu held clears the interact target on the old giver (`0x58cb83`-`0x58cb8a`, `0x58cdb7`-`0x58cde4`).
+        if let (true, Some(npc), None) = (out.finished, held, self.gossip.npc()) {
+            if let Some(t) = self.tabard.target_mut() {
+                t.clear_in_call(npc);
+            }
+        }
+        Some(out)
     }
 
     fn quest_npc(&self) -> Option<u64> {
         self.lent.giver.get()?.quest_npc()
+    }
+
+    fn interact_target(&self) -> Option<u64> {
+        self.tabard.target()
     }
 
     fn quest_select(
@@ -1106,6 +1340,14 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     fn close_stables(&mut self) -> bool {
+        // The close clears the interact target on the master (`0x5a0f2c`).
+        let master = self
+            .stable
+            .open()
+            .and_then(crate::ui_session::NpcSession::npc);
+        if let (Some(master), Some(t)) = (master, self.tabard.target_mut()) {
+            t.clear_in_call(master);
+        }
         self.stable.close()
     }
 
@@ -1287,11 +1529,406 @@ impl LiveState for LiveView<'_, '_> {
         anchor: std::time::Instant,
         ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
-        let d = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
-        self.cooldowns
-            .get()?
+        let spells = self.spells.as_deref();
+        let d = spells.and_then(|s| s.catalog.get(spell_id));
+        let cooldowns = self.cooldowns.get()?;
+        let triple = cooldowns
             .info(spell_id, 0, d, std::time::Instant::now())
-            .ui_triple(anchor, ui_now)
+            .ui_triple(anchor, ui_now);
+        // The history read's rune leg (`0x807c37`), which needs our player.
+        let me = self
+            .self_guid
+            .as_ref()
+            .and_then(|g| g.0)
+            .and_then(|g| self.player_entity(g));
+        let player = me.and_then(|e| self.stores.get(e).ok()).map(|s| &s.0);
+        let (Some(d), Some(spells), Some(runes), Some(costs), Some(mods), Some(player)) = (
+            d,
+            spells,
+            self.runes.as_deref(),
+            self.rune_costs.as_deref(),
+            self.spell_mods.as_deref(),
+            player,
+        ) else {
+            return triple;
+        };
+        let leg = crate::spell::cooldowns::RuneLeg {
+            runes: crate::spell::usable::RuneCheck {
+                state: &runes.state,
+                costs: &costs.0,
+                player,
+            },
+            catalog: &spells.catalog,
+            mods,
+        };
+        let now_ms = (ui_now * 1000.0).floor() as i64;
+        cooldowns.with_rune_leg(spell_id, d, triple, &leg, now_ms)
+    }
+
+    fn player_book(&self) -> Option<std::sync::Arc<benilla_ui::script::PlayerBook>> {
+        Some(self.book.as_ref()?.live.clone())
+    }
+
+    /// The known-spell bits (`0xbe6d88`), which the learn and removal handlers keep.
+    fn spell_known(&self, spell_id: u32) -> bool {
+        self.actions
+            .get()
+            .is_some_and(|a| a.spells.contains(&spell_id))
+    }
+
+    /// The known bits, else the higher-rank walk over our race and class's chains (`0x726160`).
+    fn spell_known_or_higher(&self, spell_id: u32) -> bool {
+        let Some(actions) = self.actions.get() else {
+            return false;
+        };
+        if actions.spells.contains(&spell_id) {
+            return true;
+        }
+        let (Some(lines), Some(me)) = (self.skill_lines.as_deref(), self.player_fields()) else {
+            return false;
+        };
+        lines.catalog.higher_rank_known(
+            spell_id,
+            me.race_id as u8,
+            me.class_id as u8,
+            &actions.spells,
+        )
+    }
+
+    fn book_spell_texture(&self, spell_id: u32) -> Option<String> {
+        let spells = self.spells.as_deref()?;
+        let d = spells.catalog.get(spell_id)?;
+        let me = self
+            .player_entity(self.self_guid.as_ref()?.0?)
+            .and_then(|e| self.stores.get(e).ok());
+        let containers = self.containers.as_ref();
+        crate::ui_spellbook::book_texture(
+            d,
+            || Some(containers?.attack_texture(me?, &spells.forms)),
+            || containers?.ranged_texture(me?),
+        )
+    }
+
+    /// The selected test (`0x53d350`): a trade-skill opener whose line's book is open and not a
+    /// linked one (`0x53d3e5`-`0x53d412`), or a shapeshift aura into our current form (`0x53d431`).
+    fn spell_selected(&self, spell_id: u32) -> bool {
+        let Some(d) = self.spells.as_deref().and_then(|s| s.catalog.get(spell_id)) else {
+            return false;
+        };
+        let Some(me) = self.unit(self.active_player().unwrap_or(0)) else {
+            return false;
+        };
+        if d.effects[0] == benilla_formats::SPELL_EFFECT_TRADE_SKILL {
+            let (race, class) = (me.unit_race().unwrap_or(0), me.unit_class().unwrap_or(0));
+            let line = self
+                .skill_lines
+                .as_deref()
+                .and_then(|l| l.catalog.spell_to_line(spell_id, race, class));
+            if line.is_some() && line == self.trade.get().and_then(|t| t.line) {
+                return true;
+            }
+        }
+        let form = me.unit_shapeshift_form();
+        form != 0 && d.shapeshift_form == Some(u32::from(form))
+    }
+
+    /// The spell tooltip builder at the hover: the player's or its pet's view of the spell, from
+    /// the state as it is now; the reference builds it whole at the call and keeps nothing.
+    fn spell_tooltip(
+        &self,
+        spell_id: u32,
+        alt_caster: bool,
+        get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<benilla_ui::script::SpellTooltipView> {
+        use crate::ui_tooltip::spell_view::{build_view, ViewCaster, ViewCtx};
+        let spells = self.spells.as_deref()?;
+        let (objects, items, commands) = self.containers.as_ref()?.item_reads();
+        let me = self.me();
+        let store = me.map(|(_, s)| s);
+        let units = self.item_range.facts().range_units();
+        let no_mods = crate::spell::SpellModifiers::default();
+        let operands = crate::spell::text_caster::Operands::of(store, items);
+        let mut vctx = ViewCtx {
+            home_area: self.tooltip.home_area(),
+            form: store.map_or(0, |s| s.0.unit_shapeshift_form()),
+            store,
+            caster: ViewCaster::Player,
+            range_caster: units.caster(),
+            attack_target: units.caster_attack_target(),
+            objects,
+            items,
+            commands,
+            sub_classes: self.tooltip.sub_classes(),
+            skill_lines: self.skill_lines.as_deref().map(|l| &*l.catalog),
+            spell_mods: self.spell_mods.as_deref().unwrap_or(&no_mods),
+            get,
+            known: self
+                .actions
+                .get()
+                .map_or(&crate::ui_spell_info::NO_SPELLS, |a| &a.spells),
+            auras: me.and_then(|(e, _)| self.auras.get(e).ok()),
+            operands: &operands,
+        };
+        if alt_caster {
+            // The builder's unit selector: the player's charm, else its summon, read as it is now.
+            let pet = store
+                .and_then(|s| s.0.unit_pet_guid())
+                .and_then(|g| self.index.as_ref()?.0.get(&g).copied());
+            let pet_fields = pet.and_then(|e| self.stores.get(e).ok()).map(|s| &s.0);
+            vctx.caster = ViewCaster::Pet(pet_fields);
+            vctx.form = pet_fields.map_or(0, |p| p.unit_shapeshift_form());
+            vctx.range_caster =
+                pet.and_then(|e| units.unit(e))
+                    .unwrap_or(benilla_formats::RangeUnit::still(
+                        crate::spell::DEFAULT_REACH,
+                    ));
+            vctx.attack_target = pet.and_then(|e| units.attack_target(e));
+        }
+        build_view(spell_id, spells, &mut vctx)
+    }
+
+    /// The bar's usable cache (`0x5a7e60`): slot `action - 1` below 144, else nil, nil.
+    fn action_current(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_current(r))
+    }
+
+    fn action_auto_repeat(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_auto_repeat(r))
+    }
+
+    fn action_in_range(&self, slot: u32, target: u64) -> Option<Option<bool>> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_in_range(r, target))
+    }
+
+    fn action_has_range(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_has_range(r))
+    }
+
+    fn action_attack(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_attack(r))
+    }
+
+    fn action_equipped(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_equipped(r))
+    }
+
+    fn action_cooldown(
+        &self,
+        slot: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_cooldown(r, anchor, ui_now))
+    }
+
+    fn item_usable(&self, item_id: u32) -> Option<(bool, bool)> {
+        Some(self.item_usable_now(item_id))
+    }
+
+    fn temp_action_bar(&self) -> Option<u32> {
+        Some(self.pages.as_deref().map_or(0, |p| p.flags))
+    }
+
+    fn bonus_bar_offset(&self) -> Option<u8> {
+        Some(self.pages.as_deref().map_or(0, |p| p.bonus_offset))
+    }
+
+    fn knows_cold_weather_flying(&self) -> Option<bool> {
+        Some(self.actions.get().is_some_and(|a| {
+            a.spells
+                .contains(&crate::spell::usable::COLD_WEATHER_FLYING)
+        }))
+    }
+
+    fn action_word(&self, slot: u32) -> Option<u32> {
+        self.slot_word(slot)
+    }
+
+    fn action_texture(&self, slot: u32) -> Option<Option<benilla_ui::script::ActionIcon>> {
+        self.slot_icon(slot)
+    }
+
+    fn action_count(&self, slot: u32) -> Option<u32> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_count(r))
+    }
+
+    fn action_consumable(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_consumable(r))
+    }
+
+    fn action_stackable(&self, slot: u32) -> Option<bool> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_stackable(r))
+    }
+
+    fn action_pet_spell(&self, slot: u32) -> Option<Option<u32>> {
+        let r = self.resolve_slot(slot)?;
+        Some(self.slot_pet_spell(r))
+    }
+
+    fn set_action_word(&mut self, slot: u32, word: u32) -> Option<bool> {
+        self.write_slot_word(slot, word)
+    }
+
+    fn action_usable(&self, action: u32) -> Option<(bool, bool)> {
+        let caches = self.usable.get()?;
+        let cell = action
+            .checked_sub(1)
+            .and_then(|slot| caches.slots.get(slot as usize));
+        Some(cell.map_or((false, false), |c| c.pair()))
+    }
+
+    /// The stance list (`[0xbe8e2c]`) as `GetShapeshiftFormInfo` reads it (`0x53de90`): the active
+    /// test now (`0x802cb0`), castable when active or the cached bytes say so, the active icon
+    /// while active.
+    fn shapeshift_forms(&self) -> Option<Vec<benilla_ui::script::ShapeshiftFormView>> {
+        use crate::ui_spell_info::CallReads;
+        let caches = self.usable.get()?;
+        let spells = self.spells.as_deref()?;
+        let now = self.cast_now();
+        let player = self.me().is_some();
+        Some(
+            caches
+                .stances
+                .iter()
+                .filter_map(|entry| {
+                    let d = spells.catalog.get(entry.spell)?;
+                    let active = player
+                        && crate::ui_spell_info::active_spell(
+                            entry.spell,
+                            d,
+                            &now,
+                            &spells.catalog,
+                        );
+                    let texture = if active {
+                        d.active_icon.clone().or_else(|| d.icon.clone())
+                    } else {
+                        d.icon.clone()
+                    };
+                    Some(benilla_ui::script::ShapeshiftFormView {
+                        spell_id: entry.spell,
+                        texture,
+                        name: d.name.clone(),
+                        active,
+                        castable: active || entry.usable.ready(),
+                        cooldown: None,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn shapeshift_form_byte(&self) -> Option<u8> {
+        Some(self.me().map_or(0, |(_, s)| s.0.unit_shapeshift_form()))
+    }
+
+    fn with_spell_source(&self, f: &mut dyn FnMut(&dyn benilla_ui::script::SpellInfoSource)) {
+        let Some(spells) = self.spells.as_deref() else {
+            return;
+        };
+        f(&crate::ui_spell_info::Answers {
+            tables: crate::ui_spell_info::Tables {
+                spells,
+                skill_lines: self.skill_lines.as_deref().map(|l| &*l.catalog),
+                talents: self.talents.as_deref().map(|t| &*t.catalog),
+            },
+            reads: self,
+        });
+    }
+
+    fn spell_targeting(&self) -> benilla_ui::script::SpellTargetingLive {
+        let Some(t) = self.cast.targeting.get() else {
+            return Default::default();
+        };
+        benilla_ui::script::SpellTargetingLive {
+            active: t.active(),
+            wants_item: t.wants(crate::spell::targeting::TargetingWants::Item),
+            arms: t.arms(),
+        }
+    }
+
+    /// The target check's unit leg toward the held unit `guid` at the call (`0x804190`): the
+    /// standing word binds it and no range refusal stands.
+    fn spell_can_target_unit(&self, guid: u64) -> bool {
+        let (Some(t), Some(bind)) = (self.cast.targeting.get(), self.bind.as_ref()) else {
+            return false;
+        };
+        let Some(&entity) = self.index.as_ref().and_then(|i| i.0.get(&guid)) else {
+            return false;
+        };
+        t.can_target_unit(entity, bind)
+    }
+
+    fn totem(&self, slot: usize) -> Option<benilla_ui::script::TotemView> {
+        self.totems.slot(slot)
+    }
+
+    fn totem_tool(&self, slot: usize) -> bool {
+        self.totems.tool(slot)
+    }
+
+    fn destroy_totem(&mut self, slot: usize) -> bool {
+        self.totems.destroy(slot)
+    }
+
+    fn multicast_list(&self, element: usize) -> Vec<u32> {
+        self.totems.list(element)
+    }
+
+    fn spell_totem_categories(&self, spell: u32) -> Option<[u32; 2]> {
+        self.totems.spell_categories(spell)
+    }
+
+    fn totem_category_name(&self, row: u32) -> Option<String> {
+        self.totems.category_name(row)
+    }
+
+    fn unit_cast(&self, guid: u64, channel: bool) -> Option<benilla_ui::script::UnitCast> {
+        let casts = self.cast.unit_casts.get()?;
+        let schools = self.schools.as_deref().copied().unwrap_or_default();
+        casts.live_cast(guid, channel, self.spells.as_deref(), schools)
+    }
+
+    /// The auto-repeating spell, else the in-flight slot the cancel resolves (`0x7fe130`,
+    /// `0x805f30`), as `SpellStopCasting` tests them.
+    fn has_stoppable_cast(&self) -> bool {
+        if self.cast.auto_repeat.get().is_some_and(|a| a.0.is_some()) {
+            return true;
+        }
+        let (Some(pending), Some(melee)) = (self.cast.pending.get(), self.cast.queued_melee.get())
+        else {
+            return false;
+        };
+        let started = self
+            .self_guid
+            .as_ref()
+            .and_then(|g| g.0)
+            .and_then(|g| self.index.as_ref()?.0.get(&g).copied())
+            .and_then(|e| self.casting.get(e).ok())
+            .map(|c| c.spell_id);
+        crate::spell::inflight(pending, melee, started, std::time::Instant::now()).is_some()
+    }
+
+    /// The rune table and our `PLAYER_RUNE_REGEN` rates now, behind the player-mask lookup of the
+    /// active player every rune verb opens with (`0x61306f`).
+    fn runes(&self) -> Option<(benilla_ui::script::RuneState, benilla_ui::script::RuneRegen)> {
+        let me = self.player_entity(self.self_guid.as_ref()?.0?)?;
+        let fields = &self.stores.get(me).ok()?.0;
+        let table = self
+            .runes
+            .as_ref()
+            .map(|r| r.state.clone())
+            .unwrap_or_default();
+        Some((table, crate::ui_rune::regen_of(fields)))
     }
 
     fn banker(&self) -> Option<u64> {
@@ -1326,7 +1963,7 @@ impl LiveState for LiveView<'_, '_> {
         if me.player_money().unwrap_or(0) < self.bank_slot_cost(u32::from(slots) + 1) {
             return Some("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
         }
-        let guid = bank.interact_target().unwrap_or(0);
+        let guid = self.tabard.target().unwrap_or(0);
         debug!("bank: purchase next bag slot at {guid:#x}");
         let _ = self
             .net
@@ -1337,10 +1974,17 @@ impl LiveState for LiveView<'_, '_> {
     }
 
     fn close_bank_interaction(&mut self) -> bool {
-        self.lent
-            .bank
-            .get_mut()
-            .is_some_and(|b| b.close_interaction())
+        let banker = self.lent.bank.get().and_then(|b| b.banker);
+        match (banker, self.tabard.target_mut()) {
+            (Some(banker), Some(t)) => t.clear_in_call(banker),
+            _ => false,
+        }
+    }
+
+    fn clear_interact_target(&mut self, guid: u64) -> bool {
+        self.tabard
+            .target_mut()
+            .is_some_and(|t| t.clear_in_call(guid))
     }
 
     fn item_tables(&self) -> Option<&benilla_ui::script::ItemTables> {
@@ -1660,6 +2304,304 @@ impl LiveState for LiveView<'_, '_> {
             records.ask(item, commands);
         }
     }
+
+    fn binder_in_reach(&self) -> bool {
+        self.talk.binder_in_reach()
+    }
+
+    fn confirm_binder(&self) {
+        self.talk.confirm_binder();
+    }
+
+    fn talent_master_in_reach(&self) -> bool {
+        self.talk.talent_master_in_reach()
+    }
+
+    fn confirm_talent_wipe(&self) -> Option<&'static str> {
+        self.talk.confirm_talent_wipe()
+    }
+
+    fn instance_boot_secs(&self) -> u32 {
+        self.dialogs.instance_boot_secs()
+    }
+
+    fn area_spirit_healer_secs(&self) -> u32 {
+        self.lent
+            .spirit
+            .get()
+            .map_or(0, |s| s.secs(std::time::Instant::now()))
+    }
+
+    fn area_spirit_poll_drop(&mut self) -> Option<bool> {
+        let spirit = self.lent.spirit.get_mut()?;
+        Some(crate::ui_dialog_verbs::poll_drop(
+            spirit,
+            &self.dialogs.spirit,
+        ))
+    }
+
+    fn accept_area_spirit_heal(&mut self, cancelled: bool) {
+        if let Some(spirit) = self.lent.spirit.get_mut() {
+            self.dialogs.accept(spirit, cancelled);
+        }
+    }
+
+    fn spirit_cancel_has_body(&self) -> bool {
+        self.dialogs.has_body()
+    }
+
+    fn cancel_area_spirit_heal(&self) {
+        self.dialogs.cancel_area_spirit_heal();
+    }
+
+    fn active_player_held(&self) -> bool {
+        self.self_guid
+            .as_ref()
+            .and_then(|g| g.0)
+            .is_some_and(|g| self.player_entity(g).is_some())
+    }
+
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        self.tabard.guild_record()
+    }
+
+    fn tabard_save_pending(&self) -> bool {
+        self.tabard.save_pending()
+    }
+
+    fn save_tabard(&mut self, design: [i32; 5]) -> Option<Result<(), &'static str>> {
+        self.tabard.save(design)
+    }
+
+    fn close_tabard(&mut self) -> u32 {
+        self.tabard.close()
+    }
+
+    fn dress_up(
+        &mut self,
+        pane: benilla_ui::widget::FrameHandle,
+        intent: benilla_ui::script::DressUpIntent,
+    ) {
+        let waits = self.record_waits.as_deref_mut();
+        self.dressup.dress_up(pane.bits(), intent, waits);
+    }
+
+    fn barber(&self) -> Option<benilla_ui::script::BarberRead<'_>> {
+        self.barber.read()
+    }
+
+    fn gossip(&self) -> Option<benilla_ui::script::GossipRead<'_>> {
+        self.gossip.read()
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        self.gossip.select_option(slot, code);
+    }
+
+    fn select_gossip_quest(&mut self, row: usize) {
+        self.gossip.select_quest(row);
+    }
+
+    fn item_text(&self) -> Option<benilla_ui::script::ItemTextRead> {
+        self.item_text.read()
+    }
+
+    fn item_text_creator(&mut self) -> Option<String> {
+        self.item_text.creator()
+    }
+
+    fn item_text_turn(&mut self, next: bool) -> bool {
+        self.item_text.turn(next, self.actions.get())
+    }
+
+    fn close_item_text(&mut self) -> u32 {
+        self.item_text.close(self.tabard.target_mut())
+    }
+
+    fn player_money(&self) -> Option<u64> {
+        let me = self.active_player().and_then(|g| self.unit(g));
+        Some(u64::from(me.and_then(|m| m.player_money()).unwrap_or(0)))
+    }
+
+    fn merchant_open(&self) -> Option<bool> {
+        Some(self.merchant.as_ref()?.open())
+    }
+
+    fn merchant_len(&self, list: benilla_ui::script::MerchantList) -> Option<usize> {
+        Some(self.merchant.as_ref()?.len(list))
+    }
+
+    fn merchant_row(
+        &mut self,
+        list: benilla_ui::script::MerchantList,
+        index: usize,
+        ask: bool,
+    ) -> Option<Option<benilla_ui::script::MerchantItem>> {
+        let waits = self.record_waits.as_deref_mut();
+        Some(self.merchant.as_mut()?.row(list, index, ask, waits))
+    }
+
+    fn can_merchant_repair(&self) -> Option<bool> {
+        Some(self.merchant.as_ref()?.can_repair())
+    }
+
+    fn repair_all_cost(&self) -> Option<Option<(u32, bool)>> {
+        Some(self.merchant.as_ref()?.repair_all_cost())
+    }
+
+    fn repair_cost(&self, at: benilla_ui::script::RepairAt) -> Option<u32> {
+        Some(self.merchant.as_ref()?.repair_cost(at))
+    }
+
+    fn merchant_act(
+        &mut self,
+        act: benilla_ui::script::MerchantAct,
+    ) -> Option<benilla_ui::script::MerchantOutcome> {
+        let target = self.tabard.target_mut();
+        Some(self.merchant.as_mut()?.act(act, target))
+    }
+
+    fn taxi_map(&self) -> Option<Option<&benilla_ui::script::TaxiUiState>> {
+        Some(self.taxi.as_ref()?.map())
+    }
+
+    fn taxi_node_cost(&self, slot: u32) -> Option<i64> {
+        Some(self.taxi.as_ref()?.cost(slot))
+    }
+
+    fn taxi_act(
+        &mut self,
+        act: benilla_ui::script::TaxiAct,
+    ) -> Option<benilla_ui::script::TaxiOutcome> {
+        let target = self.tabard.target_mut();
+        Some(self.taxi.as_mut()?.act(act, target))
+    }
+
+    fn petition_view(&self) -> Option<benilla_ui::script::PetitionState> {
+        Some(self.petition.as_ref()?.view())
+    }
+
+    fn petition_vendor_open(&self) -> Option<bool> {
+        Some(self.petition.as_ref()?.vendor_open())
+    }
+
+    fn petition_vendor_count(&self) -> Option<usize> {
+        Some(self.petition.as_ref()?.vendor_count())
+    }
+
+    fn petition_item(
+        &mut self,
+        index: u32,
+    ) -> Option<Option<benilla_ui::script::PetitionVendorItem>> {
+        let waits = self.record_waits.as_deref_mut();
+        Some(self.petition.as_ref()?.item(index, waits))
+    }
+
+    fn petition_act(
+        &mut self,
+        act: benilla_ui::script::PetitionRequest,
+    ) -> Option<benilla_ui::script::PetitionOutcome> {
+        let target = self.selection.get().and_then(|s| s.guid);
+        let designer = self.tabard.vendor();
+        let interact = self.tabard.target_mut();
+        let cx = crate::ui_petition::ActContext {
+            target,
+            designer,
+            interact,
+        };
+        Some(self.petition.as_mut()?.act(act, cx))
+    }
+
+    fn trainer(&self) -> Option<Option<&benilla_ui::script::TrainerWindow>> {
+        Some(Some(self.trainer.as_ref()?.window()))
+    }
+
+    fn trainer_mut(&mut self) -> Option<Option<&mut benilla_ui::script::TrainerWindow>> {
+        Some(Some(self.trainer.as_mut()?.window_mut()))
+    }
+
+    fn trainer_service_live(
+        &self,
+        position: usize,
+    ) -> Option<Option<benilla_ui::script::TrainerServiceLive>> {
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.get().map_or(&empty, |a| &a.spells);
+        Some(self.trainer.as_ref()?.service_live(position, known))
+    }
+
+    fn trainer_description(
+        &mut self,
+        position: usize,
+        global: benilla_ui::script::GlobalStrings<'_>,
+    ) -> Option<Option<String>> {
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.get().map_or(&empty, |a| &a.spells);
+        let waits = self.record_waits.as_deref_mut();
+        Some(
+            self.trainer
+                .as_ref()?
+                .description(position, known, waits, global),
+        )
+    }
+
+    fn trainer_buy(&mut self, spell_id: u32) -> bool {
+        let Some(t) = self.trainer.as_ref() else {
+            return false;
+        };
+        t.buy(spell_id);
+        true
+    }
+
+    fn trainer_open(&self) -> Option<bool> {
+        Some(self.trainer.as_ref()?.is_open())
+    }
+
+    fn trainer_release_target(&mut self) -> bool {
+        let target = self.tabard.target_mut();
+        self.trainer
+            .as_mut()
+            .is_some_and(|t| t.release_target(target))
+    }
+
+    fn trainer_zero(&mut self) {
+        if let Some(t) = self.trainer.as_mut() {
+            t.zero();
+        }
+    }
+
+    fn close_gossip(&mut self) -> u32 {
+        use crate::ui_session::NpcSession;
+        let giver_held = self.lent.giver.get().and_then(|q| q.npc()).is_some();
+        self.gossip.close(self.tabard.target_mut(), giver_held)
+    }
+
+    fn set_barber_dials(&mut self, dials: [u8; 5]) {
+        self.barber.set_dials(dials);
+    }
+
+    fn set_barber_skin_style(&mut self, data: u8) {
+        self.barber.set_skin_style(data);
+    }
+
+    fn send_alter_appearance(&mut self, styles: [u32; 4]) {
+        self.barber.send(styles);
+    }
+
+    fn close_barber_shop(&mut self) -> bool {
+        self.barber.close()
+    }
+
+    fn hair_customization(&self) -> Option<&str> {
+        self.barber.hair_customization()
+    }
+
+    fn facial_hair_customization(&self) -> Option<&str> {
+        self.barber.facial_hair_customization()
+    }
+
+    fn apply_guild_color(&mut self, design: [i32; 5]) {
+        self.tabard.apply_guild_color(design);
+    }
 }
 
 impl Lent<'_> {
@@ -1708,6 +2650,31 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         self.loan.with_view(|v| f(v.lent.giver.get()))
     }
 
+    /// The vendor this parameter's view lends, between calls into Lua.
+    pub(crate) fn trainer_open(&self) -> Option<(u64, usize, u32)> {
+        self.loan
+            .with_view(|v| v.trainer.as_ref().and_then(|t| t.open()))
+    }
+
+    /// The interact target (`0xbd07a8`), read between calls; whether it moved since the system last ran.
+    pub(crate) fn interact_target(&self) -> (Option<u64>, bool) {
+        let view = self.view();
+        (view.tabard.target(), view.tabard.target_changed())
+    }
+
+    pub(crate) fn merchant_vendor(&self) -> Option<u64> {
+        self.loan
+            .with_view(|v| v.merchant.as_ref().and_then(|m| m.state().vendor))
+    }
+
+    /// `f` over the gossip globals this parameter borrows, between calls into Lua.
+    pub(crate) fn with_gossip<R>(
+        &self,
+        f: impl FnOnce(Option<&crate::ui_gossip::GossipState>) -> R,
+    ) -> R {
+        self.loan.with_view(|v| f(v.gossip.state()))
+    }
+
     /// Whether the quest giver changed since this parameter's system last ran.
     pub(crate) fn giver_changed(&self) -> bool {
         self.loan.with_view(|v| v.lent.giver.changed())
@@ -1716,6 +2683,12 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     /// `f` over the quest giver this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_giver_mut<R>(&mut self, f: impl FnOnce(Option<&mut QuestGiver>) -> R) -> R {
         self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
+    }
+
+    /// The guild registrar held, read between calls into Lua.
+    pub(crate) fn registrar(&self) -> Option<u64> {
+        self.loan
+            .with_view(|v| v.petition.as_ref().and_then(|p| p.registrar()))
     }
 
     /// `f` over the guild bank this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
@@ -1770,11 +2743,17 @@ type ViewState = <LiveView<'static, 'static> as SystemParam>::State;
 /// A lendable resource's id, then the loan's and the owner's marks.
 type SlotIds = (ComponentId, ComponentId, ComponentId);
 
-/// The lendable resources' ids: the history, the pet's words, the selection, the player's place, the action store, the item locks and the charter records.
+/// The lendable resources' ids: the history, the pet's words, the selection, the player's place,
+/// the action store, the item locks, the cast state's five ([`CastSlots`]), the open trade-skill
+/// book, the usable caches, the macros' bound spells, then the bar's slots.
 type SlotState = (
     SlotIds,
     SlotIds,
     SlotIds,
+    SlotIds,
+    SlotIds,
+    SlotIds,
+    [SlotIds; 5],
     SlotIds,
     SlotIds,
     SlotIds,
@@ -1797,10 +2776,11 @@ fn slot_access<X: Resource>(
     (id, loan, owner): SlotIds,
     system: &SystemMeta,
     set: &mut FilteredAccessSet,
+    world: &mut World,
 ) {
     let name = &format!("{} in {}", std::any::type_name::<X>(), system.name());
     if owned {
-        owned_access(name, id, loan, owner, set);
+        owned_access(name, (id, loan, owner), lent_read_mark::<X>(world), set);
         return;
     }
     assert!(
@@ -1821,7 +2801,7 @@ unsafe fn slot_fetch<X: Resource>(
 }
 
 /// The [`Lent`] state's ids, in [`lent`] bit order.
-type LentIds = [ComponentId; 8];
+type LentIds = [ComponentId; 9];
 
 /// Register the [`Lent`] state's ids.
 fn lent_ids(world: &mut World) -> LentIds {
@@ -1835,13 +2815,14 @@ fn lent_ids(world: &mut World) -> LentIds {
         reg.register_non_send::<BankOpen>(),
         reg.register_non_send::<crate::ui_socket::RefundRecords>(),
         reg.register_non_send::<crate::ui_guild_bank::GuildBankState>(),
+        reg.register_non_send::<crate::ui_dialog_verbs::AreaSpiritHealer>(),
     ]
 }
 
 /// Declare `T`'s borrow unless the system owns it.
 fn lent_access<T: 'static>(
-    own: u8,
-    bit: u8,
+    own: u16,
+    bit: u16,
     id: &ComponentId,
     system_meta: &mut SystemMeta,
     component_access_set: &mut FilteredAccessSet,
@@ -1862,8 +2843,8 @@ fn lent_access<T: 'static>(
 /// # Safety
 /// As [`SystemParam::get_param`], with `T`'s access declared by [`lent_access`].
 unsafe fn lent_fetch<'w, T: 'static>(
-    own: u8,
-    bit: u8,
+    own: u16,
+    bit: u16,
     mut id: ComponentId,
     system_meta: &SystemMeta,
     world: UnsafeWorldCell<'w>,
@@ -1901,7 +2882,17 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 slot_ids::<crate::area::PlayerPlace>(world),
                 slot_ids::<crate::ui_action::PlayerActions>(world),
                 slot_ids::<crate::pending_item_ops::PendingItemOps>(world),
-                slot_ids::<crate::ui_petition::PetitionState>(world),
+                [
+                    slot_ids::<crate::spell::PendingCast>(world),
+                    slot_ids::<crate::spell::QueuedMeleeSpell>(world),
+                    slot_ids::<crate::spell::AutoRepeatActive>(world),
+                    slot_ids::<crate::spell::SpellTargeting>(world),
+                    slot_ids::<crate::ui_cast::UnitCasts>(world),
+                ],
+                slot_ids::<crate::ui_tradeskill::TradeSkillOpen>(world),
+                slot_ids::<crate::ui_action::usable_cache::UsableCaches>(world),
+                slot_ids::<crate::ui_macro::MacroBoundSpells>(world),
+                slot_ids::<crate::ui_action::ActionSlots>(world),
             ),
             lent_ids(world),
         )
@@ -1920,16 +2911,34 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
             world,
         );
         let set = component_access_set;
-        slot_access::<crate::spell::Cooldowns>(O::COOLDOWNS, state.1 .0, system_meta, set);
-        slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set);
-        slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set);
-        slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set);
-        slot_access::<crate::ui_action::PlayerActions>(O::ACTIONS, state.1 .4, system_meta, set);
+        slot_access::<crate::spell::Cooldowns>(O::COOLDOWNS, state.1 .0, system_meta, set, world);
+        slot_access::<crate::ui_pet::PetBar>(true, state.1 .1, system_meta, set, world);
+        slot_access::<crate::target::Selection>(O::SELECTION, state.1 .2, system_meta, set, world);
+        slot_access::<crate::area::PlayerPlace>(O::PLACE, state.1 .3, system_meta, set, world);
+        slot_access::<crate::ui_action::PlayerActions>(
+            O::ACTIONS,
+            state.1 .4,
+            system_meta,
+            set,
+            world,
+        );
         type Pending = crate::pending_item_ops::PendingItemOps;
-        slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set);
-        type Petitions = crate::ui_petition::PetitionState;
-        slot_access::<Petitions>(O::PETITIONS, state.1 .6, system_meta, set);
-        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = &state.2;
+        slot_access::<Pending>(O::PENDING, state.1 .5, system_meta, set, world);
+        let [pending, melee, repeat, targeting, casts] = state.1 .6;
+        slot_access::<crate::spell::PendingCast>(true, pending, system_meta, set, world);
+        slot_access::<crate::spell::QueuedMeleeSpell>(true, melee, system_meta, set, world);
+        slot_access::<crate::spell::AutoRepeatActive>(true, repeat, system_meta, set, world);
+        slot_access::<crate::spell::SpellTargeting>(true, targeting, system_meta, set, world);
+        slot_access::<crate::ui_cast::UnitCasts>(true, casts, system_meta, set, world);
+        type Trade = crate::ui_tradeskill::TradeSkillOpen;
+        slot_access::<Trade>(O::TRADE, state.1 .7, system_meta, set, world);
+        type Usable = crate::ui_action::usable_cache::UsableCaches;
+        slot_access::<Usable>(true, state.1 .8, system_meta, set, world);
+        type Macros = crate::ui_macro::MacroBoundSpells;
+        slot_access::<Macros>(O::MACROS, state.1 .9, system_meta, set, world);
+        type Slots = crate::ui_action::ActionSlots;
+        slot_access::<Slots>(true, state.1 .10, system_meta, set, world);
+        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank, spirit] = &state.2;
         let (meta, own) = (system_meta, O::LENT);
         lent_access::<UniqueSignals>(own, lent::SIGNALS, signals, meta, set, world);
         lent_access::<QuestAsks>(own, lent::ASKS, asks, meta, set, world);
@@ -1941,6 +2950,8 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
         lent_access::<Refunds>(own, lent::REFUNDS, refunds, meta, set, world);
         type GuildBank = crate::ui_guild_bank::GuildBankState;
         lent_access::<GuildBank>(own, lent::GUILD_BANK, guild_bank, meta, set, world);
+        type Spirit = crate::ui_dialog_verbs::AreaSpiritHealer;
+        lent_access::<Spirit>(own, lent::SPIRIT, spirit, meta, set, world);
     }
 
     fn apply(state: &mut Self::State, system_meta: &SystemMeta, world: &mut World) {
@@ -1991,8 +3002,24 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 (place, ..),
                 (actions, ..),
                 (pending, ..),
-                (pet, ..),
+                cast,
+                (trade, ..),
+                (usable, ..),
+                (macros, ..),
+                (slots, ..),
             ) = state.1;
+            let [(cast_pending, ..), (melee, ..), (repeat, ..), (targeting, ..), (casts, ..)] =
+                cast;
+            let c = &mut view.cast;
+            c.pending
+                .set(slot_fetch(world, cast_pending), own(true, cast_pending));
+            c.queued_melee
+                .set(slot_fetch(world, melee), own(true, melee));
+            c.auto_repeat
+                .set(slot_fetch(world, repeat), own(true, repeat));
+            c.targeting
+                .set(slot_fetch(world, targeting), own(true, targeting));
+            c.unit_casts.set(slot_fetch(world, casts), own(true, casts));
             view.cooldowns
                 .set(slot_fetch(world, cd), own(O::COOLDOWNS, cd));
             view.pet_bar.set(slot_fetch(world, bar), own(true, bar));
@@ -2002,12 +3029,17 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 .set(slot_fetch(world, place), own(O::PLACE, place));
             view.actions
                 .set(slot_fetch(world, actions), own(O::ACTIONS, actions));
+            view.slots.set(slot_fetch(world, slots), own(true, slots));
             view.pending
                 .set(slot_fetch(world, pending), own(O::PENDING, pending));
-            view.petitions
-                .set(slot_fetch(world, pet), own(O::PETITIONS, pet));
+            view.trade
+                .set(slot_fetch(world, trade), own(O::TRADE, trade));
+            view.usable
+                .set(slot_fetch(world, usable), own(true, usable));
+            view.bound
+                .set(slot_fetch(world, macros), own(O::MACROS, macros));
         }
-        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank] = state.2;
+        let [signals, asks, marks, expiries, giver, bank, refunds, guild_bank, spirit] = state.2;
         let (meta, tick, own) = (system_meta, change_tick, O::LENT);
         // SAFETY: each access was declared in `init_access` for exactly the bits not owned.
         view.lent = unsafe {
@@ -2020,6 +3052,7 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
                 bank: lent_fetch(own, lent::BANK, bank, meta, world, tick),
                 refunds: lent_fetch(own, lent::REFUNDS, refunds, meta, world, tick),
                 guild_bank: lent_fetch(own, lent::GUILD_BANK, guild_bank, meta, world, tick),
+                spirit: lent_fetch(own, lent::SPIRIT, spirit, meta, world, tick),
             }
         };
         // SAFETY: the system drops its parameters on the thread that ran it when its run ends,
@@ -2034,6 +3067,11 @@ unsafe impl<O: Owns> SystemParam for LendLive<'_, '_, O> {
 /// The `"questnpc"` unit's guid through the view lent to the running system (`0x6081b0`), `None` outside a lending system.
 pub(crate) fn quest_npc() -> Option<u64> {
     benilla_ui::script::read_live(|l| l.quest_npc()).flatten()
+}
+
+/// The interact target (`0xbd07a8`) through the view lent to the running system, `None` outside a lending system.
+pub(crate) fn interact_target() -> Option<Option<u64>> {
+    benilla_ui::script::read_live(|l| l.interact_target())
 }
 
 /// A handler's write to state the VM owns, run in turn with the events around it.
@@ -2053,6 +3091,8 @@ enum UiEvent {
     SystemLine(&'static str, Vec<LineArg>),
     /// A step over the `World`, such as the unit pushes an event's tokens read.
     World(WorldStep),
+    /// One cast or channel edge applied to the caster's cast state, its events fired in turn.
+    CastEdge(crate::ui_cast::CastBarEdge),
 }
 
 /// An argument a system line's template takes.
@@ -2066,6 +3106,11 @@ pub(crate) enum LineArg {
 pub(crate) struct UiEvents(Vec<UiEvent>);
 
 impl UiEvents {
+    /// Nothing waits.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Fire `event` once the calling handler's changes have applied, before the next handler runs.
     pub(crate) fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
         self.0.push(UiEvent::Fire(event, args));
@@ -2091,6 +3136,38 @@ impl UiEvents {
         self.0.push(UiEvent::World(Box::new(step)));
     }
 
+    /// Apply a cast or channel edge to its caster in turn with the events around it, as the
+    /// handler or press that made it does; its `UNIT_SPELLCAST_*` events fire next.
+    pub(crate) fn cast_edge(&mut self, edge: crate::ui_cast::CastBarEdge) {
+        self.0.push(UiEvent::CastEdge(edge));
+    }
+
+    /// The cast refusals queued, taken.
+    #[cfg(test)]
+    pub(crate) fn take_refusals(&mut self) -> Vec<crate::ui_action::CastFail> {
+        let mut out = Vec::new();
+        self.0.retain(|e| match e {
+            UiEvent::CastEdge(crate::ui_cast::CastBarEdge::Refused(f)) => {
+                out.push(*f);
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+
+    /// The cast edges queued, in order.
+    #[cfg(test)]
+    pub(crate) fn cast_edges(&self) -> Vec<crate::ui_cast::CastBarEdge> {
+        self.0
+            .iter()
+            .filter_map(|e| match e {
+                UiEvent::CastEdge(edge) => Some(edge.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The fired event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
@@ -2102,14 +3179,9 @@ impl UiEvents {
                 UiEvent::Write(_) => "<write>",
                 UiEvent::SystemLine(key, _) => key,
                 UiEvent::World(_) => "<world>",
+                UiEvent::CastEdge(_) => "<cast edge>",
             })
             .collect()
-    }
-
-    /// Whether nothing waits to fire.
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 
@@ -2182,6 +3254,14 @@ pub(crate) fn lend_world<R>(
     f(script)
 }
 
+/// `step` in turn after the events queued so far, or now with no event queue.
+pub(crate) fn in_turn(world: &mut World, step: impl FnOnce(&mut World) + Send + Sync + 'static) {
+    match world.get_resource_mut::<UiEvents>() {
+        Some(mut ui) => ui.world(step),
+        None => step(world),
+    }
+}
+
 /// Fires what the handler that just ran queued, in its order, with the `World` lent; it runs after
 /// each handler, not after each packet. With no VM they are dropped, as the reference has no
 /// listener before its UI loads.
@@ -2197,9 +3277,13 @@ pub(crate) fn fire_handler_events(world: &mut World) {
     let mut batch = Vec::new();
     while let Some(event) = events.pop_front() {
         match event {
-            UiEvent::World(step) => {
+            step @ (UiEvent::World(_) | UiEvent::CastEdge(_)) => {
                 fire_batch(world, &mut batch, &mut lines);
-                step(world);
+                match step {
+                    UiEvent::World(step) => step(world),
+                    UiEvent::CastEdge(edge) => crate::ui_cast::apply_edge(world, edge),
+                    _ => unreachable!(),
+                }
                 // What the step queued fires in its turn, ahead of the rest.
                 if let Some(mut queued) = world.get_resource_mut::<UiEvents>() {
                     for e in std::mem::take(&mut queued.0).into_iter().rev() {
@@ -2245,7 +3329,7 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
                     lines.extend(text.filter(|t| !t.is_empty()));
                 }
                 // Split out by the caller.
-                UiEvent::World(_) => {}
+                UiEvent::World(_) | UiEvent::CastEdge(_) => {}
             }
         }
     });
@@ -2428,35 +3512,28 @@ mod tests {
         }));
     }
 
-    /// The action store is lent like the history: a plain write beside a loan is refused (B0002), the owner's handle is admitted, and its write is the next read of the view in the same run.
+    /// Every loan owns the bar's slots, as the pet's words: a plain write beside a loan is refused (B0002), the owner's handle is admitted, and its write is the next read of the view in the same run.
     #[test]
-    fn the_action_store_is_written_by_its_owner_and_read_through_the_view() {
-        use crate::ui_action::PlayerActions;
-        let refused = refusal(|_w: ResMut<PlayerActions>, _l: LendLive| {});
+    fn the_bar_slots_are_written_by_their_owner_and_read_through_the_view() {
+        use crate::ui_action::ActionSlots;
+        let refused = refusal(|_w: ResMut<ActionSlots>, _l: LendLive| {});
         assert!(
-            refused.contains("B0002") && refused.contains("PlayerActions"),
+            refused.contains("B0002") && refused.contains("ActionSlots"),
             "{refused}"
         );
-        assert_eq!(
-            refusal(|_l: LendLive<OwnsActions>, _w: OwnedMut<PlayerActions>| {}),
-            ""
-        );
+        assert_eq!(refusal(|_l: LendLive, _w: OwnedMut<ActionSlots>| {}), "");
         let mut world = World::new();
-        world.init_resource::<PlayerActions>();
+        world.init_resource::<ActionSlots>();
         let seen = world
-            .run_system_once(
-                |live: LendLive<OwnsActions>, mut a: OwnedMut<PlayerActions>| {
-                    let read = |live: &LendLive<OwnsActions>| {
-                        live.view().actions.get().map(|a| a.spells.contains(&54197))
-                    };
-                    let before = read(&live);
-                    a.write().spells.insert(54197);
-                    (before, read(&live))
-                },
-            )
+            .run_system_once(|live: LendLive, mut a: OwnedMut<ActionSlots>| {
+                let read = |live: &LendLive| live.view().slots.get().map(|a| a.locked);
+                let before = read(&live);
+                a.write().locked = true;
+                (before, read(&live))
+            })
             .unwrap();
         assert_eq!(seen, (Some(false), Some(true)));
-        assert!(world.resource_ref::<PlayerActions>().is_changed());
+        assert!(world.resource_ref::<ActionSlots>().is_changed());
     }
 
     /// The owner's write is the next read of its view, inside the same run, and the view lent for that run is gone once it ends, on unwind too.

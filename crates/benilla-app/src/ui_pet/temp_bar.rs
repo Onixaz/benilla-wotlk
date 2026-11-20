@@ -7,7 +7,7 @@ use benilla_protocol::messages::{PET_ACT_COMMAND, PET_ACT_REACTION};
 
 use crate::net::{GuidIndex, ObjectStore, SelfPlayer};
 use crate::ui_action::{
-    PlayerActions, TempActionBar, ACTION_KIND_PET, TEMP_BAR_FIRST_SLOT, TEMP_BAR_PET,
+    ActionSlots, TempActionBar, ACTION_KIND_PET, TEMP_BAR_FIRST_SLOT, TEMP_BAR_PET,
 };
 
 use super::{bar, PetBar};
@@ -18,15 +18,14 @@ const PET_BAR_SLOTS: u32 = 10;
 /// `CreatureTypeFlags & 0x2000`: a creature whose bar never shows (`0x7226b0`).
 const TYPE_FLAG_NO_PET_BAR: u32 = 0x2000;
 
-/// A pet-action slot's texture (`0x5a97f0`): a spell's icon, or a mode or order's
-/// `PET_%s_TEXTURE` global through `global`. A spell draws its own icon; the active-icon swap of
-/// a running spell is the pet bar's alone.
-pub(crate) fn temp_slot_texture(
+/// A pet-action slot's icon (`0x5a97f0`): a spell's, or a mode or order's `PET_%s_TEXTURE` global.
+/// A spell draws its own icon; the active-icon swap of a running spell is the pet bar's alone.
+pub(crate) fn temp_slot_icon(
     bar: &PetBar,
     index: u32,
     spells: Option<&SpellCatalog>,
-    global: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
+) -> Option<benilla_ui::script::ActionIcon> {
+    use benilla_ui::script::ActionIcon;
     let entry = *bar.spells.bar.get(usize::try_from(index).ok()?)?;
     if entry.is_empty() {
         return None;
@@ -34,10 +33,16 @@ pub(crate) fn temp_slot_texture(
     let token = match entry.kind() {
         PET_ACT_REACTION => bar::reaction_token(entry.action()),
         PET_ACT_COMMAND => bar::command_token(entry.action()),
-        _ if entry.is_spell() => return spells?.get(entry.action())?.icon.clone(),
+        _ if entry.is_spell() => {
+            return spells?
+                .get(entry.action())?
+                .icon
+                .clone()
+                .map(ActionIcon::Path)
+        }
         _ => None,
     };
-    global(token?.1)
+    Some(ActionIcon::Global(token?.1))
 }
 
 /// `0x7226b0`: the pet's bar is in use unless its template forbids it, or we ride it in a seat
@@ -70,7 +75,7 @@ pub(super) fn can_gain_xp(pet: &ObjectStore, creator: Option<&ObjectStore>) -> b
 
 /// The action store, the temporary bar and the possess latch the bar's update writes and reads.
 type TempBarState<'w> = (
-    Option<ResMut<'w, PlayerActions>>,
+    Option<ResMut<'w, ActionSlots>>,
     Option<ResMut<'w, TempActionBar>>,
     Option<Res<'w, super::possess::PossessSpell>>,
 );
@@ -133,18 +138,16 @@ fn update_pet_temp_bar(
         }
     }
     if write {
-        let mut moved = false;
+        // Each of the twelve set without a send and signalled, moved or not (`0x5ab800`).
         for i in 0..12u8 {
             let packed = if u32::from(i) < PET_BAR_SLOTS {
                 (u32::from(ACTION_KIND_PET) << 24) | u32::from(i)
             } else {
                 0
             };
-            moved |= actions.set_local(TEMP_BAR_FIRST_SLOT + i, packed);
-        }
-        // The slots' icons follow the pet bar's actions.
-        if !moved {
-            actions.dirty = true;
+            let slot = TEMP_BAR_FIRST_SLOT + i;
+            actions.set_local(slot, packed);
+            crate::ui_action::slots::changed_in_turn(&mut ui, slot);
         }
     }
     let flags = if active {
@@ -158,9 +161,10 @@ fn update_pet_temp_bar(
             if active { "on" } else { "off" }
         );
         temp.flags = flags;
-        // The flag is set before the event (`0x5d4c0a`), whose stock handler asks `PetHasActionBar` whether the pet bar stays; the setter is idempotent, and the bonus page it moves (`0x5d4c0f`) is `feed_actions`' (#1281).
-        ui.write(move |s| s.set_temp_action_bar(flags));
     }
+    // The flag is set before the bonus update and the event (`0x5d4c0a`, `0x5d4c0f`), whose stock
+    // handler asks `PetHasActionBar` whether the pet bar stays.
+    ui.world(crate::ui_action::bonus::update_bonus_bar);
     fire(&mut ui);
 }
 
@@ -172,23 +176,19 @@ mod tests {
 
     #[test]
     fn a_slot_shows_its_action_s_texture() {
+        use benilla_ui::script::ActionIcon;
         let mut bar = PetBar::default();
         bar.spells.bar[0] = PetActionEntry::from(0x0700_0002); // Attack
         bar.spells.bar[1] = PetActionEntry::from(0x0600_0000); // Passive
-        let global = |k: &str| Some(format!("tex:{k}"));
         assert_eq!(
-            temp_slot_texture(&bar, 0, None, &global).as_deref(),
-            Some("tex:PET_ATTACK_TEXTURE")
+            temp_slot_icon(&bar, 0, None),
+            Some(ActionIcon::Global("PET_ATTACK_TEXTURE"))
         );
         assert_eq!(
-            temp_slot_texture(&bar, 1, None, &global).as_deref(),
-            Some("tex:PET_PASSIVE_TEXTURE")
+            temp_slot_icon(&bar, 1, None),
+            Some(ActionIcon::Global("PET_PASSIVE_TEXTURE"))
         );
-        assert_eq!(temp_slot_texture(&bar, 2, None, &global), None, "empty");
-        assert_eq!(
-            temp_slot_texture(&bar, 12, None, &global),
-            None,
-            "past the bar"
-        );
+        assert_eq!(temp_slot_icon(&bar, 2, None), None, "empty");
+        assert_eq!(temp_slot_icon(&bar, 12, None), None, "past the bar");
     }
 }

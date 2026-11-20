@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use super::test_live::VerbWritesExt;
+
 use benilla_ui::script::{
     ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView, BattlefieldJoin,
     BattlefieldListPush, BattlefieldQueueSlot, BattlegroundType, BattlemasterRow, HonorState,
@@ -536,6 +538,7 @@ fn the_arena_registrar_buys_and_turns_in_a_charter() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
     let mut s = load();
+    s.record_writes();
     let item = |name: &str, cost| PetitionVendorItem {
         name: Some(name.into()),
         texture: Some("Interface\\Icons\\INV_Misc_Note_02".into()),
@@ -564,9 +567,9 @@ fn the_arena_registrar_buys_and_turns_in_a_charter() {
            ArenaRegistrarFramePurchaseButton:Click()"#,
     )
     .unwrap();
-    // The stock purchase button hides the window, whose `OnHide` closes the vendor.
+    // The stock purchase button hides the window, whose `OnHide` closes the vendor; each act reaches the lent view inside its call.
     assert_eq!(
-        s.take_petition_requests(),
+        s.take_petition_acts(),
         vec![
             PetitionRequest::VendorBuy {
                 index: 0,
@@ -576,8 +579,6 @@ fn the_arena_registrar_buys_and_turns_in_a_charter() {
         ]
     );
     assert!(!shown(&s, "ArenaRegistrarFrame"));
-    // The close it queued fires on the next tick.
-    s.tick(0.0);
 
     // Back with the signed charter: the bags now hold a filled one.
     vendor.has_filled_petition = true;
@@ -592,12 +593,17 @@ fn the_arena_registrar_buys_and_turns_in_a_charter() {
     s.run("ArenaRegistrarButton4:Click()").unwrap();
     assert!(shown(&s, "PVPBannerFrame"), "the turn-in designs a banner");
     s.run("PVPBannerFrameAcceptButton:Click()").unwrap();
-    let requests = s.take_petition_requests();
+    let requests = s.take_petition_acts();
     assert!(
         matches!(
             requests.as_slice(),
-            // The banner frame's hide closes the vendor after the turn-in.
-            [PetitionRequest::VendorTurnInArena(b), PetitionRequest::CloseVendor] if b.team_size == 2
+            // The banner frame's and the registrar's hides each close the vendor after the
+            // turn-in; the vendor's own zero gates the second in the app (`0x5a24f0`).
+            [
+                PetitionRequest::VendorTurnInArena(b),
+                PetitionRequest::CloseVendor,
+                PetitionRequest::CloseVendor
+            ] if b.team_size == 2
                 && b.background_color >> 24 == 0xFF
                 && b.emblem_style != u32::MAX
         ),

@@ -15,7 +15,7 @@
 
 use mlua::{Lua, MultiValue, Table, Value};
 
-use super::object::{frame_handle_of, frame_wrapper};
+use super::object::frame_handle_of;
 use super::tooltip::{append_line, clear_content, fire_cleared, tip_mut};
 use super::{Model, TrainerTooltip};
 use crate::widget::FrameHandle;
@@ -71,118 +71,18 @@ pub struct SpellTooltipView {
     pub aura_description: String,
 }
 
+#[cfg(any(test, feature = "fixtures"))]
 impl super::UiScript {
-    /// Store or replace a spell's view built against the player, answering its ask: a tooltip
-    /// waiting on it re-renders now, a frame after its hover, where the reference builds it whole
-    /// at the call.
+    /// Stand in a spell's view built against the player, for a VM with no live view.
     pub fn set_spell_tooltip(&mut self, spell_id: u32, view: SpellTooltipView) {
-        self.store_spell_view(false, spell_id, view);
+        self.model_mut().spell_tooltips.insert(spell_id, view);
     }
 
-    /// Store or replace a spell's view built against the player's pet, the one the builder's unit
-    /// selector renders (`SetPetAction`, `SetSpell` on the pet book, a pet-learn trainer service).
+    /// Stand in a spell's view built against the player's pet, the one the builder's unit selector
+    /// renders (`SetPetAction`, `SetSpell` on the pet book, a pet-learn trainer service).
     pub fn set_pet_spell_tooltip(&mut self, spell_id: u32, view: SpellTooltipView) {
-        self.store_spell_view(true, spell_id, view);
+        self.model_mut().pet_spell_tooltips.insert(spell_id, view);
     }
-
-    fn store_spell_view(&mut self, alt_caster: bool, spell_id: u32, view: SpellTooltipView) {
-        let waiting: Vec<FrameHandle> = {
-            let mut model = self.model_mut();
-            let (views, asks) = spell_store(&mut model, alt_caster);
-            asks.remove(&spell_id);
-            views.insert(spell_id, view);
-            model
-                .spell_tooltip_waits
-                .iter()
-                .filter(|(_, w)| w.spell_id == spell_id && w.opts.alt_caster == alt_caster)
-                .map(|(h, _)| *h)
-                .collect()
-        };
-        for h in waiting {
-            if let Err(e) = answer_wait(&self.lua, h, spell_id, alt_caster) {
-                self.push_error(e);
-            }
-        }
-    }
-
-    /// Drain the spell ids the renderers asked the player's store for and it lacked.
-    pub fn take_spell_tooltip_asks(&mut self) -> Vec<u32> {
-        drain_set!(self, spell_tooltip_asks)
-    }
-
-    /// Drain the spell ids the renderers asked the pet's store for and it lacked.
-    pub fn take_pet_spell_tooltip_asks(&mut self) -> Vec<u32> {
-        drain_set!(self, pet_spell_tooltip_asks)
-    }
-
-    /// The spells whose pet view a hover reads from the VM's own state: the pet's bar and book,
-    /// whose setters pass the builder's unit selector. The app pushes their views ahead of a hover.
-    pub fn pet_spell_tooltip_subjects(&self) -> Vec<u32> {
-        let model = self.model_ref();
-        let pet_bar = super::pet::live_slots()
-            .into_iter()
-            .filter(|s| !s.is_token)
-            .filter_map(|s| s.spell_id);
-        let pet_book = super::spellbook::live_pet_book(&model)
-            .slots
-            .into_iter()
-            .map(|s| s.spell_id);
-        pet_bar.chain(pet_book).filter(|&id| id != 0).collect()
-    }
-
-    /// The spells whose player view a hover reads from the VM's own state rather than the
-    /// player's book: the open quest's and each log entry's reward spell, the open tradeskill's spell
-    /// subjects, the player's and every other unit's auras, the tracking spell and the talent
-    /// groups' glyph spells. The app pushes their views ahead of a hover.
-    pub fn spell_tooltip_subjects(&self) -> Vec<u32> {
-        let model = self.model_ref();
-        let rewards = model
-            .quest
-            .iter()
-            .filter_map(|q| q.reward_spell.as_ref())
-            .map(|s| s.spell_id)
-            .chain(
-                model
-                    .quest_log
-                    .iter()
-                    .filter_map(|r| super::quest_log::quest_detail(r)?.reward_spell)
-                    .map(|s| s.spell_id)
-                    .collect::<Vec<_>>(),
-            );
-        // `SetTradeSkillItem`'s spell hovers: the recipes that make no item.
-        let recipes = model
-            .trade_skill
-            .state
-            .iter()
-            .flat_map(|t| &t.recipes)
-            .filter(|r| !r.creates_item || r.product_item == 0)
-            .map(|r| r.spell_id);
-        let auras = model
-            .player_auras
-            .iter()
-            .chain(model.unit_auras.values().flatten())
-            .map(|a| a.spell_id);
-        let tracking = std::iter::once(model.minimap_tracking.spell);
-        let glyphs = super::glyph::glyph_spells(&model);
-        rewards
-            .chain(recipes)
-            .chain(auras)
-            .chain(tracking)
-            .chain(glyphs)
-            .filter(|&id| id != 0)
-            .collect()
-    }
-}
-
-/// A spell render that missed its view, kept to re-run when the view lands. The re-run is skipped
-/// unless the tooltip still shows `drawn`, so a line Lua added or rewrote since is kept.
-#[derive(Clone)]
-pub(crate) struct SpellWait {
-    spell_id: u32,
-    fallback_name: Option<String>,
-    opts: SpellRenderOpts,
-    remaining: Option<String>,
-    drawn: Drawn,
 }
 
 /// Each shown line's left and right cell as `(text, colour)`.
@@ -210,74 +110,27 @@ pub(super) fn drawn_lines(model: &mut Model, h: FrameHandle) -> mlua::Result<Dra
         .collect())
 }
 
-/// Re-run the render `h` still waits with on `spell_id` in the store `alt_caster` names, read
-/// afresh: an earlier re-render's Lua may have replaced it. Lines Lua added or rewrote since, or a
-/// fade under way, keep the tooltip as it is. The clear is silent: Lua made one setter call and saw
-/// its one `OnTooltipCleared`.
-fn answer_wait(lua: &Lua, h: FrameHandle, spell_id: u32, alt_caster: bool) -> mlua::Result<()> {
-    let (id, wait) = {
-        let mut model = crate::script::model_mut_of(lua);
-        let Some(wait) = model
-            .spell_tooltip_waits
-            .get(&h)
-            .filter(|w| w.spell_id == spell_id && w.opts.alt_caster == alt_caster)
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let fading = tip_mut(&mut model, h)?.fade.is_some();
-        if fading || drawn_lines(&mut model, h)? != wait.drawn {
-            model.spell_tooltip_waits.remove(&h);
-            return Ok(());
-        }
-        clear_content(&mut model, h);
-        (model.frame_id(h), wait)
-    };
-    let this = frame_wrapper(lua, id)?;
-    fill_spell(
-        lua,
-        &this,
-        h,
-        wait.spell_id,
-        wait.fallback_name,
-        wait.opts,
-        wait.remaining,
-    )
-}
-
-/// The view store and its asks for the unit a render is built against: the pet's when the
-/// builder's unit selector is set (`alt_caster`), else the player's.
-fn spell_store(
-    model: &mut Model,
-    alt_caster: bool,
-) -> (
-    &mut std::collections::HashMap<u32, SpellTooltipView>,
-    &mut std::collections::HashSet<u32>,
-) {
-    if alt_caster {
-        (
-            &mut model.pet_spell_tooltips,
-            &mut model.pet_spell_tooltip_asks,
-        )
-    } else {
-        (&mut model.spell_tooltips, &mut model.spell_tooltip_asks)
-    }
-}
-
-/// Look up a spell's view built against the player, or with `alt_caster` against its pet; a miss
-/// records the ask.
+/// The spell tooltip builder's view of `spell_id` at the call (`0x6238a0`), against the player
+/// or with `alt_caster` its pet: the live view builds it from the state as it is now, as the
+/// reference builds it whole at the call and keeps nothing.
 pub(super) fn spell_view_of(
     lua: &Lua,
     spell_id: u32,
     alt_caster: bool,
 ) -> Option<SpellTooltipView> {
-    let mut model = crate::script::model_mut_of(lua);
-    let (views, asks) = spell_store(&mut model, alt_caster);
-    let v = views.get(&spell_id).cloned();
-    if v.is_none() && spell_id != 0 {
-        asks.insert(spell_id);
-    }
-    v
+    let get = |key: &str| crate::strings::global(lua, key);
+    let live = super::read_live(|l| l.spell_tooltip(spell_id, alt_caster, &get)).flatten();
+    #[cfg(any(test, feature = "fixtures"))]
+    let live = live.or_else(|| {
+        let model = crate::script::model_mut_of(lua);
+        let views = if alt_caster {
+            &model.pet_spell_tooltips
+        } else {
+            &model.spell_tooltips
+        };
+        views.get(&spell_id).cloned()
+    });
+    live
 }
 
 /// The talent lines [`render_spell`] interleaves (`TOOLTIP_TALENT_RANK`, `TOOLTIP_TALENT_LEARN`):
@@ -293,7 +146,8 @@ pub(super) struct TalentLines {
     /// lack the key, and no rank row shows.
     pub rank_line: Option<String>,
     pub reqs: Vec<String>,
-    /// The next rank's spell id, 0 for none, asked from the store while `next_desc` is missing.
+    /// The next rank's spell id, 0 for none; `next_desc` is its view's description, built at the
+    /// call.
     pub next_spell: u32,
     pub next_desc: Option<String>,
     /// The closing hint lines, in order (`0x622800`).
@@ -520,9 +374,6 @@ pub(super) fn set_spell_with_talent(
             t.next_rank_spell = talent.next_spell;
         }
     }
-    if talent.next_desc.is_none() {
-        super::talent::ask_next_rank(lua, talent.next_spell);
-    }
     match spell_view_of(lua, spell_id, false) {
         Some(v) => render_spell(
             lua,
@@ -601,21 +452,6 @@ fn fill_spell(
         None => {
             if let Some(name) = fallback_name.clone() {
                 append_line(lua, this, (name, WHITE), None, false)?;
-            }
-            // The fallback stands until the app answers the ask; id 0 asks nothing.
-            if spell_id != 0 {
-                let mut model = crate::script::model_mut_of(lua);
-                let drawn = drawn_lines(&mut model, h)?;
-                model.spell_tooltip_waits.insert(
-                    h,
-                    SpellWait {
-                        spell_id,
-                        fallback_name,
-                        opts,
-                        remaining,
-                        drawn,
-                    },
-                );
             }
         }
     }
@@ -708,16 +544,17 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 if !super::multicast::has_spell(&model, spell_id, is_pet) {
                     return Ok(());
                 }
-                let pet_book;
-                let book = if is_pet {
-                    pet_book = super::spellbook::live_pet_book(&model);
-                    &pet_book.slots
-                } else {
-                    &model.spellbook.slots
+                let find = |slots: &[super::SpellSlotView]| {
+                    slots
+                        .iter()
+                        .find(|s| s.spell_id == spell_id)
+                        .map(|s| s.name.clone())
                 };
-                book.iter()
-                    .find(|s| s.spell_id == spell_id)
-                    .map(|s| s.name.clone())
+                if is_pet {
+                    find(&super::spellbook::live_pet_book(&model).slots)
+                } else {
+                    find(&super::spellbook::live_book().book.slots)
+                }
             };
             // The pet flag is also the builder's unit selector, as `SetSpell`'s.
             let opts = SpellRenderOpts {
@@ -732,12 +569,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetShapeshift",
         lua.create_function(|lua, (this, index): (Table, usize)| {
-            let (spell_id, name) = {
-                let model = crate::script::model_mut_of(lua);
-                match model.shapeshift_forms.get(index.saturating_sub(1)) {
-                    Some(f) => (f.view.spell_id, Some(f.view.name.clone())),
-                    None => return Ok(()),
-                }
+            let forms = super::shapeshift::forms(lua);
+            let (spell_id, name) = match forms.get(index.saturating_sub(1)) {
+                Some(f) => (f.view.spell_id, Some(f.view.name.clone())),
+                None => return Ok(()),
             };
             let opts = SpellRenderOpts {
                 brief: brief_tooltips(lua),
@@ -881,8 +716,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (town, spell) = {
                 let model = crate::script::model_mut_of(lua);
                 let t = &model.minimap_tracking;
-                let spell = t
-                    .spells
+                let spell = super::spellbook::live_book()
+                    .tracking
                     .iter()
                     .find(|s| s.spell_id == t.spell && t.spell != 0)
                     .map(|s| (s.spell_id, s.name.clone()));
@@ -962,7 +797,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, slot): (Table, u32)| {
             let action = {
                 let model = crate::script::model_mut_of(lua);
-                model.actions.get(&slot).cloned()
+                crate::script::action_slots::word(&model, slot)
             };
             let Some(a) = action else { return Ok(()) };
             match a.kind {
@@ -1046,14 +881,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Value::Number(n) => n as i64,
                 _ => return Err(mlua::Error::runtime(INVALID)),
             };
-            let subject = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                match super::trainer::service(&model, index) {
-                    Some(s) => s.tooltip.clone(),
-                    None => return Err(mlua::Error::runtime(INVALID)),
-                }
+            let Some(subject) = super::trainer::service_tooltip(lua, index) else {
+                return Err(mlua::Error::runtime(INVALID));
             };
             match subject {
                 // The item builder (`0x6277f0`) with its last flag set, which skips the sell

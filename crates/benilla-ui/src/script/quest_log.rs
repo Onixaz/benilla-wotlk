@@ -1115,7 +1115,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // One return per live timer, in log order, re-read every OnUpdate: `QuestTimerFrame_Update`
     // takes them as varargs and hides on none (`QuestTimerFrame.lua:11`, `:26`, `:37`). A timer
-    // run out marks its quest expired unless it is complete, inside the call (`0x5e634a` -> `0x5e57e0`): it reads failed at once, the questgivers are asked again, its line shows (`0x5e6385`), and `QUEST_LOG_UPDATE` follows (`0x5e63b0`). Deviation: the line goes out with the engine verbs' other lines after the tick, not inside the call (#1306).
+    // run out marks its quest expired unless it is complete, inside the call (`0x5e634a` -> `0x5e57e0`): it reads failed at once, the questgivers are asked again, its line shows (`0x5e6385`), and `QUEST_LOG_UPDATE` follows (`0x5e63b0`).
     g.set(
         "GetQuestTimers",
         lua.create_function(|lua, ()| {
@@ -1141,7 +1141,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     fail_seeded(id);
                     if let Some(Some(Some(title))) = super::live::write_live(|l| l.expire_quest(id))
                     {
-                        model.ui_errors_s.push(("ERR_QUEST_FAILED_S", title));
+                        drop(model);
+                        crate::script::ui_errors::show_now_s(lua, "ERR_QUEST_FAILED_S", title);
+                        model = crate::script::model_mut_of(lua);
                     }
                 }
                 super::live::unique_signal(&mut model, "QUEST_LOG_UPDATE");
@@ -2506,7 +2508,7 @@ mod tests {
             .unwrap());
         assert_eq!(clock.with_view(|v| v.expired.clone()), vec![783]);
         assert_eq!(
-            s.take_ui_errors_s(),
+            s.take_shown_s(),
             vec![("ERR_QUEST_FAILED_S", "The Fargodeep Mine".to_string())]
         );
         assert!(s
@@ -2517,6 +2519,6 @@ mod tests {
         // Marked once: the next call finds it failed.
         s.run("GetQuestTimers()").unwrap();
         assert_eq!(clock.with_view(|v| v.expired.clone()), vec![783]);
-        assert!(s.take_ui_errors_s().is_empty());
+        assert!(s.take_shown_s().is_empty());
     }
 }

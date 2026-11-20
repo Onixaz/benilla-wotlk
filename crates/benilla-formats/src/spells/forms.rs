@@ -1,6 +1,7 @@
 //! `SpellShapeshiftForm.dbc`: the per-form rows the action bar, the form gate, the spell tooltip
 //! and tracking read. A 12340 row is 35 fields: the name spans sixteen locales and a mask (2-18),
-//! and `flags1`, `creatureType`, `AttackIconID` and `CombatRoundTime` follow at 19, 20, 21 and 22.
+//! and `flags1`, `creatureType`, `AttackIconID` and `CombatRoundTime` follow at 19, 20, 21 and 22,
+//! four `creatureDisplayID`s at 23-26 and the eight `presetSpellID`s at 27-34.
 
 use std::collections::HashMap;
 
@@ -30,6 +31,9 @@ pub struct ShapeshiftForm {
     pub attack_icon: Option<String>,
     /// `CombatRoundTime` (column 22, `+0x18`): the form's attack speed in ms (`0x8013bc`).
     pub combat_round_time: u32,
+    /// `presetSpellID` (columns 27-34, `+0x2c`): a form listing any takes the temporary bar with
+    /// them (`0x5a7c50`, `0x5a7cd0`).
+    pub preset_spells: [u32; 8],
 }
 
 impl ShapeshiftForm {
@@ -44,6 +48,11 @@ impl ShapeshiftForm {
     /// makes it a silent no-op (`CastShapeshiftForm`); the warrior stances (`0x7`) set it on 5875.
     pub fn cancelable(&self) -> bool {
         self.flags & 0x2 == 0
+    }
+
+    /// The form lists a preset spell (`0x5a7c50`), so it takes the temporary bar.
+    pub fn has_preset_bar(&self) -> bool {
+        self.preset_spells.iter().any(|&s| s != 0)
     }
 }
 
@@ -83,6 +92,7 @@ pub fn load_shapeshift_forms(chain: &mut Chain) -> Result<HashMap<u32, Shapeshif
                         .filter(|&i| i != 0)
                         .and_then(|i| icons.get(&i).cloned()),
                     combat_round_time: u32_at(r, 22).unwrap_or(0),
+                    preset_spells: std::array::from_fn(|i| u32_at(r, 27 + i).unwrap_or(0)),
                 },
             );
         }

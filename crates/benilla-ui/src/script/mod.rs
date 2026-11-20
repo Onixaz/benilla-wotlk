@@ -46,6 +46,7 @@ macro_rules! drain_option {
 }
 
 /// Drain a set or map field into a `Vec`.
+#[cfg(any(test, feature = "fixtures"))]
 macro_rules! drain_set {
     ($self:expr, $($field:ident).+) => {{
         if $self.model_ref().$($field).+.is_empty() {
@@ -70,6 +71,7 @@ macro_rules! set_field {
 
 mod action;
 mod action_bar_toggles;
+mod action_slots;
 mod addon_message;
 mod arena_team;
 mod auction;
@@ -300,7 +302,7 @@ mod worldstate;
 mod worn_display;
 mod zone_text;
 
-pub use action::{ActionSlot, ActionState, ActionUse};
+pub use action::{ActionIcon, ActionSlot, ActionState, ActionUse};
 pub use addon::AddOnInfo;
 pub use addon_enable::{EnableHash, EnableLists};
 pub use addon_message::{AddonDistribution, AddonSend};
@@ -315,7 +317,7 @@ pub use auction::{
 pub use aura::AuraState;
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
-pub use barber::{BarberHost, BarberIntent, BarberStyle};
+pub use barber::{BarberRead, BarberStyle};
 pub use battlefield_positions::{BattlefieldFlagLive, BattlefieldPositionLive};
 pub use battlefield_queue::{
     BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
@@ -368,7 +370,7 @@ pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
 pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
-pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
+pub use gossip::{GossipOptionView, GossipQuestRow, GossipRead};
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
     LastOnline, UnitGuild, MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,
@@ -383,13 +385,12 @@ pub use macro_options::{EquippedForMacros, EquippedRow, OptionState};
 pub use mirror_timer::{MirrorTimer, MIRROR_TIMER_TOKENS};
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
-    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionButtonItem,
-    PetitionRecordView, PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
+    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionArg, PetitionButtonItem,
+    PetitionOutcome, PetitionRecordView, PetitionRequest, PetitionState, PetitionStep,
+    PetitionVendorItem, PetitionVendorState, GUILD_REGISTRAR_CLOSED_EVENT,
+    PETITION_VENDOR_CLOSED_EVENT,
 };
-pub use tabard::{
-    emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
-    TABARD_CREATION_COST,
-};
+pub use tabard::{emblem_mask_path, EMBLEM_MASK_TOKEN, TABARD_COUNTS, TABARD_CREATION_COST};
 pub use tooltip_quest::{QuestRecord, QuestTooltipRead, QuestTooltipView};
 pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
@@ -428,7 +429,7 @@ pub use item_stats::{
     ItemRecordWait, ItemSetMember, ItemSetView, ItemSpellView, ItemTables, ItemTemplateView,
     PlayerFields, PlayerReqState, RandomSuffixView, ReqFields,
 };
-pub use item_text::ItemTextState;
+pub use item_text::ItemTextRead;
 pub use layout_cache::PlacedFrame;
 pub use lfg::{
     EncounterView, LfgBootView, LfgCatalogView, LfgCompletionRewardView, LfgDungeonRewardView,
@@ -449,12 +450,12 @@ pub use mail::{
 };
 pub use measure::TextMeasure;
 pub use merchant::{
-    CostItem, ExtendedCost, ItemStatsHead, MerchantItem, MerchantState, RepairCosts,
+    CostItem, ExtendedCost, ItemStatsHead, MerchantAct, MerchantItem, MerchantList,
+    MerchantOutcome, MerchantState, RepairAt, RepairCosts,
 };
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};
-pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
 pub use pet::{PetActionView, PetBarLive, PetMenuOutcome, PetMenuVerb, PetStats, PossessView};
 pub use pvp::{
@@ -473,7 +474,7 @@ pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};
 pub use reputation::{FactionEntry, ReputationSend, ReputationState};
-pub use rune::{RuneEvent, RuneState, MAX_RUNES, RUNE_KINDS};
+pub use rune::{RuneEvent, RuneRegen, RuneState, MAX_RUNES, RUNE_KINDS};
 pub use session::SessionRequest;
 pub use shapeshift::ShapeshiftFormView;
 pub(crate) use simplehtml::{
@@ -485,7 +486,8 @@ pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects};
 pub use spellbook::{
-    resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
+    resolve_spell_by_name, PetBookState, PlayerBook, SpellBookState, SpellSlotView, SpellTabView,
+    SpellTargetingLive,
 };
 pub use stable::{
     StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,
@@ -493,18 +495,18 @@ pub use stable::{
 pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };
-pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
+pub use taxi::{TaxiAct, TaxiNodeType, TaxiOutcome, TaxiUiNode, TaxiUiState};
 pub use threat::{ThreatEntry, ThreatList, ThreatReading, ThreatView};
 pub use title::{chosen_title_name, title_row, PlayerTitles, TitleRow};
 pub use tooltip_spell::SpellTooltipView;
-pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};
+pub use totem::{TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
 pub use tradeskill::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
 };
 pub use trainer::{
-    TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory, TrainerSkillReq,
-    TrainerState, TrainerTooltip,
+    trainer_type_filter, TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory,
+    TrainerServiceLive, TrainerSkillReq, TrainerState, TrainerTooltip, TrainerWindow,
 };
 pub use types::{
     BlendMode, EditAction, EditBoxAdvanceRequest, EditBoxTextUi, EditOutcome, EditUnit,

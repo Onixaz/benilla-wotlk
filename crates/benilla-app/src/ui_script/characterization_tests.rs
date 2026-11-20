@@ -124,6 +124,27 @@ local VERBS = {
     { "atstable", function() return IsAtStableMaster() end },
     { "stabled", function() return GetNumStablePets() end },
     { "stablesel", function() return GetSelectedStablePet() end },
+    { "rune2", function() return GetRuneType(2) end },
+    { "rune2dur", function() return (select(2, GetRuneCooldown(2))) end },
+    { "rune2ready", function() return (select(3, GetRuneCooldown(2))) end },
+    { "totem1", function() return (GetTotemInfo(1)) end },
+    { "totem1name", function() return (select(2, GetTotemInfo(1))) end },
+    { "totem1left", function() return GetTotemTimeLeft(1) end },
+    { "casting", function() return (UnitCastingInfo("player")) end },
+    { "castid", function() return (select(8, UnitCastingInfo("player"))) end },
+    { "stopcast", function() return SpellStopCasting ~= nil end },
+    { "tabs", function() return GetNumSpellTabs() end },
+    { "book1", function() return (GetSpellName(1, "spell")) end },
+    { "book2", function() return (GetSpellName(2, "spell")) end },
+    { "tip2", function()
+        if not GetSpellName(2, "spell") then return nil end
+        GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+        GameTooltip:SetSpell(2, "spell")
+        local n, last = GameTooltip:NumLines(), GameTooltipTextLeft1:GetText()
+        for i = 2, n do last = _G["GameTooltipTextLeft" .. i]:GetText() end
+        GameTooltip:Hide()
+        return n .. ":" .. tostring(last)
+    end },
     { "greenrange", function() return GetQuestGreenRange() end },
     { "cursize", function() return GetCurrencyListSize() end },
     { "cur2", function() local n, _, _, _, _, c = GetCurrencyListInfo(2) return tostring(n) .. "x" .. tostring(c) end },
@@ -138,6 +159,10 @@ local VERBS = {
     { "slots5", function() return GetContainerNumSlots(5) end },
     { "name5", function() return GetBagName(5) end },
     { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
+    { "binderdist", function() return CheckBinderDist() end },
+    { "talentdist", function() return CheckTalentMasterDist() end },
+    { "boot", function() return GetInstanceBootTimeRemaining() end },
+    { "spirittime", function() return GetAreaSpiritHealerTime() end },
     { "gbtabs", function() return GetNumGuildBankTabs() end },
     { "gbtab1", function() return (GetGuildBankTabInfo(1)) end },
     { "gbtab2", function() return (GetGuildBankTabInfo(2)) end },
@@ -148,6 +173,32 @@ local VERBS = {
     { "gblog", function() return GetNumGuildBankTransactions(1) end },
     { "gblogname", function() return (select(2, GetGuildBankTransaction(1, 1))) end },
     { "gbtext", function() return GetGuildBankText(1) end },
+    { "cansave", function() return TabardModel and TabardModel:CanSaveTabardNow() end },
+    { "barberinfo", function() return select("#", GetBarberShopStyleInfo(2)) end },
+    { "barbercost", function() return GetBarberShopTotalCost() end },
+    { "gossiptext", function() return GetGossipText() end },
+    { "gossipopts", function() return GetNumGossipOptions() end },
+    { "ittext", function() return ItemTextGetText() end },
+    { "itpage", function() return ItemTextGetPage() end },
+    { "itnext", function() return ItemTextHasNextPage() end },
+    { "merchantn", function() return GetMerchantNumItems() end },
+    { "npc", function() return UnitGUID("npc") end },
+    { "npcname", function() return UnitName("npc") end },
+    { "buybackn", function() return GetNumBuybackItems() end },
+    { "repaircost", function() return GetRepairAllCost() end },
+    { "money", function() return GetMoney() end },
+    { "trainn", function() return GetNumTrainerServices() end },
+    { "trainsel", function() return GetTrainerSelectionIndex() end },
+    { "taxin", function() return NumTaxiNodes() end },
+    { "charter", function() return GetGuildCharterCost() end },
+    { "petnames", function() return GetNumPetitionNames() end },
+    { "pettitle", function() local _, t = GetPetitionInfo() return t end },
+    { "petitems", function() return GetNumPetitionItems() end },
+    { "taxicost", function()
+        for i = 1, NumTaxiNodes() do
+            if TaxiNodeName(i) == "Sentinel Hill, Westfall" then return TaxiNodeCost(i) end
+        end
+    end },
 }
 local function answers()
     local verbs = {}
@@ -176,7 +227,7 @@ pub(super) struct Seen {
 }
 
 impl Seen {
-    fn parse(line: &str) -> Self {
+    pub(super) fn parse(line: &str) -> Self {
         let mut parts = line.splitn(3, '\t');
         let event = parts.next().unwrap_or_default().to_string();
         let args = parts.next().unwrap_or_default().to_string();
@@ -731,16 +782,17 @@ fn a_reload_zeroes_the_countdowns() {
         pin(&armed, &["CONFIRM_SUMMON"], &["reclaim", "summon"]),
         vec!["CONFIRM_SUMMON | reclaim=30 summon=120"]
     );
-    let clocks = |rig: &Rig| {
-        rig.app
-            .world()
-            .non_send_resource::<benilla_ui::script::UiScript>()
-            .eval::<String>(
+    // Read with the `World` lent, as a script call reads the boot deadline (`0x5162e0`).
+    let clocks = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<String>(
                 "return GetInstanceBootTimeRemaining() .. ',' .. GetInstanceLockTimeRemaining()",
             )
-            .unwrap()
+        })
+        .expect("a VM")
+        .unwrap()
     };
-    assert_eq!(clocks(&rig), "59,89", "the boot and lock clocks run");
+    assert_eq!(clocks(&mut rig), "59,89", "the boot and lock clocks run");
     rig.app
         .world()
         .non_send_resource::<benilla_ui::script::UiScript>()
@@ -752,7 +804,7 @@ fn a_reload_zeroes_the_countdowns() {
         pin(&seen, &["PLAYER_ENTERING_WORLD"], &["reclaim", "summon"]),
         vec!["PLAYER_ENTERING_WORLD | reclaim=0 summon=0"]
     );
-    assert_eq!(clocks(&rig), "0,0");
+    assert_eq!(clocks(&mut rig), "0,0");
 }
 
 /// The summon offer and its withdrawal in one frame and apart: `CONFIRM_SUMMON` fires from the
@@ -767,7 +819,7 @@ fn summon_offer_and_cancel_fire_from_their_handlers() {
     let request = || SessionEvent::SummonRequest {
         summoner: 0x20,
         zone: 1519,
-        delay_ms: 120_000,
+        delay_ms: 120_500,
     };
     let events = &["CONFIRM_SUMMON", "CANCEL_SUMMON"];
     let both = rig.packets(vec![request(), SessionEvent::SummonCancel], 3);
@@ -1709,30 +1761,20 @@ fn quest_dialogs_and_the_escort_confirm() {
         DIALOG_EVENTS,
         &[],
     ));
-    // No NPC is held, so each dialog closes on its first distance check; the close zeroes the giver and leaves the panel's text (`0x58cb6b`, `0x58cb98`).
+    // No NPC is in view, so no panel takes the interact target (`0x58c5c7`) and nothing closes one: no `QUEST_FINISHED`.
     let lines = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(
         seen,
         vec![
-            lines(&[
-                "QUEST_DETAIL | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle=Charz qdone=nil",
-            ]),
-            lines(&[
-                "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle=Charz qdone=1",
-            ]),
-            lines(&[
-                "QUEST_COMPLETE | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle=Charz qdone=nil",
-            ]),
+            lines(&["QUEST_DETAIL | qtitle=Charz qdone=nil"]),
+            lines(&["QUEST_PROGRESS | qtitle=Charz qdone=1"]),
+            lines(&["QUEST_COMPLETE | qtitle=Charz qdone=nil"]),
             // The template is not cached: the turn-in waits for its answer (`0x6d1192`).
             lines(&[]),
             // Each handler fires its panel's event in its turn (`0x58dfb5`, then `0x58bb4c`).
             lines(&[
                 "QUEST_DETAIL | qtitle=Charz qdone=nil",
                 "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle=Charz qdone=1",
             ]),
             lines(&["QUEST_ACCEPT_CONFIRM Escort Charz"]),
         ]
@@ -1971,15 +2013,21 @@ fn a_handler_event_sees_the_packets_before_it_and_none_after() {
     rig.packets(vec![flags(0), control(true), flags(taxi)], 1);
     assert_eq!(take_live(&rig), vec!["gained live=nil verb=nil"]);
     // The observer sees it too, inside the drain ahead of every feed, after the stock control
-    // handler registered before it and the flags packet's `UNIT_FLAGS` (`0x60c240`) ahead of both.
+    // handler registered before it and the flags packet's `UNIT_FLAGS` (`0x60c240`) ahead of both;
+    // the stock handler ends in the usable update (`0x52102a`).
     assert_eq!(
         pin(&ahead, &["CHARZ_HANDLER"], &["taxi"]),
         vec!["CHARZ_HANDLER lost | taxi=1"]
     );
-    let first: Vec<&str> = ahead.iter().take(3).map(|s| s.event.as_str()).collect();
+    let first: Vec<&str> = ahead.iter().take(4).map(|s| s.event.as_str()).collect();
     assert_eq!(
         first,
-        ["UNIT_FLAGS", "PLAYER_CONTROL_LOST", "CHARZ_HANDLER"]
+        [
+            "UNIT_FLAGS",
+            "PLAYER_CONTROL_LOST",
+            "SPELL_UPDATE_USABLE",
+            "CHARZ_HANDLER"
+        ]
     );
 }
 
@@ -2609,7 +2657,7 @@ fn the_score_event_waits_for_the_last_name() {
     );
 }
 
-/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`).
+/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`). The anywhere list's battlemaster holds the interact target, so the same battlemaster's list re-sets it and the clear's walk closes that battlemaster first (`0x54970f` -> `0x51fd1c` -> `0x51309f` -> `0x5496dc`).
 #[test]
 fn each_battlefield_list_fires_its_source_event_with_its_instances() {
     use benilla_protocol::messages::BattlefieldList;
@@ -2649,6 +2697,7 @@ fn each_battlefield_list_fires_its_source_event_with_its_instances() {
         vec![
             "NPC_PVPQUEUE_ANYWHERE | bfcount=1",
             "PVPQUEUE_ANYWHERE_SHOW | bfcount=2",
+            "BATTLEFIELDS_CLOSED | bfcount=2",
             "BATTLEFIELDS_SHOW | bfcount=3",
             "BATTLEFIELDS_CLOSED | bfcount=4",
             "BATTLEFIELDS_CLOSED | bfcount=4",
@@ -3403,8 +3452,11 @@ fn banker_create(npc_flags: u32) -> SessionEvent {
     npc_create(BANKER, npc_flags)
 }
 
+/// `UNIT_NPC_FLAG_GOSSIP`: a flag the interact target's watchdog wants to keep a unit held (`0x7295cc`).
+pub(super) const GOSSIP_NPC: u32 = crate::target::cursor_mode::npc_flags::GOSSIP;
+
 /// A creature as a stream create sends it, with `npc_flags`.
-fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
+pub(super) fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
     let pairs = vec![
         (2, 0x9),
         (FIELD_UNIT_HEALTH, 500),
@@ -3717,13 +3769,10 @@ fn a_window_on_the_banker_itself_stays_open_after_the_bank_closes() {
     );
     assert_eq!(gossip_npc(&rig), Some(BANKER), "the menu keeps its state");
     let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
-    // Their order is the gossip feed's, #1279's.
-    let mut both = fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]);
-    both.sort();
     assert_eq!(
-        both,
-        ["BANKFRAME_OPENED", "GOSSIP_CLOSED"],
-        "the bank's open closes the menu it finds"
+        fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]),
+        ["GOSSIP_CLOSED", "BANKFRAME_OPENED"],
+        "the bank's setter closes the menu it finds before the bank opens (`0x57b909` -> `0x512ef6`)"
     );
     assert_eq!(gossip_npc(&rig), None);
     // A vendor on the banker: the same.
@@ -5166,7 +5215,7 @@ fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
     }
 }
 
-/// The stable master beside us, so the range guard keeps the stable open.
+/// The stable master beside us, so the interact target's watchdog keeps the stable open.
 fn stable_master_create() -> SessionEvent {
     stable_master_at(STABLE_MASTER)
 }
@@ -5193,6 +5242,10 @@ fn stable_master_at(guid: u64) -> SessionEvent {
             (FIELD_UNIT_HEALTH, 500),
             (FIELD_UNIT_MAXHEALTH, 500),
             (FIELD_UNIT_LEVEL, 80),
+            (
+                benilla_protocol::field::FIELD_UNIT_NPC_FLAGS,
+                crate::target::cursor_mode::npc_flags::STABLEMASTER,
+            ),
         ])
         .into_created(ObjectType::Unit),
     }
@@ -5428,6 +5481,267 @@ fn a_supersede_unlearns_the_old_companion_and_learns_the_new() {
             "COMPANION_UNLEARNED | mounts=0 critters=1",
             "COMPANION_UPDATE | mounts=0 critters=1",
             "COMPANION_LEARNED | mounts=0 critters=1",
+        ]
+    );
+}
+
+// ── Runes and totems (#1281) ─────────────────────────────────────────────────────────────────────
+
+use benilla_protocol::field::FIELD_PLAYER_RUNE_REGEN_1;
+
+/// A death knight's rates on our create: ten seconds a rune for every kind.
+fn rune_rates() -> Vec<(u16, u32)> {
+    let mut f = vec![OBJECT_TYPE_PLAYER];
+    f.extend((0..4).map(|k| (FIELD_PLAYER_RUNE_REGEN_1 + k, 0.1f32.to_bits())));
+    f
+}
+
+/// The rune packets apply in their handlers and fire there, in wire order: the resync's six
+/// `RUNE_POWER_UPDATE`s each read the whole resync applied (`0x5ee440`), the convert's
+/// `RUNE_TYPE_UPDATE` the new kind (`0x5ee020`), and the power add's `ACTIONBAR_UPDATE_COOLDOWN`
+/// comes last (`0x5ee520`). The cooldown's duration is the player's rate read at the call
+/// (`0x613098`).
+#[test]
+fn rune_packets_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&rune_rates()) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ResyncRunes(benilla_protocol::messages::ResyncRunes {
+                count: 6,
+                runes: vec![(0, 255), (0, 0), (1, 255), (1, 255), (2, 255), (2, 255)],
+            }),
+            SessionEvent::ConvertRune(benilla_protocol::messages::ConvertRune { rune: 1, kind: 3 }),
+            SessionEvent::AddRunePower { mask: 0x2 },
+        ],
+        2,
+    );
+    let events = &[
+        "RUNE_POWER_UPDATE",
+        "RUNE_TYPE_UPDATE",
+        "ACTIONBAR_UPDATE_COOLDOWN",
+    ];
+    let verbs = &["rune2", "rune2dur", "rune2ready"];
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "RUNE_POWER_UPDATE 1 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 2 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 3 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 4 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 5 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_POWER_UPDATE 6 false | rune2=1 rune2dur=10 rune2ready=false",
+            "RUNE_TYPE_UPDATE 2 | rune2=4 rune2dur=10 rune2ready=false",
+            "ACTIONBAR_UPDATE_COOLDOWN | rune2=4 rune2dur=10 rune2ready=false",
+        ]
+    );
+}
+
+/// The world entry resets the rune table after `PLAYER_ENTERING_WORLD` (`0x5281a6`, then
+/// `0x528294` -> `0x5edef0`), so the entry's handlers read the table the packets left, and the
+/// verbs after it the game start's.
+#[test]
+fn the_world_entry_resets_the_runes_after_entering_the_world() {
+    let Some(mut rig) = Rig::login(&rune_rates()) else {
+        return;
+    };
+    let convert =
+        SessionEvent::ConvertRune(benilla_protocol::messages::ConvertRune { rune: 1, kind: 3 });
+    rig.packets(vec![convert, SessionEvent::ObjectDestroyed(ME)], 2);
+    let seen = rig.packets(vec![self_create(&rune_rates())], 3);
+    assert_eq!(
+        pin(&seen, &["PLAYER_ENTERING_WORLD"], &["rune2"]),
+        vec!["PLAYER_ENTERING_WORLD | rune2=4"]
+    );
+    assert_eq!(rig.live_now().line(&["rune2"]), "NOW | rune2=1");
+}
+
+/// The totem guid.
+const TOTEM: u64 = 0xF130_0000_0000_0050;
+
+fn totem_unit() -> SessionEvent {
+    SessionEvent::ObjectCreate {
+        guid: TOTEM,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_UNIT_HEALTH, 5),
+            (FIELD_UNIT_MAXHEALTH, 5),
+            (FIELD_UNIT_LEVEL, 80),
+        ])
+        .into_created(ObjectType::Unit),
+    }
+}
+
+/// `SMSG_TOTEM_CREATED` stores its slot silently (`0x526d4c`); the totem unit's create announces
+/// it (`0x740140`), and its destroy's disable sends, clears and announces it (`0x73574a`), each
+/// in its handler's turn. The verbs read the table the handler left.
+#[test]
+fn totem_events_fire_from_the_unit_create_and_disable() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let created = SessionEvent::TotemCreated(benilla_protocol::messages::TotemCreated {
+        slot: 0,
+        guid: TOTEM,
+        duration_ms: 60_000,
+        spell_id: 3599,
+    });
+    let summoned = rig.packets(vec![created, totem_unit()], 2);
+    let gone = rig.packets(vec![SessionEvent::ObjectDestroyed(TOTEM)], 2);
+    assert_eq!(
+        pin(
+            &summoned,
+            &["PLAYER_TOTEM_UPDATE"],
+            &["totem1", "totem1name"]
+        ),
+        vec!["PLAYER_TOTEM_UPDATE 1 | totem1=true totem1name=nil"]
+    );
+    let verbs = &["totem1", "totem1left"];
+    assert_eq!(
+        pin(&gone, &["PLAYER_TOTEM_UPDATE"], verbs),
+        vec!["PLAYER_TOTEM_UPDATE 1 | totem1=false totem1left=0"]
+    );
+}
+
+/// `DestroyTotem` sends, clears and announces inside the call (`0x51d562` -> `0x5197d0`): the
+/// same chunk reads the slot empty, and the event has fired before the verb returned.
+#[test]
+fn destroy_totem_acts_inside_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let created = SessionEvent::TotemCreated(benilla_protocol::messages::TotemCreated {
+        slot: 2,
+        guid: TOTEM,
+        duration_ms: 60_000,
+        spell_id: 3599,
+    });
+    rig.packets(vec![created], 2);
+    let answers = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<(bool, usize, bool)>(
+            "local before = (GetTotemInfo(3)) DestroyTotem(3) \
+             local fired = 0 for _, l in ipairs(CHARZ_LOG) do \
+               if l:find('^PLAYER_TOTEM_UPDATE') then fired = fired + 1 end end \
+             return before, fired, (GetTotemInfo(3))",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(answers, (true, 1, false));
+}
+
+/// Our attack start and stop fire `PLAYER_ENTER_COMBAT` and `PLAYER_LEAVE_COMBAT` from their
+/// handlers (`0x756897`, `0x756b86`), so a flags update between them fires its `UNIT_FLAGS`
+/// between them, in wire order. `PLAYER_REGEN_DISABLED` still fires from the units' feed after the
+/// frame's packets (#1289).
+#[test]
+fn attack_start_and_stop_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const MOB: u64 = 0xF130_0000_0000_0099;
+    let seen = rig.packets(
+        vec![
+            SessionEvent::AttackStart {
+                attacker: ME,
+                victim: MOB,
+            },
+            flags(crate::player::UNIT_FLAG_IN_COMBAT),
+            SessionEvent::AttackStop {
+                attacker: ME,
+                victim: MOB,
+                face_victim: false,
+            },
+        ],
+        3,
+    );
+    let events = &[
+        "PLAYER_ENTER_COMBAT",
+        "PLAYER_LEAVE_COMBAT",
+        "UNIT_FLAGS",
+        "PLAYER_REGEN_DISABLED",
+    ];
+    assert_eq!(
+        pin(&seen, events, &["combat"]),
+        vec![
+            "PLAYER_ENTER_COMBAT | combat=nil",
+            "UNIT_FLAGS player | combat=1",
+            "PLAYER_LEAVE_COMBAT | combat=1",
+            "PLAYER_REGEN_DISABLED | combat=1",
+        ]
+    );
+}
+
+/// A cast's edges apply in their handlers and fire there, in wire order: `SMSG_SPELL_START` opens
+/// our cast and fires `UNIT_SPELLCAST_START` with it already readable (`0x805409`), and
+/// `SMSG_SPELL_GO` fires `SUCCEEDED` with the cast still running, then `STOP` with it gone
+/// (`0x7fecc0`, `0x7fee38`); a flags update between them fires between them.
+#[test]
+fn cast_bar_events_fire_from_the_spell_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const FIREBALL: u32 = 133;
+    let start = SessionEvent::SpellStart {
+        caster: ME,
+        cast_count: 4,
+        spell_id: FIREBALL,
+        cast_flags: 0,
+        cast_time_ms: 1500,
+        target: None,
+        ammo_display_id: None,
+        immunities: None,
+    };
+    let go = SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 4,
+        spell_id: FIREBALL,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![],
+        misses: vec![],
+        reflects: vec![],
+        target: None,
+        go_target: None,
+        target_mask: 0,
+        src: None,
+        dest: None,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    let seen = rig.packets(
+        vec![start, flags(crate::player::UNIT_FLAG_IN_COMBAT), go],
+        2,
+    );
+    let events = &[
+        "UNIT_SPELLCAST_START",
+        "UNIT_FLAGS",
+        "UNIT_SPELLCAST_SUCCEEDED",
+        "UNIT_SPELLCAST_STOP",
+    ];
+    assert_eq!(
+        pin(&seen, events, &["casting", "castid"]),
+        vec![
+            "UNIT_SPELLCAST_START player Fireball Rank 1 4 | casting=Fireball castid=4",
+            "UNIT_FLAGS player | casting=Fireball castid=4",
+            "UNIT_SPELLCAST_SUCCEEDED player Fireball Rank 1 4 | casting=Fireball castid=4",
+            "UNIT_SPELLCAST_STOP player Fireball Rank 1 4 | casting=nil castid=nil",
         ]
     );
 }
@@ -6827,5 +7141,307 @@ fn an_item_record_reads_at_the_call_and_its_answer_repaints_from_the_handler() {
         ),
         "10",
         "the stat lines read the record at the call"
+    );
+}
+
+/// Each window whose open now takes the interact target closes the vendor holding it inside that open, `MERCHANT_CLOSED` ahead of its own show: the quest frame (`0x58c6cc`), the auctioneer (`0x59f008`), the stable (`0x5a11d9`), the mailbox (`0x56dbe2`), the battlemaster (`0x54970f`) and the trade window (`0x5874cb` -> `0x587124`); the vendor's next open then closes that window in turn through its leg of the interaction close (`0x512e60`).
+#[test]
+fn every_window_open_takes_the_interact_target_from_the_vendor_holding_it() {
+    use benilla_protocol::messages::{BattlefieldList, QuestGiverList, TradeStatus};
+    const VENDOR: u64 = BANKER + 0x10;
+    const NEW: u64 = BANKER + 0x11;
+    const PARTNER: u64 = 0x0000_0000_0000_0777;
+    // Both Human (template 1), so the partner passes the watchdog's cooperation check (`0x51feba`).
+    let human = (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1);
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, human]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![
+            npc_create(VENDOR, GOSSIP_NPC),
+            npc_create(NEW, GOSSIP_NPC),
+            player_create_with(PARTNER, &[human]),
+        ],
+        2,
+    );
+    let vendor = || SessionEvent::VendorInventory {
+        vendor: VENDOR,
+        items: Vec::new(),
+        error: Some(0),
+    };
+    let target = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::ui_session::InteractTarget>()
+            .0
+    };
+    type Open = fn(&World) -> bool;
+    let opens: [(&str, SessionEvent, &str, u64, Open); 6] = [
+        (
+            "quest",
+            SessionEvent::QuestGreeting(QuestGiverList {
+                npc: NEW,
+                ..Default::default()
+            }),
+            "QUEST_GREETING",
+            NEW,
+            |w| {
+                w.non_send_resource::<crate::ui_quest::QuestGiver>()
+                    .is_open()
+            },
+        ),
+        (
+            "auction",
+            SessionEvent::AuctionHello {
+                auctioneer: NEW,
+                house_id: 1,
+                enabled: true,
+            },
+            "AUCTION_HOUSE_SHOW",
+            NEW,
+            |w| {
+                w.resource::<crate::ui_auction::AuctionOpen>()
+                    .auctioneer
+                    .is_some()
+            },
+        ),
+        (
+            "stable",
+            SessionEvent::ListStabledPets {
+                npc: NEW,
+                num_stable_slots: 0,
+                pets: Vec::new(),
+            },
+            "PET_STABLE_SHOW",
+            NEW,
+            |w| {
+                use crate::ui_session::NpcSession;
+                w.resource::<crate::ui_stable::StableOpen>().npc().is_some()
+            },
+        ),
+        (
+            "mailbox",
+            SessionEvent::ShowMailbox { mailbox: NEW },
+            "MAIL_SHOW",
+            NEW,
+            |w| w.resource::<crate::ui_mail::MailOpen>().mailbox.is_some(),
+        ),
+        (
+            "battlemaster",
+            SessionEvent::BattlefieldList(BattlefieldList {
+                battlemaster: NEW,
+                bg_type: 2,
+                ..Default::default()
+            }),
+            "BATTLEFIELDS_SHOW",
+            NEW,
+            |w| {
+                w.resource::<crate::ui_battlefield::Battlefield>()
+                    .battlemaster()
+                    .is_some()
+            },
+        ),
+        (
+            "trade",
+            SessionEvent::TradeStatus {
+                status: TradeStatus::OpenWindow { trade_id: 1 },
+            },
+            "TRADE_SHOW",
+            PARTNER,
+            |w| w.resource::<crate::ui_trade::TradeSession>().is_open(),
+        ),
+    ];
+    for (what, open, show, holder, is_open) in opens {
+        rig.packets(vec![vendor()], 2);
+        assert_eq!(target(&rig), Some(VENDOR), "{what}: the vendor holds it");
+        if what == "trade" {
+            rig.app
+                .world_mut()
+                .resource_mut::<crate::ui_trade::TradeSession>()
+                .begin(PARTNER);
+        }
+        let seen = rig.packets(vec![open], 3);
+        let order = fired(&seen, &["MERCHANT_CLOSED", show]);
+        assert_eq!(
+            order.first().map(String::as_str),
+            Some("MERCHANT_CLOSED"),
+            "{what}: the vendor closes inside the open, ahead of its show: {order:?}"
+        );
+        assert_eq!(
+            fired(&seen, &["MERCHANT_CLOSED"]).len(),
+            1,
+            "{what}: one close, from its leg"
+        );
+        assert_eq!(target(&rig), Some(holder), "{what} holds the target");
+        assert!(is_open(rig.app.world()), "{what} opened");
+        // The vendor's next open takes it back through the window's own leg.
+        rig.packets(vec![vendor()], 2);
+        assert!(
+            !is_open(rig.app.world()),
+            "{what}: the vendor's open closed it"
+        );
+        assert_eq!(target(&rig), Some(VENDOR));
+    }
+}
+
+/// The quest frame's set-current takes the interact target even from the giver holding it, so a creature's greeting then details at the same NPC fire `QUEST_FINISHED` between (`0x58c6cc` -> `0x51fd1c` -> `0x512f1a`); a GameObject giver already holding it skips the set, and fires none (`0x58c6a9`-`0x58c6c6`).
+#[test]
+fn a_creature_givers_next_panel_finishes_the_last_and_a_gameobjects_does_not() {
+    use benilla_protocol::messages::{QuestDetails, QuestGiverList};
+    const GIVER: u64 = BANKER + 0x20;
+    const BOARD: u64 = 0xF110_0000_0300_0021;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let board = SessionEvent::ObjectCreate {
+        guid: BOARD,
+        kind: EntityKind::GameObject,
+        display_id: None,
+        position: [-8949.0, -130.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT.
+        fields: ObjectFields::from_pairs(&[(2, 0x21)]).into_created(ObjectType::GameObject),
+    };
+    rig.packets(vec![npc_create(GIVER, GOSSIP_NPC), board], 2);
+    for (giver, finishes) in [(GIVER, 1), (BOARD, 0)] {
+        let greeting = SessionEvent::QuestGreeting(QuestGiverList {
+            npc: giver,
+            ..Default::default()
+        });
+        rig.packets(vec![greeting], 2);
+        let detail = SessionEvent::QuestDetail(QuestDetails {
+            npc: giver,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        });
+        let seen = rig.packets(vec![detail], 2);
+        assert_eq!(
+            fired(&seen, &["QUEST_FINISHED", "QUEST_DETAIL"]),
+            [vec!["QUEST_FINISHED"; finishes], vec!["QUEST_DETAIL"]].concat(),
+            "giver {giver:#x}"
+        );
+        assert_eq!(
+            rig.app
+                .world()
+                .resource::<crate::ui_session::InteractTarget>()
+                .0,
+            Some(giver)
+        );
+    }
+}
+
+/// `"npc"` on a GameObject interact target is no unit to the getters: `UnitExists` asks the object's targetable slot (`0x60c2f8`), which a GameObject answers 0 (`0x8e5250`), and `UnitName` reads the template's name, `""` until it is cached (`0x60e838` -> `0x70cdf0`); `UnitGUID` names it.
+#[test]
+fn npc_on_a_gameobject_names_its_template_and_is_no_unit() {
+    const BOX: u64 = 0xF110_0000_0300_0021;
+    const BARE: u64 = 0xF110_0000_0301_0022;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let mailbox = |guid: u64, entry: u32| SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::GameObject,
+        display_id: None,
+        position: [-8949.0, -130.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT; `OBJECT_FIELD_ENTRY`.
+        fields: ObjectFields::from_pairs(&[(2, 0x21), (3, entry)])
+            .into_created(ObjectType::GameObject),
+    };
+    rig.packets(vec![mailbox(BOX, 0x300), mailbox(BARE, 0x301)], 2);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::go_templates::GameObjectTemplates>()
+        .insert(0x300, 19, "Mailbox".into(), &[0; 24]);
+    lua(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SHOW') \
+         f:SetScript('OnEvent', function() STABLE_LOG = STABLE_LOG or {} \
+         table.insert(STABLE_LOG, strjoin('|', tostring(UnitName('npc')), \
+         tostring(UnitGUID('npc')), tostring(UnitExists('npc')))) end)",
+    );
+    rig.packets(vec![SessionEvent::ShowMailbox { mailbox: BOX }], 2);
+    rig.packets(vec![SessionEvent::ShowMailbox { mailbox: BARE }], 2);
+    assert_eq!(
+        lua(&mut rig, ""),
+        ["Mailbox|0xF110000003000021|nil", "|0xF110000003010022|nil"]
+    );
+}
+
+// ── The spellbook (#1281) ────────────────────────────────────────────────────────────────────────
+
+const FIREBALL_1: u32 = 133;
+const FIREBALL_2: u32 = 143;
+const FROSTBOLT_1: u32 = 116;
+
+/// The book update (`0x53ca70`) runs where 12340 runs it, each ending in `SPELLS_CHANGED` with the
+/// book rebuilt: our create's init (`0x6e7fdb`); a live learn, its tab flash after it (`0x542cd4`,
+/// `0x542d16`); a supersede, the removal's update then the learn's (`0x5401b8`, `0x542cd4`); a
+/// removal (`0x5401b8`); and our level watch, which re-sorts nothing (`0x6d66fd`). Fireball and
+/// Frostbolt sit on two skill lines, so the learn flashes the second tab. A handler's events fire
+/// once its changes apply, so both of the supersede's read the new rank in the book. A hover of the
+/// new slot inside the learn's own events shows its whole tooltip: the builder runs at the call.
+#[test]
+fn book_updates_fire_from_their_handlers_in_wire_order() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[FIREBALL_1])], &[(2, 0x19)]) else {
+        return;
+    };
+    let events = &["SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB"];
+    let verbs = &["tabs", "book1", "book2", "tip2"];
+    let seen = rig.packets(
+        vec![
+            SessionEvent::ObjectDestroyed(ME),
+            self_create(&[(2, 0x19)]),
+            SessionEvent::SpellLearned {
+                spell_id: FROSTBOLT_1,
+            },
+            SessionEvent::SpellSuperceded {
+                old_spell_id: FIREBALL_1,
+                new_spell_id: FIREBALL_2,
+            },
+            SessionEvent::SpellRemoved {
+                spell_id: FROSTBOLT_1,
+            },
+            self_values(&[(FIELD_UNIT_LEVEL, 2)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "LEARNED_SPELL_IN_TAB 2 | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "LEARNED_SPELL_IN_TAB 1 | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
+            "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
+        ]
     );
 }

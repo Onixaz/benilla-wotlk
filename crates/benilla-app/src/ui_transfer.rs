@@ -78,16 +78,22 @@ fn load_map_difficulties(mut commands: Commands, assets: Option<Res<WorldAssets>
 /// [`crate::loading_screen`]'s, off the same latch.
 fn on_transfer_pending(
     In(ev): In<SessionEvent>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut cancel: crate::spell::SelfCancel,
 ) {
     if !matches!(ev, SessionEvent::TransferPending { .. }) {
         return;
     }
-    if let Some(mut script) = script {
+    let mut script = script;
+    if let Some(script) = script.as_deref_mut() {
         script.clear_cursor_payload();
     }
     cancel.cancel_player_spells();
+    // The cancel's cast-bar end, inside the handler (`0x806200`).
+    match script.as_deref_mut() {
+        Some(script) => cancel.press.fire(script, &mut live),
+        None => cancel.press.flush(&mut cancel.ecs),
+    }
 }
 
 /// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` by its jump table (`0x52c484`). Not kept: result 6's next

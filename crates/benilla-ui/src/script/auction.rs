@@ -6,6 +6,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
+use super::container::Arm;
 use super::cursor::{self, CursorItem, CursorPayload};
 use super::Model;
 
@@ -1251,7 +1252,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 None
             };
             if let Some(key) = refusal {
-                model.ui_errors.push(key);
+                drop(model);
+                crate::script::ui_errors::show_now(lua, key);
                 return Ok(());
             }
             if bid > MAXIMUM_BID && bid > r.bid_amount.saturating_add(r.min_increment) {
@@ -1263,8 +1265,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             } else {
                 bid
             };
-            if model.money < u64::from(cost) {
-                model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+            if crate::script::live::money(&model) < u64::from(cost) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
             model.auction_bids.push(AuctionBid {
@@ -1303,7 +1306,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .and_then(|s| s.durability)
                 .is_some_and(|(cur, max)| cur < max);
             if worn {
-                model.ui_errors.push("ERR_AUCTION_REPAIR_ITEM");
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_AUCTION_REPAIR_ITEM");
                 return Ok(());
             }
             let min_bid = trunc_i64(min_bid) as u32;
@@ -1320,7 +1324,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 gather_for_sale(&model, it.item_id, stack_size.saturating_mul(num_stacks))
             };
             if items.is_empty() {
-                model.ui_errors.push("ERR_AUCTION_ENOUGH_ITEMS");
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "ERR_AUCTION_ENOUGH_ITEMS");
+                model = crate::script::model_mut_of(lua);
             } else {
                 model.auction_start = Some(AuctionStartRequest {
                     min_bid,
@@ -1368,8 +1374,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             if r.bid_amount != 0 {
                 let cut = (r.bid_amount as f32 * 0.05) as u64;
-                if model.money < cut {
-                    model.ui_errors.push("ERR_NOT_ENOUGH_MONEY");
+                if crate::script::live::money(&model) < cut {
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
                     return Ok(());
                 }
             }
@@ -1503,7 +1510,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ClickAuctionSellItemButton",
         lua.create_function(|lua, _: MultiValue| {
             let mut model = crate::script::model_mut_of(lua);
-            click_auction_sell_item(&mut model);
+            if let Some(key) = click_auction_sell_item(&mut model) {
+                drop(model);
+                crate::script::ui_errors::show_now(lua, key);
+            }
             Ok(())
         })?,
     )?;
@@ -1522,17 +1532,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// `UseContainerItem`'s auction arm (`0x5d88e0`): with the Auctions tab showing, the clicked item
-/// replaces the sell slot's. True when the arm took the click.
-pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool {
+/// replaces the sell slot's.
+pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> Arm {
     if !model.auction_tab_showing || model.auction.is_none() {
-        return false;
+        return Arm::Pass;
     }
     let Some(s) = super::container::index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
-        return false;
+        return Arm::Pass;
     };
     if let Some(key) = sell_refusal(model, bag, slot, s.item_id) {
-        model.ui_errors.push(key);
-        return true;
+        return Arm::Refused(key);
     }
     if let Some(prev) = model.auction_sell_item.take() {
         cursor::queue_lock_changed(model, prev.bag, prev.slot);
@@ -1549,21 +1558,21 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
         bar_placeable: s.bar_placeable,
     });
     cursor::queue_lock_changed(model, bag, slot);
-    true
+    Arm::Took
 }
 
 /// The sell slot's click: a refused item stays held with its reason; the same item goes back;
-/// otherwise the cursor's item and the slot's trade places, either side possibly empty.
-fn click_auction_sell_item(model: &mut Model) {
+/// otherwise the cursor's item and the slot's trade places, either side possibly empty. The
+/// refusal is handed back for the caller to show at once.
+fn click_auction_sell_item(model: &mut Model) -> Option<&'static str> {
     let held = match &model.cursor {
         Some(CursorPayload::Item(item)) => Some(item.clone()),
         None => None,
-        Some(_) => return,
+        Some(_) => return None,
     };
     if let Some(item) = &held {
         if let Some(key) = sell_refusal(model, item.bag, item.slot, item.item_id) {
-            model.ui_errors.push(key);
-            return;
+            return Some(key);
         }
         let same = model
             .auction_sell_item
@@ -1573,7 +1582,7 @@ fn click_auction_sell_item(model: &mut Model) {
             model.cursor = None;
             cursor::queue_cursor_update(model);
             cursor::queue_lock_changed(model, item.bag, item.slot);
-            return;
+            return None;
         }
     }
     let previous = model.auction_sell_item.take();
@@ -1591,6 +1600,7 @@ fn click_auction_sell_item(model: &mut Model) {
     {
         cursor::queue_lock_changed(model, it.bag, it.slot);
     }
+    None
 }
 
 #[cfg(test)]
@@ -1895,9 +1905,9 @@ mod tests {
         s.set_auction(Some(state));
         s.model_mut().money = 10_000;
         s.run(r#"PlaceAuctionBid("list", 1, 1020)"#).unwrap();
-        assert_eq!(s.take_ui_errors(), vec!["ERR_AUCTION_BID_INCREMENT"]);
+        assert_eq!(s.take_shown(), vec!["ERR_AUCTION_BID_INCREMENT"]);
         s.run(r#"PlaceAuctionBid("list", 1, 900)"#).unwrap();
-        assert_eq!(s.take_ui_errors(), vec!["ERR_AUCTION_HIGHER_BID"]);
+        assert_eq!(s.take_shown(), vec!["ERR_AUCTION_HIGHER_BID"]);
         assert!(s.take_auction_bids().is_empty());
         // Past the buyout is the buyout.
         s.run(r#"PlaceAuctionBid("list", 1, 9000)"#).unwrap();
@@ -1910,7 +1920,7 @@ mod tests {
         );
         s.model_mut().money = 10;
         s.run(r#"PlaceAuctionBid("list", 1, 1100)"#).unwrap();
-        assert_eq!(s.take_ui_errors(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+        assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
     }
 
     #[test]

@@ -1786,7 +1786,6 @@ pub(super) fn writer_loop(
                         rated,
                     } => w.battlemaster_join_arena(battlemaster, slot, as_group, rated),
                     ClientCommand::BattlefieldStatusRequest => w.battlefield_status(),
-                    ClientCommand::PetUnlearn { trainer } => w.pet_unlearn(trainer),
                     ClientCommand::BankerActivate { guid } => w.banker_activate(guid),
                     ClientCommand::SpellClick { guid } => w.spell_click(guid),
                     ClientCommand::BuyBankSlot { guid } => w.buy_bank_slot(guid),

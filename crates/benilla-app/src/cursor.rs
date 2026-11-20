@@ -165,11 +165,11 @@ pub(crate) struct DisplayedCursor(pub(crate) crate::target::WorldCursor);
 fn drive_displayed_cursor(
     world: Res<crate::target::WorldCursor>,
     over_ui: Res<crate::ui_script::PointerOverUi>,
-    targeting: Res<crate::spell::targeting::SpellTargeting>,
     (script, _live): (
         Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
         crate::ui_script::LendLive,
     ),
+    targeting: crate::ui_script::LentRef<crate::spell::targeting::SpellTargeting>,
     // The base last restored on entering the UI; `None` over the world, so re-entry restores.
     mut last: Local<crate::ui_script::VmMemo<Option<crate::target::WorldCursor>>>,
     mut displayed: ResMut<DisplayedCursor>,
@@ -200,7 +200,7 @@ fn drive_displayed_cursor(
             kind: CursorKind::Repair,
             unable: false,
         }
-    } else if targeting.active()
+    } else if targeting.get().is_some_and(|t| t.active())
         || script
             .as_ref()
             .is_some_and(|s| s.gift_wrap_armed().is_some())
@@ -884,10 +884,9 @@ mod tests {
     /// its cursor.
     #[test]
     fn the_sell_cursor_does_not_paint_over_an_armed_spell() {
-        // The gate reads the app-fed targeting flag.
+        // The gate reads the targeting cursor through the lent view.
         let mut app = App::new();
         let mut script = benilla_ui::script::UiScript::new().unwrap();
-        script.set_spell_targeting(true);
         script.set_container(
             0,
             Some(benilla_ui::script::ContainerState {
@@ -900,7 +899,6 @@ mod tests {
                 )]),
             }),
         );
-        script.run("ShowContainerSellCursor(0, 1)").unwrap();
         app.insert_non_send_resource(script);
         app.insert_resource(crate::loading_screen::LoadingScreen::default());
         app.insert_resource(CAST_GREY);
@@ -909,6 +907,11 @@ mod tests {
         let mut targeting = crate::spell::SpellTargeting::default();
         targeting.enter(6991, crate::spell::CastCommit::Spell, 0x0010);
         app.insert_resource(targeting);
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.run("ShowContainerSellCursor(0, 1)")
+        })
+        .expect("a VM")
+        .unwrap();
         app.world_mut()
             .run_system_once(drive_displayed_cursor)
             .expect("the displayed cursor drives");

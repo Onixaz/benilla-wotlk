@@ -35,10 +35,7 @@ use crate::target::cursor_mode::npc_flags as f;
 use crate::ui_gossip::GossipState;
 use benilla_ui::script::UiScript;
 
-use crate::ui_merchant::MerchantOpen;
 use crate::ui_quest::{QuestGiver, QuestStatuses};
-use crate::ui_session::InteractNpc;
-use crate::ui_trainer::TrainerOpen;
 
 /// How wide to look around a `.go` landing: the reference's service reach,
 /// [`crate::target::SERVICE_RANGE_SQ`] (5.5556 yd). Past it the cursor goes gray, the click sends
@@ -51,9 +48,9 @@ const SCAN_TIMEOUT_SECS: f64 = 20.0;
 /// How long a leg waits for its window after the opcode goes out; a terrain load starves the
 /// observer, not the wire.
 const WINDOW_TIMEOUT_SECS: f64 = 20.0;
-/// How long the re-click gate's latch may lag its window. `feed_interact_npc` runs after the net
-/// apply, so the token arms on the window's own frame; the poll covers a starved observer and
-/// reports the lag.
+/// How long the re-click gate's latch may lag its window. The window's open sets the interact
+/// target in its handler, so it arms on the window's own frame; the poll covers a starved observer
+/// and reports the lag.
 const GATE_TIMEOUT_SECS: f64 = 3.0;
 
 /// The vendor fork's NPC: Brother Danil (entry 152), `npc_flags` 4, vendor only, so no other arm
@@ -134,16 +131,17 @@ const LEGS: &[Leg] = &[
         want_arm: ServiceArm::Questgiver,
         want_window: Window::Quest,
     },
-    // The 3.3.5a world DB gives her GOSSIP too, so the click opens her menu and the stock frame
-    // selects its lone trainer option itself: `CMSG_GOSSIP_SELECT_OPTION`, then the trainer list.
+    // The 3.3.5a world DB gives her GOSSIP too, so the click opens her menu; her record carries
+    // the force-gossip type flag `0x8000000`, so `ForceGossip()` answers true (`0x58ab50` ->
+    // `0x715e1a`) and the stock frame keeps the menu rather than taking its lone trainer option.
     Leg {
-        name: "Alma Jainrose — GOSSIP|TRAINER, a lone trainer option",
+        name: "Alma Jainrose — GOSSIP|TRAINER, a forced menu",
         ident: Ident::Entry(812),
         map: 0,
         at: &[[-9237.78, -2041.65, 78.1678]],
         db_flags: 0x11,
         want_arm: ServiceArm::Gossip,
-        want_window: Window::Trainer,
+        want_window: Window::Gossip,
     },
 ];
 
@@ -262,21 +260,27 @@ fn flag_names(flags: u32) -> String {
     }
 }
 
+/// A stale trainer from the previous leg closes through the setter's zero leg.
+fn close_trainer(world: &mut World) {
+    crate::ui_trainer::set_none(world);
+    crate::ui_script::live::fire_handler_events(world);
+}
+
 /// Which window is open on `guid`, if any.
 fn open_window(
     guid: u64,
     gossip: &GossipState,
     giver: &QuestGiver,
-    trainer: &TrainerOpen,
+    trainer: Option<u64>,
 ) -> Option<Window> {
     // A trainer list reached through the NPC's menu leaves the menu's session latched, so the
     // trainer is read first.
-    if trainer.trainer == Some(guid) {
+    if trainer == Some(guid) {
         return Some(Window::Trainer);
     }
     // The gossip frame stays closed until the greeting's `CMSG_NPC_TEXT_QUERY` answers
     // (`ui_gossip`), so the greeting is part of open.
-    if gossip.npc == Some(guid) && gossip.greeting.is_some() {
+    if gossip.npc == Some(guid) && !gossip.text_pending() {
         return Some(Window::Gossip);
     }
     if giver.npc == Some(guid) && giver.view.is_some() {
@@ -288,15 +292,10 @@ fn open_window(
 fn service_probe(
     time: ProbeClock,
     mut probe: ResMut<ServiceProbe>,
-    mut gossip: ResMut<GossipState>,
-    mut trainer: ResMut<TrainerOpen>,
+    mut queue: Commands,
     statuses: Res<QuestStatuses>,
-    // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
-    // window and only by one.
-    interact: Res<InteractNpc>,
-    // The vendor fork: the merchant window, the VM the held-cursor leg picks up in, and what
-    // turns a (bag, slot) into the item guid.
-    mut merchant: ResMut<MerchantOpen>,
+    // The vendor fork: the VM the held-cursor leg picks up in, and what turns a (bag, slot) into
+    // the item guid; the merchant window is read through the view.
     (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     objects: crate::net::Objects,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
@@ -306,10 +305,14 @@ fn service_probe(
     net: Res<NetCommands>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    // The interact target, what the re-click gate reads: armed by a window and only by one.
+    let interact_target = live.interact_target().0;
     if self_player.is_empty() {
         return; // not in-world yet
     }
     let now = time.elapsed_secs_f64();
+    // The gossip globals as the verbs read them, through the view this system lends.
+    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
 
     match probe.phase {
         Phase::Start => {
@@ -425,18 +428,18 @@ fn service_probe(
 
             // A stale window from the previous leg would answer this one's question. The
             // reference's own close sends no packet, so a local clear is the whole of it.
-            gossip.clear();
+            queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
-            trainer.clear();
+            queue.queue(close_trainer);
 
             // The first click must get through: nothing is open, and the reference arms only from
             // window openers, so the gate must read disarmed at the send.
-            if interact.1.is_some() {
+            if interact_target.is_some() {
                 error!(
                     "PROBE_SERVICE: FAIL ({}) — the npc token is armed on {:#x} BEFORE the send; \
                      the re-click gate would eat first clicks{note}",
                     leg.name,
-                    interact.1.unwrap_or(0)
+                    interact_target.unwrap_or(0)
                 );
                 probe.fails += 1;
                 next(&mut probe, &net, i, now);
@@ -489,9 +492,10 @@ fn service_probe(
         }
         Phase::Await { i, since, guid } => {
             let leg = &LEGS[i];
+            let trainer = live.trainer_open();
             let Some((window, quest_view)) = live.with_giver(|giver| {
                 giver.map(|g| {
-                    let window = open_window(guid, &gossip, g, &trainer);
+                    let window = open_window(guid, &gossip, g, trainer.map(|t| t.0));
                     (window, g.view.as_ref().map(discr))
                 })
             }) else {
@@ -508,14 +512,13 @@ fn service_probe(
                                 " ({} option(s), {} quest row(s), greeting {:?})",
                                 gossip.options.len(),
                                 gossip.quests.len(),
-                                gossip.greeting.as_deref().unwrap_or("")
+                                gossip.greeting.as_str()
                             ),
                             Window::Quest => format!(" ({quest_view:?})"),
-                            Window::Trainer => format!(
-                                " ({} service(s), type {})",
-                                trainer.services.len(),
-                                trainer.trainer_type
-                            ),
+                            Window::Trainer => {
+                                let (_, n, ty) = trainer.unwrap_or_default();
+                                format!(" ({n} service(s), type {ty})")
+                            }
                         }
                     );
                     probe.passes += 1;
@@ -541,7 +544,7 @@ fn service_probe(
                 None if now - since > WINDOW_TIMEOUT_SECS => {
                     // A gossip session latched with an unresolved greeting keeps the frame shut
                     // (`GossipState::resolve_greeting`'s "Missing gossip text!" path).
-                    let held = gossip.npc == Some(guid) && gossip.greeting.is_none();
+                    let held = gossip.npc == Some(guid) && gossip.text_pending();
                     error!(
                         "PROBE_SERVICE: FAIL ({}) — no {:?} window on {guid:#x} within \
                          {WINDOW_TIMEOUT_SECS}s of the send{}",
@@ -564,7 +567,7 @@ fn service_probe(
         }
         Phase::Gate { i, since, guid } => {
             let leg = &LEGS[i];
-            if interact.1 == Some(guid) {
+            if interact_target == Some(guid) {
                 info!(
                     "PROBE_SERVICE: PASS ({}) — re-click gate armed on {guid:#x} {:.0} ms after \
                      the window: a second right-click sends nothing",
@@ -578,7 +581,7 @@ fn service_probe(
                     "PROBE_SERVICE: FAIL ({}) — the window has been open on {guid:#x} for \
                      {GATE_TIMEOUT_SECS}s and the npc token still reads {:?}; the re-click gate \
                      cannot fire and every re-click re-sends",
-                    leg.name, interact.1
+                    leg.name, interact_target
                 );
                 probe.fails += 1;
                 next(&mut probe, &net, i, now);
@@ -608,10 +611,13 @@ fn service_probe(
             };
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
-            gossip.clear();
+            queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
             live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
-            trainer.clear();
-            merchant.clear();
+            queue.queue(close_trainer);
+            queue.queue(|w: &mut World| {
+                crate::ui_merchant::close_merchant(w);
+                crate::ui_script::live::fire_handler_events(w);
+            });
 
             // The empty-cursor leg. The arm is asserted: a vendor with a GOSSIP bit takes the
             // gossip arm.
@@ -646,7 +652,7 @@ fn service_probe(
             }
         }
         Phase::VendorOpen { since, guid } => {
-            if merchant.vendor == Some(guid) {
+            if live.merchant_vendor() == Some(guid) {
                 info!(
                     "PROBE_SERVICE: PASS (vendor fork, empty cursor) — merchant window open on \
                      {guid:#x}: the zero leg is still the plain list open"
@@ -654,7 +660,10 @@ fn service_probe(
                 probe.passes += 1;
                 // The window would arm the re-click gate and eat the next click, so close it the
                 // way its own close button does (no packet) before the held-cursor leg.
-                merchant.clear();
+                queue.queue(|w: &mut World| {
+                    crate::ui_merchant::close_merchant(w);
+                    crate::ui_script::live::fire_handler_events(w);
+                });
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: ChatKind::Say,
                     target: None,

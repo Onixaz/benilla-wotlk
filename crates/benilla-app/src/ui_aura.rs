@@ -391,7 +391,6 @@ struct AuraUnits<'w> {
     group: Option<Res<'w, crate::ui_party::GroupState>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
 }
@@ -543,6 +542,10 @@ fn feed_auras(
         let pet_of = crate::ui_arena::pet_of(&index, &stores);
         (a.opponents(), a.pets(&pet_of), a.count())
     });
+    // The interact target through the lent view (`0x60af67`).
+    let interact = crate::ui_script::live::interact_target()
+        .flatten()
+        .unwrap_or(0);
     let unit_changed = memo.units.feed(
         &mut script,
         units::Inputs {
@@ -558,8 +561,9 @@ fn feed_auras(
                     h.mouseover(&units.hovered_go.as_deref().copied().unwrap_or_default())
                 })
                 .map_or(0, |(_, guid)| guid),
-            npc: units.interact.as_deref().and_then(|i| i.1).unwrap_or(0),
+            npc: interact,
             focus: focus_guid,
+            interact,
             // The player's transport while seated (`0x60ac87`).
             vehicle: seated
                 .filter(|p| p.state == crate::vehicle::SEATED)

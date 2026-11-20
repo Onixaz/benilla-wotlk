@@ -274,6 +274,29 @@ fn apply_host_sequence(
     }
 }
 
+/// On the anim root of a prop that rides a moving entity (a transport's cargo): the draw gate's
+/// sphere in the root's model frame, placed through the root's propagated world each frame. Such a
+/// prop bakes no world point, so its [`DoodadAnimHost::fade`] is only host-relative there.
+#[derive(Component, Clone, Copy, Debug)]
+#[component(storage = "SparseSet")]
+pub(crate) struct MoverGate {
+    /// The model-space bound centre the fade sphere is built around.
+    pub(crate) center: Vec3,
+    /// The model-space sphere radius, before any placement scale.
+    pub(crate) radius: f32,
+}
+
+impl MoverGate {
+    /// The gate's sphere this frame, from the anim root's world transform.
+    fn sphere(&self, root: &GlobalTransform) -> crate::particles::EmitterFade {
+        let (scale, _, _) = root.to_scale_rotation_translation();
+        crate::particles::EmitterFade::sphere(
+            self.radius * scale.max_element(),
+            root.transform_point(self.center),
+        )
+    }
+}
+
 impl DoodadAnimHost {
     /// The armed clip's `(node, seek)` on the shared clock, `(now − armed_at) mod duration`. It
     /// answers while parked, but the reference fires no events for a doodad culled out of its
@@ -414,6 +437,7 @@ fn gate_doodad_anim(
         Option<&mut AnimationPlayer>,
         Option<&mut GlobalSeqDrive>,
         Has<AnimParked>,
+        Option<&MoverGate>,
     )>,
     vis: Query<&Visibility>,
     cam: Query<
@@ -454,11 +478,13 @@ fn gate_doodad_anim(
             false,
         )
     };
-    for (entity, mut host, lazy, pose, has_rig, player, drive, parked) in &mut hosts {
+    for (entity, mut host, lazy, pose, has_rig, player, drive, parked, mover) in &mut hosts {
+        // A prop on a mover tests the sphere where its host is now, not the host-relative one.
+        let live = mover.map(|m| m.sphere(&worlds.get(entity).copied().unwrap_or_default()));
+        let fade = live.as_ref().unwrap_or(&host.fade);
         let drawn = if host.meshes.is_empty() {
             // Meshless: the reference ticks any model in the draw set, and a 0-batch model is
             // admitted on its fade sphere like its emitters, through the same `in_draw_set`.
-            let fade = &host.fade;
             world_cam.is_some_and(|(cam_tf, frustum, _)| {
                 fade.in_draw_set(
                     cam_tf.translation(),
@@ -476,7 +502,7 @@ fn gate_doodad_anim(
             host.meshes
                 .iter()
                 .any(|&e| vis.get(e).is_ok_and(|v| *v != Visibility::Hidden))
-                && world_cam.is_none_or(|(_, frustum, _)| in_frustum(frustum, &host.fade))
+                && world_cam.is_none_or(|(_, frustum, _)| in_frustum(frustum, fade))
         };
         // The lazy-rig promote, retried every frame the host stays drawn so a full table is only
         // a delay. It needs a second drawn frame (`host.active`): on its first, a spawned part's
@@ -1386,6 +1412,93 @@ mod tests {
             !world.entity(ahead).contains::<AnimParked>(),
             "in front of the camera ⇒ drawn"
         );
+    }
+
+    /// A transport prop's `fade` is host-relative: the gate places the [`MoverGate`] sphere through
+    /// the root's world, so a boat ahead keeps its wheel drawn and one behind parks it, wherever
+    /// the host-relative point falls.
+    #[test]
+    fn a_mover_prop_is_gated_where_its_host_is() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
+        app.init_resource::<crate::view::ViewDistance>();
+        app.init_resource::<crate::wmo_portal::ExteriorWindows>();
+        app.init_resource::<crate::wmo_portal::CameraInteriorClaim>();
+        app.init_resource::<crate::rig_palette::RigPalettes>();
+        app.init_asset::<SkinnedMeshInverseBindposes>();
+        app.add_systems(Update, gate_doodad_anim);
+
+        // Looking down -Z from the origin.
+        let seat =
+            Transform::from_xyz(0.0, 0.0, 0.0).looking_at(Vec3::new(0.0, 0.0, -20.0), Vec3::Y);
+        let projection = bevy::camera::Projection::from(bevy::camera::PerspectiveProjection {
+            far: 5000.0,
+            ..default()
+        });
+        let frustum = bevy::camera::primitives::Frustum::from_clip_from_world(
+            &(projection.get_clip_from_view() * GlobalTransform::from(seat).affine().inverse()),
+        );
+        app.world_mut().spawn((
+            crate::view::WorldCamera,
+            GlobalTransform::from(seat),
+            seat,
+            frustum,
+            projection,
+        ));
+        let mut mover = |relative: Vec3, root: Vec3| {
+            let mesh = app.world_mut().spawn(Visibility::Inherited).id();
+            app.world_mut()
+                .spawn((
+                    DoodadAnimHost {
+                        meshes: vec![mesh],
+                        fade: crate::particles::EmitterFade::sphere(2.0, relative),
+                        clip: Some((AnimationNodeIndex::new(1), 2.0)),
+                        armed_at: 0.0,
+                        window_hi: f32::INFINITY,
+                        anim_id: Some(0),
+                        active: true,
+                        parked_at: 0.0,
+                        fade_out: None,
+                    },
+                    MoverGate {
+                        center: Vec3::ZERO,
+                        radius: 2.0,
+                    },
+                    GlobalTransform::from_translation(root),
+                ))
+                .id()
+        };
+        // Host-relative point behind the camera, the boat ahead of it.
+        let ahead = mover(Vec3::new(0.0, 0.0, 30.0), Vec3::new(0.0, 0.0, -500.0));
+        // Host-relative point ahead, the boat behind.
+        let behind = mover(Vec3::new(0.0, 0.0, -30.0), Vec3::new(0.0, 0.0, 500.0));
+        app.update();
+        let world = app.world();
+        assert!(
+            !world.entity(ahead).contains::<AnimParked>(),
+            "the boat is in view ⇒ its prop is drawn"
+        );
+        assert!(
+            world.entity(behind).contains::<AnimParked>(),
+            "the boat is behind the camera ⇒ its prop parks"
+        );
+    }
+
+    /// The live sphere scales with the root: a prop on a doubled host doubles its radius.
+    #[test]
+    fn a_mover_gate_sphere_rides_the_root() {
+        let gate = MoverGate {
+            center: Vec3::new(1.0, 0.0, 0.0),
+            radius: 3.0,
+        };
+        let root = GlobalTransform::from(
+            Transform::from_xyz(10.0, 0.0, 0.0)
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2))
+                .with_scale(Vec3::splat(2.0)),
+        );
+        let sphere = gate.sphere(&root);
+        assert!((sphere.radius - 6.0).abs() < 1e-5);
+        assert!(sphere.center.distance(Vec3::new(10.0, 0.0, -2.0)) < 1e-4);
     }
 
     #[test]

@@ -39,6 +39,24 @@ path), in `max_remaining` (the size hint), in the parallel batcher of
 upstream visits in, ascending archetype id, and an empty archetype yielded nothing before, so the
 items and their order are unchanged. Dense queries, which walk tables, are untouched.
 
+## Patch — `src/query/access.rs`
+
+Building a schedule compares the access of every pair of systems: the ambiguity census
+(`get_conflicting_systems`, run whatever the ambiguity setting) asks `FilteredAccessSet::get_conflicts`
+of every unordered pair, and the multi-threaded executor's setup asks `is_compatible` of every pair.
+Upstream answers an incompatible pair by comparing each of one system's access entries with each of
+the other's. benilla's VM holders lend the Lua VM a view of a few hundred resources, one entry
+each, so two of them cost tens of thousands of entry checks: a frame test that builds the full client
+took 10.3 s, and takes 1.4 s patched.
+
+An entry that touches no component (a `Res`, a `ResMut`) answers every pair by its resources alone:
+`FilteredAccess::is_compatible` checks resources before filters, and resource conflicts are
+intersections, which distribute over a union. So both functions check the union of a side's plain
+entries once against the other side's whole access, both ways, and keep the pairwise loop for the
+entries that touch a component. The answer is upstream's: `the_plain_entry_shortcut_matches_the_pairwise_loop`
+compares both functions with the pairwise loop over 20,000 random pairs of sets mixing plain
+resource entries, filtered component queries, `Or` filters and the read-all and write-all accesses.
+
 ## Warning fix — `src/world/identifier.rs`
 
 `WorldId::new` calls `try_update` where upstream calls `fetch_update`, the same call under its
@@ -46,10 +64,11 @@ new name, which the pinned toolchain warns on; behaviour is unchanged.
 
 ## How to check
 
-`diff -ru <registry>/bevy_ecs-0.18.1/src third_party/bevy_ecs/src` shows the patch in those four
+`diff -ru <registry>/bevy_ecs-0.18.1/src third_party/bevy_ecs/src` shows the patch in those five
 files and the warning fix, nothing else; every other file is byte-identical to the registry crate.
-The crate's own `cargo test --lib` gives the same result patched and as published (805 pass; three
-error-reporting tests fail in both outside a workspace). `benilla-world`'s `occupied_archetype_walk`
+The crate's own `cargo test --lib` gives the same result patched and as published (805 pass as
+published, 806 patched with the access test; three error-reporting tests fail in both outside a
+workspace). `benilla-world`'s `occupied_archetype_walk`
 test drives a sparse query through the iterator, the fold path, the size hint and the parallel walk
 while archetypes empty, refill and clear. The gain shows in a per-system timing of `tag_self_player`
 before and after a teleport tour: flat with the patch, five times its fresh cost without.

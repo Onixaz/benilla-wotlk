@@ -176,6 +176,16 @@ pub struct BagAutoStore {
 }
 
 /// Container `bag` read off the World at the call (`0x5d7380`); with no active player held, the stand-in a test or capture fixture set.
+/// What one of `UseContainerItem`'s window arms did with the click.
+pub(super) enum Arm {
+    /// Not its window: the next arm reads the click.
+    Pass,
+    /// Took the item.
+    Took,
+    /// Refused it with this line, which shows at once and ends the click.
+    Refused(&'static str),
+}
+
 pub(crate) fn live_bag(model: &super::Model, bag: i64) -> Option<ContainerState> {
     let (anchor, ui_now) = (model.clock_wall.get(), model.now);
     match super::read_live(|l| l.container(bag, anchor, ui_now)).flatten() {
@@ -468,9 +478,10 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         model.cursor,
         Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
     );
-    if !placing && (model.item_pick_armed || model.repair_mode) {
+    if !placing && (super::spellbook::targeting().wants_item || super::merchant::repair_mode(model))
+    {
         let occupied = index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
-        if occupied && model.item_pick_armed {
+        if occupied && super::spellbook::targeting().wants_item {
             model.item_picks.push((bag, slot));
         } else if occupied {
             model.container_repairs.push((bag, slot));
@@ -529,14 +540,19 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         // resolves is refused, as the reference does, because this path dereferences it unchecked,
         // a latent null deref.
         Some(CursorPayload::Merchant(held)) => {
-            let row = model
-                .merchant
-                .as_ref()
-                .and_then(|m| m.items.get(held.row as usize))
-                .filter(|it| it.item_id == held.item_id)
-                .map(|_| held.row + 1);
+            let row = super::merchant::merchant_row(
+                model,
+                super::MerchantList::Items,
+                held.row as usize,
+                false,
+            )
+            .filter(|it| it.item_id == held.item_id)
+            .map(|_| held.row);
             if let Some(row) = row {
-                model.merchant_slot_buys.push((bag, slot, row));
+                super::merchant::merchant_act(
+                    model,
+                    super::MerchantAct::BuyInSlot { bag, slot, row },
+                );
             }
             cursor::queue_cursor_update(model);
         }
@@ -867,21 +883,34 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // Every right-click clears the cursor before it reads the slot: a held payload goes
             // back, never placed, and an armed gift wrap is cancelled.
             cursor::clear_cursor(&mut model);
-            if model.repair_mode {
+            if super::merchant::repair_mode(&model) {
                 // Then the item in the slot is repaired.
                 let occupied = index_slot(&model, bag, slot).is_some_and(|s| s.item_id != 0);
                 if occupied {
                     model.container_repairs.push((bag, slot));
                 }
-            } else if !super::mail::use_container_item(&mut model, bag, slot)
-                && !super::auction::use_container_item(&mut model, bag, slot)
-                && !super::guild_bank::use_container_item(&mut model, bag, slot)
-            {
+            } else {
                 // Past repair, the Send tab attaches the item (`0x5d88cf`), then the Auctions tab
-                // takes it for the sell slot (`0x5d88e0`), then an open guild bank stores it.
-                model
-                    .script_calls
-                    .push(super::ScriptCall::UseContainerItem { bag, slot });
+                // takes it for the sell slot (`0x5d88e0`), then an open guild bank stores it. A
+                // refusing arm shows its line at once and ends the click.
+                let arm = match super::mail::use_container_item(&mut model, bag, slot) {
+                    Arm::Pass => super::auction::use_container_item(&mut model, bag, slot),
+                    took => took,
+                };
+                match arm {
+                    Arm::Refused(key) => {
+                        drop(model);
+                        crate::script::ui_errors::show_now(lua, key);
+                    }
+                    Arm::Took => {}
+                    Arm::Pass => {
+                        if !super::guild_bank::use_container_item(&mut model, bag, slot) {
+                            model
+                                .script_calls
+                                .push(super::ScriptCall::UseContainerItem { bag, slot });
+                        }
+                    }
+                }
             }
             Ok(())
         })?,
@@ -906,7 +935,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let occupied = index_slot(&model, bag, slot).is_some();
             // An armed spell or repair cursor suppresses it first; each is sticky, so a Buy here
             // would stamp out the active base cursor.
-            if occupied && !model.spell_targeting && !model.repair_mode {
+            if occupied
+                && !super::spellbook::targeting().active
+                && !super::merchant::repair_mode(&model)
+            {
                 model.ui_cursor = Some(UiCursorMode::Buy);
                 model.ui_cursor_dirty = true;
             }

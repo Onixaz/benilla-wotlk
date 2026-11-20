@@ -94,6 +94,7 @@ pub(crate) fn cast_pet_spell(
     p: &mut crate::ui_pet::PetPress,
     spell_id: u32,
     on_self: bool,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> crate::ui_pet::PetCast {
     if p.bar.read().spells.pet_guid == 0 {
         debug!("ui_pet_book: dropping a queued pet book cast — the bar is gone");
@@ -101,7 +102,7 @@ pub(crate) fn cast_pet_spell(
     }
     let target = p.spell_target(on_self);
     debug!("ui_pet_book: cast {spell_id} (target {target:?})");
-    p.cast_book_spell(spell_id, target)
+    p.cast_book_spell(spell_id, target, sink)
 }
 
 /// The book's set (`0x5d5e10`): the last word for the spell (`0x5d3410`) must hold bit 31; set bit 30, `None` flipping, and copy it onto every bar slot equal under `& 0x3FFFFFFF` (`0x5d5e90`).

@@ -318,3 +318,50 @@ fn a_mount_child_carries_its_riders_arrival() {
         "the mount fades on its rider's clock, not from its own spawn"
     );
 }
+
+/// `SMSG_DISMOUNT` on a mount carrying a passenger holds the copy, the unit reading unmounted
+/// (`0x741a97`); with no passenger it drops the mount (`0x741aab`).
+#[test]
+fn a_dismount_with_passengers_holds_the_mount() {
+    use bevy::ecs::system::RunSystemOnce;
+    const HOST: u64 = 0x0000_0000_0000_0011;
+    let mut world = World::new();
+    world.init_resource::<crate::net::GuidIndex>();
+    world.init_resource::<Messages<MountDropped>>();
+    let host = world
+        .spawn(ObjectStore(
+            ObjectFields::from_pairs(&[(FIELD_MOUNTDISPLAYID, 25_871)])
+                .into_created(benilla_protocol::messages::ObjectType::Player),
+        ))
+        .id();
+    world
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(HOST, host);
+    let rider = world
+        .spawn(crate::vehicle::Passenger {
+            vehicle: HOST,
+            seat: 1,
+            state: crate::vehicle::SEATED,
+        })
+        .id();
+    let dismount = |world: &mut World| {
+        world
+            .run_system_once_with(
+                on_dismount,
+                benilla_protocol::SessionEvent::Dismount { guid: HOST },
+            )
+            .unwrap();
+    };
+    dismount(&mut world);
+    let store = world.get::<ObjectStore>(host).unwrap();
+    assert!(!store.0.unit_is_mounted(), "held");
+    assert_eq!(store.0.unit_mount_copy(), 25_871, "the copy stays");
+    world.despawn(rider);
+    world.get_mut::<ObjectStore>(host).unwrap().0 =
+        ObjectFields::from_pairs(&[(FIELD_MOUNTDISPLAYID, 25_871)])
+            .into_created(benilla_protocol::messages::ObjectType::Player);
+    dismount(&mut world);
+    let store = world.get::<ObjectStore>(host).unwrap();
+    assert_eq!(store.0.unit_mount_display_id(), 0, "dropped");
+}

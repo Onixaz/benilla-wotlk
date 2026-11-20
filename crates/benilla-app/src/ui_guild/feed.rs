@@ -36,6 +36,7 @@ pub(super) struct FedGuild {
 pub(super) fn feed_guild(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut guild: ResMut<GuildState>,
+    cache: Res<super::GuildCache>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     areas: Option<Res<AreaTableRes>>,
     commands: Res<NetCommands>,
@@ -59,7 +60,7 @@ pub(super) fn feed_guild(
     }
 
     // Rebuilt only on a change: every apply and every local intent sets the flag.
-    if !guild.dirty && fed.seeded {
+    if !guild.dirty && !cache.is_changed() && fed.seeded {
         return;
     }
     guild.dirty = false;
@@ -67,8 +68,7 @@ pub(super) fn feed_guild(
     // The lazy identity fill: the reference's `GetGuildRosterInfo` asks inline on a miss, and the
     // answer fires a bare `GUILD_ROSTER_UPDATE`.
     let guild_id = guild.guild_id;
-    guild.request_identity(guild_id, &commands);
-    let identity = guild.identity(guild_id).cloned();
+    let identity = cache.resolve(guild_id, &commands).cloned();
     let identity = identity.as_ref();
 
     let rows = display_rows(&guild, areas.as_deref().map(|a| &a.0), identity);
@@ -108,7 +108,10 @@ pub(super) fn feed_guild(
             .collect(),
         selection,
         show_offline: guild.show_offline,
-        tabard: guild.in_guild().then(|| guild.own_tabard()).flatten(),
+        tabard: guild
+            .in_guild()
+            .then(|| cache.emblem_record(guild_id))
+            .flatten(),
     });
 
     if std::mem::take(&mut guild.permissions_ask) {

@@ -163,16 +163,15 @@ fn list_tail(world: &mut World, tab: u8) {
             }
         }
         (None, Some(asked)) => {
-            crate::ui_bank::close_by_interaction(world);
-            let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
-                return;
-            };
-            ui.world(move |world| {
+            crate::ui_session::set_interact_target(world, asked);
+            crate::ui_script::live::in_turn(world, move |world| {
                 if let Some(mut bank) = bank_mut(world) {
                     bank.banker = Some(asked);
                 }
+                if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+                    ui.fire("GUILDBANKFRAME_OPENED", Vec::new());
+                }
             });
-            ui.fire("GUILDBANKFRAME_OPENED", Vec::new());
         }
         (Some(_), _) => {
             if waits == 0 {

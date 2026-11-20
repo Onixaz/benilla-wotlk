@@ -389,21 +389,6 @@ impl CastTargeting<'_, '_> {
         ctx
     }
 
-    /// The unit `guid` as the range check reads it ([`super::range_check::RangeFacts`]), `None`
-    /// before it streams.
-    pub(crate) fn range_facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
-        let ctx = self.context_at(Aim::Unit(Some(guid)));
-        let rel = &ctx.rel;
-        let store = rel.target_store?;
-        let is_self = self.self_guid.0 == Some(guid);
-        Some(range_facts_of(
-            rel,
-            store,
-            (ctx.range.target?, ctx.range.target_pos?),
-            is_self,
-        ))
-    }
-
     /// The [`CastContext`] of a cast with the pet as caster (the spell-cast entry `0x80cce0` called
     /// with the pet), aimed at `target` or else the selection: the caster's store, position, reach
     /// and auras are the pet's, and it has no main hand and no own movement flags. With
@@ -1193,8 +1178,21 @@ pub(crate) struct RangeFactsView<'w, 's> {
 }
 
 impl RangeFactsView<'_, '_> {
+    /// The units' reaches, motion and auto-attack targets.
+    pub(crate) fn range_units(&self) -> &super::RangeUnits<'_, '_> {
+        &self.range_units
+    }
+
+    /// The unit `entity`'s reach and position now, `None` before it streams.
+    pub(crate) fn at(&self, entity: Entity) -> Option<(benilla_formats::RangeUnit, Vec3)> {
+        Some((
+            self.range_units.unit(entity)?,
+            self.transforms.get(entity).ok()?.translation,
+        ))
+    }
+
     /// The unit `guid` as the range check reads it now, as [`CastTargeting::range_facts`] builds it; `None` before it streams.
-    fn facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
+    pub(crate) fn facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
         let entity = *self.index.as_deref()?.0.get(&guid)?;
         let store = self.stores.get(entity).ok()?;
         let self_guid = self.self_guid.as_deref().and_then(|g| g.0);

@@ -77,7 +77,7 @@ fn on_response(
         "net: loot response {guid:#x} type {loot_type} gold {gold} {} item(s)",
         items.len()
     );
-    select.select_unit(guid);
+    select.select_unit(guid, &mut *ui);
     select.seam.loot.open(guid, loot_type, gold, items);
     if player.is_some_and(|p| p.foreign_mover.is_none() && p.move_flags() & MOVING_CLOSES_LOOT != 0)
     {
@@ -1247,6 +1247,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_guild::GuildState>()
+            .init_resource::<crate::ui_guild::GuildCache>()
             .insert_non_send_resource(s);
         crate::ui_unit::add_unit_feed(&mut app);
         app

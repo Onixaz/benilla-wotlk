@@ -15,7 +15,7 @@ use benilla_assets::coords::wow_to_bevy;
 
 use super::PetBar;
 use crate::net::{GuidIndex, NetHandlerApp, PetDismissSoundMessage, PetTalkMessage};
-use crate::ui_action::{CastErrors, PetTameFailures, Spells, UiError};
+use crate::ui_action::{Spells, UiError};
 
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
@@ -235,16 +235,13 @@ fn on_action_feedback(
 /// The pet history's start-cooldown refund (`0x804780`): the spellbook's flush when a record matched (`0x80476d`), then the pet bar's (`0x804792`).
 fn pet_refund_start(bar: &mut PetBar, spell: u32, ui: &mut crate::ui_script::live::UiEvents) {
     if bar.cooldowns.clear_gcd(spell, Instant::now()) {
-        // `UPDATE_SHAPESHIFT_COOLDOWN` between the two while the stance bar holds forms (`0x53bac5`) is #577's.
-        ui.fire("ACTIONBAR_UPDATE_COOLDOWN", Vec::new());
-        ui.fire("SPELL_UPDATE_COOLDOWN", Vec::new());
+        crate::ui_action::signals::spellbook(ui);
     }
     ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
 }
 
 fn on_cast_failed(
     In(ev): In<SessionEvent>,
-    mut errors: ResMut<CastErrors>,
     mut bar: ResMut<super::PetBar>,
     mut ends: PetCastEnd,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
@@ -260,7 +257,7 @@ fn on_cast_failed(
         bar.pending_cast = None;
         // The start cooldown the press armed refunds on the pet history, then the pet bar's flush (`0x806d41`, `0x806d46`).
         pet_refund_start(&mut bar, spell_id, &mut ui);
-        pet_cast_failed(spell_id, reason, arg, &mut errors);
+        pet_cast_failed(spell_id, reason, arg, &mut *ui);
         ends.end(spell_id, cast_count, wire_reason);
     }
 }
@@ -318,9 +315,9 @@ impl PetCastEnd<'_, '_> {
     }
 }
 
-fn on_tame_failure(In(ev): In<SessionEvent>, mut failures: ResMut<PetTameFailures>) {
+fn on_tame_failure(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
     if let SessionEvent::PetTameFailure { reason } = ev {
-        pet_tame_failure(reason, &mut failures);
+        crate::ui_action::show_in_turn(&mut ui, "ui_pet", tame_failure_line(reason));
     }
 }
 
@@ -546,14 +543,16 @@ fn pet_feedback_key(reason: u8, helpful: bool) -> Option<&'static str> {
     })
 }
 
-/// `SMSG_PET_TAME_FAILURE`: the reason byte, queued. vmangos also sends it for a summon while a
-/// pet or a charmed unit is out (`Spell.cpp:5467`).
-fn pet_tame_failure(reason: u8, failures: &mut PetTameFailures) {
-    debug!(
-        "net: pet tame failure {reason} ({})",
-        benilla_protocol::messages::pet_tame_failure_key(reason)
-    );
-    failures.0.push(reason);
+/// `SMSG_PET_TAME_FAILURE`: the reason's `PETTAME_*` string, read through the VM's string lookup,
+/// fills `ERR_TAME_FAILED` ("%s.", error id `0xee`), shown in the handler's turn. vmangos also
+/// sends it for a summon while a pet or a charmed unit is out (`Spell.cpp:5467`).
+pub(crate) fn tame_failure_line(reason: u8) -> UiError {
+    let key = benilla_protocol::messages::pet_tame_failure_key(reason);
+    debug!("net: pet tame failure {reason} ({key})");
+    UiError::args(
+        "ERR_TAME_FAILED",
+        vec![crate::ui_action::FillArg::Global(key.to_string())],
+    )
 }
 
 /// `SMSG_PET_NAME_INVALID`: the server's name code through the name-error display, as the client's
@@ -592,10 +591,15 @@ fn pet_dismiss_sound(
     });
 }
 
-/// `SMSG_PET_CAST_FAILED`: queued as the pet's, so the display uses the reference's pet table. Our
-/// cast state is untouched, and unlike the player's it writes no combat-log line and plays no error
-/// sound.
-fn pet_cast_failed(spell_id: u32, reason: u8, arg: Option<u32>, errors: &mut CastErrors) {
+/// `SMSG_PET_CAST_FAILED`: shown in the handler's turn as the pet's, so the display uses the
+/// reference's pet table. Our cast state is untouched, and unlike the player's it writes no
+/// combat-log line and plays no error sound.
+fn pet_cast_failed(
+    spell_id: u32,
+    reason: u8,
+    arg: Option<u32>,
+    errors: &mut impl crate::ui_action::CastRefusals,
+) {
     debug!("net: pet cast failed — spell {spell_id} reason {reason:#04x} arg {arg:?}");
     errors.push_pet(spell_id, reason, arg);
 }

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use benilla_formats::{ShapeshiftForm, SpellCatalog, SpellDisplay};
 use benilla_protocol::messages::ACTION_KIND_SPELL;
 
-use crate::ui_action::PlayerActions;
+use crate::ui_action::ActionSlots;
 
 /// `Attributes & 0x40`, `SPELL_ATTR_PASSIVE` (`0x542d7b`).
 const ATTR_PASSIVE: u32 = 0x40;
@@ -86,7 +86,7 @@ pub(crate) fn auto_place_page(
 
 /// The first button of the page with no action (the action bar's has-action test over
 /// `page..page+12`, `0x542dc1`), or `None` when the page is full.
-pub(crate) fn first_empty_slot(actions: &PlayerActions, page: u8) -> Option<u8> {
+pub(crate) fn first_empty_slot(actions: &ActionSlots, page: u8) -> Option<u8> {
     (page..page.saturating_add(PAGE_SLOTS)).find(|slot| !actions.buttons.contains_key(slot))
 }
 
@@ -96,7 +96,7 @@ pub(crate) fn first_empty_slot(actions: &PlayerActions, page: u8) -> Option<u8> 
 /// macro bound to the old rank (`[rec+0x564]`); benilla's macro binding re-resolves from the
 /// book, so the bar's macros need no write.
 pub(crate) fn lower_rank_slots(
-    actions: &PlayerActions,
+    actions: &ActionSlots,
     catalog: &SpellCatalog,
     new: &SpellDisplay,
 ) -> Vec<u8> {
@@ -133,8 +133,8 @@ mod tests {
         ActionButton { slot, action, kind }
     }
 
-    fn bar(buttons: &[ActionButton]) -> PlayerActions {
-        PlayerActions {
+    fn bar(buttons: &[ActionButton]) -> ActionSlots {
+        ActionSlots {
             buttons: buttons.iter().map(|b| (b.slot, *b)).collect(),
             ..Default::default()
         }

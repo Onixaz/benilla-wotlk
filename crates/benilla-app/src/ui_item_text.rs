@@ -1,31 +1,20 @@
-//! The item-text reader (`ItemTextFrame.xml`) a bag letter, a book or a readable world object opens
-//! in, locally with no packet as in the reference: every route ends at one read call,
-//! `(guid, flag)`, which looks the guid up as any object and asks it for its text (`vtbl+0x74`), a
-//! page chain from an item template's `PageText` or a `GAMEOBJECT_TYPE_TEXT` object's `data[0]`, or
-//! else a copied mail letter's own text (`ITEM_FIELD_FLAGS & 0x200`), asked by the item's guid
-//! (`0x58a1a0`).
+//! The item-text reader (`ItemTextFrame.xml`) a bag letter, a book or a readable world object opens in, with no packet: every route ends at the read call (`0x58a1a0`), which holds the object, takes the interact target and fires `ITEM_TEXT_BEGIN` once its first page (an item record's `PageText`, a text GameObject's page property) or a copied letter's text (`ITEM_FIELD_FLAGS & 0x200`) is cached, and else leaves its callback on the miss (`0x58a450`).
 //!
-//! A book item the player has not read yet (no `ITEM_FIELD_FLAGS` `0x2` translated bit) asks the
-//! server first: `ITEM_TEXT_BEGIN` fires, `CMSG_READ_ITEM` goes out, and `SMSG_READ_ITEM_OK` or
-//! `_FAILED` decides (`0x58a1a0`, `0x6d5d90`). A used GOOBER's page arrives as
-//! `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`), the same read call.
-//!
-//! The events follow `ItemTextFrame.lua:10-96`. Unread pages pass the chat's translator in the
-//! book's or object's language (`0x589e90`).
+//! The draw (`0x589e90`) sets the text and fires `ITEM_TEXT_READY`; an unread book asks the server first, `SMSG_READ_ITEM_OK` or `_FAILED` drawing it (`0x6d5d90`), and a page not yet read passes the chat's translator in its language. The verbs read the globals at the call; a page turn draws, and `CloseItemText` closes, inside its call.
 
 use bevy::prelude::*;
-
-use benilla_ui::script::{ItemTextState, UiScript};
 
 use crate::go_templates::GameObjectTemplates;
 use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, Objects};
 use crate::query_cache::QueryCache;
-use crate::ui_script::{UiDrain, UiFeed};
 
 /// `ITEM_FIELD_FLAGS & 0x2`: the item was read once, so it shows with no read check.
 const ITEM_FIELD_FLAG_TRANSLATED: u32 = 0x2;
+
+/// `ITEM_FIELD_FLAGS & 0x200`: a copied mail letter, its text asked by item guid (`0x58a2bc`).
+const ITEM_FIELD_FLAG_LETTER: u32 = 0x200;
 
 /// One page of a book as the wire gave it (`SMSG_PAGE_TEXT_QUERY_RESPONSE`).
 pub(crate) struct PageText {
@@ -108,109 +97,71 @@ impl LetterTexts {
     }
 }
 
-/// Which of the reference's two text sources a session shows; the object decides, not the click.
-pub(crate) enum ReadSource {
-    /// A copied mail letter's own text: one body and a creator line.
-    Letter,
-    /// A page chain. `visited` runs from the first page to the one shown, as pages link only
-    /// forwards; it is empty until the object's template answers, since the reference asks for the
-    /// page id at paint time.
-    Pages { visited: Vec<u32> },
+/// The reader's globals: the read object (`0xbfc948`), the letter flag (`0xbfa9f8`), the page index (`0xbfc940`), the page ids (`0xbfc958`) and the drawn text (`0xbfaa00`), set up as the game starts (`0x589dc0`).
+#[derive(Resource)]
+pub(crate) struct ItemText {
+    pub(crate) guid: u64,
+    has_item_text: bool,
+    current_page: usize,
+    /// The page ids from the first: the entry past the current one is its next page, 0 for none.
+    pages: Vec<u32>,
+    text: String,
+    /// The reader's callbacks a cache miss left (`0x58a450`), each with the object it asked for.
+    waits: Vec<(Wait, u64)>,
 }
 
-/// The read check a book item takes before its text shows.
+impl Default for ItemText {
+    fn default() -> Self {
+        Self {
+            guid: 0,
+            has_item_text: false,
+            current_page: 0,
+            pages: vec![0, 0],
+            text: String::new(),
+            waits: Vec::new(),
+        }
+    }
+}
+
+/// A record a reader's callback waits on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReadCheck {
-    /// Not judged yet: judged once `ITEM_TEXT_BEGIN` fires.
-    Unchecked,
-    /// `CMSG_READ_ITEM` sent, the answer not in.
-    Waiting,
-    /// Show the text, with the translation bar's ms when the answer read it untranslated.
-    Show { translation_ms: Option<u32> },
+enum Wait {
+    /// A page in the page cache.
+    Page(u32),
+    /// A copied letter's text in the item-text cache, by item guid.
+    Letter(u64),
+    /// A creator's name in the name cache.
+    Name(u64),
 }
 
-pub(crate) struct ReadSession {
-    /// An item's or a GameObject's guid; reading the same object again closes the reader.
-    pub(crate) object_guid: u64,
-    pub(crate) source: ReadSource,
-    check: ReadCheck,
-    /// The open took the interact target, once per open, not again on a `/reload`'s re-fire.
-    took_target: bool,
-    /// Keyed on the VM, so a `/reload` re-fires `ITEM_TEXT_BEGIN` for a reader still open.
-    told: crate::ui_script::VmMemo<ItemTextTold>,
-}
-
-#[derive(Default)]
-struct ItemTextTold {
-    /// `ITEM_TEXT_BEGIN` fired: once per open, before the text lands.
-    begun: bool,
-    ready: bool,
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct ItemTextOpen {
-    pub(crate) pending: Option<ReadSession>,
-    /// A toggle closed the reader and the frame is not told yet; the feed holds the script.
-    closing: bool,
-}
-
-impl ItemTextOpen {
-    /// Open a bag letter; re-opening restarts from `ITEM_TEXT_BEGIN`.
-    pub(crate) fn open_letter(&mut self, item_guid: u64) {
-        self.open(item_guid, ReadSource::Letter);
+impl ItemText {
+    fn wait(&mut self, wait: Wait, guid: u64) {
+        if !self.waits.contains(&(wait, guid)) {
+            self.waits.push((wait, guid));
+        }
     }
 
-    /// Open a page chain; the feed asks the object's template for the first page.
-    pub(crate) fn open_pages(&mut self, object_guid: u64) {
-        self.open(
-            object_guid,
-            ReadSource::Pages {
-                visited: Vec::new(),
-            },
-        );
-    }
-
-    /// The read check's answer for the open book: `Some` shows it, `None` closes it. An answer for
-    /// another object is dropped (`0x589e90`).
-    fn answer(&mut self, item: u64, check: Option<ReadCheck>) {
-        let Some(sess) = self.pending.as_mut().filter(|s| s.object_guid == item) else {
-            return;
-        };
-        match check {
-            Some(c) => sess.check = c,
-            None => {
-                self.pending = None;
-                self.closing = true;
+    /// The objects whose callbacks waited on `wait`, in ask order, unlinked.
+    fn take(&mut self, wait: Wait) -> Vec<u64> {
+        let mut taken = Vec::new();
+        self.waits.retain(|&(w, g)| {
+            let hit = w == wait;
+            if hit {
+                taken.push(g);
             }
-        }
-    }
-
-    /// The reference's toggle, the read call with flag 0 from both click routes: reading the open
-    /// object again closes it. Returns whether it closed.
-    pub(crate) fn toggle_closed(&mut self, object_guid: u64) -> bool {
-        let open = self
-            .pending
-            .as_ref()
-            .is_some_and(|s| s.object_guid == object_guid);
-        if open {
-            self.pending = None;
-            self.closing = true;
-        }
-        open
-    }
-
-    fn take_closing(&mut self) -> bool {
-        std::mem::take(&mut self.closing)
-    }
-
-    fn open(&mut self, object_guid: u64, source: ReadSource) {
-        self.pending = Some(ReadSession {
-            object_guid,
-            source,
-            check: ReadCheck::Unchecked,
-            took_target: false,
-            told: Default::default(),
+            !hit
         });
+        taken
+    }
+
+    /// A new object: page 0, no pages, no text (`0x58a20c`-`0x58a247`).
+    fn reset(&mut self, guid: u64) {
+        self.guid = guid;
+        self.has_item_text = false;
+        self.current_page = 0;
+        self.pages[0] = 0;
+        self.pages[1] = 0;
+        self.text.clear();
     }
 }
 
@@ -219,7 +170,7 @@ mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::{LetterTexts, PageTexts};
+    use super::{ItemText, LetterTexts, PageTexts, Wait};
     use crate::net::NetHandlerApp;
 
     pub(super) fn register(app: &mut App) {
@@ -231,106 +182,124 @@ mod net {
             .net_handler(
                 SessionEventKind::GameObjectPageText,
                 on_gameobject_page_text,
-            );
+            )
+            .net_handler(SessionEventKind::Disconnected, on_session_end);
     }
 
-    /// `SMSG_READ_ITEM_OK`: the item's translated bit goes on locally (`0x707060`) and the text
-    /// shows.
-    fn on_read_item_ok(
-        In(ev): In<SessionEvent>,
-        mut open: ResMut<super::ItemTextOpen>,
-        index: Res<crate::net::GuidIndex>,
-        mut stores: Query<&mut crate::net::ObjectStore>,
-        mut edges: MessageWriter<crate::net::FieldChanged>,
-    ) {
+    /// `SMSG_READ_ITEM_OK` (`0x6d5d90`): the held item's translated bit goes on locally (`0x707060`) and the text draws.
+    fn on_read_item_ok(In(ev): In<SessionEvent>, world: &mut World) {
         let SessionEvent::ReadItemOk { item } = ev else {
             return;
         };
         debug!("item text: read check passed for {item:#x}");
-        if let Some((entity, mut store)) = index
-            .0
-            .get(&item)
-            .and_then(|&e| Some((e, stores.get_mut(e).ok()?)))
-        {
-            let flags = store.0.item_flags().unwrap_or(0) | super::ITEM_FIELD_FLAG_TRANSLATED;
-            let delta = benilla_protocol::messages::ObjectFields::from_pairs(&[(
-                benilla_protocol::field::FIELD_ITEM_FLAGS,
-                flags,
-            )]);
-            crate::net::merge_store_fields(&mut store.0, delta, entity, item, |e| {
-                edges.write(e);
-            });
-        }
-        open.answer(
-            item,
-            Some(super::ReadCheck::Show {
-                translation_ms: None,
-            }),
-        );
+        let entity = world
+            .get_resource::<crate::net::GuidIndex>()
+            .and_then(|i| i.0.get(&item).copied());
+        let Some(entity) = entity else {
+            return;
+        };
+        let mut state = bevy::ecs::system::SystemState::<(
+            Query<&mut crate::net::ObjectStore>,
+            MessageWriter<crate::net::FieldChanged>,
+        )>::new(world);
+        let (mut stores, mut edges) = state.get_mut(world);
+        let Ok(mut store) = stores.get_mut(entity) else {
+            return;
+        };
+        let flags = store.0.item_flags().unwrap_or(0) | super::ITEM_FIELD_FLAG_TRANSLATED;
+        let delta = benilla_protocol::messages::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_ITEM_FLAGS,
+            flags,
+        )]);
+        crate::net::merge_store_fields(&mut store.0, delta, entity, item, |e| {
+            edges.write(e);
+        });
+        state.apply(world);
+        super::display_text(world, item, true);
     }
 
-    /// `SMSG_READ_ITEM_FAILED`: reason 0 shows the text, 1 shows it untranslated with the
-    /// translation bar, any other closes the reader.
-    fn on_read_item_failed(In(ev): In<SessionEvent>, mut open: ResMut<super::ItemTextOpen>) {
+    /// `SMSG_READ_ITEM_FAILED` (`0x6d5d90`): reason 0 draws the text, 1 draws it untranslated and starts the translation bar, any other fires the close for the held object and leaves the reader set.
+    fn on_read_item_failed(In(ev): In<SessionEvent>, world: &mut World) {
         let SessionEvent::ReadItemFailed { item, failure } = ev else {
             return;
         };
         debug!("item text: read check failed for {item:#x}: {failure:?}");
         use benilla_protocol::messages::ReadItemFailure as F;
-        let check = match failure {
-            F::Show => Some(super::ReadCheck::Show {
-                translation_ms: None,
-            }),
-            F::Untranslated { ms } => Some(super::ReadCheck::Show {
-                translation_ms: Some(ms),
-            }),
-            F::Close => None,
-        };
-        open.answer(item, check);
+        match failure {
+            F::Show => super::display_text(world, item, true),
+            F::Untranslated { ms } => {
+                super::display_text(world, item, false);
+                super::fire(
+                    world,
+                    "ITEM_TEXT_TRANSLATION",
+                    vec![benilla_ui::script::ScriptValue::Number(
+                        f64::from(ms) * 0.001,
+                    )],
+                );
+            }
+            F::Close => {
+                if world.resource::<ItemText>().guid == item {
+                    super::fire(world, "ITEM_TEXT_CLOSED", Vec::new());
+                }
+            }
+        }
     }
 
-    /// `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`): the read call with flag 0 on the GameObject, so a
-    /// page already open closes.
-    fn on_gameobject_page_text(In(ev): In<SessionEvent>, mut open: ResMut<super::ItemTextOpen>) {
+    /// `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`): the read call with flag 0 on a held GameObject, so a page already open closes.
+    fn on_gameobject_page_text(In(ev): In<SessionEvent>, world: &mut World) {
         let SessionEvent::GameObjectPageText { guid } = ev else {
             return;
         };
-        if !benilla_protocol::guid::is_gameobject(guid) {
-            return;
-        }
-        if !open.toggle_closed(guid) {
+        let held = world
+            .get_resource::<crate::net::GuidIndex>()
+            .is_some_and(|i| i.0.contains_key(&guid));
+        if benilla_protocol::guid::is_gameobject(guid) && held {
             debug!("item text: read gameobject page {guid:#x}");
-            open.open_pages(guid);
+            super::set_item(world, guid, false);
         }
     }
 
-    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` (`0x635a40`): the letter's text lands in the cache.
-    fn on_item_text(In(ev): In<SessionEvent>, mut texts: ResMut<LetterTexts>) {
+    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` (`0x635a40`): the letter's text lands in the cache, then its callbacks run.
+    fn on_item_text(In(ev): In<SessionEvent>, world: &mut World) {
         if let SessionEvent::ItemText { item_guid, text } = ev {
             debug!(
                 "item text: letter {item_guid:#x} answered, {} byte(s)",
                 text.len()
             );
-            texts.insert(item_guid, text);
+            world.resource_mut::<LetterTexts>().insert(item_guid, text);
+            super::callbacks(world, Wait::Letter(item_guid), true);
         }
     }
 
-    fn on_page_text_miss(In(ev): In<SessionEvent>, mut pages: ResMut<PageTexts>) {
+    /// A page the server lacks: its callbacks run with no record, so do nothing (`0x58a453`).
+    fn on_page_text_miss(In(ev): In<SessionEvent>, world: &mut World) {
         if let SessionEvent::PageTextMiss { page_id } = ev {
             debug!("page text: no page {page_id}");
-            pages.insert_miss(page_id);
+            world.resource_mut::<PageTexts>().insert_miss(page_id);
+            super::callbacks(world, Wait::Page(page_id), false);
         }
     }
 
-    /// One page per packet; the reader repaints off the cache on the next feed.
-    fn on_page_text(In(ev): In<SessionEvent>, mut pages: ResMut<PageTexts>) {
+    /// One page per packet; the page's callbacks run once it is cached.
+    fn on_page_text(In(ev): In<SessionEvent>, world: &mut World) {
         if let SessionEvent::PageText {
             page_id,
             text,
             next_page_id,
         } = ev
         {
-            pages.insert(page_id, text, next_page_id);
+            world
+                .resource_mut::<PageTexts>()
+                .insert(page_id, text, next_page_id);
+            super::callbacks(world, Wait::Page(page_id), true);
+        }
+    }
+
+    /// The disconnect leaves the world (`0x58a430`); the asks in flight die with the socket.
+    fn on_session_end(In(_): In<SessionEvent>, world: &mut World) {
+        super::set_item(world, 0, false);
+        if let Some(mut text) = world.get_resource_mut::<ItemText>() {
+            text.waits.clear();
         }
     }
 }
@@ -342,37 +311,23 @@ impl Plugin for UiItemTextPlugin {
         net::register(app);
         crate::query_cache::register::<PageTexts>(app);
         crate::query_cache::register::<LetterTexts>(app);
-        app.init_resource::<ItemTextOpen>()
+        app.init_resource::<ItemText>()
             .init_resource::<PageTexts>()
-            .init_resource::<LetterTexts>()
-            .add_systems(
-                Update,
-                (
-                    // Feed before the input pass so an open paints this frame; drain after it
-                    // so a close clears this frame.
-                    // After the language feeds, whose skills and words the translator reads.
-                    feed_item_text
-                        .in_set(UiFeed)
-                        .after(crate::ui_chat::load_language_words)
-                        .after(crate::ui_chat::feed_language_skills),
-                    drain_item_text.in_set(UiDrain),
-                ),
-            );
+            .init_resource::<LetterTexts>();
     }
 }
 
-/// What the read object answers: its name for the title (`ItemTextGetItem`), its material
-/// (`ItemTextGetMaterial`: an item's `PageMaterial`, a GameObject's `data[2]`) and its first page.
-struct Readable {
-    title: String,
-    /// The `PageTextMaterial.dbc` basename; `None` is the Lua's Parchment default.
-    material: Option<String>,
-    /// The first `PageText` id; 0 for a letter or a template with no page.
-    page_head: u32,
-    /// The pages' language: an item template's `LanguageID`, a GameObject's prop `0x10`.
-    language: u32,
-    /// An item already read (`ITEM_FIELD_FLAGS & 0x2`) shows its pages as written.
-    translated: bool,
+/// The world leave's reader part (`0x528ce2` -> `0x58a430`): the reader closes.
+pub(crate) fn leave_world(world: &mut World) {
+    set_item(world, 0, false);
+}
+
+/// The read call from a click or a use (`0x70c86d`, `0x708f60`), its events fired once it runs.
+pub(crate) fn read_from_click(commands: &mut Commands, guid: u64) {
+    commands.queue(move |world: &mut World| {
+        set_item(world, guid, false);
+        crate::ui_script::live::fire_handler_events(world);
+    });
 }
 
 /// The material a quest from `guid` paints on, `GetQuestBackgroundMaterial`, the body of
@@ -400,339 +355,519 @@ pub(crate) fn object_material(
     name(t.page_material)
 }
 
-/// The object's [`Readable`], item or GameObject alike; `None` while its template is in flight.
-fn readable(
-    guid: u64,
-    objects: &Objects,
-    items: &Items,
-    go_templates: &GameObjectTemplates,
-    materials: Option<&PageMaterials>,
-    commands: &NetCommands,
-) -> Option<Readable> {
-    let name = |id: u32| materials.and_then(|m| m.0.name(id)).map(str::to_string);
-    if let Some(go) = go_templates.get(guid) {
-        return Some(Readable {
-            title: go.name.clone(),
-            material: go.text_page.and_then(|p| name(p.material)),
-            page_head: go.text_page.map_or(0, |p| p.page_id),
-            language: go.text_page.map_or(0, |p| p.language),
-            translated: false,
-        });
-    }
-    let fields = objects.object(guid)?;
-    let entry = fields.object_entry()?;
-    let t = items.template(entry, guid, commands)?;
-    Some(Readable {
-        title: t.name.clone(),
-        material: name(t.page_material),
-        page_head: t.page_text,
-        language: t.language_id,
-        translated: fields.item_flags().unwrap_or(0) & ITEM_FIELD_FLAG_TRANSLATED != 0,
-    })
+/// What the reader's calls read of the world: the objects, the record caches, our body and the translator.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ItemTextCtx<'w, 's> {
+    objects: Option<Objects<'w, 's>>,
+    me: Query<
+        'w,
+        's,
+        (&'static crate::net::ObjectStore, &'static crate::net::Guid),
+        With<crate::net::SelfPlayer>,
+    >,
+    items: Option<Res<'w, Items>>,
+    go_templates: Option<Res<'w, GameObjectTemplates>>,
+    pages: Option<Res<'w, PageTexts>>,
+    letters: Option<Res<'w, LetterTexts>>,
+    names: Option<Res<'w, NameCache>>,
+    states: Option<Res<'w, crate::world_state::WorldStates>>,
+    languages: Option<Res<'w, crate::ui_chat::ChatLanguages>>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    materials: Option<Res<'w, PageMaterials>>,
+    commands: Option<Res<'w, NetCommands>>,
 }
 
-/// Drive the open session to `ITEM_TEXT_BEGIN` once the template resolves, as the stock handler
-/// takes the text colour from the material (`ItemTextFrame.lua:18-23`), then to
-/// `ITEM_TEXT_READY`, which shows the window, once the body and any creator line are in.
-fn feed_item_text(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut open: ResMut<ItemTextOpen>,
-    letters: Res<LetterTexts>,
-    pages: Res<PageTexts>,
-    objects: Objects,
-    items: Res<Items>,
-    names: Res<NameCache>,
-    go_templates: Res<GameObjectTemplates>,
-    materials: Option<Res<PageMaterials>>,
-    commands: Res<NetCommands>,
-    // The `$`-macro subject for the page body: the local player.
-    self_q: Query<(&crate::net::ObjectStore, &crate::net::Guid), With<crate::net::SelfPlayer>>,
-    states: Res<crate::world_state::WorldStates>,
-    // The reader's language skill and the garble word pool, the chat's own.
-    languages: Option<Res<crate::ui_chat::ChatLanguages>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    // A toggle closed the reader; the frame is told here, where the script is.
-    if open.take_closing() {
-        script.set_item_text(None);
-        script.fire_event("ITEM_TEXT_CLOSED", vec![]);
-    }
-    let Some(sess) = open.pending.as_mut() else {
-        return;
-    };
-    if sess.told.get(&script).ready {
-        return;
-    }
-    let Some(readable) = readable(
-        sess.object_guid,
-        &objects,
-        &items,
-        &go_templates,
-        materials.as_deref(),
-        &commands,
-    ) else {
-        return; // template in flight; the reference re-enters the open when it lands
-    };
+/// An object's page head as its page-id call answers (`vtbl+0xdc`).
+enum PageHead {
+    Page(u32),
+    /// An item whose record is in flight, asked with the reader's callback on it (`0x707180`).
+    ItemRecord(u32),
+}
 
-    // No page to show: the reference bails before firing anything.
-    if matches!(sess.source, ReadSource::Pages { .. }) && readable.page_head == 0 {
-        debug!(
-            "item text: {:#x} has no page to read — closing",
-            sess.object_guid
-        );
-        open.pending = None;
-        return;
+impl ItemTextCtx<'_, '_> {
+    fn object(&self, guid: u64) -> Option<&benilla_protocol::ObjectFields> {
+        self.objects.as_ref()?.object(guid)
     }
 
-    if !sess.told.get(&script).begun {
-        // The open takes the interact target just before `ITEM_TEXT_BEGIN` (`0x58a33a`).
-        if !std::mem::replace(&mut sess.took_target, true) {
-            script.close_bank_interaction();
+    fn is_item(&self, guid: u64) -> bool {
+        benilla_protocol::guid::is_item(guid) && self.object(guid).is_some()
+    }
+
+    /// An item's cached record, asked on a miss.
+    fn item_record(&self, guid: u64) -> Option<&benilla_protocol::messages::ItemInfo> {
+        let entry = self.object(guid)?.object_entry()?;
+        self.items
+            .as_deref()?
+            .template(entry, guid, self.commands.as_deref()?)
+    }
+
+    /// The page id call: an item's record's page (`0x707180`), a GameObject's page property (`0x710280`), else 0.
+    fn page_head(&self, guid: u64) -> PageHead {
+        if self.is_item(guid) {
+            let entry = self
+                .object(guid)
+                .and_then(|o| o.object_entry())
+                .unwrap_or(0);
+            return match self.item_record(guid) {
+                Some(t) => PageHead::Page(t.page_text),
+                None => PageHead::ItemRecord(entry),
+            };
         }
-        script.set_item_text(Some(ItemTextState {
-            item: readable.title.clone(),
-            creator: None,
-            text: String::new(),
-            page: 1,
-            has_next: false,
-            material: readable.material.clone(),
-        }));
-        script.fire_event("ITEM_TEXT_BEGIN", vec![]);
-        sess.told.get(&script).begun = true;
+        PageHead::Page(
+            self.go_templates
+                .as_deref()
+                .and_then(|g| g.get(guid))
+                .and_then(|t| t.text_page)
+                .map_or(0, |p| p.page_id),
+        )
     }
 
-    // The read check (`0x58a1a0`): a book item not yet read asks the server by its bag position;
-    // a letter, a read book and a GameObject show at once. An item with no bag position sends
-    // nothing and waits.
-    if sess.check == ReadCheck::Unchecked {
-        let unread = !benilla_protocol::guid::is_gameobject(sess.object_guid)
-            && matches!(sess.source, ReadSource::Pages { .. })
-            && objects.object(sess.object_guid).is_some_and(|f| {
-                f.item_flags().unwrap_or(0) & (ITEM_FIELD_FLAG_TRANSLATED | 0x200) == 0
-            });
-        sess.check = if unread {
-            let at = self_q.iter().next().and_then(|(store, _)| {
-                crate::ui_items::collect_inventory(
-                    &store.0,
-                    &objects,
-                    crate::ui_items::InventoryScope::DEFAULT,
-                )
-                .into_iter()
-                .find(|&(_, _, g)| g == sess.object_guid)
-            });
-            if let Some((bag, slot, _)) = at {
-                debug!(
-                    "item text: read check for {:#x} at bag {bag} slot {slot}",
-                    sess.object_guid
-                );
-                let _ = commands.0.send(ClientCommand::ReadItem { bag, slot });
-            }
-            ReadCheck::Waiting
+    /// The cached page, asked on a miss.
+    fn page(&self, page_id: u32, guid: u64) -> Option<&PageText> {
+        self.pages
+            .as_deref()?
+            .get_or_ask(page_id, guid, self.commands.as_deref()?)
+    }
+
+    /// The cached letter, asked on a miss.
+    fn letter(&self, guid: u64) -> Option<&String> {
+        self.letters
+            .as_deref()?
+            .get_or_ask(guid, self.commands.as_deref()?)
+    }
+
+    /// `ItemTextGetItem` (`0x589c40`): the object's name, an item's from its record with no callback (`0x7071d0`).
+    fn name(&self, guid: u64) -> Option<String> {
+        if self.is_item(guid) {
+            return self.item_record(guid).map(|t| t.name.clone());
+        }
+        self.object(guid)?;
+        self.go_templates
+            .as_deref()?
+            .get(guid)
+            .map(|t| t.name.clone())
+    }
+
+    /// `ItemTextGetMaterial` (`0x589c90`): an item's record's material, a GameObject's page material property, its `PageTextMaterial.dbc` name when above 0.
+    fn material(&self, guid: u64) -> Option<String> {
+        let material = if self.is_item(guid) {
+            self.item_record(guid)?.page_material
+        } else if benilla_protocol::guid::is_gameobject(guid) && self.object(guid).is_some() {
+            self.go_templates.as_deref()?.get(guid)?.text_page?.material
         } else {
-            ReadCheck::Show {
-                translation_ms: None,
-            }
+            return None;
         };
+        if material == 0 {
+            return None;
+        }
+        self.materials
+            .as_deref()?
+            .0
+            .name(material)
+            .map(str::to_string)
     }
-    let ReadCheck::Show { translation_ms } = sess.check else {
-        return; // the answer is in flight
-    };
 
-    let (creator, text, page, has_next) = match &mut sess.source {
-        ReadSource::Letter => {
-            let creator_guid = objects
-                .object(sess.object_guid)
-                .and_then(|o| o.item_creator());
-            let creator = match creator_guid {
-                None => None, // authorless
-                Some(guid) => match names.resolve(guid, &commands) {
-                    Some(name) => Some(name.to_string()),
-                    None => return, // name query in flight
-                },
-            };
-            let body = letters.get_or_ask(sess.object_guid, &commands).cloned();
-            let Some(text) = body else {
-                return; // body query in flight
-            };
-            (creator, text, 1, false)
-        }
-        ReadSource::Pages { visited } => {
-            if visited.is_empty() {
-                visited.push(readable.page_head);
-            }
-            let page_id = *visited.last().expect("seeded just above");
-            let Some(page) = pages.get_or_ask(page_id, sess.object_guid, &commands) else {
-                return; // page query in flight
-            };
-            // A book has no creator line.
-            (
-                None,
-                page.text.clone(),
-                visited.len() as u32,
-                page.next != 0,
-            )
-        }
-    };
-
-    // Server-authored text runs the `$`-macro expander, as in the reference's item-text frame.
-    let subject = crate::npc_text::player_identity(&self_q, &names, &commands);
-    let text = crate::npc_text::substitute(
-        &text,
-        &crate::npc_text::MacroContext {
-            subject: subject.as_ref(),
-            states: &states,
-            achievement: None,
-        },
-    );
-    // A page not yet read shows through the translator (`0x589e90`): at the reader's skill, or
-    // none when the check read it untranslated. A letter and a read book show as written.
-    let text = match languages.as_deref() {
-        Some(langs) if matches!(sess.source, ReadSource::Pages { .. }) && !readable.translated => {
-            let skill = match translation_ms {
-                Some(_) => 0,
-                None => langs.skill(readable.language),
-            };
-            langs.translate(readable.language, skill, &text)
-        }
-        _ => text,
-    };
-    script.set_item_text(Some(ItemTextState {
-        item: readable.title,
-        creator,
-        text,
-        page,
-        has_next,
-        material: readable.material,
-    }));
-    script.fire_event("ITEM_TEXT_READY", vec![]);
-    sess.told.get(&script).ready = true;
-    // An untranslated read starts the translation bar, its seconds the answer's ms (`0x6d5d90`).
-    if let Some(ms) = translation_ms {
-        sess.check = ReadCheck::Show {
-            translation_ms: None,
+    /// Our skill in `language` (`0x6e0640`), 0 with no body.
+    fn language_skill(
+        &self,
+        language: u32,
+        known: Option<&crate::ui_action::PlayerActions>,
+    ) -> u32 {
+        let (Ok((store, _)), Some(known), Some(spells), Some(lines)) = (
+            self.me.single(),
+            known,
+            self.spells.as_deref(),
+            self.skill_lines.as_deref(),
+        ) else {
+            return 0;
         };
-        script.fire_event(
-            "ITEM_TEXT_TRANSLATION",
-            vec![benilla_ui::script::ScriptValue::Number(
-                f64::from(ms) * 0.001,
-            )],
-        );
+        crate::ui_chat::language_skill(store, &known.spells, spells, lines, language)
+    }
+
+    /// The `$`-macro pass the reader runs on its text (`0x589ff6`), with us as the subject.
+    fn parse(&self, text: &str) -> String {
+        let subject = self
+            .names
+            .as_deref()
+            .zip(self.commands.as_deref())
+            .and_then(|(names, commands)| {
+                crate::npc_text::player_identity(&self.me, names, commands)
+            });
+        let fallback = crate::world_state::WorldStates::default();
+        crate::npc_text::substitute(
+            text,
+            &crate::npc_text::MacroContext {
+                subject: subject.as_ref(),
+                states: self.states.as_deref().unwrap_or(&fallback),
+                achievement: None,
+            },
+        )
+    }
+
+    /// `text` in `language` as a reader at `skill` reads it (`0x505930`).
+    fn translate(&self, language: u32, skill: u32, text: &str) -> String {
+        match self.languages.as_deref() {
+            Some(l) => l.translate(language, skill, text),
+            None => text.to_string(),
+        }
+    }
+}
+
+/// A draw's outcome.
+enum Drawn {
+    /// Not drawn: another object, the object gone, or a record in flight.
+    No,
+    /// A letter's text, still to pass the profanity mask.
+    Letter,
+    Page,
+}
+
+/// The draw (`0x589e90`): for the held object, its letter or current page into the text, the next page's id noted, the page translated at our skill or at none.
+fn draw(
+    text: &mut ItemText,
+    ctx: &ItemTextCtx,
+    known: Option<&crate::ui_action::PlayerActions>,
+    guid: u64,
+    translate: bool,
+) -> Drawn {
+    if text.guid != guid || guid == 0 {
+        return Drawn::No;
+    }
+    let Some(object) = ctx.object(guid) else {
+        return Drawn::No;
+    };
+    if text.has_item_text {
+        let Some(letter) = ctx.letter(guid) else {
+            text.wait(Wait::Letter(guid), guid);
+            return Drawn::No;
+        };
+        text.text = ctx.parse(letter);
+        return Drawn::Letter;
+    }
+    let page_id = text.pages[text.current_page];
+    let Some(page) = ctx.page(page_id, guid) else {
+        text.wait(Wait::Page(page_id), guid);
+        return Drawn::No;
+    };
+    // The page list doubles when the next entry would run off its end (`0x589fbd`).
+    if text.pages.len() == text.current_page + 2 {
+        let len = text.pages.len();
+        text.pages.resize(2 * len, 0);
+    }
+    text.pages[text.current_page + 1] = page.next;
+    let body = ctx.parse(&page.text);
+    if ctx.is_item(guid) {
+        if object.item_flags().unwrap_or(0) & ITEM_FIELD_FLAG_TRANSLATED != 0 {
+            text.text = body;
+        } else {
+            let language = ctx.item_record(guid).map_or(0, |t| t.language_id);
+            let skill = if translate {
+                ctx.language_skill(language, known)
+            } else {
+                0
+            };
+            text.text = ctx.translate(language, skill, &body);
+        }
+    } else if benilla_protocol::guid::is_gameobject(guid) {
+        let language = ctx
+            .go_templates
+            .as_deref()
+            .and_then(|g| g.get(guid))
+            .and_then(|t| t.text_page)
+            .map_or(0, |p| p.language);
+        let skill = if translate {
+            ctx.language_skill(language, known)
+        } else {
+            0
+        };
+        text.text = ctx.translate(language, skill, &body);
+    }
+    Drawn::Page
+}
+
+/// Queue `event` from a handler.
+fn fire(world: &mut World, event: &'static str, args: Vec<benilla_ui::script::ScriptValue>) {
+    if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+        ui.fire(event, args);
+    }
+}
+
+/// The draw from a handler (`0x589e90`): `ITEM_TEXT_READY` once drawn, a letter masked first (`0x589f4b`).
+pub(crate) fn display_text(world: &mut World, guid: u64, translate: bool) {
+    let mut state = bevy::ecs::system::SystemState::<(
+        Option<ResMut<ItemText>>,
+        ItemTextCtx,
+        Option<Res<crate::ui_action::PlayerActions>>,
+        Option<ResMut<crate::text_filter::TextFilter>>,
+        Option<Res<crate::text_filter::TextFilterSwitches>>,
+    )>::new(world);
+    let (text, ctx, known, filter, switches) = state.get_mut(world);
+    let Some(mut text) = text else {
+        return;
+    };
+    let drawn = draw(&mut text, &ctx, known.as_deref(), guid, translate);
+    if let (Drawn::Letter, Some(mut filter)) = (&drawn, filter) {
+        let enabled = switches.is_none_or(|s| s.profanity);
+        filter.mask(enabled, &mut text.text);
+    }
+    state.apply(world);
+    if !matches!(drawn, Drawn::No) {
+        fire(world, "ITEM_TEXT_READY", Vec::new());
+    }
+}
+
+/// The read call (`0x58a1a0`): `guid` 0 closes; the held object again with flag 0 closes it; another object, or the held one from a callback, opens once its page or letter is cached, taking the interact target and firing `ITEM_TEXT_BEGIN`, then draws, or asks the server to read an unread book first.
+pub(crate) fn set_item(world: &mut World, guid: u64, again: bool) {
+    let Some(held) = world.get_resource::<ItemText>().map(|t| t.guid) else {
+        return;
+    };
+    if !again && guid != 0 && guid == held {
+        crate::ui_session::clear_interact_target(world, held);
+        fire(world, "ITEM_TEXT_CLOSED", Vec::new());
+        return;
+    }
+    if guid != held {
+        crate::ui_session::clear_interact_target(world, held);
+        world.resource_mut::<ItemText>().reset(guid);
+        if guid == 0 {
+            fire(world, "ITEM_TEXT_CLOSED", Vec::new());
+            return;
+        }
+    }
+    let mut state = bevy::ecs::system::SystemState::<(ResMut<ItemText>, ItemTextCtx)>::new(world);
+    let (mut text, ctx) = state.get_mut(world);
+    let Some(object) = ctx.object(guid) else {
+        text.guid = 0;
+        return;
+    };
+    let is_item = ctx.is_item(guid);
+    let flags = object.item_flags().unwrap_or(0);
+    let head = ctx.page_head(guid);
+    let page = match head {
+        PageHead::Page(p) => p,
+        PageHead::ItemRecord(_) => 0,
+    };
+    text.has_item_text = is_item && flags & ITEM_FIELD_FLAG_LETTER != 0;
+    let has_item_text = text.has_item_text;
+    let cached = if page == 0 && !has_item_text {
+        None
+    } else {
+        text.pages[0] = page;
+        if page != 0 {
+            let id = text.pages[text.current_page];
+            let hit = ctx.page(id, guid).is_some();
+            if !hit {
+                text.wait(Wait::Page(id), guid);
+            }
+            Some(hit)
+        } else {
+            let hit = ctx.letter(guid).is_some();
+            if !hit {
+                text.wait(Wait::Letter(guid), guid);
+            }
+            Some(hit)
+        }
+    };
+    state.apply(world);
+    if let PageHead::ItemRecord(entry) = head {
+        if let Some(mut waits) = world.get_non_send_resource_mut::<crate::items::RecordWaits>() {
+            waits.wait(entry, crate::items::RecordWait::ItemText(guid), false);
+        }
+    }
+    if cached != Some(true) {
+        return;
+    }
+    crate::ui_session::set_interact_target(world, guid);
+    fire(world, "ITEM_TEXT_BEGIN", Vec::new());
+    // The draw or the read check runs once `ITEM_TEXT_BEGIN` has fired (`0x58a345`).
+    crate::ui_script::live::in_turn(world, move |w| {
+        if !is_item || has_item_text || flags & ITEM_FIELD_FLAG_TRANSLATED != 0 {
+            display_text(w, guid, true);
+        } else {
+            read_check(w, guid);
+        }
+    });
+}
+
+/// An unread book's read check: `CMSG_READ_ITEM` with its bag and slot (`0x58a3d5` -> `0x6d5d10`); none found sends nothing.
+fn read_check(world: &mut World, guid: u64) {
+    let mut state = bevy::ecs::system::SystemState::<(
+        Option<Objects>,
+        Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
+        Option<Res<NetCommands>>,
+    )>::new(world);
+    let (objects, me, commands) = state.get(world);
+    let (Some(objects), Ok(me), Some(commands)) = (objects, me.single(), commands) else {
+        return;
+    };
+    let at = crate::ui_items::collect_inventory(
+        &me.0,
+        &objects,
+        crate::ui_items::InventoryScope::DEFAULT,
+    )
+    .into_iter()
+    .find(|&(_, _, g)| g == guid);
+    if let Some((bag, slot, _)) = at {
+        debug!("item text: read check for {guid:#x} at bag {bag} slot {slot}");
+        let _ = commands.0.send(ClientCommand::ReadItem { bag, slot });
+    }
+}
+
+/// The reader's callback (`0x58a450`): a found record for the held object re-runs the read call with flag 1.
+fn callback(world: &mut World, guid: u64, success: bool) {
+    let held = world.get_resource::<ItemText>().map(|t| t.guid);
+    if success && held == Some(guid) && guid != 0 {
+        set_item(world, guid, true);
+    }
+}
+
+/// The callbacks waiting on `wait`, in ask order.
+fn callbacks(world: &mut World, wait: Wait, success: bool) {
+    let Some(taken) = world
+        .get_resource_mut::<ItemText>()
+        .map(|mut t| t.take(wait))
+    else {
+        return;
+    };
+    for guid in taken {
+        callback(world, guid, success);
+    }
+}
+
+/// An item record's callback the page-id call left (`0x707180`).
+pub(crate) fn item_record_callback(world: &mut World, guid: u64, landed: bool) {
+    callback(world, guid, landed);
+}
+
+/// A name answered: the creator reads' callbacks on it (`0x58a4e1`).
+pub(crate) fn name_landed(world: &mut World, guid: u64) {
+    let landed = world
+        .get_resource::<NameCache>()
+        .is_some_and(|n| n.peek(guid).is_some());
+    callbacks(world, Wait::Name(guid), landed);
+}
+
+/// A GameObject's record landed: the text type's post-init re-runs the read call for the held object (`0x70c880`).
+pub(crate) fn go_template_landed(world: &mut World, entry: u32) {
+    let held = world.get_resource::<ItemText>().map_or(0, |t| t.guid);
+    if benilla_protocol::guid::is_gameobject(held)
+        && benilla_protocol::guid::entry(held) == Some(entry)
+    {
+        set_item(world, held, true);
+    }
+}
+
+/// An item leaving the object manager: the held one closes the reader (`0x70b036` -> `0x58a1a0`).
+pub(crate) fn item_disabled(world: &mut World, guid: u64) {
+    let held = world.get_resource::<ItemText>().map_or(0, |t| t.guid);
+    if benilla_protocol::guid::is_item(guid) && held == guid {
+        set_item(world, 0, false);
+    }
+}
+
+/// The interaction close's reader leg (`0x512ecf` -> `0x58a1a0`): the held object on the zeroed target closes.
+pub(crate) fn close_by_interaction(world: &mut World, target: u64) -> bool {
+    let held = world.get_resource::<ItemText>().map_or(0, |t| t.guid);
+    if held == 0 || held != target {
+        return false;
+    }
+    set_item(world, 0, false);
+    true
+}
+
+/// The reader as the live view lends it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ItemTextLive<'w, 's> {
+    text: Option<ResMut<'w, ItemText>>,
+    ctx: ItemTextCtx<'w, 's>,
+}
+
+impl ItemTextLive<'_, '_> {
+    /// The reader at the call.
+    pub(crate) fn read(&self) -> Option<benilla_ui::script::ItemTextRead> {
+        let t = self.text.as_deref()?;
+        Some(benilla_ui::script::ItemTextRead {
+            item: self.ctx.name(t.guid),
+            text: t.text.clone(),
+            page: t.current_page as u32 + 1,
+            has_next: !t.has_item_text && t.pages.get(t.current_page + 1).is_some_and(|&p| p != 0),
+            material: self.ctx.material(t.guid),
+        })
+    }
+
+    /// `ItemTextGetCreator` (`0x58a480`): the held item's creator name, a miss asked with the reader's callback on it.
+    pub(crate) fn creator(&mut self) -> Option<String> {
+        let t = self.text.as_mut()?;
+        let item = t.guid;
+        if !self.ctx.is_item(item) {
+            return None;
+        }
+        let creator = self.ctx.object(item)?.item_creator()?;
+        let name = self
+            .ctx
+            .names
+            .as_deref()?
+            .resolve(creator, self.ctx.commands.as_deref()?)
+            .map(str::to_string);
+        if name.is_none() {
+            t.wait(Wait::Name(creator), item);
+        }
+        name
+    }
+
+    /// A page step and its redraw (`0x58a110`, `0x58a150` -> `0x589e90`): whether it drew.
+    pub(crate) fn turn(
+        &mut self,
+        next: bool,
+        known: Option<&crate::ui_action::PlayerActions>,
+    ) -> bool {
+        let Some(t) = self.text.as_mut() else {
+            return false;
+        };
+        if t.guid == 0 || t.has_item_text {
+            return false;
+        }
+        if next {
+            // The next id read signed (`0x58a177`).
+            if t.pages
+                .get(t.current_page + 1)
+                .is_none_or(|&p| p as i32 <= 0)
+            {
+                return false;
+            }
+            t.current_page += 1;
+        } else {
+            if t.current_page == 0 {
+                return false;
+            }
+            t.current_page -= 1;
+        }
+        let guid = t.guid;
+        matches!(draw(t, &self.ctx, known, guid, true), Drawn::Page)
+    }
+
+    /// `CloseItemText`'s read call with no object (`0x58a400`): two closes while the reader holds the interact target, whose clear zeroes it (`0x58a207` -> `0x512e60` -> `0x512ecf`), one otherwise, none with no reader.
+    pub(crate) fn close(&mut self, target: Option<&mut crate::ui_session::InteractTarget>) -> u32 {
+        let Some(t) = self.text.as_mut() else {
+            return 0;
+        };
+        let held = t.guid;
+        if held == 0 {
+            return 0;
+        }
+        t.reset(0);
+        if target.is_some_and(|target| target.clear_in_call(held)) {
+            2
+        } else {
+            1
+        }
     }
 }
 
 /// `PageTextMaterial.dbc`; absent without client data, leaving every reader on Parchment.
 #[derive(Resource)]
 pub(crate) struct PageMaterials(pub(crate) benilla_formats::PageTextMaterialCatalog);
-
-/// Drain the reader's intents: `CloseItemText()` clears the session and fires `ITEM_TEXT_CLOSED`;
-/// a page turn re-runs the feed from `ITEM_TEXT_READY`, as the reference does not re-fire BEGIN.
-fn drain_item_text(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut open: ResMut<ItemTextOpen>,
-    pages: Res<PageTexts>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    for delta in script.take_item_text_page_turns() {
-        let Some(sess) = open.pending.as_mut() else {
-            continue;
-        };
-        let ReadSource::Pages { visited } = &mut sess.source else {
-            continue; // a letter has no pages; its buttons never show
-        };
-        if turn_page(visited, delta, |id| pages.pages.get(id).map(|p| p.next)) {
-            // Repaint on the next feed without re-firing BEGIN.
-            sess.told.get(&script).ready = false;
-        }
-    }
-    if script.take_item_text_close() && open.pending.take().is_some() {
-        script.set_item_text(None);
-        script.fire_event("ITEM_TEXT_CLOSED", vec![]);
-    }
-}
-
-/// Walk the trail one step: Next pushes the page's `nextPageId` from `next_of`, the cache, and Prev
-/// pops. A page not landed or a last page refuses; returns whether the page changed.
-fn turn_page(visited: &mut Vec<u32>, delta: i32, next_of: impl Fn(u32) -> Option<u32>) -> bool {
-    let Some(&current) = visited.last() else {
-        return false; // head not resolved yet
-    };
-    if delta > 0 {
-        match next_of(current) {
-            Some(next) if next != 0 => visited.push(next),
-            _ => return false,
-        }
-    } else if visited.len() > 1 {
-        visited.pop();
-    } else {
-        return false; // already on page 1
-    }
-    true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn page_turns_walk_the_chain_both_ways() {
-        let chain = |id: u32| match id {
-            100 => Some(101),
-            101 => Some(102),
-            102 => Some(0), // last page
-            _ => None,
-        };
-        let mut visited = vec![100];
-        assert!(!turn_page(&mut visited, -1, chain), "page 1 has no Prev");
-        assert_eq!(visited, [100]);
-
-        assert!(turn_page(&mut visited, 1, chain));
-        assert!(turn_page(&mut visited, 1, chain));
-        assert_eq!(visited, [100, 101, 102]);
-        assert!(
-            !turn_page(&mut visited, 1, chain),
-            "the last page has no Next"
-        );
-
-        assert!(turn_page(&mut visited, -1, chain));
-        assert_eq!(visited, [100, 101], "Prev pops the forward-only trail");
-    }
-
-    #[test]
-    fn a_page_still_in_flight_refuses_the_turn() {
-        let mut visited = vec![7];
-        assert!(!turn_page(&mut visited, 1, |_| None));
-        assert_eq!(visited, [7]);
-    }
-
-    #[test]
-    fn re_reading_the_same_object_toggles_closed() {
-        let mut open = ItemTextOpen::default();
-        open.open_pages(0xF110_0000_0000_0001);
-        assert!(!open.toggle_closed(0xF110_0000_0000_0002), "another book");
-        assert!(open.pending.is_some());
-        assert!(open.toggle_closed(0xF110_0000_0000_0001));
-        assert!(open.pending.is_none());
-        assert!(
-            open.take_closing(),
-            "the frame must be told — a cleared session alone leaves the window on screen"
-        );
-        assert!(!open.take_closing(), "drained");
-        assert!(!open.toggle_closed(0xF110_0000_0000_0001), "nothing open");
-        assert!(!open.take_closing(), "a no-op toggle closes nothing");
-    }
-
-    #[test]
-    fn a_page_read_opens_before_its_template_lands() {
-        let mut open = ItemTextOpen::default();
-        open.open_pages(0xF110_0000_0000_0001);
-        let sess = open.pending.as_ref().expect("open");
-        assert!(matches!(&sess.source, ReadSource::Pages { visited } if visited.is_empty()));
-    }
-}
 
 #[cfg(test)]
 mod quest_material_tests {

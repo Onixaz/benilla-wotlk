@@ -1,14 +1,14 @@
 //! `LiquidType.dbc` and `LiquidMaterial.dbc`: what a 3.3.5a liquid is, by the `LiquidType` id an
 //! MH2O instance, an MCLQ block or a WMO group stores. The id picks the vertex format through its
-//! material (`0x7c5690`), the depth swatch, the ambient loop (`0x4d2390`) and the class the kind is
-//! drawn from.
+//! material (`0x7c5690`), the depth swatch, the ambient loop (`0x4d2390`), the frame sheet
+//! (`0x8a27c0`) and the class the kind is drawn from.
 
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
 
-use crate::dbc::{parse, u32_at};
+use crate::dbc::{parse, str_at, u32_at};
 use crate::liquid::LiquidKind;
 use crate::Chain;
 
@@ -97,6 +97,10 @@ pub struct LiquidTypeRow {
     /// The depth table index; `None` where the material takes no depth (the reference's caller
     /// returns no table unless the LVF is 0 or 2).
     pub depth_ramp: Option<DepthRamp>,
+    /// `Texture[0]`, the animated frame sheet the water and magma materials bind as their body
+    /// (`0x8a27c0` copies the names, `0x8a2450` expands `%d` over frames 1–30); `None` where the
+    /// slot is empty or not a `%d` sheet.
+    pub sheet: Option<String>,
 }
 
 /// Every `LiquidType` row, by id.
@@ -110,8 +114,8 @@ impl LiquidTypes {
         self.rows.get(&id)
     }
 
-    /// The kind benilla draws `id` with. The reference binds `Texture[0]`; benilla's four texture
-    /// sets stand in by class, the magma and slime classes by their textured material.
+    /// The kind benilla draws `id` with: the class picks the renderer, the magma and slime classes
+    /// by their textured material. The frames are the row's own [`LiquidTypeRow::sheet`].
     pub fn kind(&self, id: u32) -> Option<LiquidKind> {
         let row = self.get(id)?;
         Some(match row.class {
@@ -120,6 +124,16 @@ impl LiquidTypes {
             3 => LiquidKind::Slime,
             _ => LiquidKind::Still,
         })
+    }
+
+    /// The frame sheet `id` binds, a `%d` path template ([`LiquidTypeRow::sheet`]).
+    pub fn sheet(&self, id: u32) -> Option<&str> {
+        self.get(id)?.sheet.as_deref()
+    }
+
+    /// Every row, by id, in no order.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, &LiquidTypeRow)> {
+        self.rows.iter().map(|(&id, row)| (id, row))
     }
 
     /// The ambient loop kit for `id`, and whether it is muted while the player is inside.
@@ -201,6 +215,7 @@ pub fn load_liquid_types(chain: &Chain) -> Result<LiquidTypes> {
                 sound_id: u32_at(r, SOUND_ID).unwrap_or(0),
                 vertex_format,
                 depth_ramp,
+                sheet: str_at(&rs, r, *TEXTURES.start()).filter(|t| t.contains("%d")),
             },
         );
     }
@@ -238,6 +253,15 @@ mod tests {
         ] {
             assert_eq!(types.kind(id), Some(kind), "LiquidType {id}");
             assert_eq!(types.get(id).unwrap().vertex_format, Some(lvf), "{id}");
+        }
+        // Each row names its own sheet: Outland's magma is the green one, not the base lava.
+        for (id, sheet) in [
+            (1, "XTextures\\river\\lake_a.%d.blp"),
+            (3, "XTextures\\lava\\lava.%d.blp"),
+            (9, "XTextures\\river\\fast_a.%d.blp"),
+            (15, "XTextures\\LavaGreen\\lavagreen.%d.blp"),
+        ] {
+            assert_eq!(types.sheet(id), Some(sheet), "LiquidType {id}");
         }
         assert_eq!(types.get(1).unwrap().depth_ramp, Some(DepthRamp::River));
         assert_eq!(types.get(2).unwrap().depth_ramp, Some(DepthRamp::Ocean));
