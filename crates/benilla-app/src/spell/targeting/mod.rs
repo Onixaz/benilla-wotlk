@@ -91,12 +91,28 @@ impl BindChecks<'_, '_> {
     /// and then its relation checks ([`super::cast_target::unit_binds`]). An unknown spell has no
     /// row to gate on.
     fn unit_binds(&self, spell_id: u32, word: u32, entity: Entity) -> bool {
+        let def = self.spells.as_deref().and_then(|s| s.catalog.get(spell_id));
+        super::cast_target::unit_binds(def, word, self.is_self(entity), &self.relations(entity))
+    }
+
+    /// Whether the player may assist this unit (`0x7293d0`), the send's rank pick's gate.
+    fn assists(&self, entity: Entity) -> bool {
+        self.relations(entity).assistable(self.is_self(entity))
+    }
+
+    /// The unit's descriptor fields, once it has streamed.
+    fn fields(&self, entity: Entity) -> Option<&benilla_protocol::messages::ObjectFields> {
+        self.stores.get(entity).ok().map(|s| &s.0)
+    }
+
+    /// The player's relations toward this unit, as the bind's checks read them.
+    fn relations(&self, entity: Entity) -> super::cast_target::TargetRelations<'_> {
         let target_store = self.stores.get(entity).ok();
         let owner_store =
             |store| super::cast_target::owner_store(store, self.index.as_deref(), &self.stores);
         let me = self.self_q.iter().next();
         let self_store = me.and_then(|(_, store)| store);
-        let rel = super::cast_target::TargetRelations {
+        super::cast_target::TargetRelations {
             target_store,
             target_owner_store: owner_store(target_store),
             self_store,
@@ -114,9 +130,7 @@ impl BindChecks<'_, '_> {
                 self_owner_store: owner_store(self_store),
                 roster: self.roster.as_deref(),
             },
-        };
-        let def = self.spells.as_deref().and_then(|s| s.catalog.get(spell_id));
-        super::cast_target::unit_binds(def, word, self.is_self(entity), &rel)
+        }
     }
 
     /// The spell's min/max range against this unit, through the one compare the pre-send gate
@@ -416,6 +430,23 @@ fn bind_target_unit(
         return;
     }
     let range = checks.range_refusal(spell_id, entity);
+    // The send's rank pick (`0x53d9d0`) on the bound unit. The player's assist check stands in for
+    // a pet caster's: the bind's relations are the player's.
+    let spell_id = match (range, commit) {
+        (None, super::cast_send::CastCommit::Spell) => ladder.rank_for(
+            spell_id,
+            None,
+            checks.fields(entity),
+            checks.assists(entity),
+        ),
+        (None, super::cast_send::CastCommit::Pet { caster }) => ladder.rank_for(
+            spell_id,
+            Some(caster),
+            checks.fields(entity),
+            checks.assists(entity),
+        ),
+        _ => spell_id,
+    };
     merge(
         ladder,
         spell_id,
@@ -742,6 +773,97 @@ mod tests {
         assert!(!world.resource::<SpellTargeting>().active());
         let selection = world.resource::<crate::target::Selection>();
         assert_eq!((selection.target, selection.guid), (Some(ally), Some(ALLY)));
+    }
+
+    /// The cursor's unit bind runs the send's rank pick (`0x53d9d0`) on the bound unit: Renew rank
+    /// 3 (level 20) cursor-bound to a level-9 ally of our faction goes out, and guards, as rank 2
+    /// (level 14), the rank the server casts and its go names.
+    #[test]
+    fn the_cursor_bind_sends_the_rank_the_unit_takes() {
+        use benilla_formats::{FactionCatalog, FactionTemplate, SpellDisplay};
+        use benilla_protocol::field::{
+            FIELD_OBJECT_TYPE, FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_FLAGS, FIELD_UNIT_HEALTH,
+            FIELD_UNIT_LEVEL,
+        };
+        const RENEW_2: u32 = 6074;
+        const RENEW_3: u32 = 6075;
+        let (mut world, rx, ally) = unit_world(10.0);
+        let renew = |id, spell_level| SpellDisplay {
+            id,
+            name: "Renew".into(),
+            spell_level,
+            range_index: 5,
+            implicit_target_a1: 21,
+            effect_apply_aura: [8, 0, 0],
+            ..Default::default()
+        };
+        let mut spells = std::mem::replace(
+            &mut *world.resource_mut::<crate::ui_action::Spells>(),
+            crate::ui_action::Spells::empty_for_tests(),
+        );
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(HashMap::from([
+            (RENEW_2, renew(RENEW_2, 14)),
+            (RENEW_3, renew(RENEW_3, 20)),
+        ]));
+        world.insert_resource(spells);
+        world.insert_resource(crate::ui_action::PlayerActions {
+            spells: [RENEW_2, RENEW_3].into(),
+            ..Default::default()
+        });
+        world.insert_resource(crate::target::Factions::from_catalog(
+            FactionCatalog::from_rows(
+                HashMap::from([(
+                    1,
+                    FactionTemplate {
+                        faction: 1,
+                        group_mask: 3,
+                        friend_group_mask: 2,
+                        enemy_group_mask: 12,
+                        enemies: [0; 4],
+                        friends: [0; 4],
+                    },
+                )]),
+                HashMap::new(),
+            ),
+        ));
+        // Live, player-controlled players of faction template 1, which assists its own kind.
+        let player = |level: u32| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_TYPE, 0x19),
+                (FIELD_UNIT_FACTIONTEMPLATE, 1),
+                (FIELD_UNIT_FLAGS, 0x8),
+                (FIELD_UNIT_HEALTH, 100),
+                (FIELD_UNIT_LEVEL, level),
+            ]))
+        };
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .single(&world)
+            .expect("the player");
+        world.entity_mut(me).insert(player(20));
+        world.entity_mut(ally).insert(player(9));
+        arm(&mut world, RENEW_3, 0x0100);
+        spell_target_unit(&mut world, "target");
+        let sent = rx
+            .try_iter()
+            .find(|c| matches!(c, ClientCommand::CastSpell { .. }));
+        assert!(
+            matches!(
+                sent,
+                Some(ClientCommand::CastSpell {
+                    spell_id: RENEW_2,
+                    target: Some(ALLY),
+                })
+            ),
+            "rank 2 goes out at the ally: {sent:?}"
+        );
+        assert_eq!(
+            world
+                .resource::<crate::spell::PendingCast>()
+                .committed(std::time::Instant::now()),
+            Some(RENEW_2)
+        );
+        assert!(errors(&mut world).is_empty());
     }
 
     /// `SpellTargetUnit` takes a `target` chain as the resolver does: `"pettarget"` and
