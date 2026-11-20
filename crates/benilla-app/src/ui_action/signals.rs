@@ -22,8 +22,9 @@ use super::UiError;
 /// The caller's ordered stream: where a signal fires, and a line shows, in turn with the write or
 /// the refusal that raised it. A packet handler's queue fires in its turn, a VM the caller holds
 /// directly, and a system without the VM once its commands apply ([`QueuedSignals`]). A press's
-/// edges fire in order as the press returns, inside the Lua call; the reference fires each at its
-/// step, so a handler there sees the state of that step, here the state after the press (#1363).
+/// edges fire in order as the press returns; the reference fires each at its step, so a handler
+/// there sees the state of that step, here the state after the press (#1363). A Lua verb's press
+/// is a script call applied after the Lua call returns (#1235).
 ///
 /// A refusal line goes here, never onto a frame-late queue: the reference's message display
 /// (`0x5216f0`) runs inside the code that refuses, so its `UI_ERROR_MESSAGE` or `UI_INFO_MESSAGE`
