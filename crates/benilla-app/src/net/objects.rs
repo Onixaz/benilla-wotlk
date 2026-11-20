@@ -1123,6 +1123,7 @@ fn object_create(
         fields.gameobject_type_id(),
         fields.gameobject_dynamic_flags(),
     );
+    crate::entities::destructible::tag(&mut entity, kind, fields.gameobject_type_id());
     if let Some(s) = speeds {
         entity.insert(UnitSpeeds(s));
     }

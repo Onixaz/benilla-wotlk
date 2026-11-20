@@ -747,14 +747,19 @@ impl Plugin for EntitiesPlugin {
                 // A WMO GameObject's doodad props, spawned as each M2 lands.
                 (
                     resolve_wmo_gameobject_props,
-                    wmo_props::resolve_building_impacts,
+                    wmo_props::resolve_building_impacts
+                        .run_if(any_with_component::<destructible::BuildingImpact>),
                 )
                     .chain(),
                 // A destructible building's state sets step through their sequences.
                 (
                     spawn_wmo_gameobject_props,
-                    destructible::drive_building_doodads,
-                    destructible::tend_building_swaps,
+                    destructible::drive_building_doodads
+                        .run_if(any_with_component::<destructible::BuildingDoodad>),
+                    destructible::tend_building_swaps.run_if(
+                        any_with_component::<destructible::BuildingSwap>
+                            .or(any_with_component::<destructible::BuildingGhostOf>),
+                    ),
                 )
                     .chain(),
                 attach_held_items,
@@ -786,7 +791,8 @@ impl Plugin for EntitiesPlugin {
                 // unit denied a palette rig rebuilds once the table has room.
                 (
                     // A building's state change, before the swap reads its new display.
-                    destructible::track_building_states,
+                    destructible::track_building_states
+                        .run_if(any_with_component::<destructible::DestructibleBuilding>),
                     refresh_live_display,
                     tick_scale_ease,
                     live_display::heal_rig_starved,

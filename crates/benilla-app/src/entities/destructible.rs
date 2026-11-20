@@ -37,6 +37,18 @@ const FLAG_HIT: u32 = 0x100;
 /// `GAMEOBJECT_TYPE_DESTRUCTIBLE_BUILDING`.
 pub(crate) const GO_TYPE_DESTRUCTIBLE_BUILDING: i32 = 33;
 
+/// Marks a destructible building from its create, the gate of the building systems.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct DestructibleBuilding;
+
+/// Mark a type-33 GameObject as it streams in.
+pub(crate) fn tag(entity: &mut EntityCommands, kind: benilla_protocol::EntityKind, type_id: i32) {
+    if kind == benilla_protocol::EntityKind::GameObject && type_id == GO_TYPE_DESTRUCTIBLE_BUILDING
+    {
+        entity.insert(DestructibleBuilding);
+    }
+}
+
 /// `DestructibleModelData.dbc`, read once at startup.
 #[derive(Resource, Default)]
 pub(crate) struct Destructibles(pub(crate) DestructibleModels);
@@ -306,7 +318,7 @@ pub(super) fn track_building_states(
             Ref<ObjectStore>,
             Option<&mut BuildingState>,
         ),
-        With<VisualAttached>,
+        (With<VisualAttached>, With<DestructibleBuilding>),
     >,
 ) {
     let templates_new = sets.templates.as_ref().is_some_and(|t| t.is_changed());
