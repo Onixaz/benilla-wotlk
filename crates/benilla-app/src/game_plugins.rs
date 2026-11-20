@@ -1265,6 +1265,7 @@ pub(crate) mod schedule_tests {
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
         ("Update", 643, 635),
+        // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
