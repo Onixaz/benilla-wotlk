@@ -262,8 +262,8 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         if matches!(kind, EntityKind::Unit | EntityKind::Player) {
             seed_attack_target(e, attack_target, &mut sc.commands);
         }
-        if let Some(m) = mover.filter(|_| sc.self_guid.0 != Some(guid)) {
-            seed_player_word(e, guid, m, &mut sc.commands);
+        if let Some(m) = mover.filter(|_| unit && sc.self_guid.0 != Some(guid)) {
+            seed_unit_word(e, m, &mut sc.commands);
         }
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
@@ -325,14 +325,13 @@ fn mover_placement(orientation: f32, mover: Option<MoverState>) -> Quat {
     )
 }
 
-/// A block replaces another player's kept word (`0x6f1520` zeroes it, then merges).
-fn seed_player_word(e: Entity, guid: u64, mover: MoverState, commands: &mut Commands) {
-    if benilla_protocol::guid::is_player(guid) {
-        let stated = crate::creature_anim::move_flags::merge_server_authored(0, mover.flags);
-        commands
-            .entity(e)
-            .insert(UnitMoveModes(crate::net::motion::standing_bits(stated)));
-    }
+/// A block replaces a unit's kept word, a creature's as a player's (`0x6f1520` zeroes it, then
+/// merges): a flyer streamed in keeps its `CAN_FLY` and gravity-off bits for the idle pick.
+fn seed_unit_word(e: Entity, mover: MoverState, commands: &mut Commands) {
+    let stated = crate::creature_anim::move_flags::merge_server_authored(0, mover.flags);
+    commands
+        .entity(e)
+        .insert(UnitMoveModes(crate::net::motion::standing_bits(stated)));
 }
 
 /// A mover's whole state from a `LIVING` create or a `MOVEMENT` block (`0x6f1520`): its speeds,
@@ -354,7 +353,7 @@ fn apply_mover(
         .entity(e)
         .remove::<RemoteMotion>()
         .insert(UnitSpeeds(speeds));
-    seed_player_word(e, guid, mover, commands);
+    seed_unit_word(e, mover, commands);
     match unit_rider(kind, transport) {
         Some(r) => {
             commands.entity(e).insert(r);
@@ -1971,11 +1970,11 @@ mod tests {
             );
         }
 
-        /// A block replaces a player's kept word with its standing bits (`0x6f1520`).
+        /// A block replaces a unit's kept word with its standing bits (`0x6f1520`), a creature's
+        /// as a player's.
         #[test]
-        fn a_block_seeds_a_players_word_and_drops_its_motion() {
+        fn a_block_seeds_a_units_word_and_drops_its_motion() {
             use crate::creature_anim::move_flags as f;
-            const PLAYER: u64 = 0x3f2;
             let mover = MoverState {
                 flags: f::FLYING | f::CAN_FLY | f::FORWARD | f::FALLING,
                 pitch: 0.0,
@@ -1985,15 +1984,37 @@ mod tests {
             let player = w.spawn(UnitMoveModes(f::ROOT)).id();
             let mob = w.spawn_empty().id();
             w.run_system_once(move |mut commands: Commands| {
-                seed_player_word(player, PLAYER, mover, &mut commands);
-                seed_player_word(mob, 0xF130_0000_0000_00F0, mover, &mut commands);
+                seed_unit_word(player, mover, &mut commands);
+                seed_unit_word(mob, mover, &mut commands);
             })
             .unwrap();
-            assert_eq!(
-                w.entity(player).get::<UnitMoveModes>().unwrap().0,
-                f::FLYING | f::CAN_FLY
-            );
-            assert!(w.entity(mob).get::<UnitMoveModes>().is_none());
+            for e in [player, mob] {
+                assert_eq!(
+                    w.entity(e).get::<UnitMoveModes>().unwrap().0,
+                    f::FLYING | f::CAN_FLY
+                );
+            }
+        }
+
+        /// A gravity-off creature streamed in reaches the selector with its word, the bits its
+        /// Hover idle reads (`0x71c6c0`).
+        #[test]
+        fn a_gravity_off_creature_block_reaches_the_selector() {
+            use crate::creature_anim::move_flags as f;
+            let mover = MoverState {
+                flags: f::LEVITATING | f::CAN_FLY | f::FORWARD,
+                pitch: 0.0,
+                flags2: 0,
+            };
+            let mut w = World::new();
+            let mob = w.spawn_empty().id();
+            w.run_system_once(move |mut commands: Commands| {
+                seed_unit_word(mob, mover, &mut commands);
+            })
+            .unwrap();
+            let modes = w.entity(mob).get::<UnitMoveModes>().copied();
+            let mv = crate::creature_anim::select::unify(None, None, None, false, modes.as_ref());
+            assert_eq!(mv.flags, f::LEVITATING | f::CAN_FLY);
         }
 
         /// Every one of the twelve 1.12.1-shaped opcodes sets or clears one bit.
