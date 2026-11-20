@@ -312,6 +312,8 @@ type HostData = (
     // Read only by the debug trace.
     Has<SelfPlayer>,
     Has<benilla_world::model_fade::DespawnFade>,
+    // The rider's descriptor: its anim tier resolves the mount model's rows (`0x7176f0`).
+    Option<&'static ObjectStore>,
 );
 
 /// The per-unit animation state machine: death overrides; otherwise Specials as bracketed loops,
@@ -649,12 +651,24 @@ fn drive_unit(
         move_modes,
         host_scale,
         ridden_by_self,
+        anim_tier,
     ) = match mount_body {
+        // The mount model resolves on the rider's tier, the unit's own (`0x7176f0`): a fly-tier
+        // rider's drake asks for FlyStand.
         Some(mb) => match mount_hosts.get(mb.host) {
-            Ok((s, r, m, sp, f, sw, md, t, host_self, _)) => {
-                (s, r, m, sp, f, sw, md, t.scale.x, host_self)
-            }
-            Err(_) => (None, None, None, None, None, false, None, 1.0, false),
+            Ok((s, r, m, sp, f, sw, md, t, host_self, _, host_store)) => (
+                s,
+                r,
+                m,
+                sp,
+                f,
+                sw,
+                md,
+                t.scale.x,
+                host_self,
+                host_store.map_or(0, |s| s.0.unit_anim_tier()),
+            ),
+            Err(_) => (None, None, None, None, None, false, None, 1.0, false, 0),
         },
         None => (
             spline,
@@ -666,6 +680,7 @@ fn drive_unit(
             move_modes,
             1.0,
             false,
+            store.map_or(0, |s| s.0.unit_anim_tier()),
         ),
     };
     // The rate divisor's `|modelScale|`: a mount child's display column composes under the rider's
@@ -801,7 +816,7 @@ fn drive_unit(
 
     // Death overrides every state: the dead pose, armed on an edge and held.
     if dead {
-        let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+        let tier = anim_tier;
         let torso = drv.gait;
         let lying = torso.is_some_and(|g| g == DEATH || select::is_dead_or_dying(g, catalog));
         // The pick's own pose past the raw kit, on the model holding DeathStart as its tier asks
@@ -1069,7 +1084,7 @@ fn drive_unit(
     });
     // In `PlaySeq` order, defense last: the reference plays it from the deferred impact scan,
     // after every message handler.
-    let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+    let tier = anim_tier;
     let mut requests: Vec<Arm> = pending
         .get(&entity)
         .map(|v| {
@@ -1524,6 +1539,7 @@ fn drive_unit(
             cast_start: cast_start.map(|(_, a)| a),
             wielded,
             store,
+            anim_tier,
             emote_sounds,
             interacting: interacting || drv.interact_hold,
             walk,
