@@ -44,9 +44,20 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
     let applied = with_world(|world| {
         // What an enclosing turn queued stays its own, fired by it.
         let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
-        let applied = world.run_system_cached_with(apply_one, call).ok();
-        // The applier's raises as the call returns (`0x80b556`, `0x806200`, `0x5216f0`), each
-        // with the `World` lent again: #1363 fires each at its step inside the press.
+        let (applied, raised) = benilla_ui::script::world_loan::raises_in_turn(|| {
+            world.run_system_cached_with(apply_one, call).ok()
+        });
+        // The applier's raises as the call returns, with the `World` lent again: the ones it made
+        // through the VM (the item-use fork's `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`,
+        // the selection's refusal line `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`).
+        // #1363 fires each at its step inside the press.
+        if !raised.is_empty() {
+            crate::ui_script::safe_world::lend(world, |script| {
+                for (event, args) in raised {
+                    script.fire_event(&event, args);
+                }
+            });
+        }
         crate::ui_script::live::fire_handler_events(world);
         world.resource_mut::<UiEvents>().put_back(earlier);
         // The setter's tail, inside the call that moved the selection (`0x524f38`-`0x524f54`).
@@ -78,10 +89,11 @@ pub(crate) fn apply_script_calls(world: &mut World) {
     });
 }
 
-/// Apply one call in its owner's applier; its signals, lines and the press's edges queue on `ui`
-/// for the caller to fire once the applier's borrows end. The item-use fork, the selection's
-/// refusal line and the cast ladder's own sinks still raise inside the applier, through the view
-/// it lends (#1363 moves each to its step).
+/// Apply one call in its owner's applier; its signals, lines and the press's edges queue on `ui`,
+/// and what it raises through the VM queues in turn ([`raises_in_turn`]), for the caller to fire
+/// once the applier's borrows end (#1363 moves each to its step).
+///
+/// [`raises_in_turn`]: benilla_ui::script::world_loan::raises_in_turn
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 fn apply_one(
     In(call): In<ScriptCall>,

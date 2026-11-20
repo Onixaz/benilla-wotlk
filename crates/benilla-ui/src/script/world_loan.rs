@@ -21,6 +21,45 @@ thread_local! {
     static LIVE_ACCESS: RefCell<Option<LiveAccess>> = const { RefCell::new(None) };
     /// The first borrow that failed under the loans live now: a borrow held across a raise.
     static HELD_ACROSS: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The events a host step raised while it held the lent state, queued in turn.
+    static IN_TURN: RefCell<Option<Vec<Raised>>> = const { RefCell::new(None) };
+}
+
+/// One event a step raised in turn: its name and arguments.
+pub type Raised = (String, Vec<super::ScriptValue>);
+
+/// Puts the enclosing step's queue back on return and on unwind.
+struct Restore(Option<Vec<Raised>>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let outer = self.0.take();
+        IN_TURN.with_borrow_mut(|q| *q = outer);
+    }
+}
+
+/// Run `f`, a host step that holds the lent state, with every event it raises queued in turn
+/// instead of fired; the events, in order, for the caller to fire once its borrows end.
+pub fn raises_in_turn<R>(f: impl FnOnce() -> R) -> (R, Vec<Raised>) {
+    let restore = Restore(IN_TURN.with_borrow_mut(|q| q.replace(Vec::new())));
+    let out = f();
+    let raised = IN_TURN.with_borrow_mut(|q| q.take()).unwrap_or_default();
+    drop(restore);
+    (out, raised)
+}
+
+/// Queue `event` when a step raises in turn ([`raises_in_turn`]); the arguments back otherwise.
+pub(crate) fn queue_in_turn(
+    event: &str,
+    args: Vec<super::ScriptValue>,
+) -> Option<Vec<super::ScriptValue>> {
+    IN_TURN.with_borrow_mut(|q| match q {
+        Some(q) => {
+            q.push((event.to_string(), args));
+            None
+        }
+        None => Some(args),
+    })
 }
 
 /// Builds the live view over the innermost loan and runs the closure on it; `false` when nothing
@@ -141,5 +180,23 @@ mod tests {
         assert!(message.contains("borrowed across a raise"), "{message}");
         assert!(!lent(), "the loan is popped on unwind");
         assert!(!lua.load("return Bump()").eval::<bool>().unwrap());
+    }
+
+    /// A step's raises queue in turn, in order, nested steps each keeping their own, and nothing
+    /// queues once the step returns.
+    #[test]
+    fn a_steps_raises_queue_in_turn_and_nest() {
+        let ((inner, ()), outer) = raises_in_turn(|| {
+            assert!(queue_in_turn("A", Vec::new()).is_none());
+            let inner = raises_in_turn(|| {
+                assert!(queue_in_turn("B", Vec::new()).is_none());
+            });
+            assert!(queue_in_turn("C", Vec::new()).is_none());
+            (inner.1, ())
+        });
+        let names = |q: &[Raised]| q.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&inner), ["B"]);
+        assert_eq!(names(&outer), ["A", "C"]);
+        assert!(queue_in_turn("D", Vec::new()).is_some());
     }
 }

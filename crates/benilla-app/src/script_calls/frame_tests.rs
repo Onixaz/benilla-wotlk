@@ -545,6 +545,17 @@ impl Rig {
         self.app.world().resource::<Selection>().guid
     }
 
+    /// The water's template, changed by `f`.
+    fn retemplate(&mut self, f: impl FnOnce(&mut benilla_protocol::ItemInfo)) {
+        let mut items = self.app.world_mut().resource_mut::<crate::items::Items>();
+        let mut t = items
+            .template_cached(WATER)
+            .cloned()
+            .expect("the water's template");
+        f(&mut t);
+        items.insert_template(WATER, Some(t));
+    }
+
     /// Five waters in the backpack's first slot (`PLAYER_FIELD_PACK_SLOT_1`), with
     /// Drink as their on-use spell.
     fn water_in_the_backpack(&mut self) {
@@ -1355,6 +1366,66 @@ fn a_select_from_a_sent_listener_applies_inside_it() {
     );
     assert_eq!(rig.selected(), Some(NEW));
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+}
+
+/// A listener on `event`, raised by the call `call` makes inside an `OnUpdate`, that targets
+/// `party1` and reads the target back inside the listener: what it read, and the selection after.
+fn listener_selects(rig: &mut Rig, event: &str, call: &str) -> (Option<String>, Option<u64>) {
+    rig.lua(TICK_DO);
+    rig.lua(&format!(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("{event}")
+        f:SetScript("OnEvent", function()
+            if SEEN then return end
+            TargetUnit("party1")
+            SEEN = UnitGUID("target")
+        end)
+        TICK_DO = function() {call} end"#
+    ));
+    rig.frame();
+    let seen = rig
+        .vm()
+        .eval::<Option<String>>("return SEEN")
+        .ok()
+        .flatten();
+    (seen, rig.selected())
+}
+
+/// The selection's refusal line (`0x525f87` -> `0x5216f0`) raises as `AssistUnit` returns, with no
+/// applier borrow held: its listener's `TargetUnit` applies inside it.
+#[test]
+fn a_select_from_a_refusal_line_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(r#"ERR_UNIT_NOT_FOUND = "Unknown unit.""#);
+    let (seen, selected) =
+        listener_selects(&mut rig, "UI_ERROR_MESSAGE", r#"AssistUnit("nobody")"#);
+    assert_eq!(seen, Some(format!("0x{NEW:016X}")));
+    assert_eq!(selected, Some(NEW));
+}
+
+/// The item-use fork's `USE_GLYPH` (`0x5d8ad3`) raises as `UseContainerItem` returns: its
+/// listener's `TargetUnit` applies inside it.
+#[test]
+fn a_select_from_a_use_glyph_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.class = 16);
+    let (seen, selected) = listener_selects(&mut rig, "USE_GLYPH", "UseContainerItem(0, 1)");
+    assert_eq!(seen, Some(format!("0x{NEW:016X}")));
+    assert_eq!(selected, Some(NEW));
+}
+
+/// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
+/// its listener's `TargetUnit` applies inside it.
+#[test]
+fn a_select_from_an_item_lock_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.flags |= benilla_protocol::messages::ITEM_FLAG_LOOTABLE);
+    let (seen, selected) =
+        listener_selects(&mut rig, "ITEM_LOCK_CHANGED", "UseContainerItem(0, 1)");
+    assert_eq!(seen, Some(format!("0x{NEW:016X}")));
+    assert_eq!(selected, Some(NEW));
 }
 
 /// A call made where no hook is lent waits; the next call made under one applies it first, so the
