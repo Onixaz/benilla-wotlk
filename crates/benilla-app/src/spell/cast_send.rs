@@ -648,21 +648,26 @@ impl CastLadder<'_, '_> {
                 .object(item)
                 .is_some_and(|f| crate::ui_socket::bound_tradeable(f, me, enchants, played))
         };
-        // A copy: a read of the lent book held across the ladder would trip its owner writes
-        // (the cooldown store's), which refuse beside any live shared read.
-        let known = self.actions.get().map(|a| a.spells.clone());
-        let none = benilla_formats::SummonPropertiesCatalog::default();
-        let book = known.as_ref().map(|spells| rank_pick::Book::Player {
-            spells,
-            summons: self.summons.as_ref().map_or(&none, |s| &s.0),
-        });
+        // The pressed spell's ranks in the book, taken here: a read of the lent book inside the
+        // send would sit beside its owner writes (the cooldown store's), which refuse it.
+        let ranks = match (commit, self.spells.as_deref(), self.actions.get()) {
+            (CastCommit::Spell, Some(spells), Some(known)) => {
+                let none = benilla_formats::SummonPropertiesCatalog::default();
+                let book = rank_pick::Book::Player {
+                    spells: &known.spells,
+                    summons: self.summons.as_ref().map_or(&none, |s| &s.0),
+                };
+                book.ranks(spell_id, &spells.catalog)
+            }
+            _ => None,
+        };
         send_spell_cast(
             spell_id,
             ctx,
             commit,
             on_object,
             hold,
-            book,
+            ranks.as_deref(),
             (self.spell_enchant.as_deref_mut(), &bound_trade),
             &self.commands,
             &self.self_player,
@@ -721,8 +726,9 @@ fn send_spell_cast(
     bound_object: Option<u64>,
     // Set for a player's spell press, which parks in `held_for_pick` at the attack pick.
     hold: Option<HeldCast>,
-    // The player's book, which the send's rank pick walks.
-    book: Option<rank_pick::Book<'_>>,
+    // The pressed spell's ranks in the player's book ([`rank_pick::Book::ranks`]), when the send's
+    // rank pick reads it.
+    ranks: Option<&[&benilla_formats::SpellDisplay]>,
     // The weapon imbue's trade-window confirm and its bound test.
     trade_confirm: (
         Option<&mut crate::ui_socket::SpellEnchantConfirm>,
@@ -1220,8 +1226,8 @@ fn send_spell_cast(
     // The send's rank pick (`0x53d9d0`), first in the send: a cast at a unit the caster may assist
     // goes out at the rank the unit can take, and everything from here names that rank.
     let pressed = spell_id;
-    let spell_id = match (commit, target, explicit_object, item_target, book, spells) {
-        (CastCommit::Spell, Some(unit), None, None, Some(book), Some(spells)) => {
+    let spell_id = match (commit, target, explicit_object, item_target, ranks, spells) {
+        (CastCommit::Spell, Some(unit), None, None, Some(ranks), Some(spells)) => {
             let is_self = ctx.self_guid == Some(unit);
             let store = if is_self {
                 ctx.rel.self_store
@@ -1231,7 +1237,7 @@ fn send_spell_cast(
             match store.filter(|_| ctx.rel.assistable(is_self)) {
                 Some(store) => {
                     let summoner = store.0.unit_summoned_by().and_then(|g| objects.object(g));
-                    book.pick(spell_id, &spells.catalog, &store.0, summoner)
+                    rank_pick::pick_among(spell_id, &spells.catalog, ranks, &store.0, summoner)
                 }
                 None => spell_id,
             }

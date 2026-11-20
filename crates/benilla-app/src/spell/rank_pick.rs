@@ -42,29 +42,46 @@ impl Book<'_> {
         unit: &ObjectFields,
         summoner: Option<&ObjectFields>,
     ) -> u32 {
-        let Some(level) = fit_level(unit, summoner) else {
-            return spell_id;
-        };
-        match self {
-            Book::Player { spells, summons } => pick(
-                spell_id,
-                catalog,
-                spells
-                    .iter()
-                    .filter_map(|&id| catalog.get(id))
-                    .filter(|d| d.in_spellbook(summons)),
-                level,
-            ),
-            Book::Pet(words) => pick(
-                spell_id,
-                catalog,
-                words
-                    .iter()
-                    .filter_map(|w| catalog.get(w.action()))
-                    .filter(|d| d.in_pet_book()),
-                level,
-            ),
+        match self.ranks(spell_id, catalog) {
+            Some(ranks) => pick_among(spell_id, catalog, &ranks, unit, summoner),
+            None => spell_id,
         }
+    }
+
+    /// The book's spells of `spell_id`'s name, in book order, or `None` when the pick never
+    /// re-ranks it: what the send needs of the book, taken before the send's own writes.
+    pub(crate) fn ranks(self, spell_id: u32, catalog: &SpellCatalog) -> Option<Vec<&SpellDisplay>> {
+        let d = catalog.get(spell_id).filter(|d| re_ranks(d))?;
+        let named = |other: &&SpellDisplay| other.name == d.name;
+        Some(match self {
+            Book::Player { spells, summons } => spells
+                .iter()
+                .filter_map(|&id| catalog.get(id))
+                .filter(named)
+                .filter(|o| o.in_spellbook(summons))
+                .collect(),
+            Book::Pet(words) => words
+                .iter()
+                .filter_map(|w| catalog.get(w.action()))
+                .filter(named)
+                .filter(|o| o.in_pet_book())
+                .collect(),
+        })
+    }
+}
+
+/// The pick over `ranks` ([`Book::ranks`] of `spell_id`) at `unit`, whose `summoner` (if it
+/// streamed) lends the level instead.
+pub(crate) fn pick_among(
+    spell_id: u32,
+    catalog: &SpellCatalog,
+    ranks: &[&SpellDisplay],
+    unit: &ObjectFields,
+    summoner: Option<&ObjectFields>,
+) -> u32 {
+    match fit_level(unit, summoner) {
+        Some(level) => pick(spell_id, catalog, ranks.iter().copied(), level),
+        None => spell_id,
     }
 }
 
