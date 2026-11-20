@@ -327,3 +327,62 @@ fn a_server_period_replaces_the_built_one() {
     assert_eq!(parked.period_ms, 0);
     assert_eq!(parked.sample(12345).pos, built.sample(0).pos);
 }
+
+/// A loop of two stops with cruise between them: each span runs Stand, ShipStart, ShipMoving,
+/// ShipStop, Stand, as the reference's ship path hands its props (`0x7f82b0`): Stand only parked
+/// at a stop, never at the cycle's wrap, which the ship passes at speed.
+#[test]
+fn a_span_between_stops_runs_start_moving_stop() {
+    // A 2000 x 400 yd rectangle, a node every 200 yd, stops midway along each long side.
+    let mut ring: Vec<[f32; 3]> = Vec::new();
+    for i in 0..=10 {
+        ring.push([i as f32 * 200.0, 0.0, 0.0]);
+    }
+    ring.push([2000.0, 200.0, 0.0]);
+    for i in (0..=10).rev() {
+        ring.push([i as f32 * 200.0, 400.0, 0.0]);
+    }
+    ring.push([0.0, 200.0, 0.0]);
+    let stops = [5usize, 17];
+    // The builder never travels the first and last node: pad the ring by one on each side.
+    let mut nodes = Vec::new();
+    let n = ring.len();
+    for (k, i) in (0..n + 3).map(|k| (k, (k + n - 1) % n)) {
+        nodes.push(crate::taxi::TaxiPathNode {
+            id: k as u32,
+            path_id: 1,
+            node_index: k as u32,
+            map_id: 0,
+            pos: ring[i],
+            flags: if stops.contains(&i) { 2 } else { 0 },
+            delay: if stops.contains(&i) { 10 } else { 0 },
+        });
+    }
+    // The accumulated cycle, unpinned: a pinned longer period parks at the last keyframe, which
+    // is the sampler's own hold, not the wrap this test walks through.
+    let tt = TransportTimetable::build_with_variant(&nodes, 30.0, 1.0, TimeMode::Vmangos, 20)
+        .expect("the loop builds");
+    let mut runs: Vec<u16> = Vec::new();
+    for ms in (0..tt.period_ms).step_by(50) {
+        let s = tt.sample(ms);
+        if s.moving {
+            assert_ne!(s.sequence, SHIP_STAND, "at {ms} ms: {s:?}");
+        }
+        if runs.last() != Some(&s.sequence) {
+            runs.push(s.sequence);
+        }
+    }
+    let cycle = [SHIP_STAND, SHIP_START, SHIP_MOVING, SHIP_STOP];
+    let head = runs
+        .iter()
+        .position(|&q| q == SHIP_STAND)
+        .expect("the loop stops");
+    // Rotated to start parked; the wrap joins the tail's run to the head's.
+    let mut walked: Vec<u16> = runs[head..].to_vec();
+    let tail = walked.last().copied();
+    walked.extend(runs[..head].iter().skip_while(|&&q| Some(q) == tail));
+    assert!(walked.len() >= 8, "two full spans: {runs:?}");
+    for (k, q) in walked.iter().enumerate() {
+        assert_eq!(*q, cycle[k % 4], "the state order: {runs:?}");
+    }
+}

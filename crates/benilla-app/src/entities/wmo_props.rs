@@ -39,6 +39,13 @@ use benilla_world::terrain_stream::{
 
 use super::{GameObjects, ModelHandle, VisualAttached};
 
+/// The ship states a boat hands its props (`0x7f82b0`); Stand is every model's loader arm.
+const SHIP_SEQUENCES: [u16; 3] = [
+    benilla_formats::SHIP_START,
+    benilla_formats::SHIP_MOVING,
+    benilla_formats::SHIP_STOP,
+];
+
 /// Marks an entity the prop resolver has visited, units and M2 GameObjects included, so it is
 /// never scanned again. Sparse, as it lands frames after the entity's other parts.
 #[derive(Component)]
@@ -176,6 +183,8 @@ pub(super) fn spawn_wmo_gameobject_props(
         let host_world = host_gt.compute_transform();
         let (mut hulls, mut emitters, mut ribbons, mut lights, mut interior) =
             (0u32, 0u32, 0u32, 0u32, 0u32);
+        // The anim roots of the props a ship state drives, for `transport::drive_ship_props`.
+        let mut ship_props: Vec<Entity> = Vec::new();
         props.0.retain(|prop| {
             let Some(m) = m2s.get(&prop.handle) else {
                 return true; // still loading; retry next frame
@@ -301,6 +310,14 @@ pub(super) fn spawn_wmo_gameobject_props(
                 benilla_world::terrain_stream::SpawnMode::Full,
             );
             commands.entity(entity).add_children(&ents);
+            // A prop that authors a ship sequence (sails, rotors, a paddle wheel) follows the
+            // boat's state. All seven pose away from rest in Stand, so the loader arm gave each a
+            // player; the request re-arms that one.
+            if let (Some(h), Some(anims)) = (host.as_ref(), m.animations.as_ref()) {
+                if SHIP_SEQUENCES.iter().any(|&id| anims.find(id).is_some()) {
+                    ship_props.push(h.root());
+                }
+            }
             // The slot's component hook returns it to the table whoever despawns the prop.
             if let (Some(slot), Some(&first)) = (interior_slot, ents.first()) {
                 commands.entity(first).insert(PropProbeSlot(slot));
@@ -415,6 +432,18 @@ pub(super) fn spawn_wmo_gameobject_props(
                 "wmo props: {hulls} cargo hulls, {emitters} emitters, {ribbons} ribbons, \
                  {lights} lights, {interior} interior-lane props (riding host {entity})"
             );
+        }
+        if !ship_props.is_empty() {
+            commands
+                .entity(entity)
+                .queue(move |mut host: EntityWorldMut| {
+                    match host.get_mut::<crate::transport::ShipProps>() {
+                        Some(mut recorded) => recorded.0.extend(ship_props),
+                        None => {
+                            host.insert(crate::transport::ShipProps(ship_props));
+                        }
+                    }
+                });
         }
         if props.0.is_empty() {
             commands.entity(entity).remove::<WmoProps>();

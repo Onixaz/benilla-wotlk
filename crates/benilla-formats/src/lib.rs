@@ -208,7 +208,9 @@ pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};
 mod liquid;
 pub use liquid::{mclq_liquid_type, LiquidKind, LiquidMesh};
 mod liquid_type;
-pub use liquid_type::{load_liquid_types, DepthRamp, LiquidTypeRow, LiquidTypes, VertexFormat};
+pub use liquid_type::{
+    load_liquid_types, DepthRamp, DepthTexture, LiquidTypeRow, LiquidTypes, VertexFormat,
+};
 mod maps;
 pub use maps::{load_map_catalog, MapCatalog};
 mod anim_data;
@@ -432,7 +434,9 @@ mod taxi;
 pub use taxi::{load_taxi_path_nodes, TaxiPathNode, TaxiPathNodes};
 mod transport_period;
 mod transports;
-pub use transports::{TransportSample, TransportTimetable};
+pub use transports::{
+    TransportSample, TransportTimetable, SHIP_MOVING, SHIP_STAND, SHIP_START, SHIP_STOP,
+};
 // Type-11 elevator and lift keyframe paths.
 mod elevators;
 pub use elevators::{
