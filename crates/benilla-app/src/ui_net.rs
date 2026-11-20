@@ -21,10 +21,7 @@ impl Plugin for UiNetPlugin {
     }
 }
 
-fn feed_net_stats(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    ping: Res<PingShared>,
-) {
+fn feed_net_stats(script: Option<NonSendMut<UiScript>>, ping: Res<PingShared>) {
     let Some(mut script) = script else { return };
     // Recovered, not unwrapped: a panic on a net thread holding this lock ends the connection,
     // not the app.

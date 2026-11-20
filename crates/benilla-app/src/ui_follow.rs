@@ -60,10 +60,7 @@ fn feed_follow(world: &mut World) {
     world.resource_mut::<FollowFeed>().vm.get(&vm).told = now;
 }
 
-fn drain_follow(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut out: MessageWriter<FollowRequest>,
-) {
+fn drain_follow(script: Option<NonSendMut<UiScript>>, mut out: MessageWriter<FollowRequest>) {
     let Some(mut script) = script else {
         return;
     };

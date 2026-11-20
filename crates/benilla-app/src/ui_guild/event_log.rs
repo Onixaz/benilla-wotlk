@@ -77,27 +77,39 @@ fn on_session_end(In(_): In<SessionEvent>, mut log: ResMut<GuildEventLog>) {
 
 /// Push the log on a change, again as missing names land, and fire `GUILD_EVENT_LOG_UPDATE` once
 /// the last name is in.
+/// Exclusive: the update fires with the `World` lent, after the log is written.
 pub(super) fn feed_guild_event_log(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut log: ResMut<GuildEventLog>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
+    world: &mut World,
+    inputs: &mut bevy::ecs::system::SystemState<(
+        ResMut<GuildEventLog>,
+        Res<NameCache>,
+        Res<NetCommands>,
+    )>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+    else {
         return;
     };
-    let seeded = seeded.get(&script);
-    if *seeded && !log.dirty && !(log.unnamed && names.is_changed()) {
-        return;
-    }
-    *seeded = true;
-    let (views, named) = log.views(&names, &commands);
-    script.set_guild_event_log(views);
-    log.dirty = false;
-    log.unnamed = !named;
-    if named && std::mem::take(&mut log.owed) {
-        script.fire_event("GUILD_EVENT_LOG_UPDATE", Vec::new());
+    let fire = {
+        let (mut log, names, commands) = inputs.get_mut(world);
+        let seeded = seeded.get(&script);
+        if *seeded && !log.dirty && !(log.unnamed && names.is_changed()) {
+            return;
+        }
+        *seeded = true;
+        let (views, named) = log.views(&names, &commands);
+        script.set_guild_event_log(views);
+        log.dirty = false;
+        log.unnamed = !named;
+        named && std::mem::take(&mut log.owed)
+    };
+    if fire {
+        crate::ui_script::safe_world::lend_to(world, &mut script, |s| {
+            s.fire_event("GUILD_EVENT_LOG_UPDATE", Vec::new())
+        });
     }
 }
 

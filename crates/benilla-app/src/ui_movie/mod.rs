@@ -110,28 +110,40 @@ fn on_session_end(In(_): In<SessionEvent>, mut playing: ResMut<MoviePlaying>) {
 }
 
 /// `PLAY_MOVIE` once our player is in the world (`0x523632`), then the stops its handlers ask for.
-fn feed_movie(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut playing: ResMut<MoviePlaying>,
-    me: Query<(), With<SelfPlayer>>,
-    net: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn feed_movie(world: &mut World) {
+    let Some(mut script) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+    else {
         return;
     };
-    if playing.owed && !me.is_empty() {
-        playing.owed = false;
-        if let Some((name, volume)) = playing.movie.clone() {
-            script.fire_event(
+    let in_world = world
+        .query_filtered::<(), With<SelfPlayer>>()
+        .iter(world)
+        .next()
+        .is_some();
+    let owed = {
+        let mut playing = world.resource_mut::<MoviePlaying>();
+        (playing.owed && in_world).then(|| {
+            playing.owed = false;
+            playing.movie.clone()
+        })
+    };
+    if let Some(Some((name, volume))) = owed {
+        crate::ui_script::safe_world::lend_to(world, &mut script, |s| {
+            s.fire_event(
                 "PLAY_MOVIE",
                 vec![ScriptValue::Str(name), ScriptValue::Int(i64::from(volume))],
-            );
-        }
+            )
+        });
     }
     for _ in 0..script.take_game_movie_finished_calls() {
-        if playing.stop() {
+        if world.resource_mut::<MoviePlaying>().stop() {
             debug!("movie: finished — CMSG_COMPLETE_MOVIE");
-            let _ = net.0.send(ClientCommand::CompleteMovie);
+            let _ = world
+                .resource::<NetCommands>()
+                .0
+                .send(ClientCommand::CompleteMovie);
         }
     }
 }

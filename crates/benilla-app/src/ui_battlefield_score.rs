@@ -132,7 +132,7 @@ fn board_log(log: PvpLogData) -> BattlefieldScores {
 /// The score request (`0x54ce30`): once asked, a finished match's or an arena's board is not
 /// asked again; otherwise once per 5000 ms.
 fn drain_battlefield_score(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
     mut clock: ResMut<ScoreRequestClock>,
     board: Res<BattlefieldScoreboard>,
     queue: Res<BattlefieldQueue>,

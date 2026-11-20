@@ -104,7 +104,7 @@ pub(crate) fn parse(text: &str) -> Vec<PlacedFrame> {
 /// after the UI tree is built and the load-time `UIParent_ManageFramePositions()` pass has run,
 /// which skips user-placed frames on every later pass (`UIParent.lua:1692`).
 pub(crate) fn load_layout(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
     data: Res<crate::account_data::AccountData>,
     mut file: ResMut<LayoutFile>,
 ) {

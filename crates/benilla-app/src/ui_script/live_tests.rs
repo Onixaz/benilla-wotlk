@@ -197,6 +197,41 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "sync_tabard_booth",
         "reads the designer's shown flag and the pane's facing off the model",
     ),
+    (
+        "ui_net.rs",
+        "feed_net_stats",
+        "writes the latency field `GetNetStats` reads",
+    ),
+    (
+        "ui_layout.rs",
+        "load_layout",
+        "writes the placed frames' anchors and sizes into the model",
+    ),
+    (
+        "ui_quest_share.rs",
+        "drain_quest_share",
+        "takes the confirms `ConfirmAcceptQuest` queued, a field drain",
+    ),
+    (
+        "ui_socket.rs",
+        "drain_item_sends",
+        "takes the socket and refund sends the verbs queued, field drains",
+    ),
+    (
+        "ui_battlefield_score.rs",
+        "drain_battlefield_score",
+        "takes the score requests `RequestBattlefieldScoreData` queued, a field drain",
+    ),
+    (
+        "ui_follow.rs",
+        "drain_follow",
+        "takes the follow requests the verbs queued, a field drain",
+    ),
+    (
+        "ui_merchant/mod.rs",
+        "end_repair_mode_on_right_press",
+        "clears the repair-mode field",
+    ),
 ];
 
 /// Whether `CALLS_NO_LUA` argues the scheduled system `name` (`crate::module::item`).

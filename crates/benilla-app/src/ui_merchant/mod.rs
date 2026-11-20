@@ -863,7 +863,7 @@ impl MerchantLive<'_, '_> {
 pub(crate) fn end_repair_mode_on_right_press(
     mut presses: MessageReader<WorldRightPress>,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
 ) {
     if presses.read().last().is_none() || payload_held.0 {
         return;
