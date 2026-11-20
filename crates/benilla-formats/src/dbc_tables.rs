@@ -232,6 +232,7 @@ tables! {
         "TotemCategory" => totem_category::totem_category_schema(),
         "GemProperties" => gem_properties::gem_properties_schema(),
         "TransportAnimation" => elevators::transport_animation_schema(),
+        "TransportRotation" => elevators::transport_rotation_schema(),
         "UnitBlood" => unit_blood::unit_blood_schema(),
         "UnitBloodLevels" => unit_blood::unit_blood_levels_schema(),
         "VocalUISounds" => vocal_ui_sounds::schema(),

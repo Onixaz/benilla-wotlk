@@ -435,10 +435,11 @@ mod transports;
 pub use transports::{
     TransportSample, TransportTimetable, SHIP_MOVING, SHIP_STAND, SHIP_START, SHIP_STOP,
 };
-// Type-11 elevator and lift keyframe paths.
+// Type-11 elevator and tram keyframe paths and orientation keys.
 mod elevators;
 pub use elevators::{
-    elevator_period_ms, elevator_sample, load_elevator_paths, ElevatorKeyframe, ElevatorPaths,
+    elevator_period_ms, elevator_rotation, elevator_sample, load_elevator_paths,
+    load_rotation_paths, ElevatorKeyframe, ElevatorPaths, RotationKey, RotationPaths,
 };
 
 // The flight-master catalogs: nodes (`TaxiNodes.dbc`) and direct-hop fares (`TaxiPath.dbc`).

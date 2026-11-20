@@ -705,6 +705,14 @@ impl ObjectFields {
     pub fn gameobject_level(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_LEVEL).unwrap_or(0)
     }
+    /// `GAMEOBJECT_PARENTROTATION` `(x, y, z, w)`: the basis a type-11 transport's path offsets
+    /// and orientation keys turn by (`0x70daa0`, `0x70dc10`); an absent field reads 0.
+    pub fn gameobject_parent_rotation(&self) -> [f32; 4] {
+        std::array::from_fn(|i| {
+            self.get_f32(FIELD_GAMEOBJECT_PARENTROTATION + i as u16)
+                .unwrap_or(0.0)
+        })
+    }
 
     /// `OBJECT_FIELD_TYPE & TYPEMASK_CONTAINER`: a bag, whose mask carries the item bit too; the
     /// reference's test in `GetInventoryItemCount` and in `PutItemInBag`.

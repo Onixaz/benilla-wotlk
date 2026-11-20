@@ -1045,6 +1045,7 @@ fn object_create(
             base_pos: position,
             yaw: orientation,
             quat: go_quat,
+            parent: fields.gameobject_parent_rotation(),
         });
     // A GameObject is placed by its quaternion. A mover's create block also seeds its flags (merge
     // mask `0x75a07dff`) and pitch before the model is built, so a swimmer that streams in
