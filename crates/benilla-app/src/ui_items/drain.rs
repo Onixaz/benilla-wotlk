@@ -74,7 +74,14 @@ pub(super) fn drain_container_autoequips(
     let Some(mut script) = script else {
         return;
     };
-    for (bag, slot) in script.take_container_autoequips() {
+    // `EquipCursorItem`'s go out with the bind question off (`0x51a51a`).
+    let asked = script.take_container_autoequips();
+    let unasked = script.take_container_autoequips_unasked();
+    let all = asked
+        .into_iter()
+        .map(|at| (at, false))
+        .chain(unasked.into_iter().map(|at| (at, true)));
+    for ((bag, slot), suppress) in all {
         let Some((bag_index, wire_slot)) = wire_pos(bag, slot) else {
             debug!("ui_items: autoequip ({bag}, {slot}) out of range — ignored");
             continue;
@@ -93,7 +100,7 @@ pub(super) fn drain_container_autoequips(
             bag_index,
             wire_slot,
             guid,
-            false,
+            suppress,
         );
     }
 }
@@ -109,8 +116,13 @@ pub(super) fn drain_bag_autostores(
         return;
     };
     for a in script.take_bag_autostores() {
+        // A target no container id names goes out as the player slot holding it (`0x6dbb30`).
+        let dst = match a.dst_player_slot {
+            Some(slot) => Some((slot, 0)),
+            None => wire_pos(a.dst_bag, 1),
+        };
         let (Some((src_bag, src_slot)), Some((dst_bag, _))) =
-            (wire_pos(a.src_bag, a.src_slot), wire_pos(a.dst_bag, 1))
+            (wire_pos(a.src_bag, a.src_slot), dst)
         else {
             debug!("ui_items: bag autostore {a:?} out of range — ignored");
             continue;

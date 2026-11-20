@@ -150,6 +150,8 @@ pub enum MerchantAct {
     BuyInSlot { bag: i64, slot: u32, row: u32 },
     /// A held vendor row dropped on a bag's own button (`0x5e79d0`): the same send into Lua container `bag`, its slot `0xFF`.
     BuyInBag { bag: i64, row: u32 },
+    /// A held row dropped on a slot whose item is no bag: the same send, that item's guid as the bag (`0x5e8fae`).
+    BuyInItem { player_slot: u8, row: u32 },
     /// `CloseMerchant` (`0x584600`).
     Close,
 }
@@ -385,6 +387,12 @@ pub(crate) fn merchant_act(model: &mut super::Model, act: MerchantAct) -> Mercha
         }
         MerchantAct::BuyInBag { bag, row } => {
             model.merchant_slot_buys.push((bag, 0xff, row + 1));
+        }
+        // A test's queue names the player slot as a bag id below every container's.
+        MerchantAct::BuyInItem { player_slot, row } => {
+            model
+                .merchant_slot_buys
+                .push((-1000 - i64::from(player_slot), 0xff, row + 1));
         }
         MerchantAct::Close => model.merchant_close = true,
     }

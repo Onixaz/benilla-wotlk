@@ -17,9 +17,7 @@ fn accepts(live: u32) -> bool {
         || (87..=118).contains(&live)
 }
 
-/// The live container id of a bag slot, the inverse of `ContainerIDToInventoryID`. Deviation:
-/// an auto-store into a bank item or keyring slot sends nothing, because no container id names
-/// it and no stock caller passes one; the reference sends it and the server refuses.
+/// The live container id of a bag slot, the inverse of `ContainerIDToInventoryID`; a bank item or keyring slot has none, and its target is the item in the slot itself (`0x5e8dbf`).
 fn autostore_container(live: u32) -> Option<i64> {
     match live {
         20..=23 => Some(i64::from(live) - 19),
@@ -83,7 +81,7 @@ pub(super) fn put_item_in_bag(model: &mut crate::script::ModelGuard<'_>, live: u
     }
     // No held item: a held vendor row is bought into the bag (`0x5e8fae`), then the cursor clears and the answer is nil (`0x5e8fb6`).
     let Some(held) = held else {
-        buy_held_row(model, autostore_container(live));
+        buy_held_row(model, autostore_container(live), live);
         clear_cursor(model);
         return false;
     };
@@ -99,15 +97,13 @@ pub(super) fn put_item_in_bag(model: &mut crate::script::ModelGuard<'_>, live: u
         return true;
     }
 
-    // Store into the bag: `CMSG_AUTOSTORE_BAG_ITEM` (`0x10B`), or `CMSG_SPLIT_ITEM` (`0x10E`) for
-    // a split. The client picks no slot: the store carries none, the split carries `0xFF`.
-    let Some(dst_bag) = autostore_container(live) else {
-        return false;
-    };
+    // Store into the slot's item, a bag or not: `CMSG_AUTOSTORE_BAG_ITEM` (`0x10B`), or `CMSG_SPLIT_ITEM` (`0x10E`) for a split (`0x5e8f45`, `0x5e8f60`). The client picks no slot: the store carries none, the split carries `0xFF`.
+    let dst_bag = autostore_container(live);
     model.bag_autostores.push(crate::script::BagAutoStore {
         src_bag: held.bag,
         src_slot: held.slot,
-        dst_bag,
+        dst_bag: dst_bag.unwrap_or(0),
+        dst_player_slot: dst_bag.is_none().then_some((live - 1) as u8),
         count: held.count,
     });
     // The cursor clears with its item still locked until the answer (`0x5e8f69`).
@@ -116,8 +112,8 @@ pub(super) fn put_item_in_bag(model: &mut crate::script::ModelGuard<'_>, live: u
 }
 
 /// A held vendor row bought into Lua container `bag`, the vendor open (`0x5e8f7d`-`0x5e8fae`); a row that no longer resolves buys nothing, where the reference dereferences it unchecked.
-fn buy_held_row(model: &mut crate::script::ModelGuard<'_>, bag: Option<i64>) {
-    let (Some(CursorPayload::Merchant(held)), Some(bag)) = (model.cursor.clone(), bag) else {
+fn buy_held_row(model: &mut crate::script::ModelGuard<'_>, bag: Option<i64>, live: u32) {
+    let Some(CursorPayload::Merchant(held)) = model.cursor.clone() else {
         return;
     };
     let resolves = crate::script::merchant::merchant_row(
@@ -128,17 +124,22 @@ fn buy_held_row(model: &mut crate::script::ModelGuard<'_>, bag: Option<i64>) {
     )
     .is_some_and(|it| it.item_id == held.item_id);
     if resolves {
-        crate::script::merchant::merchant_act(
-            model,
-            crate::script::MerchantAct::BuyInBag { bag, row: held.row },
-        );
+        // The buy names the slot's item as its bag, a bag or not (`0x5e8fae`).
+        let act = match bag {
+            Some(bag) => crate::script::MerchantAct::BuyInBag { bag, row: held.row },
+            None => crate::script::MerchantAct::BuyInItem {
+                player_slot: (live - 1) as u8,
+                row: held.row,
+            },
+        };
+        crate::script::merchant::merchant_act(model, act);
     }
 }
 
 /// `PutItemInBackpack()` (`0x5ea7f0`), `PutItemInBag(0xFF)` whose target is the player's own guid: no empty-slot leg and no swap, so even a bag is stored into the backpack; no held item clears the cursor and answers nil (`0x5e8fb6`), and an item already in the backpack just drops (`0x5e8e47`).
 pub(super) fn put_item_in_backpack(model: &mut crate::script::ModelGuard<'_>) -> bool {
     let Some(CursorPayload::Item(held)) = model.cursor.clone() else {
-        buy_held_row(model, Some(0));
+        buy_held_row(model, Some(0), 0);
         clear_cursor(model);
         return false;
     };
@@ -150,6 +151,7 @@ pub(super) fn put_item_in_backpack(model: &mut crate::script::ModelGuard<'_>) ->
         src_bag: held.bag,
         src_slot: held.slot,
         dst_bag: 0,
+        dst_player_slot: None,
         count: held.count,
     });
     // The cursor clears with its item still locked until the answer (`0x5e8f69`).
@@ -407,9 +409,53 @@ mod tests {
                 src_slot: 2,
                 // Container 5 is bank bag slot 1 (`ContainerIDToInventoryID(5) == 68`).
                 dst_bag: 5,
+                dst_player_slot: None,
                 count: None,
             }]
         );
+    }
+
+    /// A key's slot is no bag: the store names the key itself as its bag, by the player slot holding it, for the server to refuse (`0x5e8f60` -> `0x6dbb30`), and the cursor clears with the item still locked (`0x5e8f69`).
+    #[test]
+    fn an_occupied_keyring_slot_takes_the_store_for_the_server_to_refuse() {
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(backpack()));
+        let mut keys = std::collections::HashMap::new();
+        keys.insert(
+            1,
+            ContainerSlot {
+                item_id: 5396,
+                count: 1,
+                ..Default::default()
+            },
+        );
+        s.set_container(
+            -2,
+            Some(ContainerState {
+                bag_family: 0,
+                name: None,
+                num_slots: 32,
+                slots: keys,
+            }),
+        );
+        s.run("PickupContainerItem(0, 2)").unwrap();
+
+        assert_eq!(s.eval::<i64>("return PutItemInBag(87)").unwrap(), 1);
+        assert!(s.cursor_item().is_none());
+        assert_eq!(
+            s.take_bag_autostores(),
+            vec![BagAutoStore {
+                src_bag: 0,
+                src_slot: 2,
+                dst_bag: 0,
+                // Live id 87 is the first keyring slot, player slot 86.
+                dst_player_slot: Some(86),
+                count: None,
+            }]
+        );
+        assert!(s
+            .eval::<bool>("return select(3, GetContainerItemInfo(0, 2)) == 1")
+            .unwrap());
     }
 
     /// The backpack button stores whatever is held, a bag included, and the cursor clears with the item still locked (`0x5e8f69`); an item already in the backpack just drops (`0x5e8e47`), and no held item clears the cursor and answers nil (`0x5e8fb6`).
@@ -428,6 +474,7 @@ mod tests {
                 src_bag: 1,
                 src_slot: 1,
                 dst_bag: 0,
+                dst_player_slot: None,
                 count: None,
             }]
         );

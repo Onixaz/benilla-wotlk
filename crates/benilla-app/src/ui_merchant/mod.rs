@@ -865,6 +865,26 @@ impl MerchantLive<'_, '_> {
                     });
                 }
             }
+            // A held row dropped on a slot whose item is no bag (`0x5e8fae`): that item's guid as the bag, for the server to refuse.
+            MerchantAct::BuyInItem { player_slot, row } => {
+                let (Some(vendor), Some((me, _))) = (self.open.vendor, me) else {
+                    return out;
+                };
+                let (Some(&r), Some(bag_guid)) = (
+                    self.open.row_at(row),
+                    me.player_slot(player_slot).filter(|g| *g != 0),
+                ) else {
+                    return out;
+                };
+                let _ = self.commands.0.send(ClientCommand::BuyItemInSlot {
+                    vendor,
+                    entry: r.entry,
+                    slot: r.slot,
+                    bag_guid,
+                    bag_slot: 0xff,
+                    count: 1,
+                });
+            }
             // `0x584600`: with the vendor holding the interact target its clear runs the interaction close, whose merchant leg closes first (`0x584614` -> `0x512f3a`); no earlier leg holds it, as each window's open takes the target from the one before (`0x51fce0`).
             MerchantAct::Close => {
                 let Some(vendor) = self.open.vendor else {

@@ -1,6 +1,5 @@
 //! The money cursor, payload mode 2: coins taken off a money frame; the purse is never debited.
-//! Deviation: a `CURSOR_UPDATE` handler already sees the coins, because events are queued; the
-//! reference runs it inside the clear, before they land.
+//! The setter's clear signals `CURSOR_UPDATE` before the coins land (`0x5208a1`), and the coins signal their frame (`0x5208da`).
 
 use mlua::{Lua, Value};
 

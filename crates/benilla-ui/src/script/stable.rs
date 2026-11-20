@@ -291,11 +291,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     drop_verb(held, i, &list, pet_out)
                 })
                 .flatten();
-            super::cursor::clear_cursor(&mut model);
-            drop(model);
+            // The send goes out ahead of the clear (`0x5a1d88`, `0x5a1d9f`).
             if let Some(intent) = intent {
                 send(intent);
             }
+            super::cursor::clear_cursor(&mut model);
             Ok(Value::Nil)
         })?,
     )?;
@@ -600,6 +600,23 @@ mod tests {
             .eval::<bool>("PickupStablePet(1) return ClickStablePet(1) == nil")
             .unwrap());
         assert!(loan.view().take_sent().is_empty());
+    }
+
+    /// The drop's send goes out before its cursor clear (`0x5a1d88`, `0x5a1d9f`): a send a `CURSOR_UPDATE` listener makes lands after it.
+    #[test]
+    fn a_drop_sends_before_it_clears_the_cursor() {
+        let s = UiScript::new().unwrap();
+        let loan = lend_test(view());
+        s.eval::<()>("PickupStablePet(1)").unwrap();
+        s.run(
+            "local f = CreateFrame('Frame') f:RegisterEvent('CURSOR_UPDATE')              f:SetScript('OnEvent', function() StablePet() end)",
+        )
+        .unwrap();
+        s.eval::<()>("ClickStablePet(0)").unwrap();
+        assert_eq!(
+            loan.view().take_sent(),
+            vec![StableIntent::Swap(8), StableIntent::Stable]
+        );
     }
 
     #[test]

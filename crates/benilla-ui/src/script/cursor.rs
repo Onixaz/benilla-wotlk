@@ -502,7 +502,7 @@ pub(crate) fn world_drop_click(model: &mut crate::script::ModelGuard<'_>, pick: 
     }
 }
 
-/// `SplitContainerItem(bag, slot, count)` (`0x5d84f0`): an unlocked stack and a count from 1 to its size (`0x5d85b9`-`0x5d85e6`) clear the cursor of whatever it held (`0x5d85ec`), then `count` of the stack goes up through the item setter, the whole stack as a plain pickup (`0x5d8609`), and the slot locks (`0x5d8628`). Returns whether anything was picked up.
+/// `SplitContainerItem(bag, slot, count)` (`0x5d84f0`): an unlocked stack and a count from 1 to its size (`0x5d85b9`-`0x5d85e6`) clear the cursor of whatever it held (`0x5d85ec`) and stop a targeting cursor (`0x5d85f4`), then `count` of the stack goes up through the item setter, the whole stack as a plain pickup (`0x5d8609`), and the slot locks (`0x5d8628`). Returns whether anything was picked up.
 pub(crate) fn split_container_item(
     model: &mut crate::script::ModelGuard<'_>,
     bag: i64,
@@ -532,6 +532,12 @@ pub(crate) fn split_container_item(
         equip_slots: s.equip_slots.clone(),
     };
     clear_cursor(model);
+    // A targeting cursor stops after the clear (`0x5d85f4`).
+    if super::spellbook::targeting().active {
+        model
+            .script_calls
+            .push(super::ScriptCall::SpellStopTargeting);
+    }
     set_cursor(model, CursorPayload::Item(item));
     set_item_lock(model, bag, slot, true);
     true

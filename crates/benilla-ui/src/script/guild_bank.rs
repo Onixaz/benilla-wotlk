@@ -259,26 +259,26 @@ fn hold(lua: &Lua, tab: u8, slot: u8, split: Option<u32>) {
     super::tick::fire_event_into(lua, "GUILDBANK_ITEM_LOCK_CHANGED", Vec::new());
 }
 
-/// `PickupContainerItem`'s mode-11 arm: a held bank item dropped on a bag slot. The reference
-/// clears the cursor whatever the app then sends (`0x5d7ff0`).
+/// `PickupContainerItem`'s mode-11 arm: a held bank item dropped on a bag slot. With no banker open nothing moves and the cursor stays (`0x5d837c`); else the swap goes out and the cursor clears (`0x5d8472`, `0x5d847b`).
 pub(super) fn drop_on_bag_slot(
     model: &mut crate::script::ModelGuard<'_>,
     held: CursorGuildBankItem,
     bag: i64,
     slot: u32,
 ) {
-    if bank_open() {
-        model
-            .guild_bank_requests
-            .push(GuildBankRequest::WithdrawItem {
-                src_tab: held.tab,
-                src_slot: held.slot,
-                item_id: held.item_id,
-                bag,
-                bag_slot: slot,
-                split: held.split,
-            });
+    if !bank_open() {
+        return;
     }
+    model
+        .guild_bank_requests
+        .push(GuildBankRequest::WithdrawItem {
+            src_tab: held.tab,
+            src_slot: held.slot,
+            item_id: held.item_id,
+            bag,
+            bag_slot: slot,
+            split: held.split,
+        });
     cursor::clear_cursor(model);
 }
 
