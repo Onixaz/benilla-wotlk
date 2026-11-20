@@ -654,7 +654,9 @@ fn drive_unit(
         anim_tier,
     ) = match mount_body {
         // The mount model resolves on the rider's tier, the unit's own (`0x7176f0`): a fly-tier
-        // rider's drake asks for FlyStand.
+        // rider's drake asks for FlyStand. Deviation: the reference resolves the request on the
+        // rider's own model first and hands that result to the mount's resolve; this resolves once,
+        // on the mount, which differs only where the rider's model folds the request elsewhere.
         Some(mb) => match mount_hosts.get(mb.host) {
             Ok((s, r, m, sp, f, sw, md, t, host_self, _, host_store)) => (
                 s,
