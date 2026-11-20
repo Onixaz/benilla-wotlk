@@ -442,26 +442,37 @@ pub(crate) struct ShipProps(pub(crate) Vec<Entity>);
 /// world object when the state changes (`0x7134a0` -> `0x7b45f0`), each prop resolving the id
 /// through its `AnimationData.dbc` fallback (`0x832ab0` -> `0x826350`), so a prop that lacks the
 /// ship sequences plays Stand.
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn drive_ship_props(
     current_map: Option<Res<CurrentMap>>,
     anim_data: Option<Res<crate::creature_anim::AnimData>>,
-    transports: Query<(&Transport, &TransportAnchor, &ShipProps)>,
+    transports: Query<(Entity, &Transport, &TransportAnchor, &ShipProps, &Transform)>,
     mut hosts: Query<(
         &benilla_assets::ModelAnimations,
         Option<&mut benilla_world::doodad_anim::HostSequence>,
+        Option<&AnimationPlayer>,
+        Option<&benilla_world::doodad_anim::DoodadAnimHost>,
     )>,
+    time: Res<Time>,
+    mut next_sample: Local<f32>,
     mut commands: Commands,
 ) {
     let Some(current_map) = current_map else {
         return;
     };
-    for (transport, anchor, props) in &transports {
+    let tracing = benilla_assets::trace::enabled_for("ship");
+    // Once a second, each prop's playing clips, for the instrument.
+    let sampling = tracing && time.elapsed_secs() >= *next_sample;
+    if sampling {
+        *next_sample = time.elapsed_secs() + 1.0;
+    }
+    for (boat, transport, anchor, props, boat_tf) in &transports {
         let Some(sequence) = transport.ship_sequence(anchor, current_map.0) else {
             continue;
         };
         for &root in &props.0 {
             // Absent until the prop's spawn commands apply: next frame.
-            let Ok((anims, current)) = hosts.get_mut(root) else {
+            let Ok((anims, current, player, host)) = hosts.get_mut(root) else {
                 continue;
             };
             let id = match anim_data.as_deref() {
@@ -470,13 +481,45 @@ fn drive_ship_props(
                 None => benilla_formats::SHIP_STAND,
             };
             let want = benilla_world::doodad_anim::HostSequence(id);
-            match current {
-                Some(mut c) => {
-                    c.set_if_neq(want);
-                }
+            let changed = match current {
+                Some(mut c) => c.set_if_neq(want),
                 None => {
                     commands.entity(root).insert(want);
+                    true
                 }
+            };
+            if tracing && changed {
+                benilla_assets::trace::line(
+                    "ship",
+                    &format!(
+                        "boat {boat} cycle={} state={sequence} prop {root} plays {id}",
+                        transport.cycle_ms(anchor)
+                    ),
+                );
+            }
+            if sampling {
+                let at = benilla_assets::coords::bevy_to_wow(boat_tf.translation);
+                let clips: Vec<String> = player
+                    .map(|p| {
+                        p.playing_animations()
+                            .map(|(n, a)| {
+                                format!("{}:w{:.2}:t{:.2}", n.index(), a.weight(), a.seek_time())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                benilla_assets::trace::line(
+                    "ship",
+                    &format!(
+                        "sample boat {boat} at=[{:.0},{:.0},{:.0}] state={sequence} prop {root} \
+                         plays {id} drawn={} clips=[{}]",
+                        at[0],
+                        at[1],
+                        at[2],
+                        host.is_some_and(|h| h.active),
+                        clips.join(" ")
+                    ),
+                );
             }
         }
     }
