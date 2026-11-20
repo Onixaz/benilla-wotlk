@@ -9,6 +9,7 @@
 
 use bevy::animation::graph::AnimationNodeIndex;
 use bevy::app::AnimationSystems;
+use bevy::ecs::schedule::common_conditions::any_match_filter;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 
@@ -464,7 +465,8 @@ impl Plugin for DoodadAnimPlugin {
         app.add_systems(
             PostUpdate,
             (
-                apply_host_sequence,
+                // Only a new or changed ship-state request has work: skip every other frame.
+                apply_host_sequence.run_if(any_match_filter::<Changed<HostSequence>>),
                 reroll_doodad_variation,
                 gate_doodad_anim,
             )
