@@ -226,23 +226,23 @@ fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
     })
 }
 
-/// `PickupItem(item)` (`0x522fb0`): the cursor clears, then holds the id as an action-bar item, no
-/// bag slot behind it.
-fn pickup_item(model: &mut Model, id: u32) {
+/// `PickupItem(item)` (`0x522fb0`): the cursor clears (`0x523024`), then holds the id as an action-bar item, no
+/// bag slot behind it, the grid shown and `CURSOR_UPDATE` signalled (`0x52305a`, `0x52307e`).
+fn pickup_item(model: &mut crate::script::ModelGuard<'_>, id: u32) {
     let texture = super::item_stats::item_record(model, id).and_then(|t| t.icon);
-    super::cursor::clear_cursor(model);
     if id == 0 {
+        super::cursor::clear_cursor(model);
         return;
     }
-    model.cursor = Some(super::cursor::CursorPayload::Action(
-        super::cursor::CursorAction {
+    super::cursor::set_cursor(
+        model,
+        super::cursor::CursorPayload::Action(super::cursor::CursorAction {
             src_slot: 0,
             kind: super::action::ACTION_KIND_ITEM,
             action: id,
             texture,
-        },
-    ));
-    super::cursor::queue_cursor_update(model);
+        }),
+    );
 }
 
 /// The first on-use spell a template names (`0x706b90`): the first block with a spell and trigger 0, its text unread (`0x706bc8`-`0x706bd1`).

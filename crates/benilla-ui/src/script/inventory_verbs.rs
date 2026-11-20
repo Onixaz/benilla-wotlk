@@ -103,7 +103,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let changed = recompute_inventory_alerts(&mut model);
             for event in alert_events(changed) {
-                model.pending_events.push((event.to_string(), Vec::new()));
+                model.raise(event, Vec::new());
             }
             Ok(MultiValue::new())
         })?,

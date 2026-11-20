@@ -572,7 +572,7 @@ pub(super) fn holds_slot(model: &super::Model, bag: i64, slot: u32) -> bool {
 /// The button's click (`0x5a2140`): no vendor, or a cursor item without the petition flag, does
 /// nothing. An empty cursor empties the button; either way the cursor clears without unlocking
 /// its item (`ClearCursor(0, 1)`) and the previous item goes back onto it.
-fn click_petition_button(model: &mut super::Model, vendor_open: bool) {
+fn click_petition_button(model: &mut crate::script::ModelGuard<'_>, vendor_open: bool) {
     use super::cursor::{CursorItem, CursorPayload};
     if !vendor_open {
         return;
@@ -602,15 +602,9 @@ fn click_petition_button(model: &mut super::Model, vendor_open: bool) {
             });
         }
     }
-    model
-        .pending_events
-        .push(("PETITION_VENDOR_UPDATE".to_string(), Vec::new()));
-    if held.is_some() {
-        model.cursor = None;
-        super::cursor::queue_cursor_update(model);
-    } else {
-        super::cursor::clear_cursor(model);
-    }
+    model.raise("PETITION_VENDOR_UPDATE", Vec::new());
+    // The clear leaves the item the button took locked (`0x5a2261`).
+    super::cursor::clear_cursor_with(model, false, true);
     // The previous item back on the cursor, still locked (`0x5a2281`).
     let Some(prev) = previous else {
         return;
@@ -629,8 +623,7 @@ fn click_petition_button(model: &mut super::Model, vendor_open: bool) {
             bar_placeable: s.bar_placeable,
         });
     if let Some(item) = back {
-        model.cursor = Some(CursorPayload::Item(item));
-        super::cursor::queue_cursor_update(model);
+        super::cursor::set_cursor(model, CursorPayload::Item(item));
     }
 }
 
@@ -1026,14 +1019,9 @@ mod tests {
         assert!(take(&mut loan).is_empty(), "an empty button sends nothing");
 
         s.run("PickupContainerItem(0, 1)").unwrap();
-        s.model_mut().pending_events.clear();
+        crate::script::tick::fired::take();
         s.run("ClickPetitionButton()").unwrap();
-        let fired: Vec<String> = s
-            .model_ref()
-            .pending_events
-            .iter()
-            .map(|(e, _)| e.clone())
-            .collect();
+        let fired = crate::script::tick::fired::names();
         assert!(
             fired.contains(&"PETITION_VENDOR_UPDATE".to_string()),
             "{fired:?}"
@@ -1109,7 +1097,7 @@ mod tests {
         s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
             .unwrap();
         assert!(locked(&s, 1));
-        s.model_mut().pending_events.clear();
+        crate::script::tick::fired::take();
         assert_eq!(
             s.clear_petition_button(),
             Some(PetitionButtonItem {
@@ -1119,10 +1107,9 @@ mod tests {
             })
         );
         assert!(
-            !s.model_ref()
-                .pending_events
+            !crate::script::tick::fired::names()
                 .iter()
-                .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
+                .any(|e| e == "ITEM_LOCK_CHANGED"),
             "no unlock"
         );
         // The app keeps the slot's send lock (`keep_locked`), which the bag verbs read at the call.

@@ -162,11 +162,12 @@ pub(super) fn gem_matches(
 
 /// Set the socketed item (`0x5c4680`): unlocks the old item, clears the gems, then locks the new one and
 /// signals `SOCKET_INFO_UPDATE`, or signals `SOCKET_INFO_CLOSE` for 0 or an unknown template.
-pub(super) fn set_item(model: &mut Model, guid: u64) {
+pub(super) fn set_item(model: &mut crate::script::ModelGuard<'_>, guid: u64) {
     let old = find(model, model.socket_info.item).map(|h| h.position());
     let new = find(model, guid).map(|h| (h.position(), h.item_id(), h.enchants().to_vec()));
     if let Some((bag, slot)) = old {
-        cursor::queue_lock_changed(model, bag, slot);
+        model.socket_info.item = 0;
+        cursor::raise_lock_edge(model, bag, slot, false);
     }
     let info = &mut model.socket_info;
     info.gems = [0; MAX_SOCKETS];
@@ -175,25 +176,29 @@ pub(super) fn set_item(model: &mut Model, guid: u64) {
     match stats {
         Some(((bag, slot), _, enchants)) => {
             model.socket_info.seen = enchants;
-            cursor::queue_lock_changed(model, bag, slot);
-            queue(model, "SOCKET_INFO_UPDATE");
+            cursor::raise_lock_edge(model, bag, slot, true);
+            signal_event(model, "SOCKET_INFO_UPDATE");
         }
         None => {
             model.socket_info.item = 0;
             model.socket_info.seen.clear();
-            queue(model, "SOCKET_INFO_CLOSE");
+            signal_event(model, "SOCKET_INFO_CLOSE");
         }
     }
 }
 
-fn queue(model: &mut Model, event: &str) {
-    model.pending_events.push((event.to_string(), Vec::new()));
+fn signal_event(model: &mut crate::script::ModelGuard<'_>, event: &str) {
+    model.raise(event, Vec::new());
 }
 
 /// Place `gem` (0 empties the socket) in socket `i` (`0x5c4780`). A gem goes only where
 /// its meta bit matches the socket's, else its refusal is handed back for the caller to show at
 /// once. Returns whether it took.
-fn set_gem(model: &mut Model, i: usize, gem: u64) -> Result<bool, &'static str> {
+fn set_gem(
+    model: &mut crate::script::ModelGuard<'_>,
+    i: usize,
+    gem: u64,
+) -> Result<bool, &'static str> {
     let item = model.socket_info.item;
     let Some(socket_stats) =
         find(model, item).and_then(|h| super::item_stats::item_record(model, h.item_id()))
@@ -205,7 +210,7 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> Result<bool, &'static str> 
     }
     if gem == 0 {
         model.socket_info.gems[i] = 0;
-        queue(model, "SOCKET_INFO_UPDATE");
+        signal_event(model, "SOCKET_INFO_UPDATE");
         return Ok(true);
     }
     let Some(stats) =
@@ -228,7 +233,7 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> Result<bool, &'static str> 
         }
         _ => {
             model.socket_info.gems[i] = gem;
-            queue(model, "SOCKET_INFO_UPDATE");
+            signal_event(model, "SOCKET_INFO_UPDATE");
             Ok(true)
         }
     }
@@ -236,7 +241,7 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> Result<bool, &'static str> 
 
 /// The item watchers (`0x5c4ef0`, `0x5c4f40`) off the snapshots: the socketed item gone closes the window, its
 /// enchants changing re-signals it, and a gem gone empties its socket.
-pub(super) fn watch(model: &mut Model) {
+pub(super) fn watch(model: &mut crate::script::ModelGuard<'_>) {
     let item = model.socket_info.item;
     let Some(held) = find(model, item) else {
         set_item(model, 0);
@@ -254,7 +259,7 @@ pub(super) fn watch(model: &mut Model) {
         }
     }
     if changed {
-        queue(model, "SOCKET_INFO_UPDATE");
+        signal_event(model, "SOCKET_INFO_UPDATE");
     }
 }
 

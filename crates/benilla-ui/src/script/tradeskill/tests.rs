@@ -129,12 +129,9 @@ fn names(s: &mut UiScript) -> Vec<String> {
     rows(s).into_iter().map(|(n, _)| n).collect()
 }
 
-fn queued(s: &UiScript) -> Vec<String> {
-    s.model_ref()
-        .pending_events
-        .iter()
-        .map(|(e, _)| e.clone())
-        .collect()
+/// The events signalled since the last read.
+fn signalled() -> Vec<String> {
+    crate::script::tick::fired::names()
 }
 
 /// The list refresh: one header per sub-class, the `(-1, -1)` verb group first and named by the
@@ -237,7 +234,7 @@ fn collapse_folds_a_header_or_all() {
         .eval::<String>("return tostring(select(2, pcall(CollapseTradeSkillSubClass, 2)))")
         .unwrap();
     assert!(err.contains("Bad sub class"), "{err}");
-    assert!(queued(&s).iter().all(|e| e == "TRADE_SKILL_UPDATE"));
+    assert!(signalled().iter().all(|e| e == "TRADE_SKILL_UPDATE"));
 }
 
 /// The sub-class menu: exclusive shows one, off hides one, 0 shows all.
@@ -311,6 +308,7 @@ fn the_name_and_level_filters_search_and_bound() {
     st.recipes[4].required_level = Some(45); // the oil
     st.recipes[0].search_text.push("+5 health".into());
     s.set_trade_skill(Some(st));
+    signalled();
 
     s.run("SetTradeSkillItemNameFilter('HEALTH')").unwrap();
     assert_eq!(names(&mut s), ["Enchant", "Enchant Bracer - Minor Health"]);
@@ -321,7 +319,7 @@ fn the_name_and_level_filters_search_and_bound() {
     );
     s.run("SetTradeSkillItemNameFilter('health')").unwrap();
     assert_eq!(
-        queued(&s),
+        signalled(),
         ["TRADE_SKILL_FILTER_UPDATE"],
         "the same text is a no-op"
     );
@@ -527,11 +525,11 @@ fn links_description_and_the_closed_line() {
 fn close_trade_skill_fires_the_close() {
     let mut s = open();
     s.run("DoTradeSkill(2)").unwrap();
-    s.model_mut().pending_events.clear();
+    signalled();
     s.run("CloseTradeSkill()").unwrap();
     assert!(s.take_trade_skill_close());
     assert_eq!(
-        queued(&s),
+        signalled(),
         ["UPDATE_TRADESKILL_RECAST", "TRADE_SKILL_CLOSE"]
     );
 }

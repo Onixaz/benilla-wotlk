@@ -740,7 +740,7 @@ fn get_map_info_answers_the_art_height() {
 /// The refreshes the data edges run keep the selection, a direct row included, and queue the
 /// event for the next tick.
 #[test]
-fn a_data_push_refreshes_in_place_and_queues_the_event() {
+fn a_data_push_refreshes_in_place_and_signals_the_event() {
     let mut s = vm();
     s.run("SetMapByID(529)").unwrap();
     s.tick(0.01);
@@ -752,7 +752,7 @@ fn a_data_push_refreshes_in_place_and_queues_the_event() {
     )
     .unwrap();
     s.set_world_map_explored(vec![1; 64]);
-    assert_eq!(s.eval::<i64>("return heard").unwrap(), 0);
+    assert_eq!(s.eval::<i64>("return heard").unwrap(), 1, "at the push");
     s.tick(0.01);
     assert_eq!(s.eval::<i64>("return heard").unwrap(), 1);
     assert_eq!(map(&mut s), (Some("Ulduar".into()), -1, 0));

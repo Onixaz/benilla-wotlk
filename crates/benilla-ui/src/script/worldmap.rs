@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::number_arg;
-use super::Model;
 
 /// A world position: the `Map.dbc` id and the world `(x, y)`, x north and y west.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1003,7 +1002,7 @@ impl super::UiScript {
         model.worldmap.catalog = catalog;
         model.worldmap.chunk_cache.take();
         model.worldmap.refresh();
-        queue_update(&mut model);
+        signal_update(&mut model);
     }
 
     /// Pushes the discovery bitset; a change refreshes the map (`0x547120`'s field callback).
@@ -1012,7 +1011,7 @@ impl super::UiScript {
         if model.worldmap.explored != explored {
             model.worldmap.explored = explored;
             model.worldmap.refresh();
-            queue_update(&mut model);
+            signal_update(&mut model);
         }
     }
 
@@ -1028,7 +1027,7 @@ impl super::UiScript {
         if model.worldmap.world_states != states {
             model.worldmap.world_states = states;
             model.worldmap.refresh();
-            queue_update(&mut model);
+            signal_update(&mut model);
         }
     }
 
@@ -1038,7 +1037,7 @@ impl super::UiScript {
         if model.worldmap.marker != marker {
             model.worldmap.marker = marker;
             model.worldmap.refresh();
-            queue_update(&mut model);
+            signal_update(&mut model);
         }
     }
 
@@ -1086,7 +1085,7 @@ impl super::UiScript {
         let mut model = self.model_mut();
         let (c, z, d) = model.worldmap.current_zone();
         model.worldmap.set_map(c, z, d);
-        queue_update(&mut model);
+        signal_update(&mut model);
     }
 
     /// The map UV at UI point `(x, y)`, or `None` off the art, normalized over `WorldMapButton`
@@ -1105,10 +1104,8 @@ impl super::UiScript {
     }
 }
 
-fn queue_update(model: &mut Model) {
-    model
-        .pending_events
-        .push(("WORLD_MAP_UPDATE".to_string(), Vec::new()));
+fn signal_update(model: &mut crate::script::ModelGuard<'_>) {
+    model.raise("WORLD_MAP_UPDATE", Vec::new());
 }
 
 /// Runs the setter from a Lua verb and fires `WORLD_MAP_UPDATE` before the verb returns, as

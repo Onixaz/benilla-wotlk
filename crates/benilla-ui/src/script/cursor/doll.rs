@@ -7,13 +7,13 @@ use crate::script::binding_abi::flag;
 use crate::script::container::ContainerMove;
 use crate::script::Model;
 
-use super::{queue_cursor_update, queue_lock_changed, CursorItem, CursorPayload, EQUIPMENT_BAG};
+use super::{clear_cursor, raise_lock_edge, set_cursor, CursorItem, CursorPayload, EQUIPMENT_BAG};
 
 /// `PickupInventoryItem(id)`, the doll slot's click, on the bag click's model: a fitting whole item
 /// moves in and the cursor clears, with no hop; a misfit on the doll's 23 slots auto-equips
 /// (`0x5e89f3`), one off a worn slot going back instead (`0x5e89e5`); a split stays held. Returns
 /// whether to repaint.
-pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
+pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, id: u32) -> bool {
     // Head 1 to Tabard 19, the bag slots 20-23, and the bank bag slots, which only `PutItemInBag`
     // reaches. Ammo (0) is refused; its leg is not built.
     if !(1..=23).contains(&id) && !super::bag_verbs::BANK_BAG_INV_SLOTS.contains(&id) {
@@ -38,7 +38,7 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
         }
         return false;
     }
-    match model.cursor.take() {
+    match model.cursor.clone() {
         None => {
             let picked = model
                 .inv_slot("player", id as usize)
@@ -55,30 +55,27 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
                     equip_slots: s.equip_slots.clone(),
                 });
             match picked {
+                // The setter, then the lock (`0x5e893a`).
                 Some(item) => {
-                    model.cursor = Some(CursorPayload::Item(item));
-                    queue_cursor_update(model);
-                    queue_lock_changed(model, EQUIPMENT_BAG, id);
+                    set_cursor(model, CursorPayload::Item(item));
+                    raise_lock_edge(model, EQUIPMENT_BAG, id, true);
                     true
                 }
                 None => false,
             }
         }
         Some(CursorPayload::Item(held)) if held.bag == EQUIPMENT_BAG && held.slot == id => {
-            queue_cursor_update(model);
-            queue_lock_changed(model, held.bag, held.slot);
+            clear_cursor(model);
             true
         }
         Some(CursorPayload::Item(held)) => {
             // A split stays held, with no event: nothing changed.
             if held.count.is_some() {
-                model.cursor = Some(CursorPayload::Item(held));
                 return false;
             }
             // A misfit takes the auto-equip path, the server picking the slot (`0x5e89f3`); every
             // item fits a bank bag slot.
             if !super::bag_verbs::fits_slot(&held, id) {
-                model.cursor = Some(CursorPayload::Item(held));
                 return auto_equip_cursor_item(model);
             }
             model.container_moves.push(ContainerMove {
@@ -88,8 +85,7 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
                 dst_slot: id,
                 count: None,
             });
-            queue_cursor_update(model);
-            queue_lock_changed(model, held.bag, held.slot);
+            clear_cursor(model);
             true
         }
         // Mode 5, a buy into this slot: the reference sends `CMSG_BUY_ITEM_IN_SLOT` (`0x1a3`) and
@@ -114,11 +110,11 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
                     },
                 );
             }
-            queue_cursor_update(model);
+            clear_cursor(model);
             true
         }
         Some(
-            other @ (CursorPayload::Spell(_)
+            CursorPayload::Spell(_)
             | CursorPayload::Action(_)
             | CursorPayload::Macro(_)
             | CursorPayload::EquipmentSet(_)
@@ -131,16 +127,13 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             | CursorPayload::Money(_)
             // Modes 11 and 12, from the guild bank, stay held for its own buttons.
             | CursorPayload::GuildBankItem(_)
-            | CursorPayload::GuildBankMoney(_)),
-        ) => {
-            model.cursor = Some(other);
-            false
-        }
+            | CursorPayload::GuildBankMoney(_),
+        ) => false,
     }
 }
 
 /// `EquipCursorItem(id)`: placing the held item on doll slot `id`.
-pub(super) fn equip_cursor_item(model: &mut Model, id: u32) -> bool {
+pub(super) fn equip_cursor_item(model: &mut crate::script::ModelGuard<'_>, id: u32) -> bool {
     pickup_inventory_item(model, id)
 }
 
@@ -158,25 +151,20 @@ pub(super) fn cursor_can_go_in_slot(model: &Model, id: u32) -> bool {
 /// whole stack from a bag becomes `CMSG_AUTOEQUIP_ITEM`: the server picks the slot and swaps
 /// the displaced piece back (`ItemHandler.cpp:138-228`); an item off the doll's 23 slots goes back
 /// with nothing sent (`0x6dfcf3`); a split stays held. Returns whether to repaint.
-pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
-    match model.cursor.take() {
+pub(super) fn auto_equip_cursor_item(model: &mut crate::script::ModelGuard<'_>) -> bool {
+    match model.cursor.clone() {
         Some(CursorPayload::Item(item))
             if item.bag == EQUIPMENT_BAG && (1..=23).contains(&item.slot) =>
         {
-            queue_cursor_update(model);
-            queue_lock_changed(model, item.bag, item.slot);
+            clear_cursor(model);
             true
         }
         Some(CursorPayload::Item(item)) if item.bag >= 0 && item.count.is_none() => {
             model.container_autoequips.push((item.bag, item.slot));
-            queue_cursor_update(model);
-            queue_lock_changed(model, item.bag, item.slot);
+            clear_cursor(model);
             true
         }
-        other => {
-            model.cursor = other;
-            false
-        }
+        _ => false,
     }
 }
 
@@ -184,7 +172,7 @@ pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
 /// clears before the slot is read, so a held payload goes back, never placed; then the app sends
 /// `CMSG_USE_ITEM` with bag 255 and the 0-based slot, dropping an empty slot unsent, or in repair
 /// mode a worn item is repaired, locked or not.
-pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
+pub(super) fn use_inventory_item(model: &mut crate::script::ModelGuard<'_>, id: u32) {
     super::clear_cursor(model);
     if !crate::script::merchant::repair_mode(model) {
         model
@@ -205,7 +193,7 @@ pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
 /// pending operation on it. Reads [`Model::inv_slot`], since `BankFrameItemButton_UpdateLock`
 /// asks about bank slots too.
 pub(in crate::script) fn is_inventory_item_locked(model: &Model, id: u32) -> bool {
-    let held_here = matches!(&model.cursor, Some(CursorPayload::Item(c)) if c.bag == EQUIPMENT_BAG && c.slot == id)
+    let held_here = matches!(&model.cursor, Some(CursorPayload::Item(c)) if c.bag == EQUIPMENT_BAG && c.slot == id && !model.cursor_item_unlocked)
         || crate::script::socket::holds_slot(model, EQUIPMENT_BAG, id);
     let fed = usize::try_from(id)
         .ok()

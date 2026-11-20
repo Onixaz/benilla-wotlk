@@ -173,9 +173,9 @@ impl super::UiScript {
     /// The app sent a swap: the reference clears the cursor, unlocking a held bank item, and
     /// fires `GUILDBANKBAGSLOTS_CHANGED` (`0x5a50c0`, `0x5a5410`).
     pub fn guild_bank_swap_sent(&mut self) {
-        let model = &mut *self.model_mut();
-        cursor::clear_cursor(model);
-        queue(model, "GUILDBANKBAGSLOTS_CHANGED");
+        let mut model = self.model_mut();
+        cursor::clear_cursor(&mut model);
+        signal_event(&mut model, "GUILDBANKBAGSLOTS_CHANGED");
     }
 
     /// A held bank item dropped back where nothing is sent: the cursor clears and the slot
@@ -200,24 +200,8 @@ impl super::UiScript {
     }
 }
 
-fn queue(model: &mut Model, event: &str) {
-    model.pending_events.push((event.to_string(), Vec::new()));
-}
-
-/// Fire the events this call queued since `mark`, in order and inside the call, as the cursor
-/// setter and the lock fire theirs (`0x520da7`, `0x5137f1`).
-fn fire_queued_since(lua: &Lua, mark: usize) {
-    let events = {
-        let mut model = crate::script::model_mut_of(lua);
-        if model.pending_events.len() > mark {
-            model.pending_events.split_off(mark)
-        } else {
-            Vec::new()
-        }
-    };
-    for (event, args) in events {
-        super::tick::fire_event_into(lua, &event, args);
-    }
+fn signal_event(model: &mut crate::script::ModelGuard<'_>, event: &str) {
+    model.raise(event, Vec::new());
 }
 
 /// Whether a guild banker is open (`0xc1dc10`), through the lent view.
@@ -246,9 +230,9 @@ fn is_locked(tab: u8, slot: u8, item_id: u32) -> bool {
 }
 
 /// `ClearCursor`'s mode-11 arm (`0x519406`): the held slot unlocks, with its event.
-pub(super) fn unlock_held(model: &mut Model, held: &CursorGuildBankItem) {
+pub(super) fn unlock_held(model: &mut crate::script::ModelGuard<'_>, held: &CursorGuildBankItem) {
     write_live(|l| l.set_guild_bank_lock(held.tab, held.slot, held.item_id, false));
-    queue(model, "GUILDBANK_ITEM_LOCK_CHANGED");
+    signal_event(model, "GUILDBANK_ITEM_LOCK_CHANGED");
 }
 
 /// Put a bank item on the cursor (`0x520d30`, kind 11, with the split), then lock its slot
@@ -260,29 +244,29 @@ fn hold(lua: &Lua, tab: u8, slot: u8, split: Option<u32>) {
     if !crate::script::live::has_control() {
         return;
     }
-    let mark = {
-        let mut model = crate::script::model_mut_of(lua);
-        let mark = model.pending_events.len();
-        cursor::clear_cursor(&mut model);
-        model.cursor = Some(CursorPayload::GuildBankItem(CursorGuildBankItem {
+    cursor::set_cursor(
+        &mut crate::script::model_mut_of(lua),
+        CursorPayload::GuildBankItem(CursorGuildBankItem {
             tab,
             slot,
             item_id: s.item_id,
             texture: s.texture.clone(),
             link: s.link.clone(),
             split,
-        }));
-        cursor::queue_cursor_update(&mut model);
-        mark
-    };
-    fire_queued_since(lua, mark);
+        }),
+    );
     write_live(|l| l.set_guild_bank_lock(tab, slot, s.item_id, true));
     super::tick::fire_event_into(lua, "GUILDBANK_ITEM_LOCK_CHANGED", Vec::new());
 }
 
 /// `PickupContainerItem`'s mode-11 arm: a held bank item dropped on a bag slot. The reference
 /// clears the cursor whatever the app then sends (`0x5d7ff0`).
-pub(super) fn drop_on_bag_slot(model: &mut Model, held: CursorGuildBankItem, bag: i64, slot: u32) {
+pub(super) fn drop_on_bag_slot(
+    model: &mut crate::script::ModelGuard<'_>,
+    held: CursorGuildBankItem,
+    bag: i64,
+    slot: u32,
+) {
     if bank_open() {
         model
             .guild_bank_requests
@@ -295,7 +279,6 @@ pub(super) fn drop_on_bag_slot(model: &mut Model, held: CursorGuildBankItem, bag
                 split: held.split,
             });
     }
-    model.cursor = Some(CursorPayload::GuildBankItem(held));
     cursor::clear_cursor(model);
 }
 
@@ -723,12 +706,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(());
             }
-            let mut model = crate::script::model_mut_of(lua);
-            cursor::clear_cursor(&mut model);
-            model.cursor = Some(CursorPayload::GuildBankMoney(CursorMoney {
-                copper: amount,
-            }));
-            queue(&mut model, "GUILDBANK_UPDATE_MONEY");
+            // The money setter under mode 12 with the bank's event (`0x5a43a4`).
+            cursor::set_cursor(
+                &mut crate::script::model_mut_of(lua),
+                CursorPayload::GuildBankMoney(CursorMoney { copper: amount }),
+            );
             Ok(())
         })?,
     )?;

@@ -10,7 +10,6 @@
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::container::ContainerSlot;
-use super::cursor::queue_cursor_update;
 use super::CursorPayload;
 
 /// The slots a set records, every equipment slot.
@@ -805,14 +804,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 /// The cursor's equipment-set set (`0x520dc0`).
 fn pickup(lua: &Lua, set: &EquipmentSetView) {
-    let mut model = super::model_mut_of(lua);
-    model.cursor = Some(CursorPayload::EquipmentSet(
-        super::cursor::CursorEquipmentSet {
+    super::cursor::set_cursor(
+        &mut super::model_mut_of(lua),
+        CursorPayload::EquipmentSet(super::cursor::CursorEquipmentSet {
             id: set.id,
             texture: (!set.icon.is_empty()).then(|| format!("Interface\\Icons\\{}", set.icon)),
-        },
-    ));
-    queue_cursor_update(&mut model);
+        }),
+    );
 }
 
 /// The paper doll's item verbs 3.3.5a added: ids, gems, durability and the flyout's list.

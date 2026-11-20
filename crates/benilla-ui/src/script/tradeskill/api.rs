@@ -57,12 +57,12 @@ fn with<R>(lua: &Lua, f: impl FnOnce(&TradeSkillModel) -> R) -> R {
     f(&model.trade_skill)
 }
 
-/// Mutates the window's state; the events it returns fire at the next tick.
+/// Mutates the window's state; the events it returns fire inside the call.
 fn with_mut(lua: &Lua, f: impl FnOnce(&mut TradeSkillModel) -> Vec<&'static str>) {
     let mut model = crate::script::model_mut_of(lua);
     let events = f(&mut model.trade_skill);
     for e in events {
-        model.pending_events.push((e.to_string(), Vec::new()));
+        model.raise(e, Vec::new());
     }
 }
 

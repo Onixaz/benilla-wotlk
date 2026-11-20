@@ -11,7 +11,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::cursor::{queue_cursor_update, CursorMacro, CursorPayload};
+use super::cursor::{set_cursor, CursorMacro, CursorPayload};
 use super::Model;
 
 /// Account macros (`MAX_ACCOUNT_MACROS`), and so the character set's base.
@@ -292,12 +292,8 @@ fn delete_macro(model: &mut Model, index: usize) -> bool {
 }
 
 /// `PickupMacro(index)`: the macro payload (cursor mode 8), which `PlaceAction` packs as
-/// `macroId | 0x40000000`. Refused while the cursor holds anything; the reference's setter clears
-/// the cursor first instead.
-fn pickup_macro(model: &mut Model, index: usize) -> bool {
-    if model.cursor.is_some() {
-        return false;
-    }
+/// `macroId | 0x40000000`, through its setter, which clears whatever the cursor held (`0x520c0f`).
+fn pickup_macro(model: &mut crate::script::ModelGuard<'_>, index: usize) -> bool {
     let Some(entry) = model.macros.get(index) else {
         return false;
     };
@@ -305,8 +301,7 @@ fn pickup_macro(model: &mut Model, index: usize) -> bool {
         index: index as u32,
         texture: entry.texture.clone(),
     };
-    model.cursor = Some(CursorPayload::Macro(payload));
-    queue_cursor_update(model);
+    set_cursor(model, CursorPayload::Macro(payload));
     true
 }
 
@@ -668,8 +663,9 @@ mod tests {
         assert_eq!(s.macros().account.len(), 1);
     }
 
+    /// The macro setter clears whatever the cursor held and takes the macro (`0x520c0f`, `0x520c25`).
     #[test]
-    fn pickup_macro_loads_the_cursor_and_refuses_while_holding() {
+    fn pickup_macro_loads_the_cursor_over_whatever_it_held() {
         use crate::script::cursor::CursorPayload;
 
         let s = seeded();
@@ -689,9 +685,10 @@ mod tests {
             }))
         );
         assert!(
-            !s.eval::<bool>("return PickupMacro(1)").unwrap(),
-            "a macro button is a source, never a drop target"
+            s.eval::<bool>("return PickupMacro(1)").unwrap(),
+            "the setter clears the held macro and takes it again"
         );
+        assert!(matches!(s.cursor_payload(), Some(CursorPayload::Macro(_))));
     }
 
     #[test]

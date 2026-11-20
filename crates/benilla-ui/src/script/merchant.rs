@@ -239,7 +239,7 @@ impl super::UiScript {
 }
 
 /// The close's legs after each `MERCHANT_CLOSED` (`0x584646`-`0x58467c`).
-fn close_legs(model: &mut super::Model) {
+fn close_legs(model: &mut crate::script::ModelGuard<'_>) {
     if matches!(model.cursor, Some(CursorPayload::Merchant(_))) {
         crate::script::cursor::clear_cursor(model);
     }
@@ -646,7 +646,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // The grab's `CURSOR_UPDATE` signal; mode 5 skips the mode-7 `ACTIONBAR_SHOWGRID`
             // branch.
             model.cursor = Some(payload);
-            crate::script::cursor::queue_cursor_update(&mut model);
+            crate::script::cursor::raise_cursor_update(&mut model);
             Ok(())
         })?,
     )?;
@@ -1806,14 +1806,17 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.set_merchant(Some(stock()));
         listen_cursor_events(&mut s);
-        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
-            book_slot: 1,
-            book_type: "spell".into(),
-            spell_id: 133,
-            texture: None,
-            passive: false,
-        }));
-        cursor::queue_cursor_update(&mut s.model_mut()); // the pickup's own transition
+        // The pickup's own transition, through the spell setter.
+        cursor::set_cursor(
+            &mut s.model_mut(),
+            CursorPayload::Spell(CursorSpell {
+                book_slot: 1,
+                book_type: "spell".into(),
+                spell_id: 133,
+                texture: None,
+                passive: false,
+            }),
+        );
         assert_eq!(cursor_event_counts(&mut s), (1, 1, 0), "the spell pickup");
 
         s.run("PickupMerchantItem(0)").unwrap();

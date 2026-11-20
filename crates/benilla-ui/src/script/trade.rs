@@ -129,18 +129,16 @@ fn gold(model: &Model, pick: impl Fn(&TradeState) -> &TradeSideState) -> u32 {
 /// `CMSG_SET_TRADE_ITEM` and the cursor cleared, the app filling our column itself since vmangos
 /// echoes a placement only to the partner (`TradeData.cpp:81`); an empty cursor on a filled slot
 /// queues a clear. Any other payload stays on the cursor.
-fn click_trade_button(model: &mut Model, id: u32) {
+fn click_trade_button(model: &mut crate::script::ModelGuard<'_>, id: u32) {
     // Coins on the cursor go into the offer, the index unread.
     if matches!(model.cursor, Some(CursorPayload::Money(_))) {
         cursor::money::add_trade_money(model);
         return;
     }
-    match model.cursor.take() {
+    match model.cursor.clone() {
         Some(CursorPayload::Item(item)) => {
-            let (bag, slot) = (item.bag, item.slot);
-            model.trade_set_items.push((id, bag, slot));
-            cursor::queue_cursor_update(model);
-            cursor::queue_lock_changed(model, bag, slot);
+            model.trade_set_items.push((id, item.bag, item.slot));
+            cursor::clear_cursor(model);
         }
         None => {
             let filled = matches!(
@@ -156,7 +154,7 @@ fn click_trade_button(model: &mut Model, id: u32) {
                 model.trade_clear_items.push(id);
             }
         }
-        Some(other) => model.cursor = Some(other),
+        Some(_) => {}
     }
 }
 

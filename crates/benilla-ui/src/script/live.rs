@@ -1451,10 +1451,10 @@ pub(crate) fn has_control() -> bool {
     read_live(|l| l.has_control()).unwrap_or(true)
 }
 
-/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
+/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's deferred events take it.
 pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
     if write_live(|l| l.unique_signal(event)) != Some(true) {
-        model.pending_events.push((event.to_string(), Vec::new()));
+        model.defer_event(event, Vec::new());
     }
 }
 

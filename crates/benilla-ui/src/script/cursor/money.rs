@@ -4,7 +4,7 @@
 
 use mlua::{Lua, Value};
 
-use super::{queue_cursor_update, CursorMoney, CursorPayload};
+use super::{CursorMoney, CursorPayload};
 use crate::script::binding_abi::{flag, number_arg};
 use crate::script::Model;
 
@@ -34,27 +34,13 @@ pub(crate) fn cursor_money(model: &Model) -> u32 {
     }
 }
 
-/// Queue `PLAYER_MONEY`, which repaints the money frames less the held coins.
-fn queue_player_money(model: &mut Model) {
-    model
-        .pending_events
-        .push(("PLAYER_MONEY".to_string(), Vec::new()));
-}
-
-/// Put coins on the cursor as the reference does: the inner clear's `CURSOR_UPDATE`, after its own
-/// `PLAYER_MONEY` if coins were already held, then the payload and `PLAYER_MONEY`.
-fn install_money(model: &mut Model, copper: u32) {
-    if matches!(model.cursor, Some(CursorPayload::Money(_))) {
-        queue_player_money(model);
-    }
-    model.cursor = None;
-    queue_cursor_update(model);
-    model.cursor = Some(CursorPayload::Money(CursorMoney { copper }));
-    queue_player_money(model);
+/// Put coins on the cursor through the money setter (`0x520880`): the clear's `CURSOR_UPDATE`, after its own `PLAYER_MONEY` if coins were already held, then the payload and `PLAYER_MONEY`.
+fn install_money(model: &mut crate::script::ModelGuard<'_>, copper: u32) {
+    super::set_cursor(model, CursorPayload::Money(CursorMoney { copper }));
 }
 
 /// `PickupPlayerMoney` after the argument gate; each refusal is silent.
-pub(crate) fn pickup_player_money(model: &mut Model, copper: u32) -> bool {
+pub(crate) fn pickup_player_money(model: &mut crate::script::ModelGuard<'_>, copper: u32) -> bool {
     if copper == 0
         || !crate::script::live::has_control()
         || u64::from(copper) > crate::script::live::money(model)
@@ -66,20 +52,18 @@ pub(crate) fn pickup_player_money(model: &mut Model, copper: u32) -> bool {
 }
 
 /// `DropCursorMoney`: `PLAYER_MONEY`, then the clear's `CURSOR_UPDATE`, and no packet.
-pub(crate) fn drop_cursor_money(model: &mut Model) -> bool {
+pub(crate) fn drop_cursor_money(model: &mut crate::script::ModelGuard<'_>) -> bool {
     if !matches!(model.cursor, Some(CursorPayload::Money(_))) || !crate::script::live::has_control()
     {
         return false;
     }
-    model.cursor = None;
-    queue_player_money(model);
-    queue_cursor_update(model);
+    super::clear_cursor(model);
     true
 }
 
 /// `AddTradeMoney`, also run first by `ClickTradeButton`, `ClickTargetTradeButton` and the trade
 /// window's open: the offer becomes offer plus cursor, if the purse covers it.
-pub(crate) fn add_trade_money(model: &mut Model) -> bool {
+pub(crate) fn add_trade_money(model: &mut crate::script::ModelGuard<'_>) -> bool {
     let copper = cursor_money(model);
     if copper == 0 {
         return false;
@@ -95,14 +79,13 @@ pub(crate) fn add_trade_money(model: &mut Model) -> bool {
         t.player.gold = total;
     }
     // `ClearCursor(1, 0)`: no PLAYER_MONEY, the clear's own CURSOR_UPDATE.
-    model.cursor = None;
-    queue_cursor_update(model);
+    super::clear_cursor_with(model, true, false);
     true
 }
 
 /// `PickupTradeMoney` after the argument gate: signed gates, then `CMSG_SET_TRADE_GOLD` (`0x11F`)
 /// with the trimmed offer, then the coins onto the cursor.
-pub(crate) fn pickup_trade_money(model: &mut Model, amount: i32) -> bool {
+pub(crate) fn pickup_trade_money(model: &mut crate::script::ModelGuard<'_>, amount: i32) -> bool {
     let offer = model.trade.as_ref().map_or(0, |t| t.player.gold) as i32;
     if amount <= 0 || amount > offer {
         return false;
@@ -276,14 +259,15 @@ mod tests {
     use crate::script::cursor::CursorPayload;
     use crate::script::UiScript;
 
+    /// The money and cursor events heard since the last read.
     fn events(s: &mut UiScript) -> Vec<String> {
         s.run(
-            r#"EV = {} F = F or CreateFrame("Frame") F:RegisterEvent("PLAYER_MONEY")
-               F:RegisterEvent("CURSOR_UPDATE") F:SetScript("OnEvent", function() table.insert(EV, event) end)"#,
+            r#"EV = EV or {} if not F then F = CreateFrame("Frame") F:RegisterEvent("PLAYER_MONEY")
+               F:RegisterEvent("CURSOR_UPDATE") F:SetScript("OnEvent", function() table.insert(EV, event) end) end"#,
         )
         .unwrap();
-        s.tick(0.0);
-        s.eval::<Vec<String>>("return EV").unwrap()
+        s.eval::<Vec<String>>("local heard = EV EV = {} return heard")
+            .unwrap()
     }
 
     #[test]

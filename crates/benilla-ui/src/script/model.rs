@@ -703,11 +703,10 @@ pub(crate) struct Model {
     pub(crate) has_key: bool,
     /// What the cursor carries; nothing moves locally, the server's updates settle the bags.
     pub(crate) cursor: Option<cursor::CursorPayload>,
-    /// The action bar's drop grid: shown on the cursor's empty-to-held edge for any payload but a
-    /// pet action or a vendor row (mode 5; the grab setter shows it for mode 7 only).
+    /// A cursor setter showed a drop grid, the action bar's or the pet bar's (`0xbd074c`): the clear hides it.
     pub(crate) cursor_grid_shown: bool,
-    /// The pet bar's grid, lit only by a pet-action pickup; never both grids at once.
-    pub(crate) pet_grid_shown: bool,
+    /// The clear has unlocked the held item and not yet zeroed it (`0x5192c9` to `0x519301`): the cursor still reads it, its slot no longer reads locked.
+    pub(crate) cursor_item_unlocked: bool,
     /// The world pick under the cursor (`[this+0x350]`): a world click drops no payload on an
     /// object, only an item on terrain, and anything over nothing.
     /// Held-item bag moves, sent as `CMSG_SWAP_INV_ITEM` or `CMSG_SPLIT_ITEM`.
@@ -1087,8 +1086,7 @@ pub(crate) struct Model {
     pub(crate) nameplates: super::nameplate::NamePlates,
     /// The world-state readout's rows, gated and resolved by the app.
     pub(crate) worldstate: super::worldstate::WorldStateUiState,
-    /// Events bindings raise. Deviation: fired at the next tick, not synchronously as in the
-    /// reference, because a binding runs inside Lua and cannot re-enter handler dispatch.
+    /// Events deferred to the next tick ([`Model::defer_event`]).
     pub(crate) pending_events: Vec<(String, Vec<ScriptValue>)>,
     /// The last cursor position in UI space (logical px, y-up), behind `GetCursorPosition()`.
     pub(crate) cursor_pos: (f32, f32),
@@ -1157,6 +1155,11 @@ pub(crate) struct Model {
 }
 
 impl Model {
+    /// Hold `event` for the next tick's head: the one door for an event that does not fire at its step, a unique signal with no queue lent (`0x615020`, sent at `0x614760`) or a host lane's.
+    pub(crate) fn defer_event(&mut self, event: &str, args: Vec<ScriptValue>) {
+        self.pending_events.push((event.to_string(), args));
+    }
+
     /// The selected quest-log row's detail, resolved per call as the reference's bindings do.
     pub(crate) fn selected_quest_detail(&self) -> Option<quest_log::QuestLogDetail> {
         let index = usize::try_from(self.quest_log_selection.checked_sub(1)?).ok()?;
@@ -1662,7 +1665,7 @@ impl Model {
             has_key: false,
             cursor: None,
             cursor_grid_shown: false,
-            pet_grid_shown: false,
+            cursor_item_unlocked: false,
             container_moves: Vec::new(),
             container_repairs: Vec::new(),
             item_picks: Vec::new(),

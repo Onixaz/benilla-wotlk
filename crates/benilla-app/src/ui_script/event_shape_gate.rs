@@ -156,7 +156,7 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
             for call in [
                 concat!("fire_event", "("),
                 concat!("fire_event_into", "("),
-                concat!("pending_events.push", "(("),
+                concat!(".raise", "("),
                 // An event a packet handler fires after its changes apply.
                 concat!(".fire", "("),
                 // A unique signal, which fires with no arguments at the frame's flush.

@@ -354,7 +354,7 @@ impl super::UiScript {
         model.pending_wrap = Some(PendingWrap { bag, slot });
         model.ui_cursor = Some(UiCursorMode::Cast);
         model.ui_cursor_dirty = true;
-        cursor::queue_lock_changed(&mut model, bag, slot);
+        cursor::raise_lock_edge(&mut model, bag, slot, true);
     }
 
     /// The armed gift wrap, if any; the app reads it to hold the cursor's base at Cast.
@@ -421,7 +421,7 @@ pub enum UiCursorMode {
 pub(super) fn slot_held(model: &super::Model, bag: i64, slot: u32) -> bool {
     matches!(
         &model.cursor,
-        Some(CursorPayload::Item(c)) if c.bag == bag && c.slot == slot
+        Some(CursorPayload::Item(c)) if c.bag == bag && c.slot == slot && !model.cursor_item_unlocked
     ) || matches!(
         &model.pending_wrap,
         Some(w) if w.bag == bag && w.slot == slot
@@ -448,7 +448,11 @@ pub(super) fn bag_slot_locked(
 ///   displaced item in the source slot, never on the cursor (no cursor set);
 /// - a split carry places onto an empty or same-item slot, and stays held over another item;
 /// - a spell or action payload stays held.
-pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
+pub(super) fn pickup_container_item(
+    model: &mut crate::script::ModelGuard<'_>,
+    bag: i64,
+    slot: u32,
+) {
     // An armed gift wrap completes here, before the cursor is read. `PickupContainerItem` is the
     // only caller of the wrap sender, so an equipped item cannot be wrapped.
     if let Some(wrap) = model.pending_wrap {
@@ -466,7 +470,7 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         model.container_wraps.push((wrap.bag, wrap.slot, bag, slot));
         // The paper unlocks and the cursor resets right after the send, not on the answer; the
         // target never locks.
-        cursor::queue_lock_changed(model, wrap.bag, wrap.slot);
+        cursor::raise_lock_edge(model, wrap.bag, wrap.slot, false);
         model.ui_cursor = None;
         model.ui_cursor_dirty = true;
         return;
@@ -492,7 +496,7 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
     // never picks up.
     let socketed = super::socket::holds_slot(model, bag, slot)
         || super::petition::holds_slot(model, bag, slot);
-    match model.cursor.take() {
+    match model.cursor.clone() {
         None => {
             let picked = index_slot(model, bag, slot)
                 .filter(|s| s.item_id != 0 && !s.locked && !socketed)
@@ -507,15 +511,14 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
                     bar_placeable: s.bar_placeable,
                     equip_slots: s.equip_slots.clone(),
                 });
+            // The setter, then the lock (`0x5d8228`, `0x5d822f`).
             if let Some(item) = picked {
-                model.cursor = Some(CursorPayload::Item(item));
-                cursor::queue_cursor_update(model);
-                cursor::queue_lock_changed(model, bag, slot);
+                cursor::set_cursor(model, CursorPayload::Item(item));
+                cursor::raise_lock_edge(model, bag, slot, true);
             }
         }
         Some(CursorPayload::Item(held)) if held.bag == bag && held.slot == slot => {
-            cursor::queue_cursor_update(model);
-            cursor::queue_lock_changed(model, held.bag, held.slot);
+            cursor::clear_cursor(model);
         }
         Some(CursorPayload::Item(held)) => {
             // Cloned so the moves below can borrow `model`; an unresolved slot reads as empty.
@@ -523,15 +526,12 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
                 .filter(|d| d.item_id != 0);
             match (held.count, dest) {
                 // A split carry cannot swap with a different item: it stays held.
-                (Some(_), Some(d)) if d.item_id != held.item_id => {
-                    model.cursor = Some(CursorPayload::Item(held));
-                }
+                (Some(_), Some(d)) if d.item_id != held.item_id => {}
                 // Anything else queues the move and clears: a split, a merge the server tops up,
                 // or a swap that lands the displaced item in the source slot.
                 (count, _) => {
                     queue_move(model, &held, bag, slot, count);
-                    cursor::queue_cursor_update(model);
-                    cursor::queue_lock_changed(model, held.bag, held.slot);
+                    cursor::clear_cursor(model);
                 }
             }
         }
@@ -554,14 +554,14 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
                     super::MerchantAct::BuyInSlot { bag, slot, row },
                 );
             }
-            cursor::queue_cursor_update(model);
+            cursor::clear_cursor(model);
         }
         // Mode 11, a guild bank item, withdraws into this slot (`0x5d7ff0`).
         Some(CursorPayload::GuildBankItem(held)) => {
             super::guild_bank::drop_on_bag_slot(model, held, bag, slot);
         }
         Some(
-            other @ (CursorPayload::Spell(_)
+            CursorPayload::Spell(_)
             | CursorPayload::Action(_)
             // Mode 12, bank money, stays held for the bag button's `WithdrawGuildBankMoney`.
             | CursorPayload::GuildBankMoney(_)
@@ -571,10 +571,8 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
             // Mode 10, a stabled pet, stays held for the stable window.
             | CursorPayload::StablePet(_)
             // Mode 2, money, stays held for a money frame's DropFunc.
-            | CursorPayload::Money(_)),
-        ) => {
-            model.cursor = Some(other);
-        }
+            | CursorPayload::Money(_),
+        ) => {}
     }
 }
 
@@ -1458,6 +1456,7 @@ mod tests {
         );
     }
 
+    /// The whole stack goes up with no split count (`0x5d8609`); a count past the stack is refused (`0x5d85e6`).
     #[test]
     fn split_of_the_whole_stack_is_a_plain_pickup() {
         let mut s = UiScript::new().unwrap();
@@ -1466,12 +1465,11 @@ mod tests {
             .eval::<bool>("return SplitContainerItem(0, 1, 5)")
             .unwrap());
         assert_eq!(s.cursor_item().unwrap().count, None);
-        // A split of more than the stack is a plain pickup too.
         s.run("ClearCursor()").unwrap();
-        assert!(s
+        assert!(!s
             .eval::<bool>("return SplitContainerItem(0, 1, 99)")
             .unwrap());
-        assert_eq!(s.cursor_item().unwrap().count, None);
+        assert!(s.cursor_item().is_none());
     }
 
     #[test]

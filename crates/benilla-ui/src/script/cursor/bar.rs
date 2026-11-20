@@ -8,9 +8,8 @@ use mlua::Lua;
 use crate::script::action::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
 use crate::script::action_slots::{self, Word};
 use crate::script::ui_errors::Line;
-use crate::script::Model;
 
-use super::{queue_cursor_update, CursorAction, CursorPayload};
+use super::{clear_cursor, set_cursor, CursorAction, CursorPayload};
 
 /// The passive-spell refusal's error, errorId `0x9e`: entry of the table (stride `0x14`) names this
 /// key.
@@ -20,19 +19,21 @@ const PASSIVE_ON_BAR_ERROR: &str = "ERR_PASSIVE_ABILITY";
 const TEMP_BAR: std::ops::RangeInclusive<u32> = 121..=132;
 
 /// `PickupAction(id)` (`0x5abe70`), the slot's shift-click and drag start
-/// (`ActionBarFrame.xml:12-38`). With a payload held it places instead; else the slot's action goes
-/// onto the cursor and the slot is removed, sent and signalled, which a locked bar refuses while
-/// the cursor keeps the action. The temporary bar's slots are refused. Returns whether to repaint;
-/// each slot written is pushed to `changed`; a place's refusal is handed back as [`place_action`]'s.
+/// (`ActionBarFrame.xml:12-38`). With a spell, an item, a macro or a set held it places instead
+/// (`0x5abeae`-`0x5abeec`); else the slot's action goes onto the cursor through its setter, which
+/// clears whatever else was held, and then the slot is removed, sent and signalled (`0x5abf44`),
+/// which a locked bar refuses while the cursor keeps the action. The temporary bar's slots are
+/// refused. Returns whether to repaint; each slot written is pushed to `changed`; a place's
+/// refusal is handed back as [`place_action`]'s.
 pub(super) fn pickup_action(
-    model: &mut Model,
+    model: &mut crate::script::ModelGuard<'_>,
     id: u32,
     changed: &mut Vec<u32>,
 ) -> Result<bool, Line> {
     if TEMP_BAR.contains(&id) {
         return Ok(false);
     }
-    if model.cursor.is_some() {
+    if places(&model.cursor) {
         return place_action(model, id, changed);
     }
     let Some(slot) = action_slots::word(model, id) else {
@@ -44,21 +45,37 @@ pub(super) fn pickup_action(
         action: slot.action,
         texture: action_slots::texture(model, id, &|_| None),
     };
-    model.cursor = Some(CursorPayload::Action(payload));
+    set_cursor(model, CursorPayload::Action(payload));
     if action_slots::write(model, id, None, None) {
         changed.push(id);
     }
-    queue_cursor_update(model);
     Ok(true)
 }
 
-/// `PlaceAction(id)`, the slot's `OnReceiveDrag` and `UseAction(id, 1)`'s place fork. An occupied
-/// slot's action hops onto the cursor with `id` as its source; an item stays in its bag, since a
-/// bar item is a reference, not a move. A locked bar refuses the write and the payload stays held.
-/// Returns whether to repaint; each slot written is pushed to `changed`. A refusal with a line is
-/// handed back for the caller to show at once; nothing has changed by then.
+/// Whether the cursor holds what the bar takes: a spell, an item, a macro, a bar item or a set.
+fn places(cursor: &Option<CursorPayload>) -> bool {
+    matches!(
+        cursor,
+        Some(
+            CursorPayload::Spell(_)
+                | CursorPayload::Item(_)
+                | CursorPayload::Macro(_)
+                | CursorPayload::EquipmentSet(_)
+                | CursorPayload::Action(_)
+        )
+    )
+}
+
+/// `PlaceAction(id)` (`0x5ab120`), the slot's `OnReceiveDrag` and `UseAction(id, 1)`'s place fork.
+/// The slot's own action dropped on it just clears the cursor (`0x5ab32c`, `0x5ab3bd`). Else the
+/// cursor changes first: an occupied slot's action goes up through its setter with `id` as its
+/// source, an empty slot clears it; then the slot is written, sent and signalled (`0x5ab7da`),
+/// which a locked bar refuses with the cursor already changed. An item stays in its bag, since a
+/// bar item is a reference, not a move. Returns whether to repaint; each slot written is pushed to
+/// `changed`. A refusal with a line is handed back for the caller to show at once; nothing has
+/// changed by then.
 pub(crate) fn place_action(
-    model: &mut Model,
+    model: &mut crate::script::ModelGuard<'_>,
     id: u32,
     changed: &mut Vec<u32>,
 ) -> Result<bool, Line> {
@@ -89,50 +106,55 @@ pub(crate) fn place_action(
         }
         _ => {}
     }
-    let Some(held) = model.cursor.take() else {
-        return Ok(false);
-    };
-    let placeable = match &held {
-        CursorPayload::Action(a) => Some((a.kind, a.action, a.texture.clone())),
-        CursorPayload::Item(i) => Some((ACTION_KIND_ITEM, i.item_id, i.texture.clone())),
-        CursorPayload::Spell(s) => Some((ACTION_KIND_SPELL, s.spell_id, s.texture.clone())),
+    let placeable = match &model.cursor {
+        None => return Ok(false),
+        Some(CursorPayload::Action(a)) => Some((a.kind, a.action, a.texture.clone())),
+        Some(CursorPayload::Item(i)) => Some((ACTION_KIND_ITEM, i.item_id, i.texture.clone())),
+        Some(CursorPayload::Spell(s)) => Some((ACTION_KIND_SPELL, s.spell_id, s.texture.clone())),
         // `PlaceAction` accepts modes 1, 3, 7 and 8: a macro, mode 8, packs its id under the macro
         // tag. Pet actions (4), coins (2), stabled pets (10) and vendor rows (5) are refused and
         // stay held.
-        CursorPayload::Macro(m) => Some((ACTION_KIND_MACRO, m.index, m.texture.clone())),
+        Some(CursorPayload::Macro(m)) => Some((ACTION_KIND_MACRO, m.index, m.texture.clone())),
         // Mode 13, a set, packs its id under the set tag.
-        CursorPayload::EquipmentSet(e) => Some((
+        Some(CursorPayload::EquipmentSet(e)) => Some((
             crate::script::action::ACTION_KIND_EQUIPMENT_SET,
             e.id,
             e.texture.clone(),
         )),
-        CursorPayload::PetAction(_) => None,
-        CursorPayload::StablePet(_) => None,
-        CursorPayload::Money(_) => None,
-        CursorPayload::Merchant(_) => None,
-        // Modes 11 and 12, guild bank items and money, are refused too.
-        CursorPayload::GuildBankItem(_) | CursorPayload::GuildBankMoney(_) => None,
+        Some(
+            CursorPayload::PetAction(_)
+            | CursorPayload::StablePet(_)
+            | CursorPayload::Money(_)
+            | CursorPayload::Merchant(_)
+            // Modes 11 and 12, guild bank items and money, are refused too.
+            | CursorPayload::GuildBankItem(_)
+            | CursorPayload::GuildBankMoney(_),
+        ) => None,
     };
     let Some((kind, action, texture)) = placeable else {
-        model.cursor = Some(held);
         return Ok(false);
     };
     let displaced =
         action_slots::word(model, id).map(|d| (d, action_slots::texture(model, id, &|_| None)));
-    if !action_slots::write(model, id, Some(Word { kind, action }), texture) {
-        model.cursor = Some(held);
-        return Ok(false);
+    match displaced {
+        Some((d, _)) if d.kind == kind && d.action == action => {
+            clear_cursor(model);
+            return Ok(true);
+        }
+        Some((d, texture)) => set_cursor(
+            model,
+            CursorPayload::Action(CursorAction {
+                src_slot: id,
+                kind: d.kind,
+                action: d.action,
+                texture,
+            }),
+        ),
+        None => clear_cursor(model),
     }
-    changed.push(id);
-    model.cursor = displaced.map(|(d, texture)| {
-        CursorPayload::Action(CursorAction {
-            src_slot: id,
-            kind: d.kind,
-            action: d.action,
-            texture,
-        })
-    });
-    queue_cursor_update(model);
+    if action_slots::write(model, id, Some(Word { kind, action }), texture) {
+        changed.push(id);
+    }
     Ok(true)
 }
 
@@ -141,22 +163,12 @@ pub(crate) fn place_action(
 /// instead of using the slot, refused or not. Whether the fork took the press, with the place's
 /// refusal if it had one.
 pub(crate) fn use_action_places(
-    model: &mut Model,
+    model: &mut crate::script::ModelGuard<'_>,
     id: u32,
     in_binding: bool,
     changed: &mut Vec<u32>,
 ) -> Option<Option<Line>> {
-    let held = matches!(
-        model.cursor,
-        Some(
-            CursorPayload::Spell(_)
-                | CursorPayload::Item(_)
-                | CursorPayload::Macro(_)
-                | CursorPayload::EquipmentSet(_)
-                | CursorPayload::Action(_)
-        )
-    );
-    if in_binding || TEMP_BAR.contains(&id) || !held {
+    if in_binding || TEMP_BAR.contains(&id) || !places(&model.cursor) {
         return None;
     }
     Some(place_action(model, id, changed).err())
@@ -170,11 +182,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PickupAction",
         lua.create_function(|lua, id: u32| {
             let mut changed = Vec::new();
-            let (placed, grid) = {
-                let mut model = crate::script::model_mut_of(lua);
-                let placed = pickup_action(&mut model, id, &mut changed);
-                (placed, super::take_grid_edge(&mut model))
-            };
+            let placed = pickup_action(&mut crate::script::model_mut_of(lua), id, &mut changed);
             let repaint = match placed {
                 Ok(repaint) => repaint,
                 Err(line) => {
@@ -182,7 +190,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     false
                 }
             };
-            action_slots::signal_all(lua, grid, changed);
+            action_slots::signal_all(lua, changed);
             Ok(repaint)
         })?,
     )?;
@@ -190,11 +198,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "PlaceAction",
         lua.create_function(|lua, id: u32| {
             let mut changed = Vec::new();
-            let (placed, grid) = {
-                let mut model = crate::script::model_mut_of(lua);
-                let placed = place_action(&mut model, id, &mut changed);
-                (placed, super::take_grid_edge(&mut model))
-            };
+            let placed = place_action(&mut crate::script::model_mut_of(lua), id, &mut changed);
             let repaint = match placed {
                 Ok(repaint) => repaint,
                 Err(line) => {
@@ -202,7 +206,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     false
                 }
             };
-            action_slots::signal_all(lua, grid, changed);
+            action_slots::signal_all(lua, changed);
             Ok(repaint)
         })?,
     )?;
@@ -364,8 +368,9 @@ mod tests {
         assert_eq!(s.take_action_sets(), vec![(5, 111)]);
     }
 
+    /// The grid shows from the spell setter and hides from the clear, a hop's setter clearing first: hide, then show (`0x519447`-`0x51945f`, `0x520a38`).
     #[test]
-    fn showgrid_hidegrid_fire_on_gain_and_loss_not_on_a_hop() {
+    fn showgrid_hidegrid_fire_from_the_setter_and_the_clear() {
         let mut s = UiScript::new().unwrap();
         s.set_action(1, Some(action_slot("Interface\\Icons\\Spell_A", 0x00, 111)));
         s.set_action(2, Some(action_slot("Interface\\Icons\\Spell_B", 0x00, 222)));
@@ -384,19 +389,16 @@ mod tests {
         .unwrap();
 
         s.run("PickupAction(1)").unwrap(); // None -> Some: SHOW
-        s.tick(0.01);
         assert_eq!(s.eval::<i64>("return shows").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return hides").unwrap(), 0);
 
-        s.run("PlaceAction(2)").unwrap(); // Some -> Some (hop): neither
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return shows").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return hides").unwrap(), 0);
+        s.run("PlaceAction(2)").unwrap(); // a hop: the setter's clear hides, the setter shows
+        assert_eq!(s.eval::<i64>("return shows").unwrap(), 2);
+        assert_eq!(s.eval::<i64>("return hides").unwrap(), 1);
 
         s.run("ClearCursor()").unwrap(); // Some -> None: HIDE
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return shows").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return hides").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return shows").unwrap(), 2);
+        assert_eq!(s.eval::<i64>("return hides").unwrap(), 2);
     }
 
     #[test]

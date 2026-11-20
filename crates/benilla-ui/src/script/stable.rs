@@ -314,10 +314,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             super::cursor::clear_cursor(&mut model);
             if let (Some(texture), Ok(slot)) = (icon, u8::try_from(i.max(0))) {
+                // The grab writes the pet and signals nothing more (`0x520d08`).
                 model.cursor = Some(super::cursor::CursorPayload::StablePet(
                     super::cursor::CursorStablePet { slot, texture },
                 ));
-                super::cursor::queue_cursor_update(&mut model);
             }
             Ok(())
         })?,
