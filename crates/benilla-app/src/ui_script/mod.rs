@@ -24,8 +24,8 @@ pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
 pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending,
-    OwnsPetitions, OwnsPlace, OwnsSelection, OwnsTradeSkill,
+    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending, OwnsPlace,
+    OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
 };
 #[cfg(test)]
 pub(crate) mod live_tests;
@@ -1093,15 +1093,11 @@ mod instance_tests;
 mod static_popup_tests;
 
 #[cfg(test)]
-mod binder_tests;
-
+mod npc_characterization_tests;
 #[cfg(test)]
 mod summon_tests;
 #[cfg(test)]
 pub(crate) mod test_live;
-
-#[cfg(test)]
-mod talent_wipe_tests;
 
 #[cfg(test)]
 mod death_tests;
@@ -1272,8 +1268,6 @@ mod quiver_tests;
 mod world_entry_tests;
 
 /// The guild tabard designer: the stock `TabardFrame.xml` off the chain.
-#[cfg(test)]
-mod tabard_tests;
 /// The stock world map: its POI pool, unit blips, player arrow and full-screen quads.
 #[cfg(test)]
 mod world_map_tests;

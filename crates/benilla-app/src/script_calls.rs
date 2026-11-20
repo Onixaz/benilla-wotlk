@@ -24,13 +24,7 @@ const MAX_NESTING: u8 = 8;
 pub(crate) fn apply_script_calls(
     (script, mut live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<(
-            (
-                crate::ui_script::OwnsCooldowns,
-                crate::ui_script::OwnsSelection,
-            ),
-            crate::ui_script::OwnsPending,
-        )>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
     mut appliers: ParamSet<(
         crate::target::ScriptSelect,
@@ -138,7 +132,8 @@ pub(crate) fn apply_script_calls(
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {
-                appliers.p5().use_container_item(script, bag, slot);
+                let vendor = live.merchant_vendor();
+                appliers.p5().use_container_item(script, bag, slot, vendor);
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
             ScriptCall::UseItemAt { bag, slot, at } => {

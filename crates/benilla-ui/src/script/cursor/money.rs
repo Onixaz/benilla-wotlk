@@ -55,7 +55,10 @@ fn install_money(model: &mut Model, copper: u32) {
 
 /// `PickupPlayerMoney` after the argument gate; each refusal is silent.
 pub(crate) fn pickup_player_money(model: &mut Model, copper: u32) -> bool {
-    if copper == 0 || !crate::script::live::has_control() || u64::from(copper) > model.money {
+    if copper == 0
+        || !crate::script::live::has_control()
+        || u64::from(copper) > crate::script::live::money(model)
+    {
         return false;
     }
     install_money(model, copper);
@@ -83,7 +86,7 @@ pub(crate) fn add_trade_money(model: &mut Model) -> bool {
     }
     let offer = model.trade.as_ref().map_or(0, |t| t.player.gold);
     let total = u64::from(offer) + u64::from(copper);
-    if total > model.money {
+    if total > crate::script::live::money(model) {
         return false;
     }
     let total = total as u32;

@@ -200,7 +200,7 @@ pub(super) fn target_by_name_requests(
     mut commit: SelectCommit,
     (mut script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
 ) {
     for request in requests.read() {
@@ -220,7 +220,7 @@ pub(super) fn assist_requests(
     mut commit: SelectCommit,
     (mut script, _live): (
         Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSelection>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
     ),
 ) {
     for request in requests.read() {
@@ -989,7 +989,7 @@ mod tests {
     #[test]
     fn target_and_assist_unit_name_the_interaction_npc() {
         use crate::net::{Guid, ObjectStore, SelfPlayer};
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
         use benilla_ui::script::UiScript;
         use bevy::ecs::system::RunSystemOnce;
 
@@ -1015,7 +1015,7 @@ mod tests {
         let index = &mut world.resource_mut::<crate::net::GuidIndex>().0;
         index.insert(VENDOR, vendor);
         index.insert(GUARD, guard);
-        world.insert_resource(InteractNpc(Some(vendor), Some(VENDOR)));
+        world.insert_resource(InteractTarget::holding(VENDOR));
 
         let run = |world: &mut World, lua: &str| {
             world
@@ -1024,7 +1024,11 @@ mod tests {
                 .expect("the binding runs");
             world
                 .run_system_once(
-                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                    |(mut script, _live): (
+                        NonSendMut<UiScript>,
+                        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
+                    ),
+                     mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
                             select.select(request, &mut script);
                         }
@@ -1057,7 +1061,7 @@ mod tests {
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(VENDOR, vendor);
-        world.insert_resource(InteractNpc::default());
+        world.insert_resource(InteractTarget::default());
         assert_eq!(run(&mut world, r#"TargetUnit("npc")"#), Some(GUARD));
     }
 
@@ -1069,7 +1073,7 @@ mod tests {
     fn typing_target_unit_npc_in_the_stock_chat_box_selects_the_vendor() {
         benilla_formats::wow_data_or_skip!();
         use crate::net::{Guid, ObjectStore, SelfPlayer};
-        use crate::ui_session::InteractNpc;
+        use crate::ui_session::InteractTarget;
         use benilla_ui::script::UiScript;
         use bevy::ecs::system::RunSystemOnce;
 
@@ -1090,7 +1094,7 @@ mod tests {
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(VENDOR, vendor);
-        world.insert_resource(InteractNpc(Some(vendor), Some(VENDOR)));
+        world.insert_resource(InteractTarget::holding(VENDOR));
 
         let mut script = world.non_send_resource_mut::<UiScript>();
         assert!(script.focus_editbox("ChatFrameEditBox"));

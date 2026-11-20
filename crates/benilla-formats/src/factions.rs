@@ -237,6 +237,8 @@ impl Reaction {
 /// `ChrRaces.dbc` race's template.
 pub struct FactionCatalog {
     templates: HashMap<u32, FactionTemplate>,
+    /// Template id to its `Flags` column (field 2), only the non-zero ones.
+    template_flags: HashMap<u32, u32>,
     /// Race id to `ChrRaces.dbc` column 2, `FactionID`, a template id: what a corpse's reaction and
     /// a unit's PvP team read for a race.
     race_templates: HashMap<u8, u32>,
@@ -263,6 +265,7 @@ impl FactionCatalog {
     ) -> Self {
         Self {
             templates,
+            template_flags: HashMap::new(),
             race_templates,
             factions: HashMap::new(),
             group_names: HashMap::new(),
@@ -301,6 +304,18 @@ impl FactionCatalog {
     /// child list (`0x5d2680`).
     pub fn children_of(&self, faction_id: u32) -> &[u32] {
         self.children.get(&faction_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// A template's `Flags` column, 0 for none or no row: bit `0x1000` makes a contested-PvP
+    /// player hostile to it (`0x71f7f7`).
+    pub fn template_flags(&self, id: u32) -> u32 {
+        self.template_flags.get(&id).copied().unwrap_or(0)
+    }
+
+    /// This catalog with template `id`'s `Flags` column set. Fixture builder for tests.
+    pub fn with_template_flags(mut self, id: u32, flags: u32) -> Self {
+        self.template_flags.insert(id, flags);
+        self
     }
 
     /// The template row for a `UNIT_FIELD_FACTIONTEMPLATE` id.
@@ -470,9 +485,13 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
         .with_context(|| format!("reading {FACTION_TEMPLATE}"))?;
     let rs = parse(&bytes, faction_template_schema(), "FactionTemplate")?;
     let mut templates = HashMap::with_capacity(rs.records().len());
+    let mut template_flags = HashMap::new();
     for r in rs.records() {
         if let Some(id) = u32_at(r, 0) {
             let at = |i| u32_at(r, i).unwrap_or(0);
+            if at(2) != 0 {
+                template_flags.insert(id, at(2));
+            }
             templates.insert(
                 id,
                 FactionTemplate {
@@ -559,6 +578,7 @@ pub fn load_faction_catalog(chain: &mut Chain) -> Result<FactionCatalog> {
 
     Ok(FactionCatalog {
         templates,
+        template_flags,
         race_templates,
         factions,
         group_names,

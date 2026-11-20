@@ -232,6 +232,11 @@ pub trait LiveState {
         None
     }
 
+    /// The interact target (`0xbd07a8`), the `"npc"` unit's guid; `None` with none held.
+    fn interact_target(&self) -> Option<u64> {
+        None
+    }
+
     /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
     fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
         None
@@ -761,6 +766,11 @@ pub trait LiveState {
         false
     }
 
+    /// The interact target's clear on `guid` inside the call (`0x518d50` with 0): the target zeroed when it held `guid`, whether it did; the caller runs its window's leg.
+    fn clear_interact_target(&mut self, _guid: u64) -> bool {
+        false
+    }
+
     /// The banker cleared, the banker setter's tail with no banker (`0x57b8f9`).
     fn clear_banker(&mut self) {}
 
@@ -892,6 +902,273 @@ pub trait LiveState {
 
     /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
     fn ask_refund_record(&mut self, _item: u64) {}
+
+    /// `CheckBinderDist` (`0x6d2290`): the latched innkeeper held as a unit within its combat reach plus 4 yd of us.
+    fn binder_in_reach(&self) -> bool {
+        false
+    }
+
+    /// `ConfirmBinder`'s talk with no guid (`0x6d2120`): the latched innkeeper in reach, `CMSG_BINDER_ACTIVATE` goes out (`0x6d2257`).
+    fn confirm_binder(&self) {}
+
+    /// `CheckTalentMasterDist` (`0x6d2070`): the latched trainer held as a unit within its combat reach plus 4 yd of us.
+    fn talent_master_in_reach(&self) -> bool {
+        false
+    }
+
+    /// `ConfirmTalentWipe`'s talk with no guid (`0x6db1c0`): the latched trainer in reach, the wipe goes out when our money covers the latched cost, else the refusal line's key (`0x6db2ae`).
+    fn confirm_talent_wipe(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// `GetInstanceBootTimeRemaining` (`0x5162e0`): whole seconds to the boot deadline, 0 with none or past.
+    fn instance_boot_secs(&self) -> u32 {
+        0
+    }
+
+    /// `GetAreaSpiritHealerTime` (`0x516b90`): whole seconds to the held healer's wave, 0 with none or past.
+    fn area_spirit_healer_secs(&self) -> u32 {
+        0
+    }
+
+    /// `AcceptAreaSpiritHeal`'s healer poll at the call (`0x524b60` -> `0x524010`) up to its drop's cancel: whether a wave is cancelled, its event owed while the deadline still reads (`0x523eea` before `0x523efa`); `None` where no view lends it.
+    fn area_spirit_poll_drop(&mut self) -> Option<bool> {
+        None
+    }
+
+    /// The rest of the poll after that event, then `CMSG_AREA_SPIRIT_HEALER_QUEUE` naming the healer it left held (`0x524b60`).
+    fn accept_area_spirit_heal(&mut self, _cancelled: bool) {}
+
+    /// Whether our body is held, without which the 2584 aura cancel neither fires nor sends (`0x51f72d`, `0x51f75c`).
+    fn spirit_cancel_has_body(&self) -> bool {
+        false
+    }
+
+    /// `CancelAreaSpiritHeal`'s `CMSG_CANCEL_AURA` for 2584, after its event (`0x522fa0` -> `0x51f710`).
+    fn cancel_area_spirit_heal(&self) {}
+
+    /// Our player object held, the lookup the designer's verbs make first (`0x6de1d9`, `0x5997fd`).
+    fn active_player_held(&self) -> bool {
+        false
+    }
+
+    /// Our guild's record in the guild cache, asking nothing (`0x6de20c`): its five tabard fields, `-1`s when undesigned; `None` for no guild or no record.
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        None
+    }
+
+    /// The tabard save latch (`0xc9eacc`).
+    fn tabard_save_pending(&self) -> bool {
+        false
+    }
+
+    /// The tabard save (`0x6db320`): the first failing check's message key, else `MSG_SAVE_GUILD_EMBLEM` sent and the latch set; `None` with no player object.
+    fn save_tabard(&mut self, _design: [i32; 5]) -> Option<Result<(), &'static str>> {
+        None
+    }
+
+    /// The designer's close (`0x598ec0`): the vendor cleared, and how many `CLOSE_TABARD_FRAME`s fire, 0 with none held.
+    fn close_tabard(&mut self) -> u32 {
+        0
+    }
+
+    /// The seed's and a cycle's colours onto our body (`0x5993b0`).
+    fn apply_guild_color(&mut self, _design: [i32; 5]) {}
+
+    /// A `DressUpModel` pane's own model edited inside its verb's call: undress (`0x597ba0`), re-dress from its unit (`0x5977e0`) or a try-on (`0x597fc0`), whose record miss asks inside the call and leaves the pane's callback (`0x5980fa`).
+    fn dress_up(&mut self, _pane: crate::widget::FrameHandle, _intent: super::DressUpIntent) {}
+
+    /// The gossip globals at the call (`0xc00ef0`, `0xc00bf0`, `0xbfc968`, `0xc00be8`); `None` with no view.
+    fn gossip(&self) -> Option<super::GossipRead<'_>> {
+        None
+    }
+
+    /// `CMSG_GOSSIP_SELECT_OPTION` for option `slot` (0-based) to the held NPC, then the menu emptied (`0x58b040`, `0x58b045`).
+    fn select_gossip_option(&mut self, _slot: usize, _code: Option<String>) {}
+
+    /// The questgiver send for quest row `row` (0-based, whole menu) to the held NPC (`0x58b070`, `0x58b130`).
+    fn select_gossip_quest(&mut self, _row: usize) {}
+
+    /// `CloseGossip`'s zero set (`0x58a550`): how many `GOSSIP_CLOSED`s it fires, 0 with no NPC held.
+    fn close_gossip(&mut self) -> u32 {
+        0
+    }
+
+    /// The item-text reader at the call (`0xbfc948`, `0xbfc940`, `0xbfaa00`); `None` with no view.
+    fn item_text(&self) -> Option<super::ItemTextRead> {
+        None
+    }
+
+    /// `ItemTextGetCreator` (`0x58a480`): the read item's creator name, a miss asked with the reader's callback left on it.
+    fn item_text_creator(&mut self) -> Option<String> {
+        None
+    }
+
+    /// A page step and its redraw (`0x58a110`, `0x58a150` -> `0x589e90`): whether the redraw fired `ITEM_TEXT_READY`.
+    fn item_text_turn(&mut self, _next: bool) -> bool {
+        false
+    }
+
+    /// `CloseItemText` (`0x58a400`): how many `ITEM_TEXT_CLOSED`s it fires, 0 with no reader.
+    fn close_item_text(&mut self) -> u32 {
+        0
+    }
+
+    /// The taxi map the last setup listed (`0x5932e0`), `Some(None)` with none; `None` where no view lends it.
+    fn taxi_map(&self) -> Option<Option<&super::TaxiUiState>> {
+        None
+    }
+
+    /// `TaxiNodeCost`'s fare at the call (`0x591350`) for a 0-based listed slot; `None` where no view lends it.
+    fn taxi_node_cost(&self, _slot: u32) -> Option<i64> {
+        None
+    }
+
+    /// A taxi verb's act inside its call; `None` where no view lends the map.
+    fn taxi_act(&mut self, _act: super::TaxiAct) -> Option<super::TaxiOutcome> {
+        None
+    }
+
+    /// The charter window and the registrar's row at the call (`0xc22b20`.., `0xc0e558`); `None` where no view lends them.
+    fn petition_view(&self) -> Option<super::PetitionState> {
+        None
+    }
+
+    /// Whether a petition vendor is set (`0xc0f7c8`); `None` where no view lends it.
+    fn petition_vendor_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The vendor's row count (`0xc0f7d0`); `None` where no view lends it.
+    fn petition_vendor_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// Vendor row `index` (0-based) at the call, a miss asked with the vendor's record callback (`0x5a1f30`); `Some(None)` off the rows, `None` where no view lends it.
+    fn petition_item(&mut self, _index: u32) -> Option<Option<super::PetitionVendorItem>> {
+        None
+    }
+
+    /// A charter verb's act inside its call; `None` where no view lends the charter windows.
+    fn petition_act(&mut self, _act: super::PetitionRequest) -> Option<super::PetitionOutcome> {
+        None
+    }
+
+    /// The trainer window the list handler built (`0x596450`), `Some(None)` with none; `None` where no view lends it.
+    fn trainer(&self) -> Option<Option<&super::TrainerWindow>> {
+        None
+    }
+
+    /// The trainer window, written by a verb's mask commit or selection inside its call.
+    fn trainer_mut(&mut self) -> Option<Option<&mut super::TrainerWindow>> {
+        None
+    }
+
+    /// Service `position` (in list order)'s gates and product link at the call (`0x595470`, `0x5955e0`, `0x596290`); `Some(None)` past the list, `None` where no view lends it.
+    fn trainer_service_live(&self, _position: usize) -> Option<Option<super::TrainerServiceLive>> {
+        None
+    }
+
+    /// Service `position`'s description parsed at the call (`0x5959d0`), a recipe's product asked with the trainer's record callback; `None` where no view lends it.
+    fn trainer_description(
+        &mut self,
+        _position: usize,
+        _global: GlobalStrings<'_>,
+    ) -> Option<Option<String>> {
+        None
+    }
+
+    /// `CMSG_TRAINER_BUY_SPELL` to the open trainer inside the call (`0x594da0`); false where no view lends the wire.
+    fn trainer_buy(&mut self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Whether a trainer is open, which the setter's zero leg tests (`0x5940fa`); `None` where no view lends the trainer.
+    fn trainer_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The setter's interact target clear (`0x594113`): true when the trainer held it, whose interaction close runs the zero leg again inside it (`0x512f80`).
+    fn trainer_release_target(&mut self) -> bool {
+        false
+    }
+
+    /// The setter's zero (`0x59411b`): the trainer and its records.
+    fn trainer_zero(&mut self) {}
+
+    /// Our coinage at the call (`PLAYER_FIELD_COINAGE`), 0 with no player object; `None` where no view lends it.
+    fn player_money(&self) -> Option<u64> {
+        None
+    }
+
+    /// Whether a vendor is set (`0xbfa3e8`); `None` where no view lends the merchant.
+    fn merchant_open(&self) -> Option<bool> {
+        None
+    }
+
+    /// The count of `list` (`0xbfa3f0`, `0xbfa3f4`); `None` where no view lends the merchant.
+    fn merchant_len(&self, _list: super::MerchantList) -> Option<usize> {
+        None
+    }
+
+    /// Row `index` (0-based) of `list` resolved at the call, `ask` leaving the merchant's record callback on a vendor row's miss (`0x584680`); `None` where no view lends the merchant.
+    fn merchant_row(
+        &mut self,
+        _list: super::MerchantList,
+        _index: usize,
+        _ask: bool,
+    ) -> Option<Option<super::MerchantItem>> {
+        None
+    }
+
+    /// Whether the vendor's unit is held with the repair bit (`0x5845b0`); `None` where no view lends the merchant.
+    fn can_merchant_repair(&self) -> Option<bool> {
+        None
+    }
+
+    /// `GetRepairAllCost`'s sweep (`0x585990`): `Some(None)` with no repairer or no player; `None` where no view lends it.
+    fn repair_all_cost(&self) -> Option<Option<(u32, bool)>> {
+        None
+    }
+
+    /// An item's repair cost after the vendor's discount (`0x584b20`); `None` where no view lends it.
+    fn repair_cost(&self, _at: super::RepairAt) -> Option<u32> {
+        None
+    }
+
+    /// A merchant verb's act inside its call; `None` where no view lends the merchant.
+    fn merchant_act(&mut self, _act: super::MerchantAct) -> Option<super::MerchantOutcome> {
+        None
+    }
+
+    /// The barber shop at the call: the open flag (`[0xbd19b8]`), our look, level and coinage, and our body's dials; `None` with no player object.
+    fn barber(&self) -> Option<super::BarberRead<'_>> {
+        None
+    }
+
+    /// Our body's barber dials, written by a step or a reset inside its call (`0x52fc80`, `0x52f7d0`).
+    fn set_barber_dials(&mut self, _dials: [u8; 5]) {}
+
+    /// The skin style pointer (`[0xbd19b4]`), written by a skin step inside its call (`0x52fd94`).
+    fn set_barber_skin_style(&mut self, _data: u8) {}
+
+    /// `CMSG_ALTER_APPEARANCE` with the four style ids, sent inside the apply's call (`0x52eda0`).
+    fn send_alter_appearance(&mut self, _styles: [u32; 4]) {}
+
+    /// The shop's close (`0x52e9f0`): true when an open shop closed, for the caller to fire `BARBER_SHOP_CLOSE`.
+    fn close_barber_shop(&mut self) -> bool {
+        false
+    }
+
+    /// Our race row's hair token (`0x52e6d0`); `None` with no player object or row.
+    fn hair_customization(&self) -> Option<&str> {
+        None
+    }
+
+    /// Our race row's facial-hair token for our sex (`0x52e730`); `None` with no player object or row.
+    fn facial_hair_customization(&self) -> Option<&str> {
+        None
+    }
 
     /// An item set's tooltip block built at the call from its `ItemSet.dbc` row, each member's name read from the name cache and a miss asked (`0x62ba3e`), the bonuses' `$`-text with `global` the VM's strings; `None` for no row.
     fn item_set(
@@ -1181,6 +1458,13 @@ pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str
     }
 }
 
+/// Our coinage at the call through the lent view; where none lends it, a test's pushed purse.
+pub(crate) fn money(model: &super::Model) -> u64 {
+    read_live(|l| l.player_money())
+        .flatten()
+        .unwrap_or(model.money)
+}
+
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
     let ptr = SLOT.with(Cell::get)?;
@@ -1327,11 +1611,77 @@ pub(crate) struct TestView {
     /// The tabs whose text is stale, and the text asks sent, in order.
     pub guild_bank_text_stale: Vec<u8>,
     pub guild_bank_text_sent: Vec<u8>,
+    /// Our guild's cached tabard record and the save latch.
+    pub tabard_record: Option<[i32; 5]>,
+    pub tabard_pending: bool,
     /// The item cache's records, and each read made, `(id, tooltip)`, in order.
     pub item_records: std::cell::RefCell<std::collections::HashMap<u32, super::ItemTemplateView>>,
     pub item_record_reads: std::cell::RefCell<Vec<(u32, bool)>>,
     /// The bind point's area name.
     pub bind_location: std::cell::RefCell<Option<String>>,
+    /// The gossip globals, the selects and the closes a close fires.
+    pub gossip: Option<TestGossip>,
+    /// The item-text reader.
+    pub item_text: Option<TestItemText>,
+    /// The barber shop, the alter-appearance sends and our race's two tokens.
+    pub barber: Option<TestBarber>,
+    pub barber_sent: Vec<[u32; 4]>,
+    pub hair_tokens: Option<(String, String)>,
+    /// The dressing-room edits the verbs made, in call order.
+    pub dressup: Vec<(crate::widget::FrameHandle, super::DressUpIntent)>,
+    /// The charter, taxi and trainer acts the verbs made inside their calls, which this view
+    /// records and leaves to the test's seeded windows.
+    pub petition_acts: Vec<super::PetitionRequest>,
+    pub taxi_acts: Vec<super::TaxiAct>,
+    pub trainer_bought: Vec<u32>,
+    /// Whether a trainer is open, which `CloseTrainer`'s zero leg tests; `None` answers nothing.
+    pub trainer_is_open: Option<bool>,
+    /// The trainer zero legs run.
+    pub trainer_zeroes: u32,
+}
+
+/// The gossip globals a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestGossip {
+    pub greeting: String,
+    pub options: Vec<super::GossipOptionView>,
+    pub quests: Vec<super::GossipQuestRow>,
+    pub pending: bool,
+    pub force_gossip: bool,
+    pub money: u64,
+    pub selects: Vec<(usize, Option<String>)>,
+    pub quest_selects: Vec<usize>,
+    /// What the first close returns; later closes return 0.
+    pub closes: u32,
+}
+
+/// The item-text reader a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestItemText {
+    pub read: super::ItemTextRead,
+    pub creator: Option<String>,
+    /// What the first close returns; later closes return 0.
+    pub closes: u32,
+    /// Whether a turn's redraw fires, and the turns made, `true` for next.
+    pub turn_ready: bool,
+    pub turns: Vec<bool>,
+}
+
+/// The barber shop a test view lends.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestBarber {
+    pub open: bool,
+    pub class: u8,
+    pub base_cost: f32,
+    pub look: [u8; 5],
+    pub dials: [u8; 5],
+    pub skin_style: u8,
+    pub styles: Vec<super::BarberStyle>,
+    pub grid: Option<super::GlueCustomizeGrid>,
+    pub money: u32,
 }
 
 #[cfg(test)]
@@ -1405,6 +1755,37 @@ impl LiveState for TestView {
 
     fn item_tables(&self) -> Option<&super::ItemTables> {
         self.item_tables.as_ref()
+    }
+
+    fn dress_up(&mut self, pane: crate::widget::FrameHandle, intent: super::DressUpIntent) {
+        self.dressup.push((pane, intent));
+    }
+
+    fn petition_act(&mut self, act: super::PetitionRequest) -> Option<super::PetitionOutcome> {
+        // `HasFilledPetition`'s walk is a read; the test's vendor answers it.
+        if act != super::PetitionRequest::HasFilled {
+            self.petition_acts.push(act);
+        }
+        None
+    }
+
+    fn taxi_act(&mut self, act: super::TaxiAct) -> Option<super::TaxiOutcome> {
+        self.taxi_acts.push(act);
+        None
+    }
+
+    fn trainer_buy(&mut self, spell_id: u32) -> bool {
+        self.trainer_bought.push(spell_id);
+        true
+    }
+
+    fn trainer_open(&self) -> Option<bool> {
+        self.trainer_is_open
+    }
+
+    fn trainer_zero(&mut self) {
+        self.trainer_zeroes += 1;
+        self.trainer_is_open = self.trainer_is_open.map(|_| false);
     }
 
     fn guild_bank_open(&self) -> bool {
@@ -1571,6 +1952,120 @@ impl LiveState for TestView {
 
     fn active_player(&self) -> Option<u64> {
         self.player
+    }
+
+    fn spirit_cancel_has_body(&self) -> bool {
+        self.player.is_some()
+    }
+
+    fn active_player_held(&self) -> bool {
+        self.player.is_some()
+    }
+
+    fn tabard_guild_record(&self) -> Option<[i32; 5]> {
+        self.tabard_record
+    }
+
+    fn gossip(&self) -> Option<super::GossipRead<'_>> {
+        let g = self.gossip.as_ref()?;
+        Some(super::GossipRead {
+            greeting: &g.greeting,
+            options: &g.options,
+            quests: &g.quests,
+            pending: g.pending,
+            force_gossip: g.force_gossip,
+            money: g.money,
+        })
+    }
+
+    fn select_gossip_option(&mut self, slot: usize, code: Option<String>) {
+        if let Some(g) = self.gossip.as_mut() {
+            g.selects.push((slot, code));
+            g.options.clear();
+            g.quests.clear();
+        }
+    }
+
+    fn select_gossip_quest(&mut self, row: usize) {
+        if let Some(g) = self.gossip.as_mut() {
+            g.quest_selects.push(row);
+        }
+    }
+
+    fn close_gossip(&mut self) -> u32 {
+        self.gossip
+            .as_mut()
+            .map_or(0, |g| std::mem::take(&mut g.closes))
+    }
+
+    fn item_text(&self) -> Option<super::ItemTextRead> {
+        self.item_text.as_ref().map(|t| t.read.clone())
+    }
+
+    fn item_text_creator(&mut self) -> Option<String> {
+        self.item_text.as_ref()?.creator.clone()
+    }
+
+    fn item_text_turn(&mut self, next: bool) -> bool {
+        self.item_text.as_mut().is_some_and(|t| {
+            t.turns.push(next);
+            t.turn_ready
+        })
+    }
+
+    fn close_item_text(&mut self) -> u32 {
+        self.item_text
+            .as_mut()
+            .map_or(0, |t| std::mem::take(&mut t.closes))
+    }
+
+    fn barber(&self) -> Option<super::BarberRead<'_>> {
+        let b = self.barber.as_ref()?;
+        Some(super::BarberRead {
+            open: b.open,
+            class: b.class,
+            base_cost: b.base_cost,
+            look: b.look,
+            dials: b.dials,
+            skin_style: b.skin_style,
+            styles: &b.styles,
+            grid: b.grid.as_ref(),
+            money: b.money,
+        })
+    }
+
+    fn set_barber_dials(&mut self, dials: [u8; 5]) {
+        if let Some(b) = self.barber.as_mut() {
+            b.dials = dials;
+        }
+    }
+
+    fn set_barber_skin_style(&mut self, data: u8) {
+        if let Some(b) = self.barber.as_mut() {
+            b.skin_style = data;
+        }
+    }
+
+    fn send_alter_appearance(&mut self, styles: [u32; 4]) {
+        self.barber_sent.push(styles);
+    }
+
+    fn close_barber_shop(&mut self) -> bool {
+        self.barber
+            .as_mut()
+            .is_some_and(|b| std::mem::take(&mut b.open))
+    }
+
+    fn hair_customization(&self) -> Option<&str> {
+        self.hair_tokens.as_ref().map(|t| t.0.as_str())
+    }
+
+    fn facial_hair_customization(&self) -> Option<&str> {
+        self.hair_tokens.as_ref().map(|t| t.1.as_str())
+    }
+
+    fn tabard_save_pending(&self) -> bool {
+        self.tabard_pending
     }
 
     fn has_control(&self) -> bool {

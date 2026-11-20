@@ -469,8 +469,6 @@ pub enum SessionEvent {
     CriteriaDeleted(u32),
     /// One completed achievement is gone (`SMSG_ACHIEVEMENT_DELETED`).
     AchievementDeleted(u32),
-    /// `SMSG_PET_UNLEARN_CONFIRM`: accept with `CMSG_PET_UNLEARN`; declining sends nothing.
-    PetUnlearnConfirm { trainer: u64, cost: u32 },
     /// The instance-boot clock (`SMSG_RAID_GROUP_ONLY`): a positive delay arms it
     /// (`INSTANCE_BOOT_START`), zero clears it (`INSTANCE_BOOT_STOP`) and shows `reason` 1 or 2.
     RaidGroupOnly { delay_ms: u32, reason: u32 },

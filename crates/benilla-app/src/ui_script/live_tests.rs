@@ -254,7 +254,8 @@ fn every_holder_of_the_vm_lends_the_world() {
             }
         }
     }
-    assert!(checked > 200, "the scan found only {checked} holders");
+    // A floor that proves the scan reads the tree; the #1245 parts shrink the count it guards.
+    assert!(checked > 150, "the scan found only {checked} holders");
     assert!(
         offenders.is_empty(),
         "these hold the VM and lend nothing, so a verb they reach reads no client state; take \
@@ -306,7 +307,8 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
             }
         });
     }
-    assert!(holders > 200, "the census found only {holders} holders");
+    // A floor that proves the census reads the schedule; the #1245 parts shrink the count.
+    assert!(holders > 150, "the census found only {holders} holders");
     assert!(
         offenders.is_empty(),
         "these scheduled systems hold the VM and lend nothing:\n{}",

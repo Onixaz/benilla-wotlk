@@ -19,7 +19,7 @@ use crate::chr_classes::ChrClassTable;
 use crate::entities::CharCreate;
 use crate::names::NameCache;
 use crate::net::{NetCommands, Objects, SelfGuid};
-use crate::ui_guild::GuildState;
+use crate::ui_guild::GuildCache;
 use crate::ui_party::GroupState;
 
 /// `Map.dbc` instance types that run the local pass (`0x6b88cb`, `0x6b88d1`).
@@ -136,7 +136,7 @@ pub(crate) struct LocalWho<'w, 's> {
     group: Res<'w, GroupState>,
     me: Res<'w, SelfGuid>,
     names: Res<'w, NameCache>,
-    guild: Res<'w, GuildState>,
+    guild: Res<'w, GuildCache>,
     commands: Res<'w, NetCommands>,
     objects: Objects<'w, 's>,
 }

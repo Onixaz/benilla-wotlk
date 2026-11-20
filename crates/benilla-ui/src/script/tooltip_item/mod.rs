@@ -350,12 +350,10 @@ pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
             if let Some(s) = c.slots.get(&slot).filter(|s| s.item_id == item_id) {
                 return Sell::Object {
                     stack: s.count.max(1),
-                    repair_cost: model
-                        .repair_costs
-                        .bags
-                        .get(&(bag, slot))
-                        .copied()
-                        .unwrap_or(0),
+                    repair_cost: crate::script::merchant::repair_cost(
+                        &model,
+                        crate::script::RepairAt::Bag(bag, slot),
+                    ),
                     worn: false,
                 };
             }
@@ -787,7 +785,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     return Ok(Value::Nil);
                 };
                 if offset == 2 {
-                    let merchant_open = crate::script::model_mut_of(lua).merchant.is_some();
+                    let merchant_open =
+                        crate::script::merchant::merchant_open(&crate::script::model_mut_of(lua));
                     if offered.scaling_value == 0 || !merchant_open || shift {
                         return Ok(Value::Nil);
                     }
@@ -1087,7 +1086,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let (item_id, count, has_cd, inst, repair_cost) = {
                 let model = crate::script::model_mut_of(lua);
-                let cost = model.repair_costs.bags.get(&(bag, slot)).copied();
+                let cost = Some(crate::script::merchant::repair_cost(
+                    &model,
+                    crate::script::RepairAt::Bag(bag, slot),
+                ))
+                .filter(|&c| c != 0);
                 match crate::script::container::index_slot(&model, bag, slot)
                     .filter(|s| s.item_id != 0)
                 {
@@ -1392,11 +1395,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     let model = lua
                         .app_data_ref::<crate::script::ModelCell>()
                         .expect("model app_data");
-                    model
-                        .merchant
-                        .as_ref()
-                        .and_then(|m| m.items.get(row))
-                        .map(|it| it.item_id)
+                    crate::script::merchant::merchant_row(
+                        &model,
+                        crate::script::MerchantList::Items,
+                        row,
+                        false,
+                    )
+                    .map(|it| it.item_id)
                 }) else {
                     return Ok(Value::Nil);
                 };
@@ -1486,15 +1491,15 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let h = frame_handle_of(lua, &this)?;
                 let row = {
                     let model = crate::script::model_mut_of(lua);
-                    let Some(merchant) = &model.merchant else {
+                    let list = if buyback {
+                        crate::script::MerchantList::Buyback
+                    } else {
+                        crate::script::MerchantList::Items
+                    };
+                    let Some(index) = index.checked_sub(1) else {
                         return Ok(());
                     };
-                    let list = if buyback {
-                        &merchant.buyback
-                    } else {
-                        &merchant.items
-                    };
-                    list.get(index.saturating_sub(1)).cloned()
+                    crate::script::merchant::merchant_row(&model, list, index, false)
                 };
                 let Some(row) = row else { return Ok(()) };
                 {
@@ -1557,16 +1562,16 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .expect("model app_data");
                 let at = |n: f64| usize::try_from((n - 1.0).round() as i64).ok();
                 at(index).zip(at(item_index)).and_then(|(row, item)| {
-                    model
-                        .merchant
-                        .as_ref()?
-                        .items
-                        .get(row)?
-                        .extended_cost
-                        .as_ref()?
-                        .items
-                        .get(item)
-                        .map(|c| c.item_id)
+                    crate::script::merchant::merchant_row(
+                        &model,
+                        crate::script::MerchantList::Items,
+                        row,
+                        false,
+                    )?
+                    .extended_cost?
+                    .items
+                    .get(item)
+                    .map(|c| c.item_id)
                 })
             };
             let Some(item_id) = cost_item else {

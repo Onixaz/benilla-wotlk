@@ -159,6 +159,10 @@ local VERBS = {
     { "slots5", function() return GetContainerNumSlots(5) end },
     { "name5", function() return GetBagName(5) end },
     { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
+    { "binderdist", function() return CheckBinderDist() end },
+    { "talentdist", function() return CheckTalentMasterDist() end },
+    { "boot", function() return GetInstanceBootTimeRemaining() end },
+    { "spirittime", function() return GetAreaSpiritHealerTime() end },
     { "gbtabs", function() return GetNumGuildBankTabs() end },
     { "gbtab1", function() return (GetGuildBankTabInfo(1)) end },
     { "gbtab2", function() return (GetGuildBankTabInfo(2)) end },
@@ -169,6 +173,32 @@ local VERBS = {
     { "gblog", function() return GetNumGuildBankTransactions(1) end },
     { "gblogname", function() return (select(2, GetGuildBankTransaction(1, 1))) end },
     { "gbtext", function() return GetGuildBankText(1) end },
+    { "cansave", function() return TabardModel and TabardModel:CanSaveTabardNow() end },
+    { "barberinfo", function() return select("#", GetBarberShopStyleInfo(2)) end },
+    { "barbercost", function() return GetBarberShopTotalCost() end },
+    { "gossiptext", function() return GetGossipText() end },
+    { "gossipopts", function() return GetNumGossipOptions() end },
+    { "ittext", function() return ItemTextGetText() end },
+    { "itpage", function() return ItemTextGetPage() end },
+    { "itnext", function() return ItemTextHasNextPage() end },
+    { "merchantn", function() return GetMerchantNumItems() end },
+    { "npc", function() return UnitGUID("npc") end },
+    { "npcname", function() return UnitName("npc") end },
+    { "buybackn", function() return GetNumBuybackItems() end },
+    { "repaircost", function() return GetRepairAllCost() end },
+    { "money", function() return GetMoney() end },
+    { "trainn", function() return GetNumTrainerServices() end },
+    { "trainsel", function() return GetTrainerSelectionIndex() end },
+    { "taxin", function() return NumTaxiNodes() end },
+    { "charter", function() return GetGuildCharterCost() end },
+    { "petnames", function() return GetNumPetitionNames() end },
+    { "pettitle", function() local _, t = GetPetitionInfo() return t end },
+    { "petitems", function() return GetNumPetitionItems() end },
+    { "taxicost", function()
+        for i = 1, NumTaxiNodes() do
+            if TaxiNodeName(i) == "Sentinel Hill, Westfall" then return TaxiNodeCost(i) end
+        end
+    end },
 }
 local function answers()
     local verbs = {}
@@ -197,7 +227,7 @@ pub(super) struct Seen {
 }
 
 impl Seen {
-    fn parse(line: &str) -> Self {
+    pub(super) fn parse(line: &str) -> Self {
         let mut parts = line.splitn(3, '\t');
         let event = parts.next().unwrap_or_default().to_string();
         let args = parts.next().unwrap_or_default().to_string();
@@ -752,16 +782,17 @@ fn a_reload_zeroes_the_countdowns() {
         pin(&armed, &["CONFIRM_SUMMON"], &["reclaim", "summon"]),
         vec!["CONFIRM_SUMMON | reclaim=30 summon=120"]
     );
-    let clocks = |rig: &Rig| {
-        rig.app
-            .world()
-            .non_send_resource::<benilla_ui::script::UiScript>()
-            .eval::<String>(
+    // Read with the `World` lent, as a script call reads the boot deadline (`0x5162e0`).
+    let clocks = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<String>(
                 "return GetInstanceBootTimeRemaining() .. ',' .. GetInstanceLockTimeRemaining()",
             )
-            .unwrap()
+        })
+        .expect("a VM")
+        .unwrap()
     };
-    assert_eq!(clocks(&rig), "59,89", "the boot and lock clocks run");
+    assert_eq!(clocks(&mut rig), "59,89", "the boot and lock clocks run");
     rig.app
         .world()
         .non_send_resource::<benilla_ui::script::UiScript>()
@@ -773,7 +804,7 @@ fn a_reload_zeroes_the_countdowns() {
         pin(&seen, &["PLAYER_ENTERING_WORLD"], &["reclaim", "summon"]),
         vec!["PLAYER_ENTERING_WORLD | reclaim=0 summon=0"]
     );
-    assert_eq!(clocks(&rig), "0,0");
+    assert_eq!(clocks(&mut rig), "0,0");
 }
 
 /// The summon offer and its withdrawal in one frame and apart: `CONFIRM_SUMMON` fires from the
@@ -788,7 +819,7 @@ fn summon_offer_and_cancel_fire_from_their_handlers() {
     let request = || SessionEvent::SummonRequest {
         summoner: 0x20,
         zone: 1519,
-        delay_ms: 120_000,
+        delay_ms: 120_500,
     };
     let events = &["CONFIRM_SUMMON", "CANCEL_SUMMON"];
     let both = rig.packets(vec![request(), SessionEvent::SummonCancel], 3);
@@ -1730,30 +1761,20 @@ fn quest_dialogs_and_the_escort_confirm() {
         DIALOG_EVENTS,
         &[],
     ));
-    // No NPC is held, so each dialog closes on its first distance check; the close zeroes the giver and leaves the panel's text (`0x58cb6b`, `0x58cb98`).
+    // No NPC is in view, so no panel takes the interact target (`0x58c5c7`) and nothing closes one: no `QUEST_FINISHED`.
     let lines = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(
         seen,
         vec![
-            lines(&[
-                "QUEST_DETAIL | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle=Charz qdone=nil",
-            ]),
-            lines(&[
-                "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle=Charz qdone=1",
-            ]),
-            lines(&[
-                "QUEST_COMPLETE | qtitle=Charz qdone=nil",
-                "QUEST_FINISHED | qtitle=Charz qdone=nil",
-            ]),
+            lines(&["QUEST_DETAIL | qtitle=Charz qdone=nil"]),
+            lines(&["QUEST_PROGRESS | qtitle=Charz qdone=1"]),
+            lines(&["QUEST_COMPLETE | qtitle=Charz qdone=nil"]),
             // The template is not cached: the turn-in waits for its answer (`0x6d1192`).
             lines(&[]),
             // Each handler fires its panel's event in its turn (`0x58dfb5`, then `0x58bb4c`).
             lines(&[
                 "QUEST_DETAIL | qtitle=Charz qdone=nil",
                 "QUEST_PROGRESS | qtitle=Charz qdone=1",
-                "QUEST_FINISHED | qtitle=Charz qdone=1",
             ]),
             lines(&["QUEST_ACCEPT_CONFIRM Escort Charz"]),
         ]
@@ -2636,7 +2657,7 @@ fn the_score_event_waits_for_the_last_name() {
     );
 }
 
-/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`).
+/// Each `SMSG_BATTLEFIELD_LIST` fires its source's event (`0x54e390`); the stock close nests its `BATTLEFIELDS_CLOSED` (`0x549b55`). The anywhere list's battlemaster holds the interact target, so the same battlemaster's list re-sets it and the clear's walk closes that battlemaster first (`0x54970f` -> `0x51fd1c` -> `0x51309f` -> `0x5496dc`).
 #[test]
 fn each_battlefield_list_fires_its_source_event_with_its_instances() {
     use benilla_protocol::messages::BattlefieldList;
@@ -2676,6 +2697,7 @@ fn each_battlefield_list_fires_its_source_event_with_its_instances() {
         vec![
             "NPC_PVPQUEUE_ANYWHERE | bfcount=1",
             "PVPQUEUE_ANYWHERE_SHOW | bfcount=2",
+            "BATTLEFIELDS_CLOSED | bfcount=2",
             "BATTLEFIELDS_SHOW | bfcount=3",
             "BATTLEFIELDS_CLOSED | bfcount=4",
             "BATTLEFIELDS_CLOSED | bfcount=4",
@@ -3430,8 +3452,11 @@ fn banker_create(npc_flags: u32) -> SessionEvent {
     npc_create(BANKER, npc_flags)
 }
 
+/// `UNIT_NPC_FLAG_GOSSIP`: a flag the interact target's watchdog wants to keep a unit held (`0x7295cc`).
+pub(super) const GOSSIP_NPC: u32 = crate::target::cursor_mode::npc_flags::GOSSIP;
+
 /// A creature as a stream create sends it, with `npc_flags`.
-fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
+pub(super) fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
     let pairs = vec![
         (2, 0x9),
         (FIELD_UNIT_HEALTH, 500),
@@ -3744,13 +3769,10 @@ fn a_window_on_the_banker_itself_stays_open_after_the_bank_closes() {
     );
     assert_eq!(gossip_npc(&rig), Some(BANKER), "the menu keeps its state");
     let seen = rig.packets(vec![SessionEvent::ShowBank { banker: BANKER }], 2);
-    // Their order is the gossip feed's, #1279's.
-    let mut both = fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]);
-    both.sort();
     assert_eq!(
-        both,
-        ["BANKFRAME_OPENED", "GOSSIP_CLOSED"],
-        "the bank's open closes the menu it finds"
+        fired(&seen, &["GOSSIP_CLOSED", "BANKFRAME_OPENED"]),
+        ["GOSSIP_CLOSED", "BANKFRAME_OPENED"],
+        "the bank's setter closes the menu it finds before the bank opens (`0x57b909` -> `0x512ef6`)"
     );
     assert_eq!(gossip_npc(&rig), None);
     // A vendor on the banker: the same.
@@ -5193,7 +5215,7 @@ fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
     }
 }
 
-/// The stable master beside us, so the range guard keeps the stable open.
+/// The stable master beside us, so the interact target's watchdog keeps the stable open.
 fn stable_master_create() -> SessionEvent {
     stable_master_at(STABLE_MASTER)
 }
@@ -5220,6 +5242,10 @@ fn stable_master_at(guid: u64) -> SessionEvent {
             (FIELD_UNIT_HEALTH, 500),
             (FIELD_UNIT_MAXHEALTH, 500),
             (FIELD_UNIT_LEVEL, 80),
+            (
+                benilla_protocol::field::FIELD_UNIT_NPC_FLAGS,
+                crate::target::cursor_mode::npc_flags::STABLEMASTER,
+            ),
         ])
         .into_created(ObjectType::Unit),
     }
@@ -7115,6 +7141,255 @@ fn an_item_record_reads_at_the_call_and_its_answer_repaints_from_the_handler() {
         ),
         "10",
         "the stat lines read the record at the call"
+    );
+}
+
+/// Each window whose open now takes the interact target closes the vendor holding it inside that open, `MERCHANT_CLOSED` ahead of its own show: the quest frame (`0x58c6cc`), the auctioneer (`0x59f008`), the stable (`0x5a11d9`), the mailbox (`0x56dbe2`), the battlemaster (`0x54970f`) and the trade window (`0x5874cb` -> `0x587124`); the vendor's next open then closes that window in turn through its leg of the interaction close (`0x512e60`).
+#[test]
+fn every_window_open_takes_the_interact_target_from_the_vendor_holding_it() {
+    use benilla_protocol::messages::{BattlefieldList, QuestGiverList, TradeStatus};
+    const VENDOR: u64 = BANKER + 0x10;
+    const NEW: u64 = BANKER + 0x11;
+    const PARTNER: u64 = 0x0000_0000_0000_0777;
+    // Both Human (template 1), so the partner passes the watchdog's cooperation check (`0x51feba`).
+    let human = (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1);
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, human]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![
+            npc_create(VENDOR, GOSSIP_NPC),
+            npc_create(NEW, GOSSIP_NPC),
+            player_create_with(PARTNER, &[human]),
+        ],
+        2,
+    );
+    let vendor = || SessionEvent::VendorInventory {
+        vendor: VENDOR,
+        items: Vec::new(),
+        error: Some(0),
+    };
+    let target = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::ui_session::InteractTarget>()
+            .0
+    };
+    type Open = fn(&World) -> bool;
+    let opens: [(&str, SessionEvent, &str, u64, Open); 6] = [
+        (
+            "quest",
+            SessionEvent::QuestGreeting(QuestGiverList {
+                npc: NEW,
+                ..Default::default()
+            }),
+            "QUEST_GREETING",
+            NEW,
+            |w| {
+                w.non_send_resource::<crate::ui_quest::QuestGiver>()
+                    .is_open()
+            },
+        ),
+        (
+            "auction",
+            SessionEvent::AuctionHello {
+                auctioneer: NEW,
+                house_id: 1,
+                enabled: true,
+            },
+            "AUCTION_HOUSE_SHOW",
+            NEW,
+            |w| {
+                w.resource::<crate::ui_auction::AuctionOpen>()
+                    .auctioneer
+                    .is_some()
+            },
+        ),
+        (
+            "stable",
+            SessionEvent::ListStabledPets {
+                npc: NEW,
+                num_stable_slots: 0,
+                pets: Vec::new(),
+            },
+            "PET_STABLE_SHOW",
+            NEW,
+            |w| {
+                use crate::ui_session::NpcSession;
+                w.resource::<crate::ui_stable::StableOpen>().npc().is_some()
+            },
+        ),
+        (
+            "mailbox",
+            SessionEvent::ShowMailbox { mailbox: NEW },
+            "MAIL_SHOW",
+            NEW,
+            |w| w.resource::<crate::ui_mail::MailOpen>().mailbox.is_some(),
+        ),
+        (
+            "battlemaster",
+            SessionEvent::BattlefieldList(BattlefieldList {
+                battlemaster: NEW,
+                bg_type: 2,
+                ..Default::default()
+            }),
+            "BATTLEFIELDS_SHOW",
+            NEW,
+            |w| {
+                w.resource::<crate::ui_battlefield::Battlefield>()
+                    .battlemaster()
+                    .is_some()
+            },
+        ),
+        (
+            "trade",
+            SessionEvent::TradeStatus {
+                status: TradeStatus::OpenWindow { trade_id: 1 },
+            },
+            "TRADE_SHOW",
+            PARTNER,
+            |w| w.resource::<crate::ui_trade::TradeSession>().is_open(),
+        ),
+    ];
+    for (what, open, show, holder, is_open) in opens {
+        rig.packets(vec![vendor()], 2);
+        assert_eq!(target(&rig), Some(VENDOR), "{what}: the vendor holds it");
+        if what == "trade" {
+            rig.app
+                .world_mut()
+                .resource_mut::<crate::ui_trade::TradeSession>()
+                .begin(PARTNER);
+        }
+        let seen = rig.packets(vec![open], 3);
+        let order = fired(&seen, &["MERCHANT_CLOSED", show]);
+        assert_eq!(
+            order.first().map(String::as_str),
+            Some("MERCHANT_CLOSED"),
+            "{what}: the vendor closes inside the open, ahead of its show: {order:?}"
+        );
+        assert_eq!(
+            fired(&seen, &["MERCHANT_CLOSED"]).len(),
+            1,
+            "{what}: one close, from its leg"
+        );
+        assert_eq!(target(&rig), Some(holder), "{what} holds the target");
+        assert!(is_open(rig.app.world()), "{what} opened");
+        // The vendor's next open takes it back through the window's own leg.
+        rig.packets(vec![vendor()], 2);
+        assert!(
+            !is_open(rig.app.world()),
+            "{what}: the vendor's open closed it"
+        );
+        assert_eq!(target(&rig), Some(VENDOR));
+    }
+}
+
+/// The quest frame's set-current takes the interact target even from the giver holding it, so a creature's greeting then details at the same NPC fire `QUEST_FINISHED` between (`0x58c6cc` -> `0x51fd1c` -> `0x512f1a`); a GameObject giver already holding it skips the set, and fires none (`0x58c6a9`-`0x58c6c6`).
+#[test]
+fn a_creature_givers_next_panel_finishes_the_last_and_a_gameobjects_does_not() {
+    use benilla_protocol::messages::{QuestDetails, QuestGiverList};
+    const GIVER: u64 = BANKER + 0x20;
+    const BOARD: u64 = 0xF110_0000_0300_0021;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let board = SessionEvent::ObjectCreate {
+        guid: BOARD,
+        kind: EntityKind::GameObject,
+        display_id: None,
+        position: [-8949.0, -130.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT.
+        fields: ObjectFields::from_pairs(&[(2, 0x21)]).into_created(ObjectType::GameObject),
+    };
+    rig.packets(vec![npc_create(GIVER, GOSSIP_NPC), board], 2);
+    for (giver, finishes) in [(GIVER, 1), (BOARD, 0)] {
+        let greeting = SessionEvent::QuestGreeting(QuestGiverList {
+            npc: giver,
+            ..Default::default()
+        });
+        rig.packets(vec![greeting], 2);
+        let detail = SessionEvent::QuestDetail(QuestDetails {
+            npc: giver,
+            quest_id: QUEST,
+            title: "Charz".into(),
+            ..Default::default()
+        });
+        let seen = rig.packets(vec![detail], 2);
+        assert_eq!(
+            fired(&seen, &["QUEST_FINISHED", "QUEST_DETAIL"]),
+            [vec!["QUEST_FINISHED"; finishes], vec!["QUEST_DETAIL"]].concat(),
+            "giver {giver:#x}"
+        );
+        assert_eq!(
+            rig.app
+                .world()
+                .resource::<crate::ui_session::InteractTarget>()
+                .0,
+            Some(giver)
+        );
+    }
+}
+
+/// `"npc"` on a GameObject interact target is no unit to the getters: `UnitExists` asks the object's targetable slot (`0x60c2f8`), which a GameObject answers 0 (`0x8e5250`), and `UnitName` reads the template's name, `""` until it is cached (`0x60e838` -> `0x70cdf0`); `UnitGUID` names it.
+#[test]
+fn npc_on_a_gameobject_names_its_template_and_is_no_unit() {
+    const BOX: u64 = 0xF110_0000_0300_0021;
+    const BARE: u64 = 0xF110_0000_0301_0022;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let mailbox = |guid: u64, entry: u32| SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::GameObject,
+        display_id: None,
+        position: [-8949.0, -130.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        // `OBJECT_FIELD_TYPE`: OBJECT | GAMEOBJECT; `OBJECT_FIELD_ENTRY`.
+        fields: ObjectFields::from_pairs(&[(2, 0x21), (3, entry)])
+            .into_created(ObjectType::GameObject),
+    };
+    rig.packets(vec![mailbox(BOX, 0x300), mailbox(BARE, 0x301)], 2);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::go_templates::GameObjectTemplates>()
+        .insert(0x300, 19, "Mailbox".into(), &[0; 24]);
+    lua(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SHOW') \
+         f:SetScript('OnEvent', function() STABLE_LOG = STABLE_LOG or {} \
+         table.insert(STABLE_LOG, strjoin('|', tostring(UnitName('npc')), \
+         tostring(UnitGUID('npc')), tostring(UnitExists('npc')))) end)",
+    );
+    rig.packets(vec![SessionEvent::ShowMailbox { mailbox: BOX }], 2);
+    rig.packets(vec![SessionEvent::ShowMailbox { mailbox: BARE }], 2);
+    assert_eq!(
+        lua(&mut rig, ""),
+        ["Mailbox|0xF110000003000021|nil", "|0xF110000003010022|nil"]
     );
 }
 

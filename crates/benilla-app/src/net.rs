@@ -168,9 +168,6 @@ impl Plugin for NetPlugin {
                 )
                     .chain()
                     .in_set(WorldStage::Net),
-                // `ui_session::feed_interact_npc` seats itself inside this chain, after
-                // `apply_net_updates` and before `drive_display_facing`, so the `"npc"` token is
-                // current when a window's show handler reads it.
             )
             // Not part of the movement chain above: the cascade's time query, after the self create
             // has claimed the mover.
@@ -1682,10 +1679,6 @@ pub(crate) enum ClientCommand {
     },
     /// The world-enter status request: `CMSG_BATTLEFIELD_STATUS`.
     BattlefieldStatusRequest,
-    /// `ConfirmPetUnlearn()`: `CMSG_PET_UNLEARN` with the latched trainer.
-    PetUnlearn {
-        trainer: u64,
-    },
     /// `CMSG_BANKER_ACTIVATE`: a pure banker's direct opener (bit 8 the lowest service bit); a
     /// gossip banker goes through the menu. Answered by `SMSG_SHOW_BANK`.
     BankerActivate {

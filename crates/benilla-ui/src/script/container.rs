@@ -540,14 +540,19 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         // resolves is refused, as the reference does, because this path dereferences it unchecked,
         // a latent null deref.
         Some(CursorPayload::Merchant(held)) => {
-            let row = model
-                .merchant
-                .as_ref()
-                .and_then(|m| m.items.get(held.row as usize))
-                .filter(|it| it.item_id == held.item_id)
-                .map(|_| held.row + 1);
+            let row = super::merchant::merchant_row(
+                model,
+                super::MerchantList::Items,
+                held.row as usize,
+                false,
+            )
+            .filter(|it| it.item_id == held.item_id)
+            .map(|_| held.row);
             if let Some(row) = row {
-                model.merchant_slot_buys.push((bag, slot, row));
+                super::merchant::merchant_act(
+                    model,
+                    super::MerchantAct::BuyInSlot { bag, slot, row },
+                );
             }
             cursor::queue_cursor_update(model);
         }

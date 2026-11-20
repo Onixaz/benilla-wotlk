@@ -27,9 +27,10 @@ fn on_session_end(
     mut stable_open: ResMut<StableOpen>,
     ui: Option<ResMut<UiEvents>>,
 ) {
-    let fired = stable_open.close_through_target(false);
-    if let Some(mut ui) = ui {
-        for _ in 0..fired {
+    // Its close re-enters through the stable leg of the interaction close it runs (`0x5a0f2c`, `0x513065`).
+    if stable_open.close() {
+        if let Some(mut ui) = ui {
+            ui.fire("PET_STABLE_CLOSED", vec![]);
             ui.fire("PET_STABLE_CLOSED", vec![]);
         }
     }
@@ -68,24 +69,19 @@ fn on_list(
         pets,
     } = ev
     {
-        // Another master's list moves the interact target, whose clear runs the interaction close's stable arm on the held one before the new master is stored (`0x5a11d9`, `0x51fd1c`, `0x513065`, `0x5a0f4c`): its event fires with none held.
-        let switched = stable_open.npc().is_some_and(|held| held != npc) && stable_open.close();
         let Some(mut ui) = ui else {
             list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
             return;
         };
-        if switched {
-            ui.fire("PET_STABLE_CLOSED", vec![]);
-            ui.world(move |world| {
-                world.resource_scope(|world, mut names: Mut<NameCache>| {
-                    if let Some(mut open) = world.get_resource_mut::<StableOpen>() {
-                        list_stabled_pets(npc, num_stable_slots, pets, &mut open, &mut names);
-                    }
-                });
+        // Another master than the held one takes the interact target before the list is stored (`0x5a11d9`).
+        ui.world(move |world| crate::ui_stable::set_master(world, npc));
+        ui.world(move |world| {
+            world.resource_scope(|world, mut names: Mut<NameCache>| {
+                if let Some(mut open) = world.get_resource_mut::<StableOpen>() {
+                    list_stabled_pets(npc, num_stable_slots, pets, &mut open, &mut names);
+                }
             });
-        } else {
-            list_stabled_pets(npc, num_stable_slots, pets, &mut stable_open, &mut names);
-        }
+        });
         // The selection resets with the list, then `PET_STABLE_SHOW` (`0x5a11fa`, `0x5a131a`).
         ui.write(benilla_ui::script::UiScript::reset_stable_selection);
         ui.fire("PET_STABLE_SHOW", vec![]);

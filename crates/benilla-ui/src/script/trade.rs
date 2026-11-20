@@ -348,7 +348,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: SetTradeMoney(amount)",
             )? as u32;
             let mut model = crate::script::model_mut_of(lua);
-            if u64::from(n) > model.money {
+            if u64::from(n) > crate::script::live::money(&model) {
                 return Ok(());
             }
             model.trade_set_money = Some(n);

@@ -355,6 +355,16 @@ impl NpcSession for TradeSession {
     }
 }
 
+/// The interaction close's trade leg (`0x512ea4`): the partner setter with none, its target already zeroed, so its clear finds none (`0x5870f7`); the window closes and `CMSG_CANCEL_TRADE` goes out (`0x587116` -> `0x704040`).
+pub(crate) fn close_by_interaction(world: &mut World) {
+    if let Some(mut trade) = world.get_resource_mut::<TradeSession>() {
+        trade.close_window();
+    }
+    if let Some(net) = world.get_resource::<NetCommands>() {
+        let _ = net.0.send(ClientCommand::CancelTrade);
+    }
+}
+
 pub(crate) struct UiTradePlugin;
 
 /// Mirrors the `blockTrades` CVar into [`BlockTrades`].
@@ -768,6 +778,7 @@ fn drain_trade(
     objects: Objects,
     items: Res<Items>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    mut queue: Commands,
 ) {
     let Some(mut script) = script else {
         return;
@@ -854,6 +865,13 @@ fn drain_trade(
     if script.take_trade_close() {
         if trade.is_open() || trade.partner.is_some() {
             let _ = commands.0.send(ClientCommand::CancelTrade);
+        }
+        // The partner setter with none clears the interact target on the partner (`0x5870f7`).
+        if let Some(partner) = trade.npc() {
+            queue.queue(move |w: &mut World| {
+                crate::ui_session::clear_interact_target(w, partner);
+                crate::ui_script::live::fire_handler_events(w);
+            });
         }
         trade.close_window();
     }

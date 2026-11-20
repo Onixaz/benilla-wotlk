@@ -1,78 +1,28 @@
-//! The app half of the verbs behind the stock `StaticPopup.lua` dialogs: the packet feeds that
-//! raise them and the drains behind their buttons, for the pet trainer's unlearn, the instance
-//! boot countdown and the area spirit healer's wave; the battleground queue is
-//! `crate::ui_battlefield`'s.
+//! The app half of the verbs behind the stock `StaticPopup.lua` dialogs for the instance boot countdown and the area spirit healer's wave: their state, which the verbs read live, and the events their packet handlers fire (`0x513ad0`, `0x524b10`); the battleground queue is `crate::ui_battlefield`'s.
 
 use std::time::Instant;
 
-use benilla_ui::script::{ScriptValue, UiScript};
+use benilla_ui::script::UiScript;
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
-use crate::ui_script::{UiDrain, UiFeed};
-use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
-/// The pet trainer's pending question: the latch and the cost.
-#[derive(Resource, Default)]
-pub(crate) struct PetUnlearnState {
-    npc: Option<u64>,
-    cost: u32,
-    ask: bool,
-}
-
-impl PetUnlearnState {
-    /// The inbound `SMSG_PET_UNLEARN_CONFIRM`: latch and owe the dialog.
-    pub(crate) fn ask(&mut self, npc: u64, cost: u32) {
-        self.npc = Some(npc);
-        self.cost = cost;
-        self.ask = true;
-    }
-
-    fn pending(&self) -> Option<u64> {
-        self.npc
-    }
-}
-
-impl NpcSession for PetUnlearnState {
-    fn npc(&self) -> Option<u64> {
-        self.npc
-    }
-    fn close(&mut self) {
-        self.npc = None;
-        self.cost = 0;
-        self.ask = false;
-    }
-}
-
-/// The instance-boot clock, and what the last packet owes the UI.
+/// The instance boot deadline, which `GetInstanceBootTimeRemaining` counts down at the call (`0x5162e0`).
 #[derive(Resource, Default)]
 pub(crate) struct InstanceBoot {
     deadline: Option<Instant>,
-    events: Vec<&'static str>,
-    errors: Vec<&'static str>,
 }
 
 impl InstanceBoot {
-    /// `SMSG_RAID_GROUP_ONLY`: a zero delay first shows the reason's error (the jump table at
-    /// `0x6e3be3`), then the boot clock (`0x513ad0`) arms on a positive delay as `i32` and clears
-    /// otherwise; an event fires either way.
-    pub(crate) fn apply(&mut self, delay_ms: u32, reason: u32, now: Instant) {
-        if delay_ms == 0 {
-            match reason {
-                1 => self.errors.push("ERR_RAID_GROUP_LOWLEVEL"),
-                2 => self.errors.push("ERR_RAID_GROUP_ONLY"),
-                3 => self.errors.push("ERR_RAID_GROUP_FULL"),
-                4 => self.errors.push("ERR_RAID_GROUP_REQUIREMENTS_UNMATCH"),
-                _ => {}
-            }
-        }
+    /// The boot setter (`0x513ad0`): a positive delay as `i32` arms the deadline, anything else clears it; the event it fires.
+    pub(crate) fn set(&mut self, delay_ms: u32, now: Instant) -> &'static str {
         if delay_ms as i32 > 0 {
             self.deadline = Some(now + std::time::Duration::from_millis(u64::from(delay_ms)));
-            self.events.push("INSTANCE_BOOT_START");
+            "INSTANCE_BOOT_START"
         } else {
             self.deadline = None;
-            self.events.push("INSTANCE_BOOT_STOP");
+            "INSTANCE_BOOT_STOP"
         }
     }
 
@@ -83,10 +33,26 @@ impl InstanceBoot {
 
     /// Whole seconds left, 0 when idle or past, as the reference divides a clamped ms remainder.
     pub(crate) fn secs(&self, now: Instant) -> u32 {
-        self.deadline
-            .map(|d| d.saturating_duration_since(now).as_secs())
-            .map_or(0, |s| u32::try_from(s).unwrap_or(u32::MAX))
+        whole_secs(self.deadline, now)
     }
+}
+
+/// `max(deadline - now, 0) / 1000`, 0 with no deadline (`0x5162e0`, `0x516b90`).
+fn whole_secs(deadline: Option<Instant>, now: Instant) -> u32 {
+    deadline
+        .map(|d| d.saturating_duration_since(now).as_secs())
+        .map_or(0, |s| u32::try_from(s).unwrap_or(u32::MAX))
+}
+
+/// The zero-delay reason's line (`0x6e3be3`'s table); 1-4 name one.
+fn raid_group_only_key(reason: u32) -> Option<&'static str> {
+    Some(match reason {
+        1 => "ERR_RAID_GROUP_LOWLEVEL",
+        2 => "ERR_RAID_GROUP_ONLY",
+        3 => "ERR_RAID_GROUP_FULL",
+        4 => "ERR_RAID_GROUP_REQUIREMENTS_UNMATCH",
+        _ => return None,
+    })
 }
 
 /// `UNIT_NPC_FLAGS` `SPIRITGUIDE`, which the area spirit healer's acquire callback tests.
@@ -103,242 +69,166 @@ const SPIRIT_GUIDE_ACQUIRE_YD: f32 = 20.0;
 /// kept until 22.
 const SPIRIT_GUIDE_RETAIN_YD: f32 = SPIRIT_GUIDE_ACQUIRE_YD * 1.1;
 
-/// What [`AreaSpiritHealer::set_healer`] owes the frame; the reference's healer set does both.
-#[derive(Default, PartialEq, Eq, Debug)]
-pub(crate) struct SetHealerOutcome {
-    /// A wave was pending and the healer changed: `AREA_SPIRIT_HEALER_OUT_OF_RANGE` fires and
-    /// `CMSG_CANCEL_AURA` goes out for 2584; this, not Lua, closes the dialog.
-    pub(crate) cancel_aura: bool,
-    /// A newly adopted non-zero healer: `CMSG_AREA_SPIRIT_HEALER_QUERY` with it.
-    pub(crate) query: Option<u64>,
-}
-
-/// The current-area spirit healer and its wave clock.
-#[derive(Resource, Default)]
+/// The current-area spirit healer and its wave deadline. Main-thread state the poll, the guide click and `AcceptAreaSpiritHeal` write ([`crate::ui_script::live::Lent`]).
+#[derive(Default)]
 pub(crate) struct AreaSpiritHealer {
-    /// Written only by [`Self::set_healer`], the reference's healer set.
+    /// Written only by the healer set, [`Self::store_healer`].
     healer: Option<u64>,
     deadline: Option<Instant>,
-    in_range: bool,
 }
 
 impl AreaSpiritHealer {
-    /// `SMSG_AREA_SPIRIT_HEALER_TIME`: arms the clock only for the cached healer and a positive
-    /// time, and owes `AREA_SPIRIT_HEALER_IN_RANGE`.
-    pub(crate) fn on_time(&mut self, healer: u64, ms: u32, now: Instant) {
-        if self.healer == Some(healer) && ms > 0 {
+    /// `SMSG_AREA_SPIRIT_HEALER_TIME` after its poll (`0x524b10`): arms the clock only for the held healer and a positive time; whether it did, so `AREA_SPIRIT_HEALER_IN_RANGE` fires.
+    pub(crate) fn on_time(&mut self, healer: u64, ms: u32, now: Instant) -> bool {
+        let arms = self.healer == Some(healer) && ms as i32 > 0;
+        if arms {
             self.deadline = Some(now + std::time::Duration::from_millis(u64::from(ms)));
-            self.in_range = true;
         }
+        arms
     }
 
-    /// An unchanged guid returns before anything else, so the poll calls it every frame; a change
-    /// cancels a pending wave, zeroes the deadline and queries a non-zero healer.
-    pub(crate) fn set_healer(&mut self, new: Option<u64>) -> SetHealerOutcome {
+    /// The healer set up to its cancel (`0x523eb0`): an unchanged guid returns `None` before anything else, so the poll calls it every frame; a change stores the new healer first (`0x523edd`) and says whether a wave's cancel is owed, its event fired while the deadline still reads (`0x523eea` before `0x523efa`). Without our body (`player` false) the cancel neither fires nor sends (`0x51f75c`), so the wave is zeroed here.
+    pub(crate) fn store_healer(&mut self, new: Option<u64>, player: bool) -> Option<bool> {
         // The reference's zero guid is our `None`.
         let new = new.filter(|&g| g != 0);
         if self.healer == new {
-            return SetHealerOutcome::default();
+            return None;
         }
         self.healer = new;
-        let cancel_aura = self.deadline.take().is_some();
-        if cancel_aura {
-            // The cancel closes the dialog, so an `_IN_RANGE` still owed is stale.
-            self.in_range = false;
+        let owed = self.deadline.is_some() && player;
+        if !owed {
+            self.deadline = None;
         }
-        SetHealerOutcome {
-            cancel_aura,
-            query: new,
+        Some(owed)
+    }
+
+    /// The healer set past its cancel's event: `CMSG_CANCEL_AURA` for the wave cancelled, the deadline zeroed (`0x523efa`), then the query for a non-zero healer (`0x523f02`).
+    pub(crate) fn finish_set(&mut self, cancelled: bool, net: Option<&NetCommands>) {
+        let send = |cmd| {
+            if let Some(net) = net {
+                let _ = net.0.send(cmd);
+            }
+        };
+        if cancelled {
+            send(ClientCommand::CancelAura {
+                spell_id: AREA_SPIRIT_HEALER_AURA,
+            });
+        }
+        self.deadline = None;
+        if let Some(healer) = self.healer {
+            send(ClientCommand::AreaSpiritHealerQuery { healer });
         }
     }
 
-    /// The spirit-guide click: the reference sets the healer to 0, then to the guid, a cache-bust
-    /// that makes the second call query even for the healer already cached.
-    pub(crate) fn click_guide(&mut self, guid: u64) -> SetHealerOutcome {
-        let bust = self.set_healer(None);
-        let set = self.set_healer(Some(guid));
-        SetHealerOutcome {
-            cancel_aura: bust.cancel_aura || set.cancel_aura,
-            query: set.query,
+    /// The whole healer set (`0x523eb0`) from a caller holding our body (the guide click), `fire` running the cancel's event with this state at hand; whether it cancelled a wave.
+    pub(crate) fn set_healer(
+        &mut self,
+        new: Option<u64>,
+        net: Option<&NetCommands>,
+        fire: &mut impl FnMut(&mut Self),
+    ) -> bool {
+        let Some(cancelled) = self.store_healer(new, true) else {
+            return false;
+        };
+        if cancelled {
+            fire(self);
         }
+        self.finish_set(cancelled, net);
+        cancelled
     }
 
-    /// The cached healer: `AcceptAreaSpiritHeal`'s guid and the poll's retain subject.
+    /// The spirit-guide click (`0x6db180`): the healer set to 0, then to the guid (`0x6db198`, `0x6db1a7`), a cache-bust that makes the second set query even for the healer already held.
+    pub(crate) fn click_guide(
+        &mut self,
+        guid: u64,
+        net: Option<&NetCommands>,
+        fire: &mut impl FnMut(&mut Self),
+    ) {
+        self.set_healer(None, net, fire);
+        self.set_healer(Some(guid), net, fire);
+    }
+
+    /// The held healer: `AcceptAreaSpiritHeal`'s guid and the poll's retain subject.
     pub(crate) fn healer(&self) -> Option<u64> {
         self.healer
     }
 
-    fn secs(&self, now: Instant) -> u32 {
-        self.deadline
-            .map(|d| d.saturating_duration_since(now).as_secs())
-            .map_or(0, |s| u32::try_from(s).unwrap_or(u32::MAX))
+    /// `GetAreaSpiritHealerTime` (`0x516b90`).
+    pub(crate) fn secs(&self, now: Instant) -> u32 {
+        whole_secs(self.deadline, now)
     }
 }
 
-/// Drop the cached spirit guide when the world does, so no healer, wave or event reaches the next
+/// Drop the held spirit guide when the world does, so no healer, wave or event reaches the next
 /// session; the reference clears it only through its healer set, its world-leave path untraced.
-fn area_spirit_healer_leave_world(mut spirit: ResMut<AreaSpiritHealer>) {
+fn area_spirit_healer_leave_world(mut spirit: NonSendMut<AreaSpiritHealer>) {
     *spirit = AreaSpiritHealer::default();
 }
 
-pub(crate) fn feed_dialog_verbs(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut pet: ResMut<PetUnlearnState>,
-    mut boot: ResMut<InstanceBoot>,
-    mut spirit: ResMut<AreaSpiritHealer>,
-    mut sink: crate::ui_action::MessageSink,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let now = Instant::now();
-
-    script.set_pet_untrainer_pending(pet.pending().is_some());
-    if pet.ask {
-        pet.ask = false;
-        script.fire_event(
-            "CONFIRM_PET_UNLEARN",
-            vec![ScriptValue::Int(i64::from(pet.cost))],
-        );
-    }
-
-    script.set_instance_boot_secs(boot.secs(now));
-    for event in std::mem::take(&mut boot.events) {
-        script.fire_event(event, vec![]);
-    }
-    let lines: Vec<_> = std::mem::take(&mut boot.errors)
-        .into_iter()
-        .filter_map(|key| crate::ui_action::keyed_line(&script, key))
-        .collect();
-    if !lines.is_empty() {
-        crate::ui_action::show_messages(&mut script, &mut sink, "ui_dialog_verbs", lines);
-    }
-
-    let secs = spirit.secs(now);
-    script.set_area_spirit_healer(spirit.healer().is_some(), secs);
-    if std::mem::take(&mut spirit.in_range) {
-        script.fire_event("AREA_SPIRIT_HEALER_IN_RANGE", vec![]);
-    }
-}
-
-/// The pet trainer's confirm and the spirit healer's accept, the two drains over a latch.
-fn drain_latch_verbs(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    pet: Res<PetUnlearnState>,
-    spirit: Res<AreaSpiritHealer>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    commands: Res<NetCommands>,
-    mut sink: crate::ui_action::MessageSink,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-
-    // ConfirmPetUnlearn: `cost > coinage` shows ERR_NOT_ENOUGH_MONEY and sends nothing.
-    let confirms = script.take_pet_unlearn_confirms();
-    if confirms > 0 {
-        if let Some(npc) = pet.pending() {
-            let money = self_q
-                .single()
-                .ok()
-                .and_then(|store| store.0.player_money())
-                .unwrap_or(0);
-            if pet.cost > money {
-                if let Some(line) = crate::ui_action::keyed_line(&script, "ERR_NOT_ENOUGH_MONEY") {
-                    crate::ui_action::show_messages(
-                        &mut script,
-                        &mut sink,
-                        "ui_dialog_verbs",
-                        [line],
-                    );
-                }
-            } else {
-                for _ in 0..confirms {
-                    let _ = commands.0.send(ClientCommand::PetUnlearn { trainer: npc });
-                }
-            }
-        }
-    }
-
-    // AcceptAreaSpiritHeal: the cached healer's guid, nothing without one.
-    let accepts = script.take_area_spirit_accepts();
-    if let Some(healer) = spirit.healer() {
-        for _ in 0..accepts {
-            let _ = commands
-                .0
-                .send(ClientCommand::AreaSpiritHealerQueue { healer });
-        }
-    }
-}
-
-/// The area-spirit-healer poll (`0x524010`), run every frame from the world frame's update: only a
-/// ghost (`PLAYER_FLAGS` `0x10`) holds a healer; a cached one is kept within 22 yd, else the last
-/// unit in the walk that is a `SPIRITGUIDE`, may assist us (`0x523fc5`, guide → player) and is
-/// within 20 yd is adopted. Last, not nearest: the enumerate callback `0x523f80` never stops the
-/// walk.
-fn poll_area_spirit_healer(
-    mut spirit: ResMut<AreaSpiritHealer>,
-    me: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
+/// What the healer poll reads: our body and the units the walk visits, and the assist test's tables.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct SpiritPollInputs<'w, 's> {
+    me: Query<'w, 's, (&'static ObjectStore, &'static Transform), With<SelfPlayer>>,
     units: Query<
+        'w,
+        's,
         (
-            &crate::net::Guid,
-            &crate::net::NetEntity,
-            &ObjectStore,
-            &Transform,
+            &'static crate::net::Guid,
+            &'static crate::net::NetEntity,
+            &'static ObjectStore,
+            &'static Transform,
         ),
         Without<SelfPlayer>,
     >,
-    factions: Option<Res<crate::target::Factions>>,
-    reputations: Res<crate::net::Reputations>,
-    group: Option<Res<crate::ui_party::GroupState>>,
-    names: Option<Res<crate::names::NameCache>>,
-    commands: Res<NetCommands>,
-    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    factions: Option<Res<'w, crate::target::Factions>>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+    names: Option<Res<'w, crate::names::NameCache>>,
+}
+
+/// The healer poll's first half (`0x524010`): with no body, no ghost (`PLAYER_FLAGS` `0x10`), or the held healer gone or past 22 yd, the healer set to 0 up to its cancel (`0x5240ca`, `0x52409e`); whether that owes the cancel's event, never with no body (`0x51f75c`).
+pub(crate) fn poll_drop(spirit: &mut AreaSpiritHealer, inputs: &SpiritPollInputs) -> bool {
+    let body = inputs.me.single();
+    let drop = match body {
+        Err(_) => true,
+        Ok((store, _)) if !store.0.player_is_ghost() => true,
+        Ok((_, tf)) => spirit.healer().is_some_and(|cached| {
+            // A guid that no longer streams drops like one out of range (an object-lookup miss).
+            let here = tf.translation;
+            !inputs.units.iter().any(|(guid, _, _, unit)| {
+                guid.0 == cached
+                    && unit.translation.distance_squared(here)
+                        <= SPIRIT_GUIDE_RETAIN_YD * SPIRIT_GUIDE_RETAIN_YD
+            })
+        }),
+    };
+    drop && spirit.store_healer(None, body.is_ok()) == Some(true)
+}
+
+/// The poll's second half, after the drop's event: the drop's set finished, then, a ghost holding no
+/// healer, the walk (`0x5240b9`) sets each unit that is a `SPIRITGUIDE`, may assist us (`0x523fc5`,
+/// guide to player) and is within 20 yd, in walk order (`0x523ffa`): each a change that queries,
+/// the last one held, as the callback `0x523f80` never stops the walk.
+pub(crate) fn poll_finish(
+    spirit: &mut AreaSpiritHealer,
+    inputs: &SpiritPollInputs,
+    cancelled: bool,
+    net: Option<&NetCommands>,
 ) {
-    let mut apply = |outcome: SetHealerOutcome| {
-        if outcome.cancel_aura {
-            // The event with no argument, the packet with no guid.
-            if let Some(script) = script.as_deref_mut() {
-                script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
-            }
-            let _ = commands.0.send(ClientCommand::CancelAura {
-                spell_id: AREA_SPIRIT_HEALER_AURA,
-            });
-        }
-        if let Some(healer) = outcome.query {
-            let _ = commands
-                .0
-                .send(ClientCommand::AreaSpiritHealerQuery { healer });
-        }
-    };
-
-    let Ok((self_store, self_tf)) = me.single() else {
-        apply(spirit.set_healer(None));
+    if cancelled {
+        spirit.finish_set(true, net);
+    }
+    let Ok((self_store, self_tf)) = inputs.me.single() else {
         return;
     };
-    if !self_store.0.player_is_ghost() {
-        apply(spirit.set_healer(None));
+    if !self_store.0.player_is_ghost() || spirit.healer().is_some() {
         return;
     }
+    let Some(reputations) = inputs.reputations.as_deref() else {
+        return;
+    };
     let here = self_tf.translation;
-
-    // Retain: a guid that no longer streams drops like one out of range (an object-lookup miss).
-    if let Some(cached) = spirit.healer() {
-        let still = units.iter().find(|(guid, ..)| guid.0 == cached);
-        let keep = still.is_some_and(|(_, _, _, tf)| {
-            tf.translation.distance_squared(here) <= SPIRIT_GUIDE_RETAIN_YD * SPIRIT_GUIDE_RETAIN_YD
-        });
-        if !keep {
-            apply(spirit.set_healer(None));
-        }
-    }
-    if spirit.healer().is_some() {
-        return;
-    }
-
-    // Acquire: `0x523f80` asks the guide whether it may assist us (`0x7293d0`).
-    let mut adopted = None;
-    for (guid, kind, store, tf) in units.iter() {
+    for (guid, kind, store, tf) in inputs.units.iter() {
         if kind.kind != benilla_protocol::EntityKind::Unit {
             continue;
         }
@@ -352,64 +242,151 @@ fn poll_area_spirit_healer(
         if !crate::target::can_assist_dir(
             crate::target::Assist::UnitToPlayer,
             Some(store),
-            factions.as_deref(),
-            &reputations,
-            crate::target::party_of(group.as_deref()),
+            inputs.factions.as_deref(),
+            reputations,
+            crate::target::party_of(inputs.group.as_deref()),
             Some(self_store),
-            names.as_deref(),
+            inputs.names.as_deref(),
         ) {
             continue;
         }
-        adopted = Some(guid.0); // last wins: the callback never stops the walk
-    }
-    if let Some(guid) = adopted {
-        apply(spirit.set_healer(Some(guid)));
+        if let Some(cancelled) = spirit.store_healer(Some(guid.0), true) {
+            // Only `on_time` arms a deadline, for the held healer, and none is held here.
+            debug_assert!(
+                !cancelled,
+                "the walk's set found a wave with no healer held"
+            );
+            spirit.finish_set(cancelled, net);
+        }
     }
 }
 
-/// The dialog verbs' packet handlers: each parks a question or a countdown for the feed.
+/// The whole poll (`0x524010`), `fire` running the drop's event with the healer at hand; whether it cancelled a wave.
+pub(crate) fn run_poll(
+    spirit: &mut AreaSpiritHealer,
+    inputs: &SpiritPollInputs,
+    net: Option<&NetCommands>,
+    fire: impl FnOnce(&mut AreaSpiritHealer),
+) -> bool {
+    let cancelled = poll_drop(spirit, inputs);
+    if cancelled {
+        fire(spirit);
+    }
+    poll_finish(spirit, inputs, cancelled, net);
+    cancelled
+}
+
+/// What the dialog verbs read at the call: the boot deadline and the poll's inputs.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct DialogView<'w, 's> {
+    boot: Option<Res<'w, InstanceBoot>>,
+    pub(crate) spirit: SpiritPollInputs<'w, 's>,
+    net: Option<Res<'w, NetCommands>>,
+}
+
+impl DialogView<'_, '_> {
+    /// `GetInstanceBootTimeRemaining` (`0x5162e0`).
+    pub(crate) fn instance_boot_secs(&self) -> u32 {
+        self.boot.as_ref().map_or(0, |b| b.secs(Instant::now()))
+    }
+
+    /// The rest of `AcceptAreaSpiritHeal`'s poll after its drop's event, then the queue naming the healer it left held, none without one (`0x524b60`).
+    pub(crate) fn accept(&self, spirit: &mut AreaSpiritHealer, cancelled: bool) {
+        let net = self.net.as_deref();
+        poll_finish(spirit, &self.spirit, cancelled, net);
+        if let (Some(net), Some(healer)) = (net, spirit.healer()) {
+            let _ = net.0.send(ClientCommand::AreaSpiritHealerQueue { healer });
+        }
+    }
+
+    /// Whether our body is held, without which the 2584 aura cancel neither fires nor sends (`0x51f72d`, `0x51f75c`).
+    pub(crate) fn has_body(&self) -> bool {
+        self.spirit.me.single().is_ok()
+    }
+
+    /// `CancelAreaSpiritHeal`'s send after its event (`0x522fa0` -> `0x51f710`): `CMSG_CANCEL_AURA` for 2584, the deadline left as it is.
+    pub(crate) fn cancel_area_spirit_heal(&self) {
+        if let Some(net) = self.net.as_deref() {
+            let _ = net.0.send(ClientCommand::CancelAura {
+                spell_id: AREA_SPIRIT_HEALER_AURA,
+            });
+        }
+    }
+}
+
+/// The poll run every frame from the world frame's update, its drop's event fired with the healer lent to the verbs.
+pub(crate) fn poll_area_spirit_healer(
+    mut spirit: NonSendMut<AreaSpiritHealer>,
+    inputs: SpiritPollInputs,
+    commands: Res<NetCommands>,
+    (mut script, mut live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsSpirit>,
+    ),
+) {
+    run_poll(&mut spirit, &inputs, Some(&commands), |spirit| {
+        if let Some(script) = script.as_deref_mut() {
+            live.lending(spirit, || {
+                script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+            });
+        }
+    });
+}
+
+/// The dialog verbs' packet handlers, each firing its event in its turn.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
     use bevy::prelude::*;
 
-    use super::{AreaSpiritHealer, InstanceBoot, PetUnlearnState};
+    use super::{AreaSpiritHealer, InstanceBoot};
     use crate::net::NetHandlerApp;
+    use crate::ui_script::live::UiEvents;
 
     pub(super) fn register(app: &mut App) {
         use SessionEventKind as K;
-        app.net_handler(K::PetUnlearnConfirm, on_pet_unlearn_confirm)
-            .net_handler(K::RaidGroupOnly, on_raid_group_only)
+        app.net_handler(K::RaidGroupOnly, on_raid_group_only)
             .net_handler(K::AreaSpiritHealerTime, on_area_spirit_healer_time);
     }
 
-    /// The pet trainer's question; a zero guid shows `ERR_TALENT_WIPE_ERROR` instead.
-    fn on_pet_unlearn_confirm(
-        In(ev): In<SessionEvent>,
-        mut unlearn: ResMut<PetUnlearnState>,
-        mut errors: ResMut<crate::ui_action::UiErrorKeys>,
-    ) {
-        if let SessionEvent::PetUnlearnConfirm { trainer, cost } = ev {
-            if trainer == 0 {
-                debug!("net: pet unlearn refused (zero trainer) — no dialog");
-                errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_TALENT_WIPE_ERROR"));
-            } else {
-                debug!("net: trainer {trainer:#x} asks to unlearn the pet for {cost} copper");
-                unlearn.ask(trainer, cost);
+    /// `SMSG_RAID_GROUP_ONLY`: a zero delay first shows the reason's line (`0x6e3be3`), then the boot setter arms or clears the deadline and fires its event (`0x6e3c10` -> `0x513ad0`).
+    fn on_raid_group_only(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
+        let SessionEvent::RaidGroupOnly { delay_ms, reason } = ev else {
+            return;
+        };
+        if delay_ms == 0 {
+            if let Some(key) = super::raid_group_only_key(reason) {
+                crate::ui_action::show_in_turn(
+                    &mut ui,
+                    "ui_dialog_verbs",
+                    crate::ui_action::UiError::key(key),
+                );
             }
         }
+        // The setter runs after the line has shown.
+        ui.world(move |world| {
+            let Some(mut boot) = world.get_resource_mut::<InstanceBoot>() else {
+                return;
+            };
+            let event = boot.set(delay_ms, std::time::Instant::now());
+            if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+                ui.fire(event, Vec::new());
+            }
+        });
     }
 
-    fn on_raid_group_only(In(ev): In<SessionEvent>, mut boot: ResMut<InstanceBoot>) {
-        if let SessionEvent::RaidGroupOnly { delay_ms, reason } = ev {
-            boot.apply(delay_ms, reason, std::time::Instant::now());
+    /// `SMSG_AREA_SPIRIT_HEALER_TIME` (`0x526a55` -> `0x524b10`): the poll runs first, then the held healer's positive time arms the wave and fires `AREA_SPIRIT_HEALER_IN_RANGE`.
+    fn on_area_spirit_healer_time(In(ev): In<SessionEvent>, world: &mut World) {
+        let SessionEvent::AreaSpiritHealerTime { healer, ms } = ev else {
+            return;
+        };
+        if let Err(e) = world.run_system_cached(super::poll_area_spirit_healer) {
+            warn!("ui_dialog_verbs: the healer poll did not run: {e}");
         }
-    }
-
-    fn on_area_spirit_healer_time(In(ev): In<SessionEvent>, mut spirit: ResMut<AreaSpiritHealer>) {
-        if let SessionEvent::AreaSpiritHealerTime { healer, ms } = ev {
-            spirit.on_time(healer, ms, std::time::Instant::now());
+        let arms = world
+            .get_non_send_resource_mut::<AreaSpiritHealer>()
+            .is_some_and(|mut s| s.on_time(healer, ms, std::time::Instant::now()));
+        if let (true, Some(mut ui)) = (arms, world.get_resource_mut::<UiEvents>()) {
+            ui.fire("AREA_SPIRIT_HEALER_IN_RANGE", Vec::new());
         }
     }
 }
@@ -419,33 +396,17 @@ pub(crate) struct UiDialogVerbsPlugin;
 impl Plugin for UiDialogVerbsPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<PetUnlearnState>()
-            .init_resource::<InstanceBoot>()
-            .init_resource::<AreaSpiritHealer>()
+        app.init_resource::<InstanceBoot>()
+            .init_non_send_resource::<AreaSpiritHealer>()
             .add_systems(
                 Update,
-                (
-                    close_npc_session_out_of_range::<PetUnlearnState>.before(feed_dialog_verbs),
-                    // Gated on the in-game interface: vmangos can send `SMSG_RAID_GROUP_ONLY` in
-                    // the login burst (`Player.cpp:18686`), and an `INSTANCE_BOOT_START` fired at
-                    // the boot VM would be lost; the queue waits instead.
-                    feed_dialog_verbs
-                        .in_set(UiFeed)
-                        .run_if(crate::ui_script::ingame_ui_up),
-                    // After the mouse pick, the reference's order: the world frame's OnUpdate
-                    // picks, then polls. Gating is safe: the poll is level-triggered and re-derives
-                    // the cache every frame.
-                    poll_area_spirit_healer
-                        .after(crate::target::TargetUpdate)
-                        .run_if(crate::ui_script::ingame_ui_up)
-                        .in_set(crate::char_select::InWorldGated),
-                    // Before the target chain, where the poll and the click can change the
-                    // healer: the reference resolves an Accept press in the UI dispatch, before
-                    // its pick and poll run later in the frame.
-                    drain_latch_verbs
-                        .in_set(UiDrain)
-                        .before(crate::target::TargetUpdate),
-                ),
+                // After the mouse pick, the reference's order: the world frame's OnUpdate
+                // picks, then polls. Gating is safe: the poll is level-triggered and re-derives
+                // the cache every frame.
+                poll_area_spirit_healer
+                    .after(crate::target::TargetUpdate)
+                    .run_if(crate::ui_script::ingame_ui_up)
+                    .in_set(crate::char_select::InWorldGated),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
@@ -469,24 +430,48 @@ fn cancel_gate_could_apply(attributes_ex: u32) -> bool {
 mod tests {
     use super::*;
 
+    /// A command tap: what the healer set sends.
+    fn tap() -> (NetCommands, crossbeam_channel::Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        (NetCommands(tx), rx)
+    }
+
+    /// The healer set's sends, in order, by name.
+    fn sends(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<String> {
+        rx.try_iter()
+            .map(|c| match c {
+                ClientCommand::CancelAura { spell_id } => format!("cancel {spell_id}"),
+                ClientCommand::AreaSpiritHealerQuery { healer } => format!("query {healer}"),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// The whole healer set, its event recorded as the seconds the deadline still reads.
+    fn set(
+        spirit: &mut AreaSpiritHealer,
+        new: Option<u64>,
+        net: &NetCommands,
+        now: Instant,
+    ) -> Vec<u32> {
+        let mut seen = Vec::new();
+        spirit.set_healer(new, Some(net), &mut |s| seen.push(s.secs(now)));
+        seen
+    }
+
     #[test]
     fn setting_the_same_healer_is_a_complete_no_op() {
+        let (net, rx) = tap();
         let mut spirit = AreaSpiritHealer::default();
-        assert_eq!(
-            spirit.set_healer(Some(7)),
-            SetHealerOutcome {
-                cancel_aura: false,
-                query: Some(7)
-            },
-            "a fresh adopt asks for the clock"
-        );
         let now = Instant::now();
+        assert!(set(&mut spirit, Some(7), &net, now).is_empty());
+        assert_eq!(sends(&rx), ["query 7"], "a fresh adopt asks for the clock");
         spirit.on_time(7, 30_000, now);
         assert_eq!(spirit.secs(now), 30, "the wave clock is armed");
 
-        assert_eq!(
-            spirit.set_healer(Some(7)),
-            SetHealerOutcome::default(),
+        assert!(set(&mut spirit, Some(7), &net, now).is_empty());
+        assert!(
+            sends(&rx).is_empty(),
             "the same guid again: no query, no cancel"
         );
         assert_eq!(
@@ -496,40 +481,50 @@ mod tests {
         );
     }
 
+    /// `0x523eea` runs the cancel, whose event fires at `0x803290`, before `0x523efa` zeroes the
+    /// deadline `GetAreaSpiritHealerTime` reads (`0x516b90`): the event's handler reads the wave.
     #[test]
-    fn dropping_a_healer_cancels_the_wave_and_sends_nothing() {
+    fn dropping_a_healer_fires_the_cancel_while_the_wave_still_reads() {
+        let (net, rx) = tap();
         let mut spirit = AreaSpiritHealer::default();
-        spirit.set_healer(Some(7));
         let now = Instant::now();
-        spirit.on_time(7, 30_000, now);
+        set(&mut spirit, Some(7), &net, now);
+        spirit.on_time(7, 30_500, now);
+        let _ = sends(&rx);
 
+        let mut at_event = None;
+        let cancelled = spirit.set_healer(None, Some(&net), &mut |s| {
+            at_event = Some((s.secs(now), s.healer()));
+        });
+        assert!(cancelled);
         assert_eq!(
-            spirit.set_healer(None),
-            SetHealerOutcome {
-                cancel_aura: true,
-                query: None
-            },
+            at_event,
+            Some((30, None)),
+            "the new healer is stored first (`0x523edd`), the deadline zeroed after"
+        );
+        assert_eq!(
+            sends(&rx),
+            ["cancel 2584"],
             "walking away: the aura cancel, and no query for a zero guid"
         );
-        assert_eq!(spirit.secs(now), 0, "the clock is zeroed");
+        assert_eq!(spirit.secs(now), 0, "the clock is zeroed after the event");
         assert_eq!(spirit.healer(), None);
 
-        spirit.set_healer(Some(9));
-        assert_eq!(
-            spirit.set_healer(None),
-            SetHealerOutcome {
-                cancel_aura: false,
-                query: None
-            },
+        set(&mut spirit, Some(9), &net, now);
+        let _ = sends(&rx);
+        assert!(
+            set(&mut spirit, None, &net, now).is_empty(),
             "no deadline pending — the reference's `je` skips the cancel"
         );
+        assert!(sends(&rx).is_empty());
     }
 
     #[test]
     fn a_clock_for_another_healer_is_ignored() {
+        let (net, _rx) = tap();
         let mut spirit = AreaSpiritHealer::default();
-        spirit.set_healer(Some(7));
         let now = Instant::now();
+        set(&mut spirit, Some(7), &net, now);
         spirit.on_time(8, 30_000, now);
         assert_eq!(spirit.secs(now), 0, "not our healer");
         spirit.on_time(7, 0, now);
@@ -540,22 +535,27 @@ mod tests {
 
     #[test]
     fn clicking_the_cached_guide_still_asks_again() {
+        let (net, rx) = tap();
         let mut spirit = AreaSpiritHealer::default();
-        spirit.set_healer(Some(7));
         let now = Instant::now();
+        set(&mut spirit, Some(7), &net, now);
         spirit.on_time(7, 30_000, now);
+        let _ = sends(&rx);
 
-        let outcome = spirit.click_guide(7);
+        let mut seen = Vec::new();
+        spirit.click_guide(7, Some(&net), &mut |s| seen.push(s.secs(now)));
         assert_eq!(
-            outcome.query,
-            Some(7),
-            "the bust makes the second call a real change"
+            seen,
+            [30],
+            "the bust's own leg cancelled the pending wave, its event reading it"
         );
-        assert!(
-            outcome.cancel_aura,
-            "and the bust's own leg cancelled the pending wave"
+        assert_eq!(
+            sends(&rx),
+            ["cancel 2584", "query 7"],
+            "the bust makes the second set a real change"
         );
         assert_eq!(spirit.healer(), Some(7));
+        assert_eq!(spirit.secs(now), 0);
     }
 
     /// `UNIT_FIELD_FLAGS`, absolute field 46; `UNIT_FLAG_PVP` (`0x1000`) passes `can_assist`.
@@ -581,7 +581,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded::<ClientCommand>();
         let mut world = World::new();
         world.insert_resource(NetCommands(tx));
-        world.init_resource::<AreaSpiritHealer>();
+        world.init_non_send_resource::<AreaSpiritHealer>();
         world.init_resource::<crate::net::Reputations>();
         world.init_resource::<crate::net::GuidIndex>();
         if let Some(catalog) = factions {
@@ -628,9 +628,17 @@ mod tests {
 
     const GUIDE: u64 = 0x9111;
 
-    fn run_poll(world: &mut World) {
+    fn poll_once(world: &mut World) {
         use bevy::ecs::system::RunSystemOnce;
-        world.run_system_once(poll_area_spirit_healer).unwrap();
+        world
+            .run_system_once(
+                |mut spirit: NonSendMut<AreaSpiritHealer>,
+                 inputs: SpiritPollInputs,
+                 net: Res<NetCommands>| {
+                    run_poll(&mut spirit, &inputs, Some(&net), |_| {});
+                },
+            )
+            .unwrap();
     }
 
     fn queries(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<u64> {
@@ -645,8 +653,8 @@ mod tests {
     #[test]
     fn a_living_body_never_adopts_a_spirit_guide() {
         let (mut world, rx) = poll_world(false, true, 1.0, None);
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), None);
+        poll_once(&mut world);
+        assert_eq!(world.non_send_resource::<AreaSpiritHealer>().healer(), None);
         assert!(queries(&rx).is_empty(), "no clock is asked for");
     }
 
@@ -654,8 +662,11 @@ mod tests {
     fn a_ghost_adopts_a_guide_inside_the_acquire_radius_and_asks_for_the_clock() {
         let catalog = catalog_or_skip!();
         let (mut world, rx) = poll_world(true, true, 19.0, Some(catalog));
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), Some(GUIDE));
+        poll_once(&mut world);
+        assert_eq!(
+            world.non_send_resource::<AreaSpiritHealer>().healer(),
+            Some(GUIDE)
+        );
         assert_eq!(
             queries(&rx),
             vec![GUIDE],
@@ -666,8 +677,8 @@ mod tests {
     #[test]
     fn a_guide_past_the_acquire_radius_is_not_adopted() {
         let (mut world, rx) = poll_world(true, true, 21.0, None);
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), None);
+        poll_once(&mut world);
+        assert_eq!(world.non_send_resource::<AreaSpiritHealer>().healer(), None);
         assert!(queries(&rx).is_empty());
     }
 
@@ -675,8 +686,11 @@ mod tests {
     fn an_adopted_guide_is_retained_past_the_acquire_radius_and_dropped_past_the_retain_one() {
         let catalog = catalog_or_skip!();
         let (mut world, rx) = poll_world(true, true, 19.0, Some(catalog));
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), Some(GUIDE));
+        poll_once(&mut world);
+        assert_eq!(
+            world.non_send_resource::<AreaSpiritHealer>().healer(),
+            Some(GUIDE)
+        );
         let _ = queries(&rx);
 
         let guide = world
@@ -687,9 +701,9 @@ mod tests {
         world
             .entity_mut(guide)
             .insert(Transform::from_xyz(21.0, 0.0, 0.0));
-        run_poll(&mut world);
+        poll_once(&mut world);
         assert_eq!(
-            world.resource::<AreaSpiritHealer>().healer(),
+            world.non_send_resource::<AreaSpiritHealer>().healer(),
             Some(GUIDE),
             "retained between the two radii"
         );
@@ -699,15 +713,99 @@ mod tests {
         world
             .entity_mut(guide)
             .insert(Transform::from_xyz(23.0, 0.0, 0.0));
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), None);
+        poll_once(&mut world);
+        assert_eq!(world.non_send_resource::<AreaSpiritHealer>().healer(), None);
+    }
+
+    /// The walk's callback sets every guide it passes (`0x523ffa`), so two in reach are each a
+    /// change with its own query, in walk order, and the last is held.
+    #[test]
+    fn each_guide_the_walk_passes_is_set_and_queried_in_turn() {
+        const GUIDE2: u64 = 0x9112;
+        let catalog = catalog_or_skip!();
+        let (mut world, rx) = poll_world(true, true, 5.0, Some(catalog));
+        world.spawn((
+            crate::net::Guid(GUIDE2),
+            crate::net::NetEntity {
+                kind: benilla_protocol::EntityKind::Unit,
+                display_id: None,
+                scale: 1.0,
+            },
+            fields(&[
+                (NPC_FLAGS_FIELD, NPC_FLAG_SPIRITGUIDE),
+                (UNIT_FLAGS_FIELD, 0x1000),
+                (FACTION_TEMPLATE_FIELD, 35),
+            ]),
+            Transform::from_xyz(6.0, 0.0, 0.0),
+        ));
+        let walk: Vec<u64> = world
+            .query_filtered::<&crate::net::Guid, Without<SelfPlayer>>()
+            .iter(&world)
+            .map(|g| g.0)
+            .collect();
+        poll_once(&mut world);
+        assert_eq!(queries(&rx), walk, "one query per guide, in walk order");
+        assert_eq!(
+            world.non_send_resource::<AreaSpiritHealer>().healer(),
+            walk.last().copied(),
+            "the last set holds"
+        );
+        poll_once(&mut world);
+        assert!(
+            queries(&rx).is_empty(),
+            "the held guide is retained, so no walk runs"
+        );
+    }
+
+    /// With no body the poll still sets the healer to 0 (`0x524036` -> `0x5240ca`), but its cancel
+    /// finds no player object and skips the aura cancel (`0x51f75c`): no event, no send, and the
+    /// wave zeroed (`0x523efa`).
+    #[test]
+    fn with_no_body_the_drop_zeroes_the_wave_without_the_cancel() {
+        let (mut world, rx) = poll_world(true, true, 5.0, None);
+        let now = Instant::now();
+        {
+            let net = NetCommands(world.resource::<NetCommands>().0.clone());
+            let mut spirit = world.non_send_resource_mut::<AreaSpiritHealer>();
+            spirit.set_healer(Some(GUIDE), Some(&net), &mut |_| {});
+            spirit.on_time(GUIDE, 30_500, now);
+        }
+        let _ = sends(&rx);
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .iter(&world)
+            .next()
+            .expect("the body");
+        world.despawn(me);
+
+        use bevy::ecs::system::RunSystemOnce;
+        let fired = world
+            .run_system_once(
+                |mut spirit: NonSendMut<AreaSpiritHealer>,
+                 inputs: SpiritPollInputs,
+                 net: Res<NetCommands>| {
+                    let mut fired = 0;
+                    let cancelled = run_poll(&mut spirit, &inputs, Some(&net), |_| fired += 1);
+                    (fired, cancelled)
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            fired,
+            (0, false),
+            "no player object: the cancel's event never fires"
+        );
+        assert!(sends(&rx).is_empty(), "and no CMSG_CANCEL_AURA goes out");
+        let spirit = world.non_send_resource::<AreaSpiritHealer>();
+        assert_eq!(spirit.healer(), None, "the healer is still set to 0");
+        assert_eq!(spirit.secs(now), 0, "and the wave is zeroed");
     }
 
     #[test]
     fn a_unit_without_the_spiritguide_flag_is_never_adopted() {
         let (mut world, rx) = poll_world(true, false, 1.0, None);
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), None);
+        poll_once(&mut world);
+        assert_eq!(world.non_send_resource::<AreaSpiritHealer>().healer(), None);
         assert!(queries(&rx).is_empty());
     }
 
@@ -715,8 +813,11 @@ mod tests {
     fn losing_the_ghost_state_drops_the_guide() {
         let catalog = catalog_or_skip!();
         let (mut world, _rx) = poll_world(true, true, 5.0, Some(catalog));
-        run_poll(&mut world);
-        assert_eq!(world.resource::<AreaSpiritHealer>().healer(), Some(GUIDE));
+        poll_once(&mut world);
+        assert_eq!(
+            world.non_send_resource::<AreaSpiritHealer>().healer(),
+            Some(GUIDE)
+        );
 
         let me = world
             .query_filtered::<Entity, With<SelfPlayer>>()
@@ -726,9 +827,9 @@ mod tests {
         world
             .entity_mut(me)
             .insert(fields(&[(PLAYER_FLAGS_FIELD, 0)]));
-        run_poll(&mut world);
+        poll_once(&mut world);
         assert_eq!(
-            world.resource::<AreaSpiritHealer>().healer(),
+            world.non_send_resource::<AreaSpiritHealer>().healer(),
             None,
             "alive again: the cache clears even though the guide has not moved"
         );
@@ -750,58 +851,45 @@ mod tests {
     }
 
     #[test]
-    fn the_boot_clock_arms_on_a_delay_and_clears_on_zero_with_the_reason() {
+    fn the_boot_clock_arms_on_a_delay_and_clears_otherwise() {
         let mut boot = InstanceBoot::default();
         let now = Instant::now();
-        boot.apply(60_500, 0, now);
-        assert_eq!(boot.events, vec!["INSTANCE_BOOT_START"]);
+        assert_eq!(boot.set(60_500, now), "INSTANCE_BOOT_START");
         assert_eq!(boot.secs(now), 60, "whole seconds, truncated");
-        boot.apply(0, 2, now);
-        assert_eq!(
-            boot.events,
-            vec!["INSTANCE_BOOT_START", "INSTANCE_BOOT_STOP"]
-        );
-        assert_eq!(boot.errors, vec!["ERR_RAID_GROUP_ONLY"]);
+        assert_eq!(boot.set(0, now), "INSTANCE_BOOT_STOP");
         assert_eq!(boot.secs(now), 0);
+        assert_eq!(
+            boot.set(0x8000_0000, now),
+            "INSTANCE_BOOT_STOP",
+            "a negative delay clears"
+        );
         for (reason, key) in [
             (1, "ERR_RAID_GROUP_LOWLEVEL"),
+            (2, "ERR_RAID_GROUP_ONLY"),
             (3, "ERR_RAID_GROUP_FULL"),
             (4, "ERR_RAID_GROUP_REQUIREMENTS_UNMATCH"),
         ] {
-            boot.apply(0, reason, now);
-            assert_eq!(boot.errors.last(), Some(&key));
+            assert_eq!(raid_group_only_key(reason), Some(key));
         }
-        boot.apply(0, 7, now);
-        assert_eq!(boot.errors.len(), 4, "a reason outside 1-4 names nothing");
-        boot.apply(0x8000_0000, 0, now);
-        assert_eq!(boot.secs(now), 0, "a negative delay clears");
-        assert_eq!(boot.errors.len(), 4, "only a zero delay shows a reason");
+        assert_eq!(
+            raid_group_only_key(7),
+            None,
+            "a reason outside 1-4 names nothing"
+        );
     }
 
     #[test]
     fn the_spirit_healer_clock_only_arms_for_the_cached_healer() {
         let mut spirit = AreaSpiritHealer::default();
         let now = Instant::now();
-        spirit.on_time(0x77, 30_000, now);
-        assert!(!spirit.in_range, "no healer cached: the packet is ignored");
+        assert!(
+            !spirit.on_time(0x77, 30_000, now),
+            "no healer held: ignored"
+        );
         spirit.healer = Some(0x77);
-        spirit.on_time(0x78, 30_000, now);
-        assert!(!spirit.in_range, "another guid: ignored");
-        spirit.on_time(0x77, 0, now);
-        assert!(!spirit.in_range, "a zero time: ignored");
-        spirit.on_time(0x77, 30_000, now);
-        assert!(spirit.in_range);
+        assert!(!spirit.on_time(0x78, 30_000, now), "another guid: ignored");
+        assert!(!spirit.on_time(0x77, 0, now), "a zero time: ignored");
+        assert!(spirit.on_time(0x77, 30_000, now));
         assert_eq!(spirit.secs(now), 30);
-    }
-
-    #[test]
-    fn the_pet_question_latches_and_closes_like_the_talent_wipe() {
-        let mut pet = PetUnlearnState::default();
-        pet.ask(0x2b, 10_000);
-        assert_eq!(pet.pending(), Some(0x2b));
-        assert!(pet.ask);
-        pet.close();
-        assert_eq!(pet.pending(), None);
-        assert_eq!(pet.cost, 0);
     }
 }

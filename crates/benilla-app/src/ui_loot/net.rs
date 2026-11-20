@@ -1247,6 +1247,7 @@ mod tests {
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_guild::GuildState>()
+            .init_resource::<crate::ui_guild::GuildCache>()
             .insert_non_send_resource(s);
         crate::ui_unit::add_unit_feed(&mut app);
         app

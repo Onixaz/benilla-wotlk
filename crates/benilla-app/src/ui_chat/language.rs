@@ -61,9 +61,9 @@ impl ChatLanguages {
     }
 
     /// A readable's text in `language` as a reader at `skill` sees it (`0x505930` with both flags
-    /// set, as `0x589e90` calls it): `<…>` spans and punctuation stay. With no player it is copied whole.
+    /// set, as `0x589e90` calls it): `<…>` spans and punctuation stay.
     pub(crate) fn translate(&self, language: u32, skill: u32, text: &str) -> String {
-        match self.words.as_ref().filter(|_| self.have_player) {
+        match self.words.as_ref() {
             Some(words) => benilla_formats::garble(
                 words,
                 language,
@@ -182,6 +182,22 @@ pub(super) fn feed_default_language(
     if windows.default_language != name {
         windows.default_language = name.to_string();
     }
+}
+
+/// Our skill in `language` at the call (`0x6e0640`): the last known spell declaring it, its skill line's value; 0 with none.
+pub(crate) fn language_skill(
+    store: &ObjectStore,
+    known: &std::collections::BTreeSet<u32>,
+    spells: &Spells,
+    lines: &SkillLines,
+    language: u32,
+) -> u32 {
+    let (race, class) = crate::spell::race_class(Some(store));
+    known
+        .iter()
+        .rfind(|&&s| spells.catalog.declared_language(s) == Some(language))
+        .and_then(|&s| lines.catalog.spell_to_line(s, race, class))
+        .map_or(0, |line| skill_value(store, line))
 }
 
 /// A skill's `PLAYER_SKILL_INFO` value as the reference sums it: base, plus the permanent bonus

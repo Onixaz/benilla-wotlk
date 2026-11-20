@@ -496,6 +496,7 @@ pub(crate) mod net {
             names.set_player_realm(guid, realm);
             // The record's callbacks run once it is cached (`0x5a47d0`).
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
+            ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
         }
     }
 
@@ -510,6 +511,7 @@ pub(crate) mod net {
             // A placeholder or a denial ends the ask, its callbacks told (`0x635849`, `0x63583f`); a retry asks again.
             if miss != benilla_protocol::messages::NameQueryMiss::Retry {
                 ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
+                ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
             }
         }
     }

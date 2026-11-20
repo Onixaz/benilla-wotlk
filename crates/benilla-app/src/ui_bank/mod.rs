@@ -3,20 +3,17 @@
 use benilla_protocol::messages::bank_slot_result;
 use bevy::prelude::*;
 
-use crate::net::{GuidIndex, SelfPlayer};
 use crate::ui_script::live::UiEvents;
-use crate::ui_session::npc_out_of_range;
 
 /// `BankBagSlotPrices.dbc`, the client's own slot prices; absent, the purchase row shows 0 and
 /// the server still charges its own price.
 #[derive(Resource)]
 pub(crate) struct BankPrices(pub(crate) benilla_formats::BankBagSlotPrices);
 
-/// The open bank: the banker (`0xbeb9a0`), and whether the interact target is it (`0xbd07a8`). Main-thread state the bank verbs write in their call ([`crate::ui_script::live::Lent`]).
+/// The open bank: the banker (`0xbeb9a0`); the interaction close takes its leg while the interact target is it (`0x512f8a`). Main-thread state the bank verbs write in their call ([`crate::ui_script::live::Lent`]).
 #[derive(Default)]
 pub(crate) struct BankOpen {
     pub(crate) banker: Option<u64>,
-    interacting: bool,
 }
 
 impl BankOpen {
@@ -24,21 +21,17 @@ impl BankOpen {
         self.banker.is_some()
     }
 
-    /// The interact target while the banker holds it (`0xbd07a8`).
-    pub(crate) fn interact_target(&self) -> Option<u64> {
-        self.banker.filter(|_| self.interacting)
-    }
-
-    /// The interaction close's bank leg with the interact target the banker (`0x518d50`), whether it was.
-    pub(crate) fn close_interaction(&mut self) -> bool {
-        std::mem::take(&mut self.interacting) && self.banker.is_some()
-    }
-
     /// The banker setter's clear with no banker (`0x57b8f9`).
     pub(crate) fn clear(&mut self) {
         self.banker = None;
-        self.interacting = false;
     }
+}
+
+/// The banker while it holds the interact target (`0xbd07a8` against `0xbeb9a0`, `0x512f8a`).
+pub(crate) fn banker_holding(world: &World) -> Option<u64> {
+    let banker = world.get_non_send_resource::<BankOpen>()?.banker?;
+    let held = world.get_resource::<crate::ui_session::InteractTarget>()?.0;
+    (held == Some(banker)).then_some(banker)
 }
 
 mod net;
@@ -48,11 +41,7 @@ pub(crate) struct UiBankPlugin;
 impl Plugin for UiBankPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_non_send_resource::<BankOpen>().add_systems(
-            Update,
-            // Range-close ahead of the press, as the walk-away watchdog runs before input.
-            close_bank_out_of_range.before(crate::ui_script::UiPress),
-        );
+        app.init_non_send_resource::<BankOpen>();
     }
 }
 
@@ -68,39 +57,36 @@ fn bank_slot_error_key(result: u32) -> Option<&'static str> {
     })
 }
 
-/// `SMSG_SHOW_BANK`'s banker setter call (`0x57b908`): the interact target's change closes an open bank through the interaction close's bank leg first (`0x51fce0` -> `0x512fa7`), then the banker is set and `BANKFRAME_OPENED` fires (`0x57b926`).
+/// `SMSG_SHOW_BANK`'s banker setter call (`0x57b908`): the interact target set first, whose interaction close takes the window holding the old one (`0x57b909` -> `0x51fce0`), then the banker is set and `BANKFRAME_OPENED` fires (`0x57b926`).
 pub(crate) fn open_bank(world: &mut World, banker: u64) {
-    if world
-        .get_non_send_resource::<BankOpen>()
-        .is_some_and(|b| b.interacting && b.is_open())
-    {
-        close_by_interaction(world);
-    }
-    let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
-        return;
-    };
-    ui.world(move |world| {
+    crate::ui_session::set_interact_target(world, banker);
+    crate::ui_script::live::in_turn(world, move |world| {
         let Some(mut bank) = world.get_non_send_resource_mut::<BankOpen>() else {
             return;
         };
         debug!("net: bank opened at {banker:#x}");
         bank.banker = Some(banker);
-        bank.interacting = true;
         if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
             ui.fire("BANKFRAME_OPENED", Vec::new());
         }
     });
 }
 
-/// The interaction close's bank leg (`0x512fa7`), taken only while the interact target is the banker (`0x512f8a`): the target zeroed, `BANKFRAME_CLOSED` fires with the banker still set (`0x57b8e6`), then the banker clears (`0x57b8f9`). Queued on [`UiEvents`] for the caller's flush.
+/// The interact target's clear on the banker (`0x518d50`), whose interaction close takes the bank's leg; nothing while the target is another.
 pub(crate) fn close_by_interaction(world: &mut World) {
-    let Some(mut bank) = world.get_non_send_resource_mut::<BankOpen>() else {
-        return;
-    };
-    if !bank.interacting || !bank.is_open() {
+    if let Some(banker) = banker_holding(world) {
+        crate::ui_session::clear_interact_target(world, banker);
+    }
+}
+
+/// The interaction close's bank leg (`0x512fa7`), its target already zeroed (`0x512e89`): the banker setter with no banker, `BANKFRAME_CLOSED` with the banker still set (`0x57b8e6`), then the banker clears (`0x57b8f9`). Queued on [`UiEvents`] for the caller's flush.
+pub(crate) fn bank_leg(world: &mut World) {
+    if !world
+        .get_non_send_resource::<BankOpen>()
+        .is_some_and(BankOpen::is_open)
+    {
         return;
     }
-    bank.interacting = false;
     let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
         world.non_send_resource_mut::<BankOpen>().clear();
         return;
@@ -114,7 +100,7 @@ const FORM_STANCE: u32 = 0x1;
 /// `SpellShapeshiftForm` `flags1`: the form keeps NPC interaction (`0x6da1cf`).
 const FORM_NPC_INTERACT: u32 = 0x8;
 
-/// The form byte's watch (`0x6da130`): shapeshifted into a form without the NPC-interact bit, the interact target clears (`0x6da1dc` -> `0x512e60`), the bank's leg with it.
+/// The form byte's watch (`0x6da130`): shapeshifted into a form without the NPC-interact bit, the interact target clears (`0x6da1dc` -> `0x512e60`), closing the window holding it.
 pub(crate) fn form_entered(world: &mut World, form: u8) {
     let clears = form != 0
         && world
@@ -122,52 +108,25 @@ pub(crate) fn form_entered(world: &mut World, form: u8) {
             .and_then(|s| s.forms.get(&u32::from(form)))
             .is_some_and(|f| f.flags & (FORM_STANCE | FORM_NPC_INTERACT) == 0);
     if clears {
-        close_by_interaction(world);
+        crate::ui_session::clear_held_interact_target(world);
     }
 }
 
-/// The banker setter with no banker from the NPC-flag watch's bank leg (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED`, then with the interact target the banker the interaction close fires it again (`0x57b8f1` -> `0x512fa7`), then the banker clears.
+/// The banker setter with no banker from the NPC-flag watch's bank leg (`0x71a1a8`-`0x71a1db`): `BANKFRAME_CLOSED`, then the interact target's clear on the banker (`0x57b8f1`), whose interaction close fires it again while the banker held the target (`0x512fa7`), then the banker clears.
 pub(crate) fn set_banker_none(world: &mut World) {
     let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
         return;
     };
     ui.fire("BANKFRAME_CLOSED", Vec::new());
     ui.world(|world| {
-        let again = world
-            .get_non_send_resource_mut::<BankOpen>()
-            .is_some_and(|mut b| b.close_interaction());
-        if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
-            if again {
-                ui.fire("BANKFRAME_CLOSED", Vec::new());
-            }
-            ui.world(clear_banker);
-        }
+        close_by_interaction(world);
+        crate::ui_script::live::in_turn(world, clear_banker);
     });
 }
 
 fn clear_banker(world: &mut World) {
     if let Some(mut bank) = world.get_non_send_resource_mut::<BankOpen>() {
         bank.clear();
-    }
-}
-
-/// The walk-away watchdog for the bank: past its leash or with its banker gone, the interaction closes (`0x512e60`), its events fired as it runs.
-fn close_bank_out_of_range(
-    bank: NonSend<BankOpen>,
-    index: Res<GuidIndex>,
-    self_q: Query<&Transform, With<SelfPlayer>>,
-    transforms: Query<&Transform>,
-    mut commands: Commands,
-) {
-    let Some(banker) = bank.banker.filter(|_| bank.interacting) else {
-        return;
-    };
-    if npc_out_of_range(banker, &index, &self_q, &transforms) == Some(true) {
-        debug!("ui_bank: banker {banker:#x} out of range/gone — closing the interaction");
-        commands.queue(|world: &mut World| {
-            close_by_interaction(world);
-            crate::ui_script::live::fire_handler_events(world);
-        });
     }
 }
 

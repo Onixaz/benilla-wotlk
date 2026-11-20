@@ -1,155 +1,171 @@
-//! The innkeeper's bind question. Selecting the gossip line binds nothing: the server closes the
-//! gossip and asks (`SMSG_BINDER_CONFIRM`, vmangos `Player::SetBindPoint`), and the bind happens
-//! only on `CMSG_BINDER_ACTIVATE`, when the innkeeper casts spell 3286 and `SPELL_EFFECT_BIND`
-//! sends `SMSG_BINDPOINTUPDATE` and `SMSG_PLAYERBOUND`.
-//!
-//! The stock surface (`StaticPopup.lua:1321-1335`, `UIParent.lua:125`, `547-548`) is the
-//! `CONFIRM_BINDER` event, whose one argument fills the dialog's `%s`; `ConfirmBinder()`, the
-//! Accept that sends the activate; and `CheckBinderDist()`, polled from `OnUpdate`, which hides the
-//! dialog the frame it goes false. The reference's handler, its `SMSG_BINDER_CONFIRM` arm.
-//!
-//! `CheckBinderDist()` tests `d² <=` (`5.55555534362793²`), the same constant and inclusive bound
-//! as [`crate::target::SERVICE_RANGE_SQ`], so the question is an [`NpcSession`] closed by
-//! [`crate::ui_session::close_npc_session_out_of_range`]; an unstreamed guid reads as gone, so a
-//! disconnect needs no teardown.
-//!
-//! Deviation: the reference never clears its latched guid, so a second `ConfirmBinder()` in range
-//! re-sends the activate; this drops the guid on `SMSG_PLAYERBOUND`, because an answered question
-//! is not a question and the reference's dialog is gone by then.
+//! The innkeeper's bind question: the binder talk (`0x6d2120`) latches the innkeeper and fires `CONFIRM_BINDER` from `SMSG_BINDER_CONFIRM`'s handler (`0x6e3db9`) or the innkeeper click (`0x6ddee6`), and `ConfirmBinder` and `CheckBinderDist` read the latch live at the call.
 
 use benilla_ui::script::{ScriptValue, UiScript};
 use bevy::prelude::*;
 
 use crate::area::AreaTableRes;
-use crate::net::{ClientCommand, NetCommands};
-use crate::ui_script::{UiDrain, UiFeed};
-use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
+use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
+use crate::ui_script::live::UiEvents;
 
-/// The innkeeper's pending bind question; everything the dialog reads rides the event's argument.
+/// The latched innkeeper (`0xc9eb20`), set by the binder talk and never cleared.
 #[derive(Resource, Default)]
 pub(crate) struct BinderState {
-    /// The innkeeper who asked, sent back on the wire; vmangos binds only a live one in range.
     npc: Option<u64>,
-    /// A dialog the feed still owes, set per packet: asking again after a decline is a second
-    /// dialog, which a state diff would swallow.
-    ask: bool,
 }
 
 impl BinderState {
-    /// `SMSG_BINDER_CONFIRM`: parks the innkeeper's guid and owes the UI a dialog.
-    pub(crate) fn ask(&mut self, npc: u64) {
-        self.npc = Some(npc);
-        self.ask = true;
-    }
-
-    /// The guid to answer with, if a question is live.
-    fn pending(&self) -> Option<u64> {
+    /// The latched innkeeper.
+    pub(crate) fn npc(&self) -> Option<u64> {
         self.npc
-    }
-
-    /// Retracts the question: the range guard's close, and `SMSG_PLAYERBOUND`'s.
-    pub(crate) fn clear(&mut self) {
-        self.npc = None;
-        self.ask = false;
     }
 }
 
-/// The range guard closes the question without a packet, as declining does, when the player
-/// leaves service range or the innkeeper despawns; that close is what `CheckBinderDist()` reports.
-impl NpcSession for BinderState {
-    fn npc(&self) -> Option<u64> {
-        self.npc
-    }
-
-    fn close(&mut self) {
-        self.clear();
-    }
+/// A held unit within its combat reach plus 4 yd of us, the talks' and the distance checks' test (`0x6d2196`-`0x6d21bb`).
+pub(crate) fn in_talk_reach(
+    guid: u64,
+    me: Option<&Transform>,
+    index: Option<&GuidIndex>,
+    units: &Query<(&ObjectStore, &Transform)>,
+) -> bool {
+    let reach = index.and_then(|index| crate::death::healer_reach(guid, index, units));
+    me.is_some_and(|me| crate::death::within_spirit_healer_reach(me.translation, reach))
 }
 
-/// Publishes `CheckBinderDist()` every frame and fires `CONFIRM_BINDER` for each packet that
-/// asked, unconditionally, as the reference's handler always reaches its event signal.
-fn feed_binder(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut binder: ResMut<BinderState>,
-    world: benilla_world::world_point::WorldPoint,
-    areas: Option<Res<AreaTableRes>>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    script.set_binder_pending(binder.pending().is_some());
+/// What the binder and talent master verbs read at the call: the two latches and the reach test's inputs.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct TalkView<'w, 's> {
+    binder: Option<Res<'w, BinderState>>,
+    wipe: Option<Res<'w, crate::ui_talent_wipe::TalentWipeState>>,
+    index: Option<Res<'w, GuidIndex>>,
+    units: Query<'w, 's, (&'static ObjectStore, &'static Transform)>,
+    me: Query<'w, 's, (&'static ObjectStore, &'static Transform), With<SelfPlayer>>,
+    net: Option<Res<'w, NetCommands>>,
+}
 
-    if !binder.ask {
-        return;
+impl TalkView<'_, '_> {
+    fn reach(&self, guid: Option<u64>) -> bool {
+        guid.is_some_and(|guid| {
+            in_talk_reach(
+                guid,
+                self.me.single().ok().map(|(_, t)| t),
+                self.index.as_deref(),
+                &self.units,
+            )
+        })
     }
-    binder.ask = false;
-    let name = area_name(&world, areas.as_deref(), &|key: &str| {
-        script
-            .lua()
-            .globals()
-            .get::<String>(key)
+
+    /// `CheckBinderDist` (`0x6d2290`).
+    pub(crate) fn binder_in_reach(&self) -> bool {
+        self.reach(self.binder.as_ref().and_then(|b| b.npc))
+    }
+
+    /// The binder talk with no guid (`0x6d2120`): in reach, `CMSG_BINDER_ACTIVATE` names the latch (`0x6d2257`).
+    pub(crate) fn confirm_binder(&self) {
+        let Some(npc) = self.binder.as_ref().and_then(|b| b.npc) else {
+            return;
+        };
+        if self.reach(Some(npc)) {
+            if let Some(net) = &self.net {
+                let _ = net.0.send(ClientCommand::BinderActivate { binder: npc });
+            }
+        }
+    }
+
+    /// `CheckTalentMasterDist` (`0x6d2070`).
+    pub(crate) fn talent_master_in_reach(&self) -> bool {
+        self.reach(self.wipe.as_ref().and_then(|w| w.npc()))
+    }
+
+    /// The talent master talk with no guid (`0x6db1c0`): in reach, the wipe goes out when our money covers the latched cost (`0x6db2a6`), else `ERR_NOT_ENOUGH_MONEY` (`0x6db2ae`).
+    pub(crate) fn confirm_talent_wipe(&self) -> Option<&'static str> {
+        let wipe = self.wipe.as_deref()?;
+        let npc = wipe.npc()?;
+        if !self.reach(Some(npc)) {
+            return None;
+        }
+        let money = self
+            .me
+            .single()
             .ok()
-            .filter(|t| !t.is_empty())
-    });
-    script.fire_event("CONFIRM_BINDER", vec![ScriptValue::Str(name)]);
+            .and_then(|(s, _)| s.0.player_money())
+            .unwrap_or(0);
+        if wipe.cost() > money {
+            return Some("ERR_NOT_ENOUGH_MONEY");
+        }
+        if let Some(net) = &self.net {
+            let _ = net
+                .0
+                .send(ClientCommand::TalentWipeConfirm { trainer: npc });
+        }
+        None
+    }
 }
 
-/// The dialog's `%s`, an area and never the NPC's name: the player's sub-area, else its parent
-/// zone, else `HOME_INN`. The reference never withholds the question for want of one.
-fn area_name(
-    world: &benilla_world::world_point::WorldPoint,
-    areas: Option<&AreaTableRes>,
-    get: &dyn Fn(&str) -> Option<String>,
-) -> String {
-    area_name_of(world.area(), areas, get)
-}
-
-/// [`area_name`] over a bare leaf id. The tail is the install's `HOME_INN`, the same fallback as
-/// `GetBindLocation`; an install without it gives an empty name and still asks.
-fn area_name_of(
-    leaf: Option<u32>,
-    areas: Option<&AreaTableRes>,
-    get: &dyn Fn(&str) -> Option<String>,
-) -> String {
-    let named = |id: u32| {
-        areas
-            .and_then(|a| a.0.get(id))
-            .filter(|row| !row.name.is_empty())
-            .map(|row| row.name.clone())
+/// The binder talk (`0x6d2120`): a zero guid stands for the latch (`0x6d2137`-`0x6d2139`); a held innkeeper in reach with a guid is latched (`0x6d21cc`) and `CONFIRM_BINDER` fires with the current subzone's name, else the zone's, else `HOME_INN` (`0x6d21d7`-`0x6d2201`); with no guid it sends `CMSG_BINDER_ACTIVATE` naming the latch (`0x6d21ca` -> `0x6d2257`).
+pub(crate) fn talk_to_binder(
+    In(npc): In<u64>,
+    mut binder: ResMut<BinderState>,
+    me: Query<&Transform, With<SelfPlayer>>,
+    index: Option<Res<GuidIndex>>,
+    units: Query<(&ObjectStore, &Transform)>,
+    ids: Option<Res<crate::area::ZoneIds>>,
+    areas: Option<Res<AreaTableRes>>,
+    net: Option<Res<NetCommands>>,
+    mut ui: ResMut<UiEvents>,
+) {
+    let held = if npc != 0 {
+        npc
+    } else {
+        binder.npc.unwrap_or(0)
     };
-    // The parent zone is the leaf's single-hop `zone_id`; 0 means the leaf is itself a zone.
-    let zone = leaf
-        .and_then(|id| areas.and_then(|a| a.0.get(id)))
-        .map(|row| row.zone_id)
-        .filter(|z| *z != 0);
-    leaf.and_then(named)
-        .or_else(|| zone.and_then(named))
-        .or_else(|| get("HOME_INN"))
+    if held == 0 || !in_talk_reach(held, me.single().ok(), index.as_deref(), &units) {
+        debug!("ui_binder: innkeeper {held:#x} not held in reach, no question");
+        return;
+    }
+    if npc == 0 {
+        if let Some(net) = &net {
+            let _ = net.0.send(ClientCommand::BinderActivate { binder: held });
+        }
+        return;
+    }
+    binder.npc = Some(npc);
+    let name = area_row_name(
+        ids.as_deref().copied().unwrap_or_default(),
+        areas.as_deref(),
+    );
+    ui.write(move |script| {
+        let name = name.unwrap_or_else(|| home_inn(script));
+        script.fire_event("CONFIRM_BINDER", vec![ScriptValue::Str(name)]);
+    });
+}
+
+/// The talk queued from a click, its event fired in turn.
+pub(crate) fn queue_binder_talk(commands: &mut Commands, npc: u64) {
+    commands.queue(move |world: &mut World| {
+        if let Err(e) = world.run_system_cached_with(talk_to_binder, npc) {
+            warn!("ui_binder: the binder talk did not run: {e}");
+        }
+        crate::ui_script::live::fire_handler_events(world);
+    });
+}
+
+/// `HOME_INN` from the interface's strings (`0x6d21ee`).
+fn home_inn(script: &UiScript) -> String {
+    script
+        .lua()
+        .globals()
+        .get::<String>("HOME_INN")
         .unwrap_or_default()
 }
 
-/// Turns the dialog's Accept into `CMSG_BINDER_ACTIVATE`, only while a question is pending: with no
-/// guid latched, the reference's `ConfirmBinder()` finds no unit and sends nothing.
-fn drain_binder(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    binder: Res<BinderState>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
-        return;
-    };
-    let confirms = script.take_binder_confirms();
-    if confirms == 0 {
-        return;
-    }
-    let Some(npc) = binder.pending() else {
-        return;
-    };
-    for _ in 0..confirms {
-        let _ = commands
-            .0
-            .send(ClientCommand::BinderActivate { binder: npc });
-    }
+/// The client's area row, else its zone's row when the area has none (`0x519ca0`), by name, an empty one included (`0x6d21e0`); `None` for neither.
+fn area_row_name(ids: crate::area::ZoneIds, areas: Option<&AreaTableRes>) -> Option<String> {
+    let areas = areas?;
+    areas
+        .0
+        .get(ids.area)
+        .or_else(|| areas.0.get(ids.zone))
+        .map(|row| row.name.clone())
 }
 
 /// `SoundEntries.dbc` 1141, played on `SMSG_PLAYERBOUND` before the area is resolved, so an area
@@ -173,43 +189,36 @@ pub(crate) mod net {
             .net_handler(K::PlayerBound, on_bound);
     }
 
-    fn on_confirm(In(ev): In<SessionEvent>, mut binder: ResMut<BinderState>) {
+    /// `SMSG_BINDER_CONFIRM`: the binder talk with the packet's guid, a zero one included (`0x6e3db9`).
+    fn on_confirm(In(ev): In<SessionEvent>, world: &mut World) {
         if let SessionEvent::BinderConfirm { binder: npc } = ev {
-            binder.ask(npc);
+            if let Err(e) = world.run_system_cached_with(talk_to_binder, npc) {
+                warn!("ui_binder: the binder talk did not run: {e}");
+            }
         }
     }
 
     fn on_bound(
         In(ev): In<SessionEvent>,
-        mut binder: ResMut<BinderState>,
         mut errors: ResMut<crate::ui_action::UiErrorKeys>,
         areas: Option<Res<AreaTableRes>>,
         mut sounds: MessageWriter<ServerSoundMessage>,
     ) {
         if let SessionEvent::PlayerBound { binder: npc, area } = ev {
             debug!("net: bound to area {area} by {npc:#x}");
-            bound(
-                area,
-                &mut binder,
-                &mut errors,
-                areas.as_deref(),
-                &mut sounds,
-            );
+            bound(area, &mut errors, areas.as_deref(), &mut sounds);
         }
     }
 
-    /// `SMSG_PLAYERBOUND`, in the handler's order: retract the question, play the handler's own
-    /// sound (the error row has none), then queue `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a
-    /// system chat line) named by the area. The hearthstone moves on `SMSG_BINDPOINTUPDATE`, which
-    /// this leaves alone, as the reference does.
+    /// `SMSG_PLAYERBOUND`, in the handler's order: play the handler's own sound (the error row has
+    /// none), then queue `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a system chat line) named by
+    /// the area. The latch stays; the hearthstone moves on `SMSG_BINDPOINTUPDATE`.
     pub(crate) fn bound(
         area: u32,
-        binder: &mut BinderState,
         errors: &mut crate::ui_action::UiErrorKeys,
         areas: Option<&AreaTableRes>,
         sounds: &mut MessageWriter<ServerSoundMessage>,
     ) {
-        binder.clear();
         sounds.write(ServerSoundMessage {
             kind: ServerSoundKind::Sound2d,
             sound_id: SOUND_PLAYERBOUND,
@@ -226,21 +235,13 @@ pub(crate) mod net {
     }
 }
 
-/// The innkeeper bind flow: the range guard, the dialog's feed, and its answer.
+/// The innkeeper bind flow: its handlers and the latch the verbs read.
 pub(crate) struct UiBinderPlugin;
 
 impl Plugin for UiBinderPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<BinderState>().add_systems(
-            Update,
-            (
-                // Range-close before the feed, so walking away hides the dialog the same frame.
-                close_npc_session_out_of_range::<BinderState>.before(feed_binder),
-                feed_binder.in_set(UiFeed),
-                drain_binder.in_set(UiDrain),
-            ),
-        );
+        app.init_resource::<BinderState>();
     }
 }
 
@@ -248,49 +249,50 @@ impl Plugin for UiBinderPlugin {
 mod tests {
     use super::*;
 
+    /// `0x519ca0` falls back to the zone id's row only when the area id has none (`0x519cc9`), and
+    /// `0x6d21e0` passes the row's name as it is. Area 186 is Dolanaar in Teldrassil (141).
     #[test]
-    fn asking_twice_owes_two_dialogs() {
-        let mut binder = BinderState::default();
-        assert_eq!(binder.pending(), None);
-
-        binder.ask(0x2a);
-        assert!(binder.ask);
-        binder.ask = false; // the feed fired the first dialog
-        assert_eq!(binder.pending(), Some(0x2a), "the guid outlives the fire");
-
-        binder.ask(0x2a);
-        assert!(binder.ask, "the same innkeeper asking again owes a dialog");
-    }
-
-    /// Area 186 is Dolanaar, a leaf area with an innkeeper.
-    #[test]
-    fn the_dialogs_name_falls_back_sub_area_then_zone_then_home_inn() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let areas = AreaTableRes(
-            benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable.dbc"),
-        );
-        let src = chain
-            .read_file("Interface\\FrameXML\\GlobalStrings.lua")
-            .expect("GlobalStrings.lua in the chain");
-        let vm = UiScript::new().expect("VM");
-        vm.run(&String::from_utf8_lossy(&src)).expect("runs clean");
-        let get = |key: &str| {
-            vm.lua()
-                .globals()
-                .get::<String>(key)
-                .ok()
-                .filter(|t| !t.is_empty())
+    fn the_dialogs_name_is_the_area_row_else_the_zone_row() {
+        use crate::area::ZoneIds;
+        let row = |id, zone_id, name: &str| {
+            (
+                id,
+                benilla_formats::AreaTableRow {
+                    map_id: 1,
+                    zone_id,
+                    explore_flag: 0,
+                    flags: 0,
+                    faction_group_mask: 0,
+                    exploration_level: 0,
+                    name: name.to_string(),
+                    ambient_multiplier: 0.0,
+                },
+            )
         };
-        let inn = get("HOME_INN").expect("HOME_INN ships");
-
-        assert_eq!(area_name_of(Some(186), Some(&areas), &get), "Dolanaar");
-        // No row, no catalog, no id: all three reach the GlobalString.
-        assert_eq!(area_name_of(Some(0xffff), Some(&areas), &get), inn);
-        assert_eq!(area_name_of(Some(186), None, &get), inn);
-        assert_eq!(area_name_of(None, Some(&areas), &get), inn);
-        // An install without the key withholds the name, never the question.
-        assert_eq!(area_name_of(None, None, &|_| None), "");
+        let areas = AreaTableRes(benilla_formats::AreaTableCatalog::from_rows(vec![
+            row(141, 0, "Teldrassil"),
+            row(186, 141, "Dolanaar"),
+            row(187, 141, ""),
+        ]));
+        let ids = |zone, area| ZoneIds { zone, area };
+        assert_eq!(
+            area_row_name(ids(141, 186), Some(&areas)).as_deref(),
+            Some("Dolanaar")
+        );
+        assert_eq!(
+            area_row_name(ids(141, 0xffff), Some(&areas)).as_deref(),
+            Some("Teldrassil"),
+            "an area id with no row takes the zone's row"
+        );
+        assert_eq!(
+            area_row_name(ids(141, 187), Some(&areas)).as_deref(),
+            Some(""),
+            "a row with an empty name is still the area's row"
+        );
+        // No row for either, no catalog, no ids: the caller takes `HOME_INN`.
+        assert_eq!(area_row_name(ids(0xfffe, 0xffff), Some(&areas)), None);
+        assert_eq!(area_row_name(ids(141, 186), None), None);
+        assert_eq!(area_row_name(ZoneIds::default(), Some(&areas)), None);
     }
 
     /// Resolved against the install's table: a mistyped key would silence the line, not garble it.
@@ -311,14 +313,5 @@ mod tests {
             crate::ui_action::ui_error_text(&msg, &g).as_deref(),
             Some("Dolanaar is now your home.")
         );
-    }
-
-    #[test]
-    fn closing_retracts_the_guid_and_the_unfired_dialog() {
-        let mut binder = BinderState::default();
-        binder.ask(0x2a);
-        binder.close();
-        assert_eq!(binder.pending(), None);
-        assert!(!binder.ask);
     }
 }

@@ -323,6 +323,49 @@ fn custom_anim_id(anim_id: u32) -> Option<u16> {
     (anim_id < 4).then(|| 153 + anim_id as u16)
 }
 
+/// `GAMEOBJECT_TYPE_QUESTGIVER`.
+const GO_TYPE_QUESTGIVER: i32 = 2;
+/// `GAMEOBJECT_TYPE_TEXT`.
+const GO_TYPE_TEXT: i32 = 9;
+/// `GAMEOBJECT_TYPE_MAILBOX`.
+const GO_TYPE_MAILBOX: i32 = 19;
+/// `GAMEOBJECT_TYPE_GUILD_BANK`.
+const GO_TYPE_GUILD_BANK: i32 = 34;
+
+/// The interact target's GameObject legs, per type: the start (`0x51fdc2` -> `0x70bab0`) opens a text object (`0x70b560`) and a quest giver, whose template's custom anim plays in its place (`0x70fe10`), and plays a mailbox's or guild vault's first custom one-shot (`0x70c9f0`); the close (`0x5130c4` -> `0x70bac0`) shuts a text object (`0x70b570`) and an open quest giver with no custom anim (`0x70ff20`).
+fn interaction_anim(
+    mut cues: MessageReader<crate::ui_session::InteractCue>,
+    index: Res<GuidIndex>,
+    templates: Option<Res<crate::go_templates::GameObjectTemplates>>,
+    mut gos: Query<(&ObjectStore, &mut GoAnim)>,
+) {
+    for cue in cues.read() {
+        let crate::ui_session::InteractCue::GameObject { guid, start } = *cue else {
+            continue;
+        };
+        let Some((store, mut anim)) = index.0.get(&guid).and_then(|&e| gos.get_mut(e).ok()) else {
+            continue;
+        };
+        let custom = templates
+            .as_deref()
+            .and_then(|t| t.get(guid))
+            .map_or(0, |t| t.interact_anim);
+        match (store.0.gameobject_type_id(), start) {
+            (GO_TYPE_TEXT, true) => anim.state = Some(GO_STATE_ACTIVE),
+            (GO_TYPE_TEXT, false) => anim.state = Some(GO_STATE_READY),
+            (GO_TYPE_QUESTGIVER, true) if custom != 0 => {
+                anim.one_shot = custom_anim_id(custom - 1);
+            }
+            (GO_TYPE_QUESTGIVER, true) => anim.state = Some(GO_STATE_ACTIVE),
+            (GO_TYPE_QUESTGIVER, false) if custom == 0 && anim.state == Some(GO_STATE_ACTIVE) => {
+                anim.state = Some(GO_STATE_READY);
+            }
+            (GO_TYPE_MAILBOX | GO_TYPE_GUILD_BANK, true) => anim.one_shot = custom_anim_id(0),
+            _ => {}
+        }
+    }
+}
+
 /// `SMSG_GAMEOBJECT_RESET_STATE`, bridged from the net layer.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct GoResetState {
@@ -753,6 +796,7 @@ pub(crate) fn plugin(app: &mut App) {
                     // After the selection writers, whose teardown can close the loot.
                     close_go_lid.after(crate::target::TargetUpdate),
                     queue_custom_anim,
+                    interaction_anim,
                     arm_despawn_anim,
                     // Clears `shown` from last frame's finished flags before the drive, so the
                     // re-arm lands one frame after the window end, as in the reference.

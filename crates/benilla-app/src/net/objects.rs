@@ -101,6 +101,8 @@ pub(crate) struct Scene<'w, 's> {
     remote: Query<'w, 's, &'static mut RemoteMotion>,
     modes: Query<'w, 's, &'static mut UnitMoveModes>,
     riders: Query<'w, 's, &'static mut crate::transport::TransportRider>,
+    /// The seated passengers, whose vehicle holds its mount through a dismount (`0x74046f`).
+    seated: Query<'w, 's, &'static crate::vehicle::Passenger>,
     speeds: Query<'w, 's, &'static mut UnitSpeeds>,
     field_changes: MessageWriter<'w, FieldChanged>,
     speed_changes: MessageWriter<'w, SpeedChangeMessage>,
@@ -182,10 +184,15 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 guid,
                 fields,
                 own,
+                Some(&sc.seated),
             );
             pet_token_watch(&mut sc, guid, &merged);
             own_flags_watch(&mut sc, guid, merged);
             return;
+        }
+        // Our own player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`) before the active player's init (`0x6e8378`).
+        if sc.self_guid.0 == Some(guid) && kind == EntityKind::Player {
+            sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
         }
         // Our own create's init replays the known-spell buffer into the companion lists and updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
         if sc.self_guid.0 == Some(guid) {
@@ -311,6 +318,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 != Some(guid)) {
             seed_player_word(e, guid, m, &mut sc.commands);
+        }
+        // Another player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`).
+        if kind == EntityKind::Player && sc.self_guid.0 != Some(guid) {
+            sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
         }
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
@@ -572,6 +583,26 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::GuildBank(callback) => sc
             .ui
             .world(move |world| crate::ui_guild_bank::record_callback(world, callback)),
+        RecordWait::ItemText(item) => sc
+            .ui
+            .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
+        RecordWait::Merchant => sc.ui.world(crate::ui_merchant::record_callback),
+        RecordWait::DressUp(pane) => sc
+            .ui
+            .world(move |world| crate::ui_dressup::record_callback(world, entry, landed, pane)),
+        RecordWait::Buyback => sc.ui.world(crate::ui_merchant::buyback_record_callback),
+        // The trainer's callback fires on a found record (`0x593ca0`).
+        RecordWait::Trainer => {
+            if landed {
+                sc.ui.fire("TRAINER_DESCRIPTION_UPDATE", Vec::new());
+            }
+        }
+        // The petition vendor's callback fires on a found record (`0x5a1f30`).
+        RecordWait::PetitionVendor => {
+            if landed {
+                sc.ui.fire("PETITION_VENDOR_UPDATE", Vec::new());
+            }
+        }
         RecordWait::Ui(wait) => sc
             .ui
             .write(move |script| script.item_record_callback(entry, landed, wait)),
@@ -753,6 +784,7 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
                     guid,
                     fields,
                     own,
+                    Some(&sc.seated),
                 );
                 pet_token_watch(&mut sc, guid, &merged);
                 own_flags_watch(&mut sc, guid, merged);
@@ -769,6 +801,8 @@ fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
 fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectDestroyed(guid) = ev {
         item_disable_watch(&mut sc, guid);
+        sc.ui
+            .world(move |world| crate::ui_item_text::item_disabled(world, guid));
         // The item's lock goes with its object.
         sc.ui.world(move |world| {
             if let Some(mut locks) =
@@ -794,6 +828,8 @@ fn on_objects_removed(In(ev): In<SessionEvent>, mut sc: Scene) {
         guids.retain(|&g| sc.self_guid.0 != Some(g));
         for &guid in &guids {
             item_disable_watch(&mut sc, guid);
+            sc.ui
+                .world(move |world| crate::ui_item_text::item_disabled(world, guid));
             let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
             crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         }
@@ -878,6 +914,8 @@ fn on_gameobject_info(In(ev): In<SessionEvent>, mut sc: Scene) {
             &data,
             &mut sc.go_templates,
         );
+        sc.ui
+            .world(move |world| crate::ui_item_text::go_template_landed(world, entry));
     }
 }
 
@@ -1118,7 +1156,7 @@ fn item_create(
 ) {
     debug!("net: item create {guid:#x} (container: {container})");
     if let Some(&e) = index.0.get(&guid) {
-        merge_fields(commands, stores, edges, e, guid, fields, false);
+        merge_fields(commands, stores, edges, e, guid, fields, false, None);
     } else {
         let e = crate::items::spawn_item(commands, index, guid, fields, container);
         // Replay the enchant times queued while it was not held, as of now.
@@ -1688,7 +1726,9 @@ fn pet_number_watch(sc: &mut Scene, guid: u64) {
 
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
-    use benilla_protocol::field::{FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_FLAGS};
+    use benilla_protocol::field::{
+        FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_DISPLAYID, FIELD_UNIT_FLAGS,
+    };
     // The entry watch (`0x707960`), the count watch (`0x707720`), the charges watch (`0x707880`), then the enchant watch (`0x708bd0`), each its own handler in field order.
     if let Some(old) = merged.item_entry {
         item_entry_watch(sc, guid, old);
@@ -1713,16 +1753,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j, old));
     }
-    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`), the bank's leg.
+    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`): the window on it closes.
     if merged.died {
-        sc.ui.world(move |world| {
-            let held = world
-                .get_non_send_resource::<crate::ui_bank::BankOpen>()
-                .is_some_and(|b| b.interact_target() == Some(guid));
-            if held {
-                crate::ui_bank::close_by_interaction(world);
-            }
-        });
+        sc.ui
+            .world(move |world| crate::ui_session::clear_interact_target(world, guid));
     }
     // A unit's entry watch re-reads its creature record and renames the totem slot it holds
     // (`0x72ceb0`, `0x72cf2b`).
@@ -1739,6 +1773,28 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                     .is_some_and(|q| q.npc == Some(guid));
                 if open {
                     crate::ui_quest::giver_finished(world, false, 0, false);
+                }
+            });
+        }
+        // Its taxi leg (`0x71a13b`-`0x71a16d`): the flight master bit lost on the open map's flight master.
+        if old & NPC_FLAG_FLIGHTMASTER != 0 && new & NPC_FLAG_FLIGHTMASTER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_resource::<crate::ui_taxi::TaxiState>()
+                    .is_some_and(|t| t.unit == Some(guid));
+                if open {
+                    crate::ui_taxi::close_map(world);
+                }
+            });
+        }
+        // Its trainer leg (`0x71a172`-`0x71a1a0`): the trainer bit lost on the open trainer.
+        if old & NPC_FLAG_TRAINER != 0 && new & NPC_FLAG_TRAINER == 0 {
+            sc.ui.world(move |world| {
+                let open = world
+                    .get_resource::<crate::ui_trainer::TrainerOpen>()
+                    .is_some_and(|t| t.trainer == Some(guid));
+                if open {
+                    crate::ui_trainer::set_none(world);
                 }
             });
         }
@@ -1767,6 +1823,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 }
             });
         }
+    }
+    // Another player's guild id watch (`0x6e1bb0` -> `0x6e1bd9` -> `0x6df7a0`).
+    if merged.guild_moved {
+        sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+    }
+    // Another player's guild timestamp watch (`0x6e1c60`), after its guild id's (`0x6e1bb0`); ours runs in index order in [`own_player_watches`].
+    if let Some(stamp) = merged.guild_stamp {
+        guild_stamp_watch(sc, guid, stamp);
     }
     // The target's aura state (`0x716810`), and our pet's power, its predicted copy re-seeded
     // (`0x722c50` -> `0x53d1b0`).
@@ -1823,6 +1887,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         .partition_point(|&(index, ..)| index < FIELD_UNIT_FLAGS);
     let (before, after) = merged.death.split_at(split);
     own_death_fields(sc, guid, before);
+    // Our level's change, in field order: the trainer's re-evaluation (`0x6d6702`).
+    if merged.level_moved {
+        sc.ui.world(crate::ui_trainer::refresh);
+    }
     if merged.flags_moved {
         sc.ui.fire(
             "UNIT_FLAGS",
@@ -1831,7 +1899,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     let split = after.partition_point(|&(index, ..)| index < FIELD_PLAYER_FLAGS);
     let (unit, player) = after.split_at(split);
+    let split = unit.partition_point(|&(index, ..)| index < FIELD_UNIT_DISPLAYID);
+    let (unit, past_display) = unit.split_at(split);
     own_death_fields(sc, guid, unit);
+    // Our display id's watch (`0x716860`) closes an open barber shop, in field order.
+    if merged.display_moved {
+        sc.ui.world(crate::ui_barber::display_changed);
+    }
+    own_death_fields(sc, guid, past_display);
     if let Some(form) = merged.form {
         sc.ui
             .world(move |world| crate::ui_bank::form_entered(world, form));
@@ -1903,6 +1978,25 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     own_player_watches(sc, guid, &merged.watched);
 }
 
+/// The guild timestamp's watch (`0x6e1c60`): a stamp new for the player's guild drops its record and asks it again with the walk as its callback (`0x6e1d5f` -> `0x6e1b90`).
+fn guild_stamp_watch(sc: &mut Scene, guid: u64, stamp: u32) {
+    let Some(guild_id) = sc
+        .index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.stores.get(e).ok())
+        .map(|s| s.0.player_guild_id())
+    else {
+        return;
+    };
+    let net = NetCommands(sc.net.0.clone());
+    sc.ui.world(move |world| {
+        if let Some(mut cache) = world.get_resource_mut::<crate::ui_guild::GuildCache>() {
+            cache.stamp_changed(guild_id, stamp, &net);
+        }
+    });
+}
+
 /// The possess lookup (`0x5d62a0`) over our held fields, auras and transport.
 fn possess_lookup(sc: &mut Scene, guid: u64) {
     let Some(&e) = sc.index.0.get(&guid) else {
@@ -1948,6 +2042,31 @@ fn is_currency_watch(index: u16) -> bool {
     (FIELD_PLAYER_KNOWN_CURRENCIES..FIELD_PLAYER_KNOWN_CURRENCIES + 2).contains(&index)
         || player_slot_of_field(index)
             .is_some_and(|(slot, _)| crate::ui_currency::watched_slot(slot))
+}
+
+/// The buyback prices and stamps, the one range `0x585f80` watches.
+fn is_buyback_watch(index: u16) -> bool {
+    let first = benilla_protocol::field::FIELD_PLAYER_BUYBACK_PRICE_1;
+    (first..first + 24).contains(&index)
+}
+
+/// A skill slot's second or third word, whose halves the skill watches cover (`0x6e5426`, `0x6e5450`, `0x6e546a`).
+fn is_skill_watch(index: u16) -> bool {
+    let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+    index.checked_sub(first).is_some_and(|r| {
+        r < 3 * u16::from(benilla_protocol::messages::PLAYER_SKILL_SLOTS) && r % 3 != 0
+    })
+}
+
+/// How many skill watches a moved skill word runs: the second word's value half (`0x6da4a0`) and max half (`0x6cddb0`), the third word's permanent-bonus half (`0x6cddb0`).
+fn skill_watch_runs(index: u16, old: u32, new: u32) -> usize {
+    let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+    let low = old as u16 != new as u16;
+    let high = old >> 16 != new >> 16;
+    match (index - first) % 3 {
+        1 => usize::from(low) + usize::from(high),
+        _ => usize::from(high),
+    }
 }
 
 /// Our slot fields' watches, the inventory watch's (`0x6e51c5`-`0x6e52c3`) and the containers' (`0x5d9c20`): every slot but the buyback's.
@@ -2064,20 +2183,57 @@ fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: 
 /// Our player watches past the flags in field order: the bank's slot byte, honor, the currency watches, then the arena-team words once per update (`0x6cdda0`).
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
+    let mut buyback_done = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
+        // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`); its coin sound plays from [`crate::sound`].
+        if index == benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE {
+            sc.ui.world(crate::ui_trainer::refresh);
+            sc.ui.fire("PLAYER_MONEY", Vec::new());
+            continue;
+        }
+        // The skill slots' value, max and permanent-bonus halves, each its own watch re-evaluating the trainer (`0x6da5f3`, `0x6cddb0`).
+        if is_skill_watch(index) {
+            for _ in 0..skill_watch_runs(index, old, new) {
+                sc.ui.world(crate::ui_trainer::refresh);
+            }
+            continue;
+        }
+        // The buyback prices' and stamps' watch, one handler over the range, once per update (`0x585f60`).
+        if is_buyback_watch(index) {
+            if !std::mem::replace(&mut buyback_done, true) {
+                sc.ui.world(crate::ui_merchant::buyback_changed);
+            }
+            continue;
+        }
         if is_slot_watch(index) || is_currency_watch(index) {
             own_slot_watches(sc, guid, edges, at);
             continue;
         }
-        // The guild id's watch on the active player: the guild bank's tabs clear (`0x6e1bb0`).
+        // The guild id's watch on the active player: the guild change's event (`0x6e1bd9` -> `0x6df7a0`), then the guild bank's tabs clear (`0x6e1bb0`).
         if index == benilla_protocol::field::FIELD_PLAYER_GUILDID {
             if old != new {
+                sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+                // The merchant's refresh with a vendor set (`0x6e1c09`), ahead of the tabs' clear.
+                sc.ui.world(crate::ui_merchant::refresh);
                 crate::ui_guild_bank::guild_id_changed(&mut sc.ui);
             }
             continue;
         }
-        // The bank's watch on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
+        // Our guild timestamp's watch (`0x6e1c60`), after our guild id's in field order.
+        if index == benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP {
+            guild_stamp_watch(sc, guid, new);
+            continue;
+        }
+        // Our look bytes' watches, by byte: skin (`0x6da870`), hair style (`0x6df530`), hair colour (`0x6da7f0`).
+        if index == benilla_protocol::field::FIELD_PLAYER_BYTES {
+            for (byte, dial) in [(0, 0), (2, 2), (3, 3)] {
+                look_watch(sc, old, new, byte, dial);
+            }
+            continue;
+        }
+        // The facial hair's watch (`0x6df620`), then the bank's on the purchased-slots byte (`0x57ba60` -> `0x57b8b0`).
         if index == benilla_protocol::field::FIELD_PLAYER_BYTES_2 {
+            look_watch(sc, old, new, 0, 4);
             if (old >> 16) as u8 != (new >> 16) as u8 {
                 sc.ui.fire("PLAYERBANKBAGSLOTS_CHANGED", Vec::new());
             }
@@ -2104,6 +2260,17 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             &mut sc.ui,
         );
     }
+}
+
+/// One of our look bytes' watches: a moved byte lands on the barber body's dial and queues `BARBER_SHOP_APPEARANCE_APPLIED` (`0x52e4d0`).
+fn look_watch(sc: &mut Scene, old: u32, new: u32, byte: u32, dial: usize) {
+    let value = (new >> (byte * 8)) as u8;
+    if (old >> (byte * 8)) as u8 == value {
+        return;
+    }
+    sc.ui
+        .world(move |world| crate::ui_barber::look_changed(world, dial, value));
+    sc.signals.unique_signal("BARBER_SHOP_APPEARANCE_APPLIED");
 }
 
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
@@ -2143,14 +2310,22 @@ fn merge_fields(
     guid: u64,
     delta: ObjectFields,
     own: bool,
+    seated: Option<&Query<&crate::vehicle::Passenger>>,
 ) -> Merged {
     use benilla_protocol::field::{
         FIELD_PLAYER_FLAGS, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH,
     };
     let mut merged = Merged::default();
     if let Ok(mut s) = stores.get_mut(entity) {
+        let copy = s.0.unit_mount_copy();
+        let mut mount_zeroed = false;
         merge_store_fields(&mut s.0, delta, entity, guid, |e| {
+            mount_zeroed |=
+                e.unit_field(benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID) && e.new == 0;
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            merged.display_moved |=
+                own && e.unit_field(benilla_protocol::field::FIELD_UNIT_DISPLAYID);
+            merged.level_moved |= own && e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL);
             if e.unit_field(benilla_protocol::field::FIELD_UNIT_NPC_FLAGS) {
                 merged.npc_flags = Some((e.old, e.new));
             }
@@ -2197,7 +2372,6 @@ fn merge_fields(
             {
                 merged.form = Some((e.new >> 24) as u8);
             }
-            merged.level_moved |= own && e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL);
             merged.usable_updates += usable_updates(&e, own);
             merged.override_moved |= own
                 && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2)
@@ -2260,18 +2434,34 @@ fn merge_fields(
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
                 merged.pvp_flags = Some((e.old, e.new));
             }
+            if e.kind == benilla_protocol::messages::ObjectType::Player {
+                merged.guild_moved |=
+                    !own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID);
+                if !own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP) {
+                    merged.guild_stamp = Some(e.new);
+                }
+            }
             if own
                 && (crate::ui_honor::is_honor_watch(e.index)
                     || crate::ui_arena_team::is_team_info(e.index)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
                     || is_currency_watch(e.index)
-                    || is_slot_watch(e.index))
+                    || is_slot_watch(e.index)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)
+                    || is_buyback_watch(e.index)
+                    || is_skill_watch(e.index))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
             edges.write(e);
         });
+        // The mount field's zero while passengers ride holds the copy (`0x74046f`).
+        if mount_zeroed && seated.is_some_and(|q| q.iter().any(|p| p.vehicle == guid)) {
+            s.0.hold_mount(copy);
+        }
     } else {
         warn!(
             "net: values delta for {guid:#x} found no store on its entity — seeding from the delta"
@@ -2286,6 +2476,12 @@ fn merge_fields(
 /// `UNIT_NPC_FLAG_QUESTGIVER`, the bit the NPC-flag watch tests (`0x71a104`).
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 
+/// `UNIT_NPC_FLAG_FLIGHTMASTER`, the bit the NPC-flag watch's taxi leg tests (`0x71a13b`).
+const NPC_FLAG_FLIGHTMASTER: u32 = 0x2000;
+
+/// `UNIT_NPC_FLAG_TRAINER`, the bit the NPC-flag watch's trainer leg tests (`0x71a172`).
+const NPC_FLAG_TRAINER: u32 = 0x10;
+
 /// `UNIT_NPC_FLAG_BANKER`, the bit the NPC-flag watch's bank leg tests (`0x71a1a8`).
 const NPC_FLAG_BANKER: u32 = 0x20000;
 
@@ -2299,6 +2495,10 @@ type GuidHalves = (Option<u32>, Option<u32>);
 #[derive(Default)]
 struct Merged {
     flags_moved: bool,
+    /// Our own `UNIT_FIELD_DISPLAYID` moved (`0x716860`).
+    display_moved: bool,
+    /// Our own `UNIT_FIELD_LEVEL` moved (`0x72e40c` -> `0x6d66e0`).
+    level_moved: bool,
     /// Our own `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` moved (`0x6d1970`).
     pet_moved: bool,
     /// Our own `PLAYER_FARSIGHT` moved (`0x6e4fd0`).
@@ -2338,8 +2538,10 @@ struct Merged {
     died: bool,
     /// Our own shapeshift form byte, when it moved.
     form: Option<u8>,
-    /// Our own level moved (`0x6d66e0`).
-    level_moved: bool,
+    /// Another player's `PLAYER_GUILDID` moved (`0x6e1bb0`).
+    guild_moved: bool,
+    /// Another player's `PLAYER_GUILD_TIMESTAMP` moved to this stamp (`0x6e1c60`).
+    guild_stamp: Option<u32>,
     /// How many of our own main-hand and ranged visible items' entries moved (`0x6e1e10`, slots
     /// 15 and 17).
     weapons_moved: u8,

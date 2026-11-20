@@ -944,6 +944,31 @@ fn a_dropped_mount_reads_zero_until_its_field_moves() {
     assert_eq!(f.unit_mount_display_id(), 2_410, "a new mount reads");
 }
 
+/// A held dismount reads unmounted while the copy stays, through a move back to the copy, and a
+/// move to another display clears it (`0x51a230`, `0x740450`, `0x741a7f`).
+#[test]
+fn a_held_mount_reads_unmounted_until_its_field_names_another() {
+    let mount = |id: u32| ObjectFields::from_pairs(&[(FIELD_UNIT_MOUNTDISPLAYID, id)]);
+    let mut f = mount(14_376).into_created(ObjectType::Unit);
+    assert!(f.unit_is_mounted());
+    f.hold_mount(f.unit_mount_copy());
+    assert!(!f.unit_is_mounted(), "held while passengers ride");
+    assert_eq!(f.unit_mount_copy(), 14_376, "the copy stays");
+    f.merge(mount(0));
+    assert_eq!(
+        f.unit_mount_copy(),
+        0,
+        "a zero with no hold renewed clears it"
+    );
+    f.hold_mount(14_376);
+    f.merge(mount(14_376));
+    assert!(!f.unit_is_mounted(), "the copy it holds is a no-op");
+    f.merge(mount(2_410));
+    assert!(f.unit_is_mounted(), "another display clears the hold");
+    f.hold_mount(0);
+    assert!(f.unit_is_mounted(), "no mount, nothing held");
+}
+
 /// Each slot array's guid words map to their player slot and back, one past each run to none.
 #[test]
 fn a_slot_field_names_its_player_slot_and_word() {

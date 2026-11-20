@@ -368,17 +368,16 @@ fn render_lines(
         // The open merchant's first row of the item: its rating demand, bracket and the check
         // (`0x62b5ec`..`0x62b676`), the bracket clamped to 0..=3.
         let rated = match flags.requester {
-            Requester::Merchant { item_id } => model
-                .merchant
-                .as_ref()
-                .and_then(|m| m.items.iter().find(|r| r.item_id == item_id))
-                .and_then(|r| r.extended_cost.as_ref())
-                .filter(|c| c.required_rating > 0)
-                .map(|c| {
-                    let bracket = c.arena_bracket.clamp(0, 3);
-                    let met = crate::script::arena_team::rating_met(c.required_rating, bracket);
-                    (c.required_rating, bracket, met)
-                }),
+            Requester::Merchant { item_id } => {
+                { crate::script::merchant::first_vendor_row_of(&model, item_id) }
+                    .and_then(|r| r.extended_cost)
+                    .filter(|c| c.required_rating > 0)
+                    .map(|c| {
+                        let bracket = c.arena_bracket.clamp(0, 3);
+                        let met = crate::script::arena_team::rating_met(c.required_rating, bracket);
+                        (c.required_rating, bracket, met)
+                    })
+            }
             _ => None,
         };
         // The player's PvP team and sex, which name a required honor rank (`0x6d6f00`).
@@ -1293,7 +1292,7 @@ fn add_sell_price(lua: &Lua, this: &Table, v: &ItemTemplateView, sell: Sell) -> 
         let model = crate::script::model_mut_of(lua);
         (
             crate::script::merchant::repair_mode(&model),
-            model.merchant.is_some(),
+            super::super::merchant::merchant_open(&model),
         )
     };
     if repairing {

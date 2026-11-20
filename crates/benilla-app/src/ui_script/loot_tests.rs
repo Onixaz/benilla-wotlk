@@ -3,6 +3,7 @@ use benilla_ui::script::{
     SoundRequest, UiScript,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::stock_ui;
 
 /// The rect of the `QuadContent::Frame` quad sized `w` by `h`: every frame emits one.
@@ -620,8 +621,9 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
         s.mouse_button(x, y, "LeftButton", false);
         s.set_modifiers(false, false, false);
     };
+    s.record_writes();
     ctrl_click(&mut s, (x, y));
-    assert!(s.take_dressup_intents().is_empty(), "cloth is not worn");
+    assert!(s.take_dressup_edits().is_empty(), "cloth is not worn");
     assert!(
         s.take_loot_picks().is_empty(),
         "a ctrl-click must not also loot the row"
@@ -661,7 +663,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     let gloves = icon_center(&s.extract(), "INV_Gauntlets_17");
     ctrl_click(&mut s, gloves);
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![DressUpIntent::Dress, DressUpIntent::TryOn(2582, [0; 4])],
         "re-dress first, then try the looted item on"
     );

@@ -105,6 +105,8 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) mouseover: u64,
     pub(super) npc: u64,
     pub(super) focus: u64,
+    /// The interact target (`0xbd07a8`), walked beside `npc` so the token's unit and its target hop are held.
+    pub(super) interact: u64,
     /// `vehicle`'s guid, 0 when the player is not seated.
     pub(super) vehicle: u64,
     /// `bossN`'s guids, one per encounter slot.
@@ -179,6 +181,7 @@ impl UnitAuras {
             mouseover,
             npc,
             focus,
+            interact,
             vehicle,
             boss,
             arena,
@@ -219,7 +222,9 @@ impl UnitAuras {
         (g.arena, g.arena_pets, g.arena_count) = arena;
         g.held.clear();
         walk.clear();
-        walk.extend([me, pet, vehicle, target, mouseover, npc, focus].map(|g| (g, false)));
+        walk.extend(
+            [me, pet, vehicle, target, mouseover, npc, interact, focus].map(|g| (g, false)),
+        );
         walk.extend(boss.iter().map(|&g| (g, false)));
         walk.extend(arena.0.iter().chain(&arena.1).map(|&g| (g, false)));
         walk.extend(g.party.iter().chain(&g.party_pets).map(|&g| (g, true)));

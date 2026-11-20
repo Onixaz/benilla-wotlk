@@ -96,14 +96,23 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
         // the server equips or refuses. A stale row buys nothing: of the reference's three drop
         // sites only this one checks it; the other two dereference it.
         Some(CursorPayload::Merchant(held)) => {
-            let row = model
-                .merchant
-                .as_ref()
-                .and_then(|m| m.items.get(held.row as usize))
-                .filter(|it| it.item_id == held.item_id)
-                .map(|_| held.row + 1);
+            let row = crate::script::merchant::merchant_row(
+                model,
+                crate::script::MerchantList::Items,
+                held.row as usize,
+                false,
+            )
+            .filter(|it| it.item_id == held.item_id)
+            .map(|_| held.row);
             if let Some(row) = row {
-                model.merchant_slot_buys.push((EQUIPMENT_BAG, id, row));
+                crate::script::merchant::merchant_act(
+                    model,
+                    crate::script::MerchantAct::BuyInSlot {
+                        bag: EQUIPMENT_BAG,
+                        slot: id,
+                        row,
+                    },
+                );
             }
             queue_cursor_update(model);
             true

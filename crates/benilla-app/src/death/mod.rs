@@ -396,8 +396,8 @@ const PLAYER_FLAGS_GHOST: u32 = 0x10;
 fn on_death(fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
     if !dead_flag {
         cx.globals.update_repop_timer(fields, cx.now);
-        // The interact target's clear (`0x6dc17a` -> `0x512e60`), its bank leg (`0x512fa7`).
-        cx.ui.world(crate::ui_bank::close_by_interaction);
+        // The interact target's clear (`0x6dc17a` -> `0x512e60`): the window holding it closes.
+        cx.ui.world(crate::ui_session::clear_held_interact_target);
     }
     refresh_active_player(fields.unit_health().unwrap_or(0), cx.ui);
 }

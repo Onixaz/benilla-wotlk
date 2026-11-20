@@ -881,14 +881,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Value::Number(n) => n as i64,
                 _ => return Err(mlua::Error::runtime(INVALID)),
             };
-            let subject = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                match super::trainer::service(&model, index) {
-                    Some(s) => s.tooltip.clone(),
-                    None => return Err(mlua::Error::runtime(INVALID)),
-                }
+            let Some(subject) = super::trainer::service_tooltip(lua, index) else {
+                return Err(mlua::Error::runtime(INVALID));
             };
             match subject {
                 // The item builder (`0x6277f0`) with its last flag set, which skips the sell

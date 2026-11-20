@@ -651,7 +651,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let mut model = crate::script::model_mut_of(lua);
-            if u64::from(cost) > model.money + bank_money() {
+            if u64::from(cost) > crate::script::live::money(&model) + bank_money() {
                 drop(model);
                 crate::script::ui_errors::show_now(lua, "ERR_BANKSLOT_INSUFFICIENT_FUNDS");
                 return Ok(());
@@ -669,7 +669,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, money: Value| {
             let money = number_arg(lua, money, "Usage: DepositGuildBankMoney(money)")? as u32;
             let mut model = crate::script::model_mut_of(lua);
-            if model.money >= u64::from(money) {
+            if crate::script::live::money(&model) >= u64::from(money) {
                 model
                     .guild_bank_requests
                     .push(GuildBankRequest::DepositMoney(money));

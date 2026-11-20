@@ -380,6 +380,11 @@ impl super::UiScript {
             .by_name(token, |unit, with_realm| model.token_name(unit, with_realm))
     }
 
+    /// The `"npc"` guid: the interact target through the lent view, else as last pushed; 0 for none.
+    pub fn npc_guid(&self) -> u64 {
+        self.model_ref().unit_guids.npc_guid()
+    }
+
     /// Every token naming `guid` against the last push, for a per-token unit event (`0x60bb70`).
     pub fn unit_tokens(&self, guid: u64) -> Vec<String> {
         self.model_ref().unit_guids.tokens_naming(guid)

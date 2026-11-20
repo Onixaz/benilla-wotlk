@@ -20,7 +20,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_action::{show_messages, ui_error_text, MessageSink, Shown, UiError};
 use crate::ui_script::{UiDrain, UiFeed};
-use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
+use crate::ui_session::NpcSession;
 
 mod net;
 
@@ -392,6 +392,23 @@ impl NpcSession for AuctionOpen {
     }
 }
 
+/// The auctioneer set (`0x59f000`): the interact target set first (`0x59f008`), whose interaction close takes the window bound to the old one, then the house opens.
+pub(crate) fn set_auctioneer(world: &mut World, auctioneer: u64, house_id: u32) {
+    crate::ui_session::set_interact_target(world, auctioneer);
+    crate::ui_script::live::in_turn(world, move |w| {
+        if let Some(mut auction) = w.get_resource_mut::<AuctionOpen>() {
+            auction.open(auctioneer, house_id);
+        }
+    });
+}
+
+/// The interaction close's auction leg (`0x51304a` -> `0x59f150`), its target already zeroed: the house closes and `AUCTION_HOUSE_CLOSED` is owed.
+pub(crate) fn close_by_interaction(world: &mut World) {
+    if let Some(mut auction) = world.get_resource_mut::<AuctionOpen>() {
+        auction.clear();
+    }
+}
+
 pub(crate) struct UiAuctionPlugin;
 
 impl Plugin for UiAuctionPlugin {
@@ -400,10 +417,8 @@ impl Plugin for UiAuctionPlugin {
         app.init_resource::<AuctionOpen>().add_systems(
             Update,
             (
-                // Range-close before the feed so the close fires the same frame; the feed before
-                // the input pass, and after `UnitFeed` so a row's tooltip reads a landed template;
-                // the drain after the input pass so a click goes out the same frame.
-                close_npc_session_out_of_range::<AuctionOpen>.before(feed_auction),
+                // The feed before the input pass, and after `UnitFeed` so a row's tooltip reads a
+                // landed template; the drain after the input pass so a click goes out the same frame.
                 // Only with the interface up: a sale notice landing in the login burst would
                 // otherwise be shown on the boot VM and lost.
                 feed_auction
@@ -836,6 +851,7 @@ fn drain_auction(
     time: Res<Time>,
     objects: Objects,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    mut queue: Commands,
 ) {
     let Some(mut script) = script else {
         return;
@@ -1002,6 +1018,11 @@ fn drain_auction(
     }
 
     if script.take_auction_close() {
+        // The close clears the interact target on the auctioneer (`0x59f189`).
+        queue.queue(move |w: &mut World| {
+            crate::ui_session::clear_interact_target(w, auctioneer);
+            crate::ui_script::live::fire_handler_events(w);
+        });
         auction.clear();
     }
 }

@@ -29,7 +29,7 @@ pub(crate) mod idle;
 mod input;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
 mod language;
-pub(crate) use language::{feed_language_skills, load_language_words, ChatLanguages};
+pub(crate) use language::{language_skill, ChatLanguages};
 /// `LoggingChat`/`LoggingCombat`: the two log files `/chatlog` and `/combatlog` toggle.
 pub(crate) mod logging;
 mod net;
@@ -93,7 +93,7 @@ impl Plugin for UiChatPlugin {
             )
             // The slash-command table needs the VM's globals and the emote catalog, both `Startup`.
             .add_systems(PostStartup, commands::build_slash_commands)
-            // The language gate's feeds, ahead of the chat drain that reads them.
+            // The language gate's feeds, ahead of the chat drain and the calls that read them.
             .add_systems(
                 Update,
                 (
@@ -101,7 +101,9 @@ impl Plugin for UiChatPlugin {
                     language::feed_language_skills,
                     language::feed_default_language,
                 )
-                    .before(feed::feed_chat),
+                    .before(feed::feed_chat)
+                    // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
+                    .before(crate::ui_script::UiPress),
             )
             // Before the drain, so a broadcast lands on the frame it decodes.
             .add_systems(

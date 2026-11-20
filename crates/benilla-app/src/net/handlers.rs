@@ -49,10 +49,6 @@ impl NetHandlers {
         self.by_kind.entry(kind).or_default().push(handler);
     }
 
-    fn push_first(&mut self, kind: SessionEventKind, handler: Handler) {
-        self.by_kind.entry(kind).or_default().insert(0, handler);
-    }
-
     /// Runs the event's handlers in registration order, each one's events fired once its
     /// commands apply.
     fn run(&self, world: &mut World, ev: SessionEvent) {
@@ -86,13 +82,6 @@ pub(crate) trait NetHandlerApp {
         kind: SessionEventKind,
         handler: impl IntoSystem<In<SessionEvent>, (), M> + 'static,
     ) -> &mut Self;
-
-    /// [`Self::net_handler`] ahead of the kind's other handlers, whatever the plugin order.
-    fn net_handler_first<M>(
-        &mut self,
-        kind: SessionEventKind,
-        handler: impl IntoSystem<In<SessionEvent>, (), M> + 'static,
-    ) -> &mut Self;
 }
 
 impl NetHandlerApp for App {
@@ -107,21 +96,6 @@ impl NetHandlerApp for App {
             .get_resource_or_init::<NetHandlers>()
             .push(kind, (id, name));
         // The queues a handler fires its UI events and unique signals into.
-        self.init_resource::<crate::ui_script::live::UiEvents>()
-            .init_non_send_resource::<crate::ui_script::live::UniqueSignals>();
-        self
-    }
-
-    fn net_handler_first<M>(
-        &mut self,
-        kind: SessionEventKind,
-        handler: impl IntoSystem<In<SessionEvent>, (), M> + 'static,
-    ) -> &mut Self {
-        let name = std::any::type_name_of_val(&handler);
-        let id = self.world_mut().register_system(handler);
-        self.world_mut()
-            .get_resource_or_init::<NetHandlers>()
-            .push_first(kind, (id, name));
         self.init_resource::<crate::ui_script::live::UiEvents>()
             .init_non_send_resource::<crate::ui_script::live::UniqueSignals>();
         self
@@ -355,8 +329,7 @@ mod tests {
             let fixture = path
                 .file_stem()
                 .is_some_and(|s| s.to_string_lossy().ends_with("_tests"));
-            let text = regex_lite_strip_comments(&std::fs::read_to_string(&path).expect("source"))
-                .replace("net_handler_first(", "net_handler(");
+            let text = regex_lite_strip_comments(&std::fs::read_to_string(&path).expect("source"));
             for call in text.split("net_handler(").skip(1) {
                 let Some((args, _)) = call.split_once(')') else {
                     continue;

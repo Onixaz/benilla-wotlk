@@ -26,8 +26,27 @@ fn on_trade_status(
     commands: Res<NetCommands>,
     items: Option<Res<Items>>,
     limits: Option<Res<super::ItemLimitCategories>>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::TradeStatus { status } = ev {
+        use crate::ui_session::NpcSession;
+        // The partner setter takes the interact target on the open (`0x5874cb` -> `0x587124`) and clears it on the close (`0x5870f7`), whose interaction close takes the window bound to it.
+        let target = match status {
+            TradeStatus::OpenWindow { .. } => trade.partner.map(|p| (p, true)),
+            TradeStatus::Canceled | TradeStatus::Complete | TradeStatus::CloseWindow { .. } => {
+                trade.npc().map(|p| (p, false))
+            }
+            _ => None,
+        };
+        if let (Some((partner, open)), Some(mut ui)) = (target, ui) {
+            ui.world(move |w| {
+                if open {
+                    crate::ui_session::set_interact_target(w, partner);
+                } else {
+                    crate::ui_session::clear_interact_target(w, partner);
+                }
+            });
+        }
         if let TradeStatus::CloseWindow {
             result,
             target,

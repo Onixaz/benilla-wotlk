@@ -210,10 +210,6 @@ pub(crate) struct CasterSources<'w, 's> {
 }
 
 impl CasterSources<'_, '_> {
-    pub(crate) fn auras(&self) -> Option<&UnitAuras> {
-        self.auras.single().ok().map(|a| a.into_inner())
-    }
-
     /// A learn, an unlearn or an aura change since the system last ran.
     pub(crate) fn changed(&self) -> bool {
         self.known_changed() || self.auras_changed()

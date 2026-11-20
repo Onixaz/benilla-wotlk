@@ -231,7 +231,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .map(|h| h.guid())
                 .filter(|&g| record(&model, g).is_some());
             match item {
-                Some(guid) if model.merchant.is_some() => model.refund_sends.push(guid),
+                Some(guid) if super::merchant::merchant_open(&model) => {
+                    model.refund_sends.push(guid)
+                }
                 _ => {
                     drop(model);
                     crate::script::ui_errors::show_now(lua, "ERR_INTERNAL_BAG_ERROR");

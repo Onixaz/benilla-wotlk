@@ -48,6 +48,8 @@ pub(crate) struct GoTemplate {
     pub(crate) quest_material: Option<u32>,
     /// DUNGEON_DIFFICULTY (type 31) only: properties `0x57` and `0x58`, `data[0]` and `data[1]`.
     pub(crate) difficulty: Option<crate::go_difficulty::DifficultySlots>,
+    /// QUESTGIVER (type 2) only: property `0x16`, `data[4]`, the custom anim its interaction plays in place of opening, 0 for none (`0x70fe10`).
+    pub(crate) interact_anim: u32,
 }
 
 /// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`): the
@@ -192,9 +194,15 @@ impl GameObjectTemplates {
                 difficulty: data[1].max(0) as u32,
             }
         });
+        let interact_anim = if type_id == 2 {
+            data[4].max(0) as u32
+        } else {
+            0
+        };
         self.templates.insert(
             entry,
             Some(GoTemplate {
+                interact_anim,
                 lock_id,
                 name,
                 allow_mounted,
