@@ -359,6 +359,8 @@ pub enum SessionEvent {
     TransferPending {
         map_id: u32,
         transport_entry: Option<u32>,
+        /// The map the transport leaves, sent with the entry: the ship loading screen's leg.
+        transport_map: Option<u32>,
     },
     /// `SMSG_TRANSFER_ABORTED`: the transfer to `map` is off (map full, no instance), with the
     /// third byte reasons 7 to 9 carry.

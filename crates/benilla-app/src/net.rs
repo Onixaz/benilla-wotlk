@@ -31,9 +31,8 @@ pub(crate) use parked::ParkedObjects;
 mod session;
 mod world;
 
-pub(crate) use apply::apply_net_updates;
 pub(crate) use apply::enter_world_on_self_create;
-use apply::tag_self_player;
+pub(crate) use apply::{apply_net_updates, tag_self_player};
 pub(crate) use handlers::NetHandlerApp;
 
 pub(crate) use io::LoginRequest;
@@ -129,6 +128,7 @@ impl Plugin for NetPlugin {
             .add_message::<PetTalkMessage>()
             .add_message::<PetDismissSoundMessage>()
             .add_message::<WorldportMessage>()
+            .add_message::<TransferPendingMessage>()
             .add_message::<RealmListMessage>()
             .add_message::<CharListMessage>()
             .add_message::<WorldAuthMessage>()
@@ -2936,6 +2936,12 @@ pub(crate) struct KnockBackMessage {
     pub(crate) launch: JumpInfo,
 }
 
+/// `SMSG_TRANSFER_PENDING` as it arrives. The loading screen raises on it, not on
+/// [`PendingTransfer`]: AzerothCore sends `SMSG_NEW_WORLD` right behind it, and the worldport
+/// takes the latch in the same drain, before any reader of the resource runs.
+#[derive(Message, Clone, Copy)]
+pub(crate) struct TransferPendingMessage(pub(crate) PendingTransferInfo);
+
 /// A cross-map worldport: snap, swap the map, ack if required.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct WorldportMessage {
@@ -2964,6 +2970,8 @@ pub(crate) struct PendingTransfer(pub(crate) Option<PendingTransferInfo>);
 pub(crate) struct PendingTransferInfo {
     pub(crate) map_id: u32,
     pub(crate) transport_entry: Option<u32>,
+    /// The map the transport leaves, sent with the entry.
+    pub(crate) transport_map: Option<u32>,
 }
 
 /// `SMSG_PLAY_SOUND`, `PLAY_MUSIC` or `PLAY_OBJECT_SOUND`: a SoundEntries id. An unstreamed

@@ -235,6 +235,14 @@ impl Transport {
         (sample.map == here).then_some(sample.sequence)
     }
 
+    /// The reference's ship-path leg the cycle is on, for a type 15 (`0x7f82b0`); a lift has none.
+    pub(crate) fn ship_leg_at(&self, anchor: &TransportAnchor) -> Option<u32> {
+        match &self.drive {
+            Drive::Taxi(t) => Some(t.ship_leg(self.cycle_ms(anchor))),
+            Drive::Lift(_) => None,
+        }
+    }
+
     /// The live sample for an anchor, the pose the tick writes this frame; for instruments.
     pub(crate) fn sample_at(&self, anchor: &TransportAnchor, here: u32) -> TransportSample {
         self.sample(self.cycle_ms(anchor), here)
