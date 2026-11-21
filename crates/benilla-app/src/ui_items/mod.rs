@@ -34,6 +34,8 @@ pub(crate) use container_live::{BagRead, ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
 
+#[cfg(test)]
+pub(crate) use drain::drain_bind_confirm_answers;
 pub(crate) use drain::send_auto_equip;
 use drain::{
     drain_bag_autostores, drain_container_autoequips, drain_container_destroys,

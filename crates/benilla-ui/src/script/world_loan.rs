@@ -232,6 +232,10 @@ impl Drop for Pop {
     fn drop(&mut self) {
         LOANS.with_borrow_mut(|l| {
             l.live.pop();
+            // A panic leaving the outermost loan carries the record itself; the next loan starts clean.
+            if l.live.is_empty() && std::thread::panicking() {
+                l.held_across = None;
+            }
         });
     }
 }
@@ -351,9 +355,12 @@ mod tests {
         // The chunk's error is dropped, as a handler guard drops it: the loan's end still fails.
         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             lend(&lua, &mut n, || {
-                with_lent::<u32, _>(|_| {
-                    let _ = lua.load("Bump()").exec();
-                });
+                let swallowed = with_lent::<u32, _>(|_| lua.load("Bump()").exec().is_err());
+                assert_eq!(
+                    swallowed,
+                    Some(true),
+                    "the chunk returns the panic as its error"
+                );
             })
         }));
         let message = held
@@ -363,6 +370,14 @@ mod tests {
         assert!(message.contains("borrowed across a raise"), "{message}");
         assert!(!lent(), "the loan is popped on unwind");
         assert!(!lua.load("return Bump()").eval::<bool>().unwrap());
+        // A held borrow whose panic propagates out of the loan leaves the next loan clean.
+        let propagated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lend(&lua, &mut n, || {
+                with_lent::<u32, _>(|_| with_lent::<u32, _>(|_| ()));
+            })
+        }));
+        assert!(propagated.is_err());
+        lend(&lua, &mut n, || lua.load("assert(Bump())").exec().unwrap());
     }
 
     /// A step's raises queue in turn, in order, nested steps each keeping their own, and nothing

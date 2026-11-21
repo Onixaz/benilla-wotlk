@@ -1528,6 +1528,92 @@ fn a_select_from_an_item_lock_listener_applies_inside_it() {
     assert_eq!(selected, Some(NEW));
 }
 
+/// `call` in an `OnUpdate`, with an `ITEM_LOCKED` listener that casts Bolt: the sends since, as
+/// `"cast"`, `"equip"` or `"open"`, the others left out.
+fn sends_around_the_lock(rig: &mut Rig, call: &str) -> Vec<&'static str> {
+    rig.lua(TICK_DO);
+    rig.lua(&format!(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("ITEM_LOCKED")
+        f:SetScript("OnEvent", function() UseAction(1) end)
+        TICK_DO = function() {call} end"#
+    ));
+    rig.frame();
+    rig.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CastSpell { .. } => Some("cast"),
+            ClientCommand::AutoEquipItemSlot { .. } => Some("equip"),
+            ClientCommand::OpenItem { .. } => Some("open"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The slotted equip locks and signals before it sends (`0x6e0136` before `0x6e016e`): a send the
+/// lock's listener makes reaches the wire ahead of `CMSG_AUTOEQUIP_ITEM_SLOT`.
+#[test]
+fn a_slotted_equips_lock_listener_sends_before_the_equip() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    // `EquipItemByName` does nothing without the player (`0x51cdb0`).
+    rig.vm().set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: ME,
+        ..Default::default()
+    });
+    let sends = sends_around_the_lock(&mut rig, "EquipItemByName(159, 16)");
+    assert_eq!(sends, ["cast", "equip"]);
+}
+
+/// The item open locks and signals before it sends (`0x6dcded` before `0x6dce3b`): a send the
+/// lock's listener makes reaches the wire ahead of `CMSG_OPEN_ITEM`.
+#[test]
+fn an_item_opens_lock_listener_sends_before_the_open() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.flags |= benilla_protocol::messages::ITEM_FLAG_LOOTABLE);
+    let sends = sends_around_the_lock(&mut rig, "UseContainerItem(0, 1)");
+    assert_eq!(sends, ["cast", "open"]);
+}
+
+/// The bind dialog's accept re-runs the slotted equip (`0x6e01a0`), which locks and signals before
+/// it sends (`0x6e0136` before `0x6e016e`): the lock's listener's send goes out first.
+#[test]
+fn an_accepted_slotted_equips_lock_listener_sends_before_the_equip() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    let index = rig
+        .app
+        .world_mut()
+        .resource_mut::<crate::ui_bind_confirm::PendingEquips>()
+        .add(crate::ui_bind_confirm::PendingEquip::Slot {
+            bag: 0,
+            slot: 1,
+            dst: 15,
+        });
+    rig.lua(&format!(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("ITEM_LOCKED")
+        f:SetScript("OnEvent", function() UseAction(1) end)
+        EquipPendingItem({index})"#
+    ));
+    rig.app
+        .world_mut()
+        .run_system_once(crate::ui_items::drain_bind_confirm_answers)
+        .expect("the answers drain");
+    let sends: Vec<&str> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CastSpell { .. } => Some("cast"),
+            ClientCommand::AutoEquipItemSlot { .. } => Some("equip"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends, ["cast", "equip"]);
+}
+
 /// A call made where no hook is lent waits; the next call made under one applies it first, so the
 /// two keep call order: the cast goes to the target the earlier call selected.
 #[test]
