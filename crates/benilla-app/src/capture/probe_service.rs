@@ -27,8 +27,7 @@ use bevy::prelude::*;
 
 use benilla_protocol::EntityKind;
 
-use super::probes::ProbeClock;
-use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
+use crate::net::{ChatKind, ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::player::Player;
 use crate::target::click::{service_action, service_arm, ServiceAction, ServiceArm};
 use crate::target::cursor_mode::npc_flags as f;
@@ -289,34 +288,71 @@ fn open_window(
     None
 }
 
-fn service_probe(
-    time: ProbeClock,
-    mut probe: ResMut<ServiceProbe>,
-    mut queue: Commands,
-    statuses: Res<QuestStatuses>,
-    // The vendor fork: the VM the held-cursor leg picks up in, and what turns a (bag, slot) into
-    // the item guid; the merchant window is read through the view.
-    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    objects: crate::net::Objects,
-    self_store: Query<&ObjectStore, With<SelfPlayer>>,
-    self_player: Query<(), With<SelfPlayer>>,
-    player: Res<Player>,
-    units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    net: Res<NetCommands>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    // The interact target, what the re-click gate reads: armed by a window and only by one.
-    let interact_target = live.interact_target().0;
-    if self_player.is_empty() {
+/// The world steps a frame of the probe queued, run once its calls are done, as `Commands` apply.
+#[derive(Default)]
+struct Queue(Vec<Box<dyn FnOnce(&mut World) + Send>>);
+
+impl Queue {
+    fn queue(&mut self, step: impl FnOnce(&mut World) + Send + 'static) {
+        self.0.push(Box::new(step));
+    }
+}
+
+fn service_probe(world: &mut World) {
+    if !super::probes::in_world(world) {
         return; // not in-world yet
     }
-    let now = time.elapsed_secs_f64();
-    // The gossip globals as the verbs read them, through the view this system lends.
-    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
+    let now = f64::from(super::probes::probe_secs(world));
+    let units = super::probes::seen(world);
+    let pos = world.resource::<Player>().pos;
+    let Some(mut probe) = world.remove_resource::<ServiceProbe>() else {
+        return;
+    };
+    let mut queue = Queue::default();
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        service_step(&mut probe, script, now, &units, pos, &mut queue, &mut exit);
+    });
+    world.insert_resource(probe);
+    for step in queue.0 {
+        step(world);
+    }
+    for e in exit {
+        world.write_message(e);
+    }
+}
 
+/// The interact target (`0xbd07a8`), read off the lent `World`.
+fn interact_target() -> Option<u64> {
+    super::probes::read(|w| {
+        w.get_resource::<crate::ui_session::InteractTarget>()
+            .and_then(|t| t.0)
+    })
+}
+
+/// One frame of the probe, the `World` lent; the windows read live between calls.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn service_step(
+    probe: &mut ServiceProbe,
+    script: Option<&mut UiScript>,
+    now: f64,
+    units: &super::probes::Seen,
+    pos: Vec3,
+    queue: &mut Queue,
+    exit: &mut Vec<AppExit>,
+) {
+    // The interact target, what the re-click gate reads: armed by a window and only by one.
+    let interact_target = interact_target();
+    let net = super::probes::read(|w| NetCommands(w.resource::<NetCommands>().0.clone()));
+    // The gossip globals as the verbs read them.
+    let gossip = super::probes::read(|w| {
+        w.get_resource::<crate::ui_gossip::GossipState>()
+            .cloned()
+            .unwrap_or_default()
+    });
     match probe.phase {
         Phase::Start => {
-            hop(&mut probe, &net, 0, 0, now);
+            hop(probe, &net, 0, 0, now);
         }
         Phase::Hop { i, hop: h, sent_at } => {
             if now - sent_at < SETTLE_SECS {
@@ -324,7 +360,7 @@ fn service_probe(
             }
             probe.polls += 1;
             let leg = &LEGS[i];
-            let me = player.pos;
+            let me = pos;
             let found = units.iter().find(|(guid, net_e, store, tf)| {
                 // The click's own gate: `dist² > SERVICE_RANGE_SQ` is the cursor's `unable`, and
                 // the arm never runs.
@@ -340,7 +376,9 @@ fn service_probe(
                         flags & f::QUESTGIVER != 0
                             && flags & f::GOSSIP == 0
                             && crate::target::cursor_mode::questgiver_has_quest(
-                                statuses.status(guid.0),
+                                super::probes::read(|w| {
+                                    w.resource::<QuestStatuses>().status(guid.0)
+                                }),
                             )
                     }
                 }
@@ -354,7 +392,7 @@ fn service_probe(
                             h + 1,
                             leg.at.len()
                         );
-                        hop(&mut probe, &net, i, h + 1, now);
+                        hop(probe, &net, i, h + 1, now);
                         return;
                     }
                     let polls = probe.polls;
@@ -380,14 +418,14 @@ fn service_probe(
                         }
                     );
                     probe.skips += 1;
-                    next(&mut probe, &net, i, now);
+                    next(probe, &net, i, now);
                 }
                 return;
             };
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
             let entry = store.0.object_entry().unwrap_or(0);
-            let status = statuses.status(guid);
+            let status = super::probes::read(|w| w.resource::<QuestStatuses>().status(guid));
 
             // The shipped ladder, on the shipped inputs.
             let arm = service_arm(flags, status);
@@ -408,7 +446,7 @@ fn service_probe(
                     leg.want_arm
                 );
                 probe.fails += 1;
-                next(&mut probe, &net, i, now);
+                next(probe, &net, i, now);
                 return;
             };
             if arm != leg.want_arm {
@@ -422,14 +460,18 @@ fn service_probe(
                     leg.want_arm
                 );
                 probe.fails += 1;
-                next(&mut probe, &net, i, now);
+                next(probe, &net, i, now);
                 return;
             }
 
             // A stale window from the previous leg would answer this one's question. The
             // reference's own close sends no packet, so a local clear is the whole of it.
             queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
-            live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
+            super::probes::read(|w| {
+                if let Some(mut g) = w.get_non_send_resource_mut::<QuestGiver>() {
+                    g.clear();
+                }
+            });
             queue.queue(close_trainer);
 
             // The first click must get through: nothing is open, and the reference arms only from
@@ -442,7 +484,7 @@ fn service_probe(
                     interact_target.unwrap_or(0)
                 );
                 probe.fails += 1;
-                next(&mut probe, &net, i, now);
+                next(probe, &net, i, now);
                 return;
             }
 
@@ -474,7 +516,7 @@ fn service_probe(
                         leg.name
                     );
                     probe.skips += 1;
-                    next(&mut probe, &net, i, now);
+                    next(probe, &net, i, now);
                     return;
                 }
             };
@@ -492,9 +534,12 @@ fn service_probe(
         }
         Phase::Await { i, since, guid } => {
             let leg = &LEGS[i];
-            let trainer = live.trainer_open();
-            let Some((window, quest_view)) = live.with_giver(|giver| {
-                giver.map(|g| {
+            let trainer = super::probes::read(|w| {
+                w.get_resource::<crate::ui_trainer::TrainerOpen>()
+                    .and_then(|o| o.trainer.map(|t| (t, o.services.len(), o.trainer_type)))
+            });
+            let Some((window, quest_view)) = super::probes::read(|w| {
+                w.get_non_send_resource::<QuestGiver>().map(|g| {
                     let window = open_window(guid, &gossip, g, trainer.map(|t| t.0));
                     (window, g.view.as_ref().map(discr))
                 })
@@ -539,7 +584,7 @@ fn service_probe(
                         leg.name, leg.want_window
                     );
                     probe.fails += 1;
-                    next(&mut probe, &net, i, now);
+                    next(probe, &net, i, now);
                 }
                 None if now - since > WINDOW_TIMEOUT_SECS => {
                     // A gossip session latched with an unresolved greeting keeps the frame shut
@@ -560,7 +605,7 @@ fn service_probe(
                         }
                     );
                     probe.fails += 1;
-                    next(&mut probe, &net, i, now);
+                    next(probe, &net, i, now);
                 }
                 None => {}
             }
@@ -575,7 +620,7 @@ fn service_probe(
                     (now - since) * 1000.0
                 );
                 probe.passes += 1;
-                next(&mut probe, &net, i, now);
+                next(probe, &net, i, now);
             } else if now - since > GATE_TIMEOUT_SECS {
                 error!(
                     "PROBE_SERVICE: FAIL ({}) — the window has been open on {guid:#x} for \
@@ -584,7 +629,7 @@ fn service_probe(
                     leg.name, interact_target
                 );
                 probe.fails += 1;
-                next(&mut probe, &net, i, now);
+                next(probe, &net, i, now);
             }
         }
         // ── The vendor fork ──────────────────────────────────────────────────
@@ -592,7 +637,7 @@ fn service_probe(
             if now - sent_at < SETTLE_SECS {
                 return;
             }
-            let me = player.pos;
+            let me = pos;
             let found = units.iter().find(|(_, net_e, store, tf)| {
                 net_e.kind == EntityKind::Unit
                     && store.0.object_entry() == Some(VENDOR_ENTRY)
@@ -612,7 +657,11 @@ fn service_probe(
             let guid = guid.0;
             let flags = store.0.unit_npc_flags();
             queue.queue(|w: &mut World| crate::ui_gossip::set_npc(w, 0));
-            live.with_giver_mut(|giver| giver.map(QuestGiver::clear));
+            super::probes::read(|w| {
+                if let Some(mut g) = w.get_non_send_resource_mut::<QuestGiver>() {
+                    g.clear();
+                }
+            });
             queue.queue(close_trainer);
             queue.queue(|w: &mut World| {
                 crate::ui_merchant::close_merchant(w);
@@ -652,7 +701,11 @@ fn service_probe(
             }
         }
         Phase::VendorOpen { since, guid } => {
-            if live.merchant_vendor() == Some(guid) {
+            if super::probes::read(|w| {
+                w.get_resource::<crate::ui_merchant::MerchantOpen>()
+                    .and_then(|m| m.vendor)
+            }) == Some(guid)
+            {
                 info!(
                     "PROBE_SERVICE: PASS (vendor fork, empty cursor) — merchant window open on \
                      {guid:#x}: the zero leg is still the plain list open"
@@ -681,7 +734,7 @@ fn service_probe(
             }
         }
         Phase::VendorArm { since, guid } => {
-            let Some(mut script) = script else {
+            let Some(script) = script else {
                 warn!("PROBE_SERVICE: SKIP (vendor fork, held cursor) — no UI VM in this build");
                 probe.skips += 1;
                 probe.phase = Phase::Done;
@@ -716,11 +769,21 @@ fn service_probe(
                 return;
             };
             let slot0 = u8::try_from(held.slot.saturating_sub(1)).unwrap_or(0);
-            let Some(item_guid) = self_store
-                .single()
+            let item_guid = super::probes::read(|w| {
+                w.run_system_cached_with(
+                    |In((bag, slot0)): In<(i64, u8)>,
+                     me: Query<&ObjectStore, With<SelfPlayer>>,
+                     objects: crate::net::Objects| {
+                        me.single()
+                            .ok()
+                            .and_then(|s| crate::ui_items::slot_guid(&s.0, bag, slot0, &objects))
+                    },
+                    (held.bag, slot0),
+                )
                 .ok()
-                .and_then(|s| crate::ui_items::slot_guid(&s.0, held.bag, slot0, &objects))
-            else {
+                .flatten()
+            });
+            let Some(item_guid) = item_guid else {
                 error!(
                     "PROBE_SERVICE: FAIL (vendor fork, held cursor) — bag {} slot {} is on the \
                      cursor but resolves to no item guid, so the arm cannot address the packet",
@@ -805,7 +868,7 @@ fn service_probe(
             );
             // `ProbeExitPlugin::fire_probe_exit`'s pattern: `AppExit` plus a hard backstop, so a
             // teardown hang cannot leave a client holding the probe account.
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_SERVICE: still alive 5s after AppExit — hard exit");

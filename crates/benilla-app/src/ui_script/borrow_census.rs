@@ -5,10 +5,8 @@
 
 pub(super) const STILL_BORROWS: &[(&str, usize)] = &[
     ("capture/fixtures.rs", 1),
-    ("capture/probe_bg.rs", 1),
     ("capture/probe_charter.rs", 1),
     ("capture/probe_mail.rs", 1),
-    ("capture/probe_service.rs", 1),
     ("capture/probes/act.rs", 5),
     ("capture/probes/stretch.rs", 1),
     ("script_calls.rs", 1),

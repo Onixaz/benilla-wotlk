@@ -2618,17 +2618,6 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         f()
     }
 
-    /// `f` over the quest giver this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
-    pub(crate) fn with_giver<R>(&self, f: impl FnOnce(Option<&QuestGiver>) -> R) -> R {
-        self.loan.with_view(|v| f(v.lent.giver.get()))
-    }
-
-    /// The vendor this parameter's view lends, between calls into Lua.
-    pub(crate) fn trainer_open(&self) -> Option<(u64, usize, u32)> {
-        self.loan
-            .with_view(|v| v.trainer.as_ref().and_then(|t| t.open()))
-    }
-
     /// The interact target (`0xbd07a8`), read between calls; whether it moved since the system last ran.
     pub(crate) fn interact_target(&self) -> (Option<u64>, bool) {
         let view = self.view();
