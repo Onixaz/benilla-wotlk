@@ -41,7 +41,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),
-    ("TransportRotation", "#243 transport rotation"),
     ("VideoHardware", "#245 graphics defaults by video card"),
     ("WorldChunkSounds", "#244 per-chunk zone sounds"),
     (
