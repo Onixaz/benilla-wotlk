@@ -2168,10 +2168,8 @@ fn spell_delayed(
 ) {
     debug!("net: spell delayed by {caster:#x} (+{delay_ms}ms pushback)");
     ui.cast_edge(CastBarEdge::Delayed { caster, delay_ms });
-    if self_guid.0 == Some(caster) {
-        if *crate::net::CAST_TRACE {
-            info!("cast-trace: RECV SPELL_DELAYED — +{delay_ms}ms pushback (bar extends, does NOT vanish)");
-        }
+    if self_guid.0 == Some(caster) && *crate::net::CAST_TRACE {
+        info!("cast-trace: RECV SPELL_DELAYED — +{delay_ms}ms pushback (bar extends, does NOT vanish)");
     }
 }
 
