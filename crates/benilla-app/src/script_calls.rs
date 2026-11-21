@@ -47,6 +47,11 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         let (applied, raised) = benilla_ui::script::world_loan::raises_in_turn(|| {
             world.run_system_cached_with(apply_one, call).ok()
         });
+        // The setter's tail at the selection write (`0x524f38`-`0x524f54`), ahead of what the call
+        // raises after it: the cast's attack pick selects before the send (`0x80d661`, `0x80b556`).
+        if applied.is_some() {
+            crate::ui_unit::target_set_tail(world);
+        }
         // The applier's raises as the call returns, with the `World` lent again: the ones it made
         // through the VM (the item-use fork's `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`,
         // the selection's refusal line `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`).
@@ -60,10 +65,6 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         }
         crate::ui_script::live::fire_handler_events(world);
         world.resource_mut::<UiEvents>().put_back(earlier);
-        // The setter's tail, inside the call that moved the selection (`0x524f38`-`0x524f54`).
-        if applied.is_some() {
-            crate::ui_unit::target_set_tail(world);
-        }
         applied
     })
     .flatten();
@@ -1088,6 +1089,34 @@ mod tests {
                 ("select", NEW)
             ]
         );
+    }
+
+    /// The pick's selection is told before the cast it makes: `PLAYER_TARGET_CHANGED` fires inside
+    /// the setter (`0x524f54`) the pick calls (`0x80d661`), ahead of the send's `UNIT_SPELLCAST_SENT`
+    /// (`0x80b556`), and the send's listener reads the new target.
+    #[test]
+    fn a_strikes_pick_tells_the_new_target_before_the_send() {
+        let mut f = frame(false);
+        spawn_mob(&mut f, &[]);
+        with_strike(&mut f);
+        run(
+            &mut f,
+            r#"Seen = {}
+               local l = CreateFrame("Frame")
+               l:RegisterEvent("PLAYER_TARGET_CHANGED")
+               l:RegisterEvent("UNIT_SPELLCAST_SENT")
+               l:SetScript("OnEvent", function(_, e)
+                   table.insert(Seen, e .. ":" .. tostring(UnitExists("target") and 1 or 0))
+               end)
+               UseAction(1)"#,
+        );
+        let seen = f
+            .app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(Seen, ',')")
+            .unwrap();
+        assert_eq!(seen, "PLAYER_TARGET_CHANGED:1,UNIT_SPELLCAST_SENT:1");
     }
 
     /// A self-cast press passes the caster to the pick, and the reaction to oneself is 4, so the
