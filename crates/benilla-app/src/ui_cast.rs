@@ -84,6 +84,8 @@ pub(crate) enum CastBarEdge {
     /// A line the press raised through the message display (`0x5216f0`), such as an attack
     /// refusal.
     Line(crate::ui_action::UiError),
+    /// The cast send's rest after its `SENT` (`0x80b573`, `0x80b583`), run at its step.
+    SendTail(crate::spell::SendTail),
 }
 
 /// A press's signal joins its edges, in order with the send's and the cancel's.
@@ -115,6 +117,28 @@ impl crate::ui_action::CastRefusals for PressSignals<'_, '_> {
 pub(crate) struct PressEdges(Vec<CastBarEdge>);
 
 impl PressEdges {
+    /// Run every waiting send's rest in order, as its step would after its `SENT` listeners: a
+    /// harness that runs the ladder as a one-shot system and fires nothing.
+    #[cfg(test)]
+    pub(crate) fn run_tails(world: &mut World) {
+        loop {
+            let tail = world.get_resource_mut::<PressEdges>().and_then(|mut e| {
+                let at =
+                    e.0.iter()
+                        .position(|e| matches!(e, CastBarEdge::SendTail(_)))?;
+                match e.0.remove(at) {
+                    CastBarEdge::SendTail(tail) => Some(tail),
+                    _ => None,
+                }
+            });
+            let Some(tail) = tail else { return };
+            world.get_resource_or_init::<UiEvents>();
+            world
+                .run_system_cached_with(crate::spell::run_send_tail, tail)
+                .expect("the tail runs");
+        }
+    }
+
     /// The refusals waiting, taken.
     #[cfg(test)]
     pub(crate) fn take_refusals(&mut self) -> Vec<crate::ui_action::CastFail> {
@@ -131,12 +155,12 @@ impl PressEdges {
 }
 
 /// The edges a press makes: our cast send's `UNIT_SPELLCAST_SENT` (`0x80b556`), our local
-/// cancel's end (`0x806200`) and a local refusal's line (`0x808200`). The reference fires each at
-/// its step inside the press; a system holding the VM fires them, in that order, as soon as the
-/// ladder or the cancel returns ([`Self::fire`]), so a handler sees the state after the press, not
-/// at its step (#1363); a packet handler hands them to its turn's queue
-/// ([`Self::defer`]), and a system without the VM fires them once its commands apply
-/// ([`Self::flush`]).
+/// cancel's end (`0x806200`) and a local refusal's line (`0x808200`), in the press's order. They
+/// fire with the `World` lent at the press's raise step ([`apply_edge`]), and the send's rest
+/// after `SENT` ([`CastBarEdge::SendTail`]: the start visuals `0x80b573`, the GCD arm `0x80b583`)
+/// runs there after `SENT`'s listeners, so a listener reads no GCD yet and its own call applies
+/// inside it. A packet handler hands them to its turn's queue ([`Self::defer`]), and a system
+/// without the VM fires them once its commands apply ([`Self::flush`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PressSignals<'w, 's> {
     // `Option`: a ladder runs in harnesses without the cast plugin, which signal nothing.
@@ -182,6 +206,19 @@ impl PressSignals<'_, '_> {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Cancelled { caster });
             edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// Whether the edges fire at a step with the `World` lent, so the send's rest can wait for its
+    /// `SENT` listeners; a harness without the cast plugin runs it in place.
+    pub(crate) fn raises_at_step(&self) -> bool {
+        self.edges.is_some()
+    }
+
+    /// The cast send's rest, run after the `SENT` raised before it (`0x80b556`, `0x80b573`).
+    pub(crate) fn tail(&mut self, tail: crate::spell::SendTail) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::SendTail(tail));
         }
     }
 
@@ -648,6 +685,12 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         _ => {}
     }
+    if let CastBarEdge::SendTail(tail) = edge {
+        if let Err(e) = world.run_system_cached_with(crate::spell::run_send_tail, tail) {
+            warn!("ui_cast: a cast send's tail did not run: {e}");
+        }
+        return;
+    }
     if let CastBarEdge::CooldownStart { on_hold } = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             crate::ui_action::signals::cooldown_site(
@@ -711,7 +754,10 @@ fn edge_system(
     let units = &mut *units;
     match edge {
         // Run by `apply_edge` before this system.
-        CastBarEdge::CooldownStart { .. } | CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
+        CastBarEdge::CooldownStart { .. }
+        | CastBarEdge::Refused(_)
+        | CastBarEdge::Line(_)
+        | CastBarEdge::SendTail(_) => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
         CastBarEdge::Sent { spell_id, target } => {

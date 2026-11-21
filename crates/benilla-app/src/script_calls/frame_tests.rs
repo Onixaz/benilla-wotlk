@@ -1468,6 +1468,27 @@ fn a_select_from_a_sent_listener_applies_inside_it() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
 }
 
+/// `UNIT_SPELLCAST_SENT` fires after the send and ahead of the start visuals and the GCD arm
+/// (`0x80b556`, `0x80b573`, `0x80b583`): its listener reads no cooldown yet, and the code after the
+/// call reads the GCD the rest of the press armed.
+#[test]
+fn a_sent_listener_reads_no_gcd_yet() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function() AT_SENT = GetActionCooldown(1) end)
+        TICK_DO = function() UseAction(1) AFTER = GetActionCooldown(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+    let at_sent: f64 = rig.vm().eval("return AT_SENT").expect("the listener ran");
+    let after: f64 = rig.vm().eval("return AFTER").expect("the call returned");
+    assert_eq!(at_sent, 0.0, "no GCD at SENT");
+    assert!(after > 0.0, "the press armed the GCD after SENT: {after}");
+}
+
 /// A listener on `event`, raised by the call `call` makes inside an `OnUpdate`, that targets
 /// `party1` and reads the target back inside the listener: what it read, and the selection after.
 fn listener_selects(rig: &mut Rig, event: &str, call: &str) -> (Option<String>, Option<u64>) {

@@ -334,21 +334,20 @@ impl CastLadder<'_, '_> {
                 target: bound_target(bound),
             },
         };
+        let target = match bound {
+            TargetedBind::Unit(guid) => Some(guid),
+            _ => None,
+        };
+        // The send clears the cursor's pending cast before it goes out (`0x80b4a2`).
+        let prelude = self.ground.prelude().cloned();
+        self.ground.clear();
         if !commit.is_item() {
-            let target = match bound {
-                TargetedBind::Unit(guid) => Some(guid),
-                _ => None,
-            };
             self.press.sent(spell_id, target);
         }
-        if let Some(prelude) = self.ground.prelude() {
+        if let Some(prelude) = prelude {
             prelude.send(&self.commands, &mut self.ecs);
         }
         let _ = self.commands.0.send(cmd);
-        // The trade-slot click alone sends with its visuals hidden (`0x80c62c`).
-        if bound != TargetedBind::TradeItem {
-            start_sent_cast(&mut self.ecs, None, spell_id, false);
-        }
         let now = Instant::now();
         if let CastCommit::Item { entry, .. } = commit {
             self.pending.arm_item(spell_id, entry, now);
@@ -361,18 +360,36 @@ impl CastLadder<'_, '_> {
                 .is_none_or(|d| !d.ranged_attack() && !d.on_next_swing());
             self.pending.arm(spell_id, now, guards);
         }
-        if let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) {
-            let speed = cast_speed(self.objects.player_object());
-            let armed =
-                self.cooldowns
-                    .as_mut()
-                    .start_gcd(spell_id, d, now, &self.spell_mods, speed);
-            // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
-            if armed {
-                self.press.cooldown_start(d.cooldown_on_event());
-            }
+        let tail = SendTail {
+            spell_id,
+            caster: None,
+            visuals: bound != TargetedBind::TradeItem,
+            // The cursor's commit sends no attack start.
+            attack_at: None,
+            now,
+        };
+        if !commit.is_item() && self.press.raises_at_step() {
+            self.press.tail(tail);
+        } else {
+            self.finish_send(tail);
         }
-        self.ground.clear();
+    }
+
+    /// The cast send's tail after its `UNIT_SPELLCAST_SENT` ([`SendTail`]).
+    pub(crate) fn finish_send(&mut self, tail: SendTail) {
+        finish_send(
+            tail,
+            self.spells.as_deref(),
+            &self.objects,
+            &self.self_player,
+            &mut self.ecs,
+            &self.commands,
+            &mut self.sheath,
+            self.auto_repeat.as_mut(),
+            self.cooldowns.as_mut(),
+            &self.spell_mods,
+            &mut self.press,
+        );
     }
 
     /// The spell-cast entry (`0x80cce0`) with the pet as caster, for the pet's client-targeted and
@@ -1249,7 +1266,6 @@ fn send_spell_cast(
     if spell_id != pressed {
         debug!("ui_action: cast {pressed} goes out as {spell_id}, the rank its target takes");
     }
-    let def = spells.and_then(|s| s.catalog.get(spell_id));
     if matches!(commit, CastCommit::Spell) {
         press.sent(spell_id, target);
     }
@@ -1296,10 +1312,10 @@ fn send_spell_cast(
         CastCommit::Pet { caster } => Some(caster),
         _ => None,
     };
-    start_sent_cast(ecs, caster, spell_id, false);
     // One in-flight id for every commit: every class is recorded, so the `modalNextSpell` test can
-    // match a ranged shot; only `normal_cast` and the item arm guard. The item arm's deadline is
-    // shorter because vmangos answers some `CMSG_USE_ITEM` legs with
+    // match a ranged shot; only `normal_cast` and the item arm guard. The cast entry files its
+    // record before the send (`0x80cce0`), so a `UNIT_SPELLCAST_SENT` listener reads it. The item
+    // arm's deadline is shorter because vmangos answers some `CMSG_USE_ITEM` legs with
     // `SMSG_INVENTORY_CHANGE_FAILURE` and no cast result.
     if let CastCommit::Item { entry, .. } = commit {
         pending.arm_item(spell_id, entry, now);
@@ -1309,10 +1325,90 @@ fn send_spell_cast(
     if on_next_swing {
         queued_melee.arm(spell_id);
     }
+    let tail = SendTail {
+        spell_id,
+        caster,
+        visuals: true,
+        attack_at: target,
+        now,
+    };
+    // After `UNIT_SPELLCAST_SENT` (`0x80b556`) the rest runs at the raise's step, once its
+    // listeners have run: the start visuals (`0x80b573`) and the GCD arm (`0x80b583`).
+    if matches!(commit, CastCommit::Spell) && press.raises_at_step() {
+        press.tail(tail);
+        return;
+    }
+    finish_send(
+        tail,
+        spells,
+        objects,
+        self_player,
+        ecs,
+        commands,
+        sheath,
+        auto_repeat,
+        cooldowns,
+        spell_mods,
+        press,
+    );
+}
+
+/// What the cast send owes after its `UNIT_SPELLCAST_SENT` (`0x80b556`): the start visuals
+/// (`0x80b573`), the attack tail and the GCD arm (`0x80b583`), run once the event's listeners have.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SendTail {
+    spell_id: u32,
+    /// The pet's guid for a pet commit, `None` the player.
+    caster: Option<u64>,
+    /// The trade-slot click sends with its visuals hidden (`0x80c62c`).
+    visuals: bool,
+    /// The unit the send named, which the attack tail starts the swing at.
+    attack_at: Option<u64>,
+    now: Instant,
+}
+
+/// The send's tail at its step, with the `World` lent: the press's edges it raises queue behind
+/// it on `ui`.
+pub(crate) fn run_send_tail(
+    In(tail): In<SendTail>,
+    mut ladder: CastLadder,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    ladder.finish_send(tail);
+    ladder.press.defer(&mut ui);
+}
+
+/// The send's tail: the start visuals (`0x80b573`), the auto-attack start, then the GCD arm and its
+/// signals (`0x805d70`, `0x805ec3`).
+#[allow(clippy::too_many_arguments)]
+fn finish_send(
+    tail: SendTail,
+    spells: Option<&Spells>,
+    objects: &Objects,
+    self_player: &Query<(Entity, Has<crate::creature_anim::Engaged>), With<SelfPlayer>>,
+    ecs: &mut Commands,
+    commands: &NetCommands,
+    sheath: &mut MessageWriter<crate::creature_anim::SheathRequest>,
+    auto_repeat: &mut AutoRepeatActive,
+    cooldowns: &mut crate::spell::Cooldowns,
+    spell_mods: &crate::spell::SpellModifiers,
+    press: &mut crate::ui_cast::PressSignals,
+) {
+    let SendTail {
+        spell_id,
+        caster,
+        visuals,
+        attack_at,
+        now,
+    } = tail;
+    let def = spells.and_then(|s| s.catalog.get(spell_id));
+    if visuals {
+        start_sent_cast(ecs, caster, spell_id, false);
+    }
     // The cast attempt's post-send tail: a spell that initiates auto-attack (on-next-swing `0x404`
     // or `AttributesEx & 0x200`, not the GO-deferred Ex2 bit 20) starts the swing at its unit
     // target (sheath snap and `CMSG_ATTACKSWING`).
-    if let (Some(d), Some(guid)) = (def, target) {
+    if let (Some(d), Some(guid), None) = (def, attack_at, caster) {
         if d.initiates_auto_attack() {
             if let Ok((e, engaged)) = self_player.single() {
                 // The tail's own gate (the attack lock `[player+0xc48]`, our `Engaged`) skips
@@ -1338,9 +1434,9 @@ fn send_spell_cast(
     }
     // The GCD arms at send; a failed cast result clears it.
     if let Some(d) = def {
-        let caster_fields = match commit {
-            CastCommit::Pet { caster } => objects.object(caster),
-            _ => ctx.rel.self_store.map(|s| &s.0),
+        let caster_fields = match caster {
+            Some(pet) => objects.object(pet),
+            None => objects.player_object(),
         };
         let armed = cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
         // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
@@ -1533,6 +1629,7 @@ mod tests {
                 ladder.send(spell_id, &ctx(), commit);
             })
             .expect("the ladder runs as a one-shot system");
+        crate::ui_cast::PressEdges::run_tails(world);
     }
 
     fn send_at_go(world: &mut World, spell_id: u32, go_guid: u64) {
@@ -1541,6 +1638,7 @@ mod tests {
                 ladder.send_at_object(spell_id, &ctx(), go_guid);
             })
             .expect("the ladder runs as a one-shot system");
+        crate::ui_cast::PressEdges::run_tails(world);
     }
 
     /// The cast attempt's dead rung: a corpse and a ghost (health 1, the `PLAYER_FLAGS` bit) are
@@ -2154,6 +2252,7 @@ mod tests {
                     ladder.commit_targeted(MOUNT, CastCommit::Spell, bound);
                 })
                 .expect("the tail runs as a one-shot system");
+            crate::ui_cast::PressEdges::run_tails(world);
         };
         commit(&mut world, TargetedBind::TradeItem);
         assert!(world.get::<Casting>(me).is_none());
@@ -2323,6 +2422,7 @@ mod tests {
                 ladder.send(spell_id, &ctx, CastCommit::Spell);
             })
             .expect("the ladder runs as a one-shot system");
+        crate::ui_cast::PressEdges::run_tails(world);
     }
 
     /// The cast attempt's attack pick: a press of a spell stops there, above the bind, for its
