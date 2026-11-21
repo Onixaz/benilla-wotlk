@@ -13,7 +13,7 @@ use benilla_ui::script::{DeathAction, ScriptValue, UiScript};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_action::Spells;
 use crate::ui_script::live::UiEvents;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiFeed;
 
 pub(crate) mod net;
 

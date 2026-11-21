@@ -720,25 +720,29 @@ pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)
 
 /// The client's `castCount`, which keys a sent cast to the server's answer: 12340 hands out 1 to
 /// 255 and never 0, wrapping to 1 (`0x8050dc`-`0x8050ec`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CastCounter {
     next: u8,
     /// The last count each recent spell went out with, which its cancel names (`0x8062e6`).
-    sent: [(u32, u8); 16],
+    sent: Vec<(u32, u8)>,
     at: usize,
 }
+
+/// How many recent spells keep their last count.
+const KEPT_COUNTS: usize = 16;
 
 impl CastCounter {
     /// The count the next cast of `spell_id` carries; advances the counter.
     pub fn take(&mut self, spell_id: u32) -> u8 {
         let count = self.next.max(1);
         self.next = count.wrapping_add(1);
-        match self.sent.iter_mut().find(|(id, _)| *id == spell_id) {
-            Some(slot) => slot.1 = count,
-            None => {
-                self.sent[self.at] = (spell_id, count);
-                self.at = (self.at + 1) % self.sent.len();
-            }
+        if let Some(slot) = self.sent.iter_mut().find(|(id, _)| *id == spell_id) {
+            slot.1 = count;
+        } else if self.sent.len() < KEPT_COUNTS {
+            self.sent.push((spell_id, count));
+        } else {
+            self.sent[self.at] = (spell_id, count);
+            self.at = (self.at + 1) % KEPT_COUNTS;
         }
         count
     }
