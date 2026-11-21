@@ -3211,7 +3211,7 @@ mod tests {
         });
         app.world_mut()
             .resource_mut::<PendingCast>()
-            .arm(10, Instant::now(), true);
+            .arm(10, 1, Instant::now(), true);
         fire_go(&mut app, 10, false);
         assert_eq!(
             app.world()
@@ -4361,7 +4361,7 @@ mod tests {
                 app.world_mut()
                     .resource_mut::<PendingCast>()
                     // `guards: false`: a ranged hunter shot is recorded but does not guard.
-                    .arm(id, Instant::now(), false);
+                    .arm(id, 1, Instant::now(), false);
             }
             let (tx, _rx) = crossbeam_channel::unbounded();
             let cat = spells();

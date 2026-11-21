@@ -719,40 +719,16 @@ pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)
 }
 
 /// The client's `castCount`, which keys a sent cast to the server's answer: 12340 hands out 1 to
-/// 255 and never 0, wrapping to 1 (`0x8050dc`-`0x8050ec`).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct CastCounter {
-    next: u8,
-    /// The last count each recent spell went out with, which its cancel names (`0x8062e6`).
-    sent: Vec<(u32, u8)>,
-    at: usize,
-}
-
-/// How many recent spells keep their last count.
-const KEPT_COUNTS: usize = 16;
+/// 255 and never 0, wrapping to 1, as each cast attempt files its record (`0x8050dc`-`0x8050ec`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CastCounter(u8);
 
 impl CastCounter {
-    /// The count the next cast of `spell_id` carries; advances the counter.
-    pub fn take(&mut self, spell_id: u32) -> u8 {
-        let count = self.next.max(1);
-        self.next = count.wrapping_add(1);
-        if let Some(slot) = self.sent.iter_mut().find(|(id, _)| *id == spell_id) {
-            slot.1 = count;
-        } else if self.sent.len() < KEPT_COUNTS {
-            self.sent.push((spell_id, count));
-        } else {
-            self.sent[self.at] = (spell_id, count);
-            self.at = (self.at + 1) % KEPT_COUNTS;
-        }
+    /// The count the next cast carries; advances the counter.
+    pub fn take(&mut self) -> u8 {
+        let count = self.0.max(1);
+        self.0 = count.wrapping_add(1);
         count
-    }
-
-    /// The count `spell_id` last went out with; 0 for one never sent.
-    pub fn sent_for(&self, spell_id: u32) -> u8 {
-        self.sent
-            .iter()
-            .find(|(id, c)| *id == spell_id && *c != 0)
-            .map_or(0, |&(_, c)| c)
     }
 }
 
@@ -954,22 +930,9 @@ mod tests {
     #[test]
     fn the_cast_counter_runs_one_to_255_and_skips_zero() {
         let mut c = CastCounter::default();
-        assert_eq!((c.take(7), c.take(7)), (1, 2));
-        let mut c = CastCounter {
-            next: 255,
-            ..Default::default()
-        };
-        assert_eq!((c.take(7), c.take(7)), (255, 1), "0 is never handed out");
-    }
-
-    /// The cancel names the count its spell last went out with (`0x8062e6`), 0 for none.
-    #[test]
-    fn the_cast_counter_keeps_each_spells_last_count() {
-        let mut c = CastCounter::default();
-        c.take(133);
-        c.take(116);
-        c.take(133);
-        assert_eq!((c.sent_for(133), c.sent_for(116), c.sent_for(5)), (3, 2, 0));
+        assert_eq!((c.take(), c.take()), (1, 2));
+        let mut c = CastCounter(255);
+        assert_eq!((c.take(), c.take()), (255, 1), "0 is never handed out");
     }
 
     /// `CMSG_CANCEL_CAST`: `u8` cast count, then `u32` spell id (`0x8062e6`, `0x8062f2`).

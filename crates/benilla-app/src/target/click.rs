@@ -873,6 +873,7 @@ impl Dispatch<'_, '_> {
             }
             debug!("right-click skin: {guid:#x} (spell {spell_id})");
             let _ = self.seam.net.0.send(ClientCommand::CastSpell {
+                count: self.seam.pending.as_mut().map_or(0, |p| p.take_count()),
                 spell_id,
                 target: Some(guid),
             });

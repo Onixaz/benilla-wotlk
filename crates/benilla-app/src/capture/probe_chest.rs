@@ -188,6 +188,7 @@ fn chest_probe(
     kneel: Res<LootKneel>,
     net: Res<NetCommands>,
     mut exit: MessageWriter<AppExit>,
+    mut pending: ResMut<crate::spell::PendingCast>,
 ) {
     let Ok(driver) = self_q.single() else {
         return; // not in-world yet
@@ -263,6 +264,7 @@ fn chest_probe(
                 GoAction::OpenLock(spell_id) => {
                     info!("PROBE_CHEST: opener cast {spell_id} at {guid:#x} (the live arm)");
                     let _ = net.0.send(ClientCommand::CastSpellGameObject {
+                        count: pending.take_count(),
                         spell_id,
                         go_guid: guid,
                     });

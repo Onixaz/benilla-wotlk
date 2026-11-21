@@ -32,7 +32,11 @@ const CAST_SLACK: Duration = Duration::from_secs(2);
 /// `SMSG_SPELL_FAILED_OTHER`), keyed on the spell id, or by [`local_self_cancel`]; `deadline`
 /// covers a lost resolution.
 #[derive(Resource, Default)]
-pub(crate) struct PendingCast(Option<PendingCastState>);
+pub(crate) struct PendingCast {
+    record: Option<PendingCastState>,
+    /// The `castCount` each cast attempt's record takes (`0x8050dc`-`0x8050ec`).
+    counts: benilla_protocol::messages::CastCounter,
+}
 
 struct PendingCastState {
     spell_id: u32,
@@ -44,12 +48,14 @@ struct PendingCastState {
     guards: bool,
     /// The entry of the item that started it, which the current-item test (`0x805fc0`) reads.
     item: Option<u32>,
+    /// The record's `castCount`, which its cancel names (`0x8062de`).
+    count: u8,
 }
 
 impl PendingCast {
     /// A guarding cast is outstanding, inside its deadline.
     pub(crate) fn in_flight(&self, now: Instant) -> bool {
-        self.0
+        self.record
             .as_ref()
             .is_some_and(|p| p.guards && now < p.deadline)
     }
@@ -57,7 +63,7 @@ impl PendingCast {
     /// The reference's inflight id: the last committed, unresolved cast of any class, which the
     /// cast-result handler tests before reading `modalNextSpell`.
     pub(crate) fn committed(&self, now: Instant) -> Option<u32> {
-        self.0
+        self.record
             .as_ref()
             .filter(|p| now < p.deadline)
             .map(|p| p.spell_id)
@@ -65,7 +71,7 @@ impl PendingCast {
 
     /// The guarding cast's spell id, which `IsCurrentAction`'s checked state keys on.
     pub(crate) fn current(&self, now: Instant) -> Option<u32> {
-        self.0
+        self.record
             .as_ref()
             .filter(|p| p.guards && now < p.deadline)
             .map(|p| p.spell_id)
@@ -73,36 +79,52 @@ impl PendingCast {
 
     /// The guarding cast's item entry when an item started it.
     pub(crate) fn current_item(&self, now: Instant) -> Option<u32> {
-        self.0
+        self.record
             .as_ref()
             .filter(|p| p.guards && now < p.deadline)
             .and_then(|p| p.item)
     }
 
+    /// The `castCount` a new cast attempt's record takes: 1 to 255, never 0 (`0x80cda8`,
+    /// `0x8050dc`).
+    pub(crate) fn take_count(&mut self) -> u8 {
+        self.counts.take()
+    }
+
+    /// The pending record's spell and `castCount`, inside its deadline.
+    pub(crate) fn record(&self, now: Instant) -> Option<(u32, u8)> {
+        self.record
+            .as_ref()
+            .filter(|p| now < p.deadline)
+            .map(|p| (p.spell_id, p.count))
+    }
+
     /// Arm at send, the client's write; a ranged shot passes `guards = false`.
-    pub(crate) fn arm(&mut self, spell_id: u32, now: Instant, guards: bool) {
-        self.0 = Some(PendingCastState {
+    pub(crate) fn arm(&mut self, spell_id: u32, count: u8, now: Instant, guards: bool) {
+        self.record = Some(PendingCastState {
             spell_id,
             deadline: now + SEND_PROVISIONAL,
             guards,
             item: None,
+            count,
         });
     }
 
     /// Arm on an item use: the client's item use goes through the cast attempt, so it writes the
     /// same inflight id and meets the same gate. Only the deadline differs.
-    pub(crate) fn arm_item(&mut self, spell_id: u32, entry: u32, now: Instant) {
-        self.0 = Some(PendingCastState {
+    pub(crate) fn arm_item(&mut self, spell_id: u32, entry: u32, count: u8, now: Instant) {
+        self.record = Some(PendingCastState {
             spell_id,
             deadline: now + ITEM_SEND_PROVISIONAL,
             guards: true,
             item: Some(entry),
+            count,
         });
     }
 
     /// Tighten the deadline to the server's real cast time once `SMSG_SPELL_START` names it.
     pub(crate) fn refine(&mut self, cast_time_ms: u32, now: Instant) {
-        if let Some(p) = &mut self.0 {
+        if let Some(p) = &mut self.record {
             p.deadline = now + Duration::from_millis(u64::from(cast_time_ms)) + CAST_SLACK;
         }
     }
@@ -110,15 +132,15 @@ impl PendingCast {
     /// `SMSG_SPELL_DELAYED`: extend from the later of the deadline and now, so a lapsed deadline
     /// re-arms.
     pub(crate) fn delay(&mut self, delay_ms: u32, now: Instant) {
-        if let Some(p) = &mut self.0 {
+        if let Some(p) = &mut self.record {
             p.deadline = p.deadline.max(now) + Duration::from_millis(u64::from(delay_ms));
         }
     }
 
     /// Clear on a resolution for our spell only: a proc's `SMSG_SPELL_GO` mid-cast must not.
     pub(crate) fn clear_if(&mut self, spell_id: u32) {
-        if self.0.as_ref().is_some_and(|p| p.spell_id == spell_id) {
-            self.0 = None;
+        if self.record.as_ref().is_some_and(|p| p.spell_id == spell_id) {
+            self.record = None;
         }
     }
 }
@@ -136,19 +158,24 @@ impl PendingCast {
 /// auto-repeat press also runs, or through Esc, which cancels it as the inflight spell
 /// (`SpellStopCasting`).
 #[derive(Resource, Default)]
-pub(crate) struct QueuedMeleeSpell(Option<u32>);
+pub(crate) struct QueuedMeleeSpell(Option<(u32, u8)>);
 
 impl QueuedMeleeSpell {
     pub(crate) fn current(&self) -> Option<u32> {
-        self.0
+        self.0.map(|(id, _)| id)
     }
 
-    pub(crate) fn arm(&mut self, spell_id: u32) {
-        self.0 = Some(spell_id);
+    /// The queued strike's record `castCount`, which its cancel names (`0x8062de`).
+    pub(crate) fn count(&self) -> Option<u8> {
+        self.0.map(|(_, count)| count)
+    }
+
+    pub(crate) fn arm(&mut self, spell_id: u32, count: u8) {
+        self.0 = Some((spell_id, count));
     }
 
     pub(crate) fn clear_if(&mut self, spell_id: u32) {
-        if self.0 == Some(spell_id) {
+        if self.current() == Some(spell_id) {
             self.0 = None;
         }
     }
@@ -407,7 +434,21 @@ impl SelfCancel<'_, '_> {
                 if *crate::net::CAST_TRACE {
                     info!("cast-trace: LOCAL self-cancel — {slot:?} ({by:?}), CMSG_CANCEL_CAST");
                 }
-                let _ = net.0.send(ClientCommand::CancelCast { spell_id });
+                // The cancel names the cancelled record's own count (`0x8062de`).
+                let count = match slot {
+                    Inflight::Cast(_) => pending
+                        .record(now)
+                        .filter(|&(id, _)| id == spell_id)
+                        .map(|(_, count)| count)
+                        .or_else(|| {
+                            self_e
+                                .and_then(|e| casting.get(e).ok())
+                                .map(|c| c.cast_count)
+                        })
+                        .unwrap_or(0),
+                    Inflight::Strike(_) => queued_melee.count().unwrap_or(0),
+                };
+                let _ = net.0.send(ClientCommand::CancelCast { spell_id, count });
                 match slot {
                     Inflight::Cast(_) => {
                         pending.clear_if(spell_id);
@@ -494,7 +535,7 @@ mod tests {
     fn arming_closes_the_guard_and_a_matching_resolution_opens_it() {
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm(FIREBALL, t0, true);
+        g.arm(FIREBALL, 1, t0, true);
         assert!(
             g.in_flight(t0),
             "a cast is in flight — a second one is refused"
@@ -514,12 +555,12 @@ mod tests {
         const HEARTHSTONE: u32 = 6948;
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm_item(HEARTH_SPELL, HEARTHSTONE, t0);
+        g.arm_item(HEARTH_SPELL, HEARTHSTONE, 1, t0);
         assert_eq!(g.current_item(t0), Some(HEARTHSTONE));
         assert_eq!(g.current_item(t0 + ITEM_SEND_PROVISIONAL), None);
         g.clear_if(HEARTH_SPELL);
         assert_eq!(g.current_item(t0), None);
-        g.arm(FIREBALL, t0, true);
+        g.arm(FIREBALL, 1, t0, true);
         assert_eq!(g.current_item(t0), None);
     }
 
@@ -527,7 +568,7 @@ mod tests {
     fn a_different_spells_resolution_leaves_the_guard_closed() {
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm(FIREBALL, t0, true);
+        g.arm(FIREBALL, 1, t0, true);
         g.clear_if(FIREBALL + 1); // a triggered proc's GO for some other spell mid-cast
         assert!(
             g.in_flight(t0),
@@ -539,7 +580,7 @@ mod tests {
     fn the_guard_opens_when_its_safety_deadline_lapses() {
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm(FIREBALL, t0, true);
+        g.arm(FIREBALL, 1, t0, true);
         assert!(g.in_flight(t0 + SEND_PROVISIONAL - Duration::from_secs(1)));
         assert!(!g.in_flight(t0 + SEND_PROVISIONAL + Duration::from_secs(1)));
     }
@@ -548,7 +589,7 @@ mod tests {
     fn a_pushback_extends_the_guard_so_it_holds_past_the_stretched_cast() {
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm(FIREBALL, t0, true);
+        g.arm(FIREBALL, 1, t0, true);
         g.refine(1_000, t0); // deadline t0 + 1 s + 2 s slack
         g.delay(500, t0); // pushed to t0 + 3.5 s
         assert!(
@@ -561,7 +602,7 @@ mod tests {
     fn spell_start_tightens_the_deadline_to_the_real_cast_time() {
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm(FIREBALL, t0, true);
+        g.arm(FIREBALL, 1, t0, true);
         g.refine(1_500, t0); // SMSG_SPELL_START: 1.5 s + 2 s slack
         let at_four = t0 + Duration::from_secs(4);
         assert!(
@@ -578,14 +619,14 @@ mod tests {
         let mut q = QueuedMeleeSpell::default();
         assert_eq!(q.current(), None);
 
-        q.arm(HEROIC_STRIKE);
+        q.arm(HEROIC_STRIKE, 1);
         assert_eq!(q.current(), Some(HEROIC_STRIKE), "queued and checked");
 
         // Rend's GO while Heroic Strike waits.
         q.clear_if(772);
         assert_eq!(q.current(), Some(HEROIC_STRIKE));
 
-        q.arm(CLEAVE);
+        q.arm(CLEAVE, 1);
         assert_eq!(q.current(), Some(CLEAVE));
 
         q.clear_if(CLEAVE);
@@ -698,7 +739,7 @@ mod tests {
             )]));
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
             mark_casting(&mut app, FIREBALL);
 
             run(&mut app, true);
@@ -706,7 +747,10 @@ mod tests {
             assert!(
                 matches!(
                     rx.try_recv(),
-                    Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+                    Ok(crate::net::ClientCommand::CancelCast {
+                        spell_id: FIREBALL,
+                        ..
+                    })
                 ),
                 "the move edge ships CMSG_CANCEL_CAST for the in-flight cast"
             );
@@ -746,7 +790,7 @@ mod tests {
             )]));
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
 
             run(&mut app, true);
 
@@ -768,14 +812,17 @@ mod tests {
             let (mut app, rx) = harness(HashMap::new());
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
 
             run(&mut app, true);
 
             assert!(
                 matches!(
                     rx.try_recv(),
-                    Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+                    Ok(crate::net::ClientCommand::CancelCast {
+                        spell_id: FIREBALL,
+                        ..
+                    })
                 ),
                 "an unknown spell's cast still cancels on movement"
             );
@@ -798,7 +845,10 @@ mod tests {
             assert!(
                 matches!(
                     rx.try_recv(),
-                    Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+                    Ok(crate::net::ClientCommand::CancelCast {
+                        spell_id: FIREBALL,
+                        ..
+                    })
                 ),
                 "the started cast cancels through the `Casting` half of the union"
             );
@@ -817,7 +867,7 @@ mod tests {
             )]));
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
 
             run(&mut app, false);
 
@@ -867,7 +917,7 @@ mod tests {
             app.world_mut().resource_mut::<AutoRepeatActive>().0 = Some(AUTO_SHOT);
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
             mark_casting(&mut app, FIREBALL);
 
             // Press 1 stops the auto-repeat only.
@@ -901,7 +951,10 @@ mod tests {
             assert!(
                 matches!(
                     rx.try_recv(),
-                    Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+                    Ok(crate::net::ClientCommand::CancelCast {
+                        spell_id: FIREBALL,
+                        ..
+                    })
                 ),
                 "the second press reaches the cast half"
             );
@@ -922,7 +975,7 @@ mod tests {
             app.world_mut().resource_mut::<AutoRepeatActive>().0 = Some(AUTO_SHOT);
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
             mark_casting(&mut app, FIREBALL);
 
             app.world_mut()
@@ -933,7 +986,10 @@ mod tests {
                 .unwrap();
             assert!(matches!(
                 rx.try_recv(),
-                Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+                Ok(crate::net::ClientCommand::CancelCast {
+                    spell_id: FIREBALL,
+                    ..
+                })
             ));
             assert!(rx.try_recv().is_err(), "no auto-repeat cancel");
             assert_eq!(
@@ -961,7 +1017,7 @@ mod tests {
             app.insert_non_send_resource(UiScript::new().unwrap());
             app.world_mut()
                 .resource_mut::<QueuedMeleeSpell>()
-                .arm(HEROIC_STRIKE);
+                .arm(HEROIC_STRIKE, 1);
 
             assert_eq!(
                 stop_casting(&mut app),
@@ -974,7 +1030,8 @@ mod tests {
                 matches!(
                     rx.try_recv(),
                     Ok(crate::net::ClientCommand::CancelCast {
-                        spell_id: HEROIC_STRIKE
+                        spell_id: HEROIC_STRIKE,
+                        ..
                     })
                 ),
                 "the cast abort names the queued strike on the wire, exactly as it would a cast"
@@ -1004,7 +1061,7 @@ mod tests {
             )]));
             app.world_mut()
                 .resource_mut::<QueuedMeleeSpell>()
-                .arm(HEROIC_STRIKE);
+                .arm(HEROIC_STRIKE, 1);
 
             run(&mut app, true);
 
@@ -1023,10 +1080,10 @@ mod tests {
             app.insert_non_send_resource(UiScript::new().unwrap());
             app.world_mut()
                 .resource_mut::<QueuedMeleeSpell>()
-                .arm(HEROIC_STRIKE);
+                .arm(HEROIC_STRIKE, 1);
             app.world_mut()
                 .resource_mut::<PendingCast>()
-                .arm(FIREBALL, Instant::now(), true);
+                .arm(FIREBALL, 1, Instant::now(), true);
             mark_casting(&mut app, FIREBALL);
 
             assert_eq!(stop_casting(&mut app), Some(1));
@@ -1034,7 +1091,10 @@ mod tests {
             assert!(
                 matches!(
                     rx.try_recv(),
-                    Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+                    Ok(crate::net::ClientCommand::CancelCast {
+                        spell_id: FIREBALL,
+                        ..
+                    })
                 ),
                 "the nested cast is what sits in the inflight slot — it dies first"
             );
@@ -1055,7 +1115,8 @@ mod tests {
             assert!(matches!(
                 rx.try_recv(),
                 Ok(crate::net::ClientCommand::CancelCast {
-                    spell_id: HEROIC_STRIKE
+                    spell_id: HEROIC_STRIKE,
+                    ..
                 })
             ));
             assert_eq!(app.world().resource::<QueuedMeleeSpell>().current(), None);

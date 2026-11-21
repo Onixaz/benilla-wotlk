@@ -329,6 +329,7 @@ fn drain_duel(
     players: PlayerLookup,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
+    mut pending: ResMut<crate::spell::PendingCast>,
 ) {
     let Some(mut script) = script.turn() else {
         return;
@@ -352,7 +353,7 @@ fn drain_duel(
                 });
             }
             DuelRequest::ChallengeGuid(guid) => {
-                challenge(Some(guid), &spells, &actions, &commands);
+                challenge(Some(guid), &spells, &actions, &commands, &mut pending);
             }
             // The name walk with typemask `0x10`, any distance (`0x5cf953`).
             DuelRequest::ChallengeName { name, exact } => {
@@ -365,7 +366,7 @@ fn drain_duel(
                 if guid.is_none() {
                     info!(target: "duel", "StartDuel({name:?}): no player matches; nothing cast");
                 }
-                challenge(guid, &spells, &actions, &commands);
+                challenge(guid, &spells, &actions, &commands, &mut pending);
             }
         }
     }
@@ -379,6 +380,7 @@ fn challenge(
     spells: &Option<Res<Spells>>,
     actions: &crate::ui_action::PlayerActions,
     commands: &NetCommands,
+    pending: &mut crate::spell::PendingCast,
 ) {
     let Some(guid) = guid else {
         return;
@@ -392,6 +394,7 @@ fn challenge(
     };
     info!(target: "duel", "StartDuel at {guid:#x}: casting duel spell {spell_id}");
     let _ = commands.0.send(ClientCommand::CastSpell {
+        count: pending.take_count(),
         spell_id,
         target: Some(guid),
     });

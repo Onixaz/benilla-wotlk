@@ -2185,6 +2185,23 @@ impl UiEvents {
         out
     }
 
+    /// The press steps queued (a send's rest, an attempt's rest), taken in order.
+    #[cfg(test)]
+    pub(crate) fn take_press_steps(&mut self) -> Vec<crate::ui_cast::CastBarEdge> {
+        let mut out = Vec::new();
+        self.0.retain(|e| match e {
+            UiEvent::CastEdge(
+                edge @ (crate::ui_cast::CastBarEdge::SendTail(_)
+                | crate::ui_cast::CastBarEdge::LadderRest(_)),
+            ) => {
+                out.push(edge.clone());
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+
     /// The cast edges queued, in order.
     #[cfg(test)]
     pub(crate) fn cast_edges(&self) -> Vec<crate::ui_cast::CastBarEdge> {

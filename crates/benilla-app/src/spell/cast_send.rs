@@ -284,8 +284,10 @@ impl CastLadder<'_, '_> {
         commit: CastCommit,
         bound: TargetedBind,
     ) {
+        // The click re-enters the cast attempt with the cursor's record and its count (`0x80cda4`).
+        let count = self.ground.count();
         if let CastCommit::Pet { caster } = commit {
-            self.commit_pet(spell_id, caster, bound_target(bound));
+            self.commit_pet(spell_id, caster, bound_target(bound), count);
             self.ground.clear();
             return;
         }
@@ -299,27 +301,40 @@ impl CastLadder<'_, '_> {
             CastCommit::Pet { .. } => unreachable!("committed above"),
             // The same targets block under either opcode; the spell side has one builder per bind.
             CastCommit::Spell => match bound {
-                TargetedBind::Dest(dest) => ClientCommand::CastSpellAtDest { spell_id, dest },
-                TargetedBind::Source(src) => ClientCommand::CastSpellAtSource { spell_id, src },
+                TargetedBind::Dest(dest) => ClientCommand::CastSpellAtDest {
+                    count,
+                    spell_id,
+                    dest,
+                },
+                TargetedBind::Source(src) => ClientCommand::CastSpellAtSource {
+                    count,
+                    spell_id,
+                    src,
+                },
                 TargetedBind::Item(item_guid) => ClientCommand::CastSpellItem {
+                    count,
                     spell_id,
                     item_guid,
                 },
-                TargetedBind::TradeItem => ClientCommand::CastSpellTradeItem { spell_id },
+                TargetedBind::TradeItem => ClientCommand::CastSpellTradeItem { count, spell_id },
                 // The right-click OPEN_LOCK packet: the target bind's GameObject arm fills both.
-                TargetedBind::Object(go_guid) => {
-                    ClientCommand::CastSpellGameObject { spell_id, go_guid }
-                }
+                TargetedBind::Object(go_guid) => ClientCommand::CastSpellGameObject {
+                    count,
+                    spell_id,
+                    go_guid,
+                },
                 TargetedBind::Unit(unit_guid) => ClientCommand::CastSpell {
+                    count,
                     spell_id,
                     target: Some(unit_guid),
                 },
                 TargetedBind::Corpse(corpse_guid, target) => ClientCommand::CastSpellCorpse {
+                    count,
                     spell_id,
                     target,
                     corpse_guid,
                 },
-                TargetedBind::Glyph(_) => ClientCommand::CastSpellGlyph { spell_id },
+                TargetedBind::Glyph(_) => ClientCommand::CastSpellGlyph { count, spell_id },
             },
             CastCommit::Item {
                 bag_index,
@@ -327,6 +342,7 @@ impl CastLadder<'_, '_> {
                 item_guid,
                 ..
             } => ClientCommand::UseItem {
+                count,
                 bag_index,
                 slot,
                 spell_id,
@@ -350,7 +366,7 @@ impl CastLadder<'_, '_> {
         let _ = self.commands.0.send(cmd);
         let now = Instant::now();
         if let CastCommit::Item { entry, .. } = commit {
-            self.pending.arm_item(spell_id, entry, now);
+            self.pending.arm_item(spell_id, entry, count, now);
         } else {
             // The ladder's `normal_cast` predicate; a ranged shot never raises the cursor.
             let guards = self
@@ -358,7 +374,7 @@ impl CastLadder<'_, '_> {
                 .as_ref()
                 .and_then(|s| s.catalog.get(spell_id))
                 .is_none_or(|d| !d.ranged_attack() && !d.on_next_swing());
-            self.pending.arm(spell_id, now, guards);
+            self.pending.arm(spell_id, count, now, guards);
         }
         let tail = SendTail {
             spell_id,
@@ -367,6 +383,7 @@ impl CastLadder<'_, '_> {
             // The cursor's commit sends no attack start.
             attack_at: None,
             now,
+            attempt: false,
         };
         if !commit.is_item() && self.press.raises_at_step() {
             self.press.tail(tail);
@@ -386,6 +403,7 @@ impl CastLadder<'_, '_> {
             &self.commands,
             &mut self.sheath,
             self.auto_repeat.as_mut(),
+            self.queued_melee.as_mut(),
             self.cooldowns.as_mut(),
             &self.spell_mods,
             &mut self.press,
@@ -399,6 +417,18 @@ impl CastLadder<'_, '_> {
     /// then the targeting cursor or the send. The player's own state (bags, combo points,
     /// auto-repeat, the swing) is not the pet's and is not asked.
     pub(crate) fn send_pet(&mut self, spell_id: u32, ctx: &cast_target::CastContext, pet: u64) {
+        self.send_pet_from(spell_id, ctx, pet, None);
+    }
+
+    /// [`Self::send_pet`], or with `rest` (the record's count) its rungs below the targeting
+    /// cursor's stop alone.
+    fn send_pet_from(
+        &mut self,
+        spell_id: u32,
+        ctx: &cast_target::CastContext,
+        pet: u64,
+        rest: Option<u8>,
+    ) {
         let now = Instant::now();
         let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) else {
             return;
@@ -406,11 +436,14 @@ impl CastLadder<'_, '_> {
         if d.attributes & 0x40 != 0 {
             return;
         }
-        if caster_dead_refusal(spell_id, Some(d), ctx.rel.self_store, &mut self.press) {
+        // The attempt files its record with the next count (`0x80cda8`).
+        let count = rest.unwrap_or_else(|| self.pending.take_count());
+        let rest = rest.is_some();
+        if !rest && caster_dead_refusal(spell_id, Some(d), ctx.rel.self_store, &mut self.press) {
             return;
         }
         // The same spell pending for this caster bails on cooldown or `0x404` (`0x80d36d`).
-        if let Some(bar) = self.pet_bar.as_deref() {
+        if let Some(bar) = self.pet_bar.as_deref().filter(|_| !rest) {
             let pending = bar
                 .pending_cast
                 .is_some_and(|(id, until)| id == spell_id && now < until);
@@ -421,9 +454,22 @@ impl CastLadder<'_, '_> {
                 return;
             }
         }
-        if self.ground.active() {
+        if !rest && self.ground.active() {
             self.ground.clear();
             self.press.selection();
+            // The rungs below run after the stop's selection update has (`0x80d3ce`).
+            if self.press.raises_at_step() {
+                self.press.ladder_rest(LadderRest {
+                    spell_id,
+                    commit: CastCommit::Pet { caster: pet },
+                    bound_object: None,
+                    hold: None,
+                    candidate: ctx.selection_guid,
+                    owner_casts: ctx.self_guid != Some(pet),
+                    count,
+                });
+                return;
+            }
         }
         let candidates = cast_target::CastCandidates {
             selection: ctx.selection_guid,
@@ -512,6 +558,7 @@ impl CastLadder<'_, '_> {
             self.ground
                 .as_mut()
                 .enter(spell_id, CastCommit::Pet { caster: pet }, word);
+            self.ground.count_at_commit(count);
             self.press.selection();
             return;
         }
@@ -531,13 +578,13 @@ impl CastLadder<'_, '_> {
             None => spell_id,
         };
         let target = target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit);
-        self.commit_pet(spell_id, pet, target);
+        self.commit_pet(spell_id, pet, target, count);
     }
 
     /// The pending send's pet arm (`0x80b315`): `CMSG_PET_CAST_SPELL`, no `UNIT_SPELLCAST_SENT`
     /// (the player's only), the pet's pending cast and its cooldown start (the player's, with the
     /// pet as caster).
-    fn commit_pet(&mut self, spell_id: u32, pet: u64, target: UseItemTarget) {
+    fn commit_pet(&mut self, spell_id: u32, pet: u64, target: UseItemTarget, count: u8) {
         let flies_aim = self
             .spells
             .as_deref()
@@ -551,10 +598,12 @@ impl CastLadder<'_, '_> {
             aims.0.push(crate::vehicle::TrajectoryCast {
                 caster: pet,
                 spell_id,
+                count,
             });
         } else {
             debug!("ui_pet: pet cast {spell_id} sent as {pet:#x} at {target:?}");
             let _ = self.commands.0.send(ClientCommand::PetCastSpell {
+                count,
                 pet_guid: pet,
                 spell_id,
                 target,
@@ -613,7 +662,7 @@ impl CastLadder<'_, '_> {
         ctx: &cast_target::CastContext,
         commit: CastCommit,
     ) {
-        self.send_bound(spell_id, ctx, commit, None, None);
+        self.send_bound(spell_id, ctx, commit, None, None, None);
     }
 
     /// A player's spell press (`UseAction`, `CastSpell`, `CastSpellByName`): the ladder with the
@@ -625,7 +674,7 @@ impl CastLadder<'_, '_> {
         passed: Option<u64>,
     ) {
         let held = HeldCast { spell_id, passed };
-        self.send_bound(spell_id, ctx, CastCommit::Spell, None, Some(held));
+        self.send_bound(spell_id, ctx, CastCommit::Spell, None, Some(held), None);
     }
 
     /// The press held at the attack pick, if one is.
@@ -636,7 +685,7 @@ impl CastLadder<'_, '_> {
     /// A held press after its pick, at the unit the pick left selected. The rungs above the pick
     /// run again; none reads the selection, so each passes as it did.
     pub(crate) fn resume_after_pick(&mut self, held: HeldCast, ctx: &cast_target::CastContext) {
-        self.send_bound(held.spell_id, ctx, CastCommit::Spell, None, None);
+        self.send_bound(held.spell_id, ctx, CastCommit::Spell, None, None, None);
     }
 
     /// The ladder for a cast the caller already bound to a GameObject (a lock opener): the cast
@@ -647,7 +696,7 @@ impl CastLadder<'_, '_> {
         ctx: &cast_target::CastContext,
         go_guid: u64,
     ) {
-        self.send_bound(spell_id, ctx, CastCommit::Spell, Some(go_guid), None);
+        self.send_bound(spell_id, ctx, CastCommit::Spell, Some(go_guid), None, None);
     }
 
     fn send_bound(
@@ -657,7 +706,10 @@ impl CastLadder<'_, '_> {
         commit: CastCommit,
         on_object: Option<u64>,
         hold: Option<HeldCast>,
+        rest: Option<u8>,
     ) {
+        // The attempt files its record with the next count (`0x80cda8`); its rest keeps it.
+        let count = rest.unwrap_or_else(|| self.pending.take_count());
         let played = self.trade_window.0.as_deref().map_or(0, |c| c.now());
         let enchants = self.trade_window.1.as_deref();
         let objects = &self.objects;
@@ -686,6 +738,7 @@ impl CastLadder<'_, '_> {
             commit,
             on_object,
             hold,
+            (rest.is_some(), count),
             ranks.as_deref(),
             (self.spell_enchant.as_deref_mut(), &bound_trade),
             &self.commands,
@@ -745,6 +798,9 @@ fn send_spell_cast(
     bound_object: Option<u64>,
     // Set for a player's spell press, which parks in `held_for_pick` at the attack pick.
     hold: Option<HeldCast>,
+    // The rungs below the targeting cursor's stop alone (run after its selection update), and the
+    // attempt's record count.
+    (rest, count): (bool, u8),
     // The pressed spell's ranks in the player's book ([`rank_pick::Book::ranks`]), when the send's
     // rank pick reads it.
     ranks: Option<&[&benilla_formats::SpellDisplay]>,
@@ -776,14 +832,14 @@ fn send_spell_cast(
     let def = spells.and_then(|s| s.catalog.get(spell_id));
     // The cast attempt's first branch (ahead of every gate): an `Effect[0] == TRADE_SKILL` cast
     // never reaches the wire; the crafting window opens instead.
-    if def.is_some_and(|d| d.effects[0] == benilla_formats::SPELL_EFFECT_TRADE_SKILL) {
+    if !rest && def.is_some_and(|d| d.effects[0] == benilla_formats::SPELL_EFFECT_TRADE_SKILL) {
         debug!("ui_action: cast {spell_id} is a profession opener — the crafting book opens, no packet");
         trade_skill_opens.0.push(spell_id);
         return;
     }
     // The re-press toggle: pressing the running auto-repeat spell cancels it. The reference does
     // this in the action-button handler, before the cast attempt is called.
-    if def.is_some_and(|d| d.auto_repeat()) && auto_repeat.0 == Some(spell_id) {
+    if !rest && def.is_some_and(|d| d.auto_repeat()) && auto_repeat.0 == Some(spell_id) {
         debug!("ui_action: cast {spell_id} re-pressed — auto-repeat toggles off");
         let self_e = self_player.single().ok().map(|(e, _)| e);
         crate::creature_anim::cancel_auto_repeat_local(
@@ -795,16 +851,29 @@ fn send_spell_cast(
         );
         return;
     }
-    if caster_dead_refusal(spell_id, def, ctx.rel.self_store, &mut *press) {
+    if !rest && caster_dead_refusal(spell_id, def, ctx.rel.self_store, &mut *press) {
         return;
     }
     // The cast attempt's targeting check leg: a new press while the cursor is up clears the word,
     // with no packet, and continues down the ladder.
-    if ground.active() {
+    if !rest && ground.active() {
         debug!("ui_action: cast {spell_id} supersedes the targeting cursor");
         ground.clear();
         // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
         press.selection();
+        // The rungs below run after that update's listeners have (`0x80d3ce`).
+        if press.raises_at_step() {
+            press.ladder_rest(LadderRest {
+                spell_id,
+                commit,
+                bound_object,
+                hold,
+                candidate: ctx.selection_guid,
+                owner_casts: false,
+                count,
+            });
+            return;
+        }
     }
     // A ranged shot's record does not guard. An on-next-swing spell (`Attributes & 0x404`) queues
     // on the melee slot ([`crate::spell::QueuedMeleeSpell`]) and does not guard either: the
@@ -983,9 +1052,11 @@ fn send_spell_cast(
                     .is_some_and(|d| d.casting_cancels_autorepeat())
                 {
                     debug!("ui_action: the not-ready refusal cancels the wand repeat {cached}");
-                    let _ = commands
-                        .0
-                        .send(ClientCommand::CancelCastHandoff { spell_id: cached });
+                    // The refusal's cancel writes count 0 (`0x8082ad`, `0x8082b1`).
+                    let _ = commands.0.send(ClientCommand::CancelCast {
+                        spell_id: cached,
+                        count: 0,
+                    });
                     let self_e = self_player.single().ok().map(|(e, _)| e);
                     crate::creature_anim::cancel_auto_repeat_local(
                         self_e,
@@ -1195,50 +1266,46 @@ fn send_spell_cast(
         debug!("ui_action: cast {spell_id} awaits its click — targeting cursor up ({word:#06x})");
         ground.enter(spell_id, commit, word);
         ground.prelude_at_commit(prelude);
-        // The cursor's arm runs the selection update (`0x80d806`).
+        ground.count_at_commit(count);
+        // The cursor's arm runs the selection update (`0x80d806`), then the attempt's repeat tail
+        // (`0x80d8f6` -> `0x80d983`).
         press.selection();
-        return;
-    }
-    // The wand handoff: a new cast cancels the running repeat only when it carries
-    // `AttributesEx3 & 0x400000` (wand Shoot 5019), so Auto Shot survives. `CMSG_CANCEL_CAST`
-    // naming it goes first, then the local cancel and its ack.
-    if let Some(cached) = auto_repeat.0 {
-        if spells
-            .and_then(|s| s.catalog.get(cached))
-            .is_some_and(|d| d.casting_cancels_autorepeat())
-        {
-            debug!("ui_action: cast {spell_id} cancels the running wand repeat {cached}");
-            let _ = commands
-                .0
-                .send(ClientCommand::CancelCastHandoff { spell_id: cached });
-            let self_e = self_player.single().ok().map(|(e, _)| e);
-            crate::creature_anim::cancel_auto_repeat_local(
-                self_e,
-                auto_repeat,
+        let tail = SendTail {
+            spell_id,
+            caster: None,
+            visuals: false,
+            attack_at: None,
+            now,
+            attempt: true,
+        };
+        if press.raises_at_step() {
+            press.tail(tail);
+        } else {
+            finish_send(
+                tail,
+                spells,
+                objects,
+                self_player,
                 ecs,
                 commands,
-                &mut *press,
+                sheath,
+                auto_repeat,
+                queued_melee,
+                cooldowns,
+                spell_mods,
+                press,
             );
         }
+        return;
     }
     if let Some(d) = def {
-        if let Ok((e, engaged)) = self_player.single() {
+        if let Ok((e, _)) = self_player.single() {
             if d.ranged_attack() {
                 sheath.write(crate::creature_anim::SheathRequest {
                     entity: e,
                     state: 2,
                     ceremony: false,
                 });
-            }
-            if d.auto_repeat() {
-                ecs.entity(e).insert(crate::creature_anim::AutoRepeatArmed);
-                // The autorepeat key the button's checked state reads.
-                auto_repeat.set(spell_id, &mut *press);
-                // The commit's StopAttack, gated only on the caster being the active player:
-                // starting a repeat ends the melee swing and its queued strike. This is where melee
-                // and auto-repeat are kept exclusive. It runs after the arm above, so it never
-                // cancels this repeat.
-                crate::creature_anim::stop_attack_local(engaged, queued_melee, commands);
             }
         }
     }
@@ -1275,13 +1342,22 @@ fn send_spell_cast(
     let _ = commands.0.send(match commit {
         CastCommit::Spell => match (explicit_object, item_target) {
             // A lock opener bound by its click; the target bind's GameObject arm fills the block.
-            (Some(go_guid), _) => ClientCommand::CastSpellGameObject { spell_id, go_guid },
+            (Some(go_guid), _) => ClientCommand::CastSpellGameObject {
+                count,
+                spell_id,
+                go_guid,
+            },
             // The item leg, bound by the main-hand auto-pick.
             (None, Some(item_guid)) => ClientCommand::CastSpellItem {
+                count,
                 spell_id,
                 item_guid,
             },
-            (None, None) => ClientCommand::CastSpell { spell_id, target },
+            (None, None) => ClientCommand::CastSpell {
+                count,
+                spell_id,
+                target,
+            },
         },
         CastCommit::Item {
             bag_index,
@@ -1290,6 +1366,7 @@ fn send_spell_cast(
             on_object,
             ..
         } => ClientCommand::UseItem {
+            count,
             bag_index,
             slot,
             spell_id,
@@ -1303,6 +1380,7 @@ fn send_spell_cast(
         },
         // The pet's casts take `CastLadder::send_pet`, never this ladder.
         CastCommit::Pet { caster } => ClientCommand::PetCastSpell {
+            count,
             pet_guid: caster,
             spell_id,
             target: target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit),
@@ -1318,12 +1396,12 @@ fn send_spell_cast(
     // arm's deadline is shorter because vmangos answers some `CMSG_USE_ITEM` legs with
     // `SMSG_INVENTORY_CHANGE_FAILURE` and no cast result.
     if let CastCommit::Item { entry, .. } = commit {
-        pending.arm_item(spell_id, entry, now);
+        pending.arm_item(spell_id, entry, count, now);
     } else {
-        pending.arm(spell_id, now, normal_cast);
+        pending.arm(spell_id, count, now, normal_cast);
     }
     if on_next_swing {
-        queued_melee.arm(spell_id);
+        queued_melee.arm(spell_id, count);
     }
     let tail = SendTail {
         spell_id,
@@ -1331,6 +1409,7 @@ fn send_spell_cast(
         visuals: true,
         attack_at: target,
         now,
+        attempt: false,
     };
     // After `UNIT_SPELLCAST_SENT` (`0x80b556`) the rest runs at the raise's step, once its
     // listeners have run: the start visuals (`0x80b573`) and the GCD arm (`0x80b583`).
@@ -1347,6 +1426,7 @@ fn send_spell_cast(
         commands,
         sheath,
         auto_repeat,
+        queued_melee,
         cooldowns,
         spell_mods,
         press,
@@ -1354,7 +1434,8 @@ fn send_spell_cast(
 }
 
 /// What the cast send owes after its `UNIT_SPELLCAST_SENT` (`0x80b556`): the start visuals
-/// (`0x80b573`), the attack tail and the GCD arm (`0x80b583`), run once the event's listeners have.
+/// (`0x80b573`) and the GCD arm (`0x80b583`), then, back in the cast attempt, its attack and
+/// repeat tail (`0x80d8ef`-`0x80d9fa`), each part run once the listeners before it have.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SendTail {
     spell_id: u32,
@@ -1365,6 +1446,8 @@ pub(crate) struct SendTail {
     /// The unit the send named, which the attack tail starts the swing at.
     attack_at: Option<u64>,
     now: Instant,
+    /// The attempt's attack and repeat tail alone, after the GCD arm's signals.
+    attempt: bool,
 }
 
 /// The send's tail at its step, with the `World` lent: the press's edges it raises queue behind
@@ -1378,8 +1461,69 @@ pub(crate) fn run_send_tail(
     ladder.press.defer(&mut ui);
 }
 
-/// The send's tail: the start visuals (`0x80b573`), the auto-attack start, then the GCD arm and its
-/// signals (`0x805d70`, `0x805ec3`).
+/// A cast attempt that stopped the targeting cursor (`0x80d3ce`): the rungs below the stop run
+/// after its selection update's listeners (`0x8054f0`), against the unit candidate it was entered
+/// with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LadderRest {
+    spell_id: u32,
+    commit: CastCommit,
+    bound_object: Option<u64>,
+    hold: Option<HeldCast>,
+    candidate: Option<u64>,
+    /// A pet's cast whose owner is the unit the ladder reads (`AttributesEx6 & 0x40000`).
+    owner_casts: bool,
+    /// The attempt's record count, taken at its top (`0x80cda8`).
+    count: u8,
+}
+
+/// The attempt's rest at its step, with the `World` lent: a press it holds at the attack pick is
+/// picked and resumed as a script call's is, and its edges queue behind it on `ui`.
+pub(crate) fn run_ladder_rest(
+    In(rest): In<LadderRest>,
+    mut set: ParamSet<(
+        (cast_target::CastTargeting, CastLadder),
+        crate::ui_action::AttackPress,
+    )>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    {
+        let (targeting, mut ladder) = set.p0();
+        match rest.commit {
+            CastCommit::Pet { caster } => {
+                let ctx = targeting.pet_context(caster, rest.candidate, rest.owner_casts);
+                ladder.send_pet_from(rest.spell_id, &ctx, caster, Some(rest.count));
+            }
+            commit => {
+                let ctx = targeting.context_at(cast_target::Aim::Unit(rest.candidate));
+                ladder.send_bound(
+                    rest.spell_id,
+                    &ctx,
+                    commit,
+                    rest.bound_object,
+                    rest.hold,
+                    Some(rest.count),
+                );
+            }
+        }
+    }
+    let held = set.p0().1.take_held();
+    if let Some(held) = held {
+        let picked = set
+            .p1()
+            .pick_for_cast(held, &mut crate::script_calls::InTurn(&mut ui));
+        if picked {
+            let (targeting, mut ladder) = set.p0();
+            let ctx = targeting.context();
+            ladder.resume_after_pick(held, &ctx);
+        }
+    }
+    set.p0().1.press.defer(&mut ui);
+}
+
+/// The send's tail: the start visuals (`0x80b573`) and the GCD arm with its signals (`0x805d70`,
+/// `0x805ec3`); then the attempt's own tail ([`attempt_tail`]), after those signals' listeners when
+/// the press raises at its step.
 #[allow(clippy::too_many_arguments)]
 fn finish_send(
     tail: SendTail,
@@ -1390,24 +1534,85 @@ fn finish_send(
     commands: &NetCommands,
     sheath: &mut MessageWriter<crate::creature_anim::SheathRequest>,
     auto_repeat: &mut AutoRepeatActive,
+    queued_melee: &mut crate::spell::QueuedMeleeSpell,
     cooldowns: &mut crate::spell::Cooldowns,
     spell_mods: &crate::spell::SpellModifiers,
+    press: &mut crate::ui_cast::PressSignals,
+) {
+    let def = spells.and_then(|s| s.catalog.get(tail.spell_id));
+    if !tail.attempt {
+        let SendTail {
+            spell_id,
+            caster,
+            visuals,
+            now,
+            ..
+        } = tail;
+        if visuals {
+            start_sent_cast(ecs, caster, spell_id, false);
+        }
+        // The GCD arms at send; a failed cast result clears it.
+        if let Some(d) = def {
+            let caster_fields = match caster {
+                Some(pet) => objects.object(pet),
+                None => objects.player_object(),
+            };
+            let armed =
+                cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
+            debug!("spell: the send of {spell_id} finishes after its SENT (GCD armed: {armed})");
+            // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
+            if armed {
+                press.cooldown_start(d.cooldown_on_event());
+                // The attempt's tail runs once the start's listeners have (`0x80d72c`).
+                if press.raises_at_step() {
+                    press.tail(SendTail {
+                        attempt: true,
+                        ..tail
+                    });
+                    return;
+                }
+            }
+        }
+    }
+    attempt_tail(
+        tail,
+        def,
+        spells,
+        self_player,
+        ecs,
+        commands,
+        sheath,
+        auto_repeat,
+        queued_melee,
+        press,
+    );
+}
+
+/// The cast attempt's tail after its send returns: the auto-attack start (`0x80d8ef`-`0x80d97e`),
+/// then an auto-repeat spell becomes the repeating one (`0x80d99b`), or a running wand repeat
+/// ends (`0x80d9b7`-`0x80d9fa`).
+#[allow(clippy::too_many_arguments)]
+fn attempt_tail(
+    tail: SendTail,
+    def: Option<&benilla_formats::SpellDisplay>,
+    spells: Option<&Spells>,
+    self_player: &Query<(Entity, Has<crate::creature_anim::Engaged>), With<SelfPlayer>>,
+    ecs: &mut Commands,
+    commands: &NetCommands,
+    sheath: &mut MessageWriter<crate::creature_anim::SheathRequest>,
+    auto_repeat: &mut AutoRepeatActive,
+    queued_melee: &mut crate::spell::QueuedMeleeSpell,
     press: &mut crate::ui_cast::PressSignals,
 ) {
     let SendTail {
         spell_id,
         caster,
-        visuals,
         attack_at,
-        now,
+        ..
     } = tail;
-    let def = spells.and_then(|s| s.catalog.get(spell_id));
-    if visuals {
-        start_sent_cast(ecs, caster, spell_id, false);
-    }
-    // The cast attempt's post-send tail: a spell that initiates auto-attack (on-next-swing `0x404`
-    // or `AttributesEx & 0x200`, not the GO-deferred Ex2 bit 20) starts the swing at its unit
-    // target (sheath snap and `CMSG_ATTACKSWING`).
+    // A spell that initiates auto-attack (on-next-swing `0x404` or `AttributesEx & 0x200`, not the
+    // GO-deferred Ex2 bit 20) starts the swing at its unit target (sheath snap and
+    // `CMSG_ATTACKSWING`).
     if let (Some(d), Some(guid), None) = (def, attack_at, caster) {
         if d.initiates_auto_attack() {
             if let Ok((e, engaged)) = self_player.single() {
@@ -1432,17 +1637,51 @@ fn finish_send(
             }
         }
     }
-    // The GCD arms at send; a failed cast result clears it.
-    if let Some(d) = def {
-        let caster_fields = match caster {
-            Some(pet) => objects.object(pet),
-            None => objects.player_object(),
-        };
-        let armed = cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
-        debug!("spell: the send of {spell_id} finishes after its SENT (GCD armed: {armed})");
-        // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
-        if armed {
-            press.cooldown_start(d.cooldown_on_event());
+    // `AttributesEx2 & 0x20` (`0x80d983`): the caster, when it is us, repeats this spell:
+    // `START_AUTOREPEAT_SPELL`, then the melee swing ends (`0x800a2e`, `0x800a5d`).
+    if def.is_some_and(|d| d.auto_repeat()) {
+        if caster.is_none() {
+            if let Ok((e, engaged)) = self_player.single() {
+                ecs.entity(e).insert(crate::creature_anim::AutoRepeatArmed);
+                auto_repeat.set(spell_id, &mut *press);
+                crate::creature_anim::stop_attack_local(engaged, queued_melee, commands);
+            }
+        }
+        return;
+    }
+    // Any other cast ends a running repeat whose spell needs a wand (`0x80d9e3`, `0x80d9ec`):
+    // the repeat cancel with its send (`0x807560`), so Auto Shot survives.
+    if let Some(cached) = auto_repeat.0 {
+        if spells
+            .and_then(|s| s.catalog.get(cached))
+            .is_some_and(|d| d.requires_wand())
+        {
+            debug!("ui_action: cast {spell_id} cancels the running wand repeat {cached}");
+            let self_e = self_player.single().ok().map(|(e, _)| e);
+            crate::creature_anim::cancel_auto_repeat_local(
+                self_e,
+                auto_repeat,
+                ecs,
+                commands,
+                &mut *press,
+            );
+            // Then its pending record ends (`0x8075e2` -> `0x806440`): one the server started
+            // with a cast time sends its cancel with the record's own count (`0x806291`,
+            // `0x8062de`).
+            let net = commands.0.clone();
+            ecs.queue(move |world: &mut World| {
+                let mut me =
+                    world.query_filtered::<&crate::creature_anim::Casting, With<SelfPlayer>>();
+                let Ok(cast) = me.single(world) else {
+                    return;
+                };
+                if cast.spell_id == cached && cast.listed && !cast.hidden {
+                    let _ = net.send(ClientCommand::CancelCast {
+                        spell_id: cached,
+                        count: cast.cast_count,
+                    });
+                }
+            });
         }
     }
 }
@@ -2114,7 +2353,7 @@ mod tests {
         assert!(
             matches!(
                 rx.try_recv(),
-                Ok(ClientCommand::CastSpellGameObject { spell_id, go_guid })
+                Ok(ClientCommand::CastSpellGameObject { spell_id, go_guid, .. })
                     if spell_id == OPENING && go_guid == CHEST
             ),
             "the first click commits as a GameObject-targeted cast and arms the one inflight id"
@@ -2144,6 +2383,7 @@ mod tests {
     // cancels the running repeat.
 
     const AUTO_SHOT: u32 = 75;
+    const SHOOT: u32 = 5019;
     const RAPTOR_STRIKE: u32 = 2973;
     const SERPENT_STING: u32 = 1978;
     const EVISCERATE: u32 = 2098;
@@ -2180,9 +2420,19 @@ mod tests {
             attributes_ex: 0x0010_0200,
             ..Default::default()
         };
+        // Wand Shoot: auto-repeat, its equipped item a wand (class 2, subclass 19).
+        let shoot = benilla_formats::SpellDisplay {
+            targets: 0x2,
+            attributes: 0x2,
+            attributes_ex2: 0x20,
+            equipped_item_class: 2,
+            equipped_item_subclass_mask: 1 << 19,
+            ..Default::default()
+        };
         Spells {
             catalog: benilla_formats::SpellCatalog::from_displays(HashMap::from([
                 (AUTO_SHOT, auto_shot),
+                (SHOOT, shoot),
                 (RAPTOR_STRIKE, raptor_strike),
                 (SERPENT_STING, serpent_sting),
                 (EVISCERATE, eviscerate),
@@ -2377,7 +2627,7 @@ mod tests {
         let (mut world, rx) = combat_world(false);
         world
             .resource_mut::<crate::spell::PendingCast>()
-            .arm(FROSTBOLT, Instant::now(), true);
+            .arm(FROSTBOLT, 1, Instant::now(), true);
 
         send_at(&mut world, AUTO_SHOT, MOB);
 
@@ -2470,9 +2720,12 @@ mod tests {
     fn the_rungs_above_the_attack_pick_refuse_before_it() {
         use benilla_protocol::ObjectFields;
         let (mut world, rx) = combat_world(false);
-        world
-            .resource_mut::<crate::spell::PendingCast>()
-            .arm(SERPENT_STING, Instant::now(), true);
+        world.resource_mut::<crate::spell::PendingCast>().arm(
+            SERPENT_STING,
+            1,
+            Instant::now(),
+            true,
+        );
         let held = world
             .run_system_once(|mut ladder: CastLadder| {
                 ladder.send_spell(RAPTOR_STRIKE, &ctx(), None);
@@ -2516,33 +2769,151 @@ mod tests {
         }
     }
 
-    /// The commit's StopAttack: `CMSG_ATTACKSTOP`, then the queued-cast cancel hands the queued
-    /// strike to the cast cancel (`dl=1`) and its `CMSG_CANCEL_CAST`.
+    /// The shot goes out first (`0x80d727`); then the attempt's repeat arm ends the swing
+    /// (`0x80d99b` -> `0x800a5d`): `CMSG_ATTACKSTOP`, then the queued strike's cancel with the
+    /// strike record's own count (`0x8062de`).
     #[test]
     fn an_auto_repeat_press_stops_the_attack_and_takes_the_queued_strike_with_it() {
         let (mut world, rx) = combat_world(true);
         world
             .resource_mut::<crate::spell::QueuedMeleeSpell>()
-            .arm(RAPTOR_STRIKE);
+            .arm(RAPTOR_STRIKE, 7);
 
         send_at(&mut world, AUTO_SHOT, MOB);
 
         assert!(
-            matches!(rx.try_recv(), Ok(ClientCommand::AttackStop)),
-            "the auto-repeat arm calls StopAttack before the cast leaves"
-        );
-        assert!(
-            matches!(rx.try_recv(), Ok(ClientCommand::CancelCast { spell_id }) if spell_id == RAPTOR_STRIKE),
-            "the StopAttack tail cancels the queued strike by id"
-        );
-        assert!(
             matches!(rx.try_recv(), Ok(ClientCommand::CastSpell { spell_id, .. }) if spell_id == AUTO_SHOT),
-            "and then the shot itself commits"
+            "the shot commits first"
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientCommand::AttackStop)),
+            "then the repeat arm's StopAttack"
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientCommand::CancelCast { spell_id, count: 7 }) if spell_id == RAPTOR_STRIKE),
+            "the StopAttack tail cancels the queued strike with its record's count"
         );
         assert_eq!(
             world.resource::<crate::spell::QueuedMeleeSpell>().current(),
             None,
             "the queue is empty — the strike's checked ring goes dark"
+        );
+    }
+
+    /// The repeat arm is the attempt's tail after the send (`0x80d727`, `0x80d99b`): with the press
+    /// raising at its step, the ladder leaves the repeat unset and `START_AUTOREPEAT_SPELL` unraised
+    /// until the send's tail runs after `UNIT_SPELLCAST_SENT`'s listeners.
+    #[test]
+    fn the_repeat_arm_waits_for_the_sends_tail() {
+        let (mut world, rx) = combat_world(false);
+        world
+            .run_system_once(|mut ladder: CastLadder| {
+                let ctx = cast_target::CastContext {
+                    selection_guid: Some(MOB),
+                    ..ctx()
+                };
+                ladder.send(AUTO_SHOT, &ctx, CastCommit::Spell);
+            })
+            .expect("the ladder runs as a one-shot system");
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientCommand::CastSpell { spell_id, .. }) if spell_id == AUTO_SHOT)
+        );
+        assert_eq!(
+            world.resource::<AutoRepeatActive>().0,
+            None,
+            "unset at SENT"
+        );
+        let edges = world
+            .resource::<crate::ui_cast::PressEdges>()
+            .waiting()
+            .to_vec();
+        assert!(
+            matches!(
+                edges.first(),
+                Some(crate::ui_cast::CastBarEdge::Sent { .. })
+            ),
+            "{edges:?}"
+        );
+        assert!(
+            !edges.iter().any(|e| matches!(
+                e,
+                crate::ui_cast::CastBarEdge::Signal("START_AUTOREPEAT_SPELL")
+            )),
+            "{edges:?}"
+        );
+        crate::ui_cast::PressEdges::run_tails(&mut world);
+        assert_eq!(world.resource::<AutoRepeatActive>().0, Some(AUTO_SHOT));
+        let raised = world
+            .resource::<crate::ui_script::live::UiEvents>()
+            .cast_edges();
+        assert!(
+            raised.iter().any(|e| matches!(
+                e,
+                crate::ui_cast::CastBarEdge::Signal("START_AUTOREPEAT_SPELL")
+            )),
+            "{raised:?}"
+        );
+    }
+
+    /// A cast over a running wand repeat sends first, then the repeat cancel (`0x80d9fa` ->
+    /// `0x807560`): `CMSG_CANCEL_AUTO_REPEAT_SPELL`, and no `CMSG_CANCEL_CAST` when no record of
+    /// the repeat is pending. Auto Shot, which needs no wand, survives.
+    #[test]
+    fn a_cast_over_a_wand_repeat_cancels_it_after_the_send() {
+        let (mut world, rx) = combat_world(false);
+        world.resource_mut::<AutoRepeatActive>().0 = Some(SHOOT);
+        send_at(&mut world, SERPENT_STING, MOB);
+        let sent: Vec<ClientCommand> = rx.try_iter().collect();
+        assert!(
+            matches!(sent.first(), Some(ClientCommand::CastSpell { spell_id, .. }) if *spell_id == SERPENT_STING),
+            "{sent:?}"
+        );
+        assert!(
+            matches!(sent.get(1), Some(ClientCommand::CancelAutoRepeat)),
+            "{sent:?}"
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|c| matches!(c, ClientCommand::CancelCast { .. })),
+            "{sent:?}"
+        );
+        assert_eq!(world.resource::<AutoRepeatActive>().0, None);
+
+        let (mut world, rx) = combat_world(false);
+        world.resource_mut::<AutoRepeatActive>().0 = Some(AUTO_SHOT);
+        send_at(&mut world, SERPENT_STING, MOB);
+        assert!(!rx
+            .try_iter()
+            .any(|c| matches!(c, ClientCommand::CancelAutoRepeat)));
+        assert_eq!(world.resource::<AutoRepeatActive>().0, Some(AUTO_SHOT));
+    }
+
+    /// The cast attempt's records take counts 1, 2, ... (`0x80cda8`, `0x8050dc`); a local cancel
+    /// names the cancelled record's own count (`0x8062de`), not the spell's latest.
+    #[test]
+    fn a_cancel_names_its_records_own_count() {
+        let (mut world, rx) = combat_world(false);
+        send_at(&mut world, RAPTOR_STRIKE, MOB);
+        let first = rx.try_iter().find_map(|c| match c {
+            ClientCommand::CastSpell { count, .. } => Some(count),
+            _ => None,
+        });
+        assert_eq!(first, Some(1));
+        assert_eq!(
+            world.resource::<crate::spell::QueuedMeleeSpell>().count(),
+            Some(1)
+        );
+        send_at(&mut world, SERPENT_STING, MOB);
+        let second = rx.try_iter().find_map(|c| match c {
+            ClientCommand::CastSpell { count, .. } => Some(count),
+            _ => None,
+        });
+        assert_eq!(second, Some(2));
+        assert_eq!(
+            world.resource::<crate::spell::QueuedMeleeSpell>().count(),
+            Some(1),
+            "the strike keeps its record's count"
         );
     }
 
@@ -2553,7 +2924,7 @@ mod tests {
         let (mut world, rx) = combat_world(false);
         world
             .resource_mut::<crate::spell::QueuedMeleeSpell>()
-            .arm(RAPTOR_STRIKE);
+            .arm(RAPTOR_STRIKE, 1);
 
         send_at(&mut world, AUTO_SHOT, MOB);
 
@@ -2699,7 +3070,8 @@ mod tests {
             rx.try_recv(),
             Ok(ClientCommand::CastSpell {
                 spell_id: HEARTHSTONE,
-                target: None
+                target: None,
+                ..
             })
         ));
 
@@ -2713,7 +3085,8 @@ mod tests {
                 slot: 24,
                 spell_id: HEARTHSTONE,
                 item_guid: HEARTH_GUID,
-                target: UseItemTarget::SelfImplicit
+                target: UseItemTarget::SelfImplicit,
+                ..
             })
         ));
 
@@ -3026,7 +3399,8 @@ mod tests {
                 sent,
                 Some(ClientCommand::CastSpell {
                     spell_id: RENEW_2,
-                    target: Some(ALLY)
+                    target: Some(ALLY),
+                    ..
                 })
             ),
             "rank 2 goes out at the ally: {sent:?}"

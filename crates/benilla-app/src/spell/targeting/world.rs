@@ -331,6 +331,7 @@ mod tests {
             pet_guid,
             spell_id,
             target: benilla_protocol::messages::UseItemTarget::Dest(at),
+            ..
         } = sent
         else {
             panic!("a pet cast at the click: {sent:?}");
@@ -358,6 +359,7 @@ mod tests {
             Ok(ClientCommand::CastSpellGameObject {
                 spell_id: OPENING,
                 go_guid: CHEST,
+                ..
             })
         ));
         assert!(
@@ -390,6 +392,7 @@ mod tests {
             Ok(ClientCommand::CastSpell {
                 spell_id: HEAL,
                 target: Some(ALLY),
+                ..
             })
         ));
         assert!(
@@ -442,6 +445,7 @@ mod tests {
             Ok(ClientCommand::CastSpell {
                 spell_id: HEAL,
                 target: Some(ALLY),
+                ..
             })
         ));
     }
@@ -511,6 +515,7 @@ mod tests {
             Ok(ClientCommand::CastSpell {
                 spell_id: HEAL,
                 target: Some(ALLY),
+                ..
             })
         ));
         assert!(crate::ui_action::take_refusals(&mut world).is_empty());
@@ -574,6 +579,7 @@ mod tests {
                     spell_id: fx::RESURRECTION,
                     target: CorpseTarget::Ally,
                     corpse_guid: fx::CORPSE,
+                    ..
                 })
             ),
             "{sent:?}"

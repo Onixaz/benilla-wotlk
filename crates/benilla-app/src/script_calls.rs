@@ -461,7 +461,9 @@ mod tests {
     fn casts(f: &Frame) -> Vec<(u32, Option<u64>)> {
         f.rx.try_iter()
             .filter_map(|c| match c {
-                ClientCommand::CastSpell { spell_id, target } => Some((spell_id, target)),
+                ClientCommand::CastSpell {
+                    spell_id, target, ..
+                } => Some((spell_id, target)),
                 _ => None,
             })
             .collect()
@@ -1065,6 +1067,7 @@ mod tests {
                 ClientCommand::CastSpell {
                     spell_id: SINISTER_STRIKE,
                     target: Some(guid),
+                    ..
                 } => Some(("cast", guid)),
                 ClientCommand::AttackSwing { guid } => Some(("swing", guid)),
                 _ => None,

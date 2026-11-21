@@ -1053,9 +1053,7 @@ mod tests {
                     ClientCommand::SetSelection { .. } => "select",
                     ClientCommand::AttackStop => "stop",
                     ClientCommand::AttackSwing { .. } => "swing",
-                    ClientCommand::CancelCast { .. } | ClientCommand::CancelCastHandoff { .. } => {
-                        "cancel-cast"
-                    }
+                    ClientCommand::CancelCast { .. } => "cancel-cast",
                     ClientCommand::CancelAutoRepeat => "cancel-repeat",
                     _ => "other",
                 })
@@ -1092,7 +1090,7 @@ mod tests {
         // A queued strike and auto-repeat: the stop un-queues one, the re-swing ends the other.
         world
             .resource_mut::<crate::spell::QueuedMeleeSpell>()
-            .arm(78);
+            .arm(78, 1);
         world.resource_mut::<crate::spell::AutoRepeatActive>().0 = Some(75);
         let out = go(&mut world, 0xF, true, Some(1), true);
         assert!(out.changed && out.swung);

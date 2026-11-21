@@ -86,6 +86,9 @@ pub(crate) enum CastBarEdge {
     Line(crate::ui_action::UiError),
     /// The cast send's rest after its `SENT` (`0x80b573`, `0x80b583`), run at its step.
     SendTail(crate::spell::SendTail),
+    /// The cast attempt's rungs below the targeting cursor's stop, run after the stop's selection
+    /// update (`0x80d3ce`, `0x8054f0`).
+    LadderRest(crate::spell::LadderRest),
 }
 
 /// A press's signal joins its edges, in order with the send's and the cancel's.
@@ -117,26 +120,42 @@ impl crate::ui_action::CastRefusals for PressSignals<'_, '_> {
 pub(crate) struct PressEdges(Vec<CastBarEdge>);
 
 impl PressEdges {
-    /// Run every waiting send's rest in order, as its step would after its `SENT` listeners: a
-    /// harness that runs the ladder as a one-shot system and fires nothing.
+    /// Run every waiting send's rest and ladder rest in order, as their steps would after the
+    /// listeners before them: a harness that runs the ladder as a one-shot system and fires nothing.
     #[cfg(test)]
     pub(crate) fn run_tails(world: &mut World) {
         loop {
-            let tail = world.get_resource_mut::<PressEdges>().and_then(|mut e| {
-                let at =
-                    e.0.iter()
-                        .position(|e| matches!(e, CastBarEdge::SendTail(_)))?;
-                match e.0.remove(at) {
-                    CastBarEdge::SendTail(tail) => Some(tail),
-                    _ => None,
-                }
+            let step = world.get_resource_mut::<PressEdges>().and_then(|mut e| {
+                let at = e.0.iter().position(|e| {
+                    matches!(e, CastBarEdge::SendTail(_) | CastBarEdge::LadderRest(_))
+                })?;
+                Some(e.0.remove(at))
             });
-            let Some(tail) = tail else { return };
+            let Some(step) = step else { return };
             world.get_resource_or_init::<UiEvents>();
-            world
-                .run_system_cached_with(crate::spell::run_send_tail, tail)
-                .expect("the tail runs");
+            match step {
+                CastBarEdge::SendTail(tail) => world
+                    .run_system_cached_with(crate::spell::run_send_tail, tail)
+                    .expect("the tail runs"),
+                CastBarEdge::LadderRest(rest) => world
+                    .run_system_cached_with(crate::spell::run_ladder_rest, rest)
+                    .expect("the ladder's rest runs"),
+                _ => unreachable!(),
+            }
+            // A step the step queued runs next; its other raises wait on the queue unfired.
+            let steps = world.resource_mut::<UiEvents>().take_press_steps();
+            if let Some(mut edges) = world.get_resource_mut::<PressEdges>() {
+                for (i, step) in steps.into_iter().enumerate() {
+                    edges.0.insert(i, step);
+                }
+            }
         }
+    }
+
+    /// The edges waiting, in order.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> &[CastBarEdge] {
+        &self.0
     }
 
     /// The refusals waiting, taken.
@@ -219,6 +238,13 @@ impl PressSignals<'_, '_> {
     pub(crate) fn tail(&mut self, tail: crate::spell::SendTail) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::SendTail(tail));
+        }
+    }
+
+    /// The cast attempt's rungs after the cursor's stop, run after its selection update.
+    pub(crate) fn ladder_rest(&mut self, rest: crate::spell::LadderRest) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::LadderRest(rest));
         }
     }
 
@@ -691,6 +717,12 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         return;
     }
+    if let CastBarEdge::LadderRest(rest) = edge {
+        if let Err(e) = world.run_system_cached_with(crate::spell::run_ladder_rest, rest) {
+            warn!("ui_cast: a cast attempt's rest did not run: {e}");
+        }
+        return;
+    }
     if let CastBarEdge::CooldownStart { on_hold } = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             crate::ui_action::signals::cooldown_site(
@@ -757,7 +789,8 @@ fn edge_system(
         CastBarEdge::CooldownStart { .. }
         | CastBarEdge::Refused(_)
         | CastBarEdge::Line(_)
-        | CastBarEdge::SendTail(_) => {}
+        | CastBarEdge::SendTail(_)
+        | CastBarEdge::LadderRest(_) => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
         CastBarEdge::Sent { spell_id, target } => {

@@ -640,7 +640,7 @@ impl WorldSession {
 
     /// Cast a spell (`CMSG_CAST_SPELL`), `None` targeting self; a refusal is `SMSG_CAST_RESULT`.
     pub fn cast_spell(&mut self, spell_id: u32, target: Option<u64>) -> Result<()> {
-        let count = self.cast_counter.take(spell_id);
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell(count, spell_id, target),
@@ -649,7 +649,7 @@ impl WorldSession {
 
     /// Cast a spell at a ground point in world coords (`TARGET_FLAG_DEST_LOCATION`).
     pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: [f32; 3]) -> Result<()> {
-        let count = self.cast_counter.take(spell_id);
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_at_dest(count, spell_id, dest.into()),
@@ -658,7 +658,7 @@ impl WorldSession {
 
     /// Cast an OPEN_LOCK spell (e.g. 3365 Opening, 2575 Mining) at a GameObject.
     pub fn cast_spell_gameobject(&mut self, spell_id: u32, go_guid: u64) -> Result<()> {
-        let count = self.cast_counter.take(spell_id);
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_gameobject(count, spell_id, go_guid),
@@ -682,7 +682,7 @@ impl WorldSession {
         spell_id: u32,
         item_guid: u64,
     ) -> Result<()> {
-        let count = self.cast_counter.take(spell_id);
+        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_USE_ITEM,
             &messages::use_item(
@@ -1084,7 +1084,6 @@ impl WorldSession {
                 stream: self.stream,
                 encrypter,
                 chat_language: self.chat_language,
-                cast_counter: self.cast_counter,
                 mover: self.mover,
                 warden: self.warden,
             },
@@ -1111,7 +1110,7 @@ impl WorldSession {
             chat_language: writer.chat_language,
             tutorial_flags: None,
             glue_events: Vec::new(),
-            cast_counter: writer.cast_counter,
+            cast_counter: Default::default(),
             mover: writer.mover,
             warden: writer.warden,
         };

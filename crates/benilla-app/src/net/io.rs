@@ -1441,8 +1441,7 @@ pub(super) fn writer_loop(
                     ClientCommand::SetSelection { guid } => w.set_selection(guid),
                     ClientCommand::GetMirrorImageData { guid } => w.get_mirror_image_data(guid),
                     ClientCommand::CancelAutoRepeat => w.cancel_auto_repeat(),
-                    ClientCommand::CancelCast { spell_id } => w.cancel_cast(spell_id, false),
-                    ClientCommand::CancelCastHandoff { spell_id } => w.cancel_cast(spell_id, true),
+                    ClientCommand::CancelCast { spell_id, count } => w.cancel_cast(count, spell_id),
                     ClientCommand::CancelChannelling { spell_id } => w.cancel_channelling(spell_id),
                     ClientCommand::Chat {
                         kind,
@@ -1537,12 +1536,13 @@ pub(super) fn writer_loop(
                     }
                     ClientCommand::ItemQuery { entry, guid } => w.item_query(entry, guid),
                     ClientCommand::UseItem {
+                        count,
                         bag_index,
                         slot,
                         spell_id,
                         item_guid,
                         target,
-                    } => w.use_item(bag_index, slot, spell_id, item_guid, target),
+                    } => w.use_item(count, bag_index, slot, spell_id, item_guid, target),
                     ClientCommand::OpenItem { bag_index, slot } => w.open_item(bag_index, slot),
                     ClientCommand::WrapItem {
                         gift_bag,
@@ -1580,18 +1580,27 @@ pub(super) fn writer_loop(
                         slot,
                         count,
                     } => w.destroy_item(bag_index, slot, count),
-                    ClientCommand::CastSpell { spell_id, target } => w.cast_spell(spell_id, target),
+                    ClientCommand::CastSpell {
+                        count,
+                        spell_id,
+                        target,
+                    } => w.cast_spell(count, spell_id, target),
                     ClientCommand::CastSpellCorpse {
+                        count,
                         spell_id,
                         target,
                         corpse_guid,
-                    } => w.cast_spell_corpse(spell_id, target, corpse_guid),
-                    ClientCommand::CastSpellAtDest { spell_id, dest } => {
-                        w.cast_spell_at_dest(spell_id, dest)
-                    }
-                    ClientCommand::CastSpellAtSource { spell_id, src } => {
-                        w.cast_spell_at_source(spell_id, src)
-                    }
+                    } => w.cast_spell_corpse(count, spell_id, target, corpse_guid),
+                    ClientCommand::CastSpellAtDest {
+                        count,
+                        spell_id,
+                        dest,
+                    } => w.cast_spell_at_dest(count, spell_id, dest),
+                    ClientCommand::CastSpellAtSource {
+                        count,
+                        spell_id,
+                        src,
+                    } => w.cast_spell_at_source(count, spell_id, src),
                     ClientCommand::CancelAura { spell_id } => w.cancel_aura(spell_id),
                     ClientCommand::CancelMountAura => w.cancel_mount_aura(),
                     ClientCommand::DismissCritter { guid } => w.dismiss_critter(guid),
@@ -1608,11 +1617,13 @@ pub(super) fn writer_loop(
                         target_guid,
                     } => w.pet_action(pet_guid, packed, target_guid),
                     ClientCommand::PetCastSpell {
+                        count,
                         pet_guid,
                         spell_id,
                         target,
-                    } => w.pet_cast_spell(pet_guid, spell_id, target),
+                    } => w.pet_cast_spell(count, pet_guid, spell_id, target),
                     ClientCommand::PetCastTrajectory {
+                        count,
                         pet_guid,
                         spell_id,
                         shot,
@@ -1621,6 +1632,7 @@ pub(super) fn writer_loop(
                         pos,
                         orientation,
                     } => w.pet_cast_trajectory(
+                        count,
                         pet_guid,
                         spell_id,
                         &shot,
@@ -1846,17 +1858,22 @@ pub(super) fn writer_loop(
                     ClientCommand::PageTextQuery { page_id, guid } => {
                         w.page_text_query(page_id, guid)
                     }
-                    ClientCommand::CastSpellGameObject { spell_id, go_guid } => {
-                        w.cast_spell_gameobject(spell_id, go_guid)
-                    }
+                    ClientCommand::CastSpellGameObject {
+                        count,
+                        spell_id,
+                        go_guid,
+                    } => w.cast_spell_gameobject(count, spell_id, go_guid),
                     ClientCommand::CastSpellItem {
+                        count,
                         spell_id,
                         item_guid,
-                    } => w.cast_spell_item(spell_id, item_guid),
-                    ClientCommand::CastSpellTradeItem { spell_id } => {
-                        w.cast_spell_trade_item(spell_id)
+                    } => w.cast_spell_item(count, spell_id, item_guid),
+                    ClientCommand::CastSpellTradeItem { count, spell_id } => {
+                        w.cast_spell_trade_item(count, spell_id)
                     }
-                    ClientCommand::CastSpellGlyph { spell_id } => w.cast_spell_glyph(spell_id),
+                    ClientCommand::CastSpellGlyph { count, spell_id } => {
+                        w.cast_spell_glyph(count, spell_id)
+                    }
                     ClientCommand::LootMasterGive { guid, slot, target } => {
                         w.loot_master_give(guid, slot, target)
                     }

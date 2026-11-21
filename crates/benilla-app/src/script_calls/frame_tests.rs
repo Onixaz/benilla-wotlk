@@ -531,7 +531,9 @@ impl Rig {
         self.sent()
             .into_iter()
             .filter_map(|c| match c {
-                ClientCommand::CastSpell { spell_id, target } => Some((spell_id, target)),
+                ClientCommand::CastSpell {
+                    spell_id, target, ..
+                } => Some((spell_id, target)),
                 _ => None,
             })
             .collect()
@@ -1519,6 +1521,46 @@ fn a_sent_listener_reads_no_gcd_yet() {
     let after: f64 = rig.vm().eval("return AFTER").expect("the call returned");
     assert_eq!(at_sent, 0.0, "no GCD at SENT");
     assert!(after > 0.0, "the press armed the GCD after SENT: {after}");
+}
+
+/// A press that stops the targeting cursor runs the selection update at the stop (`0x80d3ce`,
+/// `0x8054f0`) and its rungs below after that update's listeners: a listener reads the new press
+/// neither filed nor sent, and its `UNIT_SPELLCAST_SENT` fires after it.
+#[test]
+fn a_stopped_cursors_selection_listener_reads_the_press_unsent() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::spell::SpellTargeting>()
+        .enter(NOVA, crate::spell::CastCommit::Spell, 0x40);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"ORDER = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("CURRENT_SPELL_CAST_CHANGED")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function(_, e)
+            if e == "CURRENT_SPELL_CAST_CHANGED" and #ORDER == 0 then
+                AT_STOP = IsCurrentAction(1) and 1 or 0
+            end
+            ORDER[#ORDER + 1] = e
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+    let at_stop: i64 = rig.vm().eval("return AT_STOP").expect("the listener ran");
+    assert_eq!(at_stop, 0, "the press is not filed at the stop's update");
+    let order: Vec<String> = rig.vm().eval("return ORDER").expect("the order");
+    let sent = order.iter().position(|e| e == "UNIT_SPELLCAST_SENT");
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("CURRENT_SPELL_CAST_CHANGED")
+    );
+    assert!(
+        sent.is_some_and(|at| at > 0),
+        "SENT after the stop's update: {order:?}"
+    );
 }
 
 /// A listener on `event`, raised by the call `call` makes inside an `OnUpdate`, that targets
