@@ -7512,3 +7512,110 @@ fn book_updates_fire_from_their_handlers_in_wire_order() {
     );
 }
 
+/// The stock `EquipmentManager`'s in-flight slots clear on `ITEM_UNLOCKED` at the item's place (#682): a bag slot when the server's update moves the locked item there (`0x5d9863` -> `0x513770` -> `0x707041`), an inventory slot when the cursor's clear unlocks it (`0x5192c9` -> `0x707041`); the put-down's clear leaves the moved item locked, so its slot stays marked until the update (`0x6dfc0d`).
+#[test]
+fn the_equipment_managers_in_flight_slots_clear_at_their_unlock() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    const ARROWS: u64 = 0x4000_0000_0000_0400;
+    const BLADE: u64 = 0x4000_0000_0000_0401;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let item = |guid: u64, entry: u32| {
+        let pairs = [
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, ME as u32),
+            (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, 1),
+        ];
+        SessionEvent::ItemCreate {
+            guid,
+            container: false,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+        }
+    };
+    let slot = |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    // The main hand is inventory slot 16, 0-based 15.
+    let main_hand = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+    let mut words = slot(FIELD_PLAYER_PACK_SLOT_1, ARROWS).to_vec();
+    words.extend(slot(main_hand, BLADE));
+    rig.packets(
+        vec![item(ARROWS, 2512), item(BLADE, 25), self_values(&words)],
+        2,
+    );
+    let marks = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<(bool, bool)>(
+                "return EQUIPMENTMANAGER_BAGSLOTS[0][2] ~= nil, \
+                 EQUIPMENTMANAGER_INVENTORYSLOTS[16] ~= nil",
+            )
+        })
+        .expect("a VM")
+        .expect("the stock tables")
+    };
+    // A swap in flight, as the stock manager marks its slots.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "EQUIPMENTMANAGER_BAGSLOTS[0][2] = 1 EQUIPMENTMANAGER_INVENTORYSLOTS[16] = 1 \
+             PickupContainerItem(0, 1) PickupContainerItem(0, 2)",
+        )
+    })
+    .expect("a VM")
+    .expect("the move runs");
+    rig.packets(Vec::new(), 2);
+    assert_eq!(marks(&mut rig), (true, true), "nothing unlocked yet");
+    // The server moves the arrows: slot 2's watch unlocks them where they landed.
+    let mut words = slot(FIELD_PLAYER_PACK_SLOT_1, 0).to_vec();
+    words.extend(slot(FIELD_PLAYER_PACK_SLOT_1 + 2, ARROWS));
+    rig.packets(vec![self_values(&words)], 2);
+    assert_eq!(
+        marks(&mut rig),
+        (false, true),
+        "the bag slot clears at the server's unlock"
+    );
+    // The worn blade's pickup locks it and the cursor's clear unlocks it, inside the call.
+    let inside = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<bool>(
+            "PickupInventoryItem(16) ClearCursor() return EQUIPMENTMANAGER_INVENTORYSLOTS[16] == nil",
+        )
+    })
+    .expect("a VM")
+    .expect("the clear runs");
+    assert!(inside, "the inventory slot clears inside the clear's call");
+}
+
+/// A refusing verb's line fires inside its call with the `World` lent (`0x5216f0` -> `0x52188a`, `0x521863`), ahead of the chunk's marker, and the frame's feed shows it no second time: only a chat line reaches the engine's queue (#1306).
+#[test]
+fn a_refusal_line_fires_in_its_call_and_never_from_the_feed() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let log = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "Log = {} local f = CreateFrame('Frame') \
+             f:RegisterEvent('UI_ERROR_MESSAGE') f:RegisterEvent('UI_INFO_MESSAGE') \
+             f:SetScript('OnEvent', function(_, e) Log[#Log + 1] = e end) \
+             NotWhileDeadError() Log[#Log + 1] = 'after'",
+        )
+        .expect("the chunk runs");
+        s.eval::<Vec<String>>("return Log").unwrap()
+    })
+    .expect("a VM");
+    assert_eq!(log, ["UI_ERROR_MESSAGE", "after"]);
+    // The feed shows what the engine's queue holds (`take_ui_errors`): a line it held would fire again here.
+    rig.packets(Vec::new(), 2);
+    let after = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<Vec<String>>("return Log").unwrap()
+    })
+    .expect("a VM");
+    assert_eq!(
+        after,
+        ["UI_ERROR_MESSAGE", "after"],
+        "the feed shows the line no second time"
+    );
+}

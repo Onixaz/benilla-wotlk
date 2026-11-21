@@ -270,4 +270,34 @@ mod show_now_tests {
         );
         assert!(s.take_ui_errors().is_empty());
     }
+
+    /// Every row of the catalog (`0xac8af0`): a red or yellow line fires its event inside the call
+    /// and leaves the engine's queue empty; only a chat line goes to the app (#1306).
+    #[test]
+    fn only_a_chat_row_reaches_the_engines_queue() {
+        use crate::messages::{MsgKind, CATALOG};
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.run(LOGGER).unwrap();
+        for r in CATALOG.iter().filter(|r| !r.key.is_empty()) {
+            s.lua().globals().set(r.key, "text").unwrap();
+            s.run("Log = {}").unwrap();
+            super::show_now(s.lua(), r.key);
+            let queued = s.take_ui_errors();
+            let fired = log(&s);
+            match r.kind {
+                MsgKind::Error => {
+                    assert_eq!(fired, ["UI_ERROR_MESSAGE:text"], "{}", r.key);
+                    assert!(queued.is_empty(), "{}", r.key);
+                }
+                MsgKind::Info => {
+                    assert_eq!(fired, ["UI_INFO_MESSAGE:text"], "{}", r.key);
+                    assert!(queued.is_empty(), "{}", r.key);
+                }
+                MsgKind::Chat => {
+                    assert!(fired.is_empty(), "{}", r.key);
+                    assert_eq!(queued, [r.key]);
+                }
+            }
+        }
+    }
 }
