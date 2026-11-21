@@ -1055,7 +1055,8 @@ pub(super) fn scaled_rate(clip: &AnimClip, speed: f32, model_scale: f32) -> Opti
 /// The unified movement view, first present winning: the controller's [`MovementState`], a
 /// remote's relayed flags ([`RemoteMotion`]), a creature's spline, else still.
 /// `creature_swimming` supplies the `SWIMMING` the wire never sends for a creature; `modes`, the
-/// `SMSG_SPLINE_MOVE_*` grants, join the remote and creature flags (one word in the reference).
+/// word a create or movement block seeds and the `SMSG_SPLINE_MOVE_*` grants change, join the
+/// remote and creature flags (one word in the reference).
 pub(crate) fn unify(
     movement: Option<&MovementState>,
     remote: Option<&RemoteMotion>,

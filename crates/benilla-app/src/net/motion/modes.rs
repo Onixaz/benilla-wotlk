@@ -7,9 +7,10 @@ use crate::creature_anim::move_flags;
 
 /// A streamed unit's server-granted movement modes as `MOVEMENTFLAGS` bits: root, water-walk,
 /// feather-fall, hover, walk-mode and swim. The reference keeps one flags dword per unit
-/// (the movement object at unit `+0x9a8`, word `+0x40`); the granted half is kept apart from
+/// (the movement object at unit `+0x788`, word `+0x44`); the granted half is kept apart from
 /// [`super::RemoteMotion::flags`] because the relay merge rewrites that word from every pose and a
-/// creature sends none. A player with no relay state keeps its word here ([`standing_bits`]).
+/// creature sends none. Every unit's create or movement block seeds it with the block's standing
+/// bits ([`standing_bits`], `0x6f1520` zeroes the word and merges), a creature's as a player's.
 /// Absent means no modes; once inserted it lives as long as the entity, as the reference's word
 /// lives as long as the unit.
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
