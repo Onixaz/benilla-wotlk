@@ -34,6 +34,8 @@ pub(crate) use input::feed_ui_input;
 #[cfg(test)]
 mod characterization_tests;
 #[cfg(test)]
+mod demo_unit_tests;
+#[cfg(test)]
 mod feed_census_tests;
 #[cfg(test)]
 mod layer_tests;
@@ -644,16 +646,47 @@ fn feed_framerate(
 
 /// Synthetic player and target snapshots for a server-less UI capture, and its first events once.
 fn demo_unit_feed(world: &mut World, mut fired: Local<VmMemo<bool>>) {
-    safe_world::lend(world, |script| demo_units(script, &mut fired));
+    // A fixture's own self player keeps its guid; else the stand-in's.
+    let player = world
+        .query_filtered::<&crate::net::Guid, With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .map_or(DEMO_PLAYER_GUID, |g| g.0);
+    safe_world::lend(world, |script| demo_units(script, player, &mut fired));
+}
+
+/// The synthetic player's guid where the capture spawns no self player.
+const DEMO_PLAYER_GUID: u64 = 0x51;
+/// The synthetic target's guid: a creature high part; only its distinctness matters.
+const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
+/// The guid a tooltip fixture's hovered snapshot carries; only its distinctness matters.
+#[cfg_attr(not(feature = "dev"), allow(dead_code))]
+pub(crate) const DEMO_MOUSEOVER_GUID: u64 = 0xF130_0000_0000_0002;
+
+/// The resolver's stand-in tables for a capture's synthetic units: the World holds no selection
+/// or hover, so the tokens name the snapshots' guids, as `addon_harness` does for its own.
+fn demo_unit_guids(player: u64) -> benilla_ui::script::UnitGuids {
+    benilla_ui::script::UnitGuids {
+        player,
+        target: DEMO_TARGET_GUID,
+        mouseover: DEMO_MOUSEOVER_GUID,
+        held: [
+            (player, DEMO_TARGET_GUID),
+            (DEMO_TARGET_GUID, 0),
+            (DEMO_MOUSEOVER_GUID, 0),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    }
 }
 
 /// [`demo_unit_feed`]'s body on the VM, with the `World` lent.
-fn demo_units(script: &mut UiScript, fired: &mut VmMemo<bool>) {
-    /// The synthetic target's guid: a creature high part; only its distinctness matters.
-    const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
-
+fn demo_units(script: &mut UiScript, player: u64, fired: &mut VmMemo<bool>) {
     // Session-keyed: a fresh VM needs the one-shot events and bar seeds again.
     let fired = fired.get(script);
+    // Each frame, ahead of any read: the synthetic snapshots below are what the tokens name.
+    crate::dev::set_fixture_units(script, demo_unit_guids(player));
     // Debug (`WOW_CAPTURE_REHOVER=1`): re-fire the world hover every frame, a flapping raycast.
     if std::env::var("WOW_CAPTURE_REHOVER").as_deref() == Ok("1") {
         script.world_tooltip_unit("mouseover");
@@ -679,6 +712,7 @@ fn demo_units(script: &mut UiScript, fired: &mut VmMemo<bool>) {
             sex: 2,
             is_player: true,
             player_controlled: true,
+            guid: player,
             ..Default::default()
         }),
     );
