@@ -1,14 +1,13 @@
-//! A VM with a fixed live view lent for its whole length, for the dialog tests: the death and
-//! summon verbs read what the test sets, as the app's verbs read the `World`.
+//! A fixed live view over this thread's set answers, lent around a test's calls into Lua: the
+//! death and summon verbs read what the test sets, as the app's verbs read the `World`.
 
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
 use benilla_ui::script::{
-    CompanionState, CompanionType, CompanionView, DressUpIntent, LiveLoan, LiveState,
-    PetActionView, PetBarLive, PetBookState, PetStats, PetitionRequest, PossessView, RuneRegen,
-    RuneState, SpellTargetingLive, StableCallback, StableFamily, StableList, TaxiAct, UiScript,
-    UnitCast,
+    CompanionState, CompanionType, CompanionView, DressUpIntent, LiveState, PetActionView,
+    PetBarLive, PetBookState, PetStats, PetitionRequest, PossessView, RuneRegen, RuneState,
+    SpellTargetingLive, StableCallback, StableFamily, StableList, TaxiAct, UiScript, UnitCast,
 };
 
 /// The death answers a test sets.
@@ -89,11 +88,19 @@ thread_local! {
     static PET: RefCell<PetAnswers> = RefCell::default();
     /// The writes the verbs made inside their calls, in call order.
     static WRITES: RefCell<VerbWrites> = RefCell::default();
-    /// The view lent for the rest of the thread once a pet answer is set.
-    static STICKY: RefCell<Option<LiveLoan<View>>> = const { RefCell::new(None) };
 }
 
-/// Set pet and companion answers on a bare VM, as the app's live view answers them: the first call lends [`View`] for the rest of the test's thread.
+/// Run `f` with `view` lent as the live view, as a call into Lua lends the `World`.
+pub(crate) fn lending<V: LiveState + 'static, R>(view: &mut V, f: impl FnOnce() -> R) -> R {
+    benilla_ui::script::world_loan::lend_live(&mlua::Lua::new(), view, f)
+}
+
+/// `f` over the `V` lent right now, between calls into Lua.
+pub(crate) fn lent_view<V: 'static, R>(f: impl FnOnce(&mut V) -> R) -> R {
+    benilla_ui::script::world_loan::with_lent::<V, R>(f).expect("a test view is lent")
+}
+
+/// Set pet and companion answers on a bare VM, as [`View`] answers them while lent.
 pub(crate) trait PetAnswersExt {
     /// The pet bar as the live view answers it: `has_bar`, `actions_usable`, `pickup_allowed`, and the slots, the attacking global raised by a slot showing it.
     fn set_pet_actions(
@@ -125,8 +132,6 @@ struct VerbWrites {
 /// Record a bare VM's verb writes as the live view receives them, inside each verb's call; the
 /// windows a test seeds stay its own, as [`View`] answers none of them.
 pub(crate) trait VerbWritesExt {
-    /// Lend [`View`] for the rest of the test's thread, so every later write reaches it.
-    fn record_writes(&mut self);
     /// Run `f` with [`View`] lent for its length only, its writes recorded.
     fn with_writes<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R;
     /// The dressing-room edits made since the last take, oldest first.
@@ -140,10 +145,6 @@ pub(crate) trait VerbWritesExt {
 }
 
 impl VerbWritesExt for UiScript {
-    fn record_writes(&mut self) {
-        sticky(self);
-    }
-
     fn with_writes<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         self.with_live(&mut View, f)
     }
@@ -165,7 +166,7 @@ impl VerbWritesExt for UiScript {
     }
 }
 
-/// Set spell and action answers on a bare VM, as the app's live view answers them: the first call lends [`View`] for the rest of the test's thread.
+/// Set spell and action answers on a bare VM, as [`View`] answers them while lent.
 pub(crate) trait SpellAnswersExt {
     /// The rune table and the player's `PLAYER_RUNE_REGEN` rates, with the player object held.
     fn set_runes(&mut self, runes: RuneState, regen: RuneRegen);
@@ -179,12 +180,10 @@ pub(crate) trait SpellAnswersExt {
 
 impl SpellAnswersExt for UiScript {
     fn set_runes(&mut self, runes: RuneState, regen: RuneRegen) {
-        sticky(self);
         SPELL.with(|s| s.borrow_mut().runes = Some((runes, regen)));
     }
 
     fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>) {
-        sticky(self);
         SPELL.with(|s| {
             let casts = &mut s.borrow_mut().unit_casts;
             match cast {
@@ -195,12 +194,10 @@ impl SpellAnswersExt for UiScript {
     }
 
     fn set_casting(&mut self, casting: bool) {
-        sticky(self);
         SPELL.with(|s| s.borrow_mut().stoppable = casting);
     }
 
     fn set_spell_targeting(&mut self, active: bool) {
-        sticky(self);
         SPELL.with(|s| {
             let t = &mut s.borrow_mut().targeting;
             if active && !t.active {
@@ -211,19 +208,6 @@ impl SpellAnswersExt for UiScript {
     }
 }
 
-/// Lend [`View`] for the rest of the thread; the first loan must enclose every later one, so no other loan may be up when it is made.
-fn sticky(script: &UiScript) {
-    STICKY.with(|s| {
-        if s.borrow().is_none() {
-            assert!(
-                !script.has_live(),
-                "the sticky loan must be made outside every other loan"
-            );
-            *s.borrow_mut() = Some(LiveLoan::new(View));
-        }
-    });
-}
-
 impl PetAnswersExt for UiScript {
     fn set_pet_actions(
         &mut self,
@@ -232,7 +216,6 @@ impl PetAnswersExt for UiScript {
         pickup_allowed: bool,
         slots: Vec<PetActionView>,
     ) {
-        sticky(self);
         PET.with(|p| {
             let mut p = p.borrow_mut();
             p.pet_bar = Some(PetBarLive {
@@ -247,7 +230,6 @@ impl PetAnswersExt for UiScript {
     }
 
     fn set_pet_book(&mut self, book: PetBookState) {
-        sticky(self);
         PET.with(|p| p.borrow_mut().pet_book = Some(book));
     }
 
@@ -256,27 +238,22 @@ impl PetAnswersExt for UiScript {
     }
 
     fn set_pet_stats(&mut self, has_ui: bool, stats: PetStats) {
-        sticky(self);
         PET.with(|p| p.borrow_mut().stats = (has_ui, stats));
     }
 
     fn set_pet_menu(&mut self, abandon: bool, rename: bool, dismiss: bool) {
-        sticky(self);
         PET.with(|p| p.borrow_mut().menu = Some((abandon, rename, dismiss)));
     }
 
     fn set_companions(&mut self, state: CompanionState) {
-        sticky(self);
         PET.with(|p| p.borrow_mut().companions = state);
     }
 
     fn set_possess_spell(&mut self, possess: Option<PossessView>) {
-        sticky(self);
         PET.with(|p| p.borrow_mut().possess = possess);
     }
 
     fn set_stable(&mut self, list: StableList, families: Vec<(u32, StableFamily)>) {
-        sticky(self);
         PET.with(|p| {
             let mut p = p.borrow_mut();
             p.stable = list;
@@ -517,20 +494,16 @@ impl LiveState for View {
     }
 }
 
-/// A VM with [`View`] lent until it drops.
+/// A VM whose death and summon answers start at their defaults, read through [`View`].
 pub(super) struct Lent {
     script: UiScript,
-    _loan: LiveLoan<View>,
 }
 
 impl Lent {
     pub(super) fn new(script: UiScript) -> Self {
         DEATH.with(|d| *d.borrow_mut() = DeathUiState::default());
         SUMMON.with(|s| *s.borrow_mut() = SummonConfirmUiState::default());
-        Self {
-            script,
-            _loan: LiveLoan::new(View),
-        }
+        Self { script }
     }
 
     pub(super) fn set_death(&mut self, state: DeathUiState) {

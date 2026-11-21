@@ -90,119 +90,121 @@ fn texture_rect(
 
 #[test]
 fn the_shipped_pet_bar_drives_end_to_end() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
 
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-    s.resolve();
-    assert_eq!(
-        textures(&s.extract(), "Interface\\PetActionBar\\UI-PetBar"),
-        0,
-        "no pet, no shelf"
-    );
+        s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+        s.resolve();
+        assert_eq!(
+            textures(&s.extract(), "Interface\\PetActionBar\\UI-PetBar"),
+            0,
+            "no pet, no shelf"
+        );
 
-    s.set_pet_actions(true, true, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
-    s.tick(0.05);
-    s.resolve();
-    let quads = s.extract();
-
-    assert_eq!(
-        textures(&quads, "Interface\\PetActionBar\\UI-PetBar"),
-        2,
-        "the two shelf strips"
-    );
-
-    // A token slot's texture names a global, resolved by `getglobal` (PetActionBarFrame.lua:102).
-    assert_eq!(
-        textures(&quads, "Interface\\Icons\\Ability_GhoulFrenzy"),
-        1,
-        "Attack's icon came from PET_ATTACK_TEXTURE"
-    );
-    assert_eq!(
-        textures(&quads, "Interface\\Icons\\Ability_Defend"),
-        1,
-        "Defensive's icon came from PET_DEFENSIVE_TEXTURE"
-    );
-    assert_eq!(textures(&quads, "Interface\\Icons\\Ability_Druid_Rake"), 1);
-
-    // An unnamed slot's button hides outright (PetActionBarFrame.lua:122-128).
-    assert_eq!(
-        textures(&quads, "Interface\\Buttons\\UI-Quickslot2"),
-        3,
-        "one filled ring per occupied slot"
-    );
-    assert_eq!(
-        textures(&quads, "Interface\\Buttons\\UI-Quickslot"),
-        0,
-        "an unnamed pet slot hides; it does not draw the empty ring"
-    );
-
-    assert_eq!(
-        textures(&quads, "Interface\\Buttons\\CheckButtonHilight"),
-        2,
-        "Attack + Defensive are lit; Claw is not"
-    );
-
-    assert_eq!(
-        textures(&quads, "Interface\\Buttons\\UI-AutoCastableOverlay"),
-        1,
-        "only Claw can autocast"
-    );
-    // The shine is the `$parentShine` frame's sparkles, which `AutoCastShine_AutoCastStart` shows
-    // for an enabled autocast (PetActionBarFrame.lua:140-144, UIParent.lua).
-    let lit: Vec<i64> = (1..=10)
-        .filter(|i| {
-            s.eval::<bool>(&format!(
-                "return PetActionButton{i}Shine.sparkles[1]:IsShown() == 1"
-            ))
-            .unwrap()
-        })
-        .collect();
-    assert_eq!(
-        lit,
-        vec![4],
-        "the shine on Claw alone — enabled, not merely allowed"
-    );
-
-    // TOPLEFT at MainMenuBar's BOTTOMLEFT (0, 0) + (36, 97) (UIParent.lua:1589,1736): the 43-tall
-    // frame spans y[54,97], and button 1 at (36, 2) in it is x[72,102] y[56,86].
-    let attack =
-        texture_rect(&quads, "Interface\\Icons\\Ability_GhoulFrenzy").expect("Attack icon");
-    assert_eq!(
-        (attack.left, attack.bottom, attack.right, attack.top),
-        (72.0, 56.0, 102.0, 86.0)
-    );
-
-    // The pet goes: the bar slides out over `PETACTIONBAR_SLIDETIME` (0.09 s) and then hides.
-    s.set_pet_actions(false, true, true, Vec::new());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    for _ in 0..3 {
+        s.set_pet_actions(true, true, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
         s.tick(0.05);
-    }
-    s.resolve();
-    let gone = s.extract();
-    assert_eq!(textures(&gone, "Interface\\PetActionBar\\UI-PetBar"), 0);
-    assert!(
-        !gone.iter().any(
-            |q| matches!(&q.content, QuadContent::ModelPane { model: Some(p), .. }
+        s.resolve();
+        let quads = s.extract();
+
+        assert_eq!(
+            textures(&quads, "Interface\\PetActionBar\\UI-PetBar"),
+            2,
+            "the two shelf strips"
+        );
+
+        // A token slot's texture names a global, resolved by `getglobal` (PetActionBarFrame.lua:102).
+        assert_eq!(
+            textures(&quads, "Interface\\Icons\\Ability_GhoulFrenzy"),
+            1,
+            "Attack's icon came from PET_ATTACK_TEXTURE"
+        );
+        assert_eq!(
+            textures(&quads, "Interface\\Icons\\Ability_Defend"),
+            1,
+            "Defensive's icon came from PET_DEFENSIVE_TEXTURE"
+        );
+        assert_eq!(textures(&quads, "Interface\\Icons\\Ability_Druid_Rake"), 1);
+
+        // An unnamed slot's button hides outright (PetActionBarFrame.lua:122-128).
+        assert_eq!(
+            textures(&quads, "Interface\\Buttons\\UI-Quickslot2"),
+            3,
+            "one filled ring per occupied slot"
+        );
+        assert_eq!(
+            textures(&quads, "Interface\\Buttons\\UI-Quickslot"),
+            0,
+            "an unnamed pet slot hides; it does not draw the empty ring"
+        );
+
+        assert_eq!(
+            textures(&quads, "Interface\\Buttons\\CheckButtonHilight"),
+            2,
+            "Attack + Defensive are lit; Claw is not"
+        );
+
+        assert_eq!(
+            textures(&quads, "Interface\\Buttons\\UI-AutoCastableOverlay"),
+            1,
+            "only Claw can autocast"
+        );
+        // The shine is the `$parentShine` frame's sparkles, which `AutoCastShine_AutoCastStart` shows
+        // for an enabled autocast (PetActionBarFrame.lua:140-144, UIParent.lua).
+        let lit: Vec<i64> = (1..=10)
+            .filter(|i| {
+                s.eval::<bool>(&format!(
+                    "return PetActionButton{i}Shine.sparkles[1]:IsShown() == 1"
+                ))
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            lit,
+            vec![4],
+            "the shine on Claw alone — enabled, not merely allowed"
+        );
+
+        // TOPLEFT at MainMenuBar's BOTTOMLEFT (0, 0) + (36, 97) (UIParent.lua:1589,1736): the 43-tall
+        // frame spans y[54,97], and button 1 at (36, 2) in it is x[72,102] y[56,86].
+        let attack =
+            texture_rect(&quads, "Interface\\Icons\\Ability_GhoulFrenzy").expect("Attack icon");
+        assert_eq!(
+            (attack.left, attack.bottom, attack.right, attack.top),
+            (72.0, 56.0, 102.0, 86.0)
+        );
+
+        // The pet goes: the bar slides out over `PETACTIONBAR_SLIDETIME` (0.09 s) and then hides.
+        s.set_pet_actions(false, true, true, Vec::new());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        for _ in 0..3 {
+            s.tick(0.05);
+        }
+        s.resolve();
+        let gone = s.extract();
+        assert_eq!(textures(&gone, "Interface\\PetActionBar\\UI-PetBar"), 0);
+        assert!(
+            !gone.iter().any(
+                |q| matches!(&q.content, QuadContent::ModelPane { model: Some(p), .. }
             if p == "Interface\\Buttons\\UI-AutoCastButton.mdx")
-        ),
-        "the shine pane hides with its bar"
-    );
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+            ),
+            "the shine pane hides with its bar"
+        );
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// Left casts and right flips autocast (`PetActionButton_OnClick`, PetActionBarFrame.lua:287-293).
@@ -211,134 +213,140 @@ fn the_shipped_pet_bar_drives_end_to_end() {
 /// attack.
 #[test]
 fn clicks_cast_and_flip_autocast() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
-    s.set_pet_actions(true, true, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
+        s.set_pet_actions(true, true, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
 
-    // Button 1 (Attack) spans x[72,102] y[56,86], centre (87, 71); the 30 px buttons chain +8, so
-    // button 4 (Claw) starts at 72 + 3 * 38 = 186, centre (201, 71).
-    let click = |s: &mut UiScript, x: f32, y: f32, button: &str| {
-        s.mouse_button(x, y, button, true);
-        s.mouse_button(x, y, button, false);
-    };
+        // Button 1 (Attack) spans x[72,102] y[56,86], centre (87, 71); the 30 px buttons chain +8, so
+        // button 4 (Claw) starts at 72 + 3 * 38 = 186, centre (201, 71).
+        let click = |s: &mut UiScript, x: f32, y: f32, button: &str| {
+            s.mouse_button(x, y, button, true);
+            s.mouse_button(x, y, button, false);
+        };
 
-    click(&mut s, 87.0, 71.0, "LeftButton");
-    assert_eq!(
-        s.take_pet_actions(),
-        vec![1],
-        "an active Attack casts again"
-    );
-    assert_eq!(s.take_pet_writes().stops, 0, "and is never called off");
+        click(&mut s, 87.0, 71.0, "LeftButton");
+        assert_eq!(
+            s.take_pet_actions(),
+            vec![1],
+            "an active Attack casts again"
+        );
+        assert_eq!(s.take_pet_writes().stops, 0, "and is never called off");
 
-    let mut slots = hunter_slots();
-    slots[0].active = false;
-    slots[0].attack_active = false;
-    s.set_pet_actions(true, true, true, slots);
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
-    click(&mut s, 87.0, 71.0, "LeftButton");
-    assert_eq!(s.take_pet_actions(), vec![1]);
-    assert_eq!(s.take_pet_writes().stops, 0);
+        let mut slots = hunter_slots();
+        slots[0].active = false;
+        slots[0].attack_active = false;
+        s.set_pet_actions(true, true, true, slots);
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
+        click(&mut s, 87.0, 71.0, "LeftButton");
+        assert_eq!(s.take_pet_actions(), vec![1]);
+        assert_eq!(s.take_pet_writes().stops, 0);
 
-    // A right-click toggles inside the click, a token's too, unflipped (`0x5d5e01`).
-    click(&mut s, 201.0, 71.0, "RightButton");
-    assert_eq!(s.take_pet_writes().toggled, vec![3]);
-    click(&mut s, 87.0, 71.0, "RightButton");
-    assert_eq!(s.take_pet_writes().toggled, vec![0], "a token's toggle");
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        // A right-click toggles inside the click, a token's too, unflipped (`0x5d5e01`).
+        click(&mut s, 201.0, 71.0, "RightButton");
+        assert_eq!(s.take_pet_writes().toggled, vec![3]);
+        click(&mut s, 87.0, 71.0, "RightButton");
+        assert_eq!(s.take_pet_writes().toggled, vec![0], "a token's toggle");
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// A click toggles the CheckButton off; the right-click's toggle signals the bar inside the click (`0x5d5e01`), whose repaint re-lights the ring, and a left-click waits for the next repaint.
 #[test]
 fn a_click_drops_the_ring_and_the_repaint_restores_it() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
 
-    let checked = |s: &UiScript| {
-        s.eval::<bool>("return PetActionButton1:GetChecked()")
-            .unwrap()
-    };
+        let checked = |s: &UiScript| {
+            s.eval::<bool>("return PetActionButton1:GetChecked()")
+                .unwrap()
+        };
 
-    // Attack's centre.
-    for (button, relit_in_click) in [("RightButton", true), ("LeftButton", false)] {
-        s.set_pet_actions(true, true, true, hunter_slots());
-        s.fire_event("PET_BAR_UPDATE", vec![]);
-        s.resolve();
-        assert!(checked(&s), "{button}: the Attack token starts lit");
+        // Attack's centre.
+        for (button, relit_in_click) in [("RightButton", true), ("LeftButton", false)] {
+            s.set_pet_actions(true, true, true, hunter_slots());
+            s.fire_event("PET_BAR_UPDATE", vec![]);
+            s.resolve();
+            assert!(checked(&s), "{button}: the Attack token starts lit");
 
-        s.mouse_button(87.0, 71.0, button, true);
-        s.mouse_button(87.0, 71.0, button, false);
-        assert_eq!(
-            checked(&s),
-            relit_in_click,
-            "{button}: lit after the click only when the click signalled the bar"
-        );
+            s.mouse_button(87.0, 71.0, button, true);
+            s.mouse_button(87.0, 71.0, button, false);
+            assert_eq!(
+                checked(&s),
+                relit_in_click,
+                "{button}: lit after the click only when the click signalled the bar"
+            );
 
-        s.fire_event("PET_BAR_UPDATE", vec![]);
+            s.fire_event("PET_BAR_UPDATE", vec![]);
+            assert!(
+                checked(&s),
+                "{button}: an unchanged repaint must re-light, not diff to a no-op"
+            );
+        }
+        let _ = s.take_pet_actions();
+        let _ = s.take_pet_writes();
         assert!(
-            checked(&s),
-            "{button}: an unchanged repaint must re-light, not diff to a no-op"
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
         );
-    }
-    let _ = s.take_pet_actions();
-    let _ = s.take_pet_writes();
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+    });
 }
 
 /// An unusable pet's bar (`PetHasActionBar` true, `GetPetActionsUsable` false) still draws, every
 /// icon desaturated (PetActionBarFrame.lua:129-134).
 #[test]
 fn a_disabled_bar_greys_rather_than_hides() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
 
-    s.set_pet_actions(true, false, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
-    let quads = s.extract();
-    assert_eq!(
-        textures(&quads, "Interface\\PetActionBar\\UI-PetBar"),
-        2,
-        "the bar is still on screen"
-    );
-    // `SetDesaturated` reports shader support, so `SetDesaturation` takes its shader arm
-    // (UIParent.lua:1500-1510): a greyscale flag on the icon, not the 0.5 vertex-colour fallback.
-    let grey = quads
-        .iter()
-        .find_map(|q| match &q.content {
-            QuadContent::Texture {
-                path: Some(p),
-                desaturated,
-                ..
-            } if p == "Interface\\Icons\\Ability_Druid_Rake" => Some(*desaturated),
-            _ => None,
-        })
-        .expect("Claw's icon");
-    assert!(grey, "a disabled bar greys every icon on it");
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        s.set_pet_actions(true, false, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
+        let quads = s.extract();
+        assert_eq!(
+            textures(&quads, "Interface\\PetActionBar\\UI-PetBar"),
+            2,
+            "the bar is still on screen"
+        );
+        // `SetDesaturated` reports shader support, so `SetDesaturation` takes its shader arm
+        // (UIParent.lua:1500-1510): a greyscale flag on the icon, not the 0.5 vertex-colour fallback.
+        let grey = quads
+            .iter()
+            .find_map(|q| match &q.content {
+                QuadContent::Texture {
+                    path: Some(p),
+                    desaturated,
+                    ..
+                } if p == "Interface\\Icons\\Ability_Druid_Rake" => Some(*desaturated),
+                _ => None,
+            })
+            .expect("Claw's icon");
+        assert!(grey, "a disabled bar greys every icon on it");
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// The pet bar with the bottom-left multibar up or not: shelf strips drawn, top of Attack's icon.
@@ -382,81 +390,85 @@ fn pet_bar_row(with_multibar: bool) -> (usize, f32) {
 /// (UIParent.lua:1163, 1201, 1813-1815).
 #[test]
 fn the_pet_bar_rises_and_sheds_its_shelf_over_the_bottom_left_bar() {
-    benilla_formats::wow_data_or_skip!();
-    let (low_shelf, low_top) = pet_bar_row(false);
-    let (high_shelf, high_top) = pet_bar_row(true);
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let (low_shelf, low_top) = pet_bar_row(false);
+        let (high_shelf, high_top) = pet_bar_row(true);
 
-    assert_eq!(
-        low_shelf, 2,
-        "on the main bar, the shelf IS the bar's border"
-    );
-    assert_eq!(high_shelf, 0, "raised, it would draw across the row below");
+        assert_eq!(
+            low_shelf, 2,
+            "on the main bar, the shelf IS the bar's border"
+        );
+        assert_eq!(high_shelf, 0, "raised, it would draw across the row below");
 
-    let risen = low_top - high_top;
-    assert!(
-        (risen.abs() - 45.0).abs() < 0.5,
-        "the bar must rise by the ref's 45 px (moved {risen})"
-    );
+        let risen = low_top - high_top;
+        assert!(
+            (risen.abs() - 45.0).abs() < 0.5,
+            "the bar must rise by the ref's 45 px (moved {risen})"
+        );
+    });
 }
 
 /// Both drag ends call `PickupPetAction` (PetActionBarFrame.lua:269-283), a move by the binding's
 /// carrying-cursor fork; meanwhile `PET_BAR_SHOWGRID` shows every slot, the empty ones included.
 #[test]
 fn dragging_a_pet_spell_between_slots_moves_it_through_the_shipped_handlers() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
-    s.set_pet_actions(true, true, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
+        s.set_pet_actions(true, true, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
 
-    // Slot 5 is empty, so its button hides until the grid comes up.
-    assert!(!s.eval::<bool>("return PetActionButton5:IsShown()").unwrap());
+        // Slot 5 is empty, so its button hides until the grid comes up.
+        assert!(!s.eval::<bool>("return PetActionButton5:IsShown()").unwrap());
 
-    s.run("PetActionButton_OnDragStart(PetActionButton4)")
-        .unwrap();
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
-    assert_eq!(
-        s.take_pet_writes().placed,
-        vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]],
-        "the pickup blanks the slot it came from and tells the server"
-    );
-    s.tick(0.01);
-    s.resolve();
-    assert_eq!(
-        s.eval::<i64>("return PetActionBarFrame.showgrid").unwrap(),
-        1
-    );
-    assert!(
-        s.eval::<bool>("return PetActionButton5:IsShown()").unwrap(),
-        "the grid reveals the empty slots to drop onto"
-    );
+        s.run("PetActionButton_OnDragStart(PetActionButton4)")
+            .unwrap();
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+        assert_eq!(
+            s.take_pet_writes().placed,
+            vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]],
+            "the pickup blanks the slot it came from and tells the server"
+        );
+        s.tick(0.01);
+        s.resolve();
+        assert_eq!(
+            s.eval::<i64>("return PetActionBarFrame.showgrid").unwrap(),
+            1
+        );
+        assert!(
+            s.eval::<bool>("return PetActionButton5:IsShown()").unwrap(),
+            "the grid reveals the empty slots to drop onto"
+        );
 
-    s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
-        .unwrap();
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
-    assert_eq!(
-        s.take_pet_writes().placed,
-        vec![vec![(4, CLAW_WORD)]],
-        "and the drop writes the word verbatim into slot 5 (0-based 4)"
-    );
-    s.tick(0.01);
-    assert_eq!(
-        s.eval::<i64>("return PetActionBarFrame.showgrid").unwrap(),
-        0,
-        "the grid goes down with the payload"
-    );
-    assert!(s.cursor_payload().is_none());
+        s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
+            .unwrap();
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+        assert_eq!(
+            s.take_pet_writes().placed,
+            vec![vec![(4, CLAW_WORD)]],
+            "and the drop writes the word verbatim into slot 5 (0-based 4)"
+        );
+        s.tick(0.01);
+        assert_eq!(
+            s.eval::<i64>("return PetActionBarFrame.showgrid").unwrap(),
+            0,
+            "the grid goes down with the payload"
+        );
+        assert!(s.cursor_payload().is_none());
+    });
 }
 
 /// `LOCK_ACTIONBAR` stops both drag ends (PetActionBarFrame.lua:302-316) but not the modified
@@ -464,141 +476,147 @@ fn dragging_a_pet_spell_between_slots_moves_it_through_the_shipped_handlers() {
 /// `PICKUPACTION` pick-up (PetActionBarFrame.xml:47-53, PetActionBarFrame.lua:295-300).
 #[test]
 fn the_lock_stops_the_pet_bar_drag_but_not_its_shift_click() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
-    s.set_pet_actions(true, true, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
+        s.set_pet_actions(true, true, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
 
-    s.run(r#"LOCK_ACTIONBAR = "1""#).unwrap();
-    s.run("PetActionButton_OnDragStart(PetActionButton4)")
-        .unwrap();
-    assert!(
-        s.take_pet_writes().placed.is_empty(),
-        "a locked bar sends nothing — the slot was never picked up"
-    );
-    assert!(s.cursor_payload().is_none());
+        s.run(r#"LOCK_ACTIONBAR = "1""#).unwrap();
+        s.run("PetActionButton_OnDragStart(PetActionButton4)")
+            .unwrap();
+        assert!(
+            s.take_pet_writes().placed.is_empty(),
+            "a locked bar sends nothing — the slot was never picked up"
+        );
+        assert!(s.cursor_payload().is_none());
 
-    s.set_modifiers(true, false, false);
-    s.run("PetActionButton4:Click(\"LeftButton\")").unwrap();
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.take_pet_writes().placed,
-        vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]],
-        "shift-click picked it up despite the lock"
-    );
-    s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
-        .unwrap();
-    assert!(
-        s.take_pet_writes().placed.is_empty(),
-        "…and a locked slot will not take the drop"
-    );
+        s.set_modifiers(true, false, false);
+        s.run("PetActionButton4:Click(\"LeftButton\")").unwrap();
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.take_pet_writes().placed,
+            vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]],
+            "shift-click picked it up despite the lock"
+        );
+        s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
+            .unwrap();
+        assert!(
+            s.take_pet_writes().placed.is_empty(),
+            "…and a locked slot will not take the drop"
+        );
 
-    s.run(r#"LOCK_ACTIONBAR = "0""#).unwrap();
-    s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
-        .unwrap();
-    assert_eq!(
-        s.take_pet_writes().placed,
-        vec![vec![(4, CLAW_WORD)]],
-        "unlocked, the same drop lands"
-    );
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        s.run(r#"LOCK_ACTIONBAR = "0""#).unwrap();
+        s.run("PetActionButton_OnReceiveDrag(PetActionButton5)")
+            .unwrap();
+        assert_eq!(
+            s.take_pet_writes().placed,
+            vec![vec![(4, CLAW_WORD)]],
+            "unlocked, the same drop lands"
+        );
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// The modifier is tested above the button split (PetActionBarFrame.xml:47-53): either button
 /// picks up.
 #[test]
 fn shift_clicking_a_pet_button_picks_it_up_rather_than_casting() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
-    s.set_pet_actions(true, true, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
+        s.set_pet_actions(true, true, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
 
-    s.set_modifiers(true, false, false);
-    s.run("PetActionButton4:Click('RightButton')").unwrap();
-    s.set_modifiers(false, false, false);
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
-    let writes = s.take_pet_writes();
-    assert!(
-        s.take_pet_actions().is_empty() && writes.toggled.is_empty(),
-        "shift outranks both click arms — no cast, no autocast flip"
-    );
-    assert_eq!(writes.placed, vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]]);
+        s.set_modifiers(true, false, false);
+        s.run("PetActionButton4:Click('RightButton')").unwrap();
+        s.set_modifiers(false, false, false);
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+        let writes = s.take_pet_writes();
+        assert!(
+            s.take_pet_actions().is_empty() && writes.toggled.is_empty(),
+            "shift outranks both click arms — no cast, no autocast flip"
+        );
+        assert_eq!(writes.placed, vec![vec![(3, CLAW_WORD & 0xFFFF_0000)]]);
+    });
 }
 
 /// A bound `BONUSACTIONBUTTONn` runs `PetActionButtonDown/Up` (PetActionBarFrame.lua:218-231), a bare `CastPetAction` on release that never reaches `OnClick`'s `IsPetAttackActive` fork.
 #[test]
 fn the_keybind_pair_pushes_and_casts_without_the_clicks_forks() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_pet_bar(&mut s);
-    declare_token_strings(&s);
-    s.set_pet_actions(true, true, true, hunter_slots());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.resolve();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        load_pet_bar(&mut s);
+        declare_token_strings(&s);
+        s.set_pet_actions(true, true, true, hunter_slots());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.resolve();
 
-    let state = |s: &UiScript| {
-        s.eval::<String>("return PetActionButton1:GetButtonState()")
-            .unwrap()
-    };
+        let state = |s: &UiScript| {
+            s.eval::<String>("return PetActionButton1:GetButtonState()")
+                .unwrap()
+        };
 
-    s.run("PetActionButtonDown(1)").unwrap();
-    assert_eq!(state(&s), "PUSHED");
-    assert!(
-        s.take_pet_actions().is_empty(),
-        "the press is visual only — the ref fires on the release"
-    );
+        s.run("PetActionButtonDown(1)").unwrap();
+        assert_eq!(state(&s), "PUSHED");
+        assert!(
+            s.take_pet_actions().is_empty(),
+            "the press is visual only — the ref fires on the release"
+        );
 
-    // A left click on this live Attack would call it off; the key casts.
-    s.run("PetActionButtonUp(1)").unwrap();
-    assert_eq!(state(&s), "NORMAL");
-    assert_eq!(s.take_pet_actions(), vec![1]);
-    assert_eq!(
-        s.take_pet_writes().stops,
-        0,
-        "IsPetAttackActive lives in OnClick, which a key press never reaches"
-    );
+        // A left click on this live Attack would call it off; the key casts.
+        s.run("PetActionButtonUp(1)").unwrap();
+        assert_eq!(state(&s), "NORMAL");
+        assert_eq!(s.take_pet_actions(), vec![1]);
+        assert_eq!(
+            s.take_pet_writes().stops,
+            0,
+            "IsPetAttackActive lives in OnClick, which a key press never reaches"
+        );
 
-    // The button-state guard: an up with nothing pushed does nothing, a second down no re-fire.
-    s.run("PetActionButtonUp(1)").unwrap();
-    assert!(
-        s.take_pet_actions().is_empty(),
-        "an unmatched release fires nothing"
-    );
-    s.run("PetActionButtonDown(1) PetActionButtonDown(1)")
-        .unwrap();
-    assert_eq!(state(&s), "PUSHED");
-    s.run("PetActionButtonUp(1)").unwrap();
-    assert_eq!(s.take_pet_actions(), vec![1], "one press, one cast");
+        // The button-state guard: an up with nothing pushed does nothing, a second down no re-fire.
+        s.run("PetActionButtonUp(1)").unwrap();
+        assert!(
+            s.take_pet_actions().is_empty(),
+            "an unmatched release fires nothing"
+        );
+        s.run("PetActionButtonDown(1) PetActionButtonDown(1)")
+            .unwrap();
+        assert_eq!(state(&s), "PUSHED");
+        s.run("PetActionButtonUp(1)").unwrap();
+        assert_eq!(s.take_pet_actions(), vec![1], "one press, one cast");
 
-    // Slot 2 is empty: `CastPetAction`'s own guard makes it inert.
-    s.run("PetActionButtonDown(2) PetActionButtonUp(2)")
-        .unwrap();
-    assert!(
-        s.take_pet_actions().is_empty(),
-        "an unnamed slot queues nothing"
-    );
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        // Slot 2 is empty: `CastPetAction`'s own guard makes it inert.
+        s.run("PetActionButtonDown(2) PetActionButtonUp(2)")
+            .unwrap();
+        assert!(
+            s.take_pet_actions().is_empty(),
+            "an unnamed slot queues nothing"
+        );
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// Button centres: button 1 spans x[72,102] y[56,86], and the 30 px buttons chain +8.
@@ -629,89 +647,95 @@ fn tooltip_line1(s: &UiScript) -> String {
 /// bare `SetPetAction` (PetActionBarFrame.lua:285-305).
 #[test]
 fn token_tooltips_name_their_binding_and_pet_spells_do_not() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = hovered_pet_bar();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = hovered_pet_bar();
 
-    s.mouse_move(ATTACK_BUTTON.0, ATTACK_BUTTON.1);
-    s.resolve();
-    assert_eq!(
-        tooltip_line1(&s),
-        "Attack|cffffd200 (CTRL-1)|r",
-        "a command token carries BONUSACTIONBUTTON1's key in the normal-font colour"
-    );
-    // With `UberTooltips` on, a token's plate still takes the default anchor.
-    assert!(
-        s.eval::<bool>("return GameTooltip.default ~= nil").unwrap(),
-        "a token's plate takes the default corner while UberTooltips is on"
-    );
+        s.mouse_move(ATTACK_BUTTON.0, ATTACK_BUTTON.1);
+        s.resolve();
+        assert_eq!(
+            tooltip_line1(&s),
+            "Attack|cffffd200 (CTRL-1)|r",
+            "a command token carries BONUSACTIONBUTTON1's key in the normal-font colour"
+        );
+        // With `UberTooltips` on, a token's plate still takes the default anchor.
+        assert!(
+            s.eval::<bool>("return GameTooltip.default ~= nil").unwrap(),
+            "a token's plate takes the default corner while UberTooltips is on"
+        );
 
-    // The control: Claw, a pet spell, goes through `SetPetAction`.
-    s.mouse_move(CLAW_BUTTON.0, CLAW_BUTTON.1);
-    s.resolve();
-    let claw = tooltip_line1(&s);
-    assert_eq!(claw, "Claw", "a pet SPELL renders through SetPetAction");
-    assert!(
-        !claw.contains('('),
-        "…and appends no binding: {claw:?} (the ref's other branch)"
-    );
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        // The control: Claw, a pet spell, goes through `SetPetAction`.
+        s.mouse_move(CLAW_BUTTON.0, CLAW_BUTTON.1);
+        s.resolve();
+        let claw = tooltip_line1(&s);
+        assert_eq!(claw, "Claw", "a pet SPELL renders through SetPetAction");
+        assert!(
+            !claw.contains('('),
+            "…and appends no binding: {claw:?} (the ref's other branch)"
+        );
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// The append is unguarded and `GetBindingText` answers "" for a nil key (UIParent.lua:1819-1821),
 /// so an unbound token shows empty parentheses. Stock binds CTRL-1..CTRL-0, so this unbinds one.
 #[test]
 fn an_unbound_token_row_renders_the_references_empty_parentheses() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = hovered_pet_bar();
-    s.run(r#"SetBinding("CTRL-1")"#).unwrap();
-    assert!(
-        s.eval::<Option<String>>(r#"return GetBindingKey("BONUSACTIONBUTTON1")"#)
-            .unwrap()
-            .is_none(),
-        "the row really is unbound now"
-    );
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = hovered_pet_bar();
+        s.run(r#"SetBinding("CTRL-1")"#).unwrap();
+        assert!(
+            s.eval::<Option<String>>(r#"return GetBindingKey("BONUSACTIONBUTTON1")"#)
+                .unwrap()
+                .is_none(),
+            "the row really is unbound now"
+        );
 
-    s.mouse_move(ATTACK_BUTTON.0, ATTACK_BUTTON.1);
-    s.resolve();
-    assert_eq!(
-        tooltip_line1(&s),
-        "Attack|cffffd200 ()|r",
-        "unbound: the parentheses stay, empty — the ref's own unguarded concatenation"
-    );
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        s.mouse_move(ATTACK_BUTTON.0, ATTACK_BUTTON.1);
+        s.resolve();
+        assert_eq!(
+            tooltip_line1(&s),
+            "Attack|cffffd200 ()|r",
+            "unbound: the parentheses stay, empty — the ref's own unguarded concatenation"
+        );
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }
 
 /// With `UberTooltips` off a pet spell takes the token branch too, binding suffix and all, and the
 /// plate anchors `ANCHOR_RIGHT` of the button (PetActionBarFrame.lua:290-296).
 #[test]
 fn ubertooltips_off_takes_the_spells_through_the_token_branch_and_moves_the_plate() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = hovered_pet_bar();
-    s.set_cvar_engine("UberTooltips", "0");
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = hovered_pet_bar();
+        s.set_cvar_engine("UberTooltips", "0");
 
-    s.mouse_move(CLAW_BUTTON.0, CLAW_BUTTON.1);
-    s.resolve();
-    assert_eq!(
-        tooltip_line1(&s),
-        "Claw|cffffd200 (CTRL-4)|r",
-        "with the CVar off a pet spell is built here too, binding and all"
-    );
-    assert!(
-        s.eval::<bool>("return GameTooltip:IsOwned(PetActionButton4)")
-            .unwrap(),
-        "…and the plate sits beside the button, not at the screen corner"
-    );
-    assert!(
-        super::test_ui::errors_but_unported(&s).is_empty(),
-        "script errors: {:?}",
-        super::test_ui::errors_but_unported(&s)
-    );
+        s.mouse_move(CLAW_BUTTON.0, CLAW_BUTTON.1);
+        s.resolve();
+        assert_eq!(
+            tooltip_line1(&s),
+            "Claw|cffffd200 (CTRL-4)|r",
+            "with the CVar off a pet spell is built here too, binding and all"
+        );
+        assert!(
+            s.eval::<bool>("return GameTooltip:IsOwned(PetActionButton4)")
+                .unwrap(),
+            "…and the plate sits beside the button, not at the screen corner"
+        );
+        assert!(
+            super::test_ui::errors_but_unported(&s).is_empty(),
+            "script errors: {:?}",
+            super::test_ui::errors_but_unported(&s)
+        );
+    });
 }

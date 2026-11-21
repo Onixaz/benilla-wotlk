@@ -618,90 +618,91 @@ fn greeting_panel_title_rows_grow_to_their_wrapped_titles() {
 fn reward_rows_preview_and_post_without_selecting_the_choice() {
     benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
-    s.record_writes();
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        const SWORD: &str = "|cffffffff|Hitem:2299:0:0:0:0:0:0:0:0|h[Worn Sword]|h|r";
+        const MACE: &str = "|cffffffff|Hitem:2300:0:0:0:0:0:0:0:0|h[Worn Mace]|h|r";
+        let linked = |id: u32, name: &str, link: &str| QuestItemView {
+            item_id: id,
+            link: Some(link.into()),
+            ..item(name)
+        };
+        s.set_quest(Some(QuestState {
+            panel: QuestPanel::Reward,
+            title: "A Threat Within".into(),
+            body: "Well done.".into(),
+            choices: vec![
+                linked(2299, "Worn Sword", SWORD),
+                linked(2300, "Worn Mace", MACE),
+            ],
+            rewards: vec![linked(
+                2504,
+                "Worn Shortbow",
+                "|cffffffff|Hitem:2504:0:0:0:0:0:0:0:0|h[Worn Shortbow]|h|r",
+            )],
+            ..QuestState::default()
+        }));
+        seat_giver(&mut s, "Marshal McBride");
+        // A worn-slot template makes the sword dressable (`IsDressableItem` `0x517530`).
+        s.set_item_template(
+            2299,
+            benilla_ui::script::ItemTemplateView {
+                name: "Worn Sword".into(),
+                quality: 1,
+                inventory_type: 21,
+                ..Default::default()
+            },
+        );
+        s.fire_event("QUEST_COMPLETE", vec![]);
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        let choice = |s: &UiScript| s.eval::<i64>("return QuestInfoFrame.itemChoice").unwrap();
 
-    const SWORD: &str = "|cffffffff|Hitem:2299:0:0:0:0:0:0:0:0|h[Worn Sword]|h|r";
-    const MACE: &str = "|cffffffff|Hitem:2300:0:0:0:0:0:0:0:0|h[Worn Mace]|h|r";
-    let linked = |id: u32, name: &str, link: &str| QuestItemView {
-        item_id: id,
-        link: Some(link.into()),
-        ..item(name)
-    };
-    s.set_quest(Some(QuestState {
-        panel: QuestPanel::Reward,
-        title: "A Threat Within".into(),
-        body: "Well done.".into(),
-        choices: vec![
-            linked(2299, "Worn Sword", SWORD),
-            linked(2300, "Worn Mace", MACE),
-        ],
-        rewards: vec![linked(
-            2504,
-            "Worn Shortbow",
-            "|cffffffff|Hitem:2504:0:0:0:0:0:0:0:0|h[Worn Shortbow]|h|r",
-        )],
-        ..QuestState::default()
-    }));
-    seat_giver(&mut s, "Marshal McBride");
-    // A worn-slot template makes the sword dressable (`IsDressableItem` `0x517530`).
-    s.set_item_template(
-        2299,
-        benilla_ui::script::ItemTemplateView {
-            name: "Worn Sword".into(),
-            quality: 1,
-            inventory_type: 21,
-            ..Default::default()
-        },
-    );
-    s.fire_event("QUEST_COMPLETE", vec![]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    let choice = |s: &UiScript| s.eval::<i64>("return QuestInfoFrame.itemChoice").unwrap();
+        // A plain click selects row 2; the modified clicks below aim at row 1.
+        s.run("QuestInfoItem2:Click()").unwrap();
+        assert_eq!(choice(&s), 2, "a plain click selects the reward choice");
+        assert!(s
+            .eval::<bool>("return QuestInfoItemHighlight:IsShown()")
+            .unwrap());
+        assert!(
+            s.take_dressup_edits().is_empty(),
+            "a plain click never opens the dressing room"
+        );
 
-    // A plain click selects row 2; the modified clicks below aim at row 1.
-    s.run("QuestInfoItem2:Click()").unwrap();
-    assert_eq!(choice(&s), 2, "a plain click selects the reward choice");
-    assert!(s
-        .eval::<bool>("return QuestInfoItemHighlight:IsShown()")
-        .unwrap());
-    assert!(
-        s.take_dressup_edits().is_empty(),
-        "a plain click never opens the dressing room"
-    );
+        s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
+        s.set_modifiers(true, false, false);
+        s.run("QuestInfoItem1:Click()").unwrap();
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.eval::<String>("return ChatFrame1EditBox:GetText()")
+                .unwrap(),
+            format!(" {SWORD}"),
+            "shift-click posted choice 1's link after `ChatEdit_InsertLink`'s space"
+        );
+        assert_eq!(choice(&s), 2, "the modified arm never selects");
 
-    s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
-    s.set_modifiers(true, false, false);
-    s.run("QuestInfoItem1:Click()").unwrap();
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.eval::<String>("return ChatFrame1EditBox:GetText()")
-            .unwrap(),
-        format!(" {SWORD}"),
-        "shift-click posted choice 1's link after `ChatEdit_InsertLink`'s space"
-    );
-    assert_eq!(choice(&s), 2, "the modified arm never selects");
+        // A fixed reward row posts too; only a `"choice"` row selects (`QuestInfo.lua:27`).
+        s.run("ChatFrame1EditBox:SetText(\"\")").unwrap();
+        s.set_modifiers(true, false, false);
+        s.run("QuestInfoItem3:Click()").unwrap();
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.eval::<String>("return ChatFrame1EditBox:GetText()")
+                .unwrap(),
+            " |cffffffff|Hitem:2504:0:0:0:0:0:0:0:0|h[Worn Shortbow]|h|r"
+        );
 
-    // A fixed reward row posts too; only a `"choice"` row selects (`QuestInfo.lua:27`).
-    s.run("ChatFrame1EditBox:SetText(\"\")").unwrap();
-    s.set_modifiers(true, false, false);
-    s.run("QuestInfoItem3:Click()").unwrap();
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.eval::<String>("return ChatFrame1EditBox:GetText()")
-            .unwrap(),
-        " |cffffffff|Hitem:2504:0:0:0:0:0:0:0:0|h[Worn Shortbow]|h|r"
-    );
-
-    s.set_modifiers(false, true, false);
-    s.run("QuestInfoItem1:Click()").unwrap();
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![
-            benilla_ui::script::DressUpIntent::Dress,
-            benilla_ui::script::DressUpIntent::TryOn(2299, [0; 4])
-        ],
-        "ctrl-click opened the room wearing choice 1"
-    );
-    assert_eq!(choice(&s), 2, "the ctrl arm never selects");
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        s.set_modifiers(false, true, false);
+        s.run("QuestInfoItem1:Click()").unwrap();
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![
+                benilla_ui::script::DressUpIntent::Dress,
+                benilla_ui::script::DressUpIntent::TryOn(2299, [0; 4])
+            ],
+            "ctrl-click opened the room wearing choice 1"
+        );
+        assert_eq!(choice(&s), 2, "the ctrl arm never selects");
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }

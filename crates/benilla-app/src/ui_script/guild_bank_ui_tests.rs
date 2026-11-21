@@ -93,32 +93,33 @@ fn the_stock_guild_bank_opens_and_withdraws_money_onto_a_bag_slot() {
     let mut s = load("guildbank");
     s.set_container(0, container(16, &[]));
     s.set_guild(guild());
-    let _bank = super::test_ui::lend_guild_bank(guild_bank(), 50_000);
-    s.fire_event("GUILDBANKFRAME_OPENED", vec![]);
-    s.fire_event("GUILDBANK_UPDATE_TABS", vec![]);
-    s.fire_event("GUILDBANKBAGSLOTS_CHANGED", vec![]);
-    let errors = bank_errors(s.take_errors());
-    assert!(errors.is_empty(), "guild bank errors: {errors:#?}");
-    s.run(
-        r#"
+    let mut bank_v = super::test_ui::lend_guild_bank(guild_bank(), 50_000);
+    crate::ui_script::test_live::lending(&mut bank_v, || {
+        s.fire_event("GUILDBANKFRAME_OPENED", vec![]);
+        s.fire_event("GUILDBANK_UPDATE_TABS", vec![]);
+        s.fire_event("GUILDBANKBAGSLOTS_CHANGED", vec![]);
+        let errors = bank_errors(s.take_errors());
+        assert!(errors.is_empty(), "guild bank errors: {errors:#?}");
+        s.run(
+            r#"
         assert(IsAddOnLoaded("Blizzard_GuildBankUI") == 1, "the addon loaded")
         assert(GuildBankFrame:IsShown(), "the window opened")
         assert(GuildBankTab1:IsShown() and GuildBankTab2:IsShown(), "both bought tabs show")
         local tex = GuildBankColumn1Button1IconTexture:GetTexture()
         assert(tex and tex:find("INV_Test_2589"), "slot 1 paints its item, got " .. tostring(tex))
         "#,
-    )
-    .unwrap();
-    let requests = s.take_guild_bank_requests();
-    assert!(
-        requests.contains(&GuildBankRequest::QueryTab(0)),
-        "the window asks for its current tab: {requests:?}"
-    );
+        )
+        .unwrap();
+        let requests = s.take_guild_bank_requests();
+        assert!(
+            requests.contains(&GuildBankRequest::QueryTab(0)),
+            "the window asks for its current tab: {requests:?}"
+        );
 
-    // Bank money onto a backpack slot: the stock click withdraws it.
-    s.run("OpenBag(0)").unwrap();
-    s.run(
-        r#"
+        // Bank money onto a backpack slot: the stock click withdraws it.
+        s.run("OpenBag(0)").unwrap();
+        s.run(
+            r#"
         PickupGuildBankMoney(100)
         local kind, money = GetCursorInfo()
         assert(kind == "guildbankmoney" and money == 100, "mode 12 holds the coins")
@@ -131,74 +132,75 @@ fn the_stock_guild_bank_opens_and_withdraws_money_onto_a_bag_slot() {
         ContainerFrameItemButton_OnClick(button, "LeftButton")
         assert(GetCursorInfo() == nil, "the click cleared the cursor")
         "#,
-    )
-    .unwrap();
-    let errors = bank_errors(s.take_errors());
-    assert!(errors.is_empty(), "withdraw errors: {errors:#?}");
-    assert_eq!(
-        s.take_guild_bank_requests(),
-        vec![GuildBankRequest::WithdrawMoney(100)]
-    );
+        )
+        .unwrap();
+        let errors = bank_errors(s.take_errors());
+        assert!(errors.is_empty(), "withdraw errors: {errors:#?}");
+        assert_eq!(
+            s.take_guild_bank_requests(),
+            vec![GuildBankRequest::WithdrawMoney(100)]
+        );
 
-    // An item taken up locks its slot; a drop on a backpack slot withdraws it.
-    s.run(
-        r#"
+        // An item taken up locks its slot; a drop on a backpack slot withdraws it.
+        s.run(
+            r#"
         GuildBankColumn1Button1:Click("LeftButton")
         local _, _, locked = GetGuildBankItemInfo(1, 1)
         assert(locked == 1, "the taken slot is locked")
         PickupContainerItem(0, 1)
         "#,
-    )
-    .unwrap();
-    let requests = s.take_guild_bank_requests();
-    assert!(
-        matches!(
-            requests.as_slice(),
-            [GuildBankRequest::WithdrawItem {
-                src_tab: 0,
-                src_slot: 0,
-                item_id: 2589,
-                bag: 0,
-                bag_slot: 1,
-                split: None
-            }]
-        ),
-        "{requests:?}"
-    );
+        )
+        .unwrap();
+        let requests = s.take_guild_bank_requests();
+        assert!(
+            matches!(
+                requests.as_slice(),
+                [GuildBankRequest::WithdrawItem {
+                    src_tab: 0,
+                    src_slot: 0,
+                    item_id: 2589,
+                    bag: 0,
+                    bag_slot: 1,
+                    split: None
+                }]
+            ),
+            "{requests:?}"
+        );
 
-    // The log tab asks for the log, and the answer prints a line.
-    s.run("GuildBankFrameTab2:Click()").unwrap();
-    let requests = s.take_guild_bank_requests();
-    assert!(
-        requests.contains(&GuildBankRequest::QueryLog(0)),
-        "the log tab asks: {requests:?}"
-    );
-    s.fire_event("GUILDBANKLOG_UPDATE", vec![]);
-    let errors = bank_errors(s.take_errors());
-    assert!(errors.is_empty(), "log errors: {errors:#?}");
-    assert!(
-        s.eval::<i64>("return GuildBankMessageFrame:GetNumMessages()")
-            .unwrap()
-            >= 1,
-        "the log line printed"
-    );
-    // The money log tab asks for the money log and prints its row through
-    // `GetDenominationsFromCopper`.
-    s.run("GuildBankFrameTab3:Click()").unwrap();
-    let requests = s.take_guild_bank_requests();
-    assert!(
-        requests.contains(&GuildBankRequest::QueryLog(6)),
-        "the money log tab asks: {requests:?}"
-    );
-    s.fire_event("GUILDBANKLOG_UPDATE", vec![]);
-    let errors = bank_errors(s.take_errors());
-    assert!(errors.is_empty(), "money log errors: {errors:#?}");
-    assert!(
-        s.eval::<i64>("return GuildBankMessageFrame:GetNumMessages()")
-            .unwrap()
-            >= 1,
-        "the money log line printed"
-    );
-    s.fire_event("GUILDBANKFRAME_CLOSED", vec![]);
-    assert!(!s.eval::<bool>("return GuildBankFrame:IsShown()").unwrap());
+        // The log tab asks for the log, and the answer prints a line.
+        s.run("GuildBankFrameTab2:Click()").unwrap();
+        let requests = s.take_guild_bank_requests();
+        assert!(
+            requests.contains(&GuildBankRequest::QueryLog(0)),
+            "the log tab asks: {requests:?}"
+        );
+        s.fire_event("GUILDBANKLOG_UPDATE", vec![]);
+        let errors = bank_errors(s.take_errors());
+        assert!(errors.is_empty(), "log errors: {errors:#?}");
+        assert!(
+            s.eval::<i64>("return GuildBankMessageFrame:GetNumMessages()")
+                .unwrap()
+                >= 1,
+            "the log line printed"
+        );
+        // The money log tab asks for the money log and prints its row through
+        // `GetDenominationsFromCopper`.
+        s.run("GuildBankFrameTab3:Click()").unwrap();
+        let requests = s.take_guild_bank_requests();
+        assert!(
+            requests.contains(&GuildBankRequest::QueryLog(6)),
+            "the money log tab asks: {requests:?}"
+        );
+        s.fire_event("GUILDBANKLOG_UPDATE", vec![]);
+        let errors = bank_errors(s.take_errors());
+        assert!(errors.is_empty(), "money log errors: {errors:#?}");
+        assert!(
+            s.eval::<i64>("return GuildBankMessageFrame:GetNumMessages()")
+                .unwrap()
+                >= 1,
+            "the money log line printed"
+        );
+        s.fire_event("GUILDBANKFRAME_CLOSED", vec![]);
+        assert!(!s.eval::<bool>("return GuildBankFrame:IsShown()").unwrap());
+    });
 }

@@ -386,53 +386,57 @@ fn heal_args(cast_count: u8) -> Vec<ScriptValue> {
 /// the fill tracks the clock, and STOP with the same `castID` turns it green.
 #[test]
 fn the_stock_bar_opens_on_start_and_completes_on_stop() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = harness();
-    s.set_unit_guids(&UnitGuids {
-        player: ME,
-        ..Default::default()
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = harness();
+        s.set_unit_guids(&UnitGuids {
+            player: ME,
+            ..Default::default()
+        });
+        assert!(!s.eval::<bool>("return CastingBarFrame:IsShown()").unwrap());
+        start_heal(&mut s, 7);
+        assert!(s.eval::<bool>("return CastingBarFrame:IsShown()").unwrap());
+        assert_eq!(
+            s.eval::<String>("return CastingBarFrameText:GetText()")
+                .unwrap(),
+            "Lesser Heal"
+        );
+        assert_eq!(bar_color(&s), (1.0, 0.7, 0.0));
+        frame(&mut s, 0.5);
+        assert!((bar_value(&s) - 0.5).abs() < 0.05, "{}", bar_value(&s));
+        s.fire_event("UNIT_SPELLCAST_SUCCEEDED", heal_args(7));
+        s.fire_event("UNIT_SPELLCAST_STOP", heal_args(7));
+        assert_eq!(bar_color(&s), (0.0, 1.0, 0.0), "completed green");
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     });
-    assert!(!s.eval::<bool>("return CastingBarFrame:IsShown()").unwrap());
-    start_heal(&mut s, 7);
-    assert!(s.eval::<bool>("return CastingBarFrame:IsShown()").unwrap());
-    assert_eq!(
-        s.eval::<String>("return CastingBarFrameText:GetText()")
-            .unwrap(),
-        "Lesser Heal"
-    );
-    assert_eq!(bar_color(&s), (1.0, 0.7, 0.0));
-    frame(&mut s, 0.5);
-    assert!((bar_value(&s) - 0.5).abs() < 0.05, "{}", bar_value(&s));
-    s.fire_event("UNIT_SPELLCAST_SUCCEEDED", heal_args(7));
-    s.fire_event("UNIT_SPELLCAST_STOP", heal_args(7));
-    assert_eq!(bar_color(&s), (0.0, 1.0, 0.0), "completed green");
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// A refusal fails the bar only with the running cast's `castID`; another cast's is ignored.
 #[test]
 fn the_stock_bar_fails_only_its_own_cast() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = harness();
-    s.set_unit_guids(&UnitGuids {
-        player: ME,
-        ..Default::default()
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = harness();
+        s.set_unit_guids(&UnitGuids {
+            player: ME,
+            ..Default::default()
+        });
+        start_heal(&mut s, 8);
+        s.fire_event("UNIT_SPELLCAST_FAILED", heal_args(9));
+        assert_eq!(
+            bar_color(&s),
+            (1.0, 0.7, 0.0),
+            "another castID: still casting"
+        );
+        s.fire_event("UNIT_SPELLCAST_FAILED", heal_args(8));
+        assert_eq!(bar_color(&s), (1.0, 0.0, 0.0), "red");
+        assert_eq!(
+            s.eval::<String>("return CastingBarFrameText:GetText()")
+                .unwrap(),
+            s.eval::<String>("return FAILED").unwrap()
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     });
-    start_heal(&mut s, 8);
-    s.fire_event("UNIT_SPELLCAST_FAILED", heal_args(9));
-    assert_eq!(
-        bar_color(&s),
-        (1.0, 0.7, 0.0),
-        "another castID: still casting"
-    );
-    s.fire_event("UNIT_SPELLCAST_FAILED", heal_args(8));
-    assert_eq!(bar_color(&s), (1.0, 0.0, 0.0), "red");
-    assert_eq!(
-        s.eval::<String>("return CastingBarFrameText:GetText()")
-            .unwrap(),
-        s.eval::<String>("return FAILED").unwrap()
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// `drawLayer="BORDER"` on the `<StatusBar>` (`CastingBarFrame.xml:4`) draws the fill under the

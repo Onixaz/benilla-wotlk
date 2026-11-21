@@ -491,62 +491,65 @@ fn corpse_map_position_binding() {
 /// release (`OnAccept` returns 1).
 #[test]
 fn the_3_3_5a_death_dialog_releases_and_honors_the_fall_and_res_gates() {
-    benilla_formats::wow_data_or_skip!();
-    let _l = crate::local_state::test_env::ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (s, _load_failures) = super::layer_tests::production_load_with("death", false, "", |_| {});
-    let mut s = Lent::new(s);
-    let _ = s.take_errors();
-    let dead = DeathUiState {
-        release_remaining: Some(300.0),
-        ..Default::default()
-    };
-    s.set_death(dead.clone());
-    s.fire_event("PLAYER_DEAD", Vec::<ScriptValue>::new());
-    s.tick(0.05);
-    assert!(s
-        .eval::<bool>("return StaticPopup1:IsVisible() and StaticPopup1.which == 'DEATH'")
-        .unwrap());
-    assert!(s
-        .eval::<bool>("return StaticPopup1Button1:IsEnabled() ~= 0")
-        .unwrap());
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let _l = crate::local_state::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (s, _load_failures) =
+            super::layer_tests::production_load_with("death", false, "", |_| {});
+        let mut s = Lent::new(s);
+        let _ = s.take_errors();
+        let dead = DeathUiState {
+            release_remaining: Some(300.0),
+            ..Default::default()
+        };
+        s.set_death(dead.clone());
+        s.fire_event("PLAYER_DEAD", Vec::<ScriptValue>::new());
+        s.tick(0.05);
+        assert!(s
+            .eval::<bool>("return StaticPopup1:IsVisible() and StaticPopup1.which == 'DEATH'")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return StaticPopup1Button1:IsEnabled() ~= 0")
+            .unwrap());
 
-    s.set_death(DeathUiState {
-        falling: true,
-        ..dead.clone()
+        s.set_death(DeathUiState {
+            falling: true,
+            ..dead.clone()
+        });
+        s.tick(0.05);
+        assert!(
+            !s.eval::<bool>("return StaticPopup1Button1:IsEnabled() ~= 0")
+                .unwrap(),
+            "a fall disables Release"
+        );
+
+        s.set_death(DeathUiState {
+            cannot_be_resurrected: true,
+            ..dead.clone()
+        });
+        s.tick(0.05);
+        s.run("StaticPopup1Button1:Click('LeftButton')").unwrap();
+        assert_eq!(s.take_death_actions(), vec![DeathAction::Repop]);
+        assert!(
+            s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
+            "CannotBeResurrected keeps the dialog up"
+        );
+
+        s.set_death(dead);
+        s.tick(0.05);
+        s.run("StaticPopup1Button1:Click('LeftButton')").unwrap();
+        assert_eq!(s.take_death_actions(), vec![DeathAction::Repop]);
+        assert!(
+            !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
+            "Release Spirit hides the dialog"
+        );
+        let errors: Vec<_> = s
+            .take_errors()
+            .into_iter()
+            .filter(|e| e.contains("StaticPopup"))
+            .collect();
+        assert!(errors.is_empty(), "{errors:#?}");
     });
-    s.tick(0.05);
-    assert!(
-        !s.eval::<bool>("return StaticPopup1Button1:IsEnabled() ~= 0")
-            .unwrap(),
-        "a fall disables Release"
-    );
-
-    s.set_death(DeathUiState {
-        cannot_be_resurrected: true,
-        ..dead.clone()
-    });
-    s.tick(0.05);
-    s.run("StaticPopup1Button1:Click('LeftButton')").unwrap();
-    assert_eq!(s.take_death_actions(), vec![DeathAction::Repop]);
-    assert!(
-        s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
-        "CannotBeResurrected keeps the dialog up"
-    );
-
-    s.set_death(dead);
-    s.tick(0.05);
-    s.run("StaticPopup1Button1:Click('LeftButton')").unwrap();
-    assert_eq!(s.take_death_actions(), vec![DeathAction::Repop]);
-    assert!(
-        !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
-        "Release Spirit hides the dialog"
-    );
-    let errors: Vec<_> = s
-        .take_errors()
-        .into_iter()
-        .filter(|e| e.contains("StaticPopup"))
-        .collect();
-    assert!(errors.is_empty(), "{errors:#?}");
 }

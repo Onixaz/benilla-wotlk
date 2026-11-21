@@ -1231,20 +1231,22 @@ mod tests {
         assert_eq!(loc(&s, 16), 0x300000 | (1 << 8) | 3);
         assert_eq!(loc(&s, 17), -1, "the vault needs a banker");
         assert_eq!(loc(&s, 18), -1);
-        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+        let mut bank_v = crate::script::live::TestView {
             banker: Some(0x42),
             ..Default::default()
-        });
-        assert_eq!(loc(&s, 17), 0x400000 | 41, "vault slot 2 is player slot 40");
-        let id = |s: &UiScript, i: u32| -> i64 {
-            s.eval(&format!("return GetEquipmentSetItemIDs(\"Mix\")[{i}]"))
-                .unwrap()
         };
-        assert_eq!(
-            (id(&s, 1), id(&s, 2), id(&s, 3), id(&s, 16)),
-            (100, 1, 0, 201)
-        );
-        assert_eq!(id(&s, 18), -1);
+        crate::script::live::lending(&mut bank_v, || {
+            assert_eq!(loc(&s, 17), 0x400000 | 41, "vault slot 2 is player slot 40");
+            let id = |s: &UiScript, i: u32| -> i64 {
+                s.eval(&format!("return GetEquipmentSetItemIDs(\"Mix\")[{i}]"))
+                    .unwrap()
+            };
+            assert_eq!(
+                (id(&s, 1), id(&s, 2), id(&s, 3), id(&s, 16)),
+                (100, 1, 0, 201)
+            );
+            assert_eq!(id(&s, 18), -1);
+        });
     }
 
     /// `UseEquipmentSet`: each slot's item and place on the wire, an empty slot 0, a missing item

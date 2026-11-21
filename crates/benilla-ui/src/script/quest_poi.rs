@@ -544,10 +544,7 @@ mod tests {
         assert_eq!(icons[1].unwrap().x, 1, "POIShiftComplete 0 leaves them");
     }
 
-    fn with_lines() -> (
-        UiScript,
-        crate::script::LiveLoan<crate::script::live::TestView>,
-    ) {
+    fn with_lines() -> (UiScript, crate::script::live::TestView) {
         use crate::script::{QuestLogEntryView, QuestLogState};
         let mut s = UiScript::new().unwrap();
         s.seed_quest_log(QuestLogState {
@@ -586,71 +583,73 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        (s, crate::script::live::lend_test(view))
+        (s, view)
     }
 
     /// `0x5e6650` reads `index` as is; `0x5e60d0` minus one; both fall back to the selection.
     #[test]
     fn the_poi_lines_answer_by_row_or_selection() {
-        let (s, _lines) = with_lines();
-        assert_eq!(
-            s.eval::<(String, String, Option<i64>)>("return GetQuestPOILeaderBoard(4, 2)")
-                .unwrap(),
-            ("Diseased Wolf Pelt: 3/8".into(), "item".into(), None)
-        );
-        assert_eq!(
-            s.eval::<(String, String, i64)>("return GetQuestPOILeaderBoard(16, 2)")
-                .unwrap(),
-            ("Return to Eagan.".into(), "event".into(), 1)
-        );
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetQuestPOILeaderBoard(0, 2))")
-                .unwrap(),
-            3
-        );
-        assert!(
-            s.eval::<bool>("return GetQuestPOILeaderBoard(4) == nil")
-                .unwrap(),
-            "no selection"
-        );
-        s.run("SelectQuestLogEntry(2)").unwrap();
-        assert_eq!(
-            s.eval::<String>("return (GetQuestPOILeaderBoard(4))")
-                .unwrap(),
-            "Diseased Wolf Pelt: 3/8"
-        );
-        assert_eq!(s.eval::<i64>("return GetNumQuestItemDrops()").unwrap(), 1);
-        assert_eq!(
-            s.eval::<i64>("return GetNumQuestItemDrops(1)").unwrap(),
-            0,
-            "a header row"
-        );
-        assert_eq!(
-            s.eval::<String>("return (GetQuestLogItemDrop(1, 2))")
-                .unwrap(),
-            "Venom Sac: 0/1"
-        );
-        assert!(s
-            .run("GetQuestLogItemDrop()")
-            .unwrap_err()
-            .to_string()
-            .contains("Usage: GetQuestLogItemDrop(index)"));
-        assert!(s
-            .run("GetQuestPOILeaderBoard()")
-            .unwrap_err()
-            .to_string()
-            .contains("Usage: GetQuestLogLeaderBoard(index)"));
-        assert!(s
-            .run("QuestPOIGetIconInfo()")
-            .unwrap_err()
-            .to_string()
-            .contains("Usage: QuestPOIGetIconInfo(questID)"));
-        assert_eq!(
-            s.eval::<i64>("return select('#', QuestPOIGetIconInfo(33))")
-                .unwrap(),
-            0,
-            "no POI slot"
-        );
+        let (s, mut lines_v) = with_lines();
+        crate::script::live::lending(&mut lines_v, || {
+            assert_eq!(
+                s.eval::<(String, String, Option<i64>)>("return GetQuestPOILeaderBoard(4, 2)")
+                    .unwrap(),
+                ("Diseased Wolf Pelt: 3/8".into(), "item".into(), None)
+            );
+            assert_eq!(
+                s.eval::<(String, String, i64)>("return GetQuestPOILeaderBoard(16, 2)")
+                    .unwrap(),
+                ("Return to Eagan.".into(), "event".into(), 1)
+            );
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetQuestPOILeaderBoard(0, 2))")
+                    .unwrap(),
+                3
+            );
+            assert!(
+                s.eval::<bool>("return GetQuestPOILeaderBoard(4) == nil")
+                    .unwrap(),
+                "no selection"
+            );
+            s.run("SelectQuestLogEntry(2)").unwrap();
+            assert_eq!(
+                s.eval::<String>("return (GetQuestPOILeaderBoard(4))")
+                    .unwrap(),
+                "Diseased Wolf Pelt: 3/8"
+            );
+            assert_eq!(s.eval::<i64>("return GetNumQuestItemDrops()").unwrap(), 1);
+            assert_eq!(
+                s.eval::<i64>("return GetNumQuestItemDrops(1)").unwrap(),
+                0,
+                "a header row"
+            );
+            assert_eq!(
+                s.eval::<String>("return (GetQuestLogItemDrop(1, 2))")
+                    .unwrap(),
+                "Venom Sac: 0/1"
+            );
+            assert!(s
+                .run("GetQuestLogItemDrop()")
+                .unwrap_err()
+                .to_string()
+                .contains("Usage: GetQuestLogItemDrop(index)"));
+            assert!(s
+                .run("GetQuestPOILeaderBoard()")
+                .unwrap_err()
+                .to_string()
+                .contains("Usage: GetQuestLogLeaderBoard(index)"));
+            assert!(s
+                .run("QuestPOIGetIconInfo()")
+                .unwrap_err()
+                .to_string()
+                .contains("Usage: QuestPOIGetIconInfo(questID)"));
+            assert_eq!(
+                s.eval::<i64>("return select('#', QuestPOIGetIconInfo(33))")
+                    .unwrap(),
+                0,
+                "no POI slot"
+            );
+        });
     }
 
     /// The push distance only takes values at or above the overlap distance (`0x5dfb40`).

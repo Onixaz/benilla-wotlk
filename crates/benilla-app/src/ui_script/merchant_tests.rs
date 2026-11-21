@@ -1016,81 +1016,82 @@ fn ctrl_and_shift_on_a_vendor_row_take_the_modified_click_and_never_buy() {
     benilla_formats::wow_data_or_skip!();
     const WATER_LINK: &str = "|cffffffff|Hitem:159:0:0:0:0:0:0:0:0|h[Refreshing Spring Water]|h|r";
     let mut s = stock_ui(1024.0, 768.0);
-    s.record_writes();
-
-    s.set_money(12_345);
-    s.set_merchant(Some(MerchantState {
-        items: vec![MerchantItem {
-            name: Some("Refreshing Spring Water".into()),
-            texture: Some("Interface\\Icons\\INV_Drink_18".into()),
-            price: 25,
-            quantity: 1,
-            num_available: -1,
-            item_id: 159,
-            stats: None,
-            // As `ui_merchant` builds it from the row's item template.
-            link: Some(WATER_LINK.into()),
-            max_stack: Some(1),
-            extended_cost: None,
-        }],
-        ..Default::default()
-    }));
-    s.fire_event("MERCHANT_SHOW", vec![]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    s.resolve();
-    let quads = s.extract();
-    let icon = quads
-        .iter()
-        .find(|q| {
-            matches!(&q.content, QuadContent::Texture { path: Some(p), .. }
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_money(12_345);
+        s.set_merchant(Some(MerchantState {
+            items: vec![MerchantItem {
+                name: Some("Refreshing Spring Water".into()),
+                texture: Some("Interface\\Icons\\INV_Drink_18".into()),
+                price: 25,
+                quantity: 1,
+                num_available: -1,
+                item_id: 159,
+                stats: None,
+                // As `ui_merchant` builds it from the row's item template.
+                link: Some(WATER_LINK.into()),
+                max_stack: Some(1),
+                extended_cost: None,
+            }],
+            ..Default::default()
+        }));
+        s.fire_event("MERCHANT_SHOW", vec![]);
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        s.resolve();
+        let quads = s.extract();
+        let icon = quads
+            .iter()
+            .find(|q| {
+                matches!(&q.content, QuadContent::Texture { path: Some(p), .. }
                     if p.contains("INV_Drink_18"))
-        })
-        .and_then(|q| q.rect)
-        .expect("no row icon quad");
-    let (x, y) = (
-        (icon.left + icon.right) * 0.5,
-        (icon.bottom + icon.top) * 0.5,
-    );
+            })
+            .and_then(|q| q.rect)
+            .expect("no row icon quad");
+        let (x, y) = (
+            (icon.left + icon.right) * 0.5,
+            (icon.bottom + icon.top) * 0.5,
+        );
 
-    s.mouse_button(x, y, "RightButton", true);
-    s.mouse_button(x, y, "RightButton", false);
-    assert_eq!(
-        s.take_merchant_buys(),
-        vec![(1, 1)],
-        "an unmodified right-click still buys"
-    );
+        s.mouse_button(x, y, "RightButton", true);
+        s.mouse_button(x, y, "RightButton", false);
+        assert_eq!(
+            s.take_merchant_buys(),
+            vec![(1, 1)],
+            "an unmodified right-click still buys"
+        );
 
-    s.set_modifiers(false, true, false);
-    s.mouse_button(x, y, "RightButton", true);
-    s.mouse_button(x, y, "RightButton", false);
-    s.set_modifiers(false, false, false);
-    assert!(
-        s.take_merchant_buys().is_empty(),
-        "a ctrl-held right-click must not buy (ref l.332-333)"
-    );
+        s.set_modifiers(false, true, false);
+        s.mouse_button(x, y, "RightButton", true);
+        s.mouse_button(x, y, "RightButton", false);
+        s.set_modifiers(false, false, false);
+        assert!(
+            s.take_merchant_buys().is_empty(),
+            "a ctrl-held right-click must not buy (ref l.332-333)"
+        );
 
-    // The ctrl arm is `HandleModifiedItemClick`'s DRESSUP leg, and water is not dressable.
-    assert!(
-        s.take_dressup_edits().is_empty(),
-        "an undressable item opens no dressing room"
-    );
+        // The ctrl arm is `HandleModifiedItemClick`'s DRESSUP leg, and water is not dressable.
+        assert!(
+            s.take_dressup_edits().is_empty(),
+            "an undressable item opens no dressing room"
+        );
 
-    s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
-    s.set_modifiers(true, false, false);
-    s.mouse_button(x, y, "LeftButton", true);
-    s.mouse_button(x, y, "LeftButton", false);
-    s.set_modifiers(false, false, false);
-    assert_eq!(
+        s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
+        s.set_modifiers(true, false, false);
+        s.mouse_button(x, y, "LeftButton", true);
+        s.mouse_button(x, y, "LeftButton", false);
+        s.set_modifiers(false, false, false);
+        assert_eq!(
         s.eval::<String>("return ChatFrame1EditBox:GetText()")
             .unwrap(),
         format!(" {WATER_LINK}"),
         "the vendor row's full escaped link landed in the chat box, after `ChatEdit_InsertLink`'s space"
     );
-    assert!(
-        s.take_merchant_buys().is_empty(),
-        "a shift-click must not also buy"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        assert!(
+            s.take_merchant_buys().is_empty(),
+            "a shift-click must not also buy"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// Shift is `SPLITSTACK`: `MerchantItemButton_OnModifiedClick` opens the split on a single row whose

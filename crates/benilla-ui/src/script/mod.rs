@@ -204,7 +204,7 @@ mod level_grant;
 mod lfg;
 pub(crate) mod live;
 pub mod world_loan;
-pub use live::{read_live, write_live, GlobalStrings, LiveLoan, LiveState};
+pub use live::{read_live, write_live, GlobalStrings, LiveState};
 mod loot;
 mod loot_roll;
 mod lua51;

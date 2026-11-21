@@ -1047,29 +1047,33 @@ mod tests {
 
     #[test]
     fn spell_is_targeting_answers_one_or_nil() {
-        let mut s = UiScript::new().unwrap();
-        assert!(s.eval::<bool>("return SpellIsTargeting() == nil").unwrap());
-        s.set_spell_targeting(true);
-        assert!(s.eval::<bool>("return SpellIsTargeting() == 1").unwrap());
-        s.set_spell_targeting(false);
-        assert!(s.eval::<bool>("return SpellIsTargeting() == nil").unwrap());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            assert!(s.eval::<bool>("return SpellIsTargeting() == nil").unwrap());
+            s.set_spell_targeting(true);
+            assert!(s.eval::<bool>("return SpellIsTargeting() == 1").unwrap());
+            s.set_spell_targeting(false);
+            assert!(s.eval::<bool>("return SpellIsTargeting() == nil").unwrap());
+        });
     }
 
     /// `SpellCanTargetItem` (`0x7fdd10`): an armed word with an item bit, else nil.
     #[test]
     fn spell_can_target_item_needs_an_item_word() {
-        let mut s = UiScript::new().unwrap();
-        let can = |s: &UiScript| {
-            s.eval::<Option<i64>>("return SpellCanTargetItem()")
-                .unwrap()
-        };
-        assert_eq!(can(&s), None);
-        s.set_spell_targeting(true);
-        assert_eq!(can(&s), None, "a unit word");
-        s.set_item_pick_armed(true);
-        assert_eq!(can(&s), Some(1));
-        s.set_spell_targeting(false);
-        assert_eq!(can(&s), None);
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            let can = |s: &UiScript| {
+                s.eval::<Option<i64>>("return SpellCanTargetItem()")
+                    .unwrap()
+            };
+            assert_eq!(can(&s), None);
+            s.set_spell_targeting(true);
+            assert_eq!(can(&s), None, "a unit word");
+            s.set_item_pick_armed(true);
+            assert_eq!(can(&s), Some(1));
+            s.set_spell_targeting(false);
+            assert_eq!(can(&s), None);
+        });
     }
 
     /// Two tabs: Fire (Fireball, and Fire Blast marked passive) and Frost (Frost Armor).
@@ -1272,55 +1276,57 @@ mod tests {
     /// The reference's marshaller.
     #[test]
     fn the_slot_marshaller_gates_the_index_and_names_the_book() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
-        for bad in ["0", "-11", "1025", "nil", "\"x\"", "{}"] {
-            let err = s
-                .eval::<mlua::Value>(&format!("return GetSpellTexture({bad}, BOOKTYPE_SPELL)"))
-                .expect_err(bad)
-                .to_string();
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
+            for bad in ["0", "-11", "1025", "nil", "\"x\"", "{}"] {
+                let err = s
+                    .eval::<mlua::Value>(&format!("return GetSpellTexture({bad}, BOOKTYPE_SPELL)"))
+                    .expect_err(bad)
+                    .to_string();
+                assert!(
+                    err.contains("GetSpellTexture(): Invalid spell slot"),
+                    "{bad}: {err}"
+                );
+            }
             assert!(
-                err.contains("GetSpellTexture(): Invalid spell slot"),
-                "{bad}: {err}"
+                s.eval::<mlua::Value>("return GetSpellTexture(1)")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("GetSpellTexture(): Invalid spell slot"),
+                "the book type is not optional"
             );
-        }
-        assert!(
-            s.eval::<mlua::Value>("return GetSpellTexture(1)")
-                .unwrap_err()
-                .to_string()
-                .contains("GetSpellTexture(): Invalid spell slot"),
-            "the book type is not optional"
-        );
-        // Inside the range but past the book: nil, not an error.
-        assert!(s
-            .eval::<bool>("return GetSpellTexture(1024, BOOKTYPE_SPELL) == nil")
-            .unwrap());
-        // Truncation toward zero: 1.9 is slot 1, and so is 0.99 (`trunc(-0.01)` is 0). A numeric
-        // string is a number (`lua_isnumber`).
-        for one in ["1.9", "0.99", "\"1\""] {
+            // Inside the range but past the book: nil, not an error.
+            assert!(s
+                .eval::<bool>("return GetSpellTexture(1024, BOOKTYPE_SPELL) == nil")
+                .unwrap());
+            // Truncation toward zero: 1.9 is slot 1, and so is 0.99 (`trunc(-0.01)` is 0). A numeric
+            // string is a number (`lua_isnumber`).
+            for one in ["1.9", "0.99", "\"1\""] {
+                assert_eq!(
+                    s.eval::<String>(&format!("return GetSpellName({one}, BOOKTYPE_SPELL)"))
+                        .unwrap(),
+                    "Fireball",
+                    "{one}"
+                );
+            }
+            let (name, _) = s
+                .eval::<(String, String)>("return GetSpellName(1, \"PET\")")
+                .unwrap();
             assert_eq!(
-                s.eval::<String>(&format!("return GetSpellName({one}, BOOKTYPE_SPELL)"))
-                    .unwrap(),
-                "Fireball",
-                "{one}"
+                name,
+                pet_book().slots[0].name,
+                "the pet list, case-insensitively"
             );
-        }
-        let (name, _) = s
-            .eval::<(String, String)>("return GetSpellName(1, \"PET\")")
-            .unwrap();
-        assert_eq!(
-            name,
-            pet_book().slots[0].name,
-            "the pet list, case-insensitively"
-        );
-        let (name, _) = s
-            .eval::<(String, String)>("return GetSpellName(1, 7)")
-            .unwrap();
-        assert_eq!(
-            name, "Fireball",
-            "a number is an accepted, player-book type"
-        );
+            let (name, _) = s
+                .eval::<(String, String)>("return GetSpellName(1, 7)")
+                .unwrap();
+            assert_eq!(
+                name, "Fireball",
+                "a number is an accepted, player-book type"
+            );
+        });
     }
 
     #[test]
@@ -1543,43 +1549,45 @@ mod tests {
     /// pet book as well, and a passive is refused whatever it says.
     #[test]
     fn cast_spell_reads_on_self_from_its_third_argument() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
-        for (arg, on_self) in [
-            ("", false),
-            (", 0.5", false),
-            (r#", "false""#, false),
-            (", 1", true),
-            (", 1, 0", true),
-            (r#", "yes""#, true),
-            (r#", "on""#, true),
-        ] {
-            s.run(&format!("CastSpell(1, BOOKTYPE_SPELL{arg})"))
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
+            for (arg, on_self) in [
+                ("", false),
+                (", 0.5", false),
+                (r#", "false""#, false),
+                (", 1", true),
+                (", 1, 0", true),
+                (r#", "yes""#, true),
+                (r#", "on""#, true),
+            ] {
+                s.run(&format!("CastSpell(1, BOOKTYPE_SPELL{arg})"))
+                    .unwrap();
+                assert_eq!(
+                    s.take_spell_casts(),
+                    vec![(
+                        133,
+                        if on_self {
+                            CastAt::Player
+                        } else {
+                            CastAt::Selection
+                        }
+                    )],
+                    "CastSpell(1, BOOKTYPE_SPELL{arg})"
+                );
+                s.run(&format!("CastSpell(1, BOOKTYPE_PET{arg})")).unwrap();
+                assert_eq!(
+                    s.take_pet_spell_casts(),
+                    vec![(2649, on_self)],
+                    "CastSpell(1, BOOKTYPE_PET{arg})"
+                );
+            }
+            s.run("CastSpell(2, BOOKTYPE_SPELL, 1) CastSpell(3, BOOKTYPE_PET, 1)")
                 .unwrap();
-            assert_eq!(
-                s.take_spell_casts(),
-                vec![(
-                    133,
-                    if on_self {
-                        CastAt::Player
-                    } else {
-                        CastAt::Selection
-                    }
-                )],
-                "CastSpell(1, BOOKTYPE_SPELL{arg})"
-            );
-            s.run(&format!("CastSpell(1, BOOKTYPE_PET{arg})")).unwrap();
-            assert_eq!(
-                s.take_pet_spell_casts(),
-                vec![(2649, on_self)],
-                "CastSpell(1, BOOKTYPE_PET{arg})"
-            );
-        }
-        s.run("CastSpell(2, BOOKTYPE_SPELL, 1) CastSpell(3, BOOKTYPE_PET, 1)")
-            .unwrap();
-        assert!(s.take_spell_casts().is_empty(), "a passive is refused");
-        assert!(s.take_pet_spell_casts().is_empty(), "a passive is refused");
+            assert!(s.take_spell_casts().is_empty(), "a passive is refused");
+            assert!(s.take_pet_spell_casts().is_empty(), "a passive is refused");
+        });
     }
 
     /// With no pet book, as when the reference's count is 0, every pet arm answers nothing.
@@ -1651,214 +1659,228 @@ mod tests {
 
     #[test]
     fn has_pet_spells_answers_a_count_and_a_class_token() {
-        let mut s = UiScript::new().unwrap();
-        let _book = s.set_pet_book(pet_book());
-        assert!(s
-            .eval::<bool>(r#"local n, t = HasPetSpells() return n == 3 and t == "PET""#)
-            .unwrap());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            let _book = s.set_pet_book(pet_book());
+            assert!(s
+                .eval::<bool>(r#"local n, t = HasPetSpells() return n == 3 and t == "PET""#)
+                .unwrap());
 
-        // A warlock's token, which FrameXML reads as `PET_TYPE_DEMON`.
-        let mut demon = pet_book();
-        demon.token = Some("DEMON".into());
-        let _book = s.set_pet_book(demon);
-        assert_eq!(
-            s.eval::<String>("local _, t = HasPetSpells() return t")
-                .unwrap(),
-            "DEMON"
-        );
+            // A warlock's token, which FrameXML reads as `PET_TYPE_DEMON`.
+            let mut demon = pet_book();
+            demon.token = Some("DEMON".into());
+            let _book = s.set_pet_book(demon);
+            assert_eq!(
+                s.eval::<String>("local _, t = HasPetSpells() return t")
+                    .unwrap(),
+                "DEMON"
+            );
 
-        // No token resolved (no `ChrClasses.dbc`) still answers a string.
-        let mut untokened = pet_book();
-        untokened.token = None;
-        let _book = s.set_pet_book(untokened);
-        assert_eq!(
-            s.eval::<String>("local _, t = HasPetSpells() return t")
-                .unwrap(),
-            "PET"
-        );
+            // No token resolved (no `ChrClasses.dbc`) still answers a string.
+            let mut untokened = pet_book();
+            untokened.token = None;
+            let _book = s.set_pet_book(untokened);
+            assert_eq!(
+                s.eval::<String>("local _, t = HasPetSpells() return t")
+                    .unwrap(),
+                "PET"
+            );
+        });
     }
 
     #[test]
     fn one_id_reads_two_different_books() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
 
-        assert_eq!(
-            s.eval::<String>(r#"return GetSpellName(1, BOOKTYPE_SPELL)"#)
-                .unwrap(),
-            "Fireball"
-        );
-        assert_eq!(
-            s.eval::<String>(r#"return GetSpellName(1, BOOKTYPE_PET)"#)
-                .unwrap(),
-            "Growl"
-        );
-        // `"pet"` alone, without case; any other string, a typo too, is the player's.
-        assert_eq!(
-            s.eval::<String>(r#"return GetSpellName(1, "PeT")"#)
-                .unwrap(),
-            "Growl"
-        );
-        assert_eq!(
-            s.eval::<String>(r#"return GetSpellName(1, "spel")"#)
-                .unwrap(),
-            "Fireball"
-        );
-        // Past the pet book's end: nil.
-        assert!(s
-            .eval::<bool>(r#"return GetSpellName(4, BOOKTYPE_PET) == nil"#)
-            .unwrap());
+            assert_eq!(
+                s.eval::<String>(r#"return GetSpellName(1, BOOKTYPE_SPELL)"#)
+                    .unwrap(),
+                "Fireball"
+            );
+            assert_eq!(
+                s.eval::<String>(r#"return GetSpellName(1, BOOKTYPE_PET)"#)
+                    .unwrap(),
+                "Growl"
+            );
+            // `"pet"` alone, without case; any other string, a typo too, is the player's.
+            assert_eq!(
+                s.eval::<String>(r#"return GetSpellName(1, "PeT")"#)
+                    .unwrap(),
+                "Growl"
+            );
+            assert_eq!(
+                s.eval::<String>(r#"return GetSpellName(1, "spel")"#)
+                    .unwrap(),
+                "Fireball"
+            );
+            // Past the pet book's end: nil.
+            assert!(s
+                .eval::<bool>(r#"return GetSpellName(4, BOOKTYPE_PET) == nil"#)
+                .unwrap());
+        });
     }
 
     #[test]
     fn autocast_is_a_pet_only_pair() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
 
-        assert!(s
-            .eval::<bool>(
-                r#"local a, e = GetSpellAutocast(1, BOOKTYPE_PET) return a == 1 and e == 1"#
-            )
-            .unwrap());
-        assert!(s
-            .eval::<bool>(
-                r#"local a, e = GetSpellAutocast(2, BOOKTYPE_PET) return a == 1 and e == nil"#
-            )
-            .unwrap());
-        assert!(
-            s.eval::<bool>(
-                r#"local a, e = GetSpellAutocast(3, BOOKTYPE_PET) return a == nil and e == nil"#
-            )
-            .unwrap(),
-            "a passive is not autocastable"
-        );
-        assert!(
+            assert!(s
+                .eval::<bool>(
+                    r#"local a, e = GetSpellAutocast(1, BOOKTYPE_PET) return a == 1 and e == 1"#
+                )
+                .unwrap());
+            assert!(s
+                .eval::<bool>(
+                    r#"local a, e = GetSpellAutocast(2, BOOKTYPE_PET) return a == 1 and e == nil"#
+                )
+                .unwrap());
+            assert!(
+                s.eval::<bool>(
+                    r#"local a, e = GetSpellAutocast(3, BOOKTYPE_PET) return a == nil and e == nil"#
+                )
+                .unwrap(),
+                "a passive is not autocastable"
+            );
+            assert!(
             s.eval::<bool>(
                 r#"local a, e = GetSpellAutocast(1, BOOKTYPE_SPELL) return a == nil and e == nil"#
             )
             .unwrap(),
             "the PLAYER book never answers a pair"
         );
-        assert!(
-            s.eval::<bool>(
-                r#"local a, e = GetSpellAutocast(9, BOOKTYPE_PET) return a == nil and e == nil"#
-            )
-            .unwrap(),
-            "still two returns out of range"
-        );
+            assert!(
+                s.eval::<bool>(
+                    r#"local a, e = GetSpellAutocast(9, BOOKTYPE_PET) return a == nil and e == nil"#
+                )
+                .unwrap(),
+                "still two returns out of range"
+            );
+        });
     }
 
     /// The book's set runs inside the call (`0x5d5e10`): only an autocast-allowed pet word flips, the bar's signal comes after it (`0x5d5fe8`).
     #[test]
     fn only_an_autocastable_pet_slot_sets_its_autocast() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
 
-        s.run(
-            r#"ToggleSpellAutocast(1, BOOKTYPE_PET)
+            s.run(
+                r#"ToggleSpellAutocast(1, BOOKTYPE_PET)
                ToggleSpellAutocast(3, BOOKTYPE_PET)
                ToggleSpellAutocast(9, BOOKTYPE_PET)
                ToggleSpellAutocast(1, BOOKTYPE_SPELL)"#,
-        )
-        .unwrap();
-        assert_eq!(
-            crate::script::live::take_test_spell_autocasts(),
-            vec![(2649, false)]
-        );
-        assert!(
-            s.eval::<bool>(
-                "local a, e = GetSpellAutocast(1, BOOKTYPE_PET) return a == 1 and e == nil"
             )
-            .unwrap(),
-            "the next verb reads it off"
-        );
-        s.run("EnableSpellAutocast(1, BOOKTYPE_PET) EnableSpellAutocast(1, BOOKTYPE_PET)")
             .unwrap();
-        assert_eq!(
-            crate::script::live::take_test_spell_autocasts(),
-            vec![(2649, true), (2649, true)]
-        );
-        assert!(s.take_spell_casts().is_empty());
+            assert_eq!(
+                crate::script::live::take_test_spell_autocasts(),
+                vec![(2649, false)]
+            );
+            assert!(
+                s.eval::<bool>(
+                    "local a, e = GetSpellAutocast(1, BOOKTYPE_PET) return a == 1 and e == nil"
+                )
+                .unwrap(),
+                "the next verb reads it off"
+            );
+            s.run("EnableSpellAutocast(1, BOOKTYPE_PET) EnableSpellAutocast(1, BOOKTYPE_PET)")
+                .unwrap();
+            assert_eq!(
+                crate::script::live::take_test_spell_autocasts(),
+                vec![(2649, true), (2649, true)]
+            );
+            assert!(s.take_spell_casts().is_empty());
+        });
     }
 
     #[test]
     fn a_pet_cast_queues_apart_from_a_player_cast() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
 
-        s.run(
-            r#"CastSpell(1, BOOKTYPE_PET)
+            s.run(
+                r#"CastSpell(1, BOOKTYPE_PET)
                CastSpell(3, BOOKTYPE_PET)
                CastSpell(1, BOOKTYPE_SPELL)"#,
-        )
-        .unwrap();
-        assert_eq!(
-            s.take_pet_spell_casts(),
-            vec![(2649, false)],
-            "the passive refused"
-        );
-        assert_eq!(s.take_spell_casts(), vec![(133, CastAt::Selection)]);
-        assert!(s.take_pet_spell_casts().is_empty(), "drain empties");
+            )
+            .unwrap();
+            assert_eq!(
+                s.take_pet_spell_casts(),
+                vec![(2649, false)],
+                "the passive refused"
+            );
+            assert_eq!(s.take_spell_casts(), vec![(133, CastAt::Selection)]);
+            assert!(s.take_pet_spell_casts().is_empty(), "drain empties");
+        });
     }
 
     #[test]
     fn a_pet_book_pickup_carries_the_packed_word() {
-        let mut s = UiScript::new().unwrap();
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
 
-        assert!(s
-            .eval::<bool>(r#"return PickupSpell(1, BOOKTYPE_PET)"#)
-            .unwrap());
-        let Some(CursorPayload::PetAction(p)) = s.cursor_payload() else {
-            panic!(
-                "expected a pet action payload, got {:?}",
-                s.cursor_payload()
-            );
-        };
-        assert_eq!(p.packed, 0xC100_0000 | 2649);
-        assert_eq!(p.src_slot, 0, "it came out of the book, not off the bar");
+            assert!(s
+                .eval::<bool>(r#"return PickupSpell(1, BOOKTYPE_PET)"#)
+                .unwrap());
+            let Some(CursorPayload::PetAction(p)) = s.cursor_payload() else {
+                panic!(
+                    "expected a pet action payload, got {:?}",
+                    s.cursor_payload()
+                );
+            };
+            assert_eq!(p.packed, 0xC100_0000 | 2649);
+            assert_eq!(p.src_slot, 0, "it came out of the book, not off the bar");
 
-        // The player book still produces a spell payload.
-        s.run("ClearCursor()").unwrap();
-        assert!(s
-            .eval::<bool>(r#"return PickupSpell(1, BOOKTYPE_SPELL)"#)
-            .unwrap());
-        assert!(matches!(s.cursor_payload(), Some(CursorPayload::Spell(_))));
+            // The player book still produces a spell payload.
+            s.run("ClearCursor()").unwrap();
+            assert!(s
+                .eval::<bool>(r#"return PickupSpell(1, BOOKTYPE_SPELL)"#)
+                .unwrap());
+            assert!(matches!(s.cursor_payload(), Some(CursorPayload::Spell(_))));
+        });
     }
 
     /// The reference reads a pet book cooldown through the shared cooldown read (`edx = isPet`), as
     /// `GetPetActionCooldown` does, so the book and the bar agree.
     #[test]
     fn the_pet_books_cooldown_is_the_pets_own() {
-        let mut s = UiScript::new().unwrap();
-        s.tick(10.0); // GetTime == 10
-        s.set_spellbook(book());
-        let _book = s.set_pet_book(pet_book());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.tick(10.0); // GetTime == 10
+            s.set_spellbook(book());
+            let _book = s.set_pet_book(pet_book());
 
-        let (start, duration, enable) = s
-            .eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_PET)"#)
-            .unwrap();
-        assert!((start - 9.4).abs() < 1e-9, "start {start}");
-        assert!((duration - 5.0).abs() < 1e-9);
-        assert_eq!(enable, 1);
-        // The player book's slot 1 has none.
-        assert_eq!(
-            s.eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_SPELL)"#)
-                .unwrap(),
-            (0.0, 0.0, 1)
-        );
+            let (start, duration, enable) = s
+                .eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_PET)"#)
+                .unwrap();
+            assert!((start - 9.4).abs() < 1e-9, "start {start}");
+            assert!((duration - 5.0).abs() < 1e-9);
+            assert_eq!(enable, 1);
+            // The player book's slot 1 has none.
+            assert_eq!(
+                s.eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_SPELL)"#)
+                    .unwrap(),
+                (0.0, 0.0, 1)
+            );
 
-        s.tick(5.0); // now == 15 > 9.4 + 5.0
-        assert_eq!(
-            s.eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_PET)"#)
-                .unwrap(),
-            (0.0, 0.0, 1)
-        );
+            s.tick(5.0); // now == 15 > 9.4 + 5.0
+            assert_eq!(
+                s.eval::<(f64, f64, i32)>(r#"return GetSpellCooldown(1, BOOKTYPE_PET)"#)
+                    .unwrap(),
+                (0.0, 0.0, 1)
+            );
+        });
     }
 
     #[test]

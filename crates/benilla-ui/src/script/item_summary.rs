@@ -533,10 +533,7 @@ mod tests {
 
     /// A model holding one distribution (id 3: stamina 50%, attack power 100%, a mana slot at 0
     /// skipped) and two values rows, the second level 2's.
-    fn scaling_model() -> (
-        Model,
-        crate::script::live::LiveLoan<crate::script::live::TestView>,
-    ) {
+    fn scaling_model() -> (Model, crate::script::live::TestView) {
         use crate::script::{ScalingDistributionView, ScalingValuesView};
         let model = Model::new();
         let mut tables = crate::script::ItemTables::default();
@@ -555,10 +552,10 @@ mod tests {
         row[10] = 100; // one-hand weapon DPS
         row[16] = 40; // spell power
         tables.scaling.values = vec![ScalingValuesView([1; 24]), ScalingValuesView(row)];
-        let loan = crate::script::live::lend_test(crate::script::live::TestView {
+        let loan = crate::script::live::TestView {
             item_tables: Some(tables),
             ..Default::default()
-        });
+        };
         (model, loan)
     }
 
@@ -580,43 +577,47 @@ mod tests {
     /// none of the template's stats, sockets or armor.
     #[test]
     fn a_scaling_item_folds_its_level_row() {
-        let (model, _tables) = scaling_model();
-        let f = ItemLinkFields {
-            level: 2,
-            ..Default::default()
-        };
-        let s = StatSummary::of(&model, &heirloom(0x8 | 0x100 | 0x8000), &f);
-        assert_eq!(
-            entries(&s),
-            vec![
-                ("ITEM_MOD_ATTACK_POWER_SHORT".into(), 200),
-                ("ITEM_MOD_SPELL_POWER_SHORT".into(), 40),
-                ("ITEM_MOD_STAMINA_SHORT".into(), 100),
-                ("RESISTANCE0_NAME".into(), 300),
-            ]
-        );
-        // No armor bit: the template's armor and resistances; no damage bit: its damage.
-        let plain = StatSummary::of(&model, &heirloom(0x8), &f);
-        assert!(entries(&plain).contains(&("RESISTANCE0_NAME".into(), 999)));
-        assert!(entries(&plain).contains(&("RESISTANCE1_NAME".into(), 5)));
-        assert_eq!(plain.dps(), Some(1.0));
+        let (model, mut tables_v) = scaling_model();
+        crate::script::live::lending(&mut tables_v, || {
+            let f = ItemLinkFields {
+                level: 2,
+                ..Default::default()
+            };
+            let s = StatSummary::of(&model, &heirloom(0x8 | 0x100 | 0x8000), &f);
+            assert_eq!(
+                entries(&s),
+                vec![
+                    ("ITEM_MOD_ATTACK_POWER_SHORT".into(), 200),
+                    ("ITEM_MOD_SPELL_POWER_SHORT".into(), 40),
+                    ("ITEM_MOD_STAMINA_SHORT".into(), 100),
+                    ("RESISTANCE0_NAME".into(), 300),
+                ]
+            );
+            // No armor bit: the template's armor and resistances; no damage bit: its damage.
+            let plain = StatSummary::of(&model, &heirloom(0x8), &f);
+            assert!(entries(&plain).contains(&("RESISTANCE0_NAME".into(), 999)));
+            assert!(entries(&plain).contains(&("RESISTANCE1_NAME".into(), 5)));
+            assert_eq!(plain.dps(), Some(1.0));
+        });
     }
 
     /// A damage bit's band sets the DPS to its mean; a link level past the table reads nothing, as
     /// the link's level is not held to the item's range.
     #[test]
     fn a_scaling_weapon_reads_its_band_and_an_unrowed_level_reads_empty() {
-        let (model, _tables) = scaling_model();
-        let at = |level| ItemLinkFields {
-            level,
-            ..Default::default()
-        };
-        let sword = heirloom(0x4 | 0x200);
-        assert_eq!(StatSummary::of(&model, &sword, &at(2)).dps(), Some(100.0));
-        assert_eq!(
-            StatSummary::of(&model, &sword, &at(99)),
-            StatSummary::default()
-        );
+        let (model, mut tables_v) = scaling_model();
+        crate::script::live::lending(&mut tables_v, || {
+            let at = |level| ItemLinkFields {
+                level,
+                ..Default::default()
+            };
+            let sword = heirloom(0x4 | 0x200);
+            assert_eq!(StatSummary::of(&model, &sword, &at(2)).dps(), Some(100.0));
+            assert_eq!(
+                StatSummary::of(&model, &sword, &at(99)),
+                StatSummary::default()
+            );
+        });
     }
 
     #[test]

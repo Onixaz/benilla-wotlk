@@ -413,7 +413,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::{lend_test, TestView};
+    use crate::script::live::TestView;
     use crate::script::UiScript;
 
     fn row(number: u32, entry: u32, name: &str, level: u32) -> StableRow {
@@ -459,49 +459,50 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetNextStableSlotCost()").unwrap(), 0);
         assert_eq!(s.eval::<i64>("return GetSelectedStablePet()").unwrap(), -1);
 
-        let loan = lend_test(view());
-        assert_eq!(s.eval::<i64>("return GetNumStableSlots()").unwrap(), 3);
-        assert_eq!(
-            s.eval::<i64>("return GetNumStablePets()").unwrap(),
-            2,
-            "the current pet is not counted"
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetNextStableSlotCost()").unwrap(),
-            50_000
-        );
-        assert_eq!(
-            s.eval::<(String, String, i64, String, String)>("return GetStablePetInfo(1)")
-                .unwrap(),
-            (
-                "Interface\\Icons\\Ability_Hunter_Pet_Wolf".into(),
-                "Bruiser".into(),
-                38,
-                "Wolf".into(),
-                "Ferocity".into()
-            )
-        );
-        assert_eq!(
-            s.eval::<String>("local _, n = GetStablePetInfo(0) return n")
-                .unwrap(),
-            "Rex",
-            "index 0 is the current pet's record"
-        );
-        assert_eq!(
-            s.eval::<String>("local _, n = GetStablePetInfo(-3) return n")
-                .unwrap(),
-            "Rex",
-            "below 0 picks the current record too"
-        );
-        assert_eq!(
-            s.eval::<(String, String)>("return GetStablePetFoodTypes(1)")
-                .unwrap(),
-            ("Meat".into(), "Fish".into())
-        );
-        for call in ["GetStablePetFoodTypes(3)", "GetStablePetFoodTypes(-1)"] {
-            assert_eq!(s.arity(call).unwrap(), 0, "{call}");
-        }
-        drop(loan);
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(s.eval::<i64>("return GetNumStableSlots()").unwrap(), 3);
+            assert_eq!(
+                s.eval::<i64>("return GetNumStablePets()").unwrap(),
+                2,
+                "the current pet is not counted"
+            );
+            assert_eq!(
+                s.eval::<i64>("return GetNextStableSlotCost()").unwrap(),
+                50_000
+            );
+            assert_eq!(
+                s.eval::<(String, String, i64, String, String)>("return GetStablePetInfo(1)")
+                    .unwrap(),
+                (
+                    "Interface\\Icons\\Ability_Hunter_Pet_Wolf".into(),
+                    "Bruiser".into(),
+                    38,
+                    "Wolf".into(),
+                    "Ferocity".into()
+                )
+            );
+            assert_eq!(
+                s.eval::<String>("local _, n = GetStablePetInfo(0) return n")
+                    .unwrap(),
+                "Rex",
+                "index 0 is the current pet's record"
+            );
+            assert_eq!(
+                s.eval::<String>("local _, n = GetStablePetInfo(-3) return n")
+                    .unwrap(),
+                "Rex",
+                "below 0 picks the current record too"
+            );
+            assert_eq!(
+                s.eval::<(String, String)>("return GetStablePetFoodTypes(1)")
+                    .unwrap(),
+                ("Meat".into(), "Fish".into())
+            );
+            for call in ["GetStablePetFoodTypes(3)", "GetStablePetFoodTypes(-1)"] {
+                assert_eq!(s.arity(call).unwrap(), 0, "{call}");
+            }
+        });
     }
 
     /// A miss answers nil, nil, 0 and asks the record with the update callback, once per call, as the cache's non-unique ask appends one (`0x5a13c1`, `0x5a1738`).
@@ -516,25 +517,29 @@ mod tests {
                 ..wolf()
             },
         );
-        let loan = lend_test(v);
-        assert_eq!(s.arity("GetStablePetInfo(2)").unwrap(), 3);
-        assert_eq!(
-            s.eval::<i64>("local _, _, l = GetStablePetInfo(2) return l")
-                .unwrap(),
-            0,
-            "the level is 0, not nil"
-        );
-        assert_eq!(s.arity("GetStablePetInfo(1)").unwrap(), 4, "no tree");
-        assert_eq!(s.arity("GetStablePetInfo(3)").unwrap(), 3, "no pet");
-        s.eval::<()>("GetStablePetFoodTypes(2)").unwrap();
-        assert_eq!(
-            *loan.view().stable_asks.borrow(),
-            vec![
-                (3, StableCallback::Update),
-                (3, StableCallback::Update),
-                (3, StableCallback::Update)
-            ]
-        );
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(s.arity("GetStablePetInfo(2)").unwrap(), 3);
+            assert_eq!(
+                s.eval::<i64>("local _, _, l = GetStablePetInfo(2) return l")
+                    .unwrap(),
+                0,
+                "the level is 0, not nil"
+            );
+            assert_eq!(s.arity("GetStablePetInfo(1)").unwrap(), 4, "no tree");
+            assert_eq!(s.arity("GetStablePetInfo(3)").unwrap(), 3, "no pet");
+            s.eval::<()>("GetStablePetFoodTypes(2)").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(
+                    *tv.stable_asks.borrow(),
+                    vec![
+                        (3, StableCallback::Update),
+                        (3, StableCallback::Update),
+                        (3, StableCallback::Update)
+                    ]
+                );
+            });
+        });
     }
 
     /// The zeroed current record answers as no pet and asks nothing: entry 0 is the null key.
@@ -543,81 +548,107 @@ mod tests {
         let s = UiScript::new().unwrap();
         let v = view();
         v.stable.borrow_mut().current = StableRow::default();
-        let loan = lend_test(v);
-        assert_eq!(s.arity("GetStablePetInfo(0)").unwrap(), 3);
-        s.eval::<()>("PickupStablePet(0)").unwrap();
-        assert!(loan.view().stable_asks.borrow().is_empty());
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(s.arity("GetStablePetInfo(0)").unwrap(), 3);
+            s.eval::<()>("PickupStablePet(0)").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert!(tv.stable_asks.borrow().is_empty());
+            });
+        });
     }
 
     #[test]
     fn every_plain_click_returns_truthy_and_selects() {
         let mut s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        for (call, selected) in [
-            ("ClickStablePet(1)", 1),
-            ("ClickStablePet(0)", 0),
-            ("ClickStablePet(2)", 2),
-            ("ClickStablePet(3)", -1),
-            ("ClickStablePet(-4)", -1),
-        ] {
-            assert!(
-                s.eval::<bool>(&format!("return {call} and true or false"))
-                    .unwrap(),
-                "{call}"
-            );
-            assert_eq!(s.stable_selection(), selected, "{call} selects");
-        }
-        assert!(
-            loan.view().stable_sent.borrow().is_empty(),
-            "selecting sends nothing"
-        );
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            for (call, selected) in [
+                ("ClickStablePet(1)", 1),
+                ("ClickStablePet(0)", 0),
+                ("ClickStablePet(2)", 2),
+                ("ClickStablePet(3)", -1),
+                ("ClickStablePet(-4)", -1),
+            ] {
+                assert!(
+                    s.eval::<bool>(&format!("return {call} and true or false"))
+                        .unwrap(),
+                    "{call}"
+                );
+                assert_eq!(s.stable_selection(), selected, "{call} selects");
+            }
+            crate::script::live::test_view(|tv| {
+                assert!(
+                    tv.stable_sent.borrow().is_empty(),
+                    "selecting sends nothing"
+                );
+            });
+        });
     }
 
     /// The list's reset clears the selection, and a pet the list no longer holds reads as none.
     #[test]
     fn a_list_clears_the_selection_and_a_stale_pet_degrades() {
         let mut s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        s.eval::<()>("ClickStablePet(2)").unwrap();
-        assert_eq!(s.stable_selection(), 2);
-        loan.view().stable.borrow_mut().stabled.pop();
-        assert_eq!(s.stable_selection(), -1, "Ghost left the list");
-        s.eval::<()>("ClickStablePet(0)").unwrap();
-        s.reset_stable_selection();
-        assert_eq!(s.stable_selection(), -1, "a list clears the selection");
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("ClickStablePet(2)").unwrap();
+            assert_eq!(s.stable_selection(), 2);
+            crate::script::live::test_view(|tv| {
+                tv.stable.borrow_mut().stabled.pop();
+            });
+            assert_eq!(s.stable_selection(), -1, "Ghost left the list");
+            s.eval::<()>("ClickStablePet(0)").unwrap();
+            s.reset_stable_selection();
+            assert_eq!(s.stable_selection(), -1, "a list clears the selection");
+        });
     }
 
     #[test]
     fn every_drop_returns_falsy_even_when_it_sends() {
         let s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        assert!(s
-            .eval::<bool>("PickupStablePet(1) return ClickStablePet(0) == nil")
-            .unwrap());
-        assert_eq!(loan.view().take_sent(), vec![StableIntent::Swap(8)]);
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            assert!(s
+                .eval::<bool>("PickupStablePet(1) return ClickStablePet(0) == nil")
+                .unwrap());
+            crate::script::live::test_view(|tv| {
+                assert_eq!(tv.take_sent(), vec![StableIntent::Swap(8)]);
+            });
 
-        assert!(s
-            .eval::<bool>("PickupStablePet(1) return ClickStablePet(1) == nil")
-            .unwrap());
-        assert!(loan.view().take_sent().is_empty());
+            assert!(s
+                .eval::<bool>("PickupStablePet(1) return ClickStablePet(1) == nil")
+                .unwrap());
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty());
+            });
+        });
     }
 
     #[test]
     fn the_current_pet_swaps_onto_a_pet_and_stables_into_a_bought_slot() {
         let s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        s.eval::<()>("PickupStablePet(0) ClickStablePet(2)")
-            .unwrap();
-        assert_eq!(loan.view().take_sent(), vec![StableIntent::Swap(9)]);
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("PickupStablePet(0) ClickStablePet(2)")
+                .unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(tv.take_sent(), vec![StableIntent::Swap(9)]);
+            });
 
-        // Index 3 is free and bought, index 4 unbought.
-        s.eval::<()>("PickupStablePet(0) ClickStablePet(3)")
-            .unwrap();
-        assert_eq!(loan.view().take_sent(), vec![StableIntent::Stable]);
-        s.eval::<()>("PickupStablePet(0) ClickStablePet(4)")
-            .unwrap();
-        assert!(loan.view().take_sent().is_empty(), "slot 4 is not bought");
-        assert!(s.eval::<bool>("return ClickStablePet(1) and true").unwrap());
+            // Index 3 is free and bought, index 4 unbought.
+            s.eval::<()>("PickupStablePet(0) ClickStablePet(3)")
+                .unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(tv.take_sent(), vec![StableIntent::Stable]);
+            });
+            s.eval::<()>("PickupStablePet(0) ClickStablePet(4)")
+                .unwrap();
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty(), "slot 4 is not bought");
+            });
+            assert!(s.eval::<bool>("return ClickStablePet(1) and true").unwrap());
+        });
     }
 
     #[test]
@@ -630,50 +661,70 @@ mod tests {
         };
         let mut v = ghost();
         {
-            let loan = lend_test(ghost());
-            s.eval::<()>("PickupStablePet(2) ClickStablePet(0)")
-                .unwrap();
-            assert_eq!(loan.view().take_sent(), vec![StableIntent::Swap(9)]);
+            let mut loan_v = ghost();
+            crate::script::live::lending(&mut loan_v, || {
+                s.eval::<()>("PickupStablePet(2) ClickStablePet(0)")
+                    .unwrap();
+                crate::script::live::test_view(|tv| {
+                    assert_eq!(tv.take_sent(), vec![StableIntent::Swap(9)]);
+                });
+            });
         }
         v.pet_out = false;
-        let loan = lend_test(v);
-        s.eval::<()>("PickupStablePet(2) ClickStablePet(0)")
-            .unwrap();
-        assert_eq!(
-            loan.view().take_sent(),
-            vec![StableIntent::Unstable(9)],
-            "a record with no pet out unstables"
-        );
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("PickupStablePet(2) ClickStablePet(0)")
+                .unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(
+                    tv.take_sent(),
+                    vec![StableIntent::Unstable(9)],
+                    "a record with no pet out unstables"
+                );
+            });
+        });
     }
 
     /// The grab takes a pet only with its record cached: a miss clears the cursor, asks nothing and grabs nothing (`0x520c6b`, `0x520cc1`, `0x520cc8`).
     #[test]
     fn a_grab_without_the_record_clears_the_cursor_and_asks_nothing() {
         let s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        s.eval::<()>("PickupStablePet(1)").unwrap();
-        assert!(s.model_mut().cursor.is_some(), "Bruiser's record is cached");
-        s.eval::<()>("PickupStablePet(2)").unwrap();
-        assert!(
-            s.model_mut().cursor.is_none(),
-            "Ghost's miss leaves it empty"
-        );
-        assert!(loan.view().stable_asks.borrow().is_empty());
-        assert!(s.eval::<bool>("return ClickStablePet(0) and true").unwrap());
-        assert!(loan.view().take_sent().is_empty());
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("PickupStablePet(1)").unwrap();
+            assert!(s.model_mut().cursor.is_some(), "Bruiser's record is cached");
+            s.eval::<()>("PickupStablePet(2)").unwrap();
+            assert!(
+                s.model_mut().cursor.is_none(),
+                "Ghost's miss leaves it empty"
+            );
+            crate::script::live::test_view(|tv| {
+                assert!(tv.stable_asks.borrow().is_empty());
+            });
+            assert!(s.eval::<bool>("return ClickStablePet(0) and true").unwrap());
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty());
+            });
+        });
     }
 
     #[test]
     fn stable_to_stable_is_a_no_op_and_an_empty_index_does_not_grab() {
         let s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        s.eval::<()>("PickupStablePet(1) ClickStablePet(2)")
-            .unwrap();
-        assert!(loan.view().take_sent().is_empty());
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("PickupStablePet(1) ClickStablePet(2)")
+                .unwrap();
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty());
+            });
 
-        s.eval::<()>("PickupStablePet(3)").unwrap();
-        assert!(s.eval::<bool>("return ClickStablePet(0) and true").unwrap());
-        assert!(loan.view().take_sent().is_empty());
+            s.eval::<()>("PickupStablePet(3)").unwrap();
+            assert!(s.eval::<bool>("return ClickStablePet(0) and true").unwrap());
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty());
+            });
+        });
     }
 
     #[test]
@@ -682,21 +733,35 @@ mod tests {
         s.set_money(1_000_000);
         let v = view();
         {
-            let loan = lend_test(view());
-            s.eval::<()>("BuyStableSlot()").unwrap();
-            assert_eq!(loan.view().take_sent(), vec![StableIntent::BuySlot]);
-            s.set_money(10);
-            s.eval::<()>("BuyStableSlot()").unwrap();
-            assert!(loan.view().take_sent().is_empty(), "unaffordable is silent");
-            s.set_money(1_000_000);
-            loan.view().stable.borrow_mut().num_slots = 4;
-            s.eval::<()>("BuyStableSlot()").unwrap();
-            assert!(loan.view().take_sent().is_empty(), "the cap of 4 is silent");
+            let mut loan_v = view();
+            crate::script::live::lending(&mut loan_v, || {
+                s.eval::<()>("BuyStableSlot()").unwrap();
+                crate::script::live::test_view(|tv| {
+                    assert_eq!(tv.take_sent(), vec![StableIntent::BuySlot]);
+                });
+                s.set_money(10);
+                s.eval::<()>("BuyStableSlot()").unwrap();
+                crate::script::live::test_view(|tv| {
+                    assert!(tv.take_sent().is_empty(), "unaffordable is silent");
+                });
+                s.set_money(1_000_000);
+                crate::script::live::test_view(|tv| {
+                    tv.stable.borrow_mut().num_slots = 4;
+                });
+                s.eval::<()>("BuyStableSlot()").unwrap();
+                crate::script::live::test_view(|tv| {
+                    assert!(tv.take_sent().is_empty(), "the cap of 4 is silent");
+                });
+            });
         }
         v.stable.borrow_mut().master = 0;
-        let loan = lend_test(v);
-        s.eval::<()>("BuyStableSlot()").unwrap();
-        assert!(loan.view().take_sent().is_empty(), "no master is silent");
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("BuyStableSlot()").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty(), "no master is silent");
+            });
+        });
     }
 
     /// `UnstablePet` gates on our charm and summon, not the pet list, and needs no master.
@@ -708,15 +773,25 @@ mod tests {
         let mut barred = view();
         barred.charm_or_summon = true;
         {
-            let loan = lend_test(barred);
-            s.eval::<()>("UnstablePet(1)").unwrap();
-            assert!(loan.view().take_sent().is_empty(), "a pet is summoned");
+            let mut loan_v = barred;
+            crate::script::live::lending(&mut loan_v, || {
+                s.eval::<()>("UnstablePet(1)").unwrap();
+                crate::script::live::test_view(|tv| {
+                    assert!(tv.take_sent().is_empty(), "a pet is summoned");
+                });
+            });
         }
-        let loan = lend_test(v);
-        s.eval::<()>("UnstablePet(0)").unwrap();
-        assert!(loan.view().take_sent().is_empty(), "index 0 is rejected");
-        s.eval::<()>("UnstablePet(2)").unwrap();
-        assert_eq!(loan.view().take_sent(), vec![StableIntent::Unstable(9)]);
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("UnstablePet(0)").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert!(tv.take_sent().is_empty(), "index 0 is rejected");
+            });
+            s.eval::<()>("UnstablePet(2)").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(tv.take_sent(), vec![StableIntent::Unstable(9)]);
+            });
+        });
     }
 
     /// `StablePet` sends with a master held, or with none under an open-stable aura.
@@ -726,41 +801,50 @@ mod tests {
         let v = view();
         v.stable.borrow_mut().master = 0;
         {
-            let loan = lend_test(v);
-            s.eval::<()>("StablePet()").unwrap();
-            assert!(loan.view().take_sent().is_empty());
+            let mut loan_v = v;
+            crate::script::live::lending(&mut loan_v, || {
+                s.eval::<()>("StablePet()").unwrap();
+                crate::script::live::test_view(|tv| {
+                    assert!(tv.take_sent().is_empty());
+                });
+            });
         }
         let mut aura = view();
         aura.open_stable_aura = true;
         aura.stable.borrow_mut().master = 0;
-        let loan = lend_test(aura);
-        s.eval::<()>("StablePet()").unwrap();
-        assert_eq!(loan.view().take_sent(), vec![StableIntent::Stable]);
+        let mut loan_v = aura;
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("StablePet()").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(tv.take_sent(), vec![StableIntent::Stable]);
+            });
+        });
     }
 
     /// The close clears the master and fires `PET_STABLE_CLOSED` inside the call, the interaction close's then its own, so the next read in the same chunk sees it gone; with none held it fires nothing.
     #[test]
     fn the_close_fires_inside_the_call_and_leaves_the_cursor_alone() {
         let s = UiScript::new().unwrap();
-        let loan = lend_test(view());
-        s.eval::<()>(
-            "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('PET_STABLE_CLOSED')
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>(
+                "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('PET_STABLE_CLOSED')
              f:SetScript('OnEvent', function() seen[#seen + 1] = tostring(IsAtStableMaster()) end)
              PickupStablePet(1)",
-        )
-        .unwrap();
-        assert_eq!(
+            )
+            .unwrap();
+            assert_eq!(
             s.eval::<String>("ClosePetStables() local at = tostring(IsAtStableMaster()) ClosePetStables() return table.concat(seen, ',') .. '|' .. at")
                 .unwrap(),
             "false,false|false"
         );
-        assert_eq!(
-            s.eval::<i64>("return GetNumStablePets()").unwrap(),
-            2,
-            "the list outlives the close"
-        );
-        assert!(s.model_mut().cursor.is_some(), "the held pet stays");
-        drop(loan);
+            assert_eq!(
+                s.eval::<i64>("return GetNumStablePets()").unwrap(),
+                2,
+                "the list outlives the close"
+            );
+            assert!(s.model_mut().cursor.is_some(), "the held pet stays");
+        });
     }
 
     /// The setter asks the selection's record with the paperdoll callback: the current pet's only without its live body, a stabled pet's always, nothing selected nothing (`0x5a1530`).
@@ -772,31 +856,39 @@ mod tests {
         let mut v = view();
         v.stable_live_pet = true;
         v.stable.borrow_mut().current.entry = 3;
-        let loan = lend_test(v);
-        let run = |pick: &str| {
-            s.eval::<()>(&format!(
-                "{pick} SetPetStablePaperdoll(CreateFrame('PlayerModel'))"
-            ))
-            .unwrap();
-            std::mem::take(&mut *loan.view().stable_asks.borrow_mut())
-        };
-        assert!(run("").is_empty(), "nothing selected");
-        assert!(run("ClickStablePet(0)").is_empty(), "the live pet");
-        assert_eq!(
-            run("ClickStablePet(2)"),
-            vec![(3, StableCallback::Paperdoll)]
-        );
-        assert!(run("ClickStablePet(1)").is_empty(), "a cached record");
-        drop(loan);
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            let run = |pick: &str| {
+                s.eval::<()>(&format!(
+                    "{pick} SetPetStablePaperdoll(CreateFrame('PlayerModel'))"
+                ))
+                .unwrap();
+                crate::script::live::test_view(|tv| {
+                    std::mem::take(&mut *tv.stable_asks.borrow_mut())
+                })
+            };
+            assert!(run("").is_empty(), "nothing selected");
+            assert!(run("ClickStablePet(0)").is_empty(), "the live pet");
+            assert_eq!(
+                run("ClickStablePet(2)"),
+                vec![(3, StableCallback::Paperdoll)]
+            );
+            assert!(run("ClickStablePet(1)").is_empty(), "a cached record");
+        });
+
         let v = view();
         v.stable.borrow_mut().current.entry = 3;
-        let loan = lend_test(v);
-        s.eval::<()>("ClickStablePet(0) SetPetStablePaperdoll(CreateFrame('PlayerModel'))")
-            .unwrap();
-        assert_eq!(
-            *loan.view().stable_asks.borrow(),
-            vec![(3, StableCallback::Paperdoll)],
-            "no live body: the current row's record"
-        );
+        let mut loan_v = v;
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("ClickStablePet(0) SetPetStablePaperdoll(CreateFrame('PlayerModel'))")
+                .unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(
+                    *tv.stable_asks.borrow(),
+                    vec![(3, StableCallback::Paperdoll)],
+                    "no live body: the current row's record"
+                );
+            });
+        });
     }
 }

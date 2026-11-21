@@ -451,9 +451,9 @@ fn every_holder_of_the_vm_lends_the_world() {
     );
 }
 
-/// No borrowed view is left anywhere in the tree, tests included: every call into Lua reaches the
-/// state through the `World` lent to it ([`super::safe_world`]), never a view, a write handle or a
-/// read handle a system borrowed beside the VM.
+/// No borrowed view is left anywhere in the app or the VM, tests included: every call into Lua
+/// reaches the state through the `World` (or a test's view) lent to it for the call alone
+/// ([`super::safe_world`]), never a view, a write handle, a read handle or a standing loan.
 #[test]
 fn no_borrowed_view_is_left_in_the_tree() {
     use crate::test_support::{rel_path, rust_files, src_dir};
@@ -462,18 +462,28 @@ fn no_borrowed_view_is_left_in_the_tree() {
         ["Owned", "Mut"].concat(),
         ["Lent", "Ref"].concat(),
         ["Owns", "ScriptCalls"].concat(),
+        ["Live", "Loan"].concat(),
+        ["push", "_view"].concat(),
+        ["pop", "_view"].concat(),
     ];
     let word =
         regex::Regex::new(&format!(r"\b(?:{})\b", names.join("|"))).expect("a valid pattern");
+    let vm_src = src_dir().join("../../benilla-ui/src");
     let mut offenders = Vec::new();
-    for file in rust_files(&src_dir()) {
+    let mut scanned = 0;
+    for file in rust_files(&src_dir())
+        .into_iter()
+        .chain(rust_files(&vm_src))
+    {
         let source = std::fs::read_to_string(&file).expect("readable source");
+        scanned += usize::from(file.starts_with(&vm_src));
         for (n, line) in source.lines().enumerate() {
             if word.is_match(line) {
                 offenders.push(format!("{}:{}: {}", rel_path(&file), n + 1, line.trim()));
             }
         }
     }
+    assert!(scanned > 0, "the VM's sources are read");
     assert!(
         offenders.is_empty(),
         "a borrowed view is back; lend the `World` instead:\n{}",

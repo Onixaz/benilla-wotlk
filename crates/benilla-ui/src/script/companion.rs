@@ -323,9 +323,9 @@ mod tests {
         UiScript::new().unwrap()
     }
 
-    /// The lists lent as the live view, for the test's length.
-    fn lend() -> crate::script::LiveLoan<crate::script::live::TestView> {
-        crate::script::live::lend_test(crate::script::live::TestView {
+    /// The lists as the live view answers them.
+    fn lend() -> crate::script::live::TestView {
+        crate::script::live::TestView {
             companions: CompanionState {
                 critters: vec![
                     view(10673, 7385, Some("Bombay Cat"), true),
@@ -335,150 +335,158 @@ mod tests {
                 random_pool: vec![4055],
             },
             ..Default::default()
-        })
+        }
     }
 
     /// `GetCompanionInfo` (`0x53e2c0`): five values, the uncached name nil, active 1 or nil, and
     /// nothing past the list; the type token is case-insensitive.
     #[test]
     fn companion_info_answers_five_values_and_nothing_past_the_list() {
-        let _live = lend();
-        let s = script();
-        assert_eq!(
-            s.eval::<i64>("return GetNumCompanions('critter')").unwrap(),
-            2
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetNumCompanions('MOUNT')").unwrap(),
-            1
-        );
-        assert!(s
-            .eval::<bool>(
-                "local c, n, id, icon, a = GetCompanionInfo('CRITTER', 1) \
+        let mut live_v = lend();
+        crate::script::live::lending(&mut live_v, || {
+            let s = script();
+            assert_eq!(
+                s.eval::<i64>("return GetNumCompanions('critter')").unwrap(),
+                2
+            );
+            assert_eq!(
+                s.eval::<i64>("return GetNumCompanions('MOUNT')").unwrap(),
+                1
+            );
+            assert!(s
+                .eval::<bool>(
+                    "local c, n, id, icon, a = GetCompanionInfo('CRITTER', 1) \
                  return c == 7385 and n == 'Bombay Cat' and id == 10673 and icon == 'Icon10673' \
                  and a == 1"
-            )
-            .unwrap());
-        assert!(s
-            .eval::<bool>(
-                "local c, n, id, icon, a = GetCompanionInfo('CRITTER', 2) \
+                )
+                .unwrap());
+            assert!(s
+                .eval::<bool>(
+                    "local c, n, id, icon, a = GetCompanionInfo('CRITTER', 2) \
                  return c == 2671 and n == nil and a == nil and select('#', \
                  GetCompanionInfo('CRITTER', 2)) == 5"
-            )
-            .unwrap());
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetCompanionInfo('MOUNT', 2))")
-                .unwrap(),
-            0
-        );
+                )
+                .unwrap());
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetCompanionInfo('MOUNT', 2))")
+                    .unwrap(),
+                0
+            );
+        });
     }
 
     /// A bad type, or an index reading 0, raises the verb's `Usage:`.
     #[test]
     fn a_bad_type_or_a_zero_index_raises() {
-        let _live = lend();
-        let s = script();
-        for (call, usage) in [
-            ("GetNumCompanions('PET')", "Usage: GetNumCompanions(type)"),
-            (
-                "GetCompanionInfo('MOUNT', 0)",
-                "Usage: GetCompanionInfo(type, index)",
-            ),
-            (
-                "CallCompanion('CRITTER')",
-                "Usage: CallCompanion(type, index)",
-            ),
-            ("DismissCompanion(nil)", "Usage: DismissCompanion(type)"),
-        ] {
-            let err = s.run(call).unwrap_err().to_string();
-            assert!(err.contains(usage), "{call}: {err}");
-        }
+        let mut live_v = lend();
+        crate::script::live::lending(&mut live_v, || {
+            let s = script();
+            for (call, usage) in [
+                ("GetNumCompanions('PET')", "Usage: GetNumCompanions(type)"),
+                (
+                    "GetCompanionInfo('MOUNT', 0)",
+                    "Usage: GetCompanionInfo(type, index)",
+                ),
+                (
+                    "CallCompanion('CRITTER')",
+                    "Usage: CallCompanion(type, index)",
+                ),
+                ("DismissCompanion(nil)", "Usage: DismissCompanion(type)"),
+            ] {
+                let err = s.run(call).unwrap_err().to_string();
+                assert!(err.contains(usage), "{call}: {err}");
+            }
+        });
     }
 
     /// `CallCompanion` casts past the book's forks at the null guid; `DismissCompanion` asks for
     /// every active companion of its list; `PickupCompanion` holds the spell.
     #[test]
     fn call_dismiss_and_pickup_queue_their_effects() {
-        let _live = lend();
-        let mut s = script();
-        s.run("CallCompanion('MOUNT', 1) CallCompanion('MOUNT', 5)")
-            .unwrap();
-        assert_eq!(
-            s.take_script_calls(),
-            vec![ScriptCall::CastSpell {
-                spell_id: 458,
-                at: CastAt::Selection,
-                via_book: false,
-            }]
-        );
-        s.run("DismissCompanion('CRITTER') DismissCompanion('MOUNT') SummonRandomCritter()")
-            .unwrap();
-        assert_eq!(
-            s.take_companion_intents(),
-            vec![CompanionIntent::Dismiss(10673)]
-        );
-        assert_eq!(
-            s.take_script_calls(),
-            vec![ScriptCall::CastSpell {
-                spell_id: 4055,
-                at: CastAt::Selection,
-                via_book: false,
-            }],
-            "the pool's one spell"
-        );
-        s.run("PickupCompanion('CRITTER', 2)").unwrap();
-        assert!(s
-            .eval::<bool>(
-                "local kind, index, ty = GetCursorInfo() \
+        let mut live_v = lend();
+        crate::script::live::lending(&mut live_v, || {
+            let mut s = script();
+            s.run("CallCompanion('MOUNT', 1) CallCompanion('MOUNT', 5)")
+                .unwrap();
+            assert_eq!(
+                s.take_script_calls(),
+                vec![ScriptCall::CastSpell {
+                    spell_id: 458,
+                    at: CastAt::Selection,
+                    via_book: false,
+                }]
+            );
+            s.run("DismissCompanion('CRITTER') DismissCompanion('MOUNT') SummonRandomCritter()")
+                .unwrap();
+            assert_eq!(
+                s.take_companion_intents(),
+                vec![CompanionIntent::Dismiss(10673)]
+            );
+            assert_eq!(
+                s.take_script_calls(),
+                vec![ScriptCall::CastSpell {
+                    spell_id: 4055,
+                    at: CastAt::Selection,
+                    via_book: false,
+                }],
+                "the pool's one spell"
+            );
+            s.run("PickupCompanion('CRITTER', 2)").unwrap();
+            assert!(s
+                .eval::<bool>(
+                    "local kind, index, ty = GetCursorInfo() \
                  return kind == 'companion' and index == 2 and ty == 'CRITTER'"
-            )
-            .unwrap());
-        s.run("PickupCompanion('CRITTER', 2)").unwrap();
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetCursorInfo())")
-                .unwrap(),
-            0,
-            "the same companion again drops it"
-        );
+                )
+                .unwrap());
+            s.run("PickupCompanion('CRITTER', 2)").unwrap();
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetCursorInfo())")
+                    .unwrap(),
+                0,
+                "the same companion again drops it"
+            );
+        });
     }
 
     /// `/cast` reaches a mount by name though no tab lists it (`0x542699`), and `GetActionInfo`
     /// answers a barred companion as `"companion"` (`0x5a8fa8`).
     #[test]
     fn a_mount_casts_by_name_and_answers_as_a_companion_on_the_bar() {
-        let _live = lend();
-        let mut s = script();
-        s.set_spellbook(SpellBookState {
-            unlisted: vec![SpellSlotView {
-                spell_id: 458,
-                name: "Brown Horse".into(),
-                ..SpellSlotView::default()
-            }],
-            ..SpellBookState::default()
-        });
-        s.set_known_spells([458]);
-        s.run("CastSpellByName('Brown Horse') CastSpellByID(458)")
-            .unwrap();
-        let calls = s.take_script_calls();
-        assert_eq!(calls.len(), 2, "{calls:?}");
-        assert_eq!(
-            s.eval::<i64>("return GetNumSpellTabs()").unwrap(),
-            0,
-            "no tab lists it"
-        );
-        s.set_action(
-            1,
-            Some(crate::script::ActionSlot {
-                kind: crate::script::action::ACTION_KIND_SPELL,
-                action: 458,
-                ..Default::default()
-            }),
-        );
-        assert!(s
-            .eval::<bool>(
-                "local kind, index, ty, id = GetActionInfo(1) \
+        let mut live_v = lend();
+        crate::script::live::lending(&mut live_v, || {
+            let mut s = script();
+            s.set_spellbook(SpellBookState {
+                unlisted: vec![SpellSlotView {
+                    spell_id: 458,
+                    name: "Brown Horse".into(),
+                    ..SpellSlotView::default()
+                }],
+                ..SpellBookState::default()
+            });
+            s.set_known_spells([458]);
+            s.run("CastSpellByName('Brown Horse') CastSpellByID(458)")
+                .unwrap();
+            let calls = s.take_script_calls();
+            assert_eq!(calls.len(), 2, "{calls:?}");
+            assert_eq!(
+                s.eval::<i64>("return GetNumSpellTabs()").unwrap(),
+                0,
+                "no tab lists it"
+            );
+            s.set_action(
+                1,
+                Some(crate::script::ActionSlot {
+                    kind: crate::script::action::ACTION_KIND_SPELL,
+                    action: 458,
+                    ..Default::default()
+                }),
+            );
+            assert!(s
+                .eval::<bool>(
+                    "local kind, index, ty, id = GetActionInfo(1) \
                  return kind == 'companion' and index == 1 and ty == 'MOUNT' and id == 458"
-            )
-            .unwrap());
+                )
+                .unwrap());
+        });
     }
 }
