@@ -154,7 +154,7 @@ pub(crate) fn commit_item_cast_on_pick(
         let Some(current) = trade.as_deref().and_then(|t| t.their_enchant_slot()) else {
             continue;
         };
-        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let held = ladder.ground.pending_for(TargetingWants::Item);
         let Some((spell_id, commit)) = held else {
             continue;
         };
@@ -244,7 +244,7 @@ pub(crate) fn commit_item_cast_on_pick(
     for (item_guid, confirmed) in asks {
         // The last commit's cast-bar edges, fired before this pick's popup can run Lua.
         ladder.press.defer_in_turn(&mut script);
-        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let held = ladder.ground.pending_for(TargetingWants::Item);
         let Some((spell_id, commit)) = held else {
             continue; // a click raced a cancel
         };
@@ -360,7 +360,7 @@ pub(crate) fn commit_item_cast_on_pick(
 
     // `ReplaceEnchant`: bind the parked guid with no gate re-run.
     for item_guid in bind_outright {
-        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let held = ladder.ground.pending_for(TargetingWants::Item);
         let Some((spell_id, commit)) = held else {
             continue;
         };

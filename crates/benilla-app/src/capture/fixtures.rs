@@ -90,10 +90,10 @@ pub(super) fn seed_ui_fixture(
         Option<NonSendMut<crate::ui_quest::QuestGiver>>,
         ResMut<super::probes::ProbeChunks>,
     ),
-    mut selection: crate::ui_script::OwnedMut<crate::target::Selection>,
+    mut selection: ResMut<crate::target::Selection>,
     // A nested tuple, one param under Bevy's 16-param cap.
     (mut actions, mut exit, mut loading): (
-        crate::ui_script::OwnedMut<crate::ui_action::PlayerActions>,
+        ResMut<crate::ui_action::PlayerActions>,
         MessageWriter<AppExit>,
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
@@ -1140,7 +1140,7 @@ pub(super) fn seed_ui_fixture(
             // As the V binding does, so FrameXML's replay at `PLAYER_ENTERING_WORLD` agrees.
             set_enemy_plates(&mut chunks, true);
             // The wolf is the target, so its plate draws lit with the target ring.
-            let mut selected = selection.write();
+            let selected = selection.as_mut();
             selected.target = Some(wolf);
             selected.guid = Some(WOLF_GUID);
         }
@@ -1268,7 +1268,7 @@ pub(super) fn seed_ui_fixture(
             let Some(_) = script.as_ref() else {
                 return;
             };
-            actions.write().spells.extend([
+            actions.spells.extend([
                 // The auto-attack shows the equipped sword's icon, not the placeholder of spell 6603,
                 // in General (no skill line).
                 6603, // Attack

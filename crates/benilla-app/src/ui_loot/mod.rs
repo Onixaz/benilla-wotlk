@@ -917,8 +917,11 @@ fn feed_loot(
         group: &group,
         names: &names,
     };
+    // Each write after a raise (the receive lines above, a sweep's events) lands once that raise's
+    // listeners have run.
     // The looted object (`[0xbfa8d8]`), which the purchase verbs refuse while it is open.
-    script.set_loot_source(loot.source().unwrap_or(0));
+    let source = loot.source().unwrap_or(0);
+    script.after_raises(move |s| s.set_loot_source(source));
     let fresh = snapshot(&loot, &items, icons.as_deref(), &commands, rolls, who).map(|mut snap| {
         let level = loot.source().and_then(|g| objects.unit_level(g));
         snap.source_unit = level.is_some();
@@ -935,7 +938,7 @@ fn feed_loot(
     // A window that replaced the shown one: the new object's set closes the old before it opens the
     // new.
     if std::mem::replace(seen_generation, loot.generation) != loot.generation && last.is_some() {
-        script.set_loot(None);
+        script.after_raises(|s| s.set_loot(None));
         script.fire_event("LOOT_CLOSED", vec![]);
         *last = None;
     }
@@ -943,7 +946,8 @@ fn feed_loot(
         fire_changed_rows(&mut loot, &mut script, &items, &commands);
         return;
     }
-    script.set_loot(fresh.clone());
+    let snap = fresh.clone();
+    script.after_raises(move |s| s.set_loot(snap));
     match (&*last, &fresh) {
         (None, Some(snap)) => {
             // No open while a template is pending (`0x5896b0`); `last` stays, so this retries.
@@ -962,7 +966,7 @@ fn feed_loot(
                 if empty {
                     let closed = close_interaction(&mut loot, &mut moving.latch, &commands, true);
                     moving.dead.after_close(closed);
-                    script.set_loot(None);
+                    script.after_raises(|s| s.set_loot(None));
                     script.fire_event("LOOT_CLOSED", vec![]);
                     *last = None;
                     return;
@@ -976,7 +980,7 @@ fn feed_loot(
                 let closed = close_on_move_start(&mut loot, &mut moving.latch, &commands);
                 if closed.is_some() {
                     moving.dead.after_close(closed);
-                    script.set_loot(None);
+                    script.after_raises(|s| s.set_loot(None));
                     script.fire_event("LOOT_CLOSED", vec![]);
                     *last = None;
                     return;

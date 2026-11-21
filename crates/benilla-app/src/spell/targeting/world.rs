@@ -34,7 +34,7 @@ pub(crate) fn commit_ground_cast_on_click(
     mut ladder: crate::spell::CastLadder,
 ) {
     let occlusion = press.occlusion;
-    if !ladder.ground.read().active() {
+    if !ladder.ground.active() {
         // A click buffered while idle must not replay as a commit once the mode turns on.
         clicks.clear();
         return;
@@ -43,7 +43,7 @@ pub(crate) fn commit_ground_cast_on_click(
         return;
     }
     // The location-wanted test: a word without it binds nothing and the mode stays.
-    let held = ladder.ground.read().pending_for(TargetingWants::Location);
+    let held = ladder.ground.pending_for(TargetingWants::Location);
     let Some((spell_id, commit)) = held else {
         return;
     };
@@ -54,7 +54,7 @@ pub(crate) fn commit_ground_cast_on_click(
     };
     // The location bind: SOURCE (`0x20`) first, then DEST (`0x40`). `None` cannot happen behind
     // `pending_for(Location)`; the `let else` fails closed.
-    let held = ladder.ground.read().location_bind(at);
+    let held = ladder.ground.location_bind(at);
     let Some(bound) = held else {
         return;
     };
@@ -88,7 +88,7 @@ pub(crate) fn commit_object_cast_on_click(
     mut ladder: crate::spell::CastLadder,
 ) {
     let (hovered, hovered_object) = (press.hovered, press.object);
-    if !ladder.ground.read().active() {
+    if !ladder.ground.active() {
         // A click buffered while idle must not replay as a commit once the mode turns on.
         clicks.clear();
         return;
@@ -97,7 +97,7 @@ pub(crate) fn commit_object_cast_on_click(
         return;
     }
     // The object-wanted test: without it the pick holds no GameObject.
-    if !(ladder.ground.read().wants(TargetingWants::GameObject)
+    if !(ladder.ground.wants(TargetingWants::GameObject)
         && go_is_nearest(&hovered, &hovered_object))
     {
         if let Some((entity, guid)) = hovered.target.zip(hovered.guid) {
@@ -108,7 +108,7 @@ pub(crate) fn commit_object_cast_on_click(
         ladder.press.flush(&mut ladder.ecs);
         return;
     }
-    let held = ladder.ground.read().pending_for(TargetingWants::GameObject);
+    let held = ladder.ground.pending_for(TargetingWants::GameObject);
     let Some((spell_id, commit)) = held else {
         return;
     };

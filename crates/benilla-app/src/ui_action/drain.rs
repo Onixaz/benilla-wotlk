@@ -58,7 +58,7 @@ pub(crate) fn attack_nearest_probe(
     mut press: AttackPress,
     mut signals: crate::ui_action::signals::QueuedSignals,
 ) {
-    if probe.read().last().is_some() && press.selection.read().guid.is_none() {
+    if probe.read().last().is_some() && press.selection.guid.is_none() {
         press.attack_target(&mut signals);
         signals.flush(&mut press.seam.ecs);
     }
@@ -69,7 +69,7 @@ pub(crate) fn attack_nearest_probe(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackPress<'w, 's> {
     pick: crate::target::AttackPick<'w, 's>,
-    selection: crate::ui_script::OwnedMut<'w, crate::target::Selection>,
+    selection: ResMut<'w, crate::target::Selection>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
     player: Option<Res<'w, crate::player::Player>>,
     auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
@@ -100,8 +100,8 @@ impl AttackPress<'_, '_> {
             e,
             guid,
             engaged,
-            &mut seam.queued_melee.write(),
-            &mut seam.auto_repeat.write(),
+            seam.queued_melee.as_mut(),
+            seam.auto_repeat.as_mut(),
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
@@ -147,7 +147,7 @@ impl AttackPress<'_, '_> {
             seam,
             ..
         } = self;
-        let gated = pick.gated(&selection.read(), true, sink);
+        let gated = pick.gated(selection.as_ref(), true, sink);
         let Some(guid) = gated else {
             return;
         };
@@ -161,8 +161,8 @@ impl AttackPress<'_, '_> {
             e,
             guid,
             false,
-            &mut seam.queued_melee.write(),
-            &mut seam.auto_repeat.write(),
+            seam.queued_melee.as_mut(),
+            seam.auto_repeat.as_mut(),
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
@@ -193,8 +193,8 @@ impl AttackPress<'_, '_> {
             e,
             0,
             true,
-            &mut seam.queued_melee.write(),
-            &mut seam.auto_repeat.write(),
+            seam.queued_melee.as_mut(),
+            seam.auto_repeat.as_mut(),
             &mut seam.sheath,
             &mut seam.ecs,
             &seam.net,
@@ -232,7 +232,7 @@ impl AttackPress<'_, '_> {
         if attack_actor_refusal(me, my_guid, mounted, sink) {
             return None;
         }
-        pick.target(passed, &mut selection.write(), seam, check_range, sink)
+        pick.target(passed, selection.as_mut(), seam, check_range, sink)
     }
 }
 
@@ -281,7 +281,7 @@ pub(super) fn drain_go_openers(
 /// What a `UseAction` press reads and writes.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ActionPress<'w, 's> {
-    actions: crate::ui_script::LentRef<'w, ActionSlots>,
+    actions: Option<Res<'w, ActionSlots>>,
     targeting: cast_target::CastTargeting<'w, 's>,
     ladder: CastLadder<'w, 's>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
@@ -325,7 +325,9 @@ pub(crate) fn use_action(
         Err(_) => return UseOutcome::Done,
     };
     // Copied out: a macro's verbs may write the bar inside the press.
-    let button = actions.get().and_then(|a| a.buttons.get(&slot).copied());
+    let button = actions
+        .as_deref()
+        .and_then(|a| a.buttons.get(&slot).copied());
     match button.as_ref() {
         Some(b) if b.kind == ACTION_KIND_SPELL && b.action == SPELL_ATTACK => {
             // `UseAction` casts Attack through the cast attempt, so its dead rung comes first: "You
@@ -339,12 +341,12 @@ pub(crate) fn use_action(
         Some(b) if b.kind == ACTION_KIND_SPELL => {
             // In `UseAction` only: re-pressing the spell whose targeting cursor is up cancels it
             // before the cast attempt. A spellbook re-press aborts and re-enters.
-            if ladder.ground.read().spell() == Some(b.action) {
+            if ladder.ground.spell() == Some(b.action) {
                 debug!(
                     "ui_action: cast {} re-pressed — targeting toggles off",
                     b.action
                 );
-                ladder.ground.write().clear();
+                ladder.ground.clear();
                 return UseOutcome::Done;
             }
             // `ClickSpell` (`0x80da80`): an active spell re-pressed cancels. The form-match toggle

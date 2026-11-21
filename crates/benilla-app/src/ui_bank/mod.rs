@@ -10,7 +10,7 @@ use crate::ui_script::live::UiEvents;
 #[derive(Resource)]
 pub(crate) struct BankPrices(pub(crate) benilla_formats::BankBagSlotPrices);
 
-/// The open bank: the banker (`0xbeb9a0`); the interaction close takes its leg while the interact target is it (`0x512f8a`). Main-thread state the bank verbs write in their call ([`crate::ui_script::live::Lent`]).
+/// The open bank: the banker (`0xbeb9a0`); the interaction close takes its leg while the interact target is it (`0x512f8a`). Main-thread state the bank verbs write in their call ([`crate::ui_script::live::MainState`]).
 #[derive(Default)]
 pub(crate) struct BankOpen {
     pub(crate) banker: Option<u64>,

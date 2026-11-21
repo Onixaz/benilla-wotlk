@@ -614,7 +614,7 @@ pub(super) fn assist_named(
                 Match::PrefixOk,
             )
             .map(|(e, _, _)| e),
-        None => commit.selection.read().target,
+        None => commit.selection.target,
     };
     let Some(basis) = basis else {
         info!("assist ({how}): no basis unit; nothing to assist");
@@ -665,8 +665,6 @@ fn follow_subject(
 #[allow(clippy::too_many_arguments)] // one system, the arm's whole read set
 pub(super) fn follow_requests(
     mut requests: MessageReader<crate::player::FollowRequest>,
-    // Lends the token resolve the view, whose giver names `"questnpc"`; ahead of the tokens' pet read.
-    _live: crate::ui_script::LendLive,
     scan_params: ByNameScan,
     tokens: crate::ui_unit::UnitTokens,
     // The focus and the names a token reads, which the VM owns.
@@ -675,7 +673,7 @@ pub(super) fn follow_requests(
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     places: Query<&Transform>,
-    cast: crate::ui_script::LentRef<crate::spell::PendingCast>,
+    cast: Option<Res<crate::spell::PendingCast>>,
     mut errors: ResMut<crate::ui_action::UiErrorKeys>,
     mut follow: ResMut<crate::player::FollowState>,
     mut approach: ResMut<crate::player::Approach>,
@@ -710,7 +708,7 @@ pub(super) fn follow_requests(
         if let Some(key) = scan_params.follow_refusal(
             guid,
             followee,
-            cast.get()
+            cast.as_deref()
                 .is_some_and(|c| c.in_flight(std::time::Instant::now())),
             at,
         ) {
@@ -741,7 +739,7 @@ pub(super) fn follow_requests(
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)] // one bundled param, the app's convention for big query sets
 pub(crate) struct SelectCommit<'w, 's> {
-    pub(super) selection: crate::ui_script::OwnedMut<'w, Selection>,
+    pub(super) selection: ResMut<'w, Selection>,
     pub(crate) seam: crate::creature_anim::AttackSeam<'w, 's>,
     // Our own body: the guid, the store `can_attack` reads, and whether we are mid-swing.
     me: Query<
@@ -824,7 +822,7 @@ impl SelectCommit<'_, '_> {
     /// Deselect, a no-op with nothing selected; see [`super::click::clear`].
     pub(super) fn clear(&mut self) {
         let engaged = self.engaged();
-        super::click::deselect(&mut self.selection.write(), &mut self.seam, engaged);
+        super::click::deselect(self.selection.as_mut(), &mut self.seam, engaged);
     }
 
     /// The reference's select on a looted object, which tests `TYPEMASK_UNIT` first.
@@ -867,7 +865,7 @@ impl SelectCommit<'_, '_> {
             return false;
         }
         scan::commit_at(
-            &mut self.selection.write(),
+            self.selection.as_mut(),
             &mut self.seam,
             None,
             guid,
@@ -898,7 +896,7 @@ impl SelectCommit<'_, '_> {
             me.and_then(|(_, store, _)| store),
         );
         scan::commit(
-            &mut self.selection.write(),
+            self.selection.as_mut(),
             &mut self.seam,
             entity,
             guid,

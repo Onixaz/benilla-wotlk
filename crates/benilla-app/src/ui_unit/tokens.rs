@@ -370,6 +370,10 @@ pub(crate) struct UnitTokens<'w, 's> {
     encounter: Option<Res<'w, EncounterUnits>>,
     arena: Option<Res<'w, ArenaOpponents>>,
     group: Res<'w, GroupState>,
+    /// The interact target (`0xbd07a8`), the `"npc"` base.
+    interact: Option<Res<'w, crate::ui_session::InteractTarget>>,
+    /// The quest window's source (`0x6081b0`), the `"questnpc"` base.
+    giver: Option<NonSend<'w, crate::ui_quest::QuestGiver>>,
     pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
     me: Query<'w, 's, (Entity, &'static Guid, Option<&'static Passenger>), With<SelfPlayer>>,
 }
@@ -475,11 +479,10 @@ impl UnitTokens<'_, '_> {
             UnitTokenParse::Empty | UnitTokenParse::Nobody => return None,
             UnitTokenParse::Unit { base: b, hops } => {
                 let guid = match b {
-                    // The interact target (`0x60af67`), read through the view every resolving
-                    // system lends; with none lent, nobody.
-                    UnitBase::Npc => crate::ui_script::live::interact_target().flatten(),
-                    // The quest window's source (`0x6081b0`), read through the view lent to the call.
-                    UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
+                    // The interact target (`0x60af67`).
+                    UnitBase::Npc => self.interact.as_ref().and_then(|t| t.0),
+                    // The quest window's source (`0x6081b0`).
+                    UnitBase::QuestNpc => self.giver.as_ref().and_then(|g| g.quest_npc()),
                     // The VM's focus `[0xbd07d0]`.
                     UnitBase::Focus => vm.focus(),
                     b => base(&w, b),

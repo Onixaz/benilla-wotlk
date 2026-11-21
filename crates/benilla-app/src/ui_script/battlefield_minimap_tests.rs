@@ -124,8 +124,7 @@ impl LiveState for Positions {
 
 /// Lend `view` until the loan drops.
 fn lend(view: Positions) -> LiveLoan<Positions> {
-    // SAFETY: each test drops its loan on its own thread, before its next one.
-    unsafe { LiveLoan::new(view) }
+    LiveLoan::new(view)
 }
 
 /// The player in Warsong Gulch at `uv`, off the map at `None`, with party members at theirs.

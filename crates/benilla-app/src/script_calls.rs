@@ -98,9 +98,9 @@ pub(crate) fn apply_script_calls(world: &mut World) {
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 fn apply_one(
     In(call): In<ScriptCall>,
-    (mut script, live, mut ui): (
+    (mut script, merchant, mut ui): (
         NonSendMut<UiScript>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
+        Option<Res<crate::ui_merchant::MerchantOpen>>,
         ResMut<crate::ui_script::live::UiEvents>,
     ),
     mut appliers: ParamSet<(
@@ -181,7 +181,7 @@ fn apply_one(
                         let held = appliers
                             .p6()
                             .bar
-                            .read()
+                            .as_ref()
                             .spells
                             .bar
                             .get(index as usize)
@@ -201,7 +201,8 @@ fn apply_one(
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {
-                let vendor = live.merchant_vendor();
+                // The vendor the bag click sells to (`0xbfa3e8`).
+                let vendor = merchant.as_ref().and_then(|m| m.vendor);
                 appliers.p5().use_container_item(script, bag, slot, vendor);
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
@@ -271,7 +272,7 @@ pub(crate) fn pet_press(
     ) -> crate::ui_pet::PetCast,
 ) -> crate::ui_pet::PetCast {
     let at = |press: &crate::ui_pet::PetPress| {
-        let bar = press.bar.read();
+        let bar = press.bar.as_ref();
         (bar.bar_signals, bar.cooldowns.generation)
     };
     let (signals, generation) = at(press);

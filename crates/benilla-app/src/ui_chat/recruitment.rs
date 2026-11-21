@@ -188,14 +188,19 @@ pub(super) fn guild_recruitment_cascade(
             match channels.claim_slot(&name) {
                 Some(n) => {
                     debug!("chat: {name:?} registered as slot {n}");
-                    script.set_channel_slots(channels.ui_slots());
+                    // After an earlier arm's `UPDATE_CHAT_WINDOWS` listeners, as the write below.
+                    let slots = channels.ui_slots();
+                    script.after_raises(move |s| s.set_channel_slots(slots));
                 }
                 None => warn!(
                     "chat: no free slot for {name:?} — all {} are taken",
                     super::edit::MAX_CHANNELS
                 ),
             }
-            script.register_chat_window_channel(0, &row.shortcut, row.id);
+            let (shortcut, id) = (row.shortcut.clone(), row.id);
+            script.after_raises(move |s| {
+                s.register_chat_window_channel(0, &shortcut, id);
+            });
             // The client's own join (`0x49eb70`).
             let _ = commands
                 .0

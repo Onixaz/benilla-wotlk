@@ -151,22 +151,12 @@ pub(crate) struct ServiceArms<'w, 's> {
     pub(crate) quest: Res<'w, crate::ui_quest::QuestStatuses>,
     /// Bit 5's talk runs as a command, its `CONFIRM_XP_LOSS` fired in turn (`0x6db010`).
     pub(crate) talk: Commands<'w, 's>,
-    /// Bit 6 sends through the cache the proximity poll writes, so the two agree on the healer.
-    pub(crate) spirit: NonSendMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>,
     /// The cursor, for the vendor arm's sell fork; `None` when no VM is mounted.
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
-    /// The lent view; the guild bank's talk writes through it between calls into Lua.
-    pub(crate) live: crate::ui_script::LendLive<
-        'w,
-        's,
-        (
-            (
-                crate::ui_script::OwnsCooldowns,
-                crate::ui_script::OwnsSelection,
-            ),
-            crate::ui_script::OwnsSpirit,
-        ),
-    >,
+    /// The guild bank, whose talk the vault and the banker send (`0x6d23c0`).
+    pub(crate) guild_bank: Option<NonSendMut<'w, crate::ui_guild_bank::GuildBankState>>,
+    /// The interact target (`0xbd07a8`), the re-click gate's.
+    pub(crate) interact: Option<Res<'w, crate::ui_session::InteractTarget>>,
     /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
     pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     /// The trainer arm's ask, which its list must answer.
@@ -656,11 +646,9 @@ impl Dispatch<'_, '_> {
             if in_reach {
                 debug!("right-click guild vault: {guid:#x}");
                 let net = &self.seam.net;
-                self.service.live.with_guild_bank_mut(|bank| {
-                    if let Some(bank) = bank {
-                        bank.talk(guid, net);
-                    }
-                });
+                if let Some(bank) = self.service.guild_bank.as_deref_mut() {
+                    bank.talk(guid, net);
+                }
             } else {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
@@ -915,7 +903,8 @@ impl Dispatch<'_, '_> {
         }
         // The reference's own `UNIT_NPC_FLAGS` ladder, not the cursor kind, which the cursor
         // classifier projects lossily; the re-click gate comes first.
-        if interaction_already_open_on(guid, self.service.live.interact_target().0) {
+        let interact = self.service.interact.as_ref().and_then(|t| t.0);
+        if interaction_already_open_on(guid, interact) {
             debug!("right-click interact: {guid:#x} — its window is already open, nothing sent");
             return;
         }
@@ -1002,18 +991,11 @@ impl Dispatch<'_, '_> {
             }
             ServiceAction::AcquireSpiritGuide => {
                 debug!("right-click interact: {guid:#x} (spirit guide — adopting, 0x2E2)");
-                let service = &mut self.service;
-                let (script, live) = (&mut service.script, &mut service.live);
-                // Each set's cancel fires its event with the deadline still set (`0x523eea`).
-                service
-                    .spirit
-                    .click_guide(guid, Some(&*self.seam.net), &mut |spirit| {
-                        if let Some(script) = script.as_deref_mut() {
-                            live.lending(spirit, || {
-                                script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
-                            });
-                        }
-                    });
+                // A step with the `World`: each set's cancel fires its event with the deadline
+                // still set (`0x523eea`).
+                self.feedback.queue.queue(move |w: &mut World| {
+                    crate::ui_dialog_verbs::click_guide(w, guid);
+                });
             }
             ServiceAction::OpenMailbox => {
                 debug!("right-click interact: {guid:#x} (mailbox NPC — mail window, no packet)");
@@ -1025,11 +1007,9 @@ impl Dispatch<'_, '_> {
             ServiceAction::TalkToGuildBanker => {
                 debug!("right-click interact: {guid:#x} (guild banker)");
                 let net = &self.seam.net;
-                self.service.live.with_guild_bank_mut(|bank| {
-                    if let Some(bank) = bank {
-                        bank.talk(guid, net);
-                    }
-                });
+                if let Some(bank) = self.service.guild_bank.as_deref_mut() {
+                    bank.talk(guid, net);
+                }
             }
             ServiceAction::Silent(why) => {
                 debug!("right-click interact: {guid:#x} ({arm:?}) — silent: {why}");
@@ -1049,7 +1029,7 @@ pub(super) fn act_on_right_click(
     mut clicks: MessageReader<WorldRightClick>,
     // The press pick: the reference picks once, on the down edge.
     press: Res<PressPick>,
-    mut selection: crate::ui_script::OwnedMut<Selection>,
+    mut selection: ResMut<Selection>,
     mut dispatch: Dispatch,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
 ) {
@@ -1077,8 +1057,8 @@ pub(super) fn act_on_right_click(
 /// leg follows; a crate's [`Interact`] runs the dispatcher alone, and only its attack leg selects,
 /// through StartAttack's selection set.
 enum Select<'a, 'w> {
-    First(&'a mut crate::ui_script::OwnedMut<'w, Selection>),
-    OnAttack(&'a mut crate::ui_script::OwnedMut<'w, Selection>),
+    First(&'a mut ResMut<'w, Selection>),
+    OnAttack(&'a mut ResMut<'w, Selection>),
 }
 
 /// Act on a pick by the cursor's classification of it: a GameObject, a corpse, an attack, loot,
@@ -1225,10 +1205,10 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     // A seam write's signal fires into the VM this system holds, in turn.
     let mut unheld: Vec<&'static str> = Vec::new();
     let commit = |seam: &mut crate::creature_anim::AttackSeam,
-                  selection: &mut crate::ui_script::OwnedMut<Selection>,
+                  selection: &mut ResMut<Selection>,
                   sink: &mut dyn crate::ui_action::signals::SignalSink| {
         scan::commit(
-            &mut selection.write(),
+            selection.as_mut(),
             seam,
             entity,
             guid,
@@ -1345,7 +1325,7 @@ pub struct Interact(pub Entity);
 /// Each [`Interact`], its object classified as a press over it would be.
 pub(super) fn act_on_interact(
     mut requests: MessageReader<Interact>,
-    mut selection: crate::ui_script::OwnedMut<Selection>,
+    mut selection: ResMut<Selection>,
     kinds: Query<(&Guid, &crate::net::NetEntity)>,
     mut set: ParamSet<(cursor_mode::CursorInputs, Dispatch)>,
 ) {

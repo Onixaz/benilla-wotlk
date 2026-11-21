@@ -723,8 +723,10 @@ fn feed_auction(
     let owed: [bool; 3] = std::array::from_fn(|i| {
         landed[i] || fresh.as_ref().map(|s| &s.lists[i]) != last.as_ref().map(|s| &s.lists[i])
     });
+    // Each write after a raise lands once that raise's listeners have run.
     if changed {
-        script.set_auction(fresh.clone());
+        let state = fresh.clone();
+        script.after_raises(move |s| s.set_auction(state));
     }
     if std::mem::take(&mut auction.disabled_requested) {
         script.fire_event("AUCTION_HOUSE_DISABLED", vec![]);
@@ -758,8 +760,9 @@ fn feed_auction(
             _ => script.fire_event("AUCTION_MULTISELL_FAILURE", args),
         }
     }
-    if std::mem::take(&mut auction.sell_slot_clear) {
-        script.clear_auction_sell_item();
+    let cleared = std::mem::take(&mut auction.sell_slot_clear);
+    if cleared {
+        script.after_raises(|s| s.clear_auction_sell_item());
     }
     let locked: Vec<(i64, u32)> = auction
         .multisell
@@ -767,9 +770,14 @@ fn feed_auction(
         .filter(|ms| ms.pending)
         .map(|ms| ms.items.iter().map(|&(b, s, _)| (b, s)).collect())
         .unwrap_or_default();
-    script.set_auction_locked(locked);
+    script.after_raises(move |s| s.set_auction_locked(locked));
 
-    let sell = script.auction_sell_item();
+    // The slot as the clear leaves it.
+    let sell = if cleared {
+        None
+    } else {
+        script.auction_sell_item()
+    };
     if sell != *last_sell {
         *last_sell = sell;
         script.fire_event("NEW_AUCTION_UPDATE", vec![]);
@@ -782,7 +790,7 @@ fn feed_auction(
         auction.can_get_all(now),
     );
     if gate != *last_gate || std::mem::take(&mut auction.gate_dirty) {
-        script.set_auction_can_query(gate.0, gate.1);
+        script.after_raises(move |s| s.set_auction_can_query(gate.0, gate.1));
         *last_gate = gate;
     }
 }

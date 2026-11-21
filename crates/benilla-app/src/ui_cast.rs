@@ -141,9 +141,7 @@ impl PressEdges {
 pub(crate) struct PressSignals<'w, 's> {
     // `Option`: a ladder runs in harnesses without the cast plugin, which signal nothing.
     edges: Option<ResMut<'w, PressEdges>>,
-    casts: Option<crate::ui_script::OwnedMut<'w, UnitCasts>>,
-    /// The usable update a press runs in place.
-    usable: Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
+    casts: Option<ResMut<'w, UnitCasts>>,
     spells: Option<Res<'w, Spells>>,
     sent: Option<SentTarget<'w, 's>>,
     index: Option<Res<'w, GuidIndex>>,
@@ -285,25 +283,26 @@ impl PressSignals<'_, '_> {
                     script.fire_event("UNIT_SPELLCAST_SENT", args);
                 }
                 CastBarEdge::Cancelled { caster } => {
-                    let run = casts.read().casts.get(&caster).copied();
+                    let run = casts.casts.get(&caster).copied();
                     let Some(run) = run else { continue };
                     let args = spell_args(spells, run.spell_id, run.cast_count);
                     script.fire_unit_event(caster, "UNIT_SPELLCAST_INTERRUPTED", args.clone());
-                    let mut casts = casts.write();
+                    let casts = casts.as_mut();
                     if casts.casts.get(&caster).is_some_and(|r| {
                         (r.spell_id, r.cast_count) == (run.spell_id, run.cast_count)
                     }) {
                         casts.casts.remove(&caster);
-                        drop(casts);
                         script.fire_unit_event(caster, "UNIT_SPELLCAST_STOP", args);
                     }
                 }
                 CastBarEdge::Selection => crate::ui_action::signals::selection_now(script),
                 CastBarEdge::Signal(event) => script.fire_event(event, Vec::new()),
+                // A harness's in-place fire: the usable update's reads are the press's own
+                // writes, so it runs at the step with the `World` ([`apply_edge`]).
                 CastBarEdge::CooldownStart { on_hold } => {
                     crate::ui_action::signals::cooldown_site_now(
                         script,
-                        self.usable.as_mut(),
+                        None,
                         on_hold,
                         crate::ui_action::signals::Tail::None,
                     );
@@ -1034,7 +1033,7 @@ fn aura_reread(
 /// The units' feed runs it beside `PLAYER_TARGET_CHANGED`, which it fires on the change (#1289).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct TargetReread<'w, 's> {
-    units: crate::ui_script::OwnedMut<'w, UnitCasts>,
+    units: ResMut<'w, UnitCasts>,
     spells: Option<Res<'w, Spells>>,
     self_guid: Res<'w, SelfGuid>,
     index: Res<'w, GuidIndex>,
@@ -1043,11 +1042,11 @@ pub(crate) struct TargetReread<'w, 's> {
 
 impl TargetReread<'_, '_> {
     pub(crate) fn reread(&mut self, target: u64) {
-        let Some(run) = self.units.read().running(target) else {
+        let Some(run) = self.units.running(target) else {
             return;
         };
         self.shield.evaluate(
-            &mut self.units.write(),
+            self.units.as_mut(),
             self.spells.as_deref(),
             &self.index,
             self.self_guid.0.is_some(),
@@ -1790,25 +1789,24 @@ mod tests {
                      HELD[#HELD + 1] = e:sub(16) .. '=' .. tostring((UnitCastingInfo('player'))) end)",
             )
             .unwrap();
+        app.world_mut()
+            .run_system_once(|mut press: PressSignals, mut ui: ResMut<UiEvents>| {
+                press.cancelled(ME);
+                assert_eq!(
+                    press.pending(),
+                    [
+                        CastBarEdge::Cancelled { caster: ME },
+                        CastBarEdge::Selection
+                    ]
+                );
+                press.defer(&mut ui);
+            })
+            .unwrap();
+        crate::ui_script::live::fire_handler_events(app.world_mut());
         let after = app
-            .world_mut()
-            .run_system_once(
-                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
-                 mut press: PressSignals| {
-                    press.cancelled(ME);
-                    assert_eq!(
-                        press.pending(),
-                        [
-                            CastBarEdge::Cancelled { caster: ME },
-                            CastBarEdge::Selection
-                        ]
-                    );
-                    press.fire(&mut script, &mut live);
-                    script
-                        .eval::<String>("return table.concat(HELD, ' ')")
-                        .unwrap()
-                },
-            )
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(HELD, ' ')")
             .unwrap();
         assert_eq!(after, "INTERRUPTED=Lesser Heal STOP=nil");
         assert!(!app.world().resource::<UnitCasts>().casting(ME));
@@ -1838,20 +1836,19 @@ mod tests {
             .non_send_resource_mut::<UiScript>()
             .run(RECORDER)
             .unwrap();
+        app.world_mut()
+            .run_system_once(|mut press: PressSignals, mut ui: ResMut<UiEvents>| {
+                press.signal("SPELLS_CHANGED");
+                press.push_local(HEAL, 0x5f);
+                press.signal("ACTIONBAR_UPDATE_STATE");
+                press.defer(&mut ui);
+            })
+            .unwrap();
+        crate::ui_script::live::fire_handler_events(app.world_mut());
         let seen = app
-            .world_mut()
-            .run_system_once(
-                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
-                 mut press: PressSignals| {
-                    press.signal("SPELLS_CHANGED");
-                    press.push_local(HEAL, 0x5f);
-                    press.signal("ACTIONBAR_UPDATE_STATE");
-                    press.fire(&mut script, &mut live);
-                    script
-                        .eval::<String>("return table.concat(SEEN, ' ')")
-                        .unwrap()
-                },
-            )
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(SEEN, ' ')")
             .unwrap();
         assert_eq!(
             seen,
@@ -1866,25 +1863,26 @@ mod tests {
         use crate::ui_action::signals::SignalSink;
         use bevy::ecs::system::RunSystemOnce;
         let mut app = feed_app();
-        app.init_resource::<PressEdges>();
+        app.init_resource::<PressEdges>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>();
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
             .run(&format!("ERR_NO_ATTACK_TARGET = 'Nothing' {RECORDER}"))
             .unwrap();
+        app.world_mut()
+            .run_system_once(|mut press: PressSignals, mut ui: ResMut<UiEvents>| {
+                press.signal("SPELLS_CHANGED");
+                press.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+                press.signal("ACTIONBAR_UPDATE_STATE");
+                press.defer(&mut ui);
+            })
+            .unwrap();
+        crate::ui_script::live::fire_handler_events(app.world_mut());
         let seen = app
-            .world_mut()
-            .run_system_once(
-                |(mut script, mut live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
-                 mut press: PressSignals| {
-                    press.signal("SPELLS_CHANGED");
-                    press.line(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
-                    press.signal("ACTIONBAR_UPDATE_STATE");
-                    press.fire(&mut script, &mut live);
-                    script
-                        .eval::<String>("return table.concat(SEEN, ' ')")
-                        .unwrap()
-                },
-            )
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(SEEN, ' ')")
             .unwrap();
         assert_eq!(
             seen,

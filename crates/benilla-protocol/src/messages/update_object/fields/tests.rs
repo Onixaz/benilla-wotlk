@@ -411,6 +411,7 @@ fn a_gameobject_reads_its_packed_bytes_and_its_rotation_from_movement() {
     assert_eq!(f.gameobject_displayid(), Some(5_000));
     assert_eq!(f.gameobject_faction(), 35);
     assert_eq!(f.gameobject_rotation(), Some([0.0, 0.0, 0.6, 0.8]));
+    assert_eq!(f.gameobject_parent_rotation(), [0.0, 0.0, 0.0, 1.0]);
     // A values delta keeps the create's rotation.
     let mut live = f.clone();
     live.merge(ObjectFields::from_pairs(&[(

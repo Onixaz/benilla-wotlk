@@ -109,8 +109,7 @@ impl LiveState for LoanedMenu {
 
 /// Lend an empty [`Menu`] for the rest of the test.
 pub(super) fn gossip_loan() -> MenuLoan {
-    // SAFETY: the test drops the loan on its own thread, after every loan made inside it.
-    MenuLoan(unsafe { benilla_ui::script::LiveLoan::new(LoanedMenu::default()) })
+    MenuLoan(benilla_ui::script::LiveLoan::new(LoanedMenu::default()))
 }
 
 impl MenuLoan {

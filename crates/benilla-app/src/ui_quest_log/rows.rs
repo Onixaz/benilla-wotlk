@@ -33,7 +33,7 @@ pub(crate) enum QuestAsk {
     Item(u32),
 }
 
-/// The records the quest verbs asked for, each answer queuing `QUEST_LOG_UPDATE` (`0x5de94a`, `0x5de9fa`, `0x5dea2a`, `0x5dea49`). Main-thread state a verb writes in its call, lent to it ([`crate::ui_script::live::Lent`]).
+/// The records the quest verbs asked for, each answer queuing `QUEST_LOG_UPDATE` (`0x5de94a`, `0x5de9fa`, `0x5dea2a`, `0x5dea49`). Main-thread state a verb writes in its call, lent to it ([`crate::ui_script::live::MainState`]).
 #[derive(Default)]
 pub(crate) struct QuestAsks(HashSet<QuestAsk>);
 

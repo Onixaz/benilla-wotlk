@@ -372,15 +372,18 @@ fn feed_tutorials(
     }
     // The bank is owed to every VM: what it has been told is per VM, so a `/reload`'s fresh VM
     // is told again.
+    // Written after the triggers' listeners, which read the bank as of their raise.
     let told = told.get(&script);
     if *told != tutorials.acknowledged {
         told.clone_from(&tutorials.acknowledged);
-        script.set_tutorial_bank(tutorials.acknowledged.clone());
+        let bank = tutorials.acknowledged.clone();
+        script.after_raises(move |s| s.set_tutorial_bank(bank));
     }
     let told_completed = told_completed.get(&script);
     if *told_completed != tutorials.completed {
         told_completed.clone_from(&tutorials.completed);
-        script.set_tutorials_completed(tutorials.completed.clone());
+        let completed = tutorials.completed.clone();
+        script.after_raises(move |s| s.set_tutorials_completed(completed));
     }
 }
 
@@ -830,6 +833,36 @@ mod tests {
         );
         app.update();
         assert!(enabled(&mut app), "…and must be told it again");
+    }
+
+    /// A trigger's listener reads the bank as of its raise: the feed's later bank write lands
+    /// once the listener has run.
+    #[test]
+    fn a_triggers_listener_does_not_see_the_feeds_later_bank_write() {
+        let mut app = feeder();
+        app.init_resource::<crate::ui_script::live::UiEvents>();
+        {
+            let mut t = app.world_mut().resource_mut::<Tutorials>();
+            t.apply_flags(&[0u8; 32]);
+            t.trigger(id::WELCOME, 0, Instant::now());
+        }
+        let script = UiScript::new().expect("VM");
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('TUTORIAL_TRIGGER')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(TutorialsEnabled()) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let seen: String = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap();
+        assert_eq!(seen, "nil", "the listener ran before the bank was told");
+        assert!(enabled(&mut app), "the bank is told after the listener");
     }
 
     /// The bag-full line's display raises tutorial `0x39` once; another message raises none.

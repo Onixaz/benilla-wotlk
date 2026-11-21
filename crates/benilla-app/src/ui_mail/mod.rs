@@ -759,7 +759,8 @@ fn feed_mail(
     };
 
     // The results' effects, in the reference's order: the message, the row's change with its
-    // events, the pending flags, then `MAIL_SUCCESS` or `MAIL_FAILED`.
+    // events, the pending flags, then `MAIL_SUCCESS` or `MAIL_FAILED`; each write after a raise
+    // lands once that raise's listeners have run.
     let mut inbox_fired = false;
     for effect in std::mem::take(&mut mail.effects) {
         match effect {
@@ -773,18 +774,18 @@ fn feed_mail(
                 let line = crate::ui_action::keyed_line(&script, key);
                 crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
             }
-            MailEffect::Sent => script.mail_sent(),
+            MailEffect::Sent => script.after_raises(|s| s.mail_sent()),
             MailEffect::CloseInboxItem(index) => {
                 script.fire_event("CLOSE_INBOX_ITEM", vec![ScriptValue::Int(i64::from(index))]);
             }
             MailEffect::InboxUpdate => {
                 let fresh = snapshot(&script, &mail);
-                script.set_mail(fresh.clone());
-                memo.inbox = Some(fresh);
+                memo.inbox = Some(fresh.clone());
+                script.after_raises(move |s| s.set_mail(fresh));
                 script.fire_event("MAIL_INBOX_UPDATE", vec![]);
                 inbox_fired = true;
             }
-            MailEffect::Done { send } => script.mail_command_done(send),
+            MailEffect::Done { send } => script.after_raises(move |s| s.mail_command_done(send)),
             MailEffect::Result { ok } => {
                 script.fire_event(if ok { "MAIL_SUCCESS" } else { "MAIL_FAILED" }, vec![]);
             }
@@ -795,8 +796,8 @@ fn feed_mail(
     // signal `MAIL_INBOX_UPDATE` (`0x56d4b0`, `0x56d460`).
     let fresh = snapshot(&script, &mail);
     if memo.inbox.as_ref() != Some(&fresh) {
-        script.set_mail(fresh.clone());
-        memo.inbox = Some(fresh);
+        memo.inbox = Some(fresh.clone());
+        script.after_raises(move |s| s.set_mail(fresh));
         if !inbox_fired {
             script.fire_event("MAIL_INBOX_UPDATE", vec![]);
         }
@@ -805,7 +806,7 @@ fn feed_mail(
     pending.step(time.delta_secs());
     let has_new_mail = pending.has_new_mail();
     if memo.has_new_mail != Some(has_new_mail) {
-        script.set_has_new_mail(has_new_mail);
+        script.after_raises(move |s| s.set_has_new_mail(has_new_mail));
         memo.has_new_mail = Some(has_new_mail);
     }
     let senders: Vec<Option<String>> = {
@@ -820,8 +821,8 @@ fn feed_mail(
         if memo.senders.is_some() {
             pending.notify_senders();
         }
-        script.set_mail_latest_senders(senders.clone());
-        memo.senders = Some(senders);
+        memo.senders = Some(senders.clone());
+        script.after_raises(move |s| s.set_mail_latest_senders(senders));
     }
     if pending.take_notify() {
         script.fire_event("UPDATE_PENDING_MAIL", vec![]);
@@ -1022,4 +1023,59 @@ fn mark_read(mail: &mut MailOpen, pending: &mut MailPending, message_id: u32) {
         .all(|r| r.entry.flags & mail_flags::READ != 0);
     pending.on_mail_read(all_read);
     mail.effects.push(MailEffect::InboxUpdate);
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    /// A result's listener reads the model as of its raise: the feed's later new-mail write lands
+    /// once the listener has run.
+    #[test]
+    fn a_results_listener_does_not_see_the_feeds_later_new_mail_write() {
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<MailOpen>()
+            .init_resource::<MailPending>()
+            .init_resource::<Items>()
+            .init_resource::<NameCache>()
+            .init_resource::<crate::go_templates::GameObjectTemplates>()
+            .init_resource::<crate::ui_social::SocialState>()
+            .init_resource::<crate::world_state::WorldStates>()
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
+            .init_resource::<Time>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .add_message::<crate::net::WorldEnterCascadeMessage>()
+            .add_systems(Update, feed_mail);
+        let script = UiScript::new().expect("VM");
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SUCCESS')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(HasNewMail()) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        app.world_mut()
+            .resource_mut::<MailPending>()
+            .apply_query_reply(0.0, &[]);
+        app.world_mut()
+            .resource_mut::<MailOpen>()
+            .effects
+            .push(MailEffect::Result { ok: true });
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let script = app.world().non_send_resource::<UiScript>();
+        let seen: String = script.eval("return table.concat(SEEN, ',')").unwrap();
+        assert_eq!(
+            seen, "nil",
+            "the listener ran before the new mail was written"
+        );
+        let now: bool = script.eval("return HasNewMail() ~= nil").unwrap();
+        assert!(now, "the new mail is written after the listener");
+    }
 }

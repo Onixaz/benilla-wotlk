@@ -247,13 +247,10 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
             priority: 0,
         }],
     }]);
-    // SAFETY: the test drops its loan on its own thread.
-    let _lines = unsafe {
-        benilla_ui::script::LiveLoan::new(PoiLines(QuestPoiLines {
-            top_area: 12,
-            ..Default::default()
-        }))
-    };
+    let _lines = benilla_ui::script::LiveLoan::new(PoiLines(QuestPoiLines {
+        top_area: 12,
+        ..Default::default()
+    }));
     s.run("ToggleFrame(WorldMapFrame) WorldMapFrame_UpdateQuests()")
         .unwrap();
     let errors = map_errors(s.take_errors());

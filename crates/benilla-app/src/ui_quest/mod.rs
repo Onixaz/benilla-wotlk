@@ -34,7 +34,7 @@ pub(crate) enum QuestView {
     Reward(QuestOfferReward),
 }
 
-/// The open questgiver window: main-thread state the panel's buttons write inside their call, lent to it ([`crate::ui_script::live::Lent`]).
+/// The open questgiver window: main-thread state the panel's buttons write inside their call, lent to it ([`crate::ui_script::live::MainState`]).
 #[derive(Default)]
 pub(crate) struct QuestGiver {
     /// The panel's source: an NPC, a GameObject, a quest-starter item or a sharing player.

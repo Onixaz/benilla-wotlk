@@ -1,7 +1,7 @@
 //! The guild bank's app side, after 12340's guild bank info: the banker, the six tabs' names,
 //! slots and locks, the money, the logs and texts, the wire, and the item gates and stack
 //! arithmetic of the swap senders. Main-thread state the verbs read and write at the call
-//! ([`crate::ui_script::live::Lent`]); its handlers fire their events in turn.
+//! ([`crate::ui_script::live::MainState`]); its handlers fire their events in turn.
 
 use benilla_protocol::messages::{
     GuildBankLogEntry, GuildBankSend, GuildBankSlot, GuildBankSwap, BAG_PLAYER_INVENTORY,

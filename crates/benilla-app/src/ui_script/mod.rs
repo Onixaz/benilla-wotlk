@@ -14,8 +14,6 @@ use benilla_world::schedule::WorldStage;
 
 /// The addon folder: discovery, manifests, the enable file and the load walk.
 pub(crate) mod addons;
-#[cfg(test)]
-mod borrow_census;
 mod content;
 pub(crate) mod extract;
 /// The stock glue screens.
@@ -27,9 +25,6 @@ mod input;
 pub(crate) mod live;
 pub(crate) mod raises;
 pub(crate) mod safe_world;
-pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsCooldowns, OwnsScriptCalls, OwnsSelection, OwnsSpirit,
-};
 pub(crate) use raises::{InTurn, VmTurn};
 #[cfg(test)]
 pub(crate) mod live_tests;
@@ -44,6 +39,8 @@ mod feed_census_tests;
 mod layer_tests;
 mod load_log;
 mod manifest;
+#[cfg(test)]
+mod raise_census_tests;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
 #[cfg(test)]

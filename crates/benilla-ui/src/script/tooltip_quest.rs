@@ -212,8 +212,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        // SAFETY: each test drops its loan on its own thread.
-        let loan = unsafe { LiveLoan::new(Caches::default()) };
+        let loan = LiveLoan::new(Caches::default());
         (s, loan)
     }
 

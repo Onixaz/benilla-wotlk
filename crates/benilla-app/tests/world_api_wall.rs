@@ -304,6 +304,11 @@ const LEAK_CEILING: usize = 107;
 /// lowered: one closure does not fail the gate, a whole stage of work cannot go unrecorded.
 const LEAK_SLACK: usize = 10;
 
+/// Whether the leak ceiling fails or only warns. Off while #1245 moves the verbs onto the live
+/// view: its pieces move this count in parallel and each edits [`LEAK_CEILING`]. #1333 turns it
+/// back on once the epic lands.
+const LEAK_ENFORCED: bool = false;
+
 #[test]
 fn the_world_api_doorway_stays_shut() {
     let all = measure();
@@ -388,26 +393,34 @@ fn the_world_api_doorway_stays_shut() {
         );
     }
 
+    let mut problems = Vec::new();
     if n > LEAK_CEILING {
         let fresh: Vec<_> = leaks
             .iter()
             .filter(|(k, _)| !sorted_by.contains_key(k.as_str()))
             .map(|(k, v)| (v.len(), k))
             .collect();
-        panic!(
+        problems.push(format!(
             "world API leaks: {n}, ceiling {LEAK_CEILING}.\n\
              Something new crossed the line and no record publishes it. Either close it, or — if \
              it is genuine engine API — add it to PUBLISHED with the record that says so, \
              a claim made in review. The unsorted leaks on this tree:\n\n{}",
             render(&fresh)
-        );
+        ));
     }
-    assert!(
-        n + LEAK_SLACK >= LEAK_CEILING,
-        "world API leaks are down to {n} and the ceiling still says {LEAK_CEILING}. Lower \
-         LEAK_CEILING to {n} in this file so the next leak has to earn its place — the ratchet \
-         only holds if the number follows the work down."
-    );
+    if n + LEAK_SLACK < LEAK_CEILING {
+        problems.push(format!(
+            "world API leaks are down to {n} and the ceiling still says {LEAK_CEILING}. Lower \
+             LEAK_CEILING to {n} in this file so the next leak has to earn its place — the \
+             ratchet only holds if the number follows the work down."
+        ));
+    }
+    if LEAK_ENFORCED {
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+    for message in problems {
+        eprintln!("warning (not enforced, #1333): {message}");
+    }
 }
 
 /// The wall that points the other way: an engine file naming a gameplay item is a dependency

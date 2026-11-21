@@ -1347,8 +1347,7 @@ mod tests {
             quest_reset: reset,
             ..Default::default()
         };
-        // SAFETY: each test drops its loans on its own thread, in reverse order of their making.
-        unsafe { crate::script::LiveLoan::new(view) }
+        crate::script::LiveLoan::new(view)
     }
 
     fn two_quests() -> QuestLogState {
@@ -2491,8 +2490,7 @@ mod tests {
             quest_titles: [(783, "The Fargodeep Mine".to_string())].into(),
             ..Default::default()
         };
-        // SAFETY: the test drops its loan on its own thread.
-        let clock = unsafe { crate::script::LiveLoan::new(view) };
+        let clock = crate::script::LiveLoan::new(view);
         s.model_mut().pending_events.clear();
 
         assert_eq!(s.arity("GetQuestTimers()").unwrap(), 0);

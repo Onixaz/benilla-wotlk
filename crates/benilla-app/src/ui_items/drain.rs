@@ -167,6 +167,8 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     deselect: MessageWriter<'w, crate::target::DeselectGuid>,
     ladder: crate::spell::CastLadder<'w, 's>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
+    /// The banker, the bank flag's (`0xbeb9a0`).
+    bank: Option<NonSend<'w, crate::ui_bank::BankOpen>>,
 }
 
 /// The context a use runs in: the selection, or the unit `UseItemByName` named.
@@ -371,6 +373,7 @@ impl ScriptItemUse<'_, '_> {
             deselect,
             ladder,
             gate,
+            bank,
         } = self;
         let slot0 = u8::try_from(slot.saturating_sub(1)).ok();
         // With a merchant open, the click sells the whole stack (`CMSG_SELL_ITEM`, count 0).
@@ -400,8 +403,7 @@ impl ScriptItemUse<'_, '_> {
         // any other deposits (`CMSG_AUTOBANK_ITEM`): the reference's bank flag, set for bags -1
         // and 5..11, picks the opcode. Doll clicks come through `use_inventory_item`, so worn gear
         // keeps its plain use.
-        // The banker through the lent view, as the bank flag reads it (`0xbeb9a0`).
-        let bank_open = benilla_ui::script::read_live(|l| l.banker().is_some()).unwrap_or(false);
+        let bank_open = bank.as_ref().is_some_and(|b| b.banker.is_some());
         if !direct && bank_open {
             let withdrawing = bag == super::BANK_CONTAINER
                 || (super::BANK_BAG_ID_FIRST..=super::BANK_BAG_ID_LAST).contains(&bag);
@@ -531,7 +533,7 @@ impl ScriptItemUse<'_, '_> {
                 .objects
                 .object(c.guid)
                 .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
-            if super::refuse_item_use(script, c.entry, enchant_skill, &mut ladder.press) {
+            if super::refuse_item_use(&ladder.use_reqs, c.entry, enchant_skill, &mut ladder.press) {
                 return;
             }
         }

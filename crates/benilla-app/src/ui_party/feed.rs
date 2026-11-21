@@ -369,7 +369,9 @@ pub(super) fn feed_party(
     };
     if fed.pushed_party.as_ref() != Some(&fresh) {
         gate.audit("feed_party", "the roster snapshot");
-        script.set_party(fresh.clone());
+        // Each write after a raise lands once that raise's listeners have run.
+        let party = fresh.clone();
+        script.after_raises(move |s| s.set_party(party));
         fed.pushed_party = Some(fresh);
     }
 
@@ -390,7 +392,8 @@ pub(super) fn feed_party(
         });
         if fed.units[i] != snap {
             gate.audit("feed_party", "a party-token snapshot");
-            script.set_unit(token, snap.clone());
+            let unit = snap.clone();
+            script.after_raises(move |s| s.set_unit(token, unit));
             if let Some(cur) = &snap {
                 crate::ui_unit::fire_transitions(
                     &mut script,
@@ -480,7 +483,8 @@ pub(super) fn feed_party(
         });
         if fed.raid_units[i] != snap {
             gate.audit("feed_party", "a raid-token snapshot");
-            script.set_unit(token, snap.clone());
+            let unit = snap.clone();
+            script.after_raises(move |s| s.set_unit(token, unit));
             if let Some(cur) = &snap {
                 crate::ui_unit::fire_transitions(
                     &mut script,
@@ -638,7 +642,7 @@ pub(super) fn feed_party(
         gate.audit("feed_party", "the saved-instance edge");
         fed.saved = saved.clone();
         fed.saved_answers = group.saved_instances_answers;
-        script.set_saved_instances(saved);
+        script.after_raises(move |s| s.set_saved_instances(saved));
         if !vm_reset {
             script.fire_event("UPDATE_INSTANCE_INFO", vec![]);
         }
