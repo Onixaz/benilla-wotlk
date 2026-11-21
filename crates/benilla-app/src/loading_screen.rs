@@ -16,7 +16,11 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use benilla_formats::{load_loading_screens, LoadingScreenCatalog};
+use benilla_formats::{
+    lit_dots, load_loading_screens, load_taxi_path_nodes, load_taxi_splines,
+    load_world_map_continent_catalog, ship_route, DockLegs, LoadingScreenCatalog, ShipRoute,
+    TaxiSplines, WorldMapContinentCatalog,
+};
 
 use benilla_assets::LockRecover;
 use benilla_assets::MapCatalogRes;
@@ -65,6 +69,18 @@ fn wide_art_path(path: &str) -> String {
         None => format!("{path}Wide"),
     }
 }
+/// The ship screen's world map: 4×3 tiles of 256 px over a 1002×668 sheet, the last column and row
+/// cropped (`0x407c50`), each `Interface\WorldMap\World\World<n>` (`0x40a160`).
+const SHEET_W: f32 = 1002.0;
+const SHEET_H: f32 = 668.0;
+const SHEET_TILE: f32 = 256.0;
+/// The route's sprite sheet: dots from its bottom-left quarter, the departure marker from the
+/// top-right, the arrival marker from the top-left (`0x408690`, `0x4089c0`).
+const SHIP_ELEMENTS: &str = "Interface\\Glues\\LoadingScreens\\DynamicElements";
+/// Half extents in the screen's unit square: a dot ±0.01 × ±0.015, a dock marker ±0.02 × ±0.0265.
+const DOT_HALF: Vec2 = Vec2::new(0.01, 0.015);
+const DOCK_HALF: Vec2 = Vec2::new(0.02, 0.0265);
+
 /// Consecutive fully resident frames before the clear: debounces the post-teleport frame where
 /// `ready` reads 0 against a nonzero `total`.
 const CLEAR_AFTER_READY_FRAMES: u32 = 3;
@@ -139,6 +155,32 @@ fn count_entry_cover(
 #[derive(Resource)]
 struct LoadingScreenCatalogRes(LoadingScreenCatalog);
 
+/// A texture and its size in pixels.
+type SizedImage = (Handle<Image>, UVec2);
+
+/// What the ship screen is built from; absent when a table or a texture is missing, and every
+/// transport raise then draws the plain bar.
+#[derive(Resource)]
+struct ShipRouteData {
+    splines: TaxiSplines,
+    legs: DockLegs,
+    continents: WorldMapContinentCatalog,
+    /// The route's sprite sheet and its size in pixels.
+    elements: SizedImage,
+}
+
+/// A transport raise's outcome, settled by [`pick_ship_route`] before the raise applies it.
+#[derive(Debug)]
+enum ShipPick {
+    /// The route drew: it replaces the art, tip and bar, and the screen keeps no map.
+    Route(ShipRoute),
+    /// We ride the named transport but its route did not build: any route on the screen goes, and
+    /// the plain screen shows the destination's art.
+    Failed,
+    /// We ride no transport, or another: the plain screen, any route on it kept.
+    NotAboard,
+}
+
 /// What a raise means for the tip of the day.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TipEdge {
@@ -184,6 +226,14 @@ pub(crate) struct LoadingScreen {
     last_wait_log: f32,
     /// The avatar's position last frame, to measure a snap (applied in `Input`, a stage earlier).
     last_pos: Option<Vec3>,
+
+    /// The ship route drawn in place of the art, tip and bar (`0x409010`). Only the dismiss and a
+    /// failed route clear it: a plain raise onto a live screen keeps it, as the reference's does.
+    ship: Option<ShipRoute>,
+    /// A transport raise's outcome, from [`pick_ship_route`], taken by the raise.
+    ship_pick: Option<ShipPick>,
+    /// Bumped whenever `ship` changes, so its dots are rebuilt once.
+    ship_revision: u32,
 }
 
 impl LoadingScreen {
@@ -277,6 +327,44 @@ impl LoadingScreen {
         self.tip_edge = Some(TipEdge::Clear);
         // The reference clears the texture handle here: the next screen resolves its own art.
         self.art_resolved = false;
+        // And the route (`0x409550` → `0x4094e0`).
+        self.set_ship(None);
+    }
+
+    fn set_ship(&mut self, ship: Option<ShipRoute>) {
+        if self.ship.is_some() || ship.is_some() {
+            self.ship_revision = self.ship_revision.wrapping_add(1);
+        }
+        self.ship = ship;
+    }
+
+    /// A ridden transport's leg change on this map (`0x40ae30`): up with no snap to wait for,
+    /// showing the leg just left. A failed route clears any route and keeps the screen's last map,
+    /// as the reference leaves its map id alone here.
+    fn raise_for_ship_leg(&mut self, route: Option<ShipRoute>, now: f32) {
+        let map = if route.is_some() { None } else { self.map };
+        self.raise("ship leg", false, map, now);
+        self.set_ship(route);
+    }
+
+    /// `SMSG_TRANSFER_PENDING`'s raise (`0x401480`): plain when no transport rides along
+    /// (`0x40ab70`), else the transport raise (`0x40ad50`), which keeps no map once its route draws.
+    fn raise_for_transfer(&mut self, map: u32, now: f32) {
+        match self.ship_pick.take() {
+            Some(ShipPick::Route(route)) => {
+                // No art resolves, so the area keeps the last screen's aspect, as the reference
+                // keeps its wide flag.
+                self.raise("transfer pending, ship route", true, None, now);
+                self.set_ship(Some(route));
+            }
+            Some(ShipPick::Failed) => {
+                self.raise("transfer pending", true, Some(map), now);
+                self.set_ship(None);
+            }
+            Some(ShipPick::NotAboard) | None => {
+                self.raise("transfer pending", true, Some(map), now)
+            }
+        }
     }
 }
 
@@ -286,6 +374,22 @@ struct LoadingRoot;
 
 #[derive(Component)]
 struct LoadingArea;
+/// The plain screen's parts (art, tip, bar), hidden as one while a ship route draws.
+#[derive(Component)]
+struct LoadingPlain;
+/// The ship screen: the world map tiles, then the route.
+#[derive(Component)]
+struct LoadingShip;
+/// Disjoint from the root, backdrop and bar queries that share the system.
+type NotCoverPart = (
+    Without<LoadingRoot>,
+    Without<LoadingBackdrop>,
+    Without<LoadingBarFill>,
+    Without<LoadingBarBorder>,
+);
+/// One of the route's sprites, the `i`th dot; the dock markers carry `None`.
+#[derive(Component)]
+struct ShipDot(Option<usize>);
 #[derive(Component)]
 struct LoadingBackdrop;
 #[derive(Component)]
@@ -307,7 +411,17 @@ impl Plugin for LoadingScreenPlugin {
             .add_systems(Startup, setup_loading_screen.after(AssetSet::Open))
             // In `WorldStage::Present`, after Input and Stream: a teleport snaps in Input and the
             // streamer refocuses in Stream, so the cover lands on the same frame, never a flash.
-            .add_systems(Update, drive_loading_screen.in_set(WorldStage::Present));
+            .add_systems(
+                Update,
+                (
+                    pick_ship_route,
+                    follow_ship_leg,
+                    drive_loading_screen,
+                    draw_ship_route,
+                )
+                    .chain()
+                    .in_set(WorldStage::Present),
+            );
         // The cover's input rule, registered here so the two cannot be registered apart.
         input::build(app);
     }
@@ -362,6 +476,11 @@ fn setup_loading_screen(
         return;
     };
     let fill = tex("Interface\\Glues\\LoadingBar\\Loading-BarFill.blp").unwrap_or_default();
+    let ship = load_ship_route_data(&mut assets, &mut images);
+    let ship_tiles = ship.as_ref().map(|(_, tiles)| tiles.clone());
+    if let Some((data, _)) = ship {
+        commands.insert_resource(data);
+    }
 
     commands.entity(root).with_children(|root| {
         // One area at the art's aspect, fit to the window and centred; the bar's fractions are
@@ -372,60 +491,417 @@ fn setup_loading_screen(
         };
         fit_area(&mut area, BACKDROP_ASPECT);
         root.spawn((LoadingArea, area)).with_children(|area| {
-            // Tinted black until the art resolves.
-            area.spawn((
-                LoadingBackdrop,
-                ImageNode {
-                    color: Color::BLACK,
-                    image_mode: NodeImageMode::Stretch,
-                    ..default()
-                },
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-            ));
-            // The tip, between the backdrop and the bar as in the reference, placed in percent of
-            // this area, the space of `crate::game_tip`.
-            area.spawn((LoadingTip, crate::game_tip::tip_bundle()));
-            // The fill art is a horizontally uniform gradient, so scaling its width is a reveal.
-            area.spawn((
-                LoadingBarFill,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(FILL_LEFT * 100.0),
-                    bottom: Val::Percent(FILL_BOTTOM * 100.0),
-                    width: Val::Percent(0.0), // set each frame
-                    height: Val::Percent(FILL_HEIGHT * 100.0),
-                    ..default()
-                },
-                ImageNode {
-                    image: fill,
-                    image_mode: NodeImageMode::Stretch,
-                    ..default()
-                },
-            ));
-            // Border frame, on top.
-            area.spawn((
-                LoadingBarBorder,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(BORDER_LEFT * 100.0),
-                    bottom: Val::Percent(BORDER_BOTTOM * 100.0),
-                    width: Val::Percent(BORDER_WIDTH * 100.0),
-                    height: Val::Percent(BORDER_HEIGHT * 100.0),
-                    ..default()
-                },
-                ImageNode {
-                    image: border,
-                    image_mode: NodeImageMode::Stretch,
-                    ..default()
-                },
-            ));
+            area.spawn((LoadingPlain, full_area_node()))
+                .with_children(|area| spawn_plain_parts(area, fill, border));
+            let mut ship = area.spawn((LoadingShip, full_area_node(), Visibility::Hidden));
+            if let Some(tiles) = ship_tiles {
+                ship.with_children(|ship| spawn_sheet_tiles(ship, tiles));
+            }
         });
     });
+}
+
+/// A node filling the loading area.
+fn full_area_node() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        width: Val::Percent(100.0),
+        height: Val::Percent(100.0),
+        ..default()
+    }
+}
+
+/// The plain screen: backdrop, tip, fill and border, in paint order.
+fn spawn_plain_parts(area: &mut ChildSpawnerCommands, fill: Handle<Image>, border: Handle<Image>) {
+    // Tinted black until the art resolves.
+    area.spawn((
+        LoadingBackdrop,
+        ImageNode {
+            color: Color::BLACK,
+            image_mode: NodeImageMode::Stretch,
+            ..default()
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+    ));
+    // The tip, between the backdrop and the bar as in the reference, placed in percent of
+    // this area, the space of `crate::game_tip`.
+    area.spawn((LoadingTip, crate::game_tip::tip_bundle()));
+    // The fill art is a horizontally uniform gradient, so scaling its width is a reveal.
+    area.spawn((
+        LoadingBarFill,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(FILL_LEFT * 100.0),
+            bottom: Val::Percent(FILL_BOTTOM * 100.0),
+            width: Val::Percent(0.0), // set each frame
+            height: Val::Percent(FILL_HEIGHT * 100.0),
+            ..default()
+        },
+        ImageNode {
+            image: fill,
+            image_mode: NodeImageMode::Stretch,
+            ..default()
+        },
+    ));
+    // Border frame, on top.
+    area.spawn((
+        LoadingBarBorder,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(BORDER_LEFT * 100.0),
+            bottom: Val::Percent(BORDER_BOTTOM * 100.0),
+            width: Val::Percent(BORDER_WIDTH * 100.0),
+            height: Val::Percent(BORDER_HEIGHT * 100.0),
+            ..default()
+        },
+        ImageNode {
+            image: border,
+            image_mode: NodeImageMode::Stretch,
+            ..default()
+        },
+    ));
+}
+
+/// The ship screen's tables and textures, with the world map tiles and their pixel sizes. The
+/// reference loads the textures each time a route draws (`0x40a160`); they are the same files, so
+/// they load once here. Any miss leaves no ship screen: the reference then draws its plain bar.
+fn load_ship_route_data(
+    assets: &mut WorldAssets,
+    images: &mut Assets<Image>,
+) -> Option<(ShipRouteData, Vec<SizedImage>)> {
+    let tables = {
+        let mut chain = assets.chain.lock_recover();
+        let splines = load_taxi_splines(&mut chain);
+        let nodes = load_taxi_path_nodes(&mut chain);
+        let continents = load_world_map_continent_catalog(&mut chain);
+        (splines, nodes, continents)
+    };
+    let (splines, legs, continents) = match tables {
+        (Ok(s), Ok(n), Ok(c)) => (s, DockLegs::build(&n), c),
+        (s, n, c) => {
+            let why = [s.err(), n.err(), c.err()]
+                .into_iter()
+                .flatten()
+                .map(|e| format!("{e:#}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            warn!("ship loading screen unavailable, transports show the plain bar: {why}");
+            return None;
+        }
+    };
+    let mut sized = |path: &str| {
+        let handle = assets.sprite_texture(path, images)?;
+        let size = images.get(&handle)?.size();
+        Some((handle, size))
+    };
+    let Some(elements) = sized(SHIP_ELEMENTS) else {
+        warn!("ship loading screen unavailable: {SHIP_ELEMENTS} missing");
+        return None;
+    };
+    let mut tiles = Vec::with_capacity(12);
+    for i in 1..=12 {
+        let path = format!("Interface\\WorldMap\\World\\World{i}");
+        let Some(tile) = sized(&path) else {
+            warn!("ship loading screen unavailable: {path} missing");
+            return None;
+        };
+        tiles.push(tile);
+    }
+    info!(
+        "ship loading screen: {} route rows, world map sheet loaded",
+        splines.len()
+    );
+    Some((
+        ShipRouteData {
+            splines,
+            legs,
+            continents,
+            elements,
+        },
+        tiles,
+    ))
+}
+
+/// The world map sheet, 4 tiles across and 3 down from the top-left, stretched over the area
+/// (`0x407c50`): a tile spans 256 px of the 1002×668 sheet, cut at its right and bottom edges,
+/// and shows the matching corner of its texture.
+fn spawn_sheet_tiles(ship: &mut ChildSpawnerCommands, tiles: Vec<SizedImage>) {
+    for (i, (image, size)) in tiles.into_iter().enumerate() {
+        let (row, col) = ((i / 4) as f32, (i % 4) as f32);
+        let (left, top) = (col * SHEET_TILE, row * SHEET_TILE);
+        let width = (left + SHEET_TILE).min(SHEET_W) - left;
+        let height = (top + SHEET_TILE).min(SHEET_H) - top;
+        let size = size.as_vec2();
+        ship.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(100.0 * left / SHEET_W),
+                top: Val::Percent(100.0 * top / SHEET_H),
+                width: Val::Percent(100.0 * width / SHEET_W),
+                height: Val::Percent(100.0 * height / SHEET_H),
+                ..default()
+            },
+            ImageNode {
+                image,
+                image_mode: NodeImageMode::Stretch,
+                rect: Some(Rect::new(
+                    0.0,
+                    0.0,
+                    size.x * width / SHEET_TILE,
+                    size.y * height / SHEET_TILE,
+                )),
+                ..default()
+            },
+        ));
+    }
+}
+
+/// Settle a transport raise before [`drive_loading_screen`] applies it (`0x40ad50`): the raise
+/// draws the route when we ride the transport the packet names and the route builds, from the leg
+/// that departs the map the packet says we leave.
+#[allow(clippy::too_many_arguments)]
+fn pick_ship_route(
+    mut transfers: MessageReader<crate::net::TransferPendingMessage>,
+    data: Option<Res<ShipRouteData>>,
+    player: Option<Res<crate::player::Player>>,
+    objects: Query<(&crate::net::Guid, Option<&crate::net::ObjectStore>)>,
+    templates: Res<crate::go_templates::GameObjectTemplates>,
+    mut screen: ResMut<LoadingScreen>,
+) {
+    let Some(&crate::net::TransferPendingMessage(info)) = transfers.read().last() else {
+        return;
+    };
+    // No entry, or no map after it, is the plain raise (`0x401480`).
+    let (Some(entry), Some(from_map)) = (info.transport_entry, info.transport_map) else {
+        return;
+    };
+    if entry == 0 || from_map == u32::MAX {
+        return;
+    }
+    let aboard = player
+        .as_ref()
+        .and_then(|p| p.ride_entity())
+        .and_then(|deck| objects.get(deck).ok())
+        .filter(|(_, store)| store.and_then(|s| s.0.object_entry()) == Some(entry));
+    let pick = match aboard {
+        None => ShipPick::NotAboard,
+        Some((guid, _)) => {
+            // A type-15 template's path is its `data0` (property 35); any other type has none.
+            let path = templates
+                .get(guid.0)
+                .and_then(|t| t.mo_transport)
+                .map(|mo| mo.taxi_path_id);
+            let route = path.zip(data.as_ref()).and_then(|(path, d)| {
+                let leg = d.legs.leg_departing(path, from_map).unwrap_or(u32::MAX);
+                ship_route(&d.splines, &d.legs, &d.continents, path, leg)
+            });
+            match route {
+                Some(route) => ShipPick::Route(route),
+                None => ShipPick::Failed,
+            }
+        }
+    };
+    info!("loading screen: transport {entry} leaving map {from_map} → {pick:?}");
+    screen.ship_pick = Some(pick);
+}
+
+/// The camera target's transport's leg, last seen on this map, and the transport.
+#[derive(Default)]
+struct SeenShipLeg(Option<(Entity, u32)>);
+
+/// A type-15 that changes leg on the current map with the camera's target aboard raises the screen
+/// over the leg it left (`0x7134a0` → `0x40ae30`; the passenger test is `0x7132e0`'s, against the
+/// camera's `+0x88` target, our [`crate::net::Embodied`]): Undercity to Grom'gol's mid-route
+/// teleport and its wrap. The leg only updates while the transport samples this map.
+///
+/// Deviation: the reference stays silent until the transport's model has loaded (its first
+/// sequence set); here the first sight of the transport with the target aboard, after boarding or a
+/// worldport (whose re-create is a new object there), only records the leg.
+#[allow(clippy::type_complexity)]
+fn follow_ship_leg(
+    player: Option<Res<crate::player::Player>>,
+    embodied: Query<
+        (
+            Has<crate::net::SelfPlayer>,
+            Option<&crate::transport::TransportRider>,
+        ),
+        With<crate::net::Embodied>,
+    >,
+    index: Res<crate::net::GuidIndex>,
+    current_map: Option<Res<CurrentMap>>,
+    transports: Query<(
+        &crate::net::Guid,
+        &crate::transport::Transport,
+        &crate::transport::TransportAnchor,
+    )>,
+    mut worldports: MessageReader<crate::net::WorldportMessage>,
+    templates: Res<crate::go_templates::GameObjectTemplates>,
+    data: Option<Res<ShipRouteData>>,
+    time: Res<Time<Real>>,
+    mut seen: Local<SeenShipLeg>,
+    mut screen: ResMut<LoadingScreen>,
+) {
+    if worldports.read().count() > 0 {
+        seen.0 = None;
+    }
+    let (Some(player), Some(current_map)) = (player, current_map) else {
+        return;
+    };
+    // Our own body's ride is the player's; a possessed unit's is its rider tail.
+    let ride = match embodied.single() {
+        Ok((true, _)) => player.ride_entity(),
+        Ok((false, Some(rider))) => index.0.get(&rider.transport_guid).copied(),
+        _ => None,
+    };
+    let Some((deck, (guid, transport, anchor))) =
+        ride.and_then(|deck| transports.get(deck).ok().map(|t| (deck, t)))
+    else {
+        seen.0 = None;
+        return;
+    };
+    let Some(leg) = transport.ship_leg_at(anchor) else {
+        return;
+    };
+    if transport.sample_at(anchor, current_map.0).map != current_map.0 {
+        return;
+    }
+    let previous = match seen.0 {
+        Some((entity, previous)) if entity == deck => previous,
+        _ => {
+            seen.0 = Some((deck, leg));
+            return;
+        }
+    };
+    if previous == leg {
+        return;
+    }
+    seen.0 = Some((deck, leg));
+    let route = templates
+        .get(guid.0)
+        .and_then(|t| t.mo_transport)
+        .zip(data.as_ref())
+        .and_then(|(mo, d)| {
+            ship_route(
+                &d.splines,
+                &d.legs,
+                &d.continents,
+                mo.taxi_path_id,
+                previous,
+            )
+        });
+    info!(
+        "loading screen: transport {:#x} left leg {previous} for {leg} → route {}",
+        guid.0,
+        route.is_some()
+    );
+    screen.raise_for_ship_leg(route, time.elapsed_secs());
+}
+
+/// The route over the sheet (`0x408e10`): the dots up to the load's progress, then the two dock
+/// markers on top. Rebuilt when the route changes; each frame only the lit count moves.
+#[allow(clippy::type_complexity)]
+fn draw_ship_route(
+    mut commands: Commands,
+    screen: Res<LoadingScreen>,
+    data: Option<Res<ShipRouteData>>,
+    ship_root: Query<Entity, With<LoadingShip>>,
+    mut dots: Query<(Entity, &ShipDot, &mut Visibility)>,
+    mut built: Local<u32>,
+) {
+    let Ok(root) = ship_root.single() else {
+        return;
+    };
+    if *built != screen.ship_revision {
+        *built = screen.ship_revision;
+        for (entity, _, _) in &dots {
+            commands.entity(entity).despawn();
+        }
+        let (Some(route), Some(data)) = (screen.ship.as_ref(), data.as_ref()) else {
+            return;
+        };
+        let (sheet, size) = (&data.elements.0, data.elements.1.as_vec2());
+        // Quarters of the sheet as pixel rects, (u0, v0, u1, v1) with v down the image.
+        let quarter = |u0: f32, v0: f32| {
+            Rect::new(
+                u0 * size.x,
+                v0 * size.y,
+                (u0 + 0.5) * size.x,
+                (v0 + 0.5) * size.y,
+            )
+        };
+        commands.entity(root).with_children(|ship| {
+            for (i, &at) in route.dots.iter().enumerate() {
+                ship.spawn(route_sprite(
+                    ShipDot(Some(i)),
+                    at,
+                    DOT_HALF,
+                    sheet,
+                    quarter(0.0, 0.5),
+                ));
+            }
+            ship.spawn(route_sprite(
+                ShipDot(None),
+                route.departure,
+                DOCK_HALF,
+                sheet,
+                quarter(0.5, 0.0),
+            ));
+            ship.spawn(route_sprite(
+                ShipDot(None),
+                route.arrival,
+                DOCK_HALF,
+                sheet,
+                quarter(0.0, 0.0),
+            ));
+        });
+        // The new sprites appear next frame, lit by then.
+        return;
+    }
+    let Some(route) = screen.ship.as_ref() else {
+        return;
+    };
+    let lit = lit_dots(route.dots.len(), screen.displayed);
+    for (_, dot, mut vis) in &mut dots {
+        let shown = dot.0.is_none_or(|i| i < lit);
+        vis.set_if_neq(if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+}
+
+/// One route sprite centred at `at` in the area's unit square, y up.
+fn route_sprite(
+    dot: ShipDot,
+    at: [f32; 2],
+    half: Vec2,
+    sheet: &Handle<Image>,
+    rect: Rect,
+) -> impl Bundle {
+    (
+        dot,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(100.0 * (at[0] - half.x)),
+            bottom: Val::Percent(100.0 * (at[1] - half.y)),
+            width: Val::Percent(200.0 * half.x),
+            height: Val::Percent(200.0 * half.y),
+            ..default()
+        },
+        ImageNode {
+            image: sheet.clone(),
+            image_mode: NodeImageMode::Stretch,
+            rect: Some(rect),
+            ..default()
+        },
+        Visibility::Hidden,
+    )
 }
 
 /// Per frame: observe the lifecycle edges, run the raise and clear rules, resolve the backdrop and
@@ -446,7 +922,12 @@ fn drive_loading_screen(
     screens: Option<Res<LoadingScreenCatalogRes>>,
     mut assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
-    mut root: Query<&mut Visibility, (With<LoadingRoot>, Without<LoadingBackdrop>)>,
+    // The root, then the plain and ship containers.
+    mut covers: (
+        Query<&mut Visibility, (With<LoadingRoot>, Without<LoadingBackdrop>)>,
+        Query<&mut Visibility, (With<LoadingPlain>, Without<LoadingShip>, NotCoverPart)>,
+        Query<&mut Visibility, (With<LoadingShip>, Without<LoadingPlain>, NotCoverPart)>,
+    ),
     mut backdrop: Query<(&mut ImageNode, &mut Visibility), With<LoadingBackdrop>>,
     mut nodes: ParamSet<(
         Query<&mut Node, With<LoadingArea>>,
@@ -477,6 +958,7 @@ fn drive_loading_screen(
         MessageReader<crate::net::CharacterLoginFailedMessage>,
         Option<Res<crate::net::PendingTransfer>>,
         Option<Res<crate::char_select::Roster>>,
+        MessageReader<crate::net::TransferPendingMessage>,
     ),
 ) {
     let (
@@ -489,6 +971,7 @@ fn drive_loading_screen(
         mut refusals,
         transfer,
         roster,
+        mut transfer_packets,
     ) = edges;
     let (progress, focus) = (&stream.0, &stream.1);
     let now = time.elapsed_secs();
@@ -508,15 +991,19 @@ fn drive_loading_screen(
         screen.tip_edge = Some(TipEdge::Pick);
     }
     // `SMSG_TRANSFER_PENDING`: cover now, before the server unloads us, as both arms of the
-    // reference do (`0x4014ef`, `0x401509`). Deviation: a transport crossing shows the map's art,
-    // not the ship-route background the reference builds for it (`0x40adef`).
-    if let Some(t) = transfer.as_ref().filter(|t| t.is_changed()) {
-        match &t.0 {
-            Some(info) => screen.raise("transfer pending", true, Some(info.map_id), now),
-            // Cleared with no snap in flight is `SMSG_TRANSFER_ABORTED` (a worldport lands below
-            // this frame): stop waiting, and the resident old world clears the screen.
-            None => screen.awaiting_snap = false,
-        }
+    // reference do (`0x4014ef`, `0x401509`); a transport's arm draws its route if it can. Raised
+    // on the packet's message: the worldport that follows in the same drain has already taken
+    // the latch.
+    if let Some(crate::net::TransferPendingMessage(info)) = transfer_packets.read().last() {
+        screen.raise_for_transfer(info.map_id, now);
+    }
+    // The latch cleared with no snap in flight is `SMSG_TRANSFER_ABORTED` (a worldport lands below
+    // this frame): stop waiting, and the resident old world clears the screen.
+    if transfer
+        .as_ref()
+        .is_some_and(|t| t.is_changed() && t.0.is_none())
+    {
+        screen.awaiting_snap = false;
     }
     // A snap never re-raises a live screen ([`LoadingScreen::far_snap`]).
     for w in worldports.read() {
@@ -629,7 +1116,7 @@ fn drive_loading_screen(
     }
 
     // --- Visibility: under blackout only the root's black shows. ---
-    if let Ok(mut vis) = root.single_mut() {
+    if let Ok(mut vis) = covers.0.single_mut() {
         *vis = if screen.active {
             Visibility::Visible
         } else {
@@ -650,6 +1137,19 @@ fn drive_loading_screen(
         if *vis != content_vis {
             *vis = content_vis;
         }
+    }
+    // The route, when one drew, replaces the art, tip and bar (`0x40a270` → `0x409010`).
+    let ship_shown = screen.active && !screen.blackout && screen.ship.is_some();
+    let (plain_vis, ship_vis) = if ship_shown {
+        (Visibility::Hidden, Visibility::Inherited)
+    } else {
+        (Visibility::Inherited, Visibility::Hidden)
+    };
+    if let Ok(mut vis) = covers.1.single_mut() {
+        vis.set_if_neq(plain_vis);
+    }
+    if let Ok(mut vis) = covers.2.single_mut() {
+        vis.set_if_neq(ship_vis);
     }
     if !screen.active || screen.blackout {
         return;
@@ -854,6 +1354,64 @@ mod tests {
         screen.dismiss();
         assert_eq!(screen.tip_edge, Some(TipEdge::Clear), "the dismiss does");
         assert!(!screen.active);
+    }
+
+    fn route() -> ShipRoute {
+        ShipRoute {
+            departure: [0.8, 0.4],
+            arrival: [0.3, 0.3],
+            dots: vec![[0.8, 0.4], [0.5, 0.5], [0.3, 0.3]],
+        }
+    }
+
+    /// `0x40ad50`: a drawn route leaves the screen no map; a failed one clears any route and shows
+    /// the destination's art; riding nothing keeps whatever is up.
+    #[test]
+    fn a_transport_raise_draws_its_route_or_falls_back_to_the_destinations_art() {
+        let mut screen = LoadingScreen {
+            ship_pick: Some(ShipPick::Route(route())),
+            ..LoadingScreen::default()
+        };
+        screen.raise_for_transfer(0, 0.0);
+        assert!(screen.active && screen.awaiting_snap);
+        assert_eq!(screen.map, None, "the route replaces the art");
+        assert_eq!(screen.ship, Some(route()));
+        assert!(screen.ship_pick.is_none(), "the raise takes its pick");
+
+        // A plain raise onto the live screen keeps the route but points the map.
+        screen.raise_for_transfer(1, 0.0);
+        assert_eq!(screen.ship, Some(route()));
+        assert_eq!(screen.map, Some(1));
+        screen.ship_pick = Some(ShipPick::NotAboard);
+        screen.raise_for_transfer(1, 0.0);
+        assert_eq!(screen.ship, Some(route()), "riding nothing keeps it too");
+
+        let revision = screen.ship_revision;
+        screen.ship_pick = Some(ShipPick::Failed);
+        screen.raise_for_transfer(0, 0.0);
+        assert_eq!(screen.ship, None, "a failed route clears the one up");
+        assert_eq!(screen.map, Some(0));
+        assert_ne!(screen.ship_revision, revision, "and its dots are rebuilt");
+
+        screen.ship_pick = Some(ShipPick::Route(route()));
+        screen.raise_for_transfer(0, 0.0);
+        screen.dismiss();
+        assert_eq!(screen.ship, None, "the dismiss clears the route");
+    }
+
+    /// `0x40ae30`: no snap to wait for; a failed route keeps the screen's last map.
+    #[test]
+    fn a_ship_leg_raise_waits_for_no_snap_and_keeps_the_last_map_when_its_route_fails() {
+        let mut screen = LoadingScreen::default();
+        screen.raise("world entry", true, Some(0), 0.0);
+        screen.dismiss();
+        screen.raise_for_ship_leg(None, 1.0);
+        assert!(screen.active && !screen.awaiting_snap);
+        assert_eq!(screen.map, Some(0), "the map id the last raise left");
+        assert_eq!(screen.ship, None);
+        screen.dismiss();
+        screen.raise_for_ship_leg(Some(route()), 2.0);
+        assert_eq!((screen.map, screen.ship.clone()), (None, Some(route())));
     }
 
     /// The reference's raises store the map id with no guard.

@@ -57,6 +57,19 @@ impl TaxiPathNodes {
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty()
     }
+
+    /// A catalog of hand-built nodes, grouped and sorted as the loader does.
+    #[cfg(test)]
+    pub(crate) fn from_nodes(nodes: impl IntoIterator<Item = TaxiPathNode>) -> Self {
+        let mut paths: HashMap<u32, Vec<TaxiPathNode>> = HashMap::new();
+        for n in nodes {
+            paths.entry(n.path_id).or_default().push(n);
+        }
+        for nodes in paths.values_mut() {
+            nodes.sort_by_key(|n| n.node_index);
+        }
+        Self { paths }
+    }
 }
 
 pub(crate) fn taxi_path_node_schema() -> Schema {

@@ -44,6 +44,8 @@ use equipment::{
     attach_held_items, resolve_corpse_equipment, resolve_equipment, warn_unsettled_equipment,
 };
 
+/// GameObject art kits, hung on the object's own attachment points.
+mod art_kit;
 /// Item and enchant glows, hung on the item's own attachment points.
 mod item_glow;
 pub(crate) use item_glow::ItemGlowAttached;
@@ -487,6 +489,7 @@ fn evict_display_caches(
     gos: Option<ResMut<GameObjects>>,
     items: Option<ResMut<equipment::ItemDisplays>>,
     glows: Option<ResMut<ItemGlows>>,
+    art_kits: Option<ResMut<art_kit::ArtKits>>,
     mut bones: ResMut<corpse::BonesModels>,
 ) {
     if changes.is_empty() {
@@ -494,12 +497,14 @@ fn evict_display_caches(
     }
     changes.clear();
     info!(
-        "display caches evicted: {} creature / {} go / {} item / {} fx / {} glow models, {} skins",
+        "display caches evicted: {} creature / {} go / {} item / {} fx / {} glow / {} art kit \
+         models, {} skins",
         creatures.as_ref().map_or(0, |c| c.models.len()),
         gos.as_ref().map_or(0, |g| g.models.len()),
         items.as_ref().map_or(0, |i| i.models.len()),
         fx.models.len(),
         glows.as_ref().map_or(0, |g| g.models.len()),
+        art_kits.as_ref().map_or(0, |k| k.models.len()),
         composites.done.len(),
     );
     composites.clear();
@@ -515,6 +520,9 @@ fn evict_display_caches(
     }
     if let Some(mut g) = glows {
         g.models.clear();
+    }
+    if let Some(mut k) = art_kits {
+        k.models.clear();
     }
     bones.0.clear();
 }
@@ -739,7 +747,8 @@ impl Plugin for EntitiesPlugin {
                 spawn_wmo_gameobject_props,
                 attach_held_items,
                 // Spell-kit effect models and held-item glows, after the item roots exist.
-                (attach_item_glows, attach_spell_fx),
+                // A GameObject's art kit models, on its built body.
+                (attach_item_glows, attach_spell_fx, art_kit::apply_art_kits),
                 (
                     attach_missile_models,
                     attach_ground_fx_models,
@@ -890,6 +899,13 @@ pub(crate) fn setup_entities(
             });
         }
         Err(e) => warn!("gameobject catalog unavailable, GameObjects stay cubes: {e:#}"),
+    }
+    match benilla_formats::load_gameobject_art_kits(&mut chain) {
+        Ok(table) => {
+            info!("gameobject art kits: {} rows", table.len());
+            commands.insert_resource(art_kit::ArtKits::new(table));
+        }
+        Err(e) => warn!("gameobject art kits unavailable, no GameObject wears its kit: {e:#}"),
     }
     match benilla_formats::load_lock_catalog(&mut chain) {
         Ok(catalog) => {
@@ -1069,7 +1085,8 @@ fn update_display_models(
     mut gameobjects: Option<ResMut<GameObjects>>,
     mut held: Option<ResMut<ItemDisplays>>,
     mut spell_fx: Option<ResMut<spell_fx::SpellFx>>,
-    mut glows: Option<ResMut<ItemGlows>>,
+    // Nested for Bevy's 16-param system limit.
+    (mut glows, mut art_kits): (Option<ResMut<ItemGlows>>, Option<ResMut<art_kit::ArtKits>>),
     model_assets: (Res<Assets<M2Model>>, Res<Assets<WmoModel>>),
     mut forms: ResMut<benilla_world::model_forms::ModelForms>,
     asset_server: Res<AssetServer>,
@@ -1295,6 +1312,26 @@ fn update_display_models(
                         &mut mats,
                         &mut uv,
                         false, // gameobject: effects, unit lighting, no collider
+                    );
+                }
+            }
+        }
+    }
+
+    // GameObject art kit models, path-keyed like the glows.
+    if art_kits.as_deref().is_some_and(|k| unbuilt(&k.models)) {
+        if let Some(kits) = art_kits.as_deref_mut() {
+            for dm in kits.models.values_mut() {
+                if dm.parts.is_none() {
+                    build_parts(
+                        dm,
+                        m2s,
+                        wmos,
+                        &mut forms,
+                        &asset_server,
+                        &mut mats,
+                        &mut uv,
+                        false, // gameobject: hung on the object as an effect is, no collider
                     );
                 }
             }

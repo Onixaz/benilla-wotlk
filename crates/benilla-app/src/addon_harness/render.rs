@@ -117,7 +117,8 @@ pub(super) fn measure_render(
 ) -> (RenderReport, Vec<Painted>) {
     // A real action with an icon on slot 1: cooldown-count addons write text only while the
     // button's icon is visible. Seated here, after every other column is read, so it perturbs none.
-    script.set_action(
+    crate::dev::set_fixture_action(
+        script,
         1,
         Some(benilla_ui::script::ActionSlot {
             texture: Some("Interface\\Icons\\Spell_Nature_Lightning".into()),
