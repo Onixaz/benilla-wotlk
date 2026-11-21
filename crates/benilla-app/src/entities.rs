@@ -44,8 +44,9 @@ use equipment::{
     attach_held_items, resolve_corpse_equipment, resolve_equipment, warn_unsettled_equipment,
 };
 
-/// Item and enchant glows, hung on the item's own attachment points.
+/// GameObject art kits, hung on the object's own attachment points.
 mod art_kit;
+/// Item and enchant glows, hung on the item's own attachment points.
 mod item_glow;
 pub(crate) use item_glow::ItemGlowAttached;
 use item_glow::{attach_item_glows, ItemGlows};

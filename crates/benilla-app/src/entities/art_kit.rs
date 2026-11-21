@@ -8,6 +8,10 @@
 //! there, as its attach returns on the lookup's miss (`0x831630`). Here the first application waits
 //! for the built visual, and a rebuild clears [`AppliedArtKit`], so the new body takes the kit again.
 //!
+//! Deviations: only the models the previous kit hung come off, not every child on ids 0 to 3 (a
+//! spell visual hung there stays); and a row's models hang together once each has loaded or
+//! failed to, where the reference attaches each as it creates it, skipping one that fails.
+//!
 //! A row's texture variations, which the reference binds to texture types 11 to 13 of the object's
 //! model, are not applied: no 12340 row names one, and they would need a display per art kit.
 
@@ -109,10 +113,12 @@ pub(super) fn apply_art_kits(
             Option<&BoneAttach>,
             Option<&mut benilla_world::rig_anim::RigPose>,
         ),
+        // A new or rebuilt body (a rebuild removes and re-adds `VisualAttached`), a pending one,
+        // or moved fields: never every unit every frame.
         (
             With<VisualAttached>,
             Or<(
-                Without<AppliedArtKit>,
+                Added<VisualAttached>,
                 With<ArtKitPending>,
                 Changed<ObjectStore>,
             )>,
@@ -143,10 +149,19 @@ pub(super) fn apply_art_kits(
         if applied.is_some_and(|a| a.kit == kit) && !pending {
             continue; // another field moved
         }
-        // The old kit comes off attachment ids 0 to 3 before the new one goes on.
+        // The old kit comes off before the new one goes on (the module's first deviation).
         for &root in applied.map_or(&[][..], |a| &a.roots[..]) {
             commands.entity(root).try_despawn();
         }
+        let pend = |commands: &mut Commands| {
+            commands.entity(object).insert((
+                AppliedArtKit {
+                    kit,
+                    roots: Vec::new(),
+                },
+                ArtKitPending,
+            ));
+        };
         let settle = |commands: &mut Commands, roots: Vec<Entity>| {
             commands
                 .entity(object)
@@ -161,31 +176,30 @@ pub(super) fn apply_art_kits(
             debug!("art kit {kit} names texture variations, which are not applied");
         }
         let Some(host) = net.display_id.and_then(|d| gameobjects.models.get(&d)) else {
-            settle(&mut commands, Vec::new()); // the display entry was evicted: no points
+            pend(&mut commands); // the display entry was evicted: retry, as item glows do
             continue;
         };
         kits.ensure_models(kit, &asset_server);
         let Some(row) = kits.table.get(kit) else {
             continue; // unreachable: looked up above
         };
-        // All or nothing, so a row's models hang together; an emitter-only model's empty list is
-        // `Some`.
-        let ready = row
-            .attached()
-            .all(|(_, p)| kits.models.get(p).is_some_and(|dm| dm.parts.is_some()));
+        // A row's models hang together once each is built or has failed to load (the module's
+        // second deviation); an emitter-only model's empty list is `Some`.
+        let ready = row.attached().all(|(_, p)| {
+            kits.models.get(p).is_some_and(|dm| {
+                dm.parts.is_some()
+                    || matches!(&dm.handle, ModelHandle::M2(h)
+                        if asset_server.load_state(h.id()).is_failed())
+            })
+        });
         if !ready {
-            commands.entity(object).insert((
-                AppliedArtKit {
-                    kit,
-                    roots: Vec::new(),
-                },
-                ArtKitPending,
-            ));
+            pend(&mut commands);
             continue;
         }
         let mut roots = Vec::new();
         for (id, path) in row.attached() {
-            let Some(dm) = kits.models.get(path) else {
+            // A model that failed to load hangs nothing, as the reference skips it.
+            let Some(dm) = kits.models.get(path).filter(|dm| dm.parts.is_some()) else {
                 continue;
             };
             let Some((parent, offset)) =
