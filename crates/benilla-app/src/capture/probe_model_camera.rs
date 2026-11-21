@@ -20,8 +20,6 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
-use benilla_ui::script::UiScript;
-
 use super::probes::ProbeClock;
 use crate::net::SelfPlayer;
 use crate::ui_models::{TilePerspectiveCamera, TileRoot, UiModelTiles};
@@ -56,7 +54,11 @@ pub(crate) struct ProbeModelCameraPlugin;
 impl Plugin for ProbeModelCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ModelCameraProbe>()
-            .add_systems(Update, model_camera_probe);
+            .init_resource::<super::probes::ProbeChunks>()
+            .add_systems(
+                Update,
+                (model_camera_probe, super::probes::run_probe_chunks).chain(),
+            );
     }
 }
 
@@ -171,7 +173,7 @@ fn model_camera_probe(
     mut commands: Commands,
     time: ProbeClock,
     mut probe: ResMut<ModelCameraProbe>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut chunks: ResMut<super::probes::ProbeChunks>,
     tiles: Res<UiModelTiles>,
     self_player: Query<(), With<SelfPlayer>>,
     cams: Query<
@@ -184,18 +186,17 @@ fn model_camera_probe(
     if self_player.is_empty() {
         return; // not in-world yet
     }
-    let Some(script) = script else { return };
     let now = time.elapsed_secs_f64();
 
     match probe.phase {
         Phase::Start => {
             info!("PROBE_MODEL_CAMERA: building a {PANE_W}x{PANE_H} <Model> on {FILE}, camera 0");
-            if let Err(e) = script.run(BUILD) {
+            chunks.run(BUILD, |world, e| {
                 error!("PROBE_MODEL_CAMERA: FAIL building the pane: {e}");
+                let mut probe = world.resource_mut::<ModelCameraProbe>();
                 probe.fails += 1;
                 probe.phase = Phase::Done;
-                return;
-            }
+            });
             probe.phase = Phase::Await { since: now };
         }
         Phase::Await { since } => {
@@ -282,12 +283,12 @@ fn model_camera_probe(
             }
             match leg.next() {
                 Some(next) => {
-                    if let Err(e) = script.run(next.setup()) {
+                    chunks.run(next.setup(), move |world, e| {
                         error!("PROBE_MODEL_CAMERA: FAIL setting up {next:?}: {e}");
+                        let mut probe = world.resource_mut::<ModelCameraProbe>();
                         probe.fails += 1;
                         probe.phase = Phase::Done;
-                        return;
-                    }
+                    });
                     probe.phase = Phase::Settle {
                         frames: 0,
                         leg: next,

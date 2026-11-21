@@ -73,6 +73,73 @@ pub(crate) use stall::StallPlugin;
 /// The clock every probe schedule reads: real time, as `Time<Virtual>` is paced and pausable.
 pub(crate) type ProbeClock<'w> = Res<'w, Time<bevy::time::Real>>;
 
+/// [`ProbeClock`]'s seconds, for an exclusive probe.
+pub(crate) fn probe_secs(world: &World) -> f32 {
+    world.resource::<Time<bevy::time::Real>>().elapsed_secs()
+}
+
+/// What a queued chunk's failure does to its probe.
+type ChunkFailed = Box<dyn FnOnce(&mut bevy::prelude::World, mlua::Error) + Send + Sync>;
+
+/// The chunks a probe queued this frame, run with the `World` lent by [`run_probe_chunks`] right
+/// after it, each with what its failure does.
+#[derive(bevy::prelude::Resource, Default)]
+pub(crate) struct ProbeChunks(Vec<(String, ChunkFailed)>);
+
+impl ProbeChunks {
+    /// Queue `chunk`; `failed` runs on its error.
+    pub(crate) fn run(
+        &mut self,
+        chunk: impl Into<String>,
+        failed: impl FnOnce(&mut bevy::prelude::World, mlua::Error) + Send + Sync + 'static,
+    ) {
+        self.0.push((chunk.into(), Box::new(failed)));
+    }
+}
+
+/// Run the queued [`ProbeChunks`] in order, each with the `World` lent; with no VM they drop.
+pub(crate) fn run_probe_chunks(world: &mut bevy::prelude::World) {
+    let Some(mut chunks) = world.get_resource_mut::<ProbeChunks>() else {
+        return;
+    };
+    for (chunk, failed) in std::mem::take(&mut chunks.0) {
+        if let Some(Err(e)) = with_vm(world, |s| s.map(|s| s.run(&chunk))) {
+            failed(world, e);
+        }
+    }
+}
+
+/// The stock `LootFrame`'s shown flag, read with the `World` lent before the loot probes run:
+/// `None` with no VM, `Some(None)` when the frame cannot be read.
+#[derive(bevy::prelude::Resource, Default)]
+pub(crate) struct LootFrameShown(pub(crate) Option<Option<bool>>);
+
+/// Read [`LootFrameShown`] for this frame.
+pub(crate) fn read_loot_frame(world: &mut bevy::prelude::World) {
+    let shown = with_vm(world, |s| {
+        s.map(|s| {
+            s.eval::<bool>("return LootFrame:IsShown() and 1 or nil")
+                .ok()
+        })
+    });
+    world.insert_resource(LootFrameShown(shown));
+}
+
+/// Run `f` on the VM (`None` without one) with the `World` lent to every verb it reaches: an
+/// exclusive probe's calls into Lua.
+pub(crate) fn with_vm<R>(
+    world: &mut bevy::prelude::World,
+    f: impl FnOnce(Option<&mut benilla_ui::script::UiScript>) -> R,
+) -> R {
+    match world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .map(benilla_ui::script::UiScript::share)
+    {
+        Some(mut s) => crate::ui_script::safe_world::lend_to(world, &mut s, |s| f(Some(s))),
+        None => f(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// No probe system under `capture/` reads the virtual clock, except the [`ALLOWED`] entries.

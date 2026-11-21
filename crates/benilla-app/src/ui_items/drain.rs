@@ -10,6 +10,7 @@ use benilla_ui::script::{item_lock_args, UiScript, EQUIPMENT_BAG};
 
 use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
+#[cfg(test)]
 use crate::pending_item_ops::PendingItemOps;
 
 use super::watch::LockStep;
