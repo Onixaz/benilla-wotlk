@@ -1638,7 +1638,8 @@ pub(crate) mod schedule_tests {
     /// something this frame that nothing can re-spend.
     #[rustfmt::skip]
     const CONSUMES: &[&str] = &[
-        "fire_event(",
+        // Split so the fired-event walker reads no event name off this list.
+        concat!("fire_event", "("),
         "fire_lock_edge_now(",
         "lock_moved_now(",
         "mem::take(",

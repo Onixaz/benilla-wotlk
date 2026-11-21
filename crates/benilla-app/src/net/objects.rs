@@ -803,8 +803,10 @@ fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
         item_disable_watch(&mut sc, guid);
         sc.ui
             .world(move |world| crate::ui_item_text::item_disabled(world, guid));
-        // The item leaves our trade offer (`0x70b0df`).
-        sc.ui.write(move |script| script.trade_item_destroyed(guid));
+        // An item leaves our trade offer (`0x70b0df`).
+        if benilla_protocol::guid::is_item(guid) {
+            sc.ui.write(move |script| script.trade_item_destroyed(guid));
+        }
         // The item's lock goes with its object.
         sc.ui.world(move |world| {
             if let Some(mut locks) =
