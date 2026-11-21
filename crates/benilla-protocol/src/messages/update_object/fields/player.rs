@@ -686,6 +686,12 @@ impl ObjectFields {
         self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
             .map_or(0, |b| i32::from((b >> 8) as u8))
     }
+    /// `GAMEOBJECT_BYTES_1` byte 2, the art kit: a signed byte, so `0xff` is `-1` and names no
+    /// `GameObjectArtKit` row; absent is 0.
+    pub fn gameobject_art_kit(&self) -> i8 {
+        self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
+            .map_or(0, |b| (b >> 16) as u8 as i8)
+    }
     /// `GAMEOBJECT_FLAGS`: `0x1` in use, `0x4` needs the quest activate bit, `0x10` no interact.
     pub fn gameobject_flags(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_FLAGS).unwrap_or(0)

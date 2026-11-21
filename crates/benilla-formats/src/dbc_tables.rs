@@ -97,6 +97,7 @@ tables! {
         "FileData" => movie::file_data_schema(),
         "FootprintTextures" => footsteps::footprint_textures_schema(),
         "FootstepTerrainLookup" => footsteps::footstep_terrain_lookup_schema(),
+        "GameObjectArtKit" => gameobject_art_kit::schema(),
         "GameObjectDisplayInfo" => gameobjects::gameobject_display_info_schema(),
         "GameTables" => game_tables::game_tables_schema(),
         "GameTips" => game_tips::schema(&LAYOUTS.game_tips),
