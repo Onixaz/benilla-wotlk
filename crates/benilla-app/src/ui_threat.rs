@@ -479,7 +479,7 @@ mod tests {
                         roles: 0,
                     });
             }
-            let mut script = UiScript::new().expect("a VM");
+            let script = UiScript::new().expect("a VM");
             script.register_cvars([("threatWarning", "2")]);
             world.insert_non_send_resource(script);
             world.resource_mut::<Threat>().tutorial = true;
