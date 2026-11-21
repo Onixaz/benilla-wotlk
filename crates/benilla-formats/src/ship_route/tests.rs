@@ -195,6 +195,7 @@ fn real_taxi_path_node_file_runs_path_then_index() {
         .expect("parse TaxiPathNode.dbc");
     let order: Vec<(u32, u32)> = rs
         .records()
+        .iter()
         .map(|r| {
             (
                 crate::dbc::u32_at(r, 1).expect("PathID"),
