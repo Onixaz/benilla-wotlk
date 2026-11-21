@@ -1020,7 +1020,7 @@ mod swap_tests {
         let shown = app
             .world_mut()
             .non_send_resource_mut::<UiScript>()
-            .take_ui_errors();
+            .take_shown_keys();
         assert_eq!(shown, ["ERR_GUILD_PERMISSIONS"]);
     }
 }

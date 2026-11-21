@@ -7589,7 +7589,7 @@ fn the_equipment_managers_in_flight_slots_clear_at_their_unlock() {
     assert!(inside, "the inventory slot clears inside the clear's call");
 }
 
-/// A refusing verb's line fires inside its call with the `World` lent (`0x5216f0` -> `0x52188a`, `0x521863`), ahead of the chunk's marker, and the frame's feed shows it no second time: only a chat line reaches the engine's queue (#1306).
+/// A refusing verb's line fires inside its call with the `World` lent (`0x5216f0` -> `0x52188a`, `0x521863`), ahead of the chunk's marker, and the frame's feed shows it no second time (#1306).
 #[test]
 fn a_refusal_line_fires_in_its_call_and_never_from_the_feed() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -7607,7 +7607,7 @@ fn a_refusal_line_fires_in_its_call_and_never_from_the_feed() {
     })
     .expect("a VM");
     assert_eq!(log, ["UI_ERROR_MESSAGE", "after"]);
-    // The feed shows what the engine's queue holds (`take_ui_errors`): a line it held would fire again here.
+    // A frame's feed would fire a line again here, were one queued for it.
     rig.packets(Vec::new(), 2);
     let after = super::live::with_live_world(rig.app.world_mut(), |s| {
         s.eval::<Vec<String>>("return Log").unwrap()
@@ -7618,6 +7618,38 @@ fn a_refusal_line_fires_in_its_call_and_never_from_the_feed() {
         ["UI_ERROR_MESSAGE", "after"],
         "the feed shows the line no second time"
     );
+}
+
+/// A chat-kind refusal adds its system line inside the verb's call with the `World` lent: the display adds it on the row's chat type (`0x5216f0` -> `0x52183c`), which records it and fires its event in the call (`0x509dd0`: `0x50a8a5`, `0x50a8d5` -> `0x4fdd5c`). `RemoveFriend` of an unlisted name (`0x6b7c69` -> `0x6b6f3c`) logs `CHAT_MSG_SYSTEM` with its text ahead of the chunk's marker, and no later frame adds it again (#1306).
+#[test]
+fn a_chat_refusal_adds_its_system_line_in_its_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .expect("a VM")
+    };
+    let text = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "Log = {} local f = CreateFrame('Frame') f:RegisterEvent('CHAT_MSG_SYSTEM') \
+             f:SetScript('OnEvent', function(_, e, t) Log[#Log + 1] = e .. ':' .. t end) \
+             RemoveFriend('Nobodyhere') Log[#Log + 1] = 'after'",
+        )
+        .expect("the chunk runs");
+        s.eval::<String>("return ERR_FRIEND_NOT_FOUND").unwrap()
+    })
+    .expect("a VM");
+    assert!(
+        !text.is_empty(),
+        "the install's GlobalStrings name the line"
+    );
+    let expected = [format!("CHAT_MSG_SYSTEM:{text}"), "after".to_string()];
+    assert_eq!(read(&mut rig), expected, "the line inside the verb's call");
+    rig.packets(Vec::new(), 2);
+    assert_eq!(read(&mut rig), expected, "no later frame adds it again");
 }
 
 /// A verb's refusal line fires inside its call with the `World` lent, ahead of the event a packet's handler fires in its turn on the next frame (#1306): the display fires the line in the verb's call (`0x5216f0` -> `0x52188a`), the learn's handler fires its own in the packet's turn. A line queued for the feed would show in the handler's frame, after its event.

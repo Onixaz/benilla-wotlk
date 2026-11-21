@@ -11,13 +11,6 @@ use super::Model;
 /// Action slot 133 in Lua (wire 132), the first of three pages of four element slots.
 pub const FIRST_TOTEM_ACTION: u32 = 133;
 
-impl super::UiScript {
-    /// Drain the keyed refusals that carry one `%s`; the app shows each.
-    pub fn take_ui_errors_s(&mut self) -> Vec<(&'static str, String)> {
-        drain_field!(self, ui_errors_s)
-    }
-}
-
 /// The tool row a totem action asks for (`0x5a7ae0`), for Lua actions 133..144.
 pub(crate) fn action_category(action: u32) -> Option<u32> {
     (FIRST_TOTEM_ACTION..FIRST_TOTEM_ACTION + 12)

@@ -1,9 +1,10 @@
-//! [`feed_actions`] drains the app's generic UI error queues, which show a frame late (#1354), and
-//! the sound and chat halves of the lines the VM's verbs showed in their call.
+//! [`feed_actions`] drains the app's generic UI error queues, which show a frame late (#1354), the
+//! sound half of the lines the VM's verbs showed in their call, and the chat lines an app caller
+//! showed through the VM in hand.
 
 use bevy::prelude::*;
 
-use super::{show_messages, ui_error_text, MessageSink, Shown, UiError, UiErrorKeys, UiErrorTexts};
+use super::{show_messages, ui_error_text, MessageSink, Shown, UiErrorKeys, UiErrorTexts};
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_actions(
@@ -50,30 +51,6 @@ pub(super) fn feed_actions(
             sink.sounds.push(record);
         }
     }
-
-    // The engine's chat-kind lines: its verbs fire their error and info lines inside the call
-    // (`0x5216f0`) and hand a chat line whole to the app, as the display adds a system line.
-    let engine_keys = script.take_ui_errors();
-    let engine_lines: Vec<Shown> = engine_keys
-        .into_iter()
-        .filter_map(|key| {
-            let e = UiError::key(key);
-            ui_error_text(&e, &|k| script.lua().globals().get::<String>(k).ok())
-                .map(|t| Shown::keyed(e.key, t))
-        })
-        .collect();
-    show_messages(&mut script, &mut sink, "ui_action", engine_lines);
-    // The same with one `%s` (`ERR_PETITION_SIGNED_S`).
-    let engine_s: Vec<Shown> = script
-        .take_ui_errors_s()
-        .into_iter()
-        .filter_map(|(key, arg)| {
-            let e = UiError::s(key, arg);
-            ui_error_text(&e, &|k| script.lua().globals().get::<String>(k).ok())
-                .map(|t| Shown::keyed(e.key, t))
-        })
-        .collect();
-    show_messages(&mut script, &mut sink, "ui_action", engine_s);
 
     // `SecureCmdOptionParse`'s unknown condition names (`0x5f011a`, message 574).
     let unknown = script.take_unknown_macro_options();

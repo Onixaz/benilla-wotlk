@@ -570,9 +570,6 @@ pub(crate) struct Model {
     /// `(action id, packed)` per stand-in slot a verb wrote with no view lent, 0 clearing it.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) action_sets: Vec<(u32, u32)>,
-    /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
-    /// (the reference's error display), each a literal from its table (stride `0x14`).
-    pub(crate) ui_errors: Vec<&'static str>,
     /// Catalog keys of lines a verb displayed inline, whose sound the app plays.
     pub(crate) message_sounds: Vec<&'static str>,
 
@@ -686,8 +683,6 @@ pub(crate) struct Model {
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// `s_vehicleAimNormPower`, 0..1.
     pub(crate) vehicle_aim_power: f32,
-    /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
-    pub(crate) ui_errors_s: Vec<(&'static str, String)>,
     /// Chat-kind lines the app resolved and showed through [`super::UiScript::show_text`], their
     /// key and text, which the app adds to the chat log.
     pub(crate) chat_lines: Vec<(&'static str, String)>,
@@ -1624,7 +1619,6 @@ impl Model {
             action_bar_page: 0,
             #[cfg(any(test, feature = "fixtures"))]
             action_sets: Vec::new(),
-            ui_errors: Vec::new(),
             message_sounds: Vec::new(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
@@ -1681,7 +1675,6 @@ impl Model {
             power_displays: Default::default(),
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
-            ui_errors_s: Vec::new(),
             chat_lines: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,

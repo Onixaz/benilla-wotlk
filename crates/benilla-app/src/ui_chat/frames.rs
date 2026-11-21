@@ -28,20 +28,54 @@ pub(crate) fn route(
     windows: &mut ChatWindows,
     event: &ChatEvent,
 ) {
+    // The VM's own globals, so the log line matches the window's.
+    let fire = record(windows, event, &|key| {
+        script.lua().globals().get::<String>(key).ok()
+    });
+    if let Some((name, args)) = fire {
+        script.fire_event(name, args);
+    }
+}
+
+/// [`route`]'s half without the VM: the next line id and the log's tee, then the event's name and
+/// arguments for the caller to fire; `None` for an event with no kind.
+fn record(
+    windows: &mut ChatWindows,
+    event: &ChatEvent,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
     let Some(kind) = event.kind else {
         warn!("chat: unroutable event (no kind): {:?}", event.text);
-        return;
+        return None;
     };
     windows.line_id = windows.line_id.wrapping_add(1);
-    let default_language = windows.default_language.clone();
-    // The VM's own globals, so the log line matches the window's.
-    if let Some(line) = compose(event, kind, &default_language, windows.line_id, &|key| {
-        script.lua().globals().get::<String>(key).ok()
-    }) {
+    if let Some(line) = compose(event, kind, &windows.default_language, windows.line_id, get) {
         windows.logs.0.record(line.as_bytes());
     }
-    let args = event.script_args_with_line(windows.line_id);
-    script.fire_event(event_name(kind), args);
+    Some((
+        event_name(kind),
+        event.script_args_with_line(windows.line_id),
+    ))
+}
+
+/// The message display's chat line added inside a verb's call (`0x52183c` -> `0x509dd0`): `text`
+/// on the catalog row's chat type, the client's own index (26 a skill line, 0 a system line, the
+/// catalog's only two), recorded as [`route`] records it; the event's name and arguments for the
+/// verb to fire. Both compose as their bare text, so no `GlobalStrings` lookup is needed.
+pub(crate) fn add_chat_line(
+    windows: &mut ChatWindows,
+    chat_type: u8,
+    text: &str,
+) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
+    let kind = match chat_type {
+        26 => ChatEventKind::Skill,
+        _ => ChatEventKind::System,
+    };
+    record(
+        windows,
+        &ChatEvent::text_only(kind, text.to_string()),
+        &|_| None,
+    )
 }
 
 /// `ChatFrame_MessageEventHandler`'s composition (`ChatFrame.lua:2753-2937`) for the line that

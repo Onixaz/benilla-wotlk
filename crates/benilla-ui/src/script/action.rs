@@ -157,12 +157,6 @@ impl super::UiScript {
         drain_field!(self, action_sets)
     }
 
-    /// Drain the GlobalStrings keys of engine-side refusals; the app fires `UI_ERROR_MESSAGE` for
-    /// each, where the reference calls its error display inline.
-    pub fn take_ui_errors(&mut self) -> Vec<&'static str> {
-        drain_field!(self, ui_errors)
-    }
-
     /// Drain the catalog keys of lines verbs displayed inline, for the app to sound.
     pub fn take_message_sounds(&mut self) -> Vec<&'static str> {
         drain_field!(self, message_sounds)

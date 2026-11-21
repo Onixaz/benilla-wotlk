@@ -125,6 +125,16 @@ pub trait LiveState {
         false
     }
 
+    /// Add `text` to the chat log on the catalog row's `chat_type` inside the call (`0x509dd0`): the
+    /// line recorded and its event's name and arguments handed back to fire; `None` with no chat log.
+    fn add_chat_line(
+        &mut self,
+        _chat_type: u8,
+        _text: &str,
+    ) -> Option<(&'static str, Vec<super::ScriptValue>)> {
+        None
+    }
+
     /// The world-state readout's admitted row count at the call (`0x548720`), `None` without one.
     fn world_state_ui_count(&self) -> Option<usize> {
         None
@@ -1496,6 +1506,8 @@ pub(crate) struct TestView {
     pub trainer_is_open: Option<bool>,
     /// The trainer zero legs run.
     pub trainer_zeroes: u32,
+    /// The chat lines the display added inside its calls, with their wire chat type.
+    pub chat_lines: Vec<(u8, String)>,
 }
 
 /// The gossip globals a test view lends.
@@ -1630,6 +1642,21 @@ impl LiveState for TestView {
     fn taxi_act(&mut self, act: super::TaxiAct) -> Option<super::TaxiOutcome> {
         self.taxi_acts.push(act);
         None
+    }
+
+    /// A system line fires `CHAT_MSG_SYSTEM`, a skill line `CHAT_MSG_SKILL`, with the text alone.
+    fn add_chat_line(
+        &mut self,
+        chat_type: u8,
+        text: &str,
+    ) -> Option<(&'static str, Vec<super::ScriptValue>)> {
+        self.chat_lines.push((chat_type, text.to_string()));
+        let event = if chat_type == 26 {
+            "CHAT_MSG_SKILL"
+        } else {
+            "CHAT_MSG_SYSTEM"
+        };
+        Some((event, vec![super::ScriptValue::Str(text.to_string())]))
     }
 
     fn trainer_buy(&mut self, spell_id: u32) -> bool {

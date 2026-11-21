@@ -1,6 +1,6 @@
 //! The message display the engine's verbs call inline ([`show_now`]), and the Lua globals whose
-//! whole body calls it. A line fires its event inside the verb's call; only its sound, and a chat
-//! line whole, go to the app ([`Model::message_sounds`], [`Model::ui_errors`]).
+//! whole body calls it. A line fires its event, or adds its chat line through the lent view, inside
+//! the verb's call; only its sound goes to the app ([`Model::message_sounds`]).
 //!
 //! `NotWhileDeadError`: no argument, no dead check, no return, and a silent catalog row. FrameXML
 //! decides when to call it (`UIParent.lua:663-666`, `ContainerFrame.lua:147` and `:190`).
@@ -10,7 +10,7 @@ use mlua::Lua;
 /// Catalog id `0x7e`'s GlobalStrings key ("You can't do that when you're dead.").
 const NOT_WHILE_DEAD_KEY: &str = "ERR_PLAYER_DEAD";
 
-/// The message display called inline (`0x5216f0`): an error or info line's sound goes to the app first, whatever the text (`0x52172d`, `0x521765`), and its event fires inside the caller's call only with a non-empty text (`0x521870` -> `0x52188a`, `0x521849` -> `0x521863`); a chat line goes to the app whole.
+/// The message display called inline (`0x5216f0`): an error or info line's sound goes to the app first, whatever the text (`0x52172d`, `0x521765`), and its event fires inside the caller's call only with a non-empty text (`0x521870` -> `0x52188a`, `0x521849` -> `0x521863`); a chat line is added to the chat log inside the call (`0x52183c`).
 pub(crate) fn show_now(lua: &Lua, key: &'static str) {
     show(lua, key, None);
 }
@@ -119,12 +119,12 @@ fn show(lua: &Lua, key: &'static str, arg: Option<String>) {
         crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
         crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
         crate::messages::MsgKind::Chat => {
-            let mut model = crate::script::model_mut_of(lua);
-            match arg {
-                Some(arg) => model.ui_errors_s.push((key, arg)),
-                None => model.ui_errors.push(key),
-            }
-            return;
+            let args: Vec<crate::strings::Arg<'_>> = arg
+                .as_deref()
+                .map(crate::strings::Arg::S)
+                .into_iter()
+                .collect();
+            return add_chat_line(lua, key, &args);
         }
     };
     if crate::messages::by_key(key).is_some() {
@@ -145,7 +145,21 @@ fn show(lua: &Lua, key: &'static str, arg: Option<String>) {
     super::tick::fire_event_into(lua, event, vec![super::ScriptValue::Str(text)]);
 }
 
-/// [`show_now`] for a line with one argument: a red or yellow line fills and fires inside the call; a chat line queues for the frame's sink (#1306).
+/// The display's chat arm (`0x521814` -> `0x52183c`): the filled text goes to the chat log on the
+/// row's chat type inside the call, where the add records it and fires its event (`0x509dd0`:
+/// `0x50a8a5`, `0x50a8d5`); the event fires here once the host lets go. A missing text adds nothing.
+fn add_chat_line(lua: &Lua, key: &'static str, args: &[crate::strings::Arg<'_>]) {
+    let Some(text) = lua.globals().get::<Option<String>>(key).ok().flatten() else {
+        return;
+    };
+    let text = crate::strings::fill(&text, args);
+    let chat_type = crate::messages::by_key(key).map_or(0, |r| r.chat_type);
+    if let Some(Some((event, args))) = super::write_live(|l| l.add_chat_line(chat_type, &text)) {
+        super::tick::fire_event_into(lua, event, args);
+    }
+}
+
+/// [`show_now`] for a line with one argument: a red or yellow line fills and fires inside the call, a chat line is added to the chat log inside it (#1306).
 pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionArg) {
     use super::PetitionArg;
     let text_arg = match arg {
@@ -156,14 +170,7 @@ pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionAr
     let event = match crate::messages::kind_of(key) {
         crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
         crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
-        crate::messages::MsgKind::Chat => {
-            let mut model = crate::script::model_mut_of(lua);
-            match arg {
-                PetitionArg::S(s) => model.ui_errors_s.push((key, s.clone())),
-                _ => model.ui_errors_s.push((key, String::new())),
-            }
-            return;
-        }
+        crate::messages::MsgKind::Chat => return add_chat_line(lua, key, &[text_arg]),
     };
     if crate::messages::by_key(key).is_some() {
         crate::script::model_mut_of(lua).message_sounds.push(key);
@@ -251,51 +258,78 @@ mod show_now_tests {
         );
     }
 
-    /// An info line fires `UI_INFO_MESSAGE` in the call; a chat line fires nothing in the VM and
-    /// goes to the app whole, its argument with it.
+    /// Logs the chat lines the display adds beside [`LOGGER`]'s.
+    const CHAT_LOGGER: &str = "local c = CreateFrame('Frame') \
+        c:RegisterEvent('CHAT_MSG_SYSTEM') c:RegisterEvent('CHAT_MSG_SKILL') \
+        c:SetScript('OnEvent', function(_, e, t) Log[#Log + 1] = e .. ':' .. t end)";
+
+    /// An info line fires `UI_INFO_MESSAGE` in the call; a chat line is added to the lent chat log
+    /// inside the call, its argument filled, and its event fires there (`0x52183c`).
     #[test]
-    fn an_info_line_fires_its_event_and_a_chat_line_goes_to_the_app() {
-        let mut s = crate::script::UiScript::new().unwrap();
+    fn an_info_line_fires_its_event_and_a_chat_line_is_added_in_the_call() {
+        let s = crate::script::UiScript::new().unwrap();
         s.run(LOGGER).unwrap();
-        s.lua()
-            .globals()
-            .set("ERR_FISH_ESCAPED", "Your fish got away!")
+        s.run(CHAT_LOGGER).unwrap();
+        let g = s.lua().globals();
+        g.set("ERR_FISH_ESCAPED", "Your fish got away!").unwrap();
+        g.set("ERR_PETITION_SIGNED_S", "%s has signed your charter.")
             .unwrap();
-        super::show_now(s.lua(), "ERR_FISH_ESCAPED");
-        super::show_now_s(s.lua(), "ERR_PETITION_SIGNED_S", "Ann".into());
-        assert_eq!(log(&s), ["UI_INFO_MESSAGE:Your fish got away!"]);
+        let mut view = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut view, || {
+            super::show_now(s.lua(), "ERR_FISH_ESCAPED");
+            super::show_now_s(s.lua(), "ERR_PETITION_SIGNED_S", "Ann".into());
+            s.run("Log[#Log + 1] = 'after'").unwrap();
+        });
         assert_eq!(
-            s.take_ui_errors_s(),
-            [("ERR_PETITION_SIGNED_S", "Ann".to_string())]
+            log(&s),
+            [
+                "UI_INFO_MESSAGE:Your fish got away!",
+                "CHAT_MSG_SYSTEM:Ann has signed your charter.",
+                "after",
+            ]
         );
-        assert!(s.take_ui_errors().is_empty());
+        assert_eq!(
+            view.chat_lines,
+            [(0, "Ann has signed your charter.".into())]
+        );
     }
 
-    /// Every row of the catalog (`0xac8af0`): a red or yellow line fires its event inside the call
-    /// and leaves the engine's queue empty; only a chat line goes to the app (#1306).
+    /// Every row of the catalog (`0xac8af0`) shows inside the call: a red or yellow line fires its
+    /// event, a chat line is added to the lent chat log on the row's chat type and fires its event
+    /// there (#1306). With no chat log lent a chat line adds nothing.
     #[test]
-    fn only_a_chat_row_reaches_the_engines_queue() {
+    fn every_catalog_row_shows_inside_the_call() {
         use crate::messages::{MsgKind, CATALOG};
-        let mut s = crate::script::UiScript::new().unwrap();
+        let s = crate::script::UiScript::new().unwrap();
         s.run(LOGGER).unwrap();
+        s.run(CHAT_LOGGER).unwrap();
+        let mut view = crate::script::live::TestView::default();
         for r in CATALOG.iter().filter(|r| !r.key.is_empty()) {
             s.lua().globals().set(r.key, "text").unwrap();
             s.run("Log = {}").unwrap();
-            super::show_now(s.lua(), r.key);
-            let queued = s.take_ui_errors();
+            view.chat_lines.clear();
+            crate::script::live::lending(&mut view, || super::show_now(s.lua(), r.key));
             let fired = log(&s);
             match r.kind {
                 MsgKind::Error => {
                     assert_eq!(fired, ["UI_ERROR_MESSAGE:text"], "{}", r.key);
-                    assert!(queued.is_empty(), "{}", r.key);
+                    assert!(view.chat_lines.is_empty(), "{}", r.key);
                 }
                 MsgKind::Info => {
                     assert_eq!(fired, ["UI_INFO_MESSAGE:text"], "{}", r.key);
-                    assert!(queued.is_empty(), "{}", r.key);
+                    assert!(view.chat_lines.is_empty(), "{}", r.key);
                 }
                 MsgKind::Chat => {
-                    assert!(fired.is_empty(), "{}", r.key);
-                    assert_eq!(queued, [r.key]);
+                    let event = if r.chat_type == 26 {
+                        "CHAT_MSG_SKILL:text"
+                    } else {
+                        "CHAT_MSG_SYSTEM:text"
+                    };
+                    assert_eq!(fired, [event], "{}", r.key);
+                    assert_eq!(view.chat_lines, [(r.chat_type, "text".into())], "{}", r.key);
+                    s.run("Log = {}").unwrap();
+                    super::show_now(s.lua(), r.key);
+                    assert!(log(&s).is_empty(), "{}", r.key);
                 }
             }
         }

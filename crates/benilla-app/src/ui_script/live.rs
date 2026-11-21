@@ -178,6 +178,8 @@ pub(crate) struct MainState<'w> {
     pub(crate) refunds: Option<NonSendMut<'w, crate::ui_socket::RefundRecords>>,
     pub(crate) guild_bank: Option<NonSendMut<'w, crate::ui_guild_bank::GuildBankState>>,
     pub(crate) spirit: Option<NonSendMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>>,
+    /// The chat windows, where the message display adds a chat line inside its call (`0x52183c`).
+    pub(crate) chat: Option<ResMut<'w, crate::ui_chat::ChatWindows>>,
 }
 
 mod actions;
@@ -419,6 +421,14 @@ impl LiveState for LiveView<'_, '_> {
             .as_deref_mut()
             .map(|s| s.unique_signal(event))
             .is_some()
+    }
+
+    fn add_chat_line(
+        &mut self,
+        chat_type: u8,
+        text: &str,
+    ) -> Option<(&'static str, Vec<ScriptValue>)> {
+        crate::ui_chat::add_chat_line(self.lent.chat.as_deref_mut()?, chat_type, text)
     }
 
     fn world_state_ui_count(&self) -> Option<usize> {
