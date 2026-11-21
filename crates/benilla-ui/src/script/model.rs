@@ -267,8 +267,7 @@ pub(crate) struct Model {
     /// addon's own `UIParent:SetScale` stands until the dial moves.
     pub(crate) ui_scale: Option<f32>,
 
-    /// Each unit token's state as pushed this frame, keyed lowercased because 1.12's resolver
-    /// matches case-insensitively: read it only through `unit`, where the fold lives.
+    /// Each unit token's state as pushed this frame, keyed by its ASCII fold as the resolver's compares fold (`0x60abf0`): read it only through `unit`, where the fold lives.
     pub(crate) units_by_lower: HashMap<String, UnitState>,
     /// The snapshot of each unit a `target` chain can end on, by guid: a token whose own push
     /// names another unit, or that has none, reads its resolved guid's entry here.
@@ -1243,10 +1242,15 @@ impl Model {
         if token.eq_ignore_ascii_case("npc") {
             return self.npc_unit();
         }
-        if !self.tokens().is_live() {
+        let resolved = self.tokens().resolve_live(token, |ask| self.unit_name(ask));
+        let Some(resolved) = resolved else {
             return self.pushed_unit(token).or_else(|| self.chained_unit(token));
-        }
-        let guid = self.token_guid(token)?;
+        };
+        self.unit_named(token, resolved.ok().flatten()?)
+    }
+
+    /// The snapshot of `guid`, which `token` resolved to: the token's own push first.
+    pub(crate) fn unit_named(&self, token: &str, guid: u64) -> Option<&UnitState> {
         self.pushed_unit(token)
             .filter(|u| u.guid == guid)
             .or_else(|| self.unit_by_guid(guid))
@@ -1273,12 +1277,7 @@ impl Model {
         let guid = target?;
         pushed
             .filter(|u| u.guid == guid)
-            .or_else(|| self.units_by_guid.get(&guid))
-            .or_else(|| {
-                self.units_by_lower
-                    .values()
-                    .find(|u| u.exists && u.guid == guid)
-            })
+            .or_else(|| self.unit_by_guid(guid))
     }
 
     /// The focus's unit by guid, as the getters look its object up: the app's `focus` push while it
@@ -1302,14 +1301,10 @@ impl Model {
         if guid == 0 {
             return None;
         }
-        self.units_by_guid.get(&guid).or_else(|| {
-            self.units_by_lower
-                .values()
-                .find(|u| u.exists && u.guid == guid)
-        })
+        self.unit_by_guid(guid)
     }
 
-    /// The snapshot pushed under `token` itself, folded as 1.12's resolver folds (`_strnicmp`:
+    /// The snapshot pushed under `token` itself, folded as the resolver folds (`_strnicmp`:
     /// `A`..`Z` only, never a byte of 0x80 or more), so `to_ascii_lowercase`, never `to_lowercase`.
     pub(crate) fn pushed_unit(&self, token: &str) -> Option<&UnitState> {
         if token.bytes().any(|b| b.is_ascii_uppercase()) {
@@ -1329,11 +1324,7 @@ impl Model {
             _ => return None,
         }
         let guid = self.resolve_token(token).ok().flatten()?;
-        self.units_by_guid.get(&guid).or_else(|| {
-            self.units_by_lower
-                .values()
-                .find(|u| u.exists && u.guid == guid)
-        })
+        self.unit_by_guid(guid)
     }
 
     /// The guid `token` names (`0x60abf0`, with no target default), the name lookup reading the
@@ -1341,7 +1332,7 @@ impl Model {
     /// false.
     pub(crate) fn resolve_token(&self, token: &str) -> Result<Option<u64>, ()> {
         self.tokens()
-            .resolve_named(token, |unit, with_realm| self.token_name(unit, with_realm))
+            .resolve_named(token, |ask| self.unit_name(ask))
     }
 
     /// Whether the resolver refuses `token` whatever units the host holds now: the empty token, or
@@ -1353,7 +1344,7 @@ impl Model {
             UnitTokenParse::Empty => true,
             UnitTokenParse::Name => self
                 .tokens()
-                .by_name(token, |unit, with_realm| self.token_name(unit, with_realm))
+                .by_name(token, |ask| self.unit_name(ask))
                 .is_none(),
             UnitTokenParse::Nobody | UnitTokenParse::Unit { .. } => false,
         }
@@ -1367,18 +1358,13 @@ impl Model {
     /// The name a base token's unit goes by (`0x60a360`): ours from the local name buffer, any
     /// other unit's from its snapshot, else, for a unit out of view, the name cache's record or the
     /// roster's; with the realm asked for, a player of another realm's as `Name-Realm`.
-    pub(crate) fn token_name(&self, token: &str, with_realm: bool) -> Option<String> {
-        self.token_name_in(self.tokens(), token, with_realm)
-    }
-
-    /// [`Self::token_name`] over `tokens`.
-    pub(crate) fn token_name_in(
-        &self,
-        tokens: super::unit::Tokens<'_>,
-        token: &str,
-        with_realm: bool,
-    ) -> Option<String> {
-        let guid = tokens.resolve_named(token, |_, _| None).ok().flatten()?;
+    pub(crate) fn unit_name(&self, ask: super::unit::NameAsk<'_>) -> Option<String> {
+        let super::unit::NameAsk {
+            token,
+            guid,
+            ours,
+            with_realm,
+        } = ask;
         let record = self.name_records.get(&guid);
         let snapshot = || {
             self.pushed_unit(token)
@@ -1397,7 +1383,7 @@ impl Model {
                 })
                 .filter(|n| !n.is_empty())
         };
-        let name = if guid == tokens.player() && !self.player_record.name.is_empty() {
+        let name = if ours && !self.player_record.name.is_empty() {
             self.player_record.name.as_str()
         } else {
             snapshot()

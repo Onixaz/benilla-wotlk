@@ -1,13 +1,11 @@
-//! The unit-token resolver's game side (`0x60abf0`): each base's unit and each hop read from the
-//! live state at the call, shared by the app's own resolver ([`UnitTokens`]) and the VM's, which
-//! reaches it through the lent view ([`TokenView`]). The text is read by [`parse_unit_token`], the
-//! focus `[0xbd07d0]` and the name lookup (`0x60a630`) are the VM's.
+//! The unit-token resolver's game side (`0x60abf0`): each base and hop read live, for the app's resolver and the VM's lent view.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use benilla_ui::script::{
-    parse_unit_token, Hop, Hops, UiScript, UnitBase, UnitCounts, UnitTokenParse, PET_OF_ANYONE,
+    parse_unit_token, Hop, Hops, UiScript, UnitBase, UnitCounts, UnitGuids, UnitTokenParse,
+    PET_OF_ANYONE,
 };
 
 use crate::net::{Guid, GuidIndex, ObjectStore, SelfPlayer};
@@ -168,10 +166,44 @@ pub(crate) fn counts(w: &impl UnitWorld) -> UnitCounts {
     }
 }
 
-/// The hops from `guid` (`0x60aaa0`): `None` where they fail. A `target` hop off the player reads
-/// the target global, off another unit its `UNIT_FIELD_TARGET`; a `pet` hop, the unit's charm, else
-/// its summon, and only off the player or a party or raid member unless our `PLAYER_FLAGS` holds
-/// [`PET_OF_ANYONE`]. A hop off any other object, or off a unit not held, is nobody.
+/// Every base's guid and each numbered base's rows, read once for the VM's walks (`0x60abf0`).
+pub(crate) fn tables(w: &impl UnitWorld) -> UnitGuids {
+    let c = counts(w);
+    let me = w.me().map(|(_, g)| g);
+    let at = |b: UnitBase| base(w, b).unwrap_or(0);
+    let raid = w
+        .group()
+        .map(|g| crate::ui_party::raid_row_guids(g, me))
+        .unwrap_or_default();
+    let raid_pets = raid
+        .iter()
+        .map(|&m| {
+            w.group()
+                .and_then(|g| g.raid_pet_guid(m, live_fields(w, m)))
+                .unwrap_or(0)
+        })
+        .collect();
+    let row = |i: usize| u32::try_from(i).unwrap_or(u32::MAX);
+    UnitGuids {
+        player: at(UnitBase::Player),
+        pet: at(UnitBase::Pet),
+        vehicle: at(UnitBase::Vehicle),
+        target: at(UnitBase::Target),
+        mouseover: at(UnitBase::Mouseover),
+        npc: 0,
+        party: std::array::from_fn(|i| at(UnitBase::Party(row(i)))),
+        party_pets: std::array::from_fn(|i| at(UnitBase::PartyPet(row(i)))),
+        raid,
+        raid_pets,
+        boss: (0..c.boss).map(|i| at(UnitBase::Boss(row(i)))).collect(),
+        arena: std::array::from_fn(|i| at(UnitBase::Arena(row(i)))),
+        arena_pets: std::array::from_fn(|i| at(UnitBase::ArenaPet(row(i)))),
+        arena_count: c.arena,
+        held: Default::default(),
+    }
+}
+
+/// The hops from `guid` (`0x60aaa0`), `None` where they fail: `target` the target global off us, else `UNIT_FIELD_TARGET`; `pet` the charm, else the summon, off us or a member unless [`PET_OF_ANYONE`].
 pub(crate) fn follow(w: &impl UnitWorld, mut guid: u64, hops: Hops<'_>) -> Option<u64> {
     let me = w.me();
     for hop in hops {
@@ -325,9 +357,7 @@ impl UnitWorld for LiveUnits<'_, '_, '_> {
     }
 }
 
-/// What the unit-token resolver reads from the VM, which owns both: the focus `[0xbd07d0]`, which
-/// `FocusUnit` sets inside the call before, and the names the name lookup (`0x60a630`) matches.
-/// The default reads neither, so `focus` and a name name nobody.
+/// The VM's part of a token: the focus `[0xbd07d0]` and the name lookup (`0x60a630`); the default reads neither.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct VmUnits<'a>(Option<&'a UiScript>);
 
@@ -359,10 +389,7 @@ impl UnitVm<'_> {
     }
 }
 
-/// The one unit-token resolver, the reference's (`0x60abf0`): case-insensitive compares, the hops,
-/// the name lookup, then the object manager; a caller wanting a type tests the resolved unit.
-/// [`Selection`] is a parameter because [`crate::target::SelectCommit`] writes it through its own
-/// borrow, and the VM's part is one too ([`VmUnits`]).
+/// The app's unit-token resolver (`0x60abf0`), the [`Selection`] and the VM's part given per call.
 #[derive(SystemParam)]
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.

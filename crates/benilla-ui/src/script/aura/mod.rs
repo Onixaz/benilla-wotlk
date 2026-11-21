@@ -386,9 +386,7 @@ impl super::UiScript {
     ) -> Option<(u64, super::Hops<'t>)> {
         let model = self.model_ref();
         let tokens = super::unit::Tokens::host(bases, counts, model.focus);
-        tokens.by_name(token, |unit, with_realm| {
-            model.token_name_in(tokens, unit, with_realm)
-        })
+        tokens.by_name(token, |ask| model.unit_name(ask))
     }
 
     /// Every token naming `guid` at the call, for a per-token unit event (`0x60bb70`).

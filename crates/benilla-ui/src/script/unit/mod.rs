@@ -617,10 +617,10 @@ mod resolve;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use resolve::Tokens;
 pub use resolve::{
     parse_unit_token, split_name, Hop, Hops, HostBases, UnitBase, UnitCounts, UnitGuids,
     UnitTokenParse, PET_OF_ANYONE,
 };
+pub(crate) use resolve::{NameAsk, Tokens};
 
 pub(super) use bindings::install;

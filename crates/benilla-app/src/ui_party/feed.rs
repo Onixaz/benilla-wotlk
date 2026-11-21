@@ -773,13 +773,21 @@ pub(super) fn raid_rows(
     )
 }
 
-/// The guid at a 1-based raid row, [`raid_row_guids`]`[index - 1]` without the allocation.
+/// The guid at a 1-based raid row, [`raid_row_guids`]`[index - 1]` by index, with no walk.
 pub(crate) fn raid_row_guid(
     group: &GroupState,
     self_guid: Option<u64>,
     index: usize,
 ) -> Option<u64> {
-    raid_rows(group, self_guid).nth(index.checked_sub(1)?)
+    if group.group_type != GROUPTYPE_RAID {
+        return None;
+    }
+    let row = index.checked_sub(1)?;
+    match self_guid {
+        Some(me) if row == 0 => Some(me),
+        Some(_) => group.members.get(row - 1).map(|m| m.guid),
+        None => group.members.get(row).map(|m| m.guid),
+    }
 }
 
 /// A 1-based raid row index to its guid; row 0, a row past the end or no raid gives `None`.

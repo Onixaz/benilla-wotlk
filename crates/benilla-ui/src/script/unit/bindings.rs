@@ -223,8 +223,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(Value::Nil);
             };
             let hidden = model
-                .unit(&token)
-                .is_some_and(|u| u.guid == guid && u.counter_hidden);
+                .unit_named(&token, guid)
+                .is_some_and(|u| u.counter_hidden);
             let shown = if hidden { guid & !0xff_ffff } else { guid };
             Ok(Value::String(lua.create_string(format!("0x{shown:016X}"))?))
         })?,
@@ -1619,20 +1619,21 @@ fn unit_reads_dead(lua: &Lua, token: &str, ask: DeathAsk) -> bool {
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
     let guid = model.token_guid(token);
-    let member = guid.is_some_and(|g| model.tokens().is_member_or_pet(g));
     let live = crate::script::read_live(|live| {
         let guid = guid?;
         let health = live.unit_health(guid)?;
         let ghost = live.player_flags(guid).is_some_and(|f| f & 0x10 != 0);
-        let looks_dead = live.unit_dynamic_flags(guid).is_some_and(|f| f & 0x20 != 0) && !member;
-        Some(match ask {
-            DeathAsk::Dead => health == 0 || looks_dead,
-            DeathAsk::Ghost => ghost,
-            DeathAsk::DeadOrGhost => health == 0 || ghost || looks_dead,
-        })
+        let flagged = live.unit_dynamic_flags(guid).is_some_and(|f| f & 0x20 != 0);
+        Some((health, ghost, flagged))
     });
-    if let Some(Some(answer)) = live {
-        return answer;
+    if let Some(Some((health, ghost, flagged))) = live {
+        // The group test only where the flag asks it.
+        let looks_dead = || flagged && !guid.is_some_and(|g| model.tokens().is_member_or_pet(g));
+        return match ask {
+            DeathAsk::Dead => health == 0 || looks_dead(),
+            DeathAsk::Ghost => ghost,
+            DeathAsk::DeadOrGhost => health == 0 || ghost || looks_dead(),
+        };
     }
     // No held object: the record's flags, which the snapshot carries for a member out of view.
     let lent = live.is_some();

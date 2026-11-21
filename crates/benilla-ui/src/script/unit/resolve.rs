@@ -7,6 +7,7 @@
 //! nobody with text after it, whose text is not hops, or that no base matches goes to the name
 //! lookup (`0x60a630`): a group member's or pet's name, then hops.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::super::live::read_live;
@@ -319,6 +320,121 @@ enum Src<'a> {
 /// A host's read of a token base's guid, 0 for nobody.
 pub type HostBases<'a> = &'a dyn Fn(UnitBase) -> u64;
 
+/// One unit the name lookup asks the name of (`0x60a360`), by its token and its guid.
+#[derive(Clone, Copy)]
+pub(crate) struct NameAsk<'t> {
+    pub(crate) token: &'t str,
+    pub(crate) guid: u64,
+    /// Whether the unit is us, whose name the local name buffer holds.
+    pub(crate) ours: bool,
+    pub(crate) with_realm: bool,
+}
+
+/// A numbered base's 0-based row from an index.
+fn row(i: usize) -> u32 {
+    u32::try_from(i).unwrap_or(u32::MAX)
+}
+
+/// The resolver's tables read once for a call, with the rows each numbered base walks.
+struct Tables<'a> {
+    t: Cow<'a, UnitGuids>,
+    counts: UnitCounts,
+    /// Whether the game's, read through the lent view, which carries the interact target.
+    live: bool,
+}
+
+impl<'a> Tables<'a> {
+    /// `t` with the rows its own tables hold.
+    fn of(t: Cow<'a, UnitGuids>, live: bool) -> Self {
+        let counts = UnitCounts {
+            party: t.party.iter().take_while(|&&m| m != 0).count(),
+            raid: t.raid.len(),
+            arena: t.arena_count.min(t.arena.len()),
+            boss: t.boss.len(),
+        };
+        Self { t, counts, live }
+    }
+
+    /// The first `count` rows of a numbered base, in order.
+    fn rows(&self, base: Numbered, count: usize) -> impl Iterator<Item = u64> + '_ {
+        (0..count).map(move |i| self.t.table_base(base(row(i))))
+    }
+
+    fn in_party(&self, guid: u64) -> bool {
+        guid != 0 && self.t.party.contains(&guid)
+    }
+
+    fn in_raid(&self, guid: u64) -> bool {
+        guid != 0
+            && self
+                .rows(UnitBase::Raid, self.counts.raid)
+                .any(|g| g == guid)
+    }
+
+    /// `0x512a30`: us, our pet, a party member or its pet, a raid member or its pet.
+    fn is_member_or_pet(&self, guid: u64) -> bool {
+        let raid = self.counts.raid;
+        guid != 0
+            && (self.t.table_base(UnitBase::Player) == guid
+                || self.t.table_base(UnitBase::Pet) == guid
+                || self.rows(UnitBase::Party, 4).any(|g| g == guid)
+                || self.rows(UnitBase::PartyPet, 4).any(|g| g == guid)
+                || self.rows(UnitBase::Raid, raid).any(|g| g == guid)
+                || self.rows(UnitBase::RaidPet, raid).any(|g| g == guid))
+    }
+
+    /// The name lookup (`0x60a630`) over these tables: the name in [`split_name`]'s buffer against
+    /// ours, then the raid roster's, else the party's, else the counted arena opponents'; then our
+    /// pet's, and the same tables' pets. The first match's guid and the hops after the name.
+    fn by_name<'t>(
+        &self,
+        token: &'t str,
+        name_of: impl Fn(NameAsk<'_>) -> Option<String>,
+    ) -> Option<(u64, Hops<'t>)> {
+        let (buffer, with_realm, hops) = split_name(token);
+        let player = self.t.table_base(UnitBase::Player);
+        let named = |unit: &str, guid: u64| {
+            guid != 0
+                && name_of(NameAsk {
+                    token: unit,
+                    guid,
+                    ours: guid == player,
+                    with_realm,
+                })
+                .is_some_and(|n| same_name(buffer, &n))
+        };
+        let first = |prefix: &str, base: Numbered, count: usize| {
+            self.rows(base, count)
+                .enumerate()
+                .find(|&(i, g)| named(&format!("{prefix}{}", i + 1), g))
+                .map_or(0, |(_, g)| g)
+        };
+        let counts = self.counts;
+        let mut guid = if named("player", player) {
+            player
+        } else if counts.raid != 0 {
+            first("raid", UnitBase::Raid, counts.raid)
+        } else if counts.party != 0 {
+            first("party", UnitBase::Party, counts.party)
+        } else {
+            first("arena", UnitBase::Arena, counts.arena)
+        };
+        if guid == 0 {
+            let pet = self.t.table_base(UnitBase::Pet);
+            guid = if named("pet", pet) {
+                pet
+            } else if counts.raid != 0 {
+                first("raidpet", UnitBase::RaidPet, counts.raid)
+            } else if counts.party != 0 {
+                first("partypet", UnitBase::PartyPet, counts.party)
+            } else {
+                first("arenapet", UnitBase::ArenaPet, counts.arena)
+            };
+        }
+        (guid != 0).then_some((guid, hops))
+    }
+}
+
 /// The resolver over the client's state at the call (`0x60abf0`): the game's through the lent
 /// view, or, where no view lends it, a fixture's. The focus `[0xbd07d0]` is the VM's own.
 #[derive(Clone, Copy)]
@@ -328,16 +444,10 @@ pub(crate) struct Tokens<'a> {
 }
 
 impl<'a> Tokens<'a> {
-    /// A fixture's tables where a test or a harness set one, else the game's when the lent view
-    /// reads them, else none.
+    /// A fixture's tables where a test or a harness set one, else the game's through the lent
+    /// view, which name nobody where no view lends them.
     pub(crate) fn new(fixture: Option<&'a UnitGuids>, focus: u64) -> Self {
-        let src = match fixture {
-            Some(g) => Src::Fixture(g),
-            None if read_live(|l| l.unit_base(UnitBase::Player).is_some()).unwrap_or(false) => {
-                Src::Live
-            }
-            None => Src::Empty,
-        };
+        let src = fixture.map_or(Src::Live, Src::Fixture);
         Self { src, focus }
     }
 
@@ -358,11 +468,6 @@ impl<'a> Tokens<'a> {
         }
     }
 
-    /// Whether the game's tables are read, through the lent view.
-    pub(crate) fn is_live(&self) -> bool {
-        matches!(self.src, Src::Live)
-    }
-
     /// Our guid, 0 without the player object.
     pub(crate) fn player(&self) -> u64 {
         self.base_guid(UnitBase::Player)
@@ -373,40 +478,98 @@ impl<'a> Tokens<'a> {
         self.base_guid(UnitBase::Target)
     }
 
+    /// The tables, read once for the call that asks.
+    fn tables(&self) -> Tables<'a> {
+        match self.src {
+            Src::Live => match read_live(|l| l.unit_tables()).flatten() {
+                Some(t) => Tables::of(Cow::Owned(t), true),
+                None => Tables::of(Cow::Owned(UnitGuids::default()), false),
+            },
+            Src::Fixture(g) => Tables::of(Cow::Borrowed(g), false),
+            Src::Host(bases, counts) => Tables {
+                t: Cow::Owned(UnitGuids::from_bases(bases, counts)),
+                counts,
+                live: false,
+            },
+            Src::Empty => Tables::of(Cow::Owned(UnitGuids::default()), false),
+        }
+    }
+
     /// The table rows the walks cover, read at the call.
     pub(crate) fn counts(&self) -> UnitCounts {
-        match self.src {
-            Src::Live => read_live(|l| l.unit_counts()).flatten().unwrap_or_default(),
-            Src::Fixture(g) => UnitCounts {
-                party: g.party.iter().take_while(|&&m| m != 0).count(),
-                raid: g.raid.len(),
-                arena: g.arena_count.min(g.arena.len()),
-                boss: g.boss.len(),
-            },
-            Src::Host(_, counts) => counts,
-            Src::Empty => UnitCounts::default(),
-        }
+        self.tables().counts
     }
 
     /// A held unit's `UNIT_FIELD_TARGET`, `None` for a guid that is no held unit (`0x60aaa0`).
     fn held_target(&self, guid: u64) -> Option<u64> {
         match self.src {
-            Src::Live => read_live(|l| l.unit_target(guid)).flatten(),
             Src::Fixture(g) => g.held.get(&guid).copied(),
-            Src::Host(..) | Src::Empty => None,
+            Src::Live | Src::Host(..) | Src::Empty => None,
         }
     }
 
     /// The guid `token` names (`0x60abf0`, with no target default), `None` for nobody, `Err` where
     /// the reference answers false: the empty token, or a name lookup that finds no one. A base
     /// whose unit is there, or that names nobody with no text after it, takes the hops; a hop to
-    /// nobody is nobody. Otherwise the whole token is a name: `name_of(token, with_realm)` is the
-    /// name a unit token's unit goes by (`0x60a360`), `"Name-Realm"` with the realm asked for and
-    /// known.
+    /// nobody is nobody. Otherwise the whole token is a name, `name_of` the name a unit goes by
+    /// (`0x60a360`), `"Name-Realm"` with the realm asked for and known.
     pub(crate) fn resolve_named(
         &self,
         token: &str,
-        name_of: impl Fn(&str, bool) -> Option<String>,
+        name_of: impl Fn(NameAsk<'_>) -> Option<String>,
+    ) -> Result<Option<u64>, ()> {
+        if let Some(resolved) = self.resolve_live(token, &name_of) {
+            return resolved;
+        }
+        let tokens = match self.src {
+            Src::Live => Self {
+                src: Src::Empty,
+                ..*self
+            },
+            _ => *self,
+        };
+        tokens.resolve_held(token, name_of)
+    }
+
+    /// [`Self::resolve_named`] over the game's state, a read for the base and its hops and, for a
+    /// name, one for the tables and one for the hops after it; `None` where no view lends it.
+    pub(crate) fn resolve_live(
+        &self,
+        token: &str,
+        name_of: impl Fn(NameAsk<'_>) -> Option<String>,
+    ) -> Option<Result<Option<u64>, ()>> {
+        if !matches!(self.src, Src::Live) {
+            return None;
+        }
+        let somebody = |guid: u64| Some(guid).filter(|&g| g != 0);
+        match parse_unit_token(token) {
+            UnitTokenParse::Empty => return Some(Err(())),
+            UnitTokenParse::Nobody => return Some(Ok(None)),
+            UnitTokenParse::Unit { base, hops } => {
+                let end = read_live(|l| l.unit_token(base, hops, self.focus)).flatten()?;
+                if let Some(end) = end {
+                    return Some(Ok(somebody(end)));
+                }
+            }
+            UnitTokenParse::Name => {}
+        }
+        let tables = Tables::of(Cow::Owned(read_live(|l| l.unit_tables()).flatten()?), true);
+        let Some((guid, hops)) = tables.by_name(token, name_of) else {
+            return Some(Err(()));
+        };
+        let end = if hops.is_empty() {
+            Some(guid)
+        } else {
+            read_live(|l| l.unit_hops(guid, hops)).flatten()?
+        };
+        Some(end.map(somebody).ok_or(()))
+    }
+
+    /// [`Self::resolve_named`] over a fixture's or the host's tables.
+    fn resolve_held(
+        &self,
+        token: &str,
+        name_of: impl Fn(NameAsk<'_>) -> Option<String>,
     ) -> Result<Option<u64>, ()> {
         match parse_unit_token(token) {
             UnitTokenParse::Empty => return Err(()),
@@ -430,7 +593,7 @@ impl<'a> Tokens<'a> {
     /// run.
     #[cfg(test)]
     pub(crate) fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
-        self.resolve_named(token, |_, _| None)
+        self.resolve_named(token, |_| None)
     }
 
     /// The unit a base names, read at the call; 0 for nobody.
@@ -453,54 +616,30 @@ impl<'a> Tokens<'a> {
         }
     }
 
-    /// Whether `guid` is a party member or on the raid roster (`0x512a00`).
-    fn in_group(&self, guid: u64) -> bool {
-        guid != 0 && (self.in_party(guid) || self.in_raid(guid))
-    }
-
     /// Whether `guid` holds one of the party's slots.
     pub(crate) fn in_party(&self, guid: u64) -> bool {
-        guid != 0 && (0..4).any(|row| self.base_guid(UnitBase::Party(row)) == guid)
+        self.tables().in_party(guid)
     }
 
     /// Whether `guid` is on the raid roster.
     pub(crate) fn in_raid(&self, guid: u64) -> bool {
-        guid != 0
-            && self
-                .rows(self.counts().raid, UnitBase::Raid)
-                .any(|g| g == guid)
+        self.tables().in_raid(guid)
     }
 
     /// The group test a dead-looking unit and `UnitInRange` waive or ask (`0x512a30`): us, our pet,
     /// a party member or its pet, a raid member or its pet.
     pub(crate) fn is_member_or_pet(&self, guid: u64) -> bool {
-        if guid == 0 {
-            return false;
-        }
-        let counts = self.counts();
-        let tables: [(Numbered, usize); 4] = [
-            (UnitBase::Party, 4),
-            (UnitBase::PartyPet, 4),
-            (UnitBase::Raid, counts.raid),
-            (UnitBase::RaidPet, counts.raid),
-        ];
-        self.player() == guid
-            || self.base_guid(UnitBase::Pet) == guid
-            || tables
-                .into_iter()
-                .any(|(base, count)| self.rows(count, base).any(|g| g == guid))
+        guid != 0 && self.tables().is_member_or_pet(guid)
     }
 
-    /// The first `count` rows of a numbered base, in order.
-    fn rows(&self, count: usize, base: Numbered) -> impl Iterator<Item = u64> + '_ {
-        (0..count).map(move |row| self.base_guid(base(u32::try_from(row).unwrap_or(u32::MAX))))
-    }
-
-    /// The hops from `guid` (`0x60aaa0`): `None` where they fail, which zeroes the guid and sends
-    /// the token to the name lookup; a hop to nobody goes on from nobody. A `target` hop off the
-    /// player reads the target global; off another unit, its held `UNIT_FIELD_TARGET`. A `pet`
-    /// hop reads the held unit's pet live.
+    /// The hops from `guid` (`0x60aaa0`): `None` where they fail, which sends the token to the name
+    /// lookup; a hop to nobody goes on from nobody. The game's are read in one view.
     pub(crate) fn follow(&self, mut guid: u64, hops: Hops<'_>) -> Option<u64> {
+        if matches!(self.src, Src::Live) {
+            if let Some(end) = read_live(|l| l.unit_hops(guid, hops)).flatten() {
+                return end;
+            }
+        }
         let me = Some(self.player()).filter(|&g| g != 0);
         for hop in hops {
             guid = match hop.ok()? {
@@ -508,7 +647,10 @@ impl<'a> Tokens<'a> {
                 Hop::Target => self.held_target(guid).unwrap_or(0),
                 Hop::Pet => {
                     let open = Some(guid) == me
-                        || self.in_group(guid)
+                        || {
+                            let t = self.tables();
+                            t.in_party(guid) || t.in_raid(guid)
+                        }
                         || me
                             .and_then(|me| read_live(|l| l.player_flags(me)).flatten())
                             .is_some_and(|flags| flags & PET_OF_ANYONE != 0);
@@ -522,45 +664,14 @@ impl<'a> Tokens<'a> {
         Some(guid)
     }
 
-    /// The name lookup (`0x60a630`): the name in [`split_name`]'s buffer against ours, then the
-    /// raid roster's, else the party's, else the counted arena opponents'; then our pet's, and the
-    /// same tables' pets. Returns the first match's guid and the hops after the name.
+    /// The name lookup (`0x60a630`) over the tables read once: the first match's guid and the
+    /// hops after the name.
     pub(crate) fn by_name<'t>(
         &self,
         token: &'t str,
-        name_of: impl Fn(&str, bool) -> Option<String>,
+        name_of: impl Fn(NameAsk<'_>) -> Option<String>,
     ) -> Option<(u64, Hops<'t>)> {
-        let (buffer, with_realm, hops) = split_name(token);
-        let named = |unit: &str| name_of(unit, with_realm).is_some_and(|n| same_name(buffer, &n));
-        let counts = self.counts();
-        let first = |prefix: &str, base: Numbered, count: usize| {
-            (0..count)
-                .find(|i| named(&format!("{prefix}{}", i + 1)))
-                .map_or(0, |i| {
-                    self.base_guid(base(u32::try_from(i).unwrap_or(u32::MAX)))
-                })
-        };
-        let mut guid = if named("player") {
-            self.player()
-        } else if counts.raid != 0 {
-            first("raid", UnitBase::Raid, counts.raid)
-        } else if counts.party != 0 {
-            first("party", UnitBase::Party, counts.party)
-        } else {
-            first("arena", UnitBase::Arena, counts.arena)
-        };
-        if guid == 0 {
-            guid = if named("pet") {
-                self.base_guid(UnitBase::Pet)
-            } else if counts.raid != 0 {
-                first("raidpet", UnitBase::RaidPet, counts.raid)
-            } else if counts.party != 0 {
-                first("partypet", UnitBase::PartyPet, counts.party)
-            } else {
-                first("arenapet", UnitBase::ArenaPet, counts.arena)
-            };
-        }
-        (guid != 0).then_some((guid, hops))
+        self.tables().by_name(token, name_of)
     }
 
     /// [`Self::resolve`], a token the reference refuses naming nobody.
@@ -577,25 +688,27 @@ impl<'a> Tokens<'a> {
         if guid == 0 {
             return out;
         }
-        let player = self.player();
+        let tables = self.tables();
+        let t = &tables.t;
+        let player = t.table_base(UnitBase::Player);
         if player == guid {
             out.push("player".into());
         }
-        if self.base_guid(UnitBase::Vehicle) == guid {
+        if t.table_base(UnitBase::Vehicle) == guid {
             out.push("vehicle".into());
         }
-        if player != 0 && self.base_guid(UnitBase::Pet) == guid {
+        if player != 0 && t.table_base(UnitBase::Pet) == guid {
             out.push("pet".into());
         }
-        let counts = self.counts();
-        let tables: [(&str, Numbered, usize); 4] = [
+        let counts = tables.counts;
+        let rows: [(&str, Numbered, usize); 4] = [
             ("party", UnitBase::Party, 4),
             ("partypet", UnitBase::PartyPet, 4),
             ("raid", UnitBase::Raid, counts.raid),
             ("raidpet", UnitBase::RaidPet, counts.raid),
         ];
-        for (prefix, base, count) in tables {
-            for (i, g) in self.rows(count, base).enumerate() {
+        for (prefix, base, count) in rows {
+            for (i, g) in tables.rows(base, count).enumerate() {
                 if g == guid {
                     out.push(format!("{prefix}{}", i + 1));
                 }
@@ -603,31 +716,31 @@ impl<'a> Tokens<'a> {
         }
         // Over the counted slots, an opponent tested before its pet, the first match ending it.
         for i in 0..counts.arena {
-            let row = u32::try_from(i).unwrap_or(u32::MAX);
-            if self.base_guid(UnitBase::Arena(row)) == guid {
+            if t.table_base(UnitBase::Arena(row(i))) == guid {
                 out.push(format!("arena{}", i + 1));
                 break;
             }
-            if self.base_guid(UnitBase::ArenaPet(row)) == guid {
+            if t.table_base(UnitBase::ArenaPet(row(i))) == guid {
                 out.push(format!("arenapet{}", i + 1));
                 break;
             }
         }
         // The first slot only, as the reference's loop breaks on a match.
-        if let Some(i) = self
-            .rows(counts.boss, UnitBase::Boss)
+        if let Some(i) = tables
+            .rows(UnitBase::Boss, counts.boss)
             .position(|g| g == guid)
         {
             out.push(format!("boss{}", i + 1));
         }
-        if self.target() == guid {
+        if t.table_base(UnitBase::Target) == guid {
             out.push("target".into());
         }
         if self.focus == guid {
             out.push("focus".into());
         }
         // The fan-out's compare is against the interact target itself (`0x60bece`).
-        if self.npc_guid() == guid {
+        let npc = if tables.live { t.npc } else { self.npc_guid() };
+        if npc == guid {
             out.push("npc".into());
         }
         out
@@ -665,6 +778,26 @@ impl<'a> Tokens<'a> {
 }
 
 impl UnitGuids {
+    /// The host's read of every base and row, as one table.
+    fn from_bases(bases: HostBases<'_>, counts: UnitCounts) -> Self {
+        let rows = |base: Numbered, n: usize| (0..n).map(|i| bases(base(row(i)))).collect();
+        Self {
+            player: bases(UnitBase::Player),
+            pet: bases(UnitBase::Pet),
+            vehicle: bases(UnitBase::Vehicle),
+            target: bases(UnitBase::Target),
+            party: std::array::from_fn(|i| bases(UnitBase::Party(row(i)))),
+            party_pets: std::array::from_fn(|i| bases(UnitBase::PartyPet(row(i)))),
+            raid: rows(UnitBase::Raid, counts.raid),
+            raid_pets: rows(UnitBase::RaidPet, counts.raid),
+            boss: rows(UnitBase::Boss, counts.boss),
+            arena: std::array::from_fn(|i| bases(UnitBase::Arena(row(i)))),
+            arena_pets: std::array::from_fn(|i| bases(UnitBase::ArenaPet(row(i)))),
+            arena_count: counts.arena,
+            ..Self::default()
+        }
+    }
+
     /// A fixture's unit for a base its tables hold; the VM's and the view's own bases are
     /// [`Tokens`]'.
     fn table_base(&self, base: UnitBase) -> u64 {
@@ -711,7 +844,7 @@ mod tests {
             token: &str,
             name_of: impl Fn(&str, bool) -> Option<String>,
         ) -> Result<Option<u64>, ()> {
-            Tokens::of(self, 0).resolve_named(token, name_of)
+            Tokens::of(self, 0).resolve_named(token, |a| name_of(a.token, a.with_realm))
         }
 
         fn guid_of(&self, token: &str) -> Option<u64> {

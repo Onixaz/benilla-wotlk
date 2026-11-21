@@ -157,7 +157,7 @@ impl Plugin for UiUnitPlugin {
                 // raises for the same port.
                 fire_leaving_world_on_worldport,
                 feed_units.in_set(EnterWorldFeed),
-                // After the aura feed, whose resolver inputs it measures.
+                // After the aura feed's turn.
                 feed_unit_reach.after(crate::ui_aura::AuraEvents),
                 // After the same feed, whose guids it covers.
                 held::feed_chain_units
@@ -2381,6 +2381,8 @@ fn feed_option_state(
 
 #[cfg(test)]
 mod host_steps_tests;
+#[cfg(test)]
+mod token_cost_tests;
 
 #[cfg(test)]
 mod tests {
