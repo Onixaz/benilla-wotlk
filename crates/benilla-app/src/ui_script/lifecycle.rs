@@ -959,9 +959,7 @@ fn exit_sweep(
     mut sweep: LeaveWorldSweep,
     mut exits: MessageReader<AppExit>,
 ) -> Option<(Option<(String, String)>, bool)> {
-    if exits.read().next().is_none() {
-        return None;
-    }
+    exits.read().next()?;
     // Same guard as [`end_ui_session`]: a quit inside the entry-load window has no UI to save.
     if pending_entry.is_some() {
         return None;

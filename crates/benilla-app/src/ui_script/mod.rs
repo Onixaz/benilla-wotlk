@@ -657,7 +657,7 @@ fn demo_units(script: &mut UiScript, fired: &mut VmMemo<bool>) {
     const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
 
     // Session-keyed: a fresh VM needs the one-shot events and bar seeds again.
-    let fired = fired.get(&script);
+    let fired = fired.get(script);
     // Debug (`WOW_CAPTURE_REHOVER=1`): re-fire the world hover every frame, a flapping raycast.
     if std::env::var("WOW_CAPTURE_REHOVER").as_deref() == Ok("1") {
         script.world_tooltip_unit("mouseover");
