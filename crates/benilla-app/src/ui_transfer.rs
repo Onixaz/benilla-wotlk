@@ -166,12 +166,14 @@ fn difficulty_refusal(result: DifficultyChangeResult) -> Option<UiError> {
 /// with `PLAYER_DIFFICULTYn`, one past the stored difficulty (`0x52c5d7`); result 8's line is
 /// system chat.
 fn feed_difficulty_notices(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut notices: ResMut<DifficultyNotices>,
     mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<ChatLog>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     for notice in std::mem::take(&mut notices.0) {
         match notice {
             DifficultyNotice::Line(text) => {
@@ -235,13 +237,13 @@ fn abort_text(
 /// (`[map+0x14]`, `0x403acc`). A map with no row, or text that resolves empty, shows nothing
 /// (`0x40395e`, `0x403ac5`-`0x403aca`).
 fn feed_transfer_aborts(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut aborts: ResMut<TransferAborts>,
     mut chat: ResMut<ChatLog>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,
     difficulties: Res<MapDifficulties>,
 ) {
-    let Some(script) = script else { return };
+    let Some(script) = script.turn() else { return };
     if aborts.0.is_empty() {
         return;
     }

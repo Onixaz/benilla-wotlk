@@ -94,11 +94,9 @@ fn on_equipment_set_saved(
 }
 
 /// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`).
-fn on_equipment_set_use_result(
-    In(ev): In<SessionEvent>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-) {
-    let (SessionEvent::EquipmentSetUseResult { result }, Some(mut script)) = (ev, script) else {
+fn on_equipment_set_use_result(In(ev): In<SessionEvent>, mut script: crate::ui_script::InTurn) {
+    let (SessionEvent::EquipmentSetUseResult { result }, Some(mut script)) = (ev, script.turn())
+    else {
         return;
     };
     debug!("net: equipment set swap result {result}");

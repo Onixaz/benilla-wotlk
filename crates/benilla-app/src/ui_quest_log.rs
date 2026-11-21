@@ -5,6 +5,8 @@ pub(crate) mod rows;
 pub(crate) mod tooltip;
 
 use crate::ui_items::{count_of, InventoryScope};
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::collections::HashSet;
 
 use bevy::prelude::*;
@@ -13,7 +15,7 @@ use benilla_protocol::messages::{quest_slot_state, QuestLogSlot, QuestObjective,
 use benilla_protocol::ObjectFields;
 #[cfg(test)]
 use benilla_ui::script::carry_collapse_filter;
-use benilla_ui::script::{QuestItemView, QuestLogDetail, QuestLogObjectiveView, UiScript};
+use benilla_ui::script::{QuestItemView, QuestLogDetail, QuestLogObjectiveView};
 use benilla_ui::strings::{fill, Arg};
 
 use crate::entities::ItemDisplays;
@@ -930,11 +932,8 @@ fn load_quest_tag_names(mut commands: Commands, assets: Option<Res<benilla_asset
 }
 
 /// `QuestLogPushQuest()`: the quest id taken at the click goes out; the server finds the party.
-fn drain_quest_log_pushes(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_quest_log_pushes(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for quest in script.take_quest_log_pushes() {
@@ -943,11 +942,8 @@ fn drain_quest_log_pushes(
     }
 }
 
-fn drain_quest_log_abandons(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_quest_log_abandons(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for quest in script.take_quest_log_abandons() {

@@ -389,10 +389,7 @@ struct PlateCasts<'w, 's> {
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn drive_vplates(
     // `None` in a run with no UI VM; the loan comes first, so the plate world's lent read pairs it.
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mode: Res<VPlateMode>,
     mut plates: ResMut<VPlates>,
     mut plate_hover: ResMut<PlateHover>,
@@ -419,8 +416,8 @@ fn drive_vplates(
     bucket.clear();
     // Every early return retires the plates first, or the widgets stay on screen; the reference
     // hides each live plate and returns it to the pool.
-    let retire_all = |script: Option<NonSendMut<benilla_ui::script::UiScript>>| {
-        if let Some(mut script) = script {
+    let retire_all = |mut script: crate::ui_script::InTurn| {
+        if let Some(mut script) = script.turn() {
             script.retire_nameplates();
         }
     };
@@ -436,7 +433,7 @@ fn drive_vplates(
         retire_all(script);
         return;
     };
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // No plate while the game UI is hidden (`[0xac80a8]`, `0x72b0a0`).

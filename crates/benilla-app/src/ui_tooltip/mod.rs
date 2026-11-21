@@ -3,9 +3,11 @@
 //! [`HoveredObject`], arbitrated by [`go_is_nearest`] as the click router does. A spell view is
 //! built at the hover by [`spell_view`].
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use benilla_ui::script::{TooltipTint, UiScript, UnitState};
+use benilla_ui::script::{TooltipTint, UnitState};
 use benilla_ui::strings::Arg;
 
 use crate::names::NameCache;
@@ -105,7 +107,7 @@ fn skill_lock_line(
 }
 
 fn drive_mouseover_tooltip(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     hovered: Res<Hovered>,
     hovered_go: Res<HoveredObject>,
     stores: Query<&ObjectStore>,
@@ -127,7 +129,7 @@ fn drive_mouseover_tooltip(
     // The meeting stone's area line.
     areas: Option<Res<crate::area::AreaTableRes>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (last, last_lines, trace) = (&mut memo.last, &mut memo.last_lines, &mut *memo.trace);

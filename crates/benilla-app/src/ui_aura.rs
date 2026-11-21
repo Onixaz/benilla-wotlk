@@ -393,11 +393,13 @@ struct AuraUnits<'w> {
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
+    /// The interact target (`0x60af67`), the `"npc"` unit's.
+    interact: Option<Res<'w, crate::ui_session::InteractTarget>>,
 }
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn feed_auras(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_q: Query<
         (
             &ObjectStore,
@@ -420,7 +422,7 @@ fn feed_auras(
     mut mem: ResMut<AuraFeedMemory>,
     actions: Option<Res<crate::ui_action::PlayerActions>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Ok((store, self_guid, self_table, seated)) = self_q.single() else {
@@ -468,14 +470,18 @@ fn feed_auras(
 
     // The minimap's tracking spell follows a known tracking spell's aura on and off the player
     // (`0x727760` add, `0x722090` removal).
-    let tracking_spell = self_table
-        .listed()
-        .filter(|a| script.is_tracking_spell(a.spell_id))
-        .last()
-        .map_or(0, |a| a.spell_id);
-    if tracking_spell != script.tracking_spell() {
-        script.set_tracking_spell(tracking_spell);
-    }
+    // The known tracking spells are the live book's, read in the step's turn with the `World` lent.
+    let listed: Vec<u32> = self_table.listed().map(|a| a.spell_id).collect();
+    benilla_ui::script::world_loan::in_turn_or_now(&mut script, move |script| {
+        let tracking_spell = listed
+            .into_iter()
+            .rev()
+            .find(|&id| script.is_tracking_spell(id))
+            .unwrap_or(0);
+        if tracking_spell != script.tracking_spell() {
+            script.set_tracking_spell(tracking_spell);
+        }
+    });
 
     if let Some(period) = trace_period() {
         if bevy_now - mem.traced_at >= period {
@@ -542,10 +548,8 @@ fn feed_auras(
         let pet_of = crate::ui_arena::pet_of(&index, &stores);
         (a.opponents(), a.pets(&pet_of), a.count())
     });
-    // The interact target through the lent view (`0x60af67`).
-    let interact = crate::ui_script::live::interact_target()
-        .flatten()
-        .unwrap_or(0);
+    // The interact target (`0x60af67`).
+    let interact = units.interact.as_ref().and_then(|t| t.0).unwrap_or(0);
     let unit_changed = memo.units.feed(
         &mut script,
         units::Inputs {
@@ -612,10 +616,8 @@ fn feed_auras(
 
 /// The session's end: drops the lists, so nothing reaches the next character's frames. The
 /// tables die with their units.
-fn end_session_aura_state(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-) {
-    if let Some(mut script) = script {
+fn end_session_aura_state(mut script: crate::ui_script::InTurn) {
+    if let Some(mut script) = script.turn() {
         script.clear_auras();
         script.set_unit_guids(&Default::default());
         script.clear_tracking();
@@ -625,11 +627,8 @@ fn end_session_aura_state(
 
 /// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell, not the
 /// slot.
-fn drain_aura_cancels(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    net: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_aura_cancels(mut script: crate::ui_script::InTurn, net: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for spell_id in script.take_cancel_aura_requests() {

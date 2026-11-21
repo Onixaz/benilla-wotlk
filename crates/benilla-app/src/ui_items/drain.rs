@@ -64,14 +64,14 @@ pub(crate) fn send_auto_equip(
 /// Sends the auto-equips `AutoEquipCursorItem` queued through [`send_auto_equip`]. It takes no
 /// pending lock, so the source slot does not dim while the equip is in flight.
 pub(super) fn drain_container_autoequips(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     items: Res<Items>,
     objects: Objects,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for (bag, slot) in script.take_container_autoequips() {
@@ -102,10 +102,10 @@ pub(super) fn drain_container_autoequips(
 /// slot: `CMSG_AUTOSTORE_BAG_ITEM` names `(srcbag, srcslot, dstbag)` and the server picks the slot.
 /// A split carry sends `CMSG_SPLIT_ITEM` instead. Takes no pending lock.
 pub(super) fn drain_bag_autostores(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for a in script.take_bag_autostores() {

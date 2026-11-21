@@ -877,7 +877,7 @@ impl LootSourceObjects<'_, '_> {
 }
 
 fn feed_loot(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut loot: ResMut<LootState>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -894,7 +894,7 @@ fn feed_loot(
     objects: LootSourceObjects,
     mut moving: OpenWhileMoving,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);

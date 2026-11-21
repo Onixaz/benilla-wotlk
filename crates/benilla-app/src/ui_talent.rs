@@ -22,7 +22,7 @@ use benilla_protocol::messages::TalentsInfo;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
     ScriptValue, TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState,
-    TalentView, UiScript,
+    TalentView,
 };
 
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
@@ -291,7 +291,7 @@ impl PetTalentInputs<'_, '_> {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_talents(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     talents: Option<Res<Talents>>,
     mut held: ResMut<PlayerTalentGroups>,
     mut pet_inputs: PetTalentInputs,
@@ -301,7 +301,7 @@ fn feed_talents(
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);
@@ -444,14 +444,14 @@ fn feed_talents(
 /// The inspected player's snapshot, pushed when its class, its groups or a catalog moved, then the
 /// `INSPECT_TALENT_READY`s owed; a `/reload`'s new VM gets the snapshot again.
 fn feed_inspect_talents(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     talents: Option<Res<Talents>>,
     spells: Option<Res<Spells>>,
     mut inspect: ResMut<InspectTalents>,
     target: Res<InspectTalentClass>,
     mut memory: Local<crate::ui_script::VmMemo<(Option<TalentUiState>, u32)>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let ((pushed, last_reset), vm_reset) = memory.get_reset(&script);
@@ -660,12 +660,12 @@ fn tab_pages(
 /// the VM chose the talent and rank (`0x5c80e0`, `0x5c6a10`), and the server answers with
 /// `SMSG_TALENTS_INFO`.
 fn drain_talent_learns(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
     bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     pet: crate::ui_pet::PetUnit,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let pet_guid = bar

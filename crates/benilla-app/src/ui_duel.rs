@@ -3,7 +3,9 @@
 //! packet. The challenge (`0x5cfcd0`) reaches both players, and the challenger's own copy accepts
 //! at once (`0x5cfd12`). Bounds (`0x5cf910`, `0x5cf930`) only fire events: the server enforces them.
 
-use benilla_ui::script::{DuelRequest, ScriptValue, UiScript};
+#[cfg(test)]
+use benilla_ui::script::UiScript;
+use benilla_ui::script::{DuelRequest, ScriptValue};
 use bevy::prelude::*;
 
 use crate::names::NameCache;
@@ -320,7 +322,7 @@ fn tick_countdown(
 
 /// Drain the duel verbs' intents into their sends.
 fn drain_duel(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     duel: Res<DuelState>,
     spells: Option<Res<Spells>>,
     actions: Res<crate::ui_action::PlayerActions>,
@@ -328,7 +330,7 @@ fn drain_duel(
     names: Res<NameCache>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let requests = script.take_duel_requests();

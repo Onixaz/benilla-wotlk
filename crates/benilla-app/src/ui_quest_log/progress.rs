@@ -469,10 +469,10 @@ fn quest_item_loot(
 
 /// `QueryQuestsCompleted()`'s requests, sent after the tick that made them.
 pub(super) fn drain_quest_progress_sends(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for _ in 0..script.take_quests_completed_queries() {

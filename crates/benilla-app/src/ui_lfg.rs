@@ -332,7 +332,7 @@ struct FeedMemory {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_lfg(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     catalog: Option<Res<LfgCatalog>>,
     mut feed: ResMut<LfgFeed>,
     current_map: Option<Res<benilla_world::world_map::CurrentMap>>,
@@ -347,7 +347,7 @@ fn feed_lfg(
     areas: Option<Res<crate::area::AreaTableRes>>,
     mut memory: Local<VmMemo<FeedMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);

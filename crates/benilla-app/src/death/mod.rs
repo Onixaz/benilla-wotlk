@@ -608,14 +608,14 @@ pub(crate) fn healer_reach(
 /// 40 yd range test against the corpse point (`0x51f663`, inclusive) and its latch's events
 /// (`0x512c40`), and the release POI as its point changes (`0x51f690`), named from the VM.
 fn update_corpse_distance(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut death_net: ResMut<DeathNet>,
     self_q: Query<&Transform, With<SelfPlayer>>,
     arena: crate::ui_arena::ArenaInstance,
     mut corpse_poi: ResMut<CorpsePoi>,
     mut release_poi: ResMut<ReleasePoi>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     if release_poi.from != death_net.release {

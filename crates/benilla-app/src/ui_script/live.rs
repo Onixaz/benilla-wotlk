@@ -296,11 +296,6 @@ impl<T: 'static> LentSlot<'_, T> {
             None => self.fetched.as_deref_mut(),
         }
     }
-
-    /// Whether the borrow was written since the system last ran; an owner's loan counts as written.
-    fn changed(&self) -> bool {
-        self.overlay.is_some() || self.fetched.as_ref().is_some_and(|f| f.is_changed())
-    }
 }
 
 // SAFETY: it registers no access and fetches nothing; `LendLive` fills it under its own access.
@@ -2673,11 +2668,6 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
         f: impl FnOnce(Option<&crate::ui_gossip::GossipState>) -> R,
     ) -> R {
         self.loan.with_view(|v| f(v.gossip.state()))
-    }
-
-    /// Whether the quest giver changed since this parameter's system last ran.
-    pub(crate) fn giver_changed(&self) -> bool {
-        self.loan.with_view(|v| v.lent.giver.changed())
     }
 
     /// `f` over the quest giver this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.

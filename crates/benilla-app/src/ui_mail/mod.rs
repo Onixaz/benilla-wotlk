@@ -677,7 +677,7 @@ struct MailMemos {
 }
 
 fn feed_mail(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut mail: ResMut<MailOpen>,
     mut pending: ResMut<MailPending>,
     look: MailLookups,
@@ -686,7 +686,7 @@ fn feed_mail(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut memos: Local<crate::ui_script::VmMemo<MailMemos>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let memo = memos.get(&script);
@@ -721,12 +721,17 @@ fn feed_mail(
     }
 
     if std::mem::take(&mut mail.open_requested) {
-        // The mailbox open takes the interact target before `MAIL_SHOW` (`0x56da67`).
-        script.close_bank_interaction();
-        script.open_mailbox();
+        // The mailbox open takes the interact target before `MAIL_SHOW` (`0x56da67`), through the
+        // lent `World` in its turn.
+        benilla_ui::script::world_loan::in_turn_or_now(&mut script, |script| {
+            script.close_bank_interaction();
+            script.open_mailbox();
+        });
     }
     if std::mem::take(&mut mail.close_requested) {
-        script.close_mailbox();
+        benilla_ui::script::world_loan::in_turn_or_now(&mut script, |script| {
+            script.close_mailbox()
+        });
     }
 
     // `None` until the player is named; a letter body re-substitutes when it lands.
@@ -857,7 +862,7 @@ fn complain(
 
 /// The VM's mail packets out, each as its verb's reference send does.
 fn drain_mail(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut mail: ResMut<MailOpen>,
     mut pending: ResMut<MailPending>,
     (commands, mut queue): (Res<NetCommands>, Commands),
@@ -870,7 +875,7 @@ fn drain_mail(
 ) {
     use benilla_protocol::messages::mail_delete_reason;
     use benilla_ui::script::MailCommand;
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for command in script.take_mail_commands() {

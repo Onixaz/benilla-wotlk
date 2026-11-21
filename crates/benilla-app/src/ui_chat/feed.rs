@@ -811,10 +811,7 @@ pub(super) fn gesture_prevented(speaker_flags: Option<u32>) -> bool {
 
 /// Drain [`ChatLog`]: resolve names (ask-once, bounded), build the events and [`route`] them.
 pub(super) fn feed_chat(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mut log: ResMut<ChatLog>,
     mut windows: ResMut<ChatWindows>,
     mut channels: ResMut<ChannelState>,
@@ -840,7 +837,7 @@ pub(super) fn feed_chat(
     // The spam and profanity filters, which run in the reference's display function.
     mut text_filter: crate::text_filter::ChatTextFilter,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     if log.pending.is_empty() {
@@ -1423,16 +1420,13 @@ fn needs_name(chat_type: u8) -> bool {
 /// `TIME_PLAYED_TOTAL` and `TIME_PLAYED_LEVEL` lines (`ChatFrame.lua:1279`), so the English lines
 /// `ui_chat::net::played_time` also prints are a duplicate.
 pub(crate) fn played_time_bridge(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
     answer: Option<ResMut<crate::net::PlayedTimeAnswer>>,
     clock: Option<Res<crate::net::PlayedClock>>,
     mut seeded: Local<crate::ui_script::VmMemo<Option<std::time::Instant>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // Every answer reseeds the VM's played clock, the refund and trade windows' base, once per VM:

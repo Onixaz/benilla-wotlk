@@ -11,7 +11,7 @@ use benilla_formats::{GlyphCatalog, SPELL_EFFECT_APPLY_GLYPH};
 use benilla_protocol::field::{FIELD_PLAYER_GLYPHS_1, FIELD_PLAYER_GLYPHS_ENABLED};
 use benilla_ui::script::{
     GlyphCatalogView, GlyphSlotView, GlyphSockets, GlyphTargeting, GlyphView, ScriptValue,
-    UiScript, NUM_GLYPH_SOCKETS,
+    NUM_GLYPH_SOCKETS,
 };
 
 use crate::net::{ClientCommand, FieldChanged, NetCommands, ObjectStore, SelfPlayer};
@@ -155,7 +155,7 @@ fn watcher_events(catalog: &GlyphCatalog, edge: &FieldChanged) -> Vec<(&'static 
 
 #[allow(clippy::too_many_arguments)]
 fn feed_glyphs(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     glyphs: Option<Res<Glyphs>>,
     spells: Option<Res<Spells>>,
     targeting: crate::ui_script::LentRef<SpellTargeting>,
@@ -164,7 +164,7 @@ fn feed_glyphs(
     mut edges: MessageReader<FieldChanged>,
     mut memory: Local<VmMemo<()>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         edges.clear();
         return;
     };
@@ -200,11 +200,8 @@ fn feed_glyphs(
 
 /// `RemoveGlyphFromSocket`'s sends, `CMSG_REMOVE_GLYPH` per socket; the server answers with
 /// `SMSG_TALENTS_INFO` and the glyph field.
-fn drain_glyph_removes(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_glyph_removes(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for socket in script.take_glyph_removes() {

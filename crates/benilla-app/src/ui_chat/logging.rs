@@ -9,8 +9,6 @@ use std::io::Write as _;
 
 use bevy::prelude::*;
 
-use benilla_ui::script::UiScript;
-
 /// One `Logs\` file, open while its flag is on.
 pub(crate) struct LogFile {
     name: &'static str,
@@ -206,12 +204,15 @@ fn local_fields(secs: i64) -> LocalTime {
 /// The VM's two flags → the two files, on the frame either flag moves or a new session's VM
 /// starts with both off, as a logout closes them (`0x5072b0`).
 pub(super) fn sync_chat_logging(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut windows: ResMut<super::frames::ChatWindows>,
     mut combat_file: ResMut<CombatLogFile>,
 ) {
-    let Some(mut script) = script else { return };
-    if !script.take_logging_changes() && !script.is_added() {
+    let added = script.is_added();
+    let Some(mut script) = script.turn() else {
+        return;
+    };
+    if !script.take_logging_changes() && !added {
         return;
     }
     let (chat, combat) = script.logging_flags();

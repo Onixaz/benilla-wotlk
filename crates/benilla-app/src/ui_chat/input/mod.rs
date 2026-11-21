@@ -1266,10 +1266,7 @@ pub(super) fn party_lane(
 /// `"/dance"` says six characters. An unknown chat-type token prints a system line and sends
 /// nothing; an empty line of any other type but AFK and DND sends nothing and prints nothing.
 pub(super) fn drain_addon_chat_sends(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
     mut chat_log: ResMut<super::feed::ChatLog>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
@@ -1284,7 +1281,7 @@ pub(super) fn drain_addon_chat_sends(
     group: Res<crate::ui_party::GroupState>,
     self_guid: Res<crate::net::SelfGuid>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for mut send in script.take_chat_sends() {
@@ -1394,13 +1391,10 @@ pub(super) fn drain_addon_chat_sends(
 /// the outbound half of the `addon` trace tag and `ui_chat::net` the inbound:
 /// `WOW_MOVE_TRACE=<path> WOW_MOVE_TRACE_TAGS=addon` logs both.
 pub(super) fn drain_addon_message_sends(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for send in script.take_addon_sends() {

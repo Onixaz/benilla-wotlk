@@ -76,13 +76,13 @@ impl Plugin for UiMacroPlugin {
 /// so no VM builds it unasked. A failed load leaves it empty, and `MacroPopupOkayButton_Update`
 /// then keeps OKAY disabled.
 fn load_icon_catalog(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     assets: Option<Res<WorldAssets>>,
     list: Res<MacroIconList>,
     item_list: Res<MacroItemIconList>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let (Some(mut script), Some(assets)) = (script, assets) else {
+    let (Some(mut script), Some(assets)) = (script.turn(), assets) else {
         return;
     };
     if !seeded.claim(&script) {
@@ -145,12 +145,14 @@ pub(crate) fn identity(roster: &crate::char_select::Roster) -> Option<(String, S
 /// Seed the engine's macro table from the two slots once per VM, when both have heard from the
 /// server (the reference's macro read `0x567c10` runs from the deferred load).
 fn load_macros(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     data: Res<crate::account_data::AccountData>,
     mut files: ResMut<MacroFiles>,
 ) {
     use crate::account_data::store::{MACROS_ACCOUNT, MACROS_CHARACTER};
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     if *files.loaded.get(&script) {
         return;
     }
@@ -175,11 +177,10 @@ fn load_macros(
 }
 
 /// An edit fires `UPDATE_MACROS` and owes the shutdown's save.
-fn note_dirty_macros(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut files: ResMut<MacroFiles>,
-) {
-    let Some(mut script) = script else { return };
+fn note_dirty_macros(mut script: crate::ui_script::InTurn, mut files: ResMut<MacroFiles>) {
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     if !script.take_macros_dirty() {
         return;
     }

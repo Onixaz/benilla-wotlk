@@ -324,10 +324,10 @@ pub(crate) fn show_line_in_world(world: &mut World, who: &'static str, line: UiE
 
 fn show_line_now(
     In((who, line)): In<(&'static str, UiError)>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut sink: MessageSink,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let shown = ui_error_text(&line, &|key| script.lua().globals().get::<String>(key).ok())

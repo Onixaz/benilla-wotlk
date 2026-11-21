@@ -8,9 +8,9 @@
 //! the reference's re-run only repeats the join, which vmangos swallows, or the leave, whose "Not
 //! on channel" notice nothing prints.
 
-use bevy::prelude::*;
-
+#[cfg(test)]
 use benilla_ui::script::UiScript;
+use bevy::prelude::*;
 
 use crate::area::AreaTableRes;
 use crate::net::{NetCommands, ObjectStore, SelfPlayer};
@@ -100,7 +100,7 @@ pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cas
 
 /// The cascade, chained after the walk: the reference runs it at the walk's tail, on a fresh zone.
 pub(super) fn guild_recruitment_cascade(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<GuildRecruitmentCascade>,
     mut channels: ResMut<ChannelState>,
     walk: Res<ZoneChannelWalk>,
@@ -108,7 +108,9 @@ pub(super) fn guild_recruitment_cascade(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     // The mode setter (`0x508260`), called with 0: unmoved is a no-op; 1 runs the cascade, 0
     // leaves a joined recruitment channel and refreshes the windows.
     if let Some(mode) = state.cvar.take() {

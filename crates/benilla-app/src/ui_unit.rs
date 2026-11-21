@@ -71,7 +71,7 @@ pub(crate) struct CombatTextEvent {
 /// Deviation: fires with our descriptor present, so `UnitExists("player")` answers true where the
 /// reference's misses, because matching it breaks `UnitExists` for no stock reader.
 pub(crate) fn fire_leaving_world_on_worldport(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut sweep: crate::ui_script::LeaveWorldSweep,
     mut ports: MessageReader<crate::net::WorldportMessage>,
 ) {
@@ -86,7 +86,7 @@ pub(crate) fn fire_leaving_world_on_worldport(
     if !sweep.run() {
         return;
     }
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     script.fire_event("PLAYER_LEAVING_WORLD", Vec::new());
@@ -263,7 +263,7 @@ pub(crate) fn known_languages(
 }
 
 fn feed_known_languages(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     actions: Option<Res<crate::ui_action::PlayerActions>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
@@ -271,7 +271,7 @@ fn feed_known_languages(
     self_q: Query<Ref<ObjectStore>, With<SelfPlayer>>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<Vec<String>>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (Some(actions), Some(spells), Some(languages)) = (actions, spells, languages) else {
@@ -364,12 +364,12 @@ pub(crate) fn seed_language_table(world: &World, script: &mut UiScript) {
 /// Push `GetDefaultLanguage()`'s string on a change of race; `None` is the reference's zero value.
 /// Locale column 0: only enUS is populated in the 1.12 data.
 fn feed_default_language(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     langs: Option<Res<DefaultLanguagesRes>>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<Option<String>>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let pushed = pushed.get(&script);
@@ -402,12 +402,12 @@ impl RestStates {
 
 /// Seed each VM's `Exhaustion.dbc` table; a failed load keeps the shipped-table fallback.
 fn load_exhaustion_rows(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     assets: Option<Res<benilla_assets::WorldAssets>>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
     mut rest_states: ResMut<RestStates>,
 ) {
-    let (Some(mut script), Some(assets)) = (script, assets) else {
+    let (Some(mut script), Some(assets)) = (script.turn(), assets) else {
         return;
     };
     if !seeded.claim(&script) {
@@ -496,10 +496,10 @@ fn melee_unit_combat(
 
 /// Drain [`CombatTextEvent`] into `COMBAT_TEXT_UPDATE(messageType, data, extra)`.
 fn fire_combat_text(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut events: MessageReader<CombatTextEvent>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for ev in events.read() {
@@ -512,36 +512,41 @@ fn fire_combat_text(
 
 /// Drain [`UnitCombatFeedback`] into `UNIT_COMBAT`, once per token naming the guid (`0x60bb70`).
 fn fire_unit_combat(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut events: MessageReader<UnitCombatFeedback>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for ev in events.read() {
-        for token in script.unit_tokens(ev.guid) {
-            script.fire_event(
-                "UNIT_COMBAT",
-                vec![
-                    ScriptValue::Str(token),
-                    ScriptValue::Str(ev.action.to_string()),
-                    ScriptValue::Str(ev.flags.to_string()),
-                    ScriptValue::Int(i64::from(ev.amount)),
-                    ScriptValue::Int(i64::from(ev.school)),
-                ],
-            );
-        }
+        let (guid, action, flags, amount, school) =
+            (ev.guid, ev.action, ev.flags, ev.amount, ev.school);
+        // The tokens are read as the event fires: `"npc"` is the interact target's (`0x60bece`).
+        benilla_ui::script::world_loan::in_turn_or_now(&mut script, move |script| {
+            for token in script.unit_tokens(guid) {
+                script.fire_event(
+                    "UNIT_COMBAT",
+                    vec![
+                        ScriptValue::Str(token),
+                        ScriptValue::Str(action.to_string()),
+                        ScriptValue::Str(flags.to_string()),
+                        ScriptValue::Int(i64::from(amount)),
+                        ScriptValue::Int(i64::from(school)),
+                    ],
+                );
+            }
+        });
     }
 }
 
 /// `SetTaxiBenchmarkMode`'s send, and the two events off `PLAYER_FLAGS` 0x20000's edge.
 fn taxi_benchmark(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
     mut was_on: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let was_on = was_on.get(&script);
@@ -568,12 +573,12 @@ fn taxi_benchmark(
 /// Mirror the name cache's changed players into the VM, every answered one into a new VM, and
 /// send `GetPlayerInfoByGUID`'s asks.
 fn feed_name_records(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     names: Res<crate::names::NameCache>,
     commands: Res<crate::net::NetCommands>,
     mut fed: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (wiped, changed) = names.take_player_changes();
@@ -945,11 +950,11 @@ fn dist_sq(q: Vec3, p: Vec3) -> f64 {
 /// `PLAYER_FARSIGHT_FOCUS_CHANGED`: the `PLAYER_FARSIGHT` field callback fires it on every change,
 /// whether or not the new guid resolves, so this diffs the field, never the pose.
 fn feed_farsight_focus(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut focus: Local<crate::ui_script::VmMemo<Option<u64>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Some(store) = self_q.iter().next() else {
@@ -971,7 +976,7 @@ fn feed_farsight_focus(
 /// reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated:
 /// distances move every frame, and no event keys off the map.
 fn feed_unit_reach(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tokens: UnitTokens,
     self_q: Query<(&Transform, &ObjectStore), With<SelfPlayer>>,
     transforms: Query<&Transform>,
@@ -979,7 +984,7 @@ fn feed_unit_reach(
     reputations: Res<Reputations>,
     group: Option<Res<crate::ui_party::GroupState>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let mut reach = HashMap::new();
@@ -1240,11 +1245,8 @@ pub(crate) fn enrich_unit(
 
 /// Drain `TogglePVP` into the bare `CMSG_TOGGLE_PVP` and `SetPVP(state)` into its one-byte form,
 /// in that order within a frame.
-fn drain_pvp_toggles(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_pvp_toggles(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for _ in 0..script.take_pvp_toggles() {
@@ -1257,11 +1259,8 @@ fn drain_pvp_toggles(
 
 /// Drain the `ShowHelm`/`ShowCloak` flips into `CMSG_TOGGLE_HELM`/`CMSG_TOGGLE_CLOAK`; the VM,
 /// which alone knows what the Options row did, has already decided each is needed.
-fn drain_worn_display_toggles(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_worn_display_toggles(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for which in script.take_worn_display_toggles() {
@@ -1274,11 +1273,8 @@ fn drain_worn_display_toggles(
 
 /// Drain `SetActionBarToggles` into `CMSG_SET_ACTIONBAR_TOGGLES`, one packet per call: the
 /// reference binding neither checks for a change nor coalesces.
-fn drain_action_bar_toggles(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_action_bar_toggles(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for toggles in script.take_action_bar_toggle_sends() {
@@ -1511,7 +1507,7 @@ fn arena_guids(
 
 /// The arena units, pushed just before `ARENA_OPPONENT_UPDATE` so its handler reads the slot (`0x608180`); per-token pushes are #1289.
 pub(crate) fn push_arena_units(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: SnapshotTables,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     index: Option<Res<crate::net::GuidIndex>>,
@@ -1526,7 +1522,7 @@ pub(crate) fn push_arena_units(
         crate::ui_arena::ArenaInstance,
     ),
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let held = held::HeldUnits {
@@ -1567,7 +1563,7 @@ pub(crate) fn push_arena_units(
 /// The `"npc"` unit, pushed as the interact target is stored (`0x51fd26`) so the window's show handler reads the object it names (`0x60af67`); per-token pushes are #1289.
 pub(crate) fn push_npc_unit(
     In(guid): In<u64>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: SnapshotTables,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     index: Option<Res<crate::net::GuidIndex>>,
@@ -1580,7 +1576,7 @@ pub(crate) fn push_npc_unit(
     instance: crate::ui_arena::ArenaInstance,
     go_templates: Option<Res<crate::go_templates::GameObjectTemplates>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let held = held::HeldUnits {
@@ -1636,6 +1632,10 @@ struct Interactions<'w> {
     instance: crate::ui_arena::ArenaInstance<'w>,
     /// A GameObject interact target's name.
     go_templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
+    /// The interact target (`0xbd07a8`), whose `"npc"` unit `MERCHANT_SHOW` reads.
+    target: Option<Res<'w, crate::ui_session::InteractTarget>>,
+    /// The open questgiver window, the `"questnpc"` source (`0x6081b0`).
+    giver: Option<NonSend<'w, crate::ui_quest::QuestGiver>>,
 }
 
 /// The selection setter's tail after its write (`0x524bf0`): the getters then read the new
@@ -1731,7 +1731,7 @@ type EntryAndTarget<'w, 's> = (
 );
 
 fn feed_units(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: SnapshotTables,
 
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
@@ -1756,7 +1756,7 @@ fn feed_units(
     // `PLAYER_TARGET_CHANGED`.
     (entered_world, mut deferred, mut hold, mut target_cast, mut usable): EntryAndTarget,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // Ahead of the gate: a login edge, with no snapshot to diff.
@@ -1805,9 +1805,9 @@ fn feed_units(
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     // The drain waits on this pass's world entry, so it runs whatever else moved.
     let entry_owed = hold.as_ref().is_some_and(|h| h.0);
-    let (interact_guid, target_changed) = live.interact_target();
-    let interact_changed = target_changed
-        || live.giver_changed()
+    let interact_guid = interact.target.as_ref().and_then(|t| t.0);
+    let interact_changed = interact.target.as_ref().is_some_and(|t| t.is_changed())
+        || interact.giver.as_ref().is_some_and(|g| g.is_changed())
         || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
         || interact.arena.as_ref().is_some_and(|r| r.is_changed())
         || interact.instance.is_changed()
@@ -1984,8 +1984,10 @@ fn feed_units(
 
     // `"questnpc"`: the questgiver window's source (`0x6081b0`), which `QuestFrame_SetPortrait`
     // titles the window with. A GameObject or item source is held like a unit.
-    let quest_npc = live
-        .with_giver(|g| g.and_then(crate::ui_quest::QuestGiver::quest_npc))
+    let quest_npc = interact
+        .giver
+        .as_deref()
+        .and_then(crate::ui_quest::QuestGiver::quest_npc)
         .and_then(|guid| {
             let entity = *index.as_deref()?.0.get(&guid)?;
             Some(held.state(stores.all.get(entity).ok()?, guid))
@@ -2224,9 +2226,13 @@ fn feed_units(
                 })
                 == Some(me.0);
             if !owned {
-                for token in script.unit_tokens(state.guid) {
-                    script.fire_event("UNIT_FACTION", vec![ScriptValue::Str(token)]);
-                }
+                let guid = state.guid;
+                // The tokens are read as the event fires (`0x60bece`).
+                benilla_ui::script::world_loan::in_turn_or_now(&mut script, move |script| {
+                    for token in script.unit_tokens(guid) {
+                        script.fire_event("UNIT_FACTION", vec![ScriptValue::Str(token)]);
+                    }
+                });
             }
         }
     }
@@ -2319,13 +2325,13 @@ fn feed_units(
 /// (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE` (`0x5d3507`). A fresh VM takes
 /// the banks silently.
 fn feed_combo_points(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     combo: Option<Res<crate::spell::ComboPoints>>,
     self_guid: Option<Res<crate::net::SelfGuid>>,
     pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
     mut memo: Local<crate::ui_script::VmMemo<Option<(u64, u64)>>>,
 ) {
-    let (Some(mut script), Some(combo)) = (script, combo) else {
+    let (Some(mut script), Some(combo)) = (script.turn(), combo) else {
         return;
     };
     let memo = memo.get(&script);
@@ -2421,12 +2427,17 @@ fn on_health_update(
     }
 }
 
-/// The bare unit feed, for a test driving the stock unit frames off engine state.
+/// The bare unit feed and its raise step, for a test driving the stock unit frames off engine
+/// state.
 #[cfg(test)]
 pub(crate) fn add_unit_feed(app: &mut App) {
     app.init_resource::<UnitFeedState>()
+        .init_resource::<crate::ui_script::live::UiEvents>()
         .add_message::<crate::net::FieldChanged>()
-        .add_systems(Update, feed_units);
+        .add_systems(
+            Update,
+            (feed_units, crate::ui_script::raises::fire_raises).chain(),
+        );
 }
 
 /// The Northrend continent, where flying also takes Cold Weather Flying (`0x7261b0`).
@@ -2459,8 +2470,11 @@ impl EquippedFeed<'_, '_> {
                 let text = if token.is_empty() {
                     None
                 } else {
+                    // A global's read, no chunk run.
                     script
-                        .eval::<Option<String>>(&format!("return {token}"))
+                        .lua()
+                        .globals()
+                        .get::<Option<String>>(token)
                         .ok()
                         .flatten()
                 };
@@ -2545,7 +2559,7 @@ impl SeatedVehicle<'_, '_> {
 
 /// The player state `SecureCmdOptionParse`'s conditions read, pushed each frame.
 fn feed_option_state(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     player: Option<Res<crate::player::Player>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     place: Option<Res<crate::area::PlayerPlace>>,
@@ -2553,7 +2567,7 @@ fn feed_option_state(
     mut equipped: EquippedFeed,
     vehicle: SeatedVehicle,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     if let Some(store) = self_q.iter().next() {

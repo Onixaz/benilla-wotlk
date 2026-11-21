@@ -104,7 +104,7 @@ pub(crate) fn drop_item_on_unit(
 
 /// The left click's payload legs on the press pick, at the settled click (`0x4f7880`).
 pub(crate) fn drop_on_world_click(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     press: Res<crate::target::PressPick>,
     mut clicks: MessageReader<WorldClick>,
     mut drops: MessageReader<WorldDropClick>,
@@ -113,7 +113,7 @@ pub(crate) fn drop_on_world_click(
     if !clicked {
         return;
     }
-    if let Some(mut script) = script {
+    if let Some(mut script) = script.turn() {
         script.world_drop_click(press.world_pick());
     }
 }

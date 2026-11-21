@@ -7,12 +7,14 @@
 //! does, so the VM resolves it to a guid and reads that guid's snapshot, which [`feed_chain_units`]
 //! pushes for the guids [`UiScript::chain_end_guids`] lists.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
 use benilla_formats::ChrClasses;
-use benilla_ui::script::{UiScript, UnitState};
+use benilla_ui::script::UnitState;
 
 use super::{enrich_unit, faction_group, faction_group_localized, snapshot, unit_reaction};
 use crate::creature_type::CreatureTypeSources;
@@ -151,7 +153,7 @@ pub(super) struct ChainMemo {
 /// or pet record, and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`; those
 /// legs are not built for a chain's end. A token without a hop reads its own push, not these.
 pub(super) fn feed_chain_units(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: super::SnapshotTables,
     // The object manager's lookup on its own, not through [`super::UnitTokens`], whose pet-bar read
     // would order this feed against the pet feed it does not depend on.
@@ -168,7 +170,7 @@ pub(super) fn feed_chain_units(
     mut removed: RemovedComponents<Guid>,
     mut memo: Local<VmMemo<ChainMemo>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memo, vm_reset) = memo.get_reset(&script);

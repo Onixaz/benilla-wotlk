@@ -594,7 +594,7 @@ type AuctionCatalogs<'w> = (
 
 /// Push the auction house into the VM and fire its events on a change, diffed against `VmMemo`s.
 fn feed_auction(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut auction: ResMut<AuctionOpen>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -611,7 +611,7 @@ fn feed_auction(
     mut last_sell: Local<crate::ui_script::VmMemo<Option<(i64, u32)>>>,
     mut last_classes: Local<crate::ui_script::VmMemo<Vec<AuctionCategory>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -845,7 +845,7 @@ impl Sender<'_> {
 
 /// Drain the Lua intents into the auction `CMSG`s.
 fn drain_auction(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut auction: ResMut<AuctionOpen>,
     commands: Res<NetCommands>,
     time: Res<Time>,
@@ -853,7 +853,7 @@ fn drain_auction(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut queue: Commands,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Some(auctioneer) = auction.auctioneer else {

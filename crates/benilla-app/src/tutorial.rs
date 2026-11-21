@@ -14,11 +14,13 @@
 //! The reference has fifty-one trigger sites and seven acknowledge sites; the ones this app can
 //! produce reach here through [`TutorialEvent`] or the self-descriptor edges below.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{ScriptValue, UiScript};
+use benilla_ui::script::ScriptValue;
 
 use crate::char_select::ClientState;
 use crate::net::{ClientCommand, EnteredWorldMessage, NetCommands, ObjectStore, SelfPlayer};
@@ -312,7 +314,7 @@ const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
 /// Before the script tick: the sites' asks, the descriptor edges, the timers, the cue and the
 /// event, and the acknowledged bank's push to whichever VM is live.
 fn feed_tutorials(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut tutorials: ResMut<Tutorials>,
     mut asks: MessageReader<TutorialEvent>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -358,7 +360,7 @@ fn feed_tutorials(
 
     tutorials.tick(now);
 
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for published in std::mem::take(&mut tutorials.fired) {
@@ -433,11 +435,11 @@ fn watch_self(
 
 /// After the script tick: the verbs' writes, then every send.
 fn drain_tutorials(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut tutorials: ResMut<Tutorials>,
     commands: Res<NetCommands>,
 ) {
-    if let Some(mut script) = script {
+    if let Some(mut script) = script.turn() {
         // `TriggerTutorial(n)` calls the client's trigger with no delay (`0x5308f7`).
         let now = Instant::now();
         for id in script.take_tutorial_triggers() {

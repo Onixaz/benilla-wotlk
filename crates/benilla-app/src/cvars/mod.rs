@@ -904,7 +904,7 @@ pub(crate) fn boot_cvar(name: &str) -> Option<String> {
 /// Per frame: seed a new VM's mirror, drain its registrations and writes into the registry, push
 /// the registry's writes into the mirror, and trigger every accepted move.
 pub(crate) fn sync_cvars(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut cvars: ResMut<Cvars>,
     adapter: Option<Res<bevy::render::renderer::RenderAdapterInfo>>,
     msaa_formats: Option<Res<benilla_world::view::MsaaFormats>>,
@@ -918,7 +918,7 @@ pub(crate) fn sync_cvars(
             cvars.own_for_session("gxApi", Some(backend));
         }
     }
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         // Nothing to mirror into; a later VM is seeded from the table, which carries it all.
         if cvars.has_outbox() {
             cvars.take_outbox();

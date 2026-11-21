@@ -200,7 +200,7 @@ fn turn_in_lines(
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(crate) fn accept_line(
     In(quest_id): In<u32>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     quest_log: Res<QuestLog>,
     commands: Res<NetCommands>,
     mut sink: MessageSink,
@@ -209,7 +209,7 @@ pub(crate) fn accept_line(
     // The accept callback's process-wide count (`0x6df46d`).
     mut accepts: Local<u32>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Some(t) = quest_log.template(quest_id, &commands) else {

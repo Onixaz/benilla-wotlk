@@ -193,14 +193,8 @@ impl Plugin for UiChatPlugin {
 ///
 /// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
 /// returns to the login screen), so the window keeps its scrollback there.
-fn end_session_chat(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    mut log: ResMut<ChatLog>,
-) {
-    end_chat_session(script.map(NonSendMut::into_inner), &mut log);
+fn end_session_chat(mut script: crate::ui_script::InTurn, mut log: ResMut<ChatLog>) {
+    end_chat_session(script.turn().as_deref_mut(), &mut log);
 }
 
 /// [`end_session_chat`]'s body, callable without a `World`.

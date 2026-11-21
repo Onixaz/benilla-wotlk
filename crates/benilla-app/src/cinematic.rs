@@ -23,11 +23,12 @@
 //! camera, so the flight is over streamed terrain) and the UI's cinematic flag, which drives
 //! `CinematicFrame` and makes `InCinematic()` true so `StaticPopup` suppresses dialogs.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::Duration;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::{CinematicCatalog, CinematicPath};
-use benilla_ui::script::UiScript;
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 use bevy::prelude::*;
@@ -544,10 +545,10 @@ fn abandon_on_leaving_world(
 /// is per VM, so a `/reload` mid-cinematic re-fires `CINEMATIC_START` into the rebuilt tree.
 fn feed_ui(
     cine: Res<Cinematic>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut published: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let playing = cine.is_playing();
@@ -576,11 +577,8 @@ fn feed_ui(
 
 /// Each Lua `OpeningCinematic()` is one empty `CMSG_OPENING_CINEMATIC`; the server answers, if at
 /// all, with the `SMSG_TRIGGER_CINEMATIC` [`take_trigger`] plays.
-fn send_opening_cinematic(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    net: Option<Res<NetCommands>>,
-) {
-    let Some(mut script) = script else {
+fn send_opening_cinematic(mut script: crate::ui_script::InTurn, net: Option<Res<NetCommands>>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let asks = script.take_opening_cinematic_asks();

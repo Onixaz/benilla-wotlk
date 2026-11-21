@@ -213,7 +213,7 @@ fn player_view(
 
 #[allow(clippy::too_many_arguments)]
 fn feed_calendar(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     catalog: Option<Res<CalendarCatalog>>,
     mut feed: ResMut<CalendarFeed>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -231,7 +231,7 @@ fn feed_calendar(
     mut mail: crate::ui_mail::MailArrival,
     mut memory: Local<VmMemo<FeedMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);

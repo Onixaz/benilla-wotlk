@@ -14,7 +14,7 @@ use benilla_protocol::messages::{AllAchievementData, CriteriaProgress};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
     AchievementBook, AchievementCategoryRow, AchievementCriteriaRow, AchievementDb, AchievementRow,
-    AchievementUpdate, CriteriaWire, UiScript,
+    AchievementUpdate, CriteriaWire,
 };
 
 use crate::char_select::ClientState;
@@ -214,7 +214,7 @@ struct FeedMemory {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_achievements(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     db: Option<Res<Achievements>>,
     mut held: ResMut<PlayerAchievements>,
     self_guid: Res<SelfGuid>,
@@ -222,7 +222,7 @@ fn feed_achievements(
     commands: Res<NetCommands>,
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Some(db) = db else { return };

@@ -8,13 +8,15 @@
 //! ([`InstanceState::saw_own_dungeon`]), because AzerothCore never sends
 //! `SMSG_UPDATE_INSTANCE_OWNERSHIP`, so the server alone would never offer the reset.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
 
 use benilla_protocol::messages::{
     EncounterUnitUpdate, InstanceLockWarning, InstanceResetFailure, RaidInstanceMessage,
     RaidInstanceWarning,
 };
-use benilla_ui::script::{InstanceLock, ScriptValue, UiScript};
+use benilla_ui::script::{InstanceLock, ScriptValue};
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
@@ -658,14 +660,14 @@ fn track_instance_state(
 /// publish what the instance verbs read; the setters diff.
 #[allow(clippy::too_many_arguments)]
 fn feed_instance(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<InstanceState>,
     mut chat: ResMut<ChatLog>,
     inputs: ResetInputs,
     time: Res<Time<Real>>,
     mut fed_maps: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         // No VM (an engine-only run): drop the queues rather than let them grow.
         state.lines.clear();
         state.welcomes.clear();
@@ -741,11 +743,8 @@ fn feed_instance(
 }
 
 /// Turn the `ResetInstances()` calls and `RespondInstanceLock` answers into their sends.
-fn drain_instance(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_instance(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for _ in 0..script.take_reset_instance_asks() {
