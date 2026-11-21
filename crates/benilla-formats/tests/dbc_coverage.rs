@@ -37,7 +37,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
-    ("TransportPhysics", "#243 transport rocking"),
     ("VideoHardware", "#245 graphics defaults by video card"),
     ("WorldChunkSounds", "#244 per-chunk zone sounds"),
     (

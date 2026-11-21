@@ -19,8 +19,9 @@ use std::time::Instant;
 use avian3d::prelude::{Position, RigidBody, Rotation};
 use benilla_formats::{
     elevator_period_ms, elevator_rotation, elevator_sample, load_elevator_paths,
-    load_rotation_paths, load_taxi_path_nodes, ElevatorKeyframe, ElevatorPaths, RotationKey,
-    RotationPaths, TaxiPathNodes, TransportSample, TransportTimetable,
+    load_rotation_paths, load_taxi_path_nodes, load_transport_physics, ElevatorKeyframe,
+    ElevatorPaths, RotationKey, RotationPaths, TaxiPathNodes, TransportPhysics,
+    TransportPhysicsTable, TransportSample, TransportTimetable,
 };
 // The collider AABB and collider-tree refresh, run a second time each frame in the chain below.
 use benilla_world::collision::refit_changed_collider_aabbs;
@@ -116,8 +117,8 @@ pub(crate) struct Transport {
 
 /// The two cycle evaluators; consumers key on [`Transport`], never on the drive.
 enum Drive {
-    /// Type 15: the client-computed taxi-path timetable.
-    Taxi(Arc<TransportTimetable>),
+    /// Type 15: the client-computed taxi-path timetable, rocked by its `TransportPhysics` row.
+    Taxi(Arc<TransportTimetable>, Option<TransportPhysics>),
     /// Type 11: the authored `TransportAnimation` keyframe path.
     Lift(Lift),
 }
@@ -152,14 +153,14 @@ impl Transport {
     /// Which drive is underneath, for the instruments only (`WOW_LIFT_CENSUS`).
     pub(crate) fn drive_label(&self) -> &'static str {
         match &self.drive {
-            Drive::Taxi(_) => "taxi",
+            Drive::Taxi(..) => "taxi",
             Drive::Lift(_) => "lift",
         }
     }
 
     pub(crate) fn period_ms(&self) -> u32 {
         match &self.drive {
-            Drive::Taxi(t) => t.period_ms,
+            Drive::Taxi(t, _) => t.period_ms,
             Drive::Lift(l) => l.period_ms,
         }
     }
@@ -178,19 +179,19 @@ impl Transport {
         anchor: &mut TransportAnchor,
         map_id: u32,
     ) -> Option<(TransportSample, Option<u32>)> {
-        let Drive::Taxi(t) = &self.drive else {
+        let Drive::Taxi(t, _) = &self.drive else {
             return None;
         };
         let cycle = self.cycle_ms(anchor);
         // Already there: seeking would rewind to the leg's head and jerk the deck backwards.
-        let here = t.sample(cycle);
+        let here = self.sample(cycle, map_id);
         if here.map == map_id {
             return Some((here, None));
         }
         let target = t.first_cycle_on_map(cycle, map_id)?;
         anchor.progress_ms = target;
         anchor.at = Instant::now();
-        Some((t.sample(target), Some(target)))
+        Some((self.sample(target, map_id), Some(target)))
     }
 
     /// Whether any leg of the cycle lies on `map_id`, the cross-map worldport's spare predicate. A
@@ -198,7 +199,7 @@ impl Transport {
     /// (`SendInitTransports`), so a lift despawns and streams back like any object.
     pub(crate) fn touches_map(&self, map_id: u32) -> bool {
         match &self.drive {
-            Drive::Taxi(t) => t.touches_map(map_id),
+            Drive::Taxi(t, _) => t.touches_map(map_id),
             Drive::Lift(_) => false,
         }
     }
@@ -207,7 +208,8 @@ impl Transport {
     /// knows each leg's map), a lift reports it, as a type-11 exists only on the viewer's map.
     fn sample(&self, cycle_ms: u32, here: u32) -> TransportSample {
         match &self.drive {
-            Drive::Taxi(t) => t.sample(cycle_ms),
+            Drive::Taxi(t, None) => t.sample(cycle_ms),
+            Drive::Taxi(t, Some(physics)) => t.sample_rocked(cycle_ms, physics),
             Drive::Lift(l) => {
                 let (pos, moving) = elevator_sample(&l.frames, l.base_pos, l.parent, cycle_ms);
                 let rotation =
@@ -228,7 +230,7 @@ impl Transport {
     /// The ship state a boat hands its props this frame (`0x7134a0`), `None` for a lift or a boat
     /// on another map's leg, where the reference returns before setting it.
     fn ship_sequence(&self, anchor: &TransportAnchor, here: u32) -> Option<u16> {
-        let Drive::Taxi(t) = &self.drive else {
+        let Drive::Taxi(t, _) = &self.drive else {
             return None;
         };
         let sample = t.sample(self.cycle_ms(anchor));
@@ -238,7 +240,7 @@ impl Transport {
     /// The reference's ship-path leg the cycle is on, for a type 15 (`0x7f82b0`); a lift has none.
     pub(crate) fn ship_leg_at(&self, anchor: &TransportAnchor) -> Option<u32> {
         match &self.drive {
-            Drive::Taxi(t) => Some(t.ship_leg(self.cycle_ms(anchor))),
+            Drive::Taxi(t, _) => Some(t.ship_leg(self.cycle_ms(anchor))),
             Drive::Lift(_) => None,
         }
     }
@@ -257,6 +259,8 @@ struct Timetables {
     built: HashMap<(u32, u32), Option<Arc<TransportTimetable>>>,
     elevators: Option<ElevatorPaths>,
     lifts: HashMap<u32, Arc<Vec<ElevatorKeyframe>>>,
+    /// `TransportPhysics.dbc`; without it every ship sails level.
+    physics: Option<TransportPhysicsTable>,
     /// `TransportRotation.dbc`; without it every car keeps its own rotation.
     rotations: Option<RotationPaths>,
     turns: HashMap<u32, Arc<Vec<RotationKey>>>,
@@ -282,6 +286,13 @@ fn setup_taxi_nodes(mut timetables: ResMut<Timetables>, world_assets: Option<Res
         }
         // Without keyframes cars stay at their spawn point.
         Err(e) => warn!("TransportAnimation unavailable, lifts stay put: {e:#}"),
+    }
+    match load_transport_physics(&mut chain) {
+        Ok(physics) => {
+            info!("transport physics: {} rows", physics.len());
+            timetables.physics = Some(physics);
+        }
+        Err(e) => warn!("TransportPhysics unavailable, ships sail level: {e:#}"),
     }
     match load_rotation_paths(&mut chain) {
         Ok(rotations) => {
@@ -384,7 +395,14 @@ fn arm_transports(
         let Some(mo) = templates.get(guid.0).and_then(|t| t.mo_transport) else {
             continue; // template answer not in yet: next frame
         };
-        let Timetables { nodes, built, .. } = &mut *timetables;
+        let Timetables {
+            nodes,
+            built,
+            physics,
+            ..
+        } = &mut *timetables;
+        // Property 99 names the rocking row (`0x711b50`); none sails level.
+        let physics = physics.as_ref().and_then(|p| p.get(mo.physics_id)).copied();
         let Some(nodes) = nodes.as_ref() else {
             continue; // no client data: stays frozen
         };
@@ -417,7 +435,7 @@ fn arm_transports(
             // tree is tuned for immobile geometry.
             commands.entity(entity).insert((
                 Transport {
-                    drive: Drive::Taxi(timetable),
+                    drive: Drive::Taxi(timetable, physics),
                     was_moving: false,
                 },
                 RigidBody::Kinematic,
@@ -1197,7 +1215,7 @@ mod tests {
         let nodes = cat.path(241).expect("taxi path 241 (Ratchet–Booty Bay)");
         let tt = TransportTimetable::build(nodes, 30.0, 1.0).expect("path 241 builds");
         Transport {
-            drive: Drive::Taxi(Arc::new(tt)),
+            drive: Drive::Taxi(Arc::new(tt), None),
             was_moving: false,
         }
     }
