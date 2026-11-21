@@ -9,8 +9,8 @@ use benilla_protocol::messages::{
 use bevy::prelude::*;
 
 use benilla_ui::script::{
-    GuildBankLogView, GuildBankRequest, GuildBankSlotView, GuildBankTabView, UiScript,
-    GUILD_BANK_TABS,
+    GuildBankLogView, GuildBankRequest, GuildBankSlotView, GuildBankTabView, GuildBankVerdict,
+    UiScript, GUILD_BANK_TABS,
 };
 
 use crate::entities::ItemDisplays;
@@ -416,14 +416,24 @@ fn drain_guild_bank(
         return;
     };
     for request in script.take_guild_bank_requests() {
-        // The bank is read between calls into Lua: the auto-store's event fires after (`0x5a63f0`).
-        let stored = live.with_guild_bank(|state| {
-            state.is_some_and(|state| handle(&mut script, state, &net, &inputs, request))
+        // The bank is read between calls into Lua, and the VM does what the gates left after.
+        let verdict = live.with_guild_bank(|state| {
+            state.map_or(GuildBankVerdict::Nothing, |state| {
+                handle(state, &net, &inputs, request)
+            })
         });
-        if stored {
-            script.fire_event("GUILDBANKBAGSLOTS_CHANGED", Vec::new());
-        }
+        script.settle_guild_bank(verdict);
     }
+}
+
+/// One swap's gates and send inside the verb that asked (`0x5a56e3`, `0x5a63a1`, `0x5a63c5`, `0x5d8472`, `0x5a63f0`): what they left for the verb.
+pub(crate) fn decide(
+    In(request): In<GuildBankRequest>,
+    state: NonSend<GuildBankState>,
+    net: Res<NetCommands>,
+    inputs: SwapInputs,
+) -> GuildBankVerdict {
+    handle(&state, &net, &inputs, request)
 }
 
 fn send(net: &NetCommands, send: GuildBankSend) {
@@ -432,12 +442,11 @@ fn send(net: &NetCommands, send: GuildBankSend) {
 }
 
 fn handle(
-    script: &mut UiScript,
     state: &GuildBankState,
     net: &NetCommands,
     inputs: &SwapInputs,
     request: GuildBankRequest,
-) -> bool {
+) -> GuildBankVerdict {
     let banker = state.banker;
     match request {
         GuildBankRequest::QueryTab(tab) => state.query_tab(tab, net),
@@ -487,12 +496,13 @@ fn handle(
             item_id,
             count,
         } => {
-            let Some(banker) = banker else { return false };
+            let Some(banker) = banker else {
+                return GuildBankVerdict::Nothing;
+            };
             // `AutoStoreGuildBankItem` (`0x5a63f0`): a rank with no withdrawals from the tab is
             // refused.
             if inputs.guild.own_bank_tab(tab).1 == 0 {
-                script.guild_bank_swap_refused("ERR_GUILD_PERMISSIONS");
-                return false;
+                return GuildBankVerdict::Refused("ERR_GUILD_PERMISSIONS");
             }
             send(
                 net,
@@ -506,7 +516,7 @@ fn handle(
                     },
                 },
             );
-            return true;
+            return GuildBankVerdict::Stored;
         }
         GuildBankRequest::DepositItem {
             tab,
@@ -514,7 +524,7 @@ fn handle(
             bag,
             bag_slot,
             split,
-        } => deposit_item(script, state, net, inputs, tab, slot, bag, bag_slot, split),
+        } => return deposit_item(state, net, inputs, tab, slot, bag, bag_slot, split),
         GuildBankRequest::MoveItem {
             tab,
             slot,
@@ -522,9 +532,11 @@ fn handle(
             src_slot,
             item_id,
             split,
-        } => move_item(
-            script, state, net, inputs, tab, slot, src_tab, src_slot, item_id, split,
-        ),
+        } => {
+            return move_item(
+                state, net, inputs, tab, slot, src_tab, src_slot, item_id, split,
+            )
+        }
         GuildBankRequest::WithdrawItem {
             src_tab,
             src_slot,
@@ -532,11 +544,13 @@ fn handle(
             bag,
             bag_slot,
             split,
-        } => withdraw_item(
-            script, state, net, inputs, src_tab, src_slot, item_id, bag, bag_slot, split,
-        ),
+        } => {
+            return withdraw_item(
+                state, net, inputs, src_tab, src_slot, item_id, bag, bag_slot, split,
+            )
+        }
     }
-    false
+    GuildBankVerdict::Nothing
 }
 
 /// The room a stack of `max` holding `held` has left.
@@ -548,7 +562,6 @@ fn room(max: u32, held: u32) -> u32 {
 /// first that fits. Its refusals keep the cursor; a send clears it.
 #[allow(clippy::too_many_arguments)]
 fn deposit_item(
-    script: &mut UiScript,
     state: &GuildBankState,
     net: &NetCommands,
     inputs: &SwapInputs,
@@ -557,23 +570,25 @@ fn deposit_item(
     bag: i64,
     bag_slot: u32,
     split: Option<u32>,
-) {
-    let Some(banker) = state.banker else { return };
+) -> GuildBankVerdict {
+    let Some(banker) = state.banker else {
+        return GuildBankVerdict::Nothing;
+    };
     let Some(store) = inputs.self_q.iter().next() else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     let Some(slot0) = bag_slot.checked_sub(1).and_then(|s| u8::try_from(s).ok()) else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     let Some(guid) = crate::ui_items::slot_guid(&store.0, bag, slot0, &inputs.objects) else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     let Some(item) = inputs.objects.object(guid) else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     let entry = item.object_entry().unwrap_or(0);
     let Some(t) = inputs.items.template_cached(entry) else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     let item_flags = item.item_flags().unwrap_or(0);
     // Bound (`ITEM_FIELD_FLAGS & 1`), a quest item's own line first.
@@ -583,29 +598,24 @@ fn deposit_item(
         } else {
             "ERR_GUILD_BANK_BOUND_ITEM"
         };
-        script.guild_bank_swap_refused(key);
-        return;
+        return GuildBankVerdict::Refused(key);
     }
     // Conjured (template flag `0x2`), or timed. The template's own duration is not read: a timed
     // item streams its `ITEM_FIELD_DURATION`.
     if t.flags & 0x2 != 0 || item.item_duration().unwrap_or(0) != 0 {
-        script.guild_bank_swap_refused("ERR_GUILD_BANK_CONJURED_ITEM");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_BANK_CONJURED_ITEM");
     }
     if item_flags & 0x8 != 0 {
-        script.guild_bank_swap_refused("ERR_GUILD_BANK_WRAPPED_ITEM");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_BANK_WRAPPED_ITEM");
     }
     let Some((wire_bag, wire_slot)) = crate::ui_items::wire_pos(bag, bag_slot) else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     if wire_bag == BAG_PLAYER_INVENTORY && wire_slot < 23 {
-        script.guild_bank_swap_refused("ERR_GUILD_BANK_EQUIPPED_ITEM");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_BANK_EQUIPPED_ITEM");
     }
     if inputs.guild.own_bank_tab(tab).0 & 0x2 == 0 {
-        script.guild_bank_swap_refused("ERR_GUILD_PERMISSIONS");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_PERMISSIONS");
     }
     let bank = state.slot(tab, slot);
     let bank_item = bank.map_or(0, |b| b.item_id);
@@ -636,13 +646,12 @@ fn deposit_item(
             },
         },
     );
-    script.guild_bank_swap_sent();
+    GuildBankVerdict::Sent
 }
 
 /// The bank-to-bank swap (`0x5a5410`): a held bank item onto another bank slot.
 #[allow(clippy::too_many_arguments)]
 fn move_item(
-    script: &mut UiScript,
     state: &GuildBankState,
     net: &NetCommands,
     inputs: &SwapInputs,
@@ -652,11 +661,12 @@ fn move_item(
     src_slot: u8,
     item_id: u32,
     split: Option<u32>,
-) {
-    let Some(banker) = state.banker else { return };
+) -> GuildBankVerdict {
+    let Some(banker) = state.banker else {
+        return GuildBankVerdict::Nothing;
+    };
     if inputs.guild.own_bank_tab(tab).0 & 0x2 == 0 {
-        script.guild_bank_swap_refused("ERR_GUILD_PERMISSIONS");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_PERMISSIONS");
     }
     let bank = state.slot(tab, slot);
     let bank_item = bank.map_or(0, |b| b.item_id);
@@ -665,8 +675,7 @@ fn move_item(
     let count = match inputs.items.template_cached(item_id) {
         // Unresolved: back onto its own slot is a no-op that drops the item.
         None if item_id == bank_item => {
-            script.guild_bank_drop_held();
-            return;
+            return GuildBankVerdict::DropHeld;
         }
         None => 0,
         Some(_) if bank_item == 0 => split,
@@ -685,8 +694,7 @@ fn move_item(
         && ((bank_item != 0 && inputs.guild.own_bank_tab(tab).1 == 0)
             || inputs.guild.own_bank_tab(src_tab).1 == 0)
     {
-        script.guild_bank_swap_refused("ERR_GUILD_PERMISSIONS");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_PERMISSIONS");
     }
     send(
         net,
@@ -703,14 +711,13 @@ fn move_item(
             },
         },
     );
-    script.guild_bank_swap_sent();
+    GuildBankVerdict::Sent
 }
 
 /// `PickupContainerItem`'s mode-11 arm and the bank-to-bag swap (`0x6db880`): a held bank item onto
 /// a bag slot. The engine already cleared the cursor.
 #[allow(clippy::too_many_arguments)]
 fn withdraw_item(
-    script: &mut UiScript,
     state: &GuildBankState,
     net: &NetCommands,
     inputs: &SwapInputs,
@@ -720,10 +727,12 @@ fn withdraw_item(
     bag: i64,
     bag_slot: u32,
     split: Option<u32>,
-) {
-    let Some(banker) = state.banker else { return };
+) -> GuildBankVerdict {
+    let Some(banker) = state.banker else {
+        return GuildBankVerdict::Nothing;
+    };
     let Some((wire_bag, wire_slot)) = crate::ui_items::wire_pos(bag, bag_slot) else {
-        return;
+        return GuildBankVerdict::Nothing;
     };
     let dest = inputs.self_q.iter().next().and_then(|store| {
         let slot0 = u8::try_from(bag_slot.checked_sub(1)?).ok()?;
@@ -749,8 +758,7 @@ fn withdraw_item(
         _ => 0,
     };
     if inputs.guild.own_bank_tab(src_tab).1 == 0 {
-        script.guild_bank_swap_refused("ERR_GUILD_PERMISSIONS");
-        return;
+        return GuildBankVerdict::Refused("ERR_GUILD_PERMISSIONS");
     }
     send(
         net,
@@ -766,4 +774,161 @@ fn withdraw_item(
             },
         },
     );
+    // The verb clears the cursor after the swap, sent or refused (`0x5d847b`).
+    GuildBankVerdict::Nothing
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+    use benilla_protocol::messages::ObjectFields;
+
+    const ITEM: u64 = 0x4000_0000_0000_0871;
+    const ENTRY: u32 = 871;
+    const BANKER: u64 = 0xF130_0000_0000_0009;
+
+    /// A player holding one item in pack slot 1 before an open banker, our rank with `rights` on tab 1.
+    fn world(bound: bool, rights: u32) -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        use benilla_protocol::field::{
+            FIELD_ITEM_FLAGS, FIELD_OBJECT_ENTRY, FIELD_PLAYER_PACK_SLOT_1,
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.init_resource::<crate::pending_item_ops::PendingItemOps>()
+            .init_resource::<Items>()
+            .init_resource::<GuildState>()
+            .init_resource::<crate::names::NameCache>()
+            .init_resource::<crate::net::GuidIndex>()
+            .insert_resource(crate::net::SelfGuid(Some(0x42)))
+            .insert_resource(NetCommands(tx));
+        let me = app
+            .world_mut()
+            .spawn((
+                SelfPlayer,
+                ObjectStore(ObjectFields::from_pairs(&[
+                    (FIELD_PLAYER_PACK_SLOT_1, ITEM as u32),
+                    (FIELD_PLAYER_PACK_SLOT_1 + 1, (ITEM >> 32) as u32),
+                ])),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(0x42, me);
+        crate::items::test_spawn_item(
+            app.world_mut(),
+            ITEM,
+            ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_ENTRY, ENTRY),
+                (FIELD_ITEM_FLAGS, u32::from(bound)),
+            ]),
+            false,
+        );
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(ENTRY, Some(crate::items::test_template("Flurry Axe")));
+        app.world_mut()
+            .resource_mut::<GuildState>()
+            .set_own_bank_tab(0, rights, 1);
+        app.insert_non_send_resource(GuildBankState {
+            banker: Some(BANKER),
+            num_tabs: 1,
+            ..Default::default()
+        });
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                r#"Log = {}
+                   ERR_GUILD_BANK_BOUND_ITEM = "bound"
+                   local f = CreateFrame("Frame")
+                   f:RegisterEvent("UI_ERROR_MESSAGE")
+                   f:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
+                   f:SetScript("OnEvent", function(_, event)
+                       Log[#Log + 1] = event .. ":" .. tostring((GetCursorInfo()))
+                   end)"#,
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        (app, rx)
+    }
+
+    /// The chunk's log, with the `World` lent as the click and the tick lend it.
+    fn run(app: &mut App, src: &str) -> Vec<String> {
+        crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script.run("Log = {}").unwrap();
+            script.run(src).unwrap();
+            script
+                .eval::<Vec<String>>(
+                    "Log[#Log + 1] = 'after:' .. tostring((GetCursorInfo())) return Log",
+                )
+                .unwrap()
+        })
+        .unwrap()
+    }
+
+    /// A bag item dropped on a bank slot runs the swap inside the verb (`0x5a63a1` -> `0x5a50c0`): a bound item's line shows with the cursor still holding and nothing goes out (`0x5a5187`); an item that passes goes out, then the cursor clears and `GUILDBANKBAGSLOTS_CHANGED` signals before the verb returns (`0x5a53ca`, `0x5a53d3`, `0x5a53df`).
+    #[test]
+    fn a_deposit_is_gated_and_sent_inside_the_call() {
+        let (mut app, rx) = world(true, 0x2);
+        assert_eq!(
+            run(
+                &mut app,
+                "PickupContainerItem(0, 1) PickupGuildBankItem(1, 1)"
+            ),
+            ["UI_ERROR_MESSAGE:item", "after:item"]
+        );
+        assert!(rx.try_iter().next().is_none(), "nothing goes out");
+
+        let (mut app, rx) = world(false, 0x2);
+        assert_eq!(
+            run(
+                &mut app,
+                "PickupContainerItem(0, 1) PickupGuildBankItem(1, 1)"
+            ),
+            ["GUILDBANKBAGSLOTS_CHANGED:nil", "after:nil"]
+        );
+        assert!(matches!(
+            rx.try_iter().next(),
+            Some(ClientCommand::GuildBank(GuildBankSend::Swap {
+                banker: BANKER,
+                swap: GuildBankSwap::Deposit {
+                    tab: 0,
+                    slot: 0,
+                    ..
+                },
+            }))
+        ));
+        // Nothing waits for the drain.
+        assert!(app
+            .world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .take_guild_bank_requests()
+            .is_empty());
+    }
+
+    /// The right-click's auto-store runs the same swap inside `UseContainerItem` (`0x5a56e3`), slot `0xFF`; a rank with no deposit right is refused there, the item where it was (`0x5a52e8`).
+    #[test]
+    fn the_auto_store_of_a_bag_item_is_sent_inside_the_call() {
+        let (mut app, rx) = world(false, 0x2);
+        assert_eq!(
+            run(&mut app, "UseContainerItem(0, 1)"),
+            ["GUILDBANKBAGSLOTS_CHANGED:nil", "after:nil"]
+        );
+        assert!(matches!(
+            rx.try_iter().next(),
+            Some(ClientCommand::GuildBank(GuildBankSend::Swap {
+                swap: GuildBankSwap::Deposit { slot: 0xFF, .. },
+                ..
+            }))
+        ));
+
+        let (mut app, rx) = world(false, 0x1);
+        assert_eq!(run(&mut app, "UseContainerItem(0, 1)"), ["after:nil"]);
+        assert!(rx.try_iter().next().is_none());
+        let shown = app
+            .world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .take_ui_errors();
+        assert_eq!(shown, ["ERR_GUILD_PERMISSIONS"]);
+    }
 }

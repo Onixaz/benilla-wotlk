@@ -534,9 +534,7 @@ pub(crate) fn split_container_item(
     clear_cursor(model);
     // A targeting cursor stops after the clear (`0x5d85f4`).
     if super::spellbook::targeting().active {
-        model
-            .script_calls
-            .push(super::ScriptCall::SpellStopTargeting);
+        model.call(super::ScriptCall::SpellStopTargeting);
     }
     set_cursor(model, CursorPayload::Item(item));
     set_item_lock(model, bag, slot, true);

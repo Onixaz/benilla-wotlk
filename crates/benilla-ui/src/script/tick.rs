@@ -10,7 +10,7 @@ use super::{event, ScriptValue, UiScript};
 impl UiScript {
     /// Hold an event for the start of the next tick, behind everything held earlier and before that
     /// tick's `OnUpdate` pass: the door of a host lane whose drain runs a step behind its input (the
-    /// bind confirms, the sound device change). A verb's own event fires at its step instead
+    /// sound device change). A verb's own event fires at its step instead
     /// (`ModelGuard::raise`).
     pub fn queue_event(&mut self, event: &str, args: Vec<ScriptValue>) {
         self.model_mut().defer_event(event, args);
@@ -357,12 +357,6 @@ mod pending_census_tests {
             "defer_event(",
             1,
             "`UiScript::queue_event`, the host lanes' door",
-        ),
-        (
-            "benilla-app/src/ui_bind_confirm.rs",
-            ".queue_event(",
-            2,
-            "a host lane: the bind confirms behind the drain's input (#1368)",
         ),
         (
             "benilla-app/src/sound/ui.rs",

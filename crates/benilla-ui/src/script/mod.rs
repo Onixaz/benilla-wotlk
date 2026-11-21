@@ -329,7 +329,10 @@ pub use battlefield_score::{
     BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
 };
 pub use bind_confirm::PendingEquipAnswer;
-pub use calls::{apply_queued, set_apply, ApplyCall, CastAt, NearestMode, ScriptCall};
+pub use calls::{
+    apply_queued, set_answer, set_apply, AnswerHost, ApplyCall, CastAt, GuildBankVerdict,
+    HostAnswer, HostAsk, NearestMode, ScriptCall,
+};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use channel_pane::ChannelSlotInfo;
@@ -896,6 +899,35 @@ impl<'a> ModelGuard<'a> {
             .expect("model app_data set");
         self.at = inner.epoch();
         self.inner = Some(inner);
+    }
+
+    /// Make `call` at this step, applied before this returns where the host's state is lent ([`calls::make`]); the borrow is released for it and taken back.
+    pub(crate) fn call(&mut self, call: ScriptCall) {
+        self.released(|lua| calls::make(lua, call));
+    }
+
+    /// Ask the host at this step ([`calls::ask_host`]), the borrow released for it and taken back.
+    pub(crate) fn ask(&mut self, ask: &HostAsk) -> Option<HostAnswer> {
+        self.released(|lua| calls::ask_host(lua, ask))
+    }
+
+    /// The message display at this step (`0x5216f0`), the borrow released for its listeners and taken back.
+    pub(crate) fn show(&mut self, key: &'static str) {
+        self.released(|lua| ui_errors::show_now(lua, key));
+    }
+
+    /// Run `f` with the model's borrow released, then take it back.
+    fn released<R>(&mut self, f: impl FnOnce(&'a mlua::Lua) -> R) -> R {
+        self.charge();
+        self.inner = None;
+        let out = f(self.lua);
+        let inner = self
+            .lua
+            .app_data_mut::<ModelCell>()
+            .expect("model app_data set");
+        self.at = inner.epoch();
+        self.inner = Some(inner);
+        out
     }
 }
 

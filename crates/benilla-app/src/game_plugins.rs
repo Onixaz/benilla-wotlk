@@ -1689,8 +1689,6 @@ pub(crate) mod schedule_tests {
          "filled only by a world right-click on a GameObject; the drain sends casts to the wire"),
         ("ui_auction/mod.rs", "drain_auction", Because::FilledByVm,
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
-        ("ui_guild_bank/mod.rs", "drain_guild_bank", Because::FilledByVm,
-         "the requests are the VM's own guild bank verbs, and the auto-store's event answers one"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,

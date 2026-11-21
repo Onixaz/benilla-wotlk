@@ -222,7 +222,18 @@ fn auto_equip_held(model: &mut crate::script::ModelGuard<'_>, suppress: bool) ->
                 SwapGate::Ask(entry)
                     if crate::script::item_stats::item_usable_by_id(model, entry) =>
                 {
-                    queue(model);
+                    let ask = crate::script::HostAsk::BindAutoEquip {
+                        bag: item.bag,
+                        slot: item.slot,
+                    };
+                    match model.ask(&ask) {
+                        Some(crate::script::HostAnswer::BindIndex(index)) => model.raise(
+                            "AUTOEQUIP_BIND_CONFIRM",
+                            vec![crate::script::ScriptValue::Int(i64::from(index))],
+                        ),
+                        // No host answers in the call: the app's drain files and asks.
+                        _ => queue(model),
+                    }
                     false
                 }
                 // The equip goes out and the cursor clears, its item still locked until the answer (`0x6dfe81`, `0x6dfebd`); ammunition is set by its id and unlocks (`0x6dfe51`).
@@ -984,5 +995,38 @@ mod tests {
         s.run("PickupContainerItem(0, 1)").unwrap();
         assert!(s.take_item_picks().is_empty());
         assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
+    }
+
+    /// With the host's state lent `AutoEquipCursorItem` files its question and signals `AUTOEQUIP_BIND_CONFIRM` inside the call (`0x6dfdc8`, `0x6dfe31`), the cursor still holding.
+    #[test]
+    fn auto_equip_cursor_item_signals_its_question_inside_the_call() {
+        use crate::script::container::SwapGate;
+        use crate::script::{HostAnswer, HostAsk};
+        let item_id = one_fitting_bag_item().slots[&1].item_id;
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Ask(item_id));
+        s.run(
+            r#"local f = CreateFrame("Frame")
+               f:RegisterEvent("AUTOEQUIP_BIND_CONFIRM")
+               f:SetScript("OnEvent", function(_, _, index) ASKED = { index, CursorHasItem(), SEEN } end)
+               PickupContainerItem(0, 1)"#,
+        )
+        .unwrap();
+        crate::script::tick::fired::take();
+        let asked = crate::script::calls::in_call::run(
+            &mut s,
+            Some(HostAnswer::BindIndex(0)),
+            "AutoEquipCursorItem() SEEN = true",
+        );
+        assert_eq!(asked, [HostAsk::BindAutoEquip { bag: 0, slot: 1 }]);
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["AUTOEQUIP_BIND_CONFIRM"]
+        );
+        assert!(s
+            .eval::<bool>("return ASKED[1] == 0 and ASKED[2] == 1 and ASKED[3] == nil")
+            .unwrap());
+        assert!(s.cursor_item().is_some() && s.take_container_autoequips().is_empty());
     }
 }

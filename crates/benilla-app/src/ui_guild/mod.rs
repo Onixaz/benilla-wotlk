@@ -482,6 +482,16 @@ impl GuildState {
             .unwrap_or((0, 0))
     }
 
+    /// Give our rank `rights` and `withdrawals` on bank tab `tab`, as a permissions answer does.
+    #[cfg(test)]
+    pub(crate) fn set_own_bank_tab(&mut self, tab: usize, rights: u32, withdrawals: u32) {
+        let rank = self.rank_index as usize;
+        if self.rank_bank.len() <= rank {
+            self.rank_bank.resize(rank + 1, Default::default());
+        }
+        self.rank_bank[rank].tabs[tab] = (rights, withdrawals);
+    }
+
     /// Our rank's rights word, which every `Can*` predicate tests; `0` (none) before a roster.
     fn own_rights(&self) -> u32 {
         self.rank_rights

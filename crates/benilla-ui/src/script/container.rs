@@ -438,9 +438,7 @@ fn take_slot_item(model: &mut crate::script::ModelGuard<'_>, bag: i64, slot: u32
         return;
     };
     if super::spellbook::targeting().active {
-        model
-            .script_calls
-            .push(super::ScriptCall::SpellStopTargeting);
+        model.call(super::ScriptCall::SpellStopTargeting);
     }
     // The app's repair drain runs the arm's `ITEM_REPAIR` and send.
     if super::merchant::repair_mode(model) {
@@ -580,12 +578,23 @@ pub(crate) fn swap_held(
             model.container_moves.push(mv);
             cursor::clear_cursor_with(model, false, true);
         }
-        SwapGate::Ask(_) => model.container_bind_asks.push(mv),
+        SwapGate::Ask(_) => ask_bind(model, mv),
         SwapGate::Wait(entry) => {
             super::item_stats::wait_item_record(model, entry, super::ItemRecordWait::Swap(mv));
             super::item_stats::ask_item_record(model, entry);
         }
         SwapGate::Refuse => {}
+    }
+}
+
+/// The swap's bind question (`0x6dface`-`0x6dfb3d`): the pending equip is filed and `EQUIP_BIND_CONFIRM` signals with its index inside the call; with no host answering, the app's drain files it.
+fn ask_bind(model: &mut crate::script::ModelGuard<'_>, mv: ContainerMove) {
+    match model.ask(&super::HostAsk::BindSwap(mv)) {
+        Some(super::HostAnswer::BindIndex(index)) => model.raise(
+            "EQUIP_BIND_CONFIRM",
+            vec![super::ScriptValue::Int(i64::from(index))],
+        ),
+        _ => model.container_bind_asks.push(mv),
     }
 }
 
@@ -605,7 +614,7 @@ fn swap_gate(model: &super::Model, mv: &ContainerMove) -> SwapGate {
 }
 
 impl super::UiScript {
-    /// The swaps that asked `EQUIP_BIND_CONFIRM` in their call, taken: the app files each and raises its question.
+    /// The swaps that asked `EQUIP_BIND_CONFIRM` where no host answered in the call, taken: the app files each and raises its question.
     pub fn take_container_bind_asks(&mut self) -> Vec<ContainerMove> {
         drain_field!(self, container_bind_asks)
     }
@@ -624,7 +633,7 @@ impl super::UiScript {
                 model.container_moves.push(mv);
                 cursor::clear_cursor_with(&mut model, false, true);
             }
-            SwapGate::Ask(_) => model.container_bind_asks.push(mv),
+            SwapGate::Ask(_) => ask_bind(&mut model, mv),
             SwapGate::Wait(_) | SwapGate::Refuse => {}
         }
     }
@@ -2261,5 +2270,87 @@ mod tests {
             .eval::<mlua::Value>("return GetContainerItemPurchaseItem(0, 1)")
             .unwrap_err();
         assert!(format!("{err}").contains("Usage: ContainerItemPurchaseItem("));
+    }
+
+    /// With the host's state lent the swap's question is filed and signalled inside the call (`0x6dface`, `0x6dfb3d`), after the lock the bag slot's click takes before the swap (`0x5d82af`, `0x5d82dc`), and nothing waits for the drain.
+    #[test]
+    fn a_swap_that_asks_signals_its_question_inside_the_call() {
+        use crate::script::{HostAnswer, HostAsk};
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 1, SwapGate::Ask(0));
+        s.run(
+            r#"local f = CreateFrame("Frame")
+               f:RegisterEvent("EQUIP_BIND_CONFIRM")
+               f:SetScript("OnEvent", function(_, _, index) ASKED = { index, CursorHasItem(), SEEN } end)
+               PickupInventoryItem(1)"#,
+        )
+        .unwrap();
+        crate::script::tick::fired::take();
+        let asked = crate::script::calls::in_call::run(
+            &mut s,
+            Some(HostAnswer::BindIndex(3)),
+            "PickupContainerItem(0, 1) SEEN = true",
+        );
+        assert_eq!(
+            asked,
+            [HostAsk::BindSwap(ContainerMove {
+                src_bag: EQUIPMENT_BAG,
+                src_slot: 1,
+                dst_bag: 0,
+                dst_slot: 1,
+                count: None,
+            })]
+        );
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["ITEM_LOCK_CHANGED", "ITEM_LOCKED", "EQUIP_BIND_CONFIRM"]
+        );
+        assert!(s
+            .eval::<bool>("return ASKED[1] == 3 and ASKED[2] == 1 and ASKED[3] == nil")
+            .unwrap());
+        assert!(s.cursor_item().is_some_and(|i| i.bag == EQUIPMENT_BAG));
+        assert!(s.take_container_bind_asks().is_empty() && s.take_container_moves().is_empty());
+    }
+
+    /// A targeting cursor is stopped inside the call, before the item goes up (`0x5d811f` ahead of `0x5d8228`), and by the split between its clear and its setter (`0x5d85ec`, `0x5d85f4`, `0x5d8621`).
+    #[test]
+    fn a_pickup_stops_targeting_before_its_cursor_signals() {
+        use crate::script::live::TestTargeting;
+        let mut s = swap_rig();
+        s.set_spell_targeting(true);
+        crate::script::tick::fired::take();
+        crate::script::calls::in_call::run(&mut s, None, "PickupContainerItem(0, 1)");
+        let fired = crate::script::tick::fired::names();
+        assert_eq!(fired[0], "APPLIED SpellStopTargeting", "{fired:?}");
+        assert!(
+            fired[1..].contains(&"CURSOR_UPDATE".to_string()),
+            "{fired:?}"
+        );
+        assert!(!s.take_stop_targeting(), "nothing waits for the press pass");
+
+        crate::script::calls::in_call::run(&mut s, None, "SplitContainerItem(0, 2, 1)");
+        let fired = crate::script::tick::fired::names();
+        let stop = fired
+            .iter()
+            .position(|e| e == "APPLIED SpellStopTargeting")
+            .expect("the split stops it");
+        // The clear's unlock of the held item, the stop, then the setter's signals and the lock.
+        assert_eq!(
+            fired[..stop].last().map(String::as_str),
+            Some("CURSOR_UPDATE"),
+            "{fired:?}"
+        );
+        assert!(
+            fired[..stop].contains(&"ITEM_UNLOCKED".to_string()),
+            "{fired:?}"
+        );
+        assert!(
+            fired[stop..].contains(&"ITEM_LOCKED".to_string()),
+            "{fired:?}"
+        );
+        assert!(
+            !fired[stop..].contains(&"ITEM_UNLOCKED".to_string()),
+            "{fired:?}"
+        );
     }
 }

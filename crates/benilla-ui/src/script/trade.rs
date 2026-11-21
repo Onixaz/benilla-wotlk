@@ -420,9 +420,7 @@ pub(super) fn use_container_item(
         .is_some_and(|t| t.target.slots[6].is_some());
     if partner_holds && item_facts(model, bag, slot).enchants_on_use {
         release_enchanting_item(model);
-        model
-            .script_calls
-            .push(super::ScriptCall::UseContainerItem { bag, slot });
+        model.call(super::ScriptCall::UseContainerItem { bag, slot });
         cursor::set_item_lock(model, bag, slot, true);
         model.trade_enchanting_item = Some((bag, slot));
         return Arm::Took;
@@ -1497,5 +1495,41 @@ mod tests {
             s.run("ClickTargetTradeButton()").is_err(),
             "a non-number raises (`0x586c9c`)"
         );
+    }
+
+    /// The enchanting item's use runs inside the call between the unlock of the one before and its own lock (`0x586c20`, `0x586c48`, `0x586c57`).
+    #[test]
+    fn the_enchanting_items_use_runs_between_the_unlock_and_the_lock() {
+        let enchants = TradeItemFacts {
+            enchants_on_use: true,
+            ..Default::default()
+        };
+        let mut s = UiScript::new().unwrap();
+        pack(&mut s);
+        let mut st = TradeState::default();
+        st.target.slots[6] = Some(item(6217, 1, 1));
+        s.set_trade(Some(st));
+        s.model_mut().trade_item_facts.insert((0, 1), enchants);
+        s.model_mut().trade_item_facts.insert((0, 2), enchants);
+        s.run("UseContainerItem(0, 1)").unwrap();
+        s.take_script_calls();
+        fired();
+        crate::script::calls::in_call::run(&mut s, None, "UseContainerItem(0, 2)");
+        assert_eq!(
+            fired(),
+            [
+                "CURSOR_UPDATE",
+                "ITEM_LOCK_CHANGED",
+                "ITEM_UNLOCKED",
+                "APPLIED UseContainerItem { bag: 0, slot: 2 }",
+                "ITEM_LOCK_CHANGED",
+                "ITEM_LOCKED",
+            ]
+        );
+        assert!(
+            s.take_script_calls().is_empty(),
+            "nothing waits for the press pass"
+        );
+        assert!(!locked(&s, 1) && locked(&s, 2));
     }
 }

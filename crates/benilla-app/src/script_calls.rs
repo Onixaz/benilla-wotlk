@@ -81,6 +81,30 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
     }
 }
 
+/// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. Nothing is raised here: the verb signals what the answer leaves.
+pub(crate) fn answer_in_call(
+    _lua: &mlua::Lua,
+    ask: &benilla_ui::script::HostAsk,
+) -> Option<benilla_ui::script::HostAnswer> {
+    use benilla_ui::script::{HostAnswer, HostAsk};
+    crate::ui_script::safe_world::with_world(|world| match ask.clone() {
+        HostAsk::GuildBank(request) => world
+            .run_system_cached_with(crate::ui_guild_bank::decide, request)
+            .ok()
+            .map(HostAnswer::GuildBank),
+        HostAsk::BindSwap(mv) => world
+            .run_system_cached_with(crate::ui_bind_confirm::file_swap, mv)
+            .ok()
+            .map(HostAnswer::BindIndex),
+        HostAsk::BindAutoEquip { bag, slot } => world
+            .run_system_cached_with(crate::ui_bind_confirm::file_auto_equip, (bag, slot))
+            .ok()
+            .flatten()
+            .map(HostAnswer::BindIndex),
+    })
+    .flatten()
+}
+
 /// Apply the calls that waited where no `World` was lent, in call order, in the press pass after
 /// the clicks and keys and before the frame's feed, which publishes the cooldowns they arm.
 pub(crate) fn apply_script_calls(world: &mut World) {

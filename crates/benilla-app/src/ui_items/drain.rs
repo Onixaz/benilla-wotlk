@@ -1697,21 +1697,44 @@ mod bind_confirm_tests {
         assert_eq!(gate(&mut app, 1), (SwapGate::Send, true));
     }
 
-    /// A bind-on-equip item put on the doll asks inside the call and returns with the cursor still holding it (`0x6dfb3d`, `0x6dfb45`); the drain files the record and sends nothing, and the accept's re-run sends the swap.
+    /// A bind-on-equip item put on the doll files its record and signals `EQUIP_BIND_CONFIRM` inside the call (`0x6dface`, `0x6dfb3d`) and returns with the cursor still holding it (`0x6dfb45`); the drain files nothing more and sends nothing, and the accept's re-run sends the swap.
     #[test]
     fn placing_a_bind_on_equip_item_keeps_it_on_the_cursor_and_sends_nothing() {
         let (mut app, rx) = axe_world(Some(2), false);
-        let held = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+        let (held, asked) = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
             script
-                .run("PickupContainerItem(0, 1) PickupInventoryItem(16)")
+                .run(
+                    r#"local f = CreateFrame("Frame")
+                       f:RegisterEvent("EQUIP_BIND_CONFIRM")
+                       f:SetScript("OnEvent", function(_, _, index)
+                           ASKED = { index, CursorHasItem(), AFTER }
+                       end)
+                       PickupContainerItem(0, 1) PickupInventoryItem(16) AFTER = true"#,
+                )
                 .unwrap();
-            script.cursor_item()
+            let asked = script
+                .eval::<bool>(
+                    "return ASKED and ASKED[1] == 0 and ASKED[2] == 1 and ASKED[3] == nil",
+                )
+                .unwrap();
+            (script.cursor_item(), asked)
         })
         .unwrap();
         assert_eq!(
             held.map(|i| (i.bag, i.slot, i.item_id)),
             Some((0, 1, FLURRY_AXE)),
             "the question leaves the cursor as it was"
+        );
+        assert!(
+            asked,
+            "the question signals inside the call, with its index"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            1,
+            "filed inside the call"
         );
         app.world_mut()
             .run_system_once(drain_container_moves)

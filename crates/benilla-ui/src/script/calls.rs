@@ -56,6 +56,62 @@ pub fn apply_queued(lua: &mlua::Lua) {
     }
 }
 
+/// A verb's step the host decides over its lent state, inside the call that reached it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostAsk {
+    /// A guild bank swap: the bag-to-bank, bank-to-bank and bank-to-bag gates and their send (`0x5a50c0`, `0x5a5410`, `0x6db880`, `0x5a63f0`).
+    GuildBank(super::GuildBankRequest),
+    /// A swap that asks its bind question: the pending equip is filed (`0x6dface`).
+    BindSwap(super::ContainerMove),
+    /// `AutoEquipCursorItem`'s bind question for the item at `(bag, slot)`: the pending equip is filed (`0x6dfdc8`).
+    BindAutoEquip { bag: i64, slot: u32 },
+}
+
+/// What the host answered a [`HostAsk`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostAnswer {
+    GuildBank(GuildBankVerdict),
+    /// The pending equip's index, the bind question's argument.
+    BindIndex(u32),
+}
+
+/// What a guild bank swap's gates left for the verb to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuildBankVerdict {
+    /// A gate returned before anything: no banker, no item, no record.
+    Nothing,
+    /// The swap went out: the cursor clears and `GUILDBANKBAGSLOTS_CHANGED` fires (`0x5a53d3`, `0x5a53df`; `0x5a5688`, `0x5a5694`).
+    Sent,
+    /// The auto-store went out: `GUILDBANKBAGSLOTS_CHANGED` fires (`0x5a65c5`).
+    Stored,
+    /// A gate refused with its line, the cursor as it was.
+    Refused(&'static str),
+    /// An unresolved item back on its own slot: the cursor clears and nothing goes out (`0x5a55fe`).
+    DropHeld,
+}
+
+/// The host's answerer of a [`HostAsk`]; `None` when it cannot answer now.
+pub type AnswerHost = fn(&mlua::Lua, &HostAsk) -> Option<HostAnswer>;
+
+thread_local! {
+    /// The host's answerer, named once per thread.
+    static ANSWER: Cell<Option<AnswerHost>> = const { Cell::new(None) };
+}
+
+/// Name the host's answerer of every [`HostAsk`] made on this thread.
+pub fn set_answer(answer: AnswerHost) {
+    ANSWER.with(|a| a.set(Some(answer)));
+}
+
+/// Ask the host inside the call, where its state is lent; `None` with none lent, and the verb's request waits for the host's drain. The caller holds no model borrow.
+pub(crate) fn ask_host(lua: &mlua::Lua, ask: &HostAsk) -> Option<HostAnswer> {
+    let answer = ANSWER.with(Cell::get)?;
+    if !world_loan::lent() {
+        return None;
+    }
+    answer(lua, ask)
+}
+
 /// Whether no earlier call waits once the queued ones applied through the lent hook: a verb that
 /// runs inside its call does so only then, so it keeps its turn behind a waiting call.
 pub(crate) fn none_waiting(lua: &mlua::Lua) -> bool {
@@ -255,5 +311,41 @@ impl UiScript {
             None => true,
         });
         taken
+    }
+}
+
+/// A host standing in for the app in this crate's tests: its state lent, its applier and answerer named.
+#[cfg(test)]
+pub(crate) mod in_call {
+    use std::cell::RefCell;
+
+    use super::{set_answer, set_apply, HostAnswer, HostAsk, ScriptCall};
+    use crate::script::UiScript;
+
+    thread_local! {
+        static ANSWER: RefCell<Option<HostAnswer>> = const { RefCell::new(None) };
+        static ASKED: RefCell<Vec<HostAsk>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Applies every call at once, leaving `APPLIED <call>` in the fired log at its step.
+    fn apply(lua: &mlua::Lua, call: ScriptCall) -> bool {
+        crate::script::tick::fire_event_into(lua, &format!("APPLIED {call:?}"), Vec::new());
+        true
+    }
+
+    fn answer(_lua: &mlua::Lua, ask: &HostAsk) -> Option<HostAnswer> {
+        ASKED.with_borrow_mut(|a| a.push(ask.clone()));
+        ANSWER.with_borrow(|a| *a)
+    }
+
+    /// Run `src` with a host lent that answers every ask with `with`; what the verbs asked, in order.
+    pub(crate) fn run(s: &mut UiScript, with: Option<HostAnswer>, src: &str) -> Vec<HostAsk> {
+        set_apply(apply);
+        set_answer(answer);
+        ANSWER.with_borrow_mut(|a| *a = with);
+        let lua = s.lua().clone();
+        let mut host = ();
+        crate::script::world_loan::lend(&lua, &mut host, || s.run(src).unwrap());
+        ASKED.with_borrow_mut(std::mem::take)
     }
 }
