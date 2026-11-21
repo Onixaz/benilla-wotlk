@@ -660,7 +660,6 @@ const DEMO_PLAYER_GUID: u64 = 0x51;
 /// The synthetic target's guid: a creature high part; only its distinctness matters.
 const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
 /// The guid a tooltip fixture's hovered snapshot carries; only its distinctness matters.
-#[cfg_attr(not(feature = "dev"), allow(dead_code))]
 pub(crate) const DEMO_MOUSEOVER_GUID: u64 = 0xF130_0000_0000_0002;
 
 /// The resolver's stand-in tables for a capture's synthetic units: the World holds no selection
