@@ -39,13 +39,14 @@ pub(crate) fn set_fixture_player(
 }
 
 /// A fixture's stand-in action slot (`UiScript::set_action`), compiled out of the player build with
-/// the fixtures.
+/// the fixtures. These four are live in every test build too, where the dev-dependencies turn the
+/// fixtures on: the addon harness's tests seat a session through them.
 pub(crate) fn set_fixture_action(
     _script: &mut benilla_ui::script::UiScript,
     _action: u32,
     _slot: Option<benilla_ui::script::ActionSlot>,
 ) {
-    #[cfg(feature = "dev")]
+    #[cfg(any(feature = "dev", test))]
     _script.set_action(_action, _slot);
 }
 
@@ -54,7 +55,7 @@ pub(crate) fn set_fixture_spellbook(
     _script: &mut benilla_ui::script::UiScript,
     _state: benilla_ui::script::SpellBookState,
 ) {
-    #[cfg(feature = "dev")]
+    #[cfg(any(feature = "dev", test))]
     _script.set_spellbook(_state);
 }
 
@@ -64,7 +65,7 @@ pub(crate) fn set_fixture_bonus_bar_offset(
     _script: &mut benilla_ui::script::UiScript,
     _offset: u8,
 ) {
-    #[cfg(feature = "dev")]
+    #[cfg(any(feature = "dev", test))]
     _script.set_bonus_bar_offset(_offset);
 }
 
@@ -74,7 +75,7 @@ pub(crate) fn set_fixture_shapeshift_forms(
     _script: &mut benilla_ui::script::UiScript,
     _forms: Vec<benilla_ui::script::ShapeshiftFormView>,
 ) {
-    #[cfg(feature = "dev")]
+    #[cfg(any(feature = "dev", test))]
     _script.set_shapeshift_forms(_forms);
 }
 
