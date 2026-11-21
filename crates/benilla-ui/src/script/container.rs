@@ -625,6 +625,12 @@ impl super::UiScript {
         self.model_mut().swap_gates.insert((bag, slot), gate);
     }
 
+    /// A swap whose record is not cached is kept on that record's callback, as its gate keeps it (`0x6dfa1d`); the caller sends nothing.
+    pub fn keep_swap_for_record(&mut self, entry: u32, mv: ContainerMove) {
+        let mut model = self.model_mut();
+        super::item_stats::wait_item_record(&mut model, entry, super::ItemRecordWait::Swap(mv));
+    }
+
     /// A kept swap's record landed (`0x6db6f0`): the swap runs again from its two ends, unsuppressed, and its send clears whatever the cursor holds (`0x6db784`).
     pub(crate) fn swap_record_landed(&mut self, mv: ContainerMove) {
         let mut model = self.model_mut();

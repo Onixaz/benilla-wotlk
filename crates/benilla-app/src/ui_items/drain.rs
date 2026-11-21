@@ -870,21 +870,24 @@ pub(crate) fn send_container_move(
             debug!("ui_items: container move {mv:?} out of range — ignored");
             return false;
         };
-        // The deferral asks when exactly one end is an equip position, about the item at the other
-        // end, which the swap equips; an unequip to an empty slot asks nothing.
-        if !suppress
-            && mv.count.is_none()
-            && is_equip_position(dst.0, dst.1) != is_equip_position(src.0, src.1)
-        {
-            let (item_bag, item_slot) = if is_equip_position(dst.0, dst.1) {
-                (mv.src_bag, mv.src_slot)
-            } else {
-                (mv.dst_bag, mv.dst_slot)
-            };
-            let slot0 = u8::try_from(item_slot.saturating_sub(1)).unwrap_or(0);
-            let guid = store.and_then(|s| slot_guid(&s.0, item_bag, slot0, objects));
-            if let Some(guid) = guid {
-                if gate.equip_binds(script, objects, items, commands, guid) {
+        // A swap no verb gated runs the swap's gate here (`0x6df890`): a record not cached keeps the swap for its callback and asks for it (`0x6dfa1d`), a bind-on-equip item the player can use is asked about (`0x6dfac1`), and an end whose bag is not held sends nothing (`0x6df98f`).
+        if let Some(me) = store.filter(|_| !suppress && mv.count.is_none()) {
+            use benilla_ui::script::SwapGate;
+            let decided = swap_gate(
+                &me.0,
+                objects,
+                items,
+                gate.enchants.as_deref(),
+                (mv.src_bag, mv.src_slot),
+                (mv.dst_bag, mv.dst_slot),
+            );
+            match decided {
+                SwapGate::Wait(entry) => {
+                    items.template(entry, 0, commands);
+                    script.keep_swap_for_record(entry, mv);
+                    return false;
+                }
+                SwapGate::Ask(entry) if script.item_usable(entry) => {
                     gate.defer_equip(
                         script,
                         crate::ui_bind_confirm::PendingEquip::Swap {
@@ -896,6 +899,8 @@ pub(crate) fn send_container_move(
                     );
                     return false;
                 }
+                SwapGate::Refuse => return false,
+                SwapGate::Ask(_) | SwapGate::Send => {}
             }
         }
         match mv.count {
@@ -1830,6 +1835,51 @@ mod bind_confirm_tests {
             Some(ClientCommand::SwapInvItem { .. })
         ));
         assert!(app.world().resource::<PendingItemOps>().is_locked(AXE_GUID));
+    }
+
+    /// A swap no verb gated, its item's record not cached: the drain's gate keeps it on the record's callback and asks for the record, sending no swap (`0x6dfa1d`); the callback runs it again and it goes out (`0x6db6f0`).
+    #[test]
+    fn a_drained_swap_whose_record_is_not_cached_waits_for_it() {
+        let (mut app, rx) = axe_world(None, false);
+        app.init_non_send_resource::<crate::items::RecordWaits>();
+        {
+            let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
+            script.set_container(0, Some(bag_with_the_axe(1)));
+            script.set_inventory_slots(Default::default());
+            // No `World` is lent: the verb's own gate reads nothing and the move waits for the drain.
+            script
+                .run("PickupContainerItem(0, 1) PickupInventoryItem(16)")
+                .unwrap();
+        }
+        app.world_mut()
+            .run_system_once(drain_container_moves)
+            .unwrap();
+        let sent: Vec<String> = rx.try_iter().map(|c| format!("{c:?}")).collect();
+        assert!(
+            sent.iter().all(|c| !c.starts_with("Swap")) && sent.iter().any(|c| c.contains("871")),
+            "the record is asked for and no swap goes out: {sent:?}"
+        );
+        let waits = app
+            .world()
+            .non_send_resource::<crate::items::RecordWaits>()
+            .waiting()
+            .to_vec();
+        let [(FLURRY_AXE, crate::items::RecordWait::Ui(wait))] = waits[..] else {
+            panic!("one wait on the axe's record: {waits:?}");
+        };
+        assert!(matches!(wait, benilla_ui::script::ItemRecordWait::Swap(_)));
+
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(FLURRY_AXE, Some(crate::items::test_template("Flurry Axe")));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .item_record_callback(FLURRY_AXE, true, wait);
+        app.world_mut()
+            .run_system_once(drain_container_moves)
+            .unwrap();
+        let sent: Vec<String> = rx.try_iter().map(|c| format!("{c:?}")).collect();
+        assert_eq!(sent, ["SwapInvItem { src_slot: 23, dst_slot: 15 }"]);
     }
 
     fn load_ui(s: &UiScript) {
