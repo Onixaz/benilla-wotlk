@@ -143,6 +143,8 @@ pub use exhaustion::{load_exhaustion, ExhaustionRow};
 mod movie;
 pub use movie::{load_movies, MovieCatalog, MovieFile};
 mod bank_bag_slot_prices;
+mod creature_movement_info;
+pub use creature_movement_info::{load_creature_movement_info, CreatureMovementInfo};
 mod currency;
 pub use bank_bag_slot_prices::{load_bank_bag_slot_prices, BankBagSlotPrices};
 pub use currency::{load_currency_tables, CurrencyCategory, CurrencyTables, CurrencyType};
@@ -214,7 +216,9 @@ pub use ship_route::{
 mod liquid;
 pub use liquid::{mclq_liquid_type, LiquidKind, LiquidMesh};
 mod liquid_type;
-pub use liquid_type::{load_liquid_types, DepthRamp, LiquidTypeRow, LiquidTypes, VertexFormat};
+pub use liquid_type::{
+    load_liquid_types, DepthRamp, DepthTexture, LiquidTypeRow, LiquidTypes, VertexFormat,
+};
 mod maps;
 pub use maps::{load_map_catalog, MapCatalog};
 mod anim_data;
@@ -441,10 +445,11 @@ mod transports;
 pub use transports::{
     TransportSample, TransportTimetable, SHIP_MOVING, SHIP_STAND, SHIP_START, SHIP_STOP,
 };
-// Type-11 elevator and lift keyframe paths.
+// Type-11 elevator and tram keyframe paths and orientation keys.
 mod elevators;
 pub use elevators::{
-    elevator_period_ms, elevator_sample, load_elevator_paths, ElevatorKeyframe, ElevatorPaths,
+    elevator_period_ms, elevator_rotation, elevator_sample, load_elevator_paths,
+    load_rotation_paths, ElevatorKeyframe, ElevatorPaths, RotationKey, RotationPaths,
 };
 
 // The flight-master catalogs: nodes (`TaxiNodes.dbc`) and direct-hop fares (`TaxiPath.dbc`).

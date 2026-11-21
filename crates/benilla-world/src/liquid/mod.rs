@@ -3,8 +3,9 @@
 //! The MCLQ parse and flat mesh are `benilla_formats::liquid`; the shading is `liquid.wgsl`.
 //!
 //! The reference has three liquid renderers, each with its own arm in the shader: ADT MCLQ, WMO
-//! MLIQ water (exterior or interior by the group's `MOGP.flags & 0x48`: one texture stage, no depth
-//! ramp, alpha from a per-vertex authored byte) and magma/slime.
+//! MLIQ water (exterior or interior by the group's `MOGP.flags & 0x48`, exterior whatever the group
+//! for a type with `LiquidType.Flags & 0x200`: one texture stage, no depth ramp, alpha from a
+//! per-vertex authored byte) and magma/slime.
 //!
 //! The ADT combiner is the asset `Shaders\Pixel\ocean0_s.bls` in `patch.MPQ`:
 //! `rgb = primary·colorTex.rgb + detailTex.rgb + (secondary + 0.25)·detailTex.a`,

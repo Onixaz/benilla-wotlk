@@ -1337,6 +1337,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 civilian,
                 racial_leader,
                 modifiers,
+                movement_id,
             ) = match info {
                 Some(i) => (
                     Some(i.name),
@@ -1352,8 +1353,22 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                     i.civilian,
                     i.racial_leader,
                     (i.health_modifier, i.power_modifier),
+                    i.movement_id,
                 ),
-                None => (None, None, None, None, 0, 0, 0, 0, false, false, (0.0, 0.0)),
+                None => (
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false,
+                    false,
+                    (0.0, 0.0),
+                    0,
+                ),
             };
             vec![SessionEvent::CreatureName {
                 entry,
@@ -1368,6 +1383,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 civilian,
                 racial_leader,
                 modifiers,
+                movement_id,
             }]
         }
         ServerPacket::PageTextQueryResponse {

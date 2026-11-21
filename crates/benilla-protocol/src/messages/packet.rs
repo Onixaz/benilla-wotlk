@@ -146,6 +146,8 @@ pub struct CreatureQueryInfo {
     /// answer for a non-hunter's pet (`0x71b8d0`, `0x71b960`).
     pub health_modifier: f32,
     pub power_modifier: f32,
+    /// `CreatureMovementInfo.dbc` id, the smooth-facing chase rate's row (`0x735f60`); 0 is none.
+    pub movement_id: u32,
 }
 
 /// A decoded server packet; an unmodelled opcode is [`Self::Other`].
