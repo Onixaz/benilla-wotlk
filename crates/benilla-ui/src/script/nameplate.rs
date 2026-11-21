@@ -182,6 +182,20 @@ struct SyncEffects {
     values: Vec<(FrameHandle, f32)>,
 }
 
+/// Fire a sync's effects with no model borrow held: at the raise step while a feed holds the VM in
+/// turn (`vplates`' driver does), at once otherwise.
+fn fire_effects(lua: &mlua::Lua, effects: SyncEffects) {
+    if effects.visibility.is_empty() && effects.values.is_empty() {
+        return;
+    }
+    super::world_loan::lua_in_turn_or_now(lua, move |lua| {
+        super::event::fire_visibility_changes(lua, effects.visibility);
+        for (bar, value) in effects.values {
+            super::statusbar::fire_engine_value_changed(lua, bar, value);
+        }
+    });
+}
+
 impl UiScript {
     /// Drive the pool from the app's per-frame states, one per shown plate; a unit with no state
     /// has its plate retired (hidden, never destroyed). An unchanged `geometry` costs nothing.
@@ -195,10 +209,7 @@ impl UiScript {
             };
             sync(&mut model, world, geometry, states)
         };
-        super::event::fire_visibility_changes(lua, effects.visibility);
-        for (bar, value) in effects.values {
-            super::statusbar::fire_engine_value_changed(lua, bar, value);
-        }
+        fire_effects(lua, effects);
     }
 
     /// The unit whose plate is the hovered frame, the mouseover its OnEnter publishes; an addon
@@ -263,7 +274,7 @@ impl UiScript {
             }
             effects
         };
-        super::event::fire_visibility_changes(lua, effects.visibility);
+        fire_effects(lua, effects);
     }
 
     /// The unit's plate back to the pool, hidden, for the next sync to bind afresh (`0x725840`): its slot freed (`0x725865`), the plate hidden (`0x725870`).
@@ -278,7 +289,7 @@ impl UiScript {
             Plate::retire(&mut model, i, &mut effects);
             effects
         };
-        super::event::fire_visibility_changes(lua, effects.visibility);
+        fire_effects(lua, effects);
     }
 
     /// How many plate widgets the pool holds.
