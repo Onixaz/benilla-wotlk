@@ -26,7 +26,7 @@ impl WorldWriter {
         spell_id: u32,
         target: messages::UseItemTarget,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_PET_CAST_SPELL,
             &messages::pet_cast_spell(pet_guid, count, spell_id, target),
@@ -46,7 +46,7 @@ impl WorldWriter {
         pos: [f32; 3],
         orientation: f32,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         let mut stop = crate::world::movement::movement_info(pos, orientation, flags);
         stop.flags2 = flags2;
         self.send(

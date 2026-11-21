@@ -59,7 +59,7 @@ impl WorldWriter {
         item_guid: u64,
         target: messages::UseItemTarget,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_USE_ITEM,
             &messages::use_item(count, bag_index, slot, spell_id, item_guid, target),

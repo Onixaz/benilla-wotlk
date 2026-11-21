@@ -721,14 +721,34 @@ pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)
 /// The client's `castCount`, which keys a sent cast to the server's answer: 12340 hands out 1 to
 /// 255 and never 0, wrapping to 1 (`0x8050dc`-`0x8050ec`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct CastCounter(u8);
+pub struct CastCounter {
+    next: u8,
+    /// The last count each recent spell went out with, which its cancel names (`0x8062e6`).
+    sent: [(u32, u8); 16],
+    at: usize,
+}
 
 impl CastCounter {
-    /// The count the next cast carries; advances the counter.
-    pub fn take(&mut self) -> u8 {
-        let count = self.0.max(1);
-        self.0 = count.wrapping_add(1);
+    /// The count the next cast of `spell_id` carries; advances the counter.
+    pub fn take(&mut self, spell_id: u32) -> u8 {
+        let count = self.next.max(1);
+        self.next = count.wrapping_add(1);
+        match self.sent.iter_mut().find(|(id, _)| *id == spell_id) {
+            Some(slot) => slot.1 = count,
+            None => {
+                self.sent[self.at] = (spell_id, count);
+                self.at = (self.at + 1) % self.sent.len();
+            }
+        }
         count
+    }
+
+    /// The count `spell_id` last went out with; 0 for one never sent.
+    pub fn sent_for(&self, spell_id: u32) -> u8 {
+        self.sent
+            .iter()
+            .find(|(id, c)| *id == spell_id && *c != 0)
+            .map_or(0, |&(_, c)| c)
     }
 }
 
@@ -872,6 +892,15 @@ pub fn cast_spell_at_source(cast_count: u8, spell_id: u32, src: TargetPoint) -> 
     cast_at_point(cast_count, spell_id, TARGET_FLAG_SOURCE_LOCATION, src)
 }
 
+/// Body of `CMSG_CANCEL_CAST`: the `u8` cast count the cast went out with, then its `u32` spell id
+/// (`0x8062e6`, `0x8062f2`).
+pub fn cancel_cast(cast_count: u8, spell_id: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(5);
+    body.push(cast_count);
+    body.extend_from_slice(&spell_id.to_le_bytes());
+    body
+}
+
 /// Body of `CMSG_CANCEL_AURA`: by spell id, not slot. `HandleCancelAuraOpcode`
 /// (`SpellHandler.cpp:333-405`) refuses passives, debuffs and `SPELL_ATTR_NO_AURA_CANCEL` spells;
 /// the client gates on the aura's `AURA_FLAG_CANCELABLE` bit.
@@ -921,9 +950,29 @@ mod tests {
     #[test]
     fn the_cast_counter_runs_one_to_255_and_skips_zero() {
         let mut c = CastCounter::default();
-        assert_eq!((c.take(), c.take()), (1, 2));
-        let mut c = CastCounter(255);
-        assert_eq!((c.take(), c.take()), (255, 1), "0 is never handed out");
+        assert_eq!((c.take(7), c.take(7)), (1, 2));
+        let mut c = CastCounter {
+            next: 255,
+            ..Default::default()
+        };
+        assert_eq!((c.take(7), c.take(7)), (255, 1), "0 is never handed out");
+    }
+
+    /// The cancel names the count its spell last went out with (`0x8062e6`), 0 for none.
+    #[test]
+    fn the_cast_counter_keeps_each_spells_last_count() {
+        let mut c = CastCounter::default();
+        c.take(133);
+        c.take(116);
+        c.take(133);
+        assert_eq!((c.sent_for(133), c.sent_for(116), c.sent_for(5)), (3, 2, 0));
+    }
+
+    /// `CMSG_CANCEL_CAST`: `u8` cast count, then `u32` spell id (`0x8062e6`, `0x8062f2`).
+    #[test]
+    fn cancel_cast_body_is_count_then_spell() {
+        assert_eq!(cancel_cast(3, 688), [3, 0xb0, 0x02, 0, 0]);
+        assert_eq!(cancel_cast(0, 5019), [0, 0x9b, 0x13, 0, 0]);
     }
 
     #[test]

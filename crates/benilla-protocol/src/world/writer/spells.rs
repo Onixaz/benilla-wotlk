@@ -11,7 +11,7 @@ impl WorldWriter {
     /// `CMSG_CAST_SPELL`: `None` is a self or implicit cast, `Some` a unit target; answered by
     /// `SMSG_SPELL_START`, or `SMSG_CAST_FAILED` (benilla's `SMSG_CAST_RESULT`) on a refusal.
     pub fn cast_spell(&mut self, spell_id: u32, target: Option<u64>) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell(count, spell_id, target),
@@ -40,7 +40,7 @@ impl WorldWriter {
     /// `CMSG_CAST_SPELL` at a GameObject: the open-lock cast on a chest, vein or herb. The server
     /// checks the skill, and a chest answers with its loot.
     pub fn cast_spell_gameobject(&mut self, spell_id: u32, go_guid: u64) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_gameobject(count, spell_id, go_guid),
@@ -55,7 +55,7 @@ impl WorldWriter {
         target: messages::CorpseTarget,
         corpse_guid: u64,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_corpse(count, spell_id, target, corpse_guid),
@@ -65,7 +65,7 @@ impl WorldWriter {
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_ITEM` and the item's packed guid: an enchant on the item
     /// picked in the craft frame.
     pub fn cast_spell_item(&mut self, spell_id: u32, item_guid: u64) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_item(count, spell_id, item_guid),
@@ -74,7 +74,7 @@ impl WorldWriter {
 
     /// `CMSG_CAST_SPELL` at the trade window's not-traded slot (`0x80c5f0`).
     pub fn cast_spell_trade_item(&mut self, spell_id: u32) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_trade_item(count, spell_id),
@@ -83,7 +83,7 @@ impl WorldWriter {
 
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_GLYPH_SLOT`: a glyph spell cast from the book.
     pub fn cast_spell_glyph(&mut self, spell_id: u32) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_glyph(count, spell_id),
@@ -93,7 +93,7 @@ impl WorldWriter {
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`: a ground-targeted spell at a point; the
     /// server checks range and line of sight (`Spell::CheckCast`).
     pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: messages::TargetPoint) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_at_dest(count, spell_id, dest),
@@ -107,17 +107,25 @@ impl WorldWriter {
         spell_id: u32,
         src: messages::TargetPoint,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
+        let count = self.cast_counter.take(spell_id);
         self.send(
             opcode::CMSG_CAST_SPELL,
             &messages::cast_spell_at_source(count, spell_id, src),
         )
     }
 
-    /// `CMSG_CANCEL_CAST`, one `u32` spell id: sent by the wand auto-repeat handoff and when
-    /// movement or Esc cancels a cast.
-    pub fn cancel_cast(&mut self, spell_id: u32) -> Result<()> {
-        self.send(opcode::CMSG_CANCEL_CAST, &spell_id.to_le_bytes())
+    /// `CMSG_CANCEL_CAST`: the `u8` cast count the cancelled cast went out with, then its `u32`
+    /// spell id (`0x8062e6`, `0x8062f2`); the auto-repeat handoff writes count 0 (`handoff`).
+    pub fn cancel_cast(&mut self, spell_id: u32, handoff: bool) -> Result<()> {
+        let count = if handoff {
+            0
+        } else {
+            self.cast_counter.sent_for(spell_id)
+        };
+        self.send(
+            opcode::CMSG_CANCEL_CAST,
+            &messages::cancel_cast(count, spell_id),
+        )
     }
 
     /// `CMSG_CANCEL_CHANNELLING`: the 1.12 client writes the spell id, which vmangos ignores,

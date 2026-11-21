@@ -985,7 +985,7 @@ fn send_spell_cast(
                     debug!("ui_action: the not-ready refusal cancels the wand repeat {cached}");
                     let _ = commands
                         .0
-                        .send(ClientCommand::CancelCast { spell_id: cached });
+                        .send(ClientCommand::CancelCastHandoff { spell_id: cached });
                     let self_e = self_player.single().ok().map(|(e, _)| e);
                     crate::creature_anim::cancel_auto_repeat_local(
                         self_e,
@@ -1210,7 +1210,7 @@ fn send_spell_cast(
             debug!("ui_action: cast {spell_id} cancels the running wand repeat {cached}");
             let _ = commands
                 .0
-                .send(ClientCommand::CancelCast { spell_id: cached });
+                .send(ClientCommand::CancelCastHandoff { spell_id: cached });
             let self_e = self_player.single().ok().map(|(e, _)| e);
             crate::creature_anim::cancel_auto_repeat_local(
                 self_e,

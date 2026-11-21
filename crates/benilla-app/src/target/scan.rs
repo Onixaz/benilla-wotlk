@@ -1053,7 +1053,9 @@ mod tests {
                     ClientCommand::SetSelection { .. } => "select",
                     ClientCommand::AttackStop => "stop",
                     ClientCommand::AttackSwing { .. } => "swing",
-                    ClientCommand::CancelCast { .. } => "cancel-cast",
+                    ClientCommand::CancelCast { .. } | ClientCommand::CancelCastHandoff { .. } => {
+                        "cancel-cast"
+                    }
                     ClientCommand::CancelAutoRepeat => "cancel-repeat",
                     _ => "other",
                 })
