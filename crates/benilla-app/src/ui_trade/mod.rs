@@ -40,6 +40,8 @@ pub(crate) struct TradeSession {
     /// and cleared by the status handler's tail, which codes 1, 2, 4, 7, 9 and 22 skip, so it
     /// survives `OPEN_WINDOW` for the life of a trade we opened.
     initiated: bool,
+    /// Our initiate asked the open to take what the cursor holds (`0xca0fe4`, written at `0x703d90`).
+    use_cursor: bool,
     /// `OPEN_WINDOW` arrived; `partner` is set before it.
     open: bool,
     /// `OPEN_WINDOW`'s trade id `[0xca0b68]`, which every snapshot must carry.
@@ -88,11 +90,12 @@ pub(crate) struct NamedLine {
 }
 
 impl TradeSession {
-    /// Our `CMSG_INITIATE_TRADE` goes out: a fresh session with the target as partner.
-    pub(crate) fn initiate(&mut self, target: u64) {
+    /// Our `CMSG_INITIATE_TRADE` goes out (`0x703cf0`): a fresh session with the target as partner, and whether the open takes the cursor's payload (`0x703d90`).
+    pub(crate) fn initiate(&mut self, target: u64, use_cursor: bool) {
         *self = TradeSession {
             partner: Some(target),
             initiated: true,
+            use_cursor,
             named_lines: vec![NamedLine {
                 key: "ERR_INITIATE_TRADE_S",
                 who: target,
@@ -125,10 +128,16 @@ impl TradeSession {
         };
     }
 
-    /// `OPEN_WINDOW` (`0x704517`): both offers empty, both states 1, the trade id kept; the feed's
-    /// open edge fires `TRADE_SHOW`.
+    /// The open's cursor test (`0x703c30`): our own initiate stands and it asked for the cursor.
+    pub(crate) fn opens_with_cursor(&self) -> bool {
+        self.initiated && self.use_cursor
+    }
+
+    /// `OPEN_WINDOW` (`0x704517`): both offers empty, both states 1, the trade id kept, and the partner setter's open drops both accepts (`0x587143`, `0x587149`); the feed's open edge fires `TRADE_SHOW`.
     pub(crate) fn open_window(&mut self, trade_id: u32) {
         self.open = true;
+        self.our_accept = false;
+        self.their_accept = false;
         self.trade_id = trade_id;
         self.own_state = 1;
         self.their_state = 1;
@@ -313,6 +322,12 @@ impl TradeSession {
         if !self.open {
             self.partner = None;
         }
+    }
+
+    /// Code 13's packet arm (`0x704584`): both offers' coins zero.
+    pub(crate) fn zero_gold(&mut self) {
+        self.our.gold = 0;
+        self.their.gold = 0;
     }
 
     /// `TRADE_REJECTED` (case 9): drop the partner's accept and nothing else; vmangos never sends
@@ -745,7 +760,6 @@ fn feed_trade(
     stores: Query<&ObjectStore>,
     mut last: Local<crate::ui_script::VmMemo<Option<TradeState>>>,
     mut last_open: Local<crate::ui_script::VmMemo<bool>>,
-    mut last_accept: Local<crate::ui_script::VmMemo<(bool, bool)>>,
     mut last_player_gold: Local<crate::ui_script::VmMemo<u32>>,
     mut last_their_gold: Local<crate::ui_script::VmMemo<u32>>,
 ) {
@@ -754,7 +768,6 @@ fn feed_trade(
     };
     let last = last.get(&script);
     let last_open = last_open.get(&script);
-    let last_accept = last_accept.get(&script);
     let last_player_gold = last_player_gold.get(&script);
     let last_their_gold = last_their_gold.get(&script);
 
@@ -800,14 +813,10 @@ fn feed_trade(
     // `CloseTrade` signalled its own close (`0x5879bc`).
     let verb_closed = trade.take_verb_closed();
     if opened {
-        // The partner setter zeroes our slots before its open leg (`0x5870a0`).
-        script.reset_trade_offer();
-        // The trade-partner set's open leg: coins held on the cursor fold into the offer first and
-        // fire the two money events locally; the send goes out with the money intent.
-        if let Some(offer) = script.fold_cursor_money_into_trade() {
-            trade.set_own_gold(offer);
-            script.fire_event("PLAYER_TRADE_MONEY", vec![]);
-            script.fire_event("PLAYER_MONEY", vec![]);
+        // The partner setter's open leg (`0x587129`): the folded coins are the last offer signalled (`0x5872ba`), so they signal once.
+        if let Some(offer) = script.open_trade_partner(trade.opens_with_cursor()) {
+            trade.our.gold = offer;
+            *last_player_gold = offer;
         }
         script.fire_event("TRADE_SHOW", vec![]);
     } else if closed && !verb_closed {
@@ -816,9 +825,10 @@ fn feed_trade(
         script.fire_event("TRADE_UPDATE", vec![]);
     }
 
-    // `TRADE_ACCEPT_UPDATE(mine, theirs)` on any change while open.
+    // `TRADE_ACCEPT_UPDATE(mine, theirs)` when the session's flags leave the VM's while open; the accept verbs write and signal their own (`0x586712`, `0x586763`), and a send of theirs still waiting for the drain is not yet in the session.
     let accept = (trade.our_accept, trade.their_accept);
-    if trade.is_open() && accept != *last_accept {
+    if trade.is_open() && !script.trade_accept_sends_wait() && script.trade_accepts() != accept {
+        script.set_trade_accepts(accept);
         script.fire_event(
             "TRADE_ACCEPT_UPDATE",
             vec![
@@ -827,16 +837,13 @@ fn feed_trade(
             ],
         );
     }
-    if closed {
-        *last_accept = (false, false);
-    } else {
-        *last_accept = accept;
-    }
 
     // Our gold reaches the money input through `PLAYER_TRADE_MONEY` (`TradeFrame.xml:565`), never
     // `TRADE_UPDATE`, so a repaint never overwrites what the player is typing.
     let player_gold = trade.our.gold;
     if trade.is_open() && player_gold != *last_player_gold {
+        // The session's own trim of the offer reaches the VM's coins here.
+        script.set_trade_offer_gold(player_gold);
         script.fire_event("PLAYER_TRADE_MONEY", vec![]);
     }
     *last_player_gold = if trade.is_open() { player_gold } else { 0 };
@@ -876,7 +883,8 @@ fn drain_trade(
         match resolve_trade_target(&token, &selection, &group) {
             Some(guid) => {
                 info!(target: "trade", "initiate: {token:?} -> {guid:#x}; sending CMSG_INITIATE_TRADE");
-                trade.initiate(guid);
+                // `InitiateTrade` asks for no cursor (`0x5226e1`); the drop on a player does (#1382).
+                trade.initiate(guid, false);
                 let _ = commands
                     .0
                     .send(ClientCommand::InitiateTrade { target: guid });
@@ -887,26 +895,24 @@ fn drain_trade(
         }
     }
 
-    // The accept verbs need an open window; close always clears, even a stale session.
-    if script.take_trade_accept() && trade.is_open() {
-        trade.accept();
-        let _ = commands.0.send(ClientCommand::AcceptTrade {
-            their_state: trade.their_state(),
-        });
-    }
-    if script.take_trade_unaccept() && trade.is_open() {
-        trade.unaccept();
-        let _ = commands.0.send(ClientCommand::UnacceptTrade);
-    }
-    // A money offer sends `CMSG_SET_TRADE_GOLD` while open; vmangos sends it to the partner only,
-    // so our own gold is set here.
-    if let Some(copper) = script.take_trade_money() {
-        if trade.is_open() {
-            trade.set_own_gold(copper);
-            info!(target: "trade", "set gold: {copper} copper; sending CMSG_SET_TRADE_GOLD");
-            let _ = commands.0.send(ClientCommand::SetTradeGold { copper });
-            trade.own_change_sent();
+    // The accept verbs' sends in call order, whatever the window's state (`0x58671a` -> `0x703f50`, `0x58676b` -> `0x703fd0`).
+    for accept in script.take_trade_accept_sends() {
+        if accept {
+            trade.accept();
+            let _ = commands.0.send(ClientCommand::AcceptTrade {
+                their_state: trade.their_state(),
+            });
+        } else {
+            trade.unaccept();
+            let _ = commands.0.send(ClientCommand::UnacceptTrade);
         }
+    }
+    // Each money offer sends `CMSG_SET_TRADE_GOLD` whatever the window's state (`0x7043c0`, `0x704220`, `0x704320`); the server sends it to the partner only, so our own gold is set here.
+    for copper in script.take_trade_money_sends() {
+        trade.set_own_gold(copper);
+        info!(target: "trade", "set gold: {copper} copper; sending CMSG_SET_TRADE_GOLD");
+        let _ = commands.0.send(ClientCommand::SetTradeGold { copper });
+        trade.own_change_sent();
     }
     // Placements and clears, sent whatever the window's state (`0x7040b0`, `0x7041a0`): the UI id is 1-based, the wire slot 0-based, and the cursor's bag and slot map to the wire position.
     for send in script.take_trade_item_sends() {
@@ -1095,7 +1101,7 @@ mod tests {
         let mut s = TradeSession::default();
         assert!(!s.is_open());
 
-        s.initiate(0x1234);
+        s.initiate(0x1234, false);
         assert_eq!(s.partner, Some(0x1234));
         assert!(!s.is_open());
         assert_eq!(s.npc(), None);
@@ -1141,7 +1147,7 @@ mod tests {
     #[test]
     fn a_request_leaves_a_live_trade_alone() {
         let mut s = TradeSession::default();
-        s.initiate(0x1);
+        s.initiate(0x1, false);
         s.open_window(0);
         s.partner_accepted();
 
@@ -1337,6 +1343,161 @@ mod tests {
         );
     }
 
+    /// The accept verbs' sends go out in call order, and the coins', with no window standing (`0x58671a` -> `0x703f50`, `0x58676b` -> `0x703fd0`, `0x7043c0`).
+    #[test]
+    fn the_drain_sends_the_accepts_and_the_coins_with_no_window() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.init_resource::<TradeSession>()
+            .init_resource::<GroupState>()
+            .init_resource::<Items>()
+            .init_resource::<GuidIndex>()
+            .init_resource::<Selection>()
+            .insert_resource(NetCommands(tx));
+        let mut vm = UiScript::new().unwrap();
+        vm.set_money(1_000);
+        vm.run("CancelTradeAccept() AcceptTrade() CancelTradeAccept() SetTradeMoney(500)")
+            .unwrap();
+        app.insert_non_send_resource(vm);
+        app.world_mut().run_system_once(drain_trade).unwrap();
+        let sent: Vec<String> = rx.try_iter().map(|c| format!("{c:?}")).collect();
+        assert_eq!(
+            sent,
+            [
+                "AcceptTrade { their_state: 0 }",
+                "UnacceptTrade",
+                "SetTradeGold { copper: 500 }"
+            ]
+        );
+        let trade = app.world().resource::<TradeSession>();
+        assert!(!trade.is_open() && !trade.our_accept);
+        assert_eq!(trade.our.gold, 500);
+    }
+
+    /// The feed signals an accept only when the verb has not already written and signalled it (`0x586712`); the partner's, from its status, it still signals.
+    #[test]
+    fn the_feed_does_not_signal_the_verbs_accept_again() {
+        let (mut app, _rx) = feed_app();
+        {
+            let mut trade = app.world_mut().resource_mut::<TradeSession>();
+            trade.begin(0x7);
+            trade.open_window(1);
+        }
+        app.update();
+        let seen = |app: &mut App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<String>("return table.concat(seen, ',')")
+                .unwrap()
+        };
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('TRADE_ACCEPT_UPDATE') \
+                 f:SetScript('OnEvent', function(_, _, mine, theirs) seen[#seen + 1] = mine .. ':' .. theirs end) \
+                 AcceptTrade()",
+            )
+            .unwrap();
+        assert_eq!(seen(&mut app), "1:0");
+        // The feed ahead of the drain leaves the verb's flag alone; so does the feed after it.
+        app.update();
+        assert_eq!(seen(&mut app), "1:0");
+        let drain = |app: &mut App| {
+            let sends = app
+                .world_mut()
+                .non_send_resource_mut::<UiScript>()
+                .take_trade_accept_sends();
+            let mut trade = app.world_mut().resource_mut::<TradeSession>();
+            for accept in sends {
+                if accept {
+                    trade.accept();
+                } else {
+                    trade.unaccept();
+                }
+            }
+        };
+        drain(&mut app);
+        app.update();
+        assert_eq!(seen(&mut app), "1:0");
+        app.world_mut()
+            .resource_mut::<TradeSession>()
+            .partner_accepted();
+        app.update();
+        assert_eq!(seen(&mut app), "1:0,1:1");
+        // A status that drops both between the drain and the next feed is still signalled.
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run("CancelTradeAccept() AcceptTrade()")
+            .unwrap();
+        drain(&mut app);
+        app.world_mut()
+            .resource_mut::<TradeSession>()
+            .back_to_trade();
+        app.update();
+        assert_eq!(seen(&mut app), "1:0,1:1,0:1,1:1,0:0");
+    }
+
+    /// The open takes the cursor's coins only for an initiate of ours that asked for the cursor (`0x703c30`), and the folded coins signal once, ahead of `TRADE_SHOW` (`0x5872ba`-`0x5872d8`).
+    #[test]
+    fn the_open_folds_the_cursors_coins_only_for_an_initiate_that_asked() {
+        let (mut app, _rx) = feed_app();
+        // The purse the fold's test reads off the player (`0x704283`).
+        let purse = benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE, 1_000),
+        ]);
+        let me = app.world_mut().spawn(ObjectStore(purse)).id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(0x42, me);
+        app.insert_resource(crate::net::SelfGuid(Some(0x42)));
+        {
+            let mut vm = app.world_mut().non_send_resource_mut::<UiScript>();
+            vm.set_money(1_000);
+            vm.run(
+                "seen = {} local f = CreateFrame('Frame') \
+                 for _, e in ipairs({'PLAYER_TRADE_MONEY', 'PLAYER_MONEY', 'TRADE_SHOW'}) do f:RegisterEvent(e) end \
+                 f:SetScript('OnEvent', function(_, e) seen[#seen + 1] = e end) \
+                 PickupPlayerMoney(300) seen = {}",
+            )
+            .unwrap();
+        }
+        let seen = |app: &mut App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<String>("local s = table.concat(seen, ',') seen = {} return s")
+                .unwrap()
+        };
+        {
+            let mut trade = app.world_mut().resource_mut::<TradeSession>();
+            trade.initiate(0x7, false);
+            trade.open_window(1);
+        }
+        app.update();
+        assert_eq!(seen(&mut app), "TRADE_SHOW");
+        assert_eq!(app.world().resource::<TradeSession>().our.gold, 0);
+
+        app.world_mut()
+            .resource_mut::<TradeSession>()
+            .close_window();
+        app.update();
+        {
+            let mut trade = app.world_mut().resource_mut::<TradeSession>();
+            trade.initiate(0x7, true);
+            trade.open_window(2);
+        }
+        app.update();
+        app.update();
+        assert_eq!(seen(&mut app), "PLAYER_TRADE_MONEY,PLAYER_MONEY,TRADE_SHOW");
+        assert_eq!(app.world().resource::<TradeSession>().our.gold, 300);
+        let vm = app.world().non_send_resource::<UiScript>();
+        assert_eq!(vm.eval::<i64>("return GetCursorMoney()").unwrap(), 0);
+        assert_eq!(vm.eval::<i64>("return GetPlayerTradeMoney()").unwrap(), 300);
+    }
+
     /// An app running [`feed_trade`] with a live VM and `0x7` named in the cache.
     fn feed_app() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -1358,7 +1519,9 @@ mod tests {
     #[test]
     fn initiating_a_trade_says_so() {
         let (mut app, _rx) = feed_app();
-        app.world_mut().resource_mut::<TradeSession>().initiate(0x7);
+        app.world_mut()
+            .resource_mut::<TradeSession>()
+            .initiate(0x7, false);
         app.update();
 
         assert_eq!(
@@ -1388,7 +1551,7 @@ mod tests {
         let (mut app, _rx) = feed_app();
         {
             let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.initiate(0x7); // parks ERR_INITIATE_TRADE_S, needs_live_object: false
+            trade.initiate(0x7, false); // parks ERR_INITIATE_TRADE_S, needs_live_object: false
             trade.owe_named_line(NamedLine {
                 key: "ERR_PLAYER_BUSY_S",
                 who: 0x7,
@@ -1436,7 +1599,7 @@ mod tests {
         let (mut app, _rx) = feed_app();
         app.world_mut()
             .resource_mut::<TradeSession>()
-            .initiate(0x99); // no name cached
+            .initiate(0x99, false); // no name cached
         app.update();
         assert!(
             app.world()
@@ -1609,7 +1772,7 @@ mod tests {
         let (mut app, rx) = request_app(false, false, true);
         {
             let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.initiate(0x9);
+            trade.initiate(0x9, false);
             trade.request(0x7);
         }
         app.update();
@@ -1676,8 +1839,9 @@ mod tests {
         (app, rx)
     }
 
+    /// `SetTradeMoney`'s send asks for no window (`0x586870` -> `0x7043c0`: the purse test `0x70441e`, then the send `0x704463`).
     #[test]
-    fn drain_money_ships_set_trade_gold_only_when_open() {
+    fn drain_money_ships_set_trade_gold_with_or_without_a_window() {
         use bevy::ecs::system::RunSystemOnce;
 
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -1697,7 +1861,13 @@ mod tests {
             .run("SetTradeMoney(500)")
             .unwrap();
         app.world_mut().run_system_once(drain_trade).unwrap();
-        assert!(rx.try_recv().is_err(), "no CMSG with no open trade");
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(ClientCommand::SetTradeGold { copper: 500 })
+            ),
+            "the offer goes out with no window standing"
+        );
 
         {
             let mut trade = app.world_mut().resource_mut::<TradeSession>();

@@ -34,6 +34,9 @@ fn drain_ui_sounds(
     assets: Option<Res<WorldAssets>>,
     mut out: NonSendMut<SoundOutput>,
     config: Res<SoundConfig>,
+    items: Option<Res<Items>>,
+    displays: Option<Res<ItemDisplays>>,
+    sounds: Option<Res<ItemSounds>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -52,6 +55,28 @@ fn drain_ui_sounds(
     for req in requests {
         let kit_ref = match &req {
             SoundRequest::KitName(name) => KitRef::Name(name),
+            // The item's own put-down kit (`0x4d0020`); a record not cached or a missing link is silent.
+            SoundRequest::ItemPutDown(item_id) => {
+                let display = items
+                    .as_deref()
+                    .and_then(|items| items.template_cached(*item_id))
+                    .map(|t| t.display_info_id);
+                if let (Some(display_id), Some(displays), Some(sounds)) =
+                    (display, displays.as_deref(), sounds.as_deref())
+                {
+                    play_item_gesture(
+                        display_id,
+                        ItemGesture::PutDown,
+                        displays,
+                        sounds,
+                        &mut kits,
+                        &assets,
+                        &mut out,
+                        &config,
+                    );
+                }
+                continue;
+            }
             SoundRequest::File(path) => {
                 // `PlaySoundFile`: by path, with no kit gates or variation.
                 if let Err(e) = kit::play_file(

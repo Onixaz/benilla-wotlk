@@ -922,19 +922,24 @@ pub(crate) struct Model {
     /// and `SetTradeMoney` copper (`CMSG_SET_TRADE_GOLD`).
     pub(crate) trade: Option<trade::TradeState>,
     pub(crate) trade_initiates: Vec<String>,
-    pub(crate) trade_accept: bool,
-    pub(crate) trade_unaccept: bool,
+    /// The accept sends in call order: `true` `CMSG_ACCEPT_TRADE`, `false` `CMSG_UNACCEPT_TRADE`.
+    pub(crate) trade_accept_sends: Vec<bool>,
+    /// Our accept flag and the partner's (`0xbfa660`, `0xbfa664`).
+    pub(crate) trade_accepts: (bool, bool),
+    /// Our offered coins (`0xca0b74`), kept whether a window stands or not.
+    pub(crate) trade_offer_gold: u32,
     pub(crate) trade_close: bool,
     /// `BeginTrade()` and `CancelTrade()` calls.
     pub(crate) trade_begin: bool,
     pub(crate) trade_cancel: bool,
-    pub(crate) trade_set_money: Option<u32>,
+    /// The coin offers the money verbs sent, in call order.
+    pub(crate) trade_set_money: Vec<u32>,
     /// Our slots' placements and clears, in the order the calls made them.
     pub(crate) trade_item_sends: Vec<trade::TradeItemSend>,
     /// Our offer's slots as the clicks wrote them (`0xbfa620`), zeroed at the window's open.
     pub(crate) trade_own_items: [Option<trade::TradeOwnItem>; trade::TRADE_SLOTS],
     /// The enchanting item, locked while it aims at the partner's seventh slot (`0xbfa680`).
-    pub(crate) trade_enchanting_item: Option<(i64, u32)>,
+    pub(crate) trade_enchanting_item: Option<(u64, i64, u32)>,
     /// The last close was a completed trade (`0xbfa678`), which `CloseTrade` reads.
     pub(crate) trade_completed: bool,
     /// A fixture's stand-in for the offer gates' item reads, by `(bag, slot)`.
@@ -1795,12 +1800,13 @@ impl Model {
             auction_sell_item: None,
             trade: None,
             trade_initiates: Vec::new(),
-            trade_accept: false,
-            trade_unaccept: false,
+            trade_accept_sends: Vec::new(),
+            trade_accepts: (false, false),
+            trade_offer_gold: 0,
             trade_close: false,
             trade_begin: false,
             trade_cancel: false,
-            trade_set_money: None,
+            trade_set_money: Vec::new(),
             trade_item_sends: Vec::new(),
             trade_own_items: Default::default(),
             trade_enchanting_item: None,

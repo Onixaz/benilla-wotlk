@@ -53,18 +53,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "UPDATE_BINDINGS",
         "benilla-app/src/bindings.rs",
     ),
-    // The trade drain applies the accept or the unaccept to the session at once, and the trade
-    // feed fires on the change it reads.
-    (
-        "AcceptTrade",
-        "TRADE_ACCEPT_UPDATE",
-        "benilla-app/src/ui_trade/mod.rs",
-    ),
-    (
-        "CancelTradeAccept",
-        "TRADE_ACCEPT_UPDATE",
-        "benilla-app/src/ui_trade/mod.rs",
-    ),
     // The direct RSVP (`direct_rsvp`) marks the action pending and signals it.
     (
         "CalendarContextInviteAvailable",

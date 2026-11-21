@@ -60,50 +60,35 @@ pub(crate) fn drop_cursor_money(model: &mut crate::script::ModelGuard<'_>) -> bo
     true
 }
 
-/// `AddTradeMoney`, also run first by `ClickTradeButton`, `ClickTargetTradeButton` and the trade
-/// window's open: the offer becomes offer plus cursor, if the purse covers it.
+/// `AddTradeMoney`'s add (`0x704220`), also run first by `ClickTradeButton`, `ClickTargetTradeButton` and the trade window's open: the offer (`0xca0b74`) becomes offer plus cursor and goes out if the purse covers it (`0x704293`), with or without a window.
 pub(crate) fn add_trade_money(model: &mut crate::script::ModelGuard<'_>) -> bool {
     let copper = cursor_money(model);
     if copper == 0 {
         return false;
     }
-    let offer = model.trade.as_ref().map_or(0, |t| t.player.gold);
-    let total = u64::from(offer) + u64::from(copper);
-    if total > crate::script::live::money(model) {
+    // The sum wraps as the reference's 32-bit add does (`0x70423c`).
+    let total = model.trade_offer_gold.wrapping_add(copper);
+    if u64::from(total) > crate::script::live::money(model) {
         return false;
     }
-    let total = total as u32;
-    model.trade_set_money = Some(total);
-    if let Some(t) = model.trade.as_mut() {
-        t.player.gold = total;
-    }
+    model.trade_set_money.push(total);
+    model.trade_offer_gold = total;
     // `ClearCursor(1, 0)`: no PLAYER_MONEY, the clear's own CURSOR_UPDATE.
     super::clear_cursor_with(model, true, false);
     true
 }
 
-/// `PickupTradeMoney` after the argument gate: signed gates, then `CMSG_SET_TRADE_GOLD` (`0x11F`)
-/// with the trimmed offer, then the coins onto the cursor.
+/// `PickupTradeMoney` after the argument gate (`0x586810`): signed gates against the offer (`0xca0b74`), with or without a window, then `CMSG_SET_TRADE_GOLD` with the trimmed offer (`0x704320`), then the coins onto the cursor (`0x58685f`).
 pub(crate) fn pickup_trade_money(model: &mut crate::script::ModelGuard<'_>, amount: i32) -> bool {
-    let offer = model.trade.as_ref().map_or(0, |t| t.player.gold) as i32;
+    let offer = model.trade_offer_gold as i32;
     if amount <= 0 || amount > offer {
         return false;
     }
     let left = (offer - amount) as u32;
-    model.trade_set_money = Some(left);
-    if let Some(t) = model.trade.as_mut() {
-        t.player.gold = left;
-    }
+    model.trade_set_money.push(left);
+    model.trade_offer_gold = left;
     install_money(model, amount as u32);
     true
-}
-
-impl crate::script::UiScript {
-    /// The trade window's open folds held coins into the offer.
-    pub fn fold_cursor_money_into_trade(&mut self) -> Option<u32> {
-        let mut model = self.model_mut();
-        add_trade_money(&mut model).then(|| model.trade.as_ref().map_or(0, |t| t.player.gold))
-    }
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -369,6 +354,7 @@ mod tests {
         s.run("PickupTradeMoney(0) PickupTradeMoney(301) PickupTradeMoney(-1)")
             .unwrap();
         assert_eq!(s.take_trade_money(), None);
+        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 0);
         s.run("PickupTradeMoney(100)").unwrap();
         assert_eq!(s.take_trade_money(), Some(200));
         assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 100);

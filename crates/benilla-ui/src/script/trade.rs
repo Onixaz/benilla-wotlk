@@ -63,14 +63,38 @@ impl super::UiScript {
         drain_field!(self, trade_initiates)
     }
 
-    /// Whether `AcceptTrade` was called since the last drain: `CMSG_ACCEPT_TRADE`.
-    pub fn take_trade_accept(&mut self) -> bool {
-        drain_field!(self, trade_accept)
+    /// The accept sends since the last drain, in call order: `true` `CMSG_ACCEPT_TRADE` (`0x703f50`), `false` `CMSG_UNACCEPT_TRADE` (`0x703fd0`).
+    pub fn take_trade_accept_sends(&mut self) -> Vec<bool> {
+        drain_field!(self, trade_accept_sends)
     }
 
-    /// Whether `CancelTradeAccept` was called since the last drain: `CMSG_UNACCEPT_TRADE`.
-    pub fn take_trade_unaccept(&mut self) -> bool {
-        drain_field!(self, trade_unaccept)
+    /// Whether an accept verb's send still waits for the drain.
+    pub fn trade_accept_sends_wait(&self) -> bool {
+        !self.model_ref().trade_accept_sends.is_empty()
+    }
+
+    /// Our accept flag and the partner's (`0xbfa660`, `0xbfa664`).
+    pub fn trade_accepts(&self) -> (bool, bool) {
+        self.model_ref().trade_accepts
+    }
+
+    /// The accept flags as a status left them (`0x5873e0`'s arms); the caller signals.
+    pub fn set_trade_accepts(&mut self, accepts: (bool, bool)) {
+        if self.model_ref().trade_accepts != accepts {
+            self.model_mut().trade_accepts = accepts;
+        }
+    }
+
+    /// Our offered coins as a status or our own snapshot leaves them (`0x704545`, `0x70457c`, `0x70459f`, `0x7045eb`, `0x7046ff`).
+    pub fn set_trade_offer_gold(&mut self, copper: u32) {
+        if self.model_ref().trade_offer_gold != copper {
+            self.model_mut().trade_offer_gold = copper;
+        }
+    }
+
+    /// Our offered coins (`0xca0b74`), whatever the window's state.
+    pub fn trade_offer_gold(&self) -> u32 {
+        self.model_ref().trade_offer_gold
     }
 
     /// Whether `CloseTrade`, the window's OnHide verb, was called since the last drain; the app
@@ -89,9 +113,14 @@ impl super::UiScript {
         drain_field!(self, trade_cancel)
     }
 
-    /// The copper `SetTradeMoney` last offered since the last drain: `CMSG_SET_TRADE_GOLD`.
-    pub fn take_trade_money(&mut self) -> Option<u32> {
+    /// The coin offers sent since the last drain, in call order, each a `CMSG_SET_TRADE_GOLD` (`0x704463`, `0x7042d8`, `0x704382`).
+    pub fn take_trade_money_sends(&mut self) -> Vec<u32> {
         drain_field!(self, trade_set_money)
+    }
+
+    /// The last of [`Self::take_trade_money_sends`], which it empties.
+    pub fn take_trade_money(&mut self) -> Option<u32> {
+        self.take_trade_money_sends().pop()
     }
 
     /// Our slots' placements and clears in call order, for `CMSG_SET_TRADE_ITEM` and `CMSG_CLEAR_TRADE_ITEM`.
@@ -139,6 +168,29 @@ fn slot_at(
 
 fn gold(model: &Model, pick: impl Fn(&TradeState) -> &TradeSideState) -> u32 {
     model.trade.as_ref().map(pick).map_or(0, |side| side.gold)
+}
+
+/// `GetPlayerTradeMoney`'s read (`0x586780`): our offered coins while a partner is set, else 0.
+fn own_gold(model: &Model) -> u32 {
+    if model.trade.is_some() {
+        model.trade_offer_gold
+    } else {
+        0
+    }
+}
+
+/// An item's put-down sound (`0x4d0020` with 1): a wrapped item's own kit (`0x4d006d`), else its sound group's; nothing with no item object (`0x587a75`).
+fn put_down_sound(model: &mut Model, item: &CursorItem) {
+    if cursor::guid_at(model, item.bag, item.slot).is_none() {
+        return;
+    }
+    let wrapped =
+        super::container::live_slot(model, item.bag, item.slot).is_some_and(|s| s.flags & 0x8 != 0);
+    model.sound_queue.push(if wrapped {
+        super::SoundRequest::KitName("(DONOTRENAME)WrappedItemDrop".to_string())
+    } else {
+        super::SoundRequest::ItemPutDown(item.item_id)
+    });
 }
 
 /// One send of our offer's slot setter: `id` the 1-based trade slot, `bag` and `slot` in the cursor's space.
@@ -309,10 +361,11 @@ fn click_trade_button(
     remove: bool,
 ) -> Option<&'static str> {
     if remove {
-        // The slot empties, then its item unlocks (`0x587a51`, `0x587a58`).
+        // The slot empties, its item unlocks and its put-down sound plays (`0x587a51`, `0x587a58`, `0x587a7e`).
         if let Some(old) = own_item(model, slot) {
             set_own_item(model, slot, None);
             cursor::set_item_lock(model, old.item.bag, old.item.slot, false);
+            put_down_sound(model, &old.item);
         }
         return None;
     }
@@ -370,7 +423,7 @@ fn free_slot(model: &Model) -> Option<i64> {
         .map(|i| i as i64)
 }
 
-/// The offer's add of a bag item (`0x5877b0`): an unbound item to the first free traded slot, a bound one to slot 7 unless a quest item, past the bag gates; then the slot's write and the item's lock (`0x587918`, `0x587922`).
+/// The offer's add of a bag item (`0x5877b0`): an unbound item to the first free traded slot, a bound one to slot 7 unless a quest item, past the bag gates; then the slot's write, the item's lock and its put-down sound (`0x587918`, `0x587922`, `0x58792a`).
 fn add_own_item(
     model: &mut crate::script::ModelGuard<'_>,
     item: CursorItem,
@@ -389,14 +442,15 @@ fn add_own_item(
         return Err(Some(line));
     }
     let (bag, bag_slot) = (item.bag, item.slot);
-    set_own_item(model, slot, Some(item));
+    set_own_item(model, slot, Some(item.clone()));
     cursor::set_item_lock(model, bag, bag_slot, true);
+    put_down_sound(model, &item);
     Ok(())
 }
 
 /// The enchanting item's release (`0x586c20`, `0x586fb6`, `0x5870d5`, `0x587985`, `0x5880f4`): it unlocks and its slot zeroes.
 pub(crate) fn release_enchanting_item(model: &mut crate::script::ModelGuard<'_>) {
-    if let Some((bag, slot)) = model.trade_enchanting_item.take() {
+    if let Some((_, bag, slot)) = model.trade_enchanting_item.take() {
         cursor::set_item_lock(model, bag, slot, false);
     }
 }
@@ -422,7 +476,8 @@ pub(super) fn use_container_item(
         release_enchanting_item(model);
         model.call(super::ScriptCall::UseContainerItem { bag, slot });
         cursor::set_item_lock(model, bag, slot, true);
-        model.trade_enchanting_item = Some((bag, slot));
+        let guid = cursor::guid_at(model, bag, slot).unwrap_or(0);
+        model.trade_enchanting_item = Some((guid, bag, slot));
         return Arm::Took;
     }
     let added = add_own_item(
@@ -491,16 +546,59 @@ impl super::UiScript {
         }
     }
 
-    /// The window's open zeroes our offer's slots and the completion flag (`0x5870a0`, its partner arm).
-    pub fn reset_trade_offer(&mut self) {
-        let stale = {
-            let model = self.model_ref();
-            model.trade_completed || model.trade_own_items.iter().any(Option::is_some)
+    /// The partner setter's open leg (`0x587129`-`0x5873be`), short of its `TRADE_SHOW`: both accept flags, the completion flag and our slots zero; when our own initiate asked for the cursor (`0x703c30`), held coins fold into the offer and signal `PLAYER_TRADE_MONEY` then `PLAYER_MONEY` (`0x587297`-`0x5872ca`), else a held item goes out to slot 1, or to slot 7 past `TRADE_POTENTIAL_BIND_ENCHANT` when bound (`0x58735e`, `0x58737b`), the cursor clearing with the item still locked (`0x587383`) and the slot written unsignalled (`0x587391`). Answers the folded offer.
+    pub fn open_trade_partner(&mut self, use_cursor: bool) -> Option<u32> {
+        let mut model = self.model_mut();
+        model.trade_accepts = (false, false);
+        model.trade_completed = false;
+        model.trade_own_items = Default::default();
+        if !use_cursor {
+            return None;
+        }
+        if cursor::money::cursor_money(&model) != 0 {
+            if !cursor::money::add_trade_money(&mut model) {
+                return None;
+            }
+            let offer = model.trade_offer_gold;
+            model.raise("PLAYER_TRADE_MONEY", Vec::new());
+            model.raise("PLAYER_MONEY", Vec::new());
+            return Some(offer);
+        }
+        let Some(CursorPayload::Item(item)) = model.cursor.clone() else {
+            return None;
         };
-        if stale {
-            let mut model = self.model_mut();
-            model.trade_own_items = Default::default();
-            model.trade_completed = false;
+        let guid = cursor::guid_at(&model, item.bag, item.slot)?;
+        let facts = item_facts(&model, item.bag, item.slot);
+        let i = if facts.bound { 6 } else { 0 };
+        if facts.bound {
+            let binds = !facts.bound_for_trade(&model);
+            model.raise(
+                "TRADE_POTENTIAL_BIND_ENCHANT",
+                vec![ScriptValue::Bool(binds)],
+            );
+        }
+        model.trade_item_sends.push(TradeItemSend::Set {
+            id: i as u32 + 1,
+            bag: item.bag,
+            slot: item.slot,
+        });
+        cursor::clear_cursor_with(&mut model, false, true);
+        let row = shown(&model, &item);
+        model.trade_own_items[i] = Some(TradeOwnItem { guid, item });
+        if let Some(trade) = model.trade.as_mut() {
+            trade.player.slots[i] = Some(row);
+        }
+        None
+    }
+
+    /// A cancelled cast's item (`0x80624b`-`0x806258`): when it is the enchanting item, that unlocks and its slot zeroes.
+    pub fn cast_item_cancelled(&mut self, item: u64) {
+        let ours = self
+            .model_ref()
+            .trade_enchanting_item
+            .is_some_and(|(guid, ..)| guid != 0 && guid == item);
+        if ours {
+            release_enchanting_item(&mut self.model_mut());
         }
     }
 
@@ -649,7 +747,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(i64::from(gold(&model, |t| &t.player)))
+            Ok(i64::from(own_gold(&model)))
         })?,
     )?;
     g.set(
@@ -671,20 +769,29 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    g.set(
-        "AcceptTrade",
-        lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).trade_accept = true;
-            Ok(())
-        })?,
-    )?;
-    g.set(
-        "CancelTradeAccept",
-        lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).trade_unaccept = true;
-            Ok(())
-        })?,
-    )?;
+    // AcceptTrade() and CancelTradeAccept() (`0x5866e0`, `0x586730`), past the action gate (`0x5191c0`, #1227): a flag that moves is written (`0x58670d`, `0x586759`), `TRADE_ACCEPT_UPDATE` signals with the partner's (`0x586712`, `0x586763`), then the send goes out (`0x58671a`, `0x58676b`); no window is asked for.
+    for (name, accept) in [("AcceptTrade", true), ("CancelTradeAccept", false)] {
+        g.set(
+            name,
+            lua.create_function(move |lua, ()| {
+                let mut model = crate::script::model_mut_of(lua);
+                if model.trade_accepts.0 == accept {
+                    return Ok(());
+                }
+                model.trade_accepts.0 = accept;
+                let theirs = model.trade_accepts.1;
+                model.raise(
+                    "TRADE_ACCEPT_UPDATE",
+                    vec![
+                        ScriptValue::Int(i64::from(accept)),
+                        ScriptValue::Int(i64::from(theirs)),
+                    ],
+                );
+                model.trade_accept_sends.push(accept);
+                Ok(())
+            })?,
+        )?;
+    }
     g.set(
         "CloseTrade",
         lua.create_function(|lua, ()| {
@@ -725,8 +832,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetTradeMoney",
         lua.create_function(|lua, copper: Value| {
-            // A non-number raises; the low dword is the whole offer, sent only when the purse
-            // covers it, and a refusal is silent.
+            // `0x586870` -> `0x7043c0`: a non-number raises; the low dword is the whole offer, sent and kept (`0x70445d`) only when the purse covers it (`0x70441e`), with or without a window; a refusal is silent.
             let n = crate::script::binding_abi::number_arg(
                 lua,
                 copper,
@@ -736,7 +842,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if u64::from(n) > crate::script::live::money(&model) {
                 return Ok(());
             }
-            model.trade_set_money = Some(n);
+            model.trade_offer_gold = n;
+            model.trade_set_money.push(n);
             Ok(())
         })?,
     )?;
@@ -914,15 +1021,177 @@ mod tests {
             .unwrap());
     }
 
+    /// `GetPlayerTradeMoney` reads our offered coins only while a partner is set (`0x58678f`, `0x586791`).
     #[test]
-    fn money_reads_the_pushed_state() {
+    fn money_reads_the_offer_while_a_partner_is_set() {
         let mut s = UiScript::new().unwrap();
+        s.set_trade_offer_gold(12_345);
+        assert_eq!(s.eval::<i64>("return GetPlayerTradeMoney()").unwrap(), 0);
         s.set_trade(Some(state()));
         assert_eq!(
             s.eval::<i64>("return GetPlayerTradeMoney()").unwrap(),
             12_345
         );
         assert_eq!(s.eval::<i64>("return GetTargetTradeMoney()").unwrap(), 500);
+    }
+
+    /// The money verbs keep and send the offer with no window (`0x7043c0`, `0x704220`, `0x704320`), and the offer reads back inside the chunk that set it (`0x70445d`).
+    #[test]
+    fn the_money_verbs_keep_and_send_the_offer_with_no_window() {
+        let mut s = UiScript::new().unwrap();
+        s.set_money(1_000);
+        s.run("SetTradeMoney(500)").unwrap();
+        assert_eq!(s.take_trade_money(), Some(500));
+        assert_eq!(s.trade_offer_gold(), 500);
+        s.run("PickupTradeMoney(200)").unwrap();
+        assert_eq!(s.take_trade_money(), Some(300));
+        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 200);
+        s.run("AddTradeMoney()").unwrap();
+        assert_eq!(s.take_trade_money(), Some(500));
+        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 0);
+        // The purse does not cover it: nothing is kept or sent (`0x70441e`).
+        s.run("SetTradeMoney(1001)").unwrap();
+        assert_eq!((s.take_trade_money(), s.trade_offer_gold()), (None, 500));
+        // Each send goes out, in call order (`0x704463`, `0x704382`, `0x7042d8`).
+        s.run("SetTradeMoney(100) SetTradeMoney(200) PickupTradeMoney(50) AddTradeMoney()")
+            .unwrap();
+        assert_eq!(s.take_trade_money_sends(), [100, 200, 150, 200]);
+        s.set_trade(Some(TradeState::default()));
+        assert_eq!(
+            s.eval::<i64>("SetTradeMoney(700) return GetPlayerTradeMoney()")
+                .unwrap(),
+            700
+        );
+    }
+
+    /// `AcceptTrade` writes its flag, signals with the partner's and sends, with no window asked for, and a flag already up does nothing (`0x5866f9`, `0x58670d`, `0x586712`, `0x58671a`); `CancelTradeAccept` mirrors it (`0x586745`, `0x586763`, `0x58676b`).
+    #[test]
+    fn the_accept_verbs_signal_inside_the_call_and_send_in_call_order() {
+        let mut s = UiScript::new().unwrap();
+        s.set_trade_accepts((false, true));
+        s.run(
+            "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('TRADE_ACCEPT_UPDATE') \
+             f:SetScript('OnEvent', function(_, _, mine, theirs) seen[#seen + 1] = mine .. ':' .. theirs end)",
+        )
+        .unwrap();
+        s.run(
+            "AcceptTrade() seen[#seen + 1] = 'after' AcceptTrade() \
+             CancelTradeAccept() CancelTradeAccept()",
+        )
+        .unwrap();
+        assert_eq!(
+            s.eval::<String>("return table.concat(seen, ',')").unwrap(),
+            "1:1,after,0:1"
+        );
+        assert_eq!(s.take_trade_accept_sends(), [true, false]);
+        assert_eq!(s.trade_accepts(), (false, true));
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+    }
+
+    /// The remove click and the right-click add play the item's put-down sound (`0x587a7e`, `0x58792a`), a wrapped item its own kit (`0x4d006d`); an empty slot's remove plays none (`0x587a40`), and a placing click queues none of its own.
+    #[test]
+    fn the_remove_click_and_the_add_play_the_put_down_sound() {
+        use crate::script::SoundRequest;
+        let mut s = UiScript::new().unwrap();
+        open(&mut s);
+        s.run("UseContainerItem(0, 2)").unwrap();
+        assert_eq!(s.take_sounds(), [SoundRequest::ItemPutDown(2770)]);
+        s.run("ClickTradeButton(1, true)").unwrap();
+        assert_eq!(s.take_sounds(), [SoundRequest::ItemPutDown(2770)]);
+        s.run("ClickTradeButton(1, true)").unwrap();
+        assert!(s.take_sounds().is_empty());
+        s.run("PickupContainerItem(0, 1) ClickTradeButton(1)")
+            .unwrap();
+        assert!(s.take_sounds().is_empty());
+
+        let mut slots = std::collections::HashMap::new();
+        slots.insert(
+            1,
+            crate::script::ContainerSlot {
+                guid: 0x4000_0000_0000_0009,
+                item_id: 5043,
+                count: 1,
+                flags: 0x8,
+                ..Default::default()
+            },
+        );
+        s.set_container(
+            1,
+            Some(crate::script::ContainerState {
+                bag_family: 0,
+                name: Some("Bag".into()),
+                num_slots: 4,
+                slots,
+            }),
+        );
+        s.run("UseContainerItem(1, 1)").unwrap();
+        assert_eq!(
+            s.take_sounds(),
+            [SoundRequest::KitName("(DONOTRENAME)WrappedItemDrop".into())]
+        );
+    }
+
+    /// The partner setter's open leg zeroes the flags and takes the cursor only when our own initiate asked (`0x703c30`): coins fold in and signal once (`0x587297`-`0x5872ca`); an item goes out to slot 1 unsignalled, still locked (`0x58737b`, `0x587383`, `0x587391`), a bound one to slot 7 past `TRADE_POTENTIAL_BIND_ENCHANT` (`0x58735e`).
+    #[test]
+    fn the_open_leg_takes_the_cursors_coins_or_item_when_asked() {
+        let mut s = UiScript::new().unwrap();
+        pack(&mut s);
+        s.set_money(1_000);
+        s.set_trade(Some(TradeState::default()));
+        s.set_trade_accepts((true, true));
+        s.run("PickupPlayerMoney(300)").unwrap();
+        fired();
+        assert_eq!(s.open_trade_partner(false), None);
+        assert_eq!(s.trade_accepts(), (false, false));
+        assert!(fired().is_empty() && s.take_trade_money().is_none());
+        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 300);
+        assert_eq!(s.open_trade_partner(true), Some(300));
+        assert_eq!(
+            fired(),
+            ["CURSOR_UPDATE", "PLAYER_TRADE_MONEY", "PLAYER_MONEY"]
+        );
+        assert_eq!(s.take_trade_money(), Some(300));
+        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 0);
+        // The purse does not cover offer plus cursor: the coins stay held, unsignalled (`0x5872a1`).
+        s.run("PickupPlayerMoney(800)").unwrap();
+        fired();
+        assert_eq!(s.open_trade_partner(true), None);
+        assert!(fired().is_empty());
+        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 800);
+        s.run("ClearCursor()").unwrap();
+
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        fired();
+        assert_eq!(s.open_trade_partner(true), None);
+        assert_eq!(fired(), ["CURSOR_UPDATE"]);
+        assert_eq!(
+            s.take_trade_item_sends(),
+            [TradeItemSend::Set {
+                id: 1,
+                bag: 0,
+                slot: 1
+            }]
+        );
+        assert!(s.cursor_payload().is_none() && locked(&s, 1) && s.trade_offers_slot(0));
+
+        let bound = TradeItemFacts {
+            bound: true,
+            ..Default::default()
+        };
+        s.model_mut().trade_item_facts.insert((0, 2), bound);
+        s.run("PickupContainerItem(0, 2)").unwrap();
+        fired();
+        s.open_trade_partner(true);
+        assert_eq!(fired(), ["TRADE_POTENTIAL_BIND_ENCHANT", "CURSOR_UPDATE"]);
+        assert_eq!(
+            s.take_trade_item_sends(),
+            [TradeItemSend::Set {
+                id: 7,
+                bag: 0,
+                slot: 2
+            }]
+        );
+        assert!(s.trade_offers_slot(6) && !s.trade_offers_slot(0) && locked(&s, 2));
     }
 
     #[test]
@@ -944,12 +1213,13 @@ mod tests {
         assert_eq!(s.take_trade_initiates(), vec!["target", "party2"]);
         assert!(s.take_trade_initiates().is_empty(), "drained");
 
+        // The accept's send follows its flag (`0x58671a`); the unaccept goes out only with the flag up (`0x586745`, `0x58676b`).
         s.run("AcceptTrade()").unwrap();
-        assert!(s.take_trade_accept());
-        assert!(!s.take_trade_accept(), "drained");
+        assert_eq!(s.take_trade_accept_sends(), [true]);
+        assert!(s.take_trade_accept_sends().is_empty(), "drained");
 
         s.run("CancelTradeAccept()").unwrap();
-        assert!(s.take_trade_unaccept());
+        assert_eq!(s.take_trade_accept_sends(), [false]);
 
         s.run("CloseTrade()").unwrap();
         assert!(s.take_trade_close());
@@ -1001,7 +1271,7 @@ mod tests {
     fn open(s: &mut UiScript) {
         pack(s);
         s.set_trade(Some(TradeState::default()));
-        s.reset_trade_offer();
+        s.open_trade_partner(false);
     }
 
     fn locked(s: &UiScript, slot: u32) -> bool {
@@ -1295,7 +1565,7 @@ mod tests {
         // A second walk finds nothing locked; the window's open zeroes the slots (`0x5870a0`).
         s.unlock_trade_items();
         assert!(fired().is_empty());
-        s.reset_trade_offer();
+        s.open_trade_partner(false);
         assert!(!s.trade_offers_slot(0) && !s.trade_offers_slot(4));
     }
 
@@ -1400,7 +1670,7 @@ mod tests {
         assert!(!locked(&s, 3) && !s.trade_offers_slot(6));
     }
 
-    /// An enchanting item aimed at the partner's seventh slot is used, then locked (`0x586c48`, `0x586c57`), and released by the next one (`0x586c20`), the partner's slot changing (`0x586fb6`), the partner setter's close (`0x5870d5`, `0x5880f4`) and `CloseTrade` (`0x587985`).
+    /// An enchanting item aimed at the partner's seventh slot is used, then locked (`0x586c48`, `0x586c57`), and released by the next one (`0x586c20`), the partner's slot changing (`0x586fb6`), the partner setter's close (`0x5870d5`, `0x5880f4`), its cast's cancel (`0x806258`) and `CloseTrade` (`0x587985`).
     #[test]
     fn the_enchanting_item_locks_until_each_of_its_releases() {
         let enchants = TradeItemFacts {
@@ -1441,6 +1711,15 @@ mod tests {
         s.close_trade_partner(false);
         assert!(!locked(&s, 1));
 
+        // A cancelled cast releases it only when the cast's item is that item (`0x80624d`, `0x806258`).
+        let mut s = setup();
+        s.cast_item_cancelled(0);
+        s.cast_item_cancelled(0x4000_0000_0000_0002);
+        assert!(fired().is_empty() && locked(&s, 1));
+        s.cast_item_cancelled(0x4000_0000_0000_0001);
+        assert_eq!(fired(), ["ITEM_LOCK_CHANGED", "ITEM_UNLOCKED"]);
+        assert!(!locked(&s, 1));
+
         let mut s = setup();
         s.run("CloseTrade()").unwrap();
         assert_eq!(
@@ -1475,7 +1754,7 @@ mod tests {
         s.run("CloseTrade()").unwrap();
         assert!(fired().is_empty() && s.take_trade_close());
         // The next window's open zeroes the flag (`0x5870a0`).
-        s.reset_trade_offer();
+        s.open_trade_partner(false);
         s.run("CloseTrade()").unwrap();
         assert_eq!(fired(), ["PLAYER_TRADE_MONEY"]);
     }

@@ -39,6 +39,24 @@ fn on_trade_status(
             _ => None,
         };
         if let Some(mut ui) = ui {
+            // The packet's own arms run first: our offered coins zero on the open and on each close (`0x704545`, `0x70459f`, `0x7045eb`), on the coins' refusal (`0x70457c`), and codes 3 and 13 signal `PLAYER_MONEY` (`0x7045ab`).
+            let zeroes = match status {
+                TradeStatus::OpenWindow { .. }
+                | TradeStatus::Canceled
+                | TradeStatus::Complete
+                | TradeStatus::CloseWindow { .. }
+                | TradeStatus::Unknown13 => true,
+                TradeStatus::OnlyConjured { slot } | TradeStatus::NotEligible { slot } => {
+                    slot == 0xff
+                }
+                _ => false,
+            };
+            if zeroes {
+                ui.write(|script| script.set_trade_offer_gold(0));
+            }
+            if matches!(status, TradeStatus::Canceled | TradeStatus::Unknown13) {
+                ui.fire("PLAYER_MONEY", vec![]);
+            }
             // The cancel signals first (`0x587503`); each close unlocks the offer's items (`0x587508`, `0x587529`, `0x58754a`) ahead of the partner setter's close.
             if matches!(status, TradeStatus::Canceled) {
                 ui.fire("TRADE_REQUEST_CANCEL", vec![]);
@@ -140,8 +158,10 @@ fn on_trade_status_extended(
         let Some(mut ui) = ui.filter(|_| update == OfferUpdate::Applied) else {
             return;
         };
-        // An own-window snapshot denies each slot it no longer fills (`0x704810`, `0x704873` -> `0x586410`).
+        // An own-window snapshot carries our offered coins (`0x7046ff`) and denies each slot it no longer fills (`0x704810`, `0x704873` -> `0x586410`).
         if !state.their_window {
+            let gold = state.gold;
+            ui.write(move |script| script.set_trade_offer_gold(gold));
             for slot in trade.mirror_own(&state) {
                 ui.write(move |script| script.deny_trade_item(slot));
             }
@@ -218,7 +238,6 @@ fn trade_status(
         | TradeStatus::NoTarget
         | TradeStatus::TargetTooFar
         | TradeStatus::WrongFaction
-        | TradeStatus::Unknown13
         | TradeStatus::IgnoreYou
         | TradeStatus::YouStunned
         | TradeStatus::TargetStunned
@@ -227,7 +246,12 @@ fn trade_status(
         | TradeStatus::YouLogout
         | TradeStatus::TargetLogout
         | TradeStatus::TrialAccount => trade.clear_pending(),
-        // Past `0x16`: the bare epilogue, as for case 13; vmangos never sends one.
+        // Code 13 shares the cancel's packet arm (`0x704584`): the coins zero, then the tail's clear.
+        TradeStatus::Unknown13 => {
+            trade.zero_gold();
+            trade.clear_pending();
+        }
+        // Past `0x16`: the bare epilogue; no server sends one.
         TradeStatus::Unknown(_) => {}
     }
 }
@@ -364,7 +388,7 @@ mod tests {
     /// A window up and both sides accepted, so a wrong close, accept reset or cell clear shows.
     fn open_trade() -> TradeSession {
         let mut trade = TradeSession::default();
-        trade.initiate(0x7);
+        trade.initiate(0x7, false);
         trade.open_window(0);
         trade.accept();
         trade.partner_accepted();
@@ -540,7 +564,7 @@ mod tests {
             // We asked: the line is owed, naming our target.
             let (mut errors, commands, _rx) = sink();
             let mut trade = TradeSession::default();
-            trade.initiate(0x7);
+            trade.initiate(0x7, false);
             trade.take_named_lines_for_test();
             trade_status(status, &mut trade, &mut errors, &commands);
             assert_eq!(
@@ -574,7 +598,7 @@ mod tests {
     fn the_plain_refusals_are_raised_immediately() {
         let (mut errors, commands, _rx) = sink();
         let mut trade = TradeSession::default();
-        trade.initiate(0x7);
+        trade.initiate(0x7, false);
         trade.take_named_lines_for_test();
         trade_status(TradeStatus::TargetDead, &mut trade, &mut errors, &commands);
         assert_eq!(errors.0, vec![UiError::key("ERR_TRADE_TARGET_DEAD")]);
@@ -680,7 +704,7 @@ mod lock_tests {
         app.insert_non_send_resource(script);
         {
             let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.initiate(0x7);
+            trade.initiate(0x7, false);
             trade.open_window(9);
         }
         (app, rx)
@@ -910,6 +934,76 @@ mod lock_tests {
         aim(&mut app);
         status(&mut app, TradeStatus::Canceled);
         assert_eq!(log(&mut app), "TRADE_REQUEST_CANCEL ITEM_UNLOCKED:3");
+    }
+
+    /// The status packet's own arms run ahead of the trade's (`0x7044dd`): our offered coins zero on the open, each close and the coins' refusal (`0x704545`, `0x70459f`, `0x7045eb`, `0x70457c`), codes 3 and 13 signal `PLAYER_MONEY` first (`0x7045ab`), and our own snapshot carries the coins (`0x7046ff`).
+    #[test]
+    fn the_status_arms_zero_the_offered_coins_and_signal_the_purse() {
+        let coins = |app: &App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .trade_offer_gold()
+        };
+        let close = TradeStatus::CloseWindow {
+            result: 0,
+            target: false,
+            item: 0,
+        };
+        for (code, zeroed) in [
+            (TradeStatus::OpenWindow { trade_id: 9 }, true),
+            (TradeStatus::Canceled, true),
+            (TradeStatus::Complete, true),
+            (close, true),
+            (TradeStatus::Unknown13, true),
+            (TradeStatus::OnlyConjured { slot: 0xff }, true),
+            (TradeStatus::NotEligible { slot: 0xff }, true),
+            (TradeStatus::OnlyConjured { slot: 2 }, false),
+            (TradeStatus::Accept, false),
+            (TradeStatus::BackToTrade, false),
+            (TradeStatus::TargetTooFar, false),
+        ] {
+            let (mut app, _rx) = rig();
+            app.world_mut()
+                .non_send_resource_mut::<UiScript>()
+                .set_trade_offer_gold(500);
+            status(&mut app, code);
+            assert_eq!(coins(&app), if zeroed { 0 } else { 500 }, "{code:?}");
+        }
+
+        let spy = "local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_MONEY') \
+                   f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)";
+        let (mut app, _rx) = rig();
+        run(&mut app, spy);
+        status(&mut app, TradeStatus::Canceled);
+        assert_eq!(log(&mut app), "PLAYER_MONEY TRADE_REQUEST_CANCEL");
+        let (mut app, _rx) = rig();
+        run(&mut app, spy);
+        status(&mut app, TradeStatus::Unknown13);
+        assert_eq!(log(&mut app), "PLAYER_MONEY");
+        status(&mut app, TradeStatus::Complete);
+        assert_eq!(log(&mut app), "", "a completion signals no purse");
+
+        let (mut app, _rx) = rig();
+        let gold_snapshot = |app: &mut App, their_window: bool, gold: u32| {
+            crate::net::handlers::dispatch(
+                app.world_mut(),
+                vec![SessionEvent::TradeStatusExtended {
+                    state: Box::new(TradeStatusExtended {
+                        their_window,
+                        trade_id: 9,
+                        state_index: 5,
+                        side_state: 5,
+                        gold,
+                        enchant_spell_id: 0,
+                        slots: [None; 7],
+                    }),
+                }],
+            );
+        };
+        gold_snapshot(&mut app, false, 250);
+        assert_eq!(coins(&app), 250);
+        gold_snapshot(&mut app, true, 99);
+        assert_eq!(coins(&app), 250, "the partner's coins are not ours");
     }
 
     /// `0x5880c7`, `0x5880f4`, `0x588133`, `0x588138`: the world leave unlocks the offer and the enchanting item, closes the window and sends the cancel twice.
