@@ -1439,6 +1439,7 @@ fn finish_send(
             None => objects.player_object(),
         };
         let armed = cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
+        debug!("spell: the send of {spell_id} finishes after its SENT (GCD armed: {armed})");
         // An armed start signals after the send's events (`0x805ec3`, `0x805ed1`).
         if armed {
             press.cooldown_start(d.cooldown_on_event());
