@@ -281,7 +281,11 @@ fn every_holder_of_the_vm_lends_the_world() {
     let mut offenders = Vec::new();
     for file in rust_files(&src_dir()) {
         let rel = rel_path(&file);
-        if rel.ends_with("tests.rs") || rel.starts_with("ui_script/live") {
+        // The raise queue's own param holds the VM to queue the raises it opens.
+        if rel.ends_with("tests.rs")
+            || rel.starts_with("ui_script/live")
+            || rel == "ui_script/raises.rs"
+        {
             continue;
         }
         let source = std::fs::read_to_string(&file).expect("readable source");
@@ -380,6 +384,7 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
             ) else {
                 return;
             };
+            let in_turn = components.get_resource_id(TypeId::of::<super::raises::RaisesInTurn>());
             let graph = schedule.graph();
             for (key, system, _) in graph.systems.iter() {
                 if system.is_exclusive() {
@@ -391,7 +396,11 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
                 let access = with_access.access.combined_access();
                 if access.has_resource_read(vm) || access.has_resource_write(vm) {
                     holders += 1;
-                    if !access.has_resource_read(mark) && !argued_system(&system.name()) {
+                    let raises_in_turn = in_turn.is_some_and(|t| access.has_resource_read(t));
+                    if !access.has_resource_read(mark)
+                        && !raises_in_turn
+                        && !argued_system(&system.name())
+                    {
                         offenders.push(format!("{label:?}: {}", system.name()));
                     }
                 }

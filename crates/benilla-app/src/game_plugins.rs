@@ -1265,7 +1265,8 @@ pub(crate) mod schedule_tests {
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
         // Counts `gate_doodad_anim`, every frame: a doodad's animation stops while it is not drawn.
-        ("Update", 644, 636),
+        // Counts the five raise steps between the UI phases, each run only while raises wait.
+        ("Update", 649, 636),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
@@ -1742,7 +1743,7 @@ pub(crate) mod schedule_tests {
         let mut consumers = Vec::new();
         for file in rust_files(&src_dir()) {
             let text = std::fs::read_to_string(&file).expect("readable source");
-            if !text.contains("UiScript") {
+            if !text.contains("UiScript") && !text.contains("InTurn") {
                 continue;
             }
             let rel = rel_path(&file);
@@ -1752,6 +1753,7 @@ pub(crate) mod schedule_tests {
                     && (f.body.contains("UiScript::share") || f.body.contains("safe_world::"));
                 let holds_vm = f.params.contains("NonSendMut<UiScript>")
                     || f.params.contains("NonSend<UiScript>")
+                    || f.params.contains("ui_script::InTurn")
                     || lends;
                 if !holds_vm || !CONSUMES.iter().any(|m| f.body.contains(m)) {
                     continue;

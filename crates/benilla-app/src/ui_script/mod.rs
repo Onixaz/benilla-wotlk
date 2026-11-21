@@ -25,11 +25,13 @@ pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
+pub(crate) mod raises;
 pub(crate) mod safe_world;
 pub(crate) use live::{
     LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending, OwnsPlace,
     OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
 };
+pub(crate) use raises::InTurn;
 #[cfg(test)]
 pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
@@ -519,6 +521,8 @@ impl Plugin for UiScriptPlugin {
                 )
                     .chain(),
             )
+            // The raise steps between the phases.
+            .add_plugins(raises::schedule)
             // The area resolves after the input's calls drain and before the paint (`0x47f15b`, `0x47f163`).
             .configure_sets(
                 Update,
@@ -620,11 +624,11 @@ pub(crate) use lifecycle::{
 /// `GetFramerate()`'s host half: FPS on `Time<Real>`, smoothed by a one-second pole; how the
 /// reference averages it is untraced.
 fn feed_framerate(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     time: Res<Time<bevy::time::Real>>,
     mut smoothed: Local<f64>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let dt = time.delta_secs_f64();
