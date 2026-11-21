@@ -92,6 +92,8 @@ local VERBS = {
     { "bfcount", function() return GetNumBattlefields() end },
     { "wpvp", function() return (GetWorldPVPQueueStatus(1)) end },
     { "opps", function() return GetNumArenaOpponents() end },
+    { "p1", function() return UnitGUID("party1") end },
+    { "veh", function() return UnitGUID("vehicle") end },
     { "a1name", function() return (UnitName("arena1")) end },
     { "kills", function() return (GetPVPSessionStats()) end },
     { "honorpts", function() return (GetHonorCurrency()) end },
@@ -7444,4 +7446,82 @@ fn book_updates_fire_from_their_handlers_in_wire_order() {
             "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
         ]
     );
+}
+
+/// A party list in the same frame as a handler-fired event: `party1` resolves at the event against
+/// the roster the packets before it wrote (`0x52bc50`), in wire order, and not before it lands.
+#[test]
+fn a_party_token_resolves_at_the_event_against_the_roster_so_far() {
+    for party_first in [true, false] {
+        let Some(mut rig) = Rig::login(&[]) else {
+            return;
+        };
+        let frame = if party_first {
+            vec![party_with(0x50), active_status(489)]
+        } else {
+            vec![active_status(489), party_with(0x50)]
+        };
+        let seen = rig.packets(frame, 1);
+        let want = if party_first {
+            "0x0000000000000050"
+        } else {
+            "nil"
+        };
+        assert_eq!(
+            pin(&seen, &["UPDATE_BATTLEFIELD_STATUS"], &["p1"]),
+            vec![format!("UPDATE_BATTLEFIELD_STATUS 1 | p1={want}")],
+            "party first: {party_first}"
+        );
+        assert_eq!(rig.live_now().line(&["p1"]), "NOW | p1=0x0000000000000050");
+    }
+}
+
+/// The selection setter's write is the target global a token reads in the same call
+/// (`0x524f38`, `0x60acfe`), and a hop off it reads the new target's own target (`0x60aaa0`).
+#[test]
+fn a_target_token_reads_the_selection_inside_the_call_that_moved_it() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let answer = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local before = tostring(UnitGUID('target')) TargetUnit('player') \
+             return before .. ' ' .. tostring(UnitGUID('target')) .. ' ' \
+             .. tostring(UnitGUID('targettarget')) .. ' ' .. tostring(UnitIsUnit('target', 'player'))",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(answer, "nil 0x0000000000000010 0x0000000000000010 1");
+}
+
+/// `vehicle` reads our seat at the call (`0x60ac87`): a seat taken between frames names the
+/// vehicle before any feed runs, and leaving it names nobody at once.
+#[test]
+fn the_vehicle_token_reads_the_seat_at_the_call() {
+    const CART: u64 = 0xF150_0000_0000_0001;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let me = rig
+        .app
+        .world_mut()
+        .query_filtered::<Entity, With<crate::net::SelfPlayer>>()
+        .single(rig.app.world())
+        .expect("our player");
+    let seat = crate::vehicle::Passenger {
+        vehicle: CART,
+        seat: 0,
+        state: crate::vehicle::SEATED,
+    };
+    rig.app.world_mut().entity_mut(me).insert(seat);
+    assert_eq!(
+        rig.live_now().line(&["veh"]),
+        "NOW | veh=0xF150000000000001"
+    );
+    rig.app
+        .world_mut()
+        .entity_mut(me)
+        .remove::<crate::vehicle::Passenger>();
+    assert_eq!(rig.live_now().line(&["veh"]), "NOW | veh=nil");
 }
