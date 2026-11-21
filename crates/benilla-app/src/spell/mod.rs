@@ -43,8 +43,8 @@ pub(crate) use cast_target::{
 pub(crate) use combo::ComboPoints;
 pub(crate) use cooldowns::Cooldowns;
 pub(crate) use inflight::{
-    cancel_records, inflight, ActiveChannel, AutoRepeatActive, LocalMoveStart, PendingCast,
-    PendingRecord, QueuedMeleeSpell, SelfCancel, SPELL_INTERRUPT_MOVEMENT,
+    cancel_records, inflight, pet_setter_cancel, ActiveChannel, AutoRepeatActive, LocalMoveStart,
+    PendingCast, PendingRecord, QueuedMeleeSpell, SelfCancel, SPELL_INTERRUPT_MOVEMENT,
 };
 pub(crate) use mods::{
     track_cost_inputs, SpellModifiers, OP_CAST_TIME, OP_COST, OP_GCD, OP_RADIUS,

@@ -147,7 +147,7 @@ pub(crate) fn player_dead(store: &crate::net::ObjectStore) -> bool {
     store.0.unit_health().is_some_and(|h| h as i32 <= 0)
 }
 
-/// The pet setter's tail (`0x5d6a2f`-`0x5d6b80`): on a new guid the latches drop, a held head's tests run, an empty head zeroes the pet's combo points (`0x5d6ab0`), then `UNIT_PET`; every call updates the temporary bar (`0x5d6ad2`); a new guid while we are `dead` fires `RAISED_AS_GHOUL` for a head (`0x5d6b80`), else refreshes the active player (`0x5d6b6f`); the modal-cast cancel (`0x5d6afb`-`0x5d6b24`) is #1337.
+/// The pet setter's tail (`0x5d6a2f`-`0x5d6b80`): on a new guid the latches drop, a held head's tests run, an empty head zeroes the pet's combo points (`0x5d6ab0`), then `UNIT_PET`; every call updates the temporary bar (`0x5d6ad2`); a new guid while we are `dead` fires `RAISED_AS_GHOUL` for a head (`0x5d6b80`), else refreshes the active player (`0x5d6b6f`); the modal test and cancel run after the temporary bar (`0x5d6afb`-`0x5d6b24`).
 pub(crate) fn set_pet_tail(
     changed: bool,
     bar: &mut PetBar,
@@ -177,7 +177,13 @@ pub(crate) fn set_pet_tail(
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
-    ui.world(super::temp_bar::update_pet_temp_bar_step);
+    // The temporary bar, then the modal test and cancel on the guid the setter was handed
+    // (`0x5d6ad2`, `0x5d6afb`-`0x5d6b24`).
+    let handed = bar.spells.pet_guid;
+    ui.world(move |world| {
+        super::temp_bar::update_pet_temp_bar_step(world);
+        crate::spell::pet_setter_cancel(world, changed, handed);
+    });
     if changed && dead {
         if head {
             ui.fire("RAISED_AS_GHOUL", Vec::new());

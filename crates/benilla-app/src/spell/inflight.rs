@@ -88,6 +88,12 @@ impl PendingCast {
             .any(|r| r.spell_id == spell_id && (caster == 0 || r.caster == 0 || r.caster == caster))
     }
 
+    /// Any record cast by `caster` (`0x805ef0`): the pet setter's modal test. A record filed
+    /// without its caster's guid is the player's and never a pet's.
+    pub(crate) fn caster_has(&self, caster: u64) -> bool {
+        caster != 0 && self.records.iter().any(|r| r.caster == caster)
+    }
+
     /// The newest record of the player's own, the one its cancel and its ring name.
     pub(crate) fn current(&self) -> Option<&PendingRecord> {
         self.records.iter().rev().find(|r| !r.pet)
@@ -113,6 +119,14 @@ impl PendingCast {
             .iter()
             .position(|r| r.spell_id == spell_id && r.count == count)?;
         Some(self.records.remove(at))
+    }
+
+    /// Release every record cast by `caster`, oldest first (`0x806390`'s walk); none for 0.
+    pub(crate) fn release_caster(&mut self, caster: u64) -> Vec<PendingRecord> {
+        if caster == 0 {
+            return Vec::new();
+        }
+        self.release_where(|r| r.caster == caster)
     }
 
     /// Release every record of `spell_id`, oldest first (`0x806440`'s walk).
@@ -185,6 +199,33 @@ pub(crate) fn cancel_records(world: &mut World, records: &[(PendingRecord, u64)]
         }
     }
 }
+
+/// The pet setter's modal test and cancel (`0x5d6afb`-`0x5d6b24`): with a record cast by the
+/// list's head (`0x805ef0`), a changed guid, an empty list or a zero head cancels every record
+/// cast by the guid the setter was handed (`0x806390`), reason `0x1b` (`0x8063c1`).
+pub(crate) fn pet_setter_cancel(world: &mut World, changed: bool, handed: u64) {
+    let head = world
+        .get_resource::<crate::ui_pet::PetList>()
+        .and_then(|l| l.head());
+    let Some(mut pending) = world.get_resource_mut::<PendingCast>() else {
+        return;
+    };
+    if !pending.caster_has(head.unwrap_or(0)) {
+        return;
+    }
+    if !changed && head.is_some_and(|h| h != 0) {
+        return;
+    }
+    let records: Vec<_> = pending
+        .release_caster(handed)
+        .into_iter()
+        .map(|r| (r, handed))
+        .collect();
+    cancel_records(world, &records, PET_CHANGE_REASON);
+}
+
+/// The pet setter's cancel reason (`0x8063c1`).
+const PET_CHANGE_REASON: u8 = 0x1b;
 
 /// Our queued on-next-swing spell (Heroic Strike, Cleave: `Attributes & 0x404`). The reference
 /// keeps it in the inflight id, and a new cast nests around it (the nested-cast push and pop); this
@@ -614,6 +655,135 @@ mod tests {
         g.release(FIREBALL + 1, 2);
         assert!(g.listed_for(FIREBALL, ME));
         assert_eq!(g.records().len(), 1);
+    }
+
+    /// The by-caster walk (`0x805ef0`, `0x806390`) finds and releases one caster's records; a
+    /// record filed without its caster never matches a caster, and 0 releases nothing.
+    #[test]
+    fn the_by_caster_walk_keeps_other_casters_records() {
+        const PET: u64 = 0x2A;
+        let mut g = PendingCast::default();
+        g.file(PendingRecord {
+            pet: true,
+            ..PendingRecord::player(FIREBALL, 1, PET)
+        });
+        g.file(PendingRecord::player(FIREBALL, 2, 0));
+        assert!(g.caster_has(PET));
+        assert!(!g.caster_has(0));
+        assert!(g.release_caster(0).is_empty());
+        assert_eq!(g.release_caster(PET).len(), 1);
+        assert_eq!(g.records().len(), 1);
+        assert_eq!(g.current().map(|r| r.count), Some(2));
+    }
+
+    /// The pet setter's modal cancel (`0x5d6afb`-`0x5d6b24`), on a world with the pet streamed.
+    mod pet_setter {
+        use super::*;
+        use crossbeam_channel::Receiver;
+
+        const PET: u64 = 0x2A;
+        const OTHER: u64 = 0x2B;
+        const CLAW: u32 = 16829;
+
+        fn world(head: &[u64]) -> (World, Receiver<ClientCommand>, Entity) {
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let mut world = World::new();
+            world.insert_resource(NetCommands(tx));
+            world.init_resource::<GuidIndex>();
+            world.init_resource::<PendingCast>();
+            world.init_resource::<crate::ui_script::live::UiEvents>();
+            world.insert_resource(crate::ui_pet::PetList(head.to_vec()));
+            let pet = world.spawn(Casting {
+                spell_id: CLAW,
+                cast_count: 4,
+                until: None,
+                listed: true,
+                hidden: false,
+            });
+            let pet = pet.id();
+            world.resource_mut::<GuidIndex>().0.insert(PET, pet);
+            (world, rx, pet)
+        }
+
+        fn file(world: &mut World, caster: u64, count: u8) {
+            world.resource_mut::<PendingCast>().file(PendingRecord {
+                pet: true,
+                ..PendingRecord::player(CLAW, count, caster)
+            });
+        }
+
+        /// A new head with a record of its own cancels it: `CMSG_CANCEL_CAST` with the record's
+        /// count and spell, as the pet runs that cast (`0x8062a6`, `0x8062de`), its cast ends
+        /// (`0x806358`) and its end edges queue.
+        #[test]
+        fn a_new_head_with_a_pending_cast_cancels_it() {
+            let (mut world, rx, pet) = world(&[PET]);
+            file(&mut world, PET, 4);
+            pet_setter_cancel(&mut world, true, PET);
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(ClientCommand::CancelCast {
+                    spell_id: CLAW,
+                    count: 4
+                })
+            ));
+            assert!(world.resource::<PendingCast>().records().is_empty());
+            assert!(world.get::<Casting>(pet).is_none());
+            assert_eq!(
+                world
+                    .resource::<crate::ui_script::live::UiEvents>()
+                    .cast_edges(),
+                [
+                    crate::ui_cast::CastBarEdge::Cancelled { caster: PET },
+                    crate::ui_cast::CastBarEdge::Selection
+                ]
+            );
+        }
+
+        /// The same pet re-sent, unchanged and still the head, keeps its record (`0x5d6b0b`).
+        #[test]
+        fn a_resend_of_the_same_pet_keeps_its_record() {
+            let (mut world, rx, _) = world(&[PET]);
+            file(&mut world, PET, 4);
+            pet_setter_cancel(&mut world, false, PET);
+            assert!(rx.try_recv().is_err());
+            assert_eq!(world.resource::<PendingCast>().records().len(), 1);
+        }
+
+        /// Another caster's record survives the change: the walk ends the handed guid's alone
+        /// (`0x8063af`).
+        #[test]
+        fn another_casters_record_survives_the_change() {
+            let (mut world, rx, _) = world(&[PET]);
+            file(&mut world, PET, 4);
+            file(&mut world, OTHER, 5);
+            world
+                .resource_mut::<PendingCast>()
+                .file(PendingRecord::player(133, 6, 0x10));
+            pet_setter_cancel(&mut world, true, PET);
+            assert!(rx.try_iter().count() == 1);
+            let left: Vec<u64> = world
+                .resource::<PendingCast>()
+                .records()
+                .iter()
+                .map(|r| r.caster)
+                .collect();
+            assert_eq!(left, [OTHER, 0x10]);
+        }
+
+        /// The teardown cancels nothing: the list is empty and no record's caster is the zero
+        /// guid (`0x5d6afb` with head 0).
+        #[test]
+        fn the_teardown_cancels_nothing() {
+            let (mut world, rx, _) = world(&[]);
+            file(&mut world, PET, 4);
+            world
+                .resource_mut::<PendingCast>()
+                .file(PendingRecord::player(133, 6, 0));
+            pet_setter_cancel(&mut world, true, 0);
+            assert!(rx.try_recv().is_err());
+            assert_eq!(world.resource::<PendingCast>().records().len(), 2);
+        }
     }
 
     #[test]
