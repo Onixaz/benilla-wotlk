@@ -60,6 +60,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 accept: true,
             });
+            // The accept re-runs the equip inside the call (`0x51a530` -> `0x6e01a0`).
+            model.ask(&super::HostAsk::BindAnswers);
             Ok(())
         })?,
     )?;
@@ -74,6 +76,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 index,
                 accept: false,
             });
+            // The cancel unlocks the record's items inside the call (`0x51a5c0` -> `0x6e0273`, `0x6e02cd`).
+            model.ask(&super::HostAsk::BindAnswers);
             Ok(())
         })?,
     )?;
@@ -85,6 +89,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
             model.bind_on_use_confirms += 1;
+            // The use is re-issued inside the call (`0x510db0` -> `0x7093f0`).
+            model.ask(&super::HostAsk::BindAnswers);
             Ok(())
         })?,
     )?;

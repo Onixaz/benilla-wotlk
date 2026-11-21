@@ -65,6 +65,8 @@ pub enum HostAsk {
     BindSwap(super::ContainerMove),
     /// `AutoEquipCursorItem`'s bind question for the item at `(bag, slot)`: the pending equip is filed (`0x6dfdc8`).
     BindAutoEquip { bag: i64, slot: u32 },
+    /// `EquipPendingItem`, `CancelPendingEquip` and `ConfirmBindOnUse`: the answers given so far run now (`0x6e01a0`, `0x7093f0`).
+    BindAnswers,
 }
 
 /// What the host answered a [`HostAsk`].
@@ -73,6 +75,8 @@ pub enum HostAnswer {
     GuildBank(GuildBankVerdict),
     /// The pending equip's index, the bind question's argument.
     BindIndex(u32),
+    /// The step ran.
+    Done,
 }
 
 /// What a guild bank swap's gates left for the verb to do.

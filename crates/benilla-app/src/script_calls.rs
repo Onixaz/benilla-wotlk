@@ -25,7 +25,6 @@ enum Applied {
 /// the `World`: its signals, lines and the press's edges queue, and fire as the call returns with
 /// the `World` lent again, so a listener's own call applies nested inside the raise.
 pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
-    use crate::ui_script::live::UiEvents;
     use crate::ui_script::safe_world::with_world;
     // The destroy in its turn, through the lent view (`0x5197d0`), then its signal.
     if let ScriptCall::DestroyTotem(slot) = call {
@@ -42,24 +41,9 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         return true;
     }
     let applied = with_world(|world| {
-        // What an enclosing turn queued stays its own, fired by it.
-        let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
-        let (applied, raised) = benilla_ui::script::world_loan::raises_in_turn(|| {
+        let applied = in_call_step(world, |world| {
             world.run_system_cached_with(apply_one, call).ok()
         });
-        // The applier's raises as the call returns, with the `World` lent again: the ones it made
-        // through the VM (the item-use fork's `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`,
-        // the selection's refusal line `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`).
-        // #1363 fires each at its step inside the press.
-        if !raised.is_empty() {
-            crate::ui_script::safe_world::lend(world, |script| {
-                for (event, args) in raised {
-                    script.fire_event(&event, args);
-                }
-            });
-        }
-        crate::ui_script::live::fire_handler_events(world);
-        world.resource_mut::<UiEvents>().put_back(earlier);
         // The setter's tail, inside the call that moved the selection (`0x524f38`-`0x524f54`).
         if applied.is_some() {
             crate::ui_unit::target_set_tail(world);
@@ -81,7 +65,31 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
     }
 }
 
-/// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. Nothing is raised here: the verb signals what the answer leaves.
+/// Run `step`, a host step that holds the lent `World`, inside the Lua call that reached it: it
+/// raises nothing while it holds the `World`; its signals, lines and a press's edges queue, and
+/// fire as it returns with the `World` lent again, so a listener's own call applies nested.
+fn in_call_step<R>(world: &mut World, step: impl FnOnce(&mut World) -> R) -> R {
+    use crate::ui_script::live::UiEvents;
+    // What an enclosing turn queued stays its own, fired by it.
+    let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
+    let (out, raised) = benilla_ui::script::world_loan::raises_in_turn(|| step(world));
+    // The step's raises as it returns: the ones it made through the VM (the item-use fork's
+    // `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`, the selection's refusal line
+    // `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`). #1363 fires each at its step
+    // inside the press.
+    if !raised.is_empty() {
+        crate::ui_script::safe_world::lend(world, |script| {
+            for (event, args) in raised {
+                script.fire_event(&event, args);
+            }
+        });
+    }
+    crate::ui_script::live::fire_handler_events(world);
+    world.resource_mut::<UiEvents>().put_back(earlier);
+    out
+}
+
+/// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. A gate or a filing raises nothing here, and the verb signals what the answer leaves; the bind dialogs' answers run their drains as a step.
 pub(crate) fn answer_in_call(
     _lua: &mlua::Lua,
     ask: &benilla_ui::script::HostAsk,
@@ -101,6 +109,9 @@ pub(crate) fn answer_in_call(
             .ok()
             .flatten()
             .map(HostAnswer::BindIndex),
+        HostAsk::BindAnswers => {
+            in_call_step(world, crate::ui_items::run_bind_answers).then_some(HostAnswer::Done)
+        }
     })
     .flatten()
 }

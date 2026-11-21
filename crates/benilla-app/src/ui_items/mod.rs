@@ -76,6 +76,17 @@ const BANK_BAG_LIVE: std::ops::RangeInclusive<u32> =
 /// reference's `HasKey` searches for.
 pub(super) const BAG_FAMILY_KEYS: u32 = 9;
 
+/// The bind dialogs' answers run inside the verb that gave them: `EquipPendingItem` and `CancelPendingEquip` (`0x6e01a0`), `ConfirmBindOnUse` (`0x7093f0`); `false` in a world without their state, where they wait for the drains.
+pub(crate) fn run_bind_answers(world: &mut World) -> bool {
+    let equips = world
+        .run_system_cached(drain::drain_bind_confirm_answers)
+        .is_ok();
+    let uses = world
+        .run_system_cached(drain::drain_bind_on_use_confirms)
+        .is_ok();
+    equips || uses
+}
+
 /// Lua `(bag, 1-based slot)` to the wire `(bag_index, slot)`, the one mapping every drain shares.
 /// The backpack, the bank's generic slots, the keyring and the doll ([`EQUIPMENT_BAG`]: live id
 /// minus one, 1..=23 and the bank-bag buttons 68..=74) all land on [`BAG_PLAYER_INVENTORY`], so a

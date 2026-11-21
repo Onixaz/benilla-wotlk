@@ -1683,6 +1683,8 @@ pub(crate) mod schedule_tests {
          "the selection setter's tail (`0x524f54`), run inside the script call that moved the selection"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
+        ("script_calls.rs", "in_call_step", Because::FilledByVm,
+         "not a system: a host step run inside a Lua call a verb made, which only a running interface makes"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
          "`sends` exist only after Lua acknowledged, cleared or reset a flag, and go to the wire"),
         ("ui_action/drain.rs", "drain_go_openers", Because::FilledByVm,

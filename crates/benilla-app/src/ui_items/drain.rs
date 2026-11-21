@@ -1765,6 +1765,51 @@ mod bind_confirm_tests {
         ));
     }
 
+    /// The dialog's cancel unlocks the swap's items inside the call (`0x6e0273`, `0x6e02cd`), and its accept re-runs the swap, which sends before the verb returns (`0x6e021d`, `0x6dfc04`).
+    #[test]
+    fn the_bind_answers_run_inside_the_call() {
+        let (mut app, rx) = axe_world(Some(2), false);
+        let log = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run(
+                    r#"local f = CreateFrame("Frame")
+                       f:RegisterEvent("ITEM_UNLOCKED")
+                       f:SetScript("OnEvent", function(_, e) Log[#Log + 1] = e end)
+                       PickupContainerItem(0, 1) PickupInventoryItem(16)
+                       Log = {}
+                       CancelPendingEquip(0) Log[#Log + 1] = "after cancel""#,
+                )
+                .unwrap();
+            script.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .unwrap();
+        assert_eq!(log, ["ITEM_UNLOCKED", "after cancel"]);
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            0
+        );
+        assert!(!app.world().resource::<PendingItemOps>().is_locked(AXE_GUID));
+        assert!(rx.try_iter().next().is_none());
+
+        // The question again, then the accept: the swap goes out inside the call.
+        let rx = &rx;
+        let sent = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run("PickupInventoryItem(16) EquipPendingItem(0)")
+                .unwrap();
+            rx.try_iter().next()
+        })
+        .unwrap();
+        assert!(matches!(sent, Some(ClientCommand::SwapInvItem { .. })));
+        assert!(app
+            .world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .take_pending_equip_answers()
+            .is_empty());
+    }
+
     /// The same put-down of an item that binds nothing sends and clears the cursor, the item locked until the answer (`0x6dfc04`, `0x6dfc0d`).
     #[test]
     fn placing_an_item_that_binds_nothing_sends_and_clears_the_cursor() {
