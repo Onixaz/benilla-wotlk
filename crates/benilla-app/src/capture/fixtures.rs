@@ -906,8 +906,7 @@ pub(super) fn seed_ui_fixture(
                 return;
             };
             // A ranked player under the cursor, pushed as the mouseover feed does, then the call
-            // `drive_mouseover_tooltip` makes: the title is the reference name decorator's rank leg
-            // over the name, "Sergeant Bob".
+            // `drive_mouseover_tooltip` makes: titled "Bob", the chosen title's leg being empty.
             script.set_unit(
                 "mouseover",
                 Some(benilla_ui::script::UnitState {

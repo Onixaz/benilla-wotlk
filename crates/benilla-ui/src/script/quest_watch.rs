@@ -717,8 +717,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .map(|s| s.to_string_lossy())
                 .unwrap_or_default();
             let model = model_ref(lua);
-            // The token resolves through the unit feed's guids, not at the call (#1289). A missing or empty token is the target (`0x60b029`).
-
+            // The token resolves at the call; a missing or empty one is the target (`0x60b029`).
             let target = if token.is_empty() {
                 Some(model.target_guid()).filter(|&g| g != 0)
             } else {

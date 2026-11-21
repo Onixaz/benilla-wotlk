@@ -329,8 +329,7 @@ mod tests {
     /// The world: we target `MOB`, which targets party1 (`A`), who targets `BOSS`, which targets
     /// `GONE`; raid3 (`B`) targets `ADD`, our pet `FOE`, and `C` nobody. `LONER` is held and
     /// targets `EXTRA`. The group is a raid of us, `A`, `B` and `C`, all in our subgroup, so the
-    /// three are also party slots 1 to 3. The aura feed, whose resolver inputs the chain feed
-    /// reads, and the chain feed run.
+    /// three are also party slots 1 to 3. The aura feed and the chain feed run.
     fn app() -> App {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
@@ -443,8 +442,8 @@ mod tests {
         eval(app, &format!("return {expr}"))
     }
 
-    /// The getters answer for a chain through the feeds that run in the client: the aura feed's
-    /// resolver inputs name the guid, and this feed's snapshot of it answers, so `party1target`,
+    /// The getters answer for a chain through the feeds that run in the client: the token resolves
+    /// to a guid at the call, and this feed's snapshot of it answers, so `party1target`,
     /// `raid3target` and `pettarget` read the unit at the end of the chain and any break in the
     /// chain reads nobody. No token names `ADD` or `FOE` but a chain.
     #[test]
@@ -571,8 +570,7 @@ mod tests {
         assert_eq!(health(&mut app, "raid3target"), 0);
     }
 
-    /// The chain feed reads the resolver inputs the aura feed pushes in the same frame, so the
-    /// declared order puts the feed after it: read off the schedule graph.
+    /// The chain feed is declared after the aura feed, read off the schedule graph.
     #[test]
     fn the_chain_feed_runs_after_the_aura_feed_it_reads() {
         use crate::game_plugins::schedule_tests::{census, headless_client, SyncPoints};

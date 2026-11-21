@@ -53,8 +53,7 @@ pub(super) enum UiFixture {
     /// The world-mouseover tooltip over a seeded unit: the default anchor puts it at the screen's
     /// bottom-right (`GameTooltip.lua:73-77`), never on the hovered model.
     TooltipWorld,
-    /// The world-mouseover tooltip over a seeded ranked player: the same anchor, with the title's
-    /// PvP rank leg ("Sergeant Bob").
+    /// The world-mouseover tooltip over a seeded ranked player: the same anchor, titled "Bob", as 3.3.5a's title is the chosen title, never a PvP rank.
     TooltipRank,
     /// The character window fed through a synthetic self player's stat block and equipped item
     /// guids, with the items in [`crate::items::Items`].
@@ -732,7 +731,7 @@ pub(super) const ON_DEMAND: &[Scenario] = &[
         minute: 720,
         ui: Some(UiFixture::TooltipWorld),
     },
-    // The same anchor over a ranked player: the tooltip title carries the rank, "Sergeant Bob".
+    // The same anchor over a ranked player, titled "Bob": the title leg is the chosen title, none here.
     Scenario {
         name: "ui-tooltip-rank",
         map: Some(MAP_AZEROTH),

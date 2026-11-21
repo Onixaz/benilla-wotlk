@@ -94,9 +94,7 @@ impl VmTurn<'_> {
         self.queue.as_deref_mut()
     }
 
-    /// Run `op` on the VM with the `World` lent, in turn with the raises around it, so a token it
-    /// resolves reads the state at its step (`0x60abf0`); at once in a harness with no handler
-    /// queue.
+    /// Queue `op` in turn with the raises, run with the `World` lent so a token reads its step's state (`0x60abf0`); with no queue (a harness), run at once with none lent.
     pub(crate) fn lent(&mut self, op: impl FnOnce(&mut UiScript) + Send + Sync + 'static) {
         if self.queue.is_some() {
             if let Some(queue) = self.queue() {
