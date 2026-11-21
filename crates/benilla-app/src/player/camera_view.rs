@@ -350,7 +350,7 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Startup, load_saved_views.after(crate::cvars::CvarLoad))
         .add_systems(
             Update,
-            drain_view_requests
+            crate::ui_script::raises::then_fire(drain_view_requests)
                 // After the Lua tick that queues them, before the control pass seats the pose.
                 .in_set(crate::ui_script::UiDrain)
                 .after(crate::ui_barber::BarberDrain)

@@ -356,8 +356,8 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                drain_ui_sounds,
-                play_item_gesture_sounds,
+                crate::ui_script::raises::then_fire(drain_ui_sounds),
+                crate::ui_script::raises::then_fire(play_item_gesture_sounds),
                 play_loot_pickup_sounds,
                 play_auto_equip_sounds,
             )

@@ -140,7 +140,7 @@ impl Plugin for UiTradeSkillPlugin {
                         .after(crate::ui_script::UiPress)
                         .before(crate::ui_script::UiFeed),
                     feed_trade_skill.in_set(UnitFeed),
-                    drain_trade_skill.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_trade_skill).in_set(UiDrain),
                 ),
             );
     }

@@ -358,6 +358,10 @@ pub(crate) mod schedule_tests {
         /// The systems whose declared access includes the Lua VM, read off each system's own
         /// access set: a holder whose every VM pair is declared shows in no conflict.
         pub holds_vm: HashSet<SystemKey>,
+        /// The systems that raise in turn ([`crate::ui_script::InTurn`]), read off the same access.
+        pub raises_in_turn: HashSet<SystemKey>,
+        /// The exclusive systems (`&mut World`), which run Lua with the `World` lent.
+        pub exclusive: HashSet<SystemKey>,
     }
 
     impl Census {
@@ -417,13 +421,26 @@ pub(crate) mod schedule_tests {
                     )
                 })
                 .collect();
+            let in_turn = world
+                .components()
+                .get_resource_id(TypeId::of::<crate::ui_script::raises::RaisesInTurn>());
             let mut systems = HashMap::new();
             let mut holds_vm = HashSet::new();
+            let mut raises_in_turn = HashSet::new();
+            let mut exclusive = HashSet::new();
             for (key, system, conds) in graph.systems.iter() {
+                if system.is_exclusive() {
+                    exclusive.insert(key);
+                }
                 if let (Some(vm), Some(with_access)) = (vm, graph.systems.get(key)) {
                     let access = with_access.access.combined_access();
                     if access.has_resource_read(vm) || access.has_resource_write(vm) {
                         holds_vm.insert(key);
+                    }
+                    if in_turn
+                        .is_some_and(|t| access.has_resource_read(t) && !system.is_exclusive())
+                    {
+                        raises_in_turn.insert(key);
                     }
                 }
                 let mut sets = Vec::new();
@@ -535,6 +552,8 @@ pub(crate) mod schedule_tests {
                 dependencies,
                 non_send,
                 holds_vm,
+                raises_in_turn,
+                exclusive,
             }
         })
     }
@@ -1172,6 +1191,33 @@ pub(crate) mod schedule_tests {
                 .join(", "),
             actionable.len(),
         );
+        // The raise steps' share: a step against a system outside the UI chain's sets (#1368).
+        let outside_ui = |k: &SystemKey| {
+            !update.systems[k]
+                .sets
+                .iter()
+                .any(|set| UI_SETS.contains(&set.as_str()))
+        };
+        let in_no_set = |k: &SystemKey| {
+            update.systems[k]
+                .sets
+                .iter()
+                .all(|set| set.starts_with("SystemTypeSet"))
+        };
+        let step = |k: &SystemKey| update.name(*k).contains("raises::fire_raises");
+        let (mut steps_outside, mut steps_unset) = (0, 0);
+        for (a, b, _) in &actionable {
+            for (x, y) in [(a, b), (b, a)] {
+                if step(x) && !step(y) {
+                    steps_outside += usize::from(outside_ui(y));
+                    steps_unset += usize::from(in_no_set(y));
+                }
+            }
+        }
+        eprintln!(
+            "Update: {steps_outside} actionable pairs are a raise step against a system outside the \
+             UI chain's sets, {steps_unset} of them against a system in no set"
+        );
         if std::env::var_os("WOW_AMBIGUITY_DUMP").is_some() {
             let mut rows: Vec<String> = actionable
                 .iter()
@@ -1652,6 +1698,252 @@ pub(crate) mod schedule_tests {
             offenders.join("\n  ")
         );
         assert!(stale.is_empty(), "stale rows:\n  {}", stale.join("\n  "));
+    }
+
+    /// The UI chain's sets, in the frame order [`crate::ui_script`] declares.
+    const UI_SETS: &[&str] = &[
+        "UiPress",
+        "UiFeed",
+        "UiSignals",
+        "UiInput",
+        "UiDrain",
+        "UiPaint",
+    ];
+
+    /// Holders in turn outside the feed phases whose raises wait for their phase's raise step
+    /// rather than a step of their own (the one after `UiDrain`, before the world update), keyed
+    /// by a suffix of the system's name, with the reason.
+    #[rustfmt::skip]
+    const PHASE_BATCHED: &[(&str, &str)] = &[
+        ("::minimap::feed_minimap_mask", "a feed in the drain phase: the minimap's mask shape, which no later drain writes"),
+        ("::sound::ui::feed_drivers", "a feed in the drain phase: the device list, after the restart chain that writes it"),
+        ("::ui_chat::logging::sync_chat_logging", "a feed in the drain phase: the logging CVars' state, which no later drain writes"),
+        ("::ui_companion::feed_companion_booth", "a feed in the drain phase: the booth's model, which no later drain writes"),
+        ("::ui_honor::feed_pvp_name_strings", "a feed in the drain phase: the rank names, which no later drain writes"),
+        ("::ui_models::sync_tiles", "a feed in the drain phase: the model tiles' state, which no later drain writes"),
+        ("::ui_quest::read_trivial_tracking", "a feed in the drain phase: the trivial-quest CVar, which no later drain writes"),
+        ("::ui_world_map::feed_world_map", "a feed in the drain phase: the map's zone, which no later drain writes"),
+        ("::ui_macro::note_dirty_macros", "a feed in the drain phase: the macro file's dirty mark, which no later drain writes"),
+        ("::ui_script::glue_mgr::drive_glue_mgr", "the glue screen's driver: no in-world drain runs beside it"),
+    ];
+
+    /// A press or a drain raises at its step in 12340 (`0x81b530` runs the listeners in the
+    /// caller), so a holder in turn outside the feed phases has a raise step of its own chained
+    /// right after it, and every system declared after the holder runs after that step: no
+    /// listener reads a later system's write. Feeds (`UiFeed`, `UiSignals`) and the rows of
+    /// [`PHASE_BATCHED`] fire at their phase's step.
+    #[test]
+    fn every_press_and_drain_holder_in_turn_fires_at_its_own_step() {
+        let mut app = headless_client();
+        let c = census(&mut app, Update, SyncPoints::Declared);
+        if !type_names_available(&c) {
+            eprintln!(
+                "skipped: this build carries no type names (bevy/debug rides with the dev feature)"
+            );
+            return;
+        }
+        let mut succ: HashMap<SystemKey, Vec<SystemKey>> = HashMap::new();
+        for (a, b) in &c.dependencies {
+            succ.entry(*a).or_default().push(*b);
+        }
+        let reach = |start: SystemKey| {
+            let mut seen = HashSet::new();
+            let mut stack = vec![start];
+            while let Some(n) = stack.pop() {
+                for m in succ.get(&n).into_iter().flatten() {
+                    if seen.insert(*m) {
+                        stack.push(*m);
+                    }
+                }
+            }
+            seen
+        };
+        let steps: HashSet<SystemKey> = c
+            .systems
+            .iter()
+            .filter(|(_, s)| s.name.contains("raises::fire_raises"))
+            .map(|(k, _)| *k)
+            .collect();
+        let mut holders: Vec<SystemKey> = c.raises_in_turn.iter().copied().collect();
+        holders.sort_by(|a, b| c.name(*a).cmp(c.name(*b)));
+        let (mut own, mut feeds, mut batched) = (0, 0, 0);
+        let mut offenders = Vec::new();
+        for h in holders {
+            let s = &c.systems[&h];
+            if s.sets
+                .iter()
+                .any(|set| set == "UiFeed" || set == "UiSignals")
+            {
+                feeds += 1;
+                continue;
+            }
+            if PHASE_BATCHED
+                .iter()
+                .any(|(suffix, _)| s.name.ends_with(suffix))
+            {
+                batched += 1;
+                continue;
+            }
+            let after = reach(h);
+            let direct: Vec<SystemKey> = succ
+                .get(&h)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|k| steps.contains(k))
+                .collect();
+            let fires_first = |step: SystemKey| {
+                let from_step = reach(step);
+                after
+                    .iter()
+                    .filter(|x| **x != step && !from_step.contains(*x))
+                    .map(|x| c.name(*x).to_string())
+                    .collect::<Vec<_>>()
+            };
+            if direct.iter().any(|step| fires_first(*step).is_empty()) {
+                own += 1;
+                continue;
+            }
+            offenders.push(match direct.first() {
+                None => format!(
+                    "{}: no raise step of its own; chain `raises::then_fire` after it",
+                    s.name
+                ),
+                Some(step) => format!(
+                    "{}: its step does not precede {:?}",
+                    s.name,
+                    fires_first(*step)
+                ),
+            });
+        }
+        for (suffix, _) in PHASE_BATCHED {
+            if !c
+                .raises_in_turn
+                .iter()
+                .any(|k| c.name(*k).ends_with(suffix))
+            {
+                offenders.push(format!(
+                    "`…{suffix}` no longer raises in turn: drop its row"
+                ));
+            }
+        }
+        eprintln!(
+            "holders in turn: {own} with their own step, {feeds} feeds, {batched} phase-batched"
+        );
+        assert!(
+            offenders.is_empty(),
+            "{} holders in turn fire after a later system ran:\n{}",
+            offenders.len(),
+            offenders.join("\n")
+        );
+        assert!(
+            own > 40,
+            "the census found only {own} holders with their own step"
+        );
+    }
+
+    /// Every raise step and every exclusive system of ours (a Lua runner) sits in a UI phase or
+    /// between two, ordered against every system of the other phases and every other runner:
+    /// what one fires or runs never interleaves with a UI system in an undeclared order. Each
+    /// phase's own members stay unordered among themselves.
+    #[test]
+    fn every_raise_step_and_lua_runner_is_ordered_against_the_ui_chain() {
+        let mut app = headless_client();
+        let c = census(&mut app, Update, SyncPoints::Declared);
+        if !type_names_available(&c) {
+            eprintln!(
+                "skipped: this build carries no type names (bevy/debug rides with the dev feature)"
+            );
+            return;
+        }
+        let mut succ: HashMap<SystemKey, Vec<SystemKey>> = HashMap::new();
+        for (a, b) in &c.dependencies {
+            succ.entry(*a).or_default().push(*b);
+        }
+        let reach = |start: SystemKey| {
+            let mut seen = HashSet::new();
+            let mut stack = vec![start];
+            while let Some(n) = stack.pop() {
+                for m in succ.get(&n).into_iter().flatten() {
+                    if seen.insert(*m) {
+                        stack.push(*m);
+                    }
+                }
+            }
+            seen
+        };
+        // A raise step, or an exclusive system of ours: it lends the `World` to Lua.
+        let runners: Vec<SystemKey> = c
+            .systems
+            .iter()
+            .filter(|(k, s)| {
+                s.name.contains("raises::fire_raises")
+                    || (c.exclusive.contains(*k) && s.name.starts_with("benilla_app::"))
+            })
+            .map(|(k, _)| *k)
+            .collect();
+        let ui: Vec<SystemKey> = c
+            .systems
+            .iter()
+            .filter(|(_, s)| s.sets.iter().any(|set| UI_SETS.contains(&set.as_str())))
+            .map(|(k, _)| *k)
+            .collect();
+        let after: HashMap<SystemKey, HashSet<SystemKey>> =
+            runners.iter().chain(&ui).map(|k| (*k, reach(*k))).collect();
+        let ordered = |a: SystemKey, b: SystemKey| after[&a].contains(&b) || after[&b].contains(&a);
+        // Where a system sits: its UI set, else its other sets.
+        let place = |k: SystemKey| {
+            let sets = &c.systems[&k].sets;
+            sets.iter()
+                .find(|s| UI_SETS.contains(&s.as_str()))
+                .or_else(|| sets.iter().find(|s| !s.starts_with("SystemTypeSet")))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let phase = |k: SystemKey| {
+            c.systems[&k]
+                .sets
+                .iter()
+                .find(|s| UI_SETS.contains(&s.as_str()))
+                .cloned()
+        };
+        // Two members of one phase run in its order-free middle, as the phase's other members do.
+        let same_phase = |a: SystemKey, b: SystemKey| phase(a).is_some() && phase(a) == phase(b);
+        let mut pairs = HashSet::new();
+        let mut offenders = Vec::new();
+        for &r in &runners {
+            let loose: Vec<String> = runners
+                .iter()
+                .chain(&ui)
+                .filter(|&&o| o != r && !same_phase(r, o) && !ordered(r, o))
+                .map(|&o| {
+                    pairs.insert(if r < o { (r, o) } else { (o, r) });
+                    format!("{} [{}]", c.name(o), place(o))
+                })
+                .collect();
+            if !loose.is_empty() {
+                offenders.push(format!(
+                    "{} [{}] against {}: {}",
+                    c.name(r),
+                    place(r),
+                    loose.len(),
+                    loose.join(", ")
+                ));
+            }
+        }
+        offenders.sort();
+        eprintln!(
+            "{} raise steps and Lua runners against {} UI-chain systems",
+            runners.len(),
+            ui.len()
+        );
+        assert!(
+            offenders.is_empty(),
+            "{} pairs run with the `World` lent in no declared order against a UI system; put \
+             them in the UI chain's sets:\n{}",
+            pairs.len(),
+            offenders.join("\n")
+        );
     }
 
     /// The consumer markers: a VM holder that does one of these to host state has spent

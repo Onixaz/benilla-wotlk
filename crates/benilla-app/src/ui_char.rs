@@ -147,7 +147,7 @@ impl Plugin for UiCharPlugin {
                 feed_char.in_set(UiFeed),
                 watch_skill_ups.in_set(UiFeed),
                 feed_skills.in_set(UiFeed),
-                drain_skill_abandons.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_skill_abandons).in_set(UiDrain),
             ),
         );
     }

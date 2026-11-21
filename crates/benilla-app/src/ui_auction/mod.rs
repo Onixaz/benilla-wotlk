@@ -425,7 +425,7 @@ impl Plugin for UiAuctionPlugin {
                     .after(crate::ui_unit::UnitFeed)
                     .in_set(UiFeed)
                     .run_if(crate::ui_script::ingame_ui_up),
-                drain_auction.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_auction).in_set(UiDrain),
             ),
         );
     }

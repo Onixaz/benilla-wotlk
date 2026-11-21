@@ -173,9 +173,10 @@ impl Plugin for UiPetPlugin {
                         .before(UnitFeed)
                         .before(crate::ui_script::UiPress),
                     // The menu verbs a queued script call held back, once the interface is up.
-                    drain_pet_menu
-                        .in_set(UiDrain)
-                        .run_if(crate::ui_script::ingame_ui_up),
+                    crate::ui_script::raises::then_fire(
+                        drain_pet_menu.run_if(crate::ui_script::ingame_ui_up),
+                    )
+                    .in_set(UiDrain),
                 ),
             );
     }

@@ -73,7 +73,8 @@ impl Plugin for UiHonorPlugin {
             .init_resource::<crate::nameplates::PvpNameStrings>()
             .add_systems(
                 Update,
-                drain_inspect_honor_requests.in_set(crate::ui_script::UiDrain),
+                crate::ui_script::raises::then_fire(drain_inspect_honor_requests)
+                    .in_set(crate::ui_script::UiDrain),
             )
             // A VM holder, so after the tick; before the driver, so a new VM's strings reach the
             // lines the frame it arrives.

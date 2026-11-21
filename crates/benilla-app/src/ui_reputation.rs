@@ -33,7 +33,7 @@ impl Plugin for UiReputationPlugin {
                 Update,
                 (
                     feed_reputation.in_set(UiFeed),
-                    drain_reputation_sends.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_reputation_sends).in_set(UiDrain),
                 ),
             )
             .add_systems(PostUpdate, apply_local_flag_writes);

@@ -291,9 +291,10 @@ impl Plugin for UiQuestLogPlugin {
             .add_systems(
                 Update,
                 (
-                    drain_quest_log_abandons.in_set(UiDrain),
-                    drain_quest_log_pushes.in_set(UiDrain),
-                    progress::drain_quest_progress_sends.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_quest_log_abandons).in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_quest_log_pushes).in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(progress::drain_quest_progress_sends)
+                        .in_set(UiDrain),
                 ),
             );
     }

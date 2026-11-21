@@ -39,7 +39,7 @@ impl Plugin for UiGlyphPlugin {
                     feed_glyphs
                         .in_set(UnitFeed)
                         .after(crate::ui_talent::TalentFeed),
-                    drain_glyph_removes.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_glyph_removes).in_set(UiDrain),
                 ),
             );
     }

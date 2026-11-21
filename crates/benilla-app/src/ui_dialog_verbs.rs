@@ -451,7 +451,8 @@ impl Plugin for UiDialogVerbsPlugin {
                 poll_area_spirit_healer
                     .after(crate::target::TargetUpdate)
                     .run_if(crate::ui_script::ingame_ui_up)
-                    .in_set(crate::char_select::InWorldGated),
+                    .in_set(crate::char_select::InWorldGated)
+                    .in_set(crate::ui_script::UiPaint),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),

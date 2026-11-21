@@ -158,7 +158,9 @@ impl Plugin for CinematicPlugin {
             .add_systems(
                 Update,
                 crate::ui_script::raises::then_fire(send_opening_cinematic)
-                    .in_set(WorldStage::Input),
+                    .in_set(WorldStage::Input)
+                    // Ahead of the driver: what it raises fires before the frame's cinematic edges.
+                    .before(take_trigger),
             )
             // Leaving the world drops a cinematic with no ack, as the reference's teardown does
             // (it clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).

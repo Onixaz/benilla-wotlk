@@ -1100,20 +1100,21 @@ impl Plugin for UiItemsPlugin {
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
                     // plain `UseContainerItem` is a script call.
-                    drain_container_repairs.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_container_repairs).in_set(UiDrain),
                     // Pick, place and split: `CMSG_SWAP_INV_ITEM`, `CMSG_SWAP_ITEM` or
                     // `CMSG_SPLIT_ITEM`.
                     drain_container_moves.in_set(UiDrain),
                     // The delete-confirm popup's accept: `CMSG_DESTROYITEM`.
                     drain_container_destroys.in_set(UiDrain),
                     // `AutoEquipCursorItem`: `CMSG_AUTOEQUIP_ITEM`.
-                    drain_container_autoequips.in_set(UiDrain),
-                    drain_bag_autostores.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_container_autoequips).in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_bag_autostores).in_set(UiDrain),
                     // The soulbind confirmations' answers (`EquipPendingItem`,
                     // `CancelPendingEquip`, `ConfirmBindOnUse`). A dialog is answered in a later
                     // frame than it was raised, so no order against the other drains is needed.
                     drain::drain_bind_confirm_answers.in_set(UiDrain),
-                    drain::drain_bind_on_use_confirms.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain::drain_bind_on_use_confirms)
+                        .in_set(UiDrain),
                 ),
             );
     }

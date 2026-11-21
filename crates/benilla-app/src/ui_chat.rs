@@ -146,15 +146,15 @@ impl Plugin for UiChatPlugin {
                 (
                     // First, so a `/afk` typed this frame reads the descriptor's settled state.
                     away::reconcile_afk_mirror,
-                    away::movement_clears_afk,
+                    crate::ui_script::raises::then_fire(away::movement_clears_afk),
                     // After the clears, so a press that stamps the clock and drops the flag is
                     // settled before the idle timer reads it.
-                    idle::idle_handler,
+                    crate::ui_script::raises::then_fire(idle::idle_handler).in_set(idle::IdleStep),
                     input::drain_chat_input.in_set(ChatDrain),
                     // After the box's drain, so a `SendChatMessage` or `SendAddonMessage` from a
                     // slash handler it just ran goes out this frame.
-                    input::drain_addon_chat_sends,
-                    input::drain_addon_message_sends,
+                    crate::ui_script::raises::then_fire(input::drain_addon_chat_sends),
+                    crate::ui_script::raises::then_fire(input::drain_addon_message_sends),
                 )
                     .chain()
                     .in_set(UiDrain)
@@ -170,18 +170,23 @@ impl Plugin for UiChatPlugin {
             // refresh.
             .add_systems(
                 Update,
-                crate::ui_script::raises::then_fire(
-                    (
+                (
+                    crate::ui_script::raises::then_fire(
                         channels::end_session_channels_on_disconnect,
+                    ),
+                    crate::ui_script::raises::then_fire(
                         channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
+                    ),
+                    crate::ui_script::raises::then_fire(
                         recruitment::guild_recruitment_cascade
                             .in_set(crate::char_select::InWorldGated),
-                    )
-                        .chain(),
+                    ),
                 )
-                .after(benilla_world::terrain_stream::AreaAuthoritySet)
-                // The selection and the pet's words its lent view reads are the clicks'.
-                .after(crate::target::TargetUpdate),
+                    .chain()
+                    .in_set(crate::ui_script::UiPaint)
+                    .after(benilla_world::terrain_stream::AreaAuthoritySet)
+                    // The selection and the pet's words its lent view reads are the clicks'.
+                    .after(crate::target::TargetUpdate),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),

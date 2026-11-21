@@ -181,7 +181,10 @@ impl Plugin for UiUnitPlugin {
         )
         .add_systems(Update, feed_name_records.in_set(UnitFeed))
         .add_systems(Update, taxi_benchmark.in_set(UnitFeed))
-        .add_systems(Update, drain_pvp_toggles.in_set(UiDrain))
+        .add_systems(
+            Update,
+            crate::ui_script::raises::then_fire(drain_pvp_toggles).in_set(UiDrain),
+        )
         .net_handler(
             benilla_protocol::SessionEventKind::PowerUpdate,
             on_power_update,
@@ -190,8 +193,14 @@ impl Plugin for UiUnitPlugin {
             benilla_protocol::SessionEventKind::HealthUpdate,
             on_health_update,
         )
-        .add_systems(Update, drain_worn_display_toggles.in_set(UiDrain))
-        .add_systems(Update, drain_action_bar_toggles.in_set(UiDrain))
+        .add_systems(
+            Update,
+            crate::ui_script::raises::then_fire(drain_worn_display_toggles).in_set(UiDrain),
+        )
+        .add_systems(
+            Update,
+            crate::ui_script::raises::then_fire(drain_action_bar_toggles).in_set(UiDrain),
+        )
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
         .add_systems(Update, feed_known_languages.in_set(UnitFeed))
         .add_systems(Update, feed_option_state.in_set(UnitFeed))

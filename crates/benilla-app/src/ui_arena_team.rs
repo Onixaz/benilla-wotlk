@@ -520,7 +520,7 @@ impl Plugin for UiArenaTeamPlugin {
                         .in_set(crate::ui_script::UiFeed)
                         .after(crate::ui_lfg::lfg_enter_world)
                         .after(crate::query_cache::release_on_enter::<ArenaTeams>),
-                    drain_arena_teams.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_arena_teams).in_set(UiDrain),
                 ),
             );
     }

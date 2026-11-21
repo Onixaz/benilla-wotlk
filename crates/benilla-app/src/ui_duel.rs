@@ -407,7 +407,7 @@ impl Plugin for UiDuelPlugin {
             Update,
             (
                 tick_countdown.after(benilla_world::schedule::WorldStage::Net),
-                drain_duel.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_duel).in_set(UiDrain),
             ),
         );
     }

@@ -257,7 +257,7 @@ impl Plugin for UiGuildBankPlugin {
         net::register(app);
         app.init_non_send_resource::<GuildBankState>().add_systems(
             Update,
-            drain_guild_bank
+            crate::ui_script::raises::then_fire(drain_guild_bank)
                 .in_set(UiDrain)
                 .after(crate::ui_guild::GuildDrain),
         );

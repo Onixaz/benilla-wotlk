@@ -187,7 +187,7 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
 ];
 
 /// The raise steps: the five between the UI phases and each `then_fire` chain.
-const RAISE_STEPS: usize = 18;
+const RAISE_STEPS: usize = 76;
 
 /// `source` with every inline test module cut out, to its closing brace.
 fn production(source: &str) -> String {

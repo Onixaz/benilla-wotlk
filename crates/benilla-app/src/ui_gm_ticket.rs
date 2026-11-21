@@ -479,7 +479,7 @@ impl Plugin for UiGmTicketPlugin {
                 Update,
                 (
                     feed_gm_ticket.in_set(UiFeed),
-                    drain_gm_ticket.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_gm_ticket).in_set(UiDrain),
                 ),
             );
     }

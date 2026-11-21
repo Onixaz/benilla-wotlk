@@ -26,7 +26,7 @@ impl Plugin for UiCompanionPlugin {
             .add_systems(
                 Update,
                 (
-                    drain_companions.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_companions).in_set(UiDrain),
                     // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it. Before the display build that loads its model and the booth that draws it.
                     feed_companion_booth
                         .in_set(UiDrain)

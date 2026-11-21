@@ -660,6 +660,11 @@ impl Cvars {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CvarLoad;
 
+/// The per-frame registry sync ([`sync_cvars`]) and the step that fires what it raised: what reads
+/// the frame's `SetCVar`s orders after this set.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CvarSync;
+
 pub(crate) struct CvarPlugin;
 
 impl Plugin for CvarPlugin {
@@ -676,7 +681,10 @@ impl Plugin for CvarPlugin {
             // finds the stage. A texture-policy write is published the same frame.
             .add_systems(
                 Update,
-                (sync_cvars, follow_filter_policy)
+                (
+                    crate::ui_script::raises::then_fire(sync_cvars).in_set(CvarSync),
+                    follow_filter_policy,
+                )
                     .chain()
                     .in_set(crate::ui_script::UiDrain),
             )

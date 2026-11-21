@@ -423,7 +423,7 @@ impl Plugin for UiTradePlugin {
                     trim_offer_to_purse
                         .after(crate::ui_unit::UnitFeed)
                         .before(feed_trade),
-                    drain_trade.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_trade).in_set(UiDrain),
                 ),
             );
     }

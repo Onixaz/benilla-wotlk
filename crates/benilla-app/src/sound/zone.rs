@@ -1123,7 +1123,8 @@ pub(super) fn plugin(app: &mut App) {
                 .after(crate::ui_script::UiInput)
                 // After the dev mute chord, so the gain feed hears it the same frame.
                 .after(super::toggle_mute)
-                .in_set(WorldStage::Present),
+                .in_set(WorldStage::Present)
+                .in_set(crate::ui_script::UiPaint),
         )
         .add_systems(
             Update,

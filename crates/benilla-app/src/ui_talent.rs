@@ -172,7 +172,7 @@ impl Plugin for UiTalentPlugin {
                     // window; drain after it, so a click sends the same frame.
                     feed_talents.in_set(UnitFeed).in_set(TalentFeed),
                     feed_inspect_talents.in_set(UnitFeed),
-                    drain_talent_learns.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_talent_learns).in_set(UiDrain),
                 ),
             );
     }

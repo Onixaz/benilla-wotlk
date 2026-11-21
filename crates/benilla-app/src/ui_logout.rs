@@ -213,9 +213,12 @@ impl Plugin for UiLogoutPlugin {
                 feed_logout.in_set(UiFeed),
                 // After the idle handler, which reads the pending byte: its request is drained and
                 // the byte set in the frame it was asked, as the reference sets it in the call.
-                (drain_logout, exit_on_logout_complete)
+                (
+                    crate::ui_script::raises::then_fire(drain_logout),
+                    exit_on_logout_complete,
+                )
                     .in_set(UiDrain)
-                    .after(crate::ui_chat::idle::idle_handler),
+                    .after(crate::ui_chat::idle::IdleStep),
             ),
         );
     }

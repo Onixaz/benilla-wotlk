@@ -119,6 +119,10 @@ pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
     }
 }
 
+/// [`idle_handler`] and the step that fires what it raised.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct IdleStep;
+
 /// The handler, in-world only: the reference runs it in the world frame's render.
 pub(crate) fn idle_handler(
     time: Res<Time<Real>>,

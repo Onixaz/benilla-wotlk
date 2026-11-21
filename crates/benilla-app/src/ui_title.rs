@@ -26,7 +26,7 @@ impl Plugin for UiTitlePlugin {
             Update,
             (
                 feed_titles.in_set(UnitFeed),
-                drain_title_sets.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_title_sets).in_set(UiDrain),
                 feed_overhead_rows,
             ),
         )
