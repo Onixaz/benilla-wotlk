@@ -122,13 +122,34 @@ pub(crate) fn fire_raises(world: &mut World) {
     super::live::fire_handler_events(world);
 }
 
+/// `holders`, [`InTurn`] systems outside the UI phases, with a raise step chained right after
+/// them, run while raises wait: what they queued fires before any later system runs Lua.
+pub(crate) fn then_fire<M>(
+    holders: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>,
+) -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (holders, fire_raises.run_if(waiting)).chain()
+}
+
 /// Whether raises wait on the handler queue: the raise step's trigger.
 pub(crate) fn waiting(queue: Option<Res<UiEvents>>) -> bool {
     queue.is_some_and(|q| !q.is_empty())
 }
 
+/// The UI phases a raise step follows: an [`InTurn`] system outside them chains its own step.
+pub(crate) fn phases() -> [bevy::ecs::intern::Interned<dyn bevy::ecs::schedule::SystemSet>; 5] {
+    use super::{UiDrain, UiFeed, UiPaint, UiPress, UiSignals};
+    [
+        UiPress.intern(),
+        UiFeed.intern(),
+        UiSignals.intern(),
+        UiDrain.intern(),
+        UiPaint.intern(),
+    ]
+}
+
 /// The raise steps between the UI phases: what a phase's [`InTurn`] systems queued fires before
-/// the next phase runs.
+/// the next phase runs. Each step reads the queue itself: one shared condition is read once a
+/// frame, at the first step, and would skip the later ones.
 pub(crate) fn schedule(app: &mut App) {
     use super::{UiDrain, UiFeed, UiInput, UiPaint, UiPress, UiSignals};
     app.init_resource::<UiEvents>().add_systems(
@@ -140,7 +161,7 @@ pub(crate) fn schedule(app: &mut App) {
             fire_raises.after(UiDrain).before(UiPaint),
             fire_raises.after(UiPaint),
         )
-            .run_if(waiting),
+            .distributive_run_if(waiting),
     );
 }
 
@@ -197,6 +218,59 @@ mod tests {
             "PLAYER_TARGET_CHANGED,PLAYER_REGEN_DISABLED,PLAYER_TARGET_CHANGED"
         );
         assert!(world.resource::<UiEvents>().is_empty());
+    }
+
+    /// In a scheduled frame each phase's raises fire at the step after it: a feed's event reaches
+    /// its listener before the same frame's tick, and a drain's before the paint, although the
+    /// queue was empty at the step after the press.
+    #[test]
+    fn a_feeds_raise_reaches_its_listener_before_the_same_frames_tick() {
+        use super::super::{UiDrain, UiFeed, UiInput, UiPaint, UiPress, UiSignals};
+        #[derive(Resource, Default)]
+        struct AtTick(Vec<String>);
+        let mut app = App::new();
+        app.configure_sets(
+            Update,
+            (UiPress, UiFeed, UiSignals, UiInput, UiDrain, UiPaint).chain(),
+        )
+        .add_plugins(schedule)
+        .init_resource::<AtTick>();
+        vm(app.world_mut());
+        app.add_systems(
+            Update,
+            (
+                (|mut vm: InTurn| {
+                    if let Some(mut s) = vm.turn() {
+                        s.fire_event("PLAYER_TARGET_CHANGED", Vec::new());
+                    }
+                })
+                .in_set(UiFeed),
+                (|world: &mut World| {
+                    let seen = seen(world);
+                    world.resource_mut::<AtTick>().0.push(seen);
+                })
+                .in_set(UiInput),
+                (|mut vm: InTurn| {
+                    if let Some(mut s) = vm.turn() {
+                        s.fire_event("PLAYER_REGEN_DISABLED", Vec::new());
+                    }
+                })
+                .in_set(UiDrain),
+                (|world: &mut World| {
+                    let seen = seen(world);
+                    world.resource_mut::<AtTick>().0.push(seen);
+                })
+                .in_set(UiPaint),
+            ),
+        );
+        app.update();
+        assert_eq!(
+            app.world().resource::<AtTick>().0,
+            [
+                "PLAYER_TARGET_CHANGED",
+                "PLAYER_TARGET_CHANGED,PLAYER_REGEN_DISABLED"
+            ]
+        );
     }
 
     /// The combat edge's barring write waits behind its event's listeners in turn (`0x524600`).

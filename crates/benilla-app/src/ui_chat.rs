@@ -168,19 +168,25 @@ impl Plugin for UiChatPlugin {
             // refresh.
             .add_systems(
                 Update,
-                (
-                    channels::end_session_channels_on_disconnect,
-                    channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
-                    recruitment::guild_recruitment_cascade.in_set(crate::char_select::InWorldGated),
+                crate::ui_script::raises::then_fire(
+                    (
+                        channels::end_session_channels_on_disconnect,
+                        channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
+                        recruitment::guild_recruitment_cascade
+                            .in_set(crate::char_select::InWorldGated),
+                    )
+                        .chain(),
                 )
-                    .chain()
-                    .after(benilla_world::terrain_stream::AreaAuthoritySet)
-                    // The selection and the pet's words its lent view reads are the clicks'.
-                    .after(crate::target::TargetUpdate),
+                .after(benilla_world::terrain_stream::AreaAuthoritySet)
+                // The selection and the pet's words its lent view reads are the clicks'.
+                .after(crate::target::TargetUpdate),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
-                (channels::end_session_channels, end_session_chat),
+                (
+                    crate::ui_script::raises::then_fire(channels::end_session_channels),
+                    end_session_chat,
+                ),
             );
         settings::plugin(app);
         logging::plugin(app);
@@ -193,8 +199,12 @@ impl Plugin for UiChatPlugin {
 ///
 /// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
 /// returns to the login screen), so the window keeps its scrollback there.
-fn end_session_chat(mut script: crate::ui_script::InTurn, mut log: ResMut<ChatLog>) {
-    end_chat_session(script.turn().as_deref_mut(), &mut log);
+fn end_session_chat(world: &mut World) {
+    let mut log = std::mem::take(&mut *world.resource_mut::<ChatLog>());
+    // The windows' `Clear` runs Lua: the `World` is lent for it.
+    crate::ui_script::safe_world::lend(world, |script| end_chat_session(Some(script), &mut log))
+        .unwrap_or_else(|| end_chat_session(None, &mut log));
+    *world.resource_mut::<ChatLog>() = log;
 }
 
 /// [`end_session_chat`]'s body, callable without a `World`.

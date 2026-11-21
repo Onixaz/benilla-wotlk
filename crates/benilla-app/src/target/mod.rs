@@ -428,7 +428,7 @@ impl Plugin for TargetPlugin {
                     // Reads that verdict: `WorldCursor.unable` is the frame's range state, as the
                     // reference's one caller of its ground-point range check feeds both.
                     reticle::update_reticle,
-                    click::world_right_click_payload,
+                    crate::ui_script::raises::then_fire(click::world_right_click_payload),
                     // After the gated select in the press pass, which reads the targeting mode
                     // before a commit clears it. The pending spell feeds only one of the two
                     // legs, so their mutual order is free.

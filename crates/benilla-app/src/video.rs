@@ -607,7 +607,7 @@ impl Plugin for VideoPlugin {
             .add_systems(
                 Last,
                 (
-                    drain_restart_gx,
+                    crate::ui_script::raises::then_fire(drain_restart_gx),
                     validate_refresh,
                     apply_present_mode,
                     apply_window_mode,

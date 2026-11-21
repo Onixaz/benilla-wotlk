@@ -1265,14 +1265,16 @@ pub(crate) mod schedule_tests {
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
         // Counts `gate_doodad_anim`, every frame: a doodad's animation stops while it is not drawn.
-        // Counts the five raise steps between the UI phases, each run only while raises wait.
-        ("Update", 649, 636),
+        // Counts the five raise steps between the UI phases and the seven chained after holders in
+        // turn outside them, each run only while raises wait.
+        ("Update", 656, 636),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
         ("RunFixedMainLoop", 7, 7),
-        ("Last", 32, 27),
+        // Counts the raise step after the `RestartGx` drain, run only while raises wait.
+        ("Last", 33, 27),
     ];
     /// How far a count may sit under its ceiling before the ceiling must come down with it.
     const FRAME_FLOOR_SLACK: usize = 8;
@@ -1687,6 +1689,8 @@ pub(crate) mod schedule_tests {
          "the requests are the VM's own guild bank verbs, and the auto-store's event answers one"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
+        ("ui_chat.rs", "end_session_chat", Because::Deliberate,
+         "the session end in `OnExit(InWorld)`: it empties the chat log and clears the game VM's windows, publishing nothing a VM waits for"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
          "`pending` is held until the zone mask and zone id are settled, which happens on the entry VM"),
         ("ui_gm_ticket.rs", "feed_gm_ticket", Because::MemoLatched,

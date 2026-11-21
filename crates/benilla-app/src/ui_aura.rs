@@ -44,7 +44,10 @@ impl Plugin for UiAuraPlugin {
                     .after(crate::ui_action::SlotIdentityFeed),
             )
             .add_systems(Update, drain_aura_cancels.in_set(UiDrain))
-            .add_systems(OnExit(ClientState::InWorld), end_session_aura_state);
+            .add_systems(
+                OnExit(ClientState::InWorld),
+                crate::ui_script::raises::then_fire(end_session_aura_state),
+            );
     }
 }
 

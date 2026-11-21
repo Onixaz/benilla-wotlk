@@ -146,17 +146,20 @@ impl Plugin for CinematicPlugin {
             // would leave nothing listening for ESC.
             .add_systems(
                 Update,
-                feed_ui
+                crate::ui_script::raises::then_fire(feed_ui.run_if(crate::ui_script::ingame_ui_up))
                     .in_set(WorldStage::Input)
-                    .after(drive)
-                    .run_if(crate::ui_script::ingame_ui_up),
+                    .after(drive),
             )
             // The cursor and the bars, after the driver settled this frame's state.
             .add_systems(
                 Update,
                 drive_letterbox.in_set(WorldStage::Input).after(drive),
             )
-            .add_systems(Update, send_opening_cinematic.in_set(WorldStage::Input))
+            .add_systems(
+                Update,
+                crate::ui_script::raises::then_fire(send_opening_cinematic)
+                    .in_set(WorldStage::Input),
+            )
             // Leaving the world drops a cinematic with no ack, as the reference's teardown does
             // (it clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).
             .add_systems(OnExit(ClientState::InWorld), abandon_on_leaving_world);

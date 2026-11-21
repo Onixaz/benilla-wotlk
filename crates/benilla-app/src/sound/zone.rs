@@ -1118,7 +1118,7 @@ pub(super) fn plugin(app: &mut App) {
         // after the VM tick, whose output it drains.
         .add_systems(
             Update,
-            lua_music
+            crate::ui_script::raises::then_fire(lua_music)
                 .before(server_sounds)
                 .after(crate::ui_script::UiInput)
                 // After the dev mute chord, so the gain feed hears it the same frame.

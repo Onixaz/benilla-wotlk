@@ -808,7 +808,7 @@ impl Plugin for VPlatesPlugin {
                     // After the targeting chain, itself after `WorldStage::Input`, so this projects
                     // through this frame's camera; `ui_script::extract::paint_script` runs after
                     // it, so the plates paint the same frame.
-                    drive_vplates.after(TargetUpdate),
+                    crate::ui_script::raises::then_fire(drive_vplates.after(TargetUpdate)),
                 )
                     .chain()
                     .in_set(VPlateSet),

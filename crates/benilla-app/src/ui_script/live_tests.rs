@@ -416,6 +416,113 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
     );
 }
 
+/// Every scheduled [`super::raises::InTurn`] holder has a raise step right after it: it sits in a
+/// UI phase a step follows ([`super::raises::phases`]), or is ordered directly before a step of
+/// its own schedule. Otherwise its raises wait for whichever step or handler fires next.
+#[test]
+fn every_scheduled_holder_in_turn_has_its_raise_step() {
+    use bevy::ecs::schedule::NodeId;
+    use std::any::TypeId;
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    let world = app.world_mut();
+    let labels: Vec<_> = world
+        .resource::<bevy::ecs::schedule::Schedules>()
+        .iter()
+        .map(|(_, schedule)| schedule.label())
+        .collect();
+    let mut holders = 0;
+    let mut offenders = Vec::new();
+    for label in labels {
+        world.schedule_scope(label, |world, schedule| {
+            schedule.graph_mut().systems.initialize(world);
+            let Some(mark) = world
+                .components()
+                .get_resource_id(TypeId::of::<super::raises::RaisesInTurn>())
+            else {
+                return;
+            };
+            let graph = schedule.graph();
+            let phases: Vec<NodeId> = super::raises::phases()
+                .into_iter()
+                .filter_map(|set| graph.system_sets.get_key(set).map(NodeId::Set))
+                .collect();
+            let steps: Vec<NodeId> = graph
+                .systems
+                .iter()
+                .filter(|(_, system, _)| system.name().to_string().contains("raises::fire_raises"))
+                .map(|(key, _, _)| NodeId::System(key))
+                .collect();
+            let hierarchy = graph.hierarchy().graph();
+            // The sets a node sits in, directly or through a parent set.
+            let in_phase = |node: NodeId| {
+                let mut stack = vec![node];
+                let mut seen = std::collections::HashSet::new();
+                while let Some(n) = stack.pop() {
+                    if phases.contains(&n) {
+                        return true;
+                    }
+                    if seen.insert(n) {
+                        stack.extend(hierarchy.neighbors_directed(
+                            n,
+                            bevy::ecs::schedule::graph::Direction::Incoming,
+                        ));
+                    }
+                }
+                false
+            };
+            let dependency = graph.dependency().graph();
+            let in_turn: Vec<(NodeId, String)> = graph
+                .systems
+                .iter()
+                .filter(|(key, _, _)| {
+                    graph
+                        .systems
+                        .get(*key)
+                        .is_some_and(|s| s.access.combined_access().has_resource_read(mark))
+                })
+                .map(|(key, system, _)| (NodeId::System(key), system.name().to_string()))
+                .collect();
+            holders += in_turn.len();
+            // Covered: in a phase, or ordered directly before a step or a covered holder in turn,
+            // which runs no Lua between.
+            let mut covered: Vec<NodeId> = Vec::new();
+            loop {
+                let before = covered.len();
+                for (node, _) in &in_turn {
+                    if covered.contains(node) {
+                        continue;
+                    }
+                    let next = dependency
+                        .neighbors_directed(*node, bevy::ecs::schedule::graph::Direction::Outgoing)
+                        .any(|n| steps.contains(&n) || covered.contains(&n));
+                    if in_phase(*node) || next {
+                        covered.push(*node);
+                    }
+                }
+                if covered.len() == before {
+                    break;
+                }
+            }
+            offenders.extend(
+                in_turn
+                    .iter()
+                    .filter(|(node, _)| !covered.contains(node))
+                    .map(|(_, name)| format!("{label:?}: {name}")),
+            );
+        });
+    }
+    assert!(
+        holders > 100,
+        "the census found only {holders} holders in turn"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these hold the VM in turn with no raise step after them; put them in a UI phase or chain \
+         `raises::then_fire` after them:\n{}",
+        offenders.join("\n")
+    );
+}
+
 /// A unique signal waits once however often it is queued (`0x6143f0`), in its first queueing's place, and the flush fires the queue in that order and empties it (`0x614760`).
 #[test]
 fn a_unique_signal_waits_once_and_the_flush_fires_the_queue_in_order() {
