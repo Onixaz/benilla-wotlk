@@ -212,7 +212,9 @@ pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};
 mod liquid;
 pub use liquid::{mclq_liquid_type, LiquidKind, LiquidMesh};
 mod liquid_type;
-pub use liquid_type::{load_liquid_types, DepthRamp, LiquidTypeRow, LiquidTypes, VertexFormat};
+pub use liquid_type::{
+    load_liquid_types, DepthRamp, DepthTexture, LiquidTypeRow, LiquidTypes, VertexFormat,
+};
 mod maps;
 pub use maps::{load_map_catalog, MapCatalog};
 mod anim_data;
