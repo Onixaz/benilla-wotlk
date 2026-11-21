@@ -38,6 +38,47 @@ pub(crate) fn set_fixture_player(
     _script.set_player_req_state(_state);
 }
 
+/// A fixture's stand-in action slot (`UiScript::set_action`), compiled out of the player build with
+/// the fixtures. These four are live in every test build too, where the dev-dependencies turn the
+/// fixtures on: the addon harness's tests seat a session through them.
+pub(crate) fn set_fixture_action(
+    _script: &mut benilla_ui::script::UiScript,
+    _action: u32,
+    _slot: Option<benilla_ui::script::ActionSlot>,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_action(_action, _slot);
+}
+
+/// A fixture's stand-in spellbook (`UiScript::set_spellbook`), compiled out of the player build.
+pub(crate) fn set_fixture_spellbook(
+    _script: &mut benilla_ui::script::UiScript,
+    _state: benilla_ui::script::SpellBookState,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_spellbook(_state);
+}
+
+/// A fixture's stand-in bonus bar offset (`UiScript::set_bonus_bar_offset`), compiled out of the
+/// player build.
+pub(crate) fn set_fixture_bonus_bar_offset(
+    _script: &mut benilla_ui::script::UiScript,
+    _offset: u8,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_bonus_bar_offset(_offset);
+}
+
+/// A fixture's stand-in stance bar (`UiScript::set_shapeshift_forms`), compiled out of the player
+/// build.
+pub(crate) fn set_fixture_shapeshift_forms(
+    _script: &mut benilla_ui::script::UiScript,
+    _forms: Vec<benilla_ui::script::ShapeshiftFormView>,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_shapeshift_forms(_forms);
+}
+
 /// The instruments, debug panel first: `PerfPlugin` needs the egui plugin and context it sets up.
 pub(crate) struct DevToolsPlugin;
 

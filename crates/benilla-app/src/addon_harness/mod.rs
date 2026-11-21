@@ -1118,7 +1118,8 @@ fn seat_a_session(script: &mut UiScript) {
             ..Default::default()
         }),
     );
-    script.set_action(
+    crate::dev::set_fixture_action(
+        script,
         1,
         Some(benilla_ui::script::ActionSlot {
             texture: Some("Interface\\Icons\\Ability_SteelMelee".into()),
@@ -1213,29 +1214,32 @@ fn seat_a_session(script: &mut UiScript) {
             }),
         );
     }
-    script.set_spellbook(benilla_ui::script::SpellBookState {
-        tabs: vec![
-            benilla_ui::script::SpellTabView {
-                name: "General".into(),
-                texture: Some("Interface\\Icons\\INV_Misc_QuestionMark".into()),
-                offset: 0,
-                num_spells: 2,
-            },
-            benilla_ui::script::SpellTabView {
-                name: "Arms".into(),
-                texture: Some("Interface\\Icons\\Ability_Rogue_Eviscerate".into()),
-                offset: 2,
-                num_spells: 2,
-            },
-        ],
-        slots: vec![
-            spell_slot(6603, "Attack", None),
-            spell_slot(78, "Heroic Strike", Some("Rank 1")),
-            spell_slot(100, "Charge", Some("Rank 1")),
-            spell_slot(772, "Rend", Some("Rank 1")),
-        ],
-        ..Default::default()
-    });
+    crate::dev::set_fixture_spellbook(
+        script,
+        benilla_ui::script::SpellBookState {
+            tabs: vec![
+                benilla_ui::script::SpellTabView {
+                    name: "General".into(),
+                    texture: Some("Interface\\Icons\\INV_Misc_QuestionMark".into()),
+                    offset: 0,
+                    num_spells: 2,
+                },
+                benilla_ui::script::SpellTabView {
+                    name: "Arms".into(),
+                    texture: Some("Interface\\Icons\\Ability_Rogue_Eviscerate".into()),
+                    offset: 2,
+                    num_spells: 2,
+                },
+            ],
+            slots: vec![
+                spell_slot(6603, "Attack", None),
+                spell_slot(78, "Heroic Strike", Some("Rank 1")),
+                spell_slot(100, "Charge", Some("Rank 1")),
+                spell_slot(772, "Rend", Some("Rank 1")),
+            ],
+            ..Default::default()
+        },
+    );
 
     // ── The login-scoped catalogues ──
     //

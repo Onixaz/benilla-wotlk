@@ -1797,6 +1797,7 @@ impl Model {
             item_stat_asks: HashSet::new(),
             #[cfg(any(test, feature = "fixtures"))]
             item_record_waits: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             spell_tooltips: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             pet_spell_tooltips: HashMap::new(),
