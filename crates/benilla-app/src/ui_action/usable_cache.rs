@@ -860,21 +860,23 @@ pub(crate) fn fire_into(script: &mut benilla_ui::script::UiScript, events: Vec<U
 /// fires next.
 pub(crate) fn step(pass: Pass) -> impl FnOnce(&mut World) + Send + Sync + 'static {
     move |world: &mut World| {
-        if let Err(e) = world.run_system_cached_with(run_step, pass) {
+        // The walk reads whether sets can be used as it runs (`0x5a9fe3`).
+        let sets_usable = world
+            .get_non_send_resource::<benilla_ui::script::UiScript>()
+            .map(|s| s.can_use_equipment_sets());
+        if let Err(e) = world.run_system_cached_with(run_step, (pass, sets_usable)) {
             warn!("usable update {pass:?}: {e}");
         }
     }
 }
 
 fn run_step(
-    In(pass): In<Pass>,
+    In((pass, sets_usable)): In<(Pass, Option<bool>)>,
     inputs: UsableInputs,
     mut caches: OwnedMut<UsableCaches>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
 ) {
-    // The walk reads whether sets can be used as it runs (`0x5a9fe3`).
-    if let Some(sets_usable) = script.map(|s| s.can_use_equipment_sets()) {
+    if let Some(sets_usable) = sets_usable {
         if caches.read().sets_usable != sets_usable {
             caches.write().sets_usable = sets_usable;
         }
