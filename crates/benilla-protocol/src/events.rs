@@ -588,6 +588,8 @@ pub enum SessionEvent {
         racial_leader: bool,
         /// The health and power multipliers, 0.0 on a miss.
         modifiers: (f32, f32),
+        /// `CreatureMovementInfo.dbc` id; 0 is none, and on a miss.
+        movement_id: u32,
     },
     /// `SMSG_GAMEOBJECT_QUERY_RESPONSE`, keyed by template `entry`; `data` is the type-specific
     /// raw tail. An unknown entry still fires, every field zero or empty.
