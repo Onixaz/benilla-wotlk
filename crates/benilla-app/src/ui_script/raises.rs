@@ -64,10 +64,14 @@ impl VmTurn<'_> {
     /// The handler queue behind the raises made so far, so a `ui.fire` keeps its place among them.
     #[cfg(test)]
     pub(crate) fn ui(&mut self) -> &mut UiEvents {
-        self.flush();
-        self.queue
-            .as_deref_mut()
+        self.queue()
             .expect("a system that queues on `UiEvents` runs where the queue is initialized")
+    }
+
+    /// The handler queue behind the raises made so far; `None` in a harness without one.
+    pub(crate) fn queue(&mut self) -> Option<&mut UiEvents> {
+        self.flush();
+        self.queue.as_deref_mut()
     }
 
     /// Move the raises queued so far onto the handler queue, in order.

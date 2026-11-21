@@ -119,10 +119,7 @@ fn on_slot_changed(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>) {
 
 fn on_money_notify(
     In(ev): In<SessionEvent>,
-    (script, _live): (
-        Option<NonSend<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    script: Option<NonSend<benilla_ui::script::UiScript>>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
 ) {
     if let SessionEvent::LootMoneyNotify { amount, solo } = ev {

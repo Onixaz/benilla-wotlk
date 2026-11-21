@@ -25,13 +25,11 @@
 //! Deviation: the indoor dedup keys `(WMOID, MOGP uniqueID)`, not the client's raw per-WMO group
 //! index, because the raw index can alias across adjacent buildings.
 //!
-use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
 use crate::console::ConsoleCommandApp;
 
 use benilla_formats::{AreaGroupCatalog, AreaTableCatalog};
-use benilla_ui::script::UiScript;
 
 use crate::net::{ObjectStore, SelfPlayer};
 use crate::target::Factions;
@@ -217,10 +215,7 @@ fn territory_visible(realm_pvp: bool, zone_flags: u32) -> bool {
 
 /// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event.
 fn feed_zone_events(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPlace>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     world: benilla_world::world_point::WorldPoint,
     areas: Option<Res<AreaTableRes>>,
     factions: Option<Res<Factions>>,
@@ -231,7 +226,7 @@ fn feed_zone_events(
     mut ids: ResMut<ZoneIds>,
     mut usable: Option<crate::ui_action::usable_cache::UsableRun>,
 ) {
-    let (Some(mut script), Some(areas)) = (script, areas) else {
+    let (Some(mut script), Some(areas)) = (vm.turn(), areas) else {
         return;
     };
     let (cache, fresh_vm) = cache.get_reset(&script);
@@ -434,12 +429,14 @@ impl Plugin for AreaPlugin {
                 Update,
                 // After the leaf authority: leaf, indoor bit and names must come from one frame, as
                 // in the client's single-pass resolve, or a stale leaf fires a spurious splash.
-                feed_zone_events
-                    // The selection and the pet's words its lent view reads are the clicks'.
-                    .after(crate::target::TargetUpdate)
-                    .after(crate::char_select::RealmEntrySet)
-                    .after(crate::ui_script::UiInput)
-                    .after(benilla_world::terrain_stream::AreaAuthoritySet),
+                crate::ui_script::raises::then_fire(
+                    feed_zone_events
+                        // The usable update it runs reads the clicks' selection.
+                        .after(crate::target::TargetUpdate)
+                        .after(crate::char_select::RealmEntrySet)
+                        .after(crate::ui_script::UiInput)
+                        .after(benilla_world::terrain_stream::AreaAuthoritySet),
+                ),
             )
             .add_systems(
                 Update,

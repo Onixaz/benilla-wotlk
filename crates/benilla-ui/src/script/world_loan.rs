@@ -112,6 +112,11 @@ impl Raised {
     }
 }
 
+/// Whether a host step raises on `lua` in turn: an event raised now queues behind the step's.
+pub fn in_turn(lua: &Lua) -> bool {
+    with_turn(lua, |t| t.queue.is_some())
+}
+
 /// Run `op` on `script` in its turn: queued behind the step's raises while a step raises in turn
 /// ([`raises_in_turn`]), at once otherwise.
 pub fn in_turn_or_now(

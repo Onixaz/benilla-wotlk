@@ -241,10 +241,7 @@ impl AttackPress<'_, '_> {
 /// mid-cast is the ladder's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
     mut gate: crate::ui_bind_confirm::BindGate,
@@ -253,21 +250,21 @@ pub(super) fn drain_go_openers(
         return;
     }
     let ctx = targeting.context();
-    let mut script = script;
+    let mut script = vm.turn();
     for opener in std::mem::take(&mut queue.0) {
         match opener {
             super::GoOpener::Spell { spell_id, go_guid } => {
                 debug!("ui_action: gameobject opener casts {spell_id} at {go_guid:#x}");
                 ladder.send_at_object(spell_id, &ctx, go_guid);
-                // The send's cast-bar edges, fired as it returns (`0x80b556`).
-                match script.as_deref_mut() {
-                    Some(script) => ladder.press.fire(script, &mut live),
+                // The send's cast-bar edges, in turn as it returns (`0x80b556`).
+                match script.as_mut() {
+                    Some(script) => ladder.press.defer_in_turn(script),
                     None => ladder.press.flush(&mut ladder.ecs),
                 }
             }
             // The key goes through the shared item-use fork, as a bag click does.
             super::GoOpener::Key(it) => {
-                let Some(script) = script.as_deref_mut() else {
+                let Some(script) = script.as_mut() else {
                     continue;
                 };
                 debug!(
@@ -275,7 +272,7 @@ pub(super) fn drain_go_openers(
                     it.bag_index, it.slot, it.on_object
                 );
                 crate::ui_items::send_item_use(it, &ctx, &mut ladder, script, &mut gate, false);
-                ladder.press.fire(script, &mut live);
+                ladder.press.defer_in_turn(script);
             }
         }
     }

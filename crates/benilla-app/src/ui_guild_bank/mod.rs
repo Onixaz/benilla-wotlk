@@ -408,18 +408,19 @@ pub(crate) struct SwapInputs<'w, 's> {
 
 /// Drain the engine's sends: each gated on the open banker as the reference's senders are.
 fn drain_guild_bank(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
+    bank: Option<NonSend<GuildBankState>>,
     net: Res<NetCommands>,
     inputs: SwapInputs,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     for request in script.take_guild_bank_requests() {
-        // The bank is read between calls into Lua: the auto-store's event fires after (`0x5a63f0`).
-        let stored = live.with_guild_bank(|state| {
-            state.is_some_and(|state| handle(&mut script, state, &net, &inputs, request))
-        });
+        // The auto-store's event follows its send (`0x5a63f0`).
+        let stored = bank
+            .as_deref()
+            .is_some_and(|state| handle(&mut script, state, &net, &inputs, request));
         if stored {
             script.fire_event("GUILDBANKBAGSLOTS_CHANGED", Vec::new());
         }

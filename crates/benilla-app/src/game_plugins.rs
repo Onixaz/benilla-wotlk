@@ -1265,9 +1265,10 @@ pub(crate) mod schedule_tests {
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
         // Counts `gate_doodad_anim`, every frame: a doodad's animation stops while it is not drawn.
-        // Counts the five raise steps between the UI phases and the seven chained after holders in
-        // turn outside them, each run only while raises wait.
-        ("Update", 656, 636),
+        // Counts the five raise steps between the UI phases and the nine chained after holders in
+        // turn outside them (the zone feed's and the by-name asks' among them), each run only while
+        // raises wait.
+        ("Update", 658, 636),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
@@ -1641,7 +1642,7 @@ pub(crate) mod schedule_tests {
     /// The consumer markers: a VM holder that does one of these to host state has spent
     /// something this frame that nothing can re-spend.
     #[rustfmt::skip]
-    const CONSUMES: &[&str] = &["fire_event(", "fire_lock_edge_now(", "mem::take(", ".drain("];
+    const CONSUMES: &[&str] = &["fire_event(", "edge_now(", "with_edge(", "mem::take(", ".drain("];
 
     /// Why an ungated one-shot consumer holding the VM loses nothing in the one-frame window
     /// where the wire is in world and the boot VM is still live and frameless.
@@ -1717,8 +1718,10 @@ pub(crate) mod schedule_tests {
          "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
         ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
          "runs in the progress packet's handler turn, as 12340's handler shows its line (`0x6d82e9`); a packet before the interface loads has no listener in 12340 either"),
-        ("ui_script/extract/mod.rs", "paint_script", Because::Deliberate,
-         "per-frame paint and cost state, not a queue"),
+        ("spell/targeting/item.rs", "commit_item_cast_on_pick", Because::FilledByVm,
+         "its takes are the VM's queues, filled by the bag, paper-doll and popup clicks' Lua"),
+        ("ui_script/extract/mod.rs", "paint_extract", Because::Deliberate,
+         "per-frame paint and cost state, not a queue; run by `paint_script`"),
         ("ui_script/glue_mgr.rs", "drive_glue_mgr", Because::Deliberate,
          "acts on the glue VM alone, which the lifecycle installs with its GlueXML loaded and seated, so there is no frameless window; its takes are the manager's own flags and outbox"),
     ];

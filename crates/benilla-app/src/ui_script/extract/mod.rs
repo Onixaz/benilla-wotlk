@@ -710,13 +710,117 @@ fn tick_lent(
 
 /// The UI pass's second half, after the camera and the plate driver: an incremental measure and
 /// `resolve` for what was written since the tick, the walk, and the conversion into [`UiQuads`].
-pub(super) fn paint_script(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+/// Exclusive: the resolve fires `OnSizeChanged` and the scroll-range handlers, with the `World`
+/// lent.
+pub(super) fn paint_script(world: &mut World) {
+    let Ok(Some(start)) = world.run_system_cached(paint_measure) else {
+        return;
+    };
+    super::safe_world::lend(world, |script| {
+        let _span = bevy::log::info_span!("ui_script: resolve").entered();
+        script.resolve();
+    });
+    if start.measured_any
+        && world
+            .run_system_cached(paint_remeasure)
+            .is_ok_and(|again| again)
+    {
+        super::safe_world::lend(world, UiScript::resolve);
+    }
+    if let Err(e) = world.run_system_cached_with(paint_extract, start) {
+        warn!("ui_script: the paint's extract did not run: {e}");
+    }
+}
+
+/// What the paint's first measure hands its extract: the raster, the cost clock and the epoch.
+struct PaintStart {
+    w: f32,
+    h: f32,
+    s: f32,
+    dpi: f32,
+    epoch_feeds: u64,
+    measured_any: bool,
+    cost_on: bool,
+    printing: bool,
+    t_mark: Option<std::time::Instant>,
+}
+
+/// The paint's first measure, of what was written since the tick half; `None` when the pass
+/// stands down.
+fn paint_measure(
+    script: Option<NonSendMut<UiScript>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut font_atlas: Option<ResMut<UiFontAtlas>>,
+    ui_cost_wanted: Res<super::UiCostWanted>,
+    mut ui_cost: ResMut<super::UiFrameCost>,
+    pass: Res<super::UiPassState>,
+) -> Option<PaintStart> {
+    // Stand down with the tick half, which already cleared the booth panes.
+    if !pass.live {
+        return None;
+    }
+    let mut script = script?;
+    let window = window.single().ok()?;
+    // The mutation count after the feeds that ran between the two halves.
+    let epoch_feeds = script.visual_epoch();
+    script.epoch_trace_phase("paint");
+    let printing = ui_cost_enabled();
+    let cost_on = printing || ui_cost_wanted.0;
+    // What was written since the tick half, above all the nameplate anchors from this frame's
+    // camera (`vplates::drive_vplates`); a renamed plate needs its measure too.
+    let mut measured_any = false;
+    if let Some(atlas) = font_atlas.as_deref_mut() {
+        measured_any = measure_fontstrings(
+            &mut script,
+            atlas,
+            pass.seam,
+            &mut ui_cost,
+            ui_cost_wanted.0,
+        );
+    }
+    Some(PaintStart {
+        w: window.width(),
+        h: window.height(),
+        s: pass.seam,
+        dpi: pass.dpi,
+        epoch_feeds,
+        measured_any,
+        cost_on,
+        printing,
+        t_mark: cost_on.then(std::time::Instant::now),
+    })
+}
+
+/// The second measure after a resolve that re-measured: whether it measured again.
+fn paint_remeasure(
+    script: Option<NonSendMut<UiScript>>,
+    mut font_atlas: Option<ResMut<UiFontAtlas>>,
+    ui_cost_wanted: Res<super::UiCostWanted>,
+    mut ui_cost: ResMut<super::UiFrameCost>,
+    pass: Res<super::UiPassState>,
+) -> bool {
+    match (script, font_atlas.as_deref_mut()) {
+        (Some(mut script), Some(atlas)) => measure_fontstrings(
+            &mut script,
+            atlas,
+            pass.seam,
+            &mut ui_cost,
+            ui_cost_wanted.0,
+        ),
+        _ => false,
+    }
+}
+
+/// The paint after its resolve: the walk and the conversion into [`UiQuads`].
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+fn paint_extract(
+    In(start): In<PaintStart>,
+    script: Option<NonSendMut<UiScript>>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut quads: ResMut<UiQuads>,
     world_assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
-    mut font_atlas: Option<ResMut<UiFontAtlas>>,
+    font_atlas: Option<ResMut<UiFontAtlas>>,
     // The booth seam both ways: the bakes regions sample, and the pane aspects published back.
     mut booths: crate::portrait::BoothBridge,
     // Capture mode (the cursor icon quad) and [`super::UiCostWanted`], tupled to stay inside
@@ -737,28 +841,26 @@ pub(super) fn paint_script(
     // The playing movie, which a MovieFrame's quad draws.
     movie: Option<Res<crate::ui_movie::player::MovieShared>>,
 ) {
-    let (capture, ui_cost_wanted) = run;
-    // Stand down with the tick half, which already cleared the booth panes.
-    if !pass.live {
-        return;
-    }
-    let Some(mut script) = script else {
+    let (capture, _) = run;
+    let (Some(mut script), Ok(window)) = (script, window.single()) else {
         return;
     };
     let prev = prev.get(&script);
-    let Ok(window) = window.single() else {
-        return;
-    };
-    // The mutation count after the feeds that ran between the two halves.
-    let epoch_feeds = script.visual_epoch();
-    script.epoch_trace_phase("paint");
-    let (w, h) = (window.width(), window.height());
-    let (s, dpi) = (pass.seam, pass.dpi);
+    let PaintStart {
+        w,
+        h,
+        s,
+        dpi,
+        epoch_feeds,
+        cost_on,
+        printing,
+        t_mark,
+        ..
+    } = start;
+    let mut font_atlas = font_atlas;
     let (us_tick, us_resolve) = (pass.us_tick, pass.us_resolve);
     let (solves_before, derives_before) = (Some(pass.solves_before), Some(pass.derives_before));
-    let printing = ui_cost_enabled();
-    let cost_on = printing || ui_cost_wanted.0;
-    let mut t_mark = cost_on.then(std::time::Instant::now);
+    let mut t_mark = t_mark;
     let mut lap = move || -> u128 {
         if !cost_on {
             return 0;
@@ -767,24 +869,6 @@ pub(super) fn paint_script(
             .replace(std::time::Instant::now())
             .map_or(0, |t| t.elapsed().as_micros())
     };
-    // ── The second measure and resolve ───────────────────────────────────────────────────────
-    // What was written since the tick half, above all the nameplate anchors from this frame's
-    // camera (`vplates::drive_vplates`); a renamed plate needs its measure too.
-    let mut measured_any = false;
-    if let Some(atlas) = font_atlas.as_deref_mut() {
-        measured_any = measure_fontstrings(&mut script, atlas, s, &mut ui_cost, ui_cost_wanted.0);
-    }
-    {
-        let _span = bevy::log::info_span!("ui_script: resolve").entered();
-        script.resolve();
-    }
-    if measured_any {
-        if let Some(atlas) = font_atlas.as_deref_mut() {
-            if measure_fontstrings(&mut script, atlas, s, &mut ui_cost, ui_cost_wanted.0) {
-                script.resolve();
-            }
-        }
-    }
     // Folded into the tick half's own measure figure: one frame, one row.
     let us_measure = pass.us_measure + lap();
     let epoch_resolve = script.visual_epoch();

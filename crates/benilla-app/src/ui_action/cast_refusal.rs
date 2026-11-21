@@ -66,10 +66,21 @@ pub(crate) trait WaitRecord {
     fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait);
 }
 
+impl WaitRecord for crate::items::RecordWaits {
+    fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
+        self.wait(entry, wait, false);
+    }
+}
+
 impl<O: crate::ui_script::live::Owns> WaitRecord for crate::ui_script::LendLive<'_, '_, O> {
     fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
         crate::ui_script::LendLive::wait_record(self, entry, wait);
     }
+}
+
+/// A harness with no raise queue and no record store links nothing.
+impl WaitRecord for () {
+    fn wait_record(&mut self, _: u32, _: crate::items::RecordWait) {}
 }
 
 /// A test's record of the links, for a rig with no loan.
@@ -340,11 +351,17 @@ pub(crate) fn show_refusal(world: &mut World, fail: CastFail) {
 
 fn show_refusal_now(
     In(fail): In<CastFail>,
-    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
+    mut waits: Option<NonSendMut<crate::items::RecordWaits>>,
     show: Option<CastFailShow>,
 ) {
-    if let Some(mut show) = show {
-        show.show(script.map(NonSendMut::into_inner), fail, &mut live);
+    let Some(mut show) = show else {
+        return;
+    };
+    let mut script = vm.turn();
+    match waits.as_deref_mut() {
+        Some(waits) => show.show(script.as_deref_mut(), fail, waits),
+        None => show.show(script.as_deref_mut(), fail, &mut ()),
     }
 }
 

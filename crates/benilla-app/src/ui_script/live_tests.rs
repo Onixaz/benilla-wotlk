@@ -245,6 +245,86 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "end_repair_mode_on_right_press",
         "clears the repair-mode field",
     ),
+    (
+        "combat_log/producers.rs",
+        "LogCtx",
+        "reads the combat-text unit and the focus off the model",
+    ),
+    (
+        "minimap/mod.rs",
+        "emit_minimap",
+        "takes the ping click and reads the town filter off the model",
+    ),
+    (
+        "ui_dressup.rs",
+        "sync_dressup_booth",
+        "reads the shown pane and its facing off the model",
+    ),
+    (
+        "ui_stable/mod.rs",
+        "feed_stable_booth",
+        "reads the pane's facing and the stable selection off the model",
+    ),
+    (
+        "ui_loot/net.rs",
+        "on_money_notify",
+        "reads the money line's global strings off the VM",
+    ),
+    (
+        "ui_macro/mod.rs",
+        "rebind_macro_spells",
+        "reads the macro bodies and writes their bound spells into the model",
+    ),
+    (
+        "combat_log/mod.rs",
+        "log_deaths",
+        "reads the combat-text unit and the focus off the model through `LogCtx`",
+    ),
+    (
+        "combat_log/mod.rs",
+        "log_missile_misses",
+        "reads the combat-text unit and the focus off the model through `LogCtx`",
+    ),
+    (
+        "combat_log/mod.rs",
+        "log_cast_failures",
+        "reads the combat-text unit and the focus off the model through `LogCtx`",
+    ),
+    (
+        "cursor.rs",
+        "drive",
+        "reads the cursor payload and mode off the model and takes its cursor writes",
+    ),
+    (
+        "cursor.rs",
+        "drive_displayed_cursor",
+        "reads the cursor mode off the model and takes its cursor writes",
+    ),
+    (
+        "cursor/other.rs",
+        "drive",
+        "the inline module's cursor driver: reads the payload's icon off the model",
+    ),
+    (
+        "cursor/macos.rs",
+        "drive",
+        "the inline module's cursor driver: reads the payload's icon off the model",
+    ),
+    (
+        "ui_script/extract/mod.rs",
+        "paint_measure",
+        "measures the strings written since the tick; the resolve runs with the `World` lent",
+    ),
+    (
+        "ui_script/extract/mod.rs",
+        "paint_remeasure",
+        "measures the strings the resolve rewrote",
+    ),
+    (
+        "ui_script/extract/mod.rs",
+        "paint_extract",
+        "walks the resolved frames into the draw list",
+    ),
 ];
 
 /// Whether `CALLS_NO_LUA` argues the scheduled system `name` (`crate::module::item`).

@@ -1184,12 +1184,18 @@ struct LootUnlocks<'w, 's> {
 impl LootUnlocks<'_, '_> {
     fn flush(&mut self, loot: &mut LootState, mut script: Option<&mut UiScript>) {
         for guid in loot.take_unlocks() {
-            if !self.pending.write().unlock(guid) {
-                continue;
-            }
             let args = crate::ui_items::watch::lock_args(&self.objects, guid);
-            if let (Some(script), Some(args)) = (script.as_deref_mut(), args) {
-                crate::ui_items::watch::fire_lock_edge_now(script, false, args);
+            match script.as_deref_mut() {
+                Some(script) => crate::ui_items::watch::set_lock_with_edge(
+                    script,
+                    &mut self.pending,
+                    guid,
+                    false,
+                    args,
+                ),
+                None => {
+                    self.pending.write().unlock(guid);
+                }
             }
         }
     }
@@ -1197,10 +1203,7 @@ impl LootUnlocks<'_, '_> {
 
 /// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`).
 fn drain_loot(
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     commands: Res<NetCommands>,
@@ -1213,6 +1216,7 @@ fn drain_loot(
     mut errors: ResMut<UiErrorKeys>,
     mut unlocks: LootUnlocks,
 ) {
+    let mut script = vm.turn();
     if std::mem::take(&mut move_start.0) {
         dead.after_close(close_on_move_start(&mut loot, &mut latch, &commands));
     }

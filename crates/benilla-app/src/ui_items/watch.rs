@@ -93,6 +93,41 @@ pub(crate) fn fire_lock_edge_now(
     }
 }
 
+/// Lock or unlock `guid` and signal at its place (`0x706fe0`, `0x707020`): in a step that raises in
+/// turn the write waits behind the raises made before it, so their listeners read the slot as it
+/// stood when they were raised; an edge without `args` writes only.
+pub(crate) fn set_lock_with_edge(
+    script: &mut benilla_ui::script::UiScript,
+    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
+    guid: u64,
+    locked: bool,
+    args: Option<Vec<ScriptValue>>,
+) {
+    let write = move |p: &mut PendingItemOps| {
+        if locked {
+            p.lock(guid)
+        } else {
+            p.unlock(guid)
+        }
+    };
+    if benilla_ui::script::world_loan::in_turn(script.lua()) {
+        benilla_ui::script::world_loan::in_turn_or_now(script, move |s| {
+            let changed = crate::ui_script::safe_world::with_world(|w| {
+                w.get_resource_mut::<PendingItemOps>()
+                    .is_some_and(|mut p| write(&mut p))
+            })
+            .unwrap_or(false);
+            if let (true, Some(args)) = (changed, args) {
+                fire_lock_edge_now(s, locked, args);
+            }
+        });
+        return;
+    }
+    if let (true, Some(args)) = (write(&mut pending.write()), args) {
+        fire_lock_edge_now(script, locked, args);
+    }
+}
+
 /// The item unlock (`0x513770` -> `0x707020`): a locked item unlocks and signals at its place; an unlocked or absent one does nothing.
 pub(crate) fn unlock_item(world: &mut World, guid: u64) {
     let unlocked = world

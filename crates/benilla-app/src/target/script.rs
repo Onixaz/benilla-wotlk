@@ -198,11 +198,9 @@ pub(super) fn target_by_name_requests(
     mut requests: MessageReader<by_name::TargetByNameRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
-    ),
+    mut vm: crate::ui_script::InTurn,
 ) {
+    let mut script = vm.turn();
     for request in requests.read() {
         let unheld = with_sink(script.as_deref_mut(), |sink| {
             by_name::target_named(&scan_params, &mut commit, &request.name, false, sink)
@@ -218,11 +216,9 @@ pub(super) fn assist_requests(
     mut requests: MessageReader<by_name::AssistRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
-    ),
+    mut vm: crate::ui_script::InTurn,
 ) {
+    let mut script = vm.turn();
     for request in requests.read() {
         let unheld = with_sink(script.as_deref_mut(), |sink| {
             by_name::assist_named(

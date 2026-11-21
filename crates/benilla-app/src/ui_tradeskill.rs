@@ -15,9 +15,9 @@ use bevy::prelude::*;
 use benilla_formats::{SpellDisplay, SPELL_ATTR_IS_TRADESKILL};
 use benilla_protocol::messages::{ItemInfo, PLAYER_SKILL_SLOTS};
 use benilla_protocol::{SessionEvent, SessionEventKind};
+use benilla_ui::script::world_loan::in_turn_or_now;
 use benilla_ui::script::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
-    UiScript,
 };
 use benilla_ui::strings::Arg;
 
@@ -451,10 +451,7 @@ pub(crate) fn list_link(
 /// Build the book: the known recipes of the open line, banded against the current rank.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_trade_skill(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsTradeSkill>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
     actions: Res<PlayerActions>,
     data: BookData,
@@ -469,7 +466,7 @@ fn feed_trade_skill(
     mut texts: Local<crate::ui_script::VmMemo<HashMap<u32, RecipeText>>>,
     mut last_reads: Local<crate::ui_script::VmMemo<Option<TokenReads>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let (open_line, opener) = {
@@ -794,19 +791,13 @@ fn feed_trade_skill(
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<(
-            crate::ui_script::OwnsCooldowns,
-            crate::ui_script::OwnsTradeSkill,
-        )>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
     mut cast_events: MessageReader<CastEvent>,
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
 
@@ -817,8 +808,8 @@ fn drain_trade_skill(
         }
         debug!("ui_tradeskill: DoTradeSkill({spell_id})");
         ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
-        // The send's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script, &mut live);
+        // The send's cast-bar edges, in turn as it returns (`0x80b556`).
+        ladder.press.defer_in_turn(&mut script);
     }
 
     let self_entity = ladder.self_player.single().ok().map(|(e, _)| e);
@@ -827,15 +818,22 @@ fn drain_trade_skill(
             continue;
         }
         match ev.kind {
-            CastEventKind::Start { .. } => script.trade_skill_cast_started(ev.spell_id),
+            // In turn behind the sends' events, which their listeners read before it.
+            CastEventKind::Start { .. } => {
+                let id = ev.spell_id;
+                in_turn_or_now(&mut script, move |s| s.trade_skill_cast_started(id));
+            }
             CastEventKind::Go { .. } => {
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
-                    ladder.press.fire(&mut script, &mut live);
+                    ladder.press.defer_in_turn(&mut script);
                 }
             }
-            CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
+            CastEventKind::Fail { .. } => {
+                let id = ev.spell_id;
+                in_turn_or_now(&mut script, move |s| s.trade_skill_cast_failed(id));
+            }
             _ => {}
         }
     }

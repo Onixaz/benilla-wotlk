@@ -268,11 +268,6 @@ impl DressUpLive<'_> {
             .or_default()
             .apply(pane, intent, &cat, waits);
     }
-
-    /// `pane`'s model, for the booth's render.
-    pub(crate) fn room(&self, pane: Pane) -> Option<&DressUpRoom> {
-        self.rooms.as_ref()?.0.get(&pane)
-    }
 }
 
 /// The pane's record callback (`0x5980b0`): a found record tries the item on again with no enchants
@@ -312,7 +307,8 @@ const BOOTH_PANES: [&str; 2] = ["DressUpModel", "AuctionDressUpModel"];
 /// The booth's render sync: the shown pane's model and facing, which 12340's model frame draws on
 /// every frame render (`0x960240`); it reads the pane's model and writes no game state.
 fn sync_dressup_booth(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSend<UiScript>>,
+    rooms: Option<Res<DressUpRooms>>,
     mut preview: ResMut<DressUpPreview>,
     items: Res<Items>,
     self_q: Query<(&ObjectStore, &NetEntity), With<SelfPlayer>>,
@@ -330,8 +326,7 @@ fn sync_dressup_booth(
     }
     // A hidden pane draws nothing; its model stays as the verbs left it.
     let look = shown.and_then(|(pane, _)| {
-        let view = live.view();
-        let room = view.dressup.room(pane.bits()).filter(|r| r.open)?;
+        let room = rooms.as_ref()?.0.get(&pane.bits()).filter(|r| r.open)?;
         let (store, net) = self_q.single().ok()?;
         // The crest comes off the guild cache, read with no ask, not the outfit `player_look` builds.
         player_look(store, net, room, &items).map(|l| DressUpLook {

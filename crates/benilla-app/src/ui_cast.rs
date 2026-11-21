@@ -201,6 +201,15 @@ impl PressSignals<'_, '_> {
         }
     }
 
+    /// Hand the edges to the raise queue behind `turn`'s raises, fired at the step after the
+    /// holder's set; a harness with no queue fires them into the turn.
+    pub(crate) fn defer_in_turn(&mut self, turn: &mut crate::ui_script::VmTurn) {
+        match turn.queue() {
+            Some(ui) => self.defer(ui),
+            None => self.fire(turn, &mut ()),
+        }
+    }
+
     /// Hand the edges to the queue and fire it once the calling system's commands apply: a system
     /// without the VM.
     pub(crate) fn flush(&mut self, ecs: &mut Commands) {

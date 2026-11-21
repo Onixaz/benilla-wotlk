@@ -2,7 +2,6 @@
 
 use std::time::Instant;
 
-use benilla_ui::script::UiScript;
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
@@ -262,6 +261,7 @@ pub(crate) fn poll_finish(
 }
 
 /// The whole poll (`0x524010`), `fire` running the drop's event with the healer at hand; whether it cancelled a wave.
+#[cfg(test)]
 pub(crate) fn run_poll(
     spirit: &mut AreaSpiritHealer,
     inputs: &SpiritPollInputs,
@@ -314,23 +314,31 @@ impl DialogView<'_, '_> {
     }
 }
 
-/// The poll run every frame from the world frame's update, its drop's event fired with the healer lent to the verbs.
-pub(crate) fn poll_area_spirit_healer(
+/// The poll run every frame from the world frame's update: its drop's event fires with the
+/// `World` lent between the drop and the rest of the poll.
+pub(crate) fn poll_area_spirit_healer(world: &mut World) {
+    let cancelled = world.run_system_cached(poll_drop_step).unwrap_or(false);
+    if cancelled {
+        crate::ui_script::safe_world::raise(world, "AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+    }
+    if let Err(e) = world.run_system_cached_with(poll_finish_step, cancelled) {
+        warn!("ui_dialog_verbs: the healer poll's finish did not run: {e}");
+    }
+}
+
+/// The poll's drop: whether it cancelled the held healer.
+fn poll_drop_step(mut spirit: NonSendMut<AreaSpiritHealer>, inputs: SpiritPollInputs) -> bool {
+    poll_drop(&mut spirit, &inputs)
+}
+
+/// The poll's rest after its drop's event.
+fn poll_finish_step(
+    In(cancelled): In<bool>,
     mut spirit: NonSendMut<AreaSpiritHealer>,
     inputs: SpiritPollInputs,
     commands: Res<NetCommands>,
-    (mut script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSpirit>,
-    ),
 ) {
-    run_poll(&mut spirit, &inputs, Some(&commands), |spirit| {
-        if let Some(script) = script.as_deref_mut() {
-            live.lending(spirit, || {
-                script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
-            });
-        }
-    });
+    poll_finish(&mut spirit, &inputs, cancelled, Some(&commands));
 }
 
 /// The dialog verbs' packet handlers, each firing its event in its turn.

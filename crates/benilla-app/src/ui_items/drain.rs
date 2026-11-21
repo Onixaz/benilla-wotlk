@@ -201,9 +201,7 @@ pub(crate) fn send_equip_to_slot(
         return;
     }
     // The lock before the send (`0x6e0136` -> `0x513740`), its edge signalled at its place.
-    if pending.write().lock(guid) {
-        super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
-    }
+    super::watch::set_lock_with_edge(script, pending, guid, true, Some(item_lock_args(bag, slot)));
     let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
         item: guid,
         slot: dst,
@@ -557,11 +555,8 @@ impl ScriptItemUse<'_, '_> {
             }
             // Each unlock signals at the item's place as it clears (`0x707020`).
             for item in loot.take_unlocks() {
-                if pending_items.write().unlock(item) {
-                    if let Some(args) = super::watch::lock_args(&ladder.objects, item) {
-                        super::watch::fire_lock_edge_now(script, false, args);
-                    }
-                }
+                let args = super::watch::lock_args(&ladder.objects, item);
+                super::watch::set_lock_with_edge(script, pending_items, item, false, args);
             }
             let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
@@ -573,9 +568,13 @@ impl ScriptItemUse<'_, '_> {
                 .next()
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
-            if pending_items.write().lock(guid) {
-                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
-            }
+            super::watch::set_lock_with_edge(
+                script,
+                pending_items,
+                guid,
+                true,
+                Some(item_lock_args(bag, slot)),
+            );
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
                 slot: wire_slot,
@@ -606,20 +605,22 @@ impl ScriptItemUse<'_, '_> {
 
 /// Sends the repair-mode clicks, bag and paper doll, as `CMSG_REPAIR_ITEM`.
 pub(super) fn drain_container_repairs(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
+    merchant: Option<Res<crate::ui_merchant::MerchantOpen>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     commands: Res<NetCommands>,
     mut purse: crate::ui_merchant::RepairPurse,
 ) {
-    let Some(mut script) = script else {
+    let vendor = merchant.as_ref().and_then(|m| m.vendor);
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let me = self_q.iter().next();
     // Repair-mode clicks repair the one item: the purse test first, then `ITEM_REPAIR` as it goes
     // out.
     for (bag, slot) in script.take_container_repairs() {
-        let (Some(vendor), Some(me)) = (live.merchant_vendor(), me) else {
+        let (Some(vendor), Some(me)) = (vendor, me) else {
             continue;
         };
         let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
@@ -641,7 +642,7 @@ pub(super) fn drain_container_repairs(
     }
     // The paper doll's repair clicks, the same arm on a worn item.
     for id in script.take_inventory_repairs() {
-        let (Some(vendor), Some(me)) = (live.merchant_vendor(), me) else {
+        let (Some(vendor), Some(me)) = (vendor, me) else {
             continue;
         };
         let item_guid = u8::try_from(id.wrapping_sub(1))
@@ -693,10 +694,7 @@ struct Clicked {
 /// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, the moves
 /// through [`send_container_move`].
 pub(super) fn drain_container_moves(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
@@ -704,7 +702,7 @@ pub(super) fn drain_container_moves(
     mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let store = self_q.iter().next();
@@ -849,9 +847,13 @@ pub(crate) fn send_container_move(
         // The item at each end locks, its edge signalled at its place (`0x706fe0`).
         for (bag, slot) in [(mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)] {
             let (guid, _) = slot_guid_count(store, bag, slot, objects);
-            if pending.write().lock(guid) {
-                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
-            }
+            super::watch::set_lock_with_edge(
+                script,
+                pending,
+                guid,
+                true,
+                Some(item_lock_args(bag, slot)),
+            );
         }
     }
     true
@@ -860,16 +862,13 @@ pub(crate) fn send_container_move(
 /// Sends the destroys `DeleteCursorItem` queued as `CMSG_DESTROYITEM` (count 0 is the whole stack
 /// on both sides) and locks the one slot.
 pub(super) fn drain_container_destroys(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let store = self_q.iter().next();
@@ -886,9 +885,13 @@ pub(super) fn drain_container_destroys(
             count,
         });
         let (guid, _) = slot_guid_count(store, bag, slot, &objects);
-        if pending.write().lock(guid) {
-            super::watch::fire_lock_edge_now(&mut script, true, item_lock_args(bag, slot));
-        }
+        super::watch::set_lock_with_edge(
+            &mut script,
+            &mut pending,
+            guid,
+            true,
+            Some(item_lock_args(bag, slot)),
+        );
     }
 }
 
@@ -905,7 +908,7 @@ fn run_container_clicks(world: &mut World) {
                 NonSendMut<UiScript>,
                 crate::ui_script::LendLive<(
                     crate::ui_script::OwnsCooldowns,
-                    crate::ui_script::OwnsPending,
+                    crate::ui_script::live::OwnsPending,
                 )>,
             ),
              mut items: ScriptItemUse| {
@@ -1345,10 +1348,7 @@ fn cancel_occupants(
 
 /// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants, which its deferral never locked, so only an item another send locked fires.
 pub(super) fn drain_bind_confirm_answers(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     objects: Objects,
@@ -1356,7 +1356,7 @@ pub(super) fn drain_bind_confirm_answers(
     commands: Res<NetCommands>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let store = self_q.iter().next();
@@ -1372,11 +1372,8 @@ pub(super) fn drain_bind_confirm_answers(
         if !answer.accept {
             debug!("ui_items: pending equip {} cancelled", answer.index);
             for guid in cancel_occupants(store, &objects, &rec) {
-                if pending.write().unlock(guid) {
-                    if let Some(args) = super::watch::lock_args(&objects, guid) {
-                        super::watch::fire_lock_edge_now(&mut script, false, args);
-                    }
-                }
+                let args = super::watch::lock_args(&objects, guid);
+                super::watch::set_lock_with_edge(&mut script, &mut pending, guid, false, args);
             }
             continue;
         }
@@ -1442,15 +1439,12 @@ pub(super) fn drain_bind_confirm_answers(
 /// `ConfirmBindOnUse()`: re-issues the pending use through the cast ladder with `suppress` set.
 /// The pending state is one cell, taken on the first accept, so a doubled accept does nothing.
 pub(super) fn drain_bind_on_use_confirms(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     if script.take_bind_on_use_confirms() == 0 {
@@ -1471,8 +1465,8 @@ pub(super) fn drain_bind_on_use_confirms(
         &mut gate,
         true,
     );
-    // The use's cast-bar edges, fired as it returns (`0x80b556`).
-    ladder.press.fire(&mut script, &mut live);
+    // The use's cast-bar edges, in turn as it returns (`0x80b556`).
+    ladder.press.defer_in_turn(&mut script);
 }
 
 #[cfg(test)]

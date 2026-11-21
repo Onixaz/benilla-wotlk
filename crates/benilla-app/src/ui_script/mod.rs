@@ -28,10 +28,10 @@ pub(crate) mod live;
 pub(crate) mod raises;
 pub(crate) mod safe_world;
 pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending, OwnsPlace,
-    OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
+    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsScriptCalls, OwnsSelection,
+    OwnsSpirit,
 };
-pub(crate) use raises::InTurn;
+pub(crate) use raises::{InTurn, VmTurn};
 #[cfg(test)]
 pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.

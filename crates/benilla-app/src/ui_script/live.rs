@@ -533,12 +533,6 @@ impl<A: Owns, B: Owns> Owns for (A, B) {
     const LENT: u16 = A::LENT | B::LENT;
 }
 
-/// The system writes [`crate::area::PlayerPlace`].
-pub(crate) struct OwnsPlace;
-impl Owns for OwnsPlace {
-    const PLACE: bool = true;
-}
-
 /// The system writes [`crate::target::Selection`].
 pub(crate) struct OwnsSelection;
 impl Owns for OwnsSelection {
@@ -555,18 +549,6 @@ impl Owns for OwnsActions {
 pub(crate) struct OwnsPending;
 impl Owns for OwnsPending {
     const PENDING: bool = true;
-}
-
-/// The system writes [`crate::ui_tradeskill::TradeSkillOpen`].
-pub(crate) struct OwnsTradeSkill;
-impl Owns for OwnsTradeSkill {
-    const TRADE: bool = true;
-}
-
-/// The system writes [`crate::ui_macro::MacroBoundSpells`].
-pub(crate) struct OwnsMacros;
-impl Owns for OwnsMacros {
-    const MACROS: bool = true;
 }
 
 /// The system writes [`crate::spell::Cooldowns`].
@@ -587,12 +569,6 @@ impl Owns for OwnsSignals {
 pub(crate) struct OwnsSpirit;
 impl Owns for OwnsSpirit {
     const LENT: u16 = lent::SPIRIT;
-}
-
-/// The system lends the quest timers' [`QuestExpiries`] from its own borrow.
-pub(crate) struct OwnsExpiries;
-impl Owns for OwnsExpiries {
-    const LENT: u16 = lent::EXPIRIES;
 }
 
 /// A script-call applier owns what its calls write: the cooldowns, the selection and the item locks.
@@ -2681,14 +2657,6 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     pub(crate) fn registrar(&self) -> Option<u64> {
         self.loan
             .with_view(|v| v.petition.as_ref().and_then(|p| p.registrar()))
-    }
-
-    /// `f` over the guild bank this parameter borrows, between calls into Lua; a verb reached from inside `f` panics.
-    pub(crate) fn with_guild_bank<R>(
-        &self,
-        f: impl FnOnce(Option<&crate::ui_guild_bank::GuildBankState>) -> R,
-    ) -> R {
-        self.loan.with_view(|v| f(v.lent.guild_bank.get()))
     }
 
     /// `f` over the guild bank this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
