@@ -1344,16 +1344,8 @@ impl FilteredAccessSet {
         if self.combined_access.is_compatible(other.combined_access()) {
             return true;
         }
-        // benilla: an entry that touches no component answers every pair by its resources alone,
-        // so those entries are checked once, as one union, against the other side's whole access.
-        let (plain, other_plain) = (self.plain_access(), other.plain_access());
-        if !plain.is_resources_compatible(other.combined_access())
-            || !self.combined_access.is_resources_compatible(&other_plain)
-        {
-            return false;
-        }
-        for filtered in self.component_accesses() {
-            for other_filtered in other.component_accesses() {
+        for filtered in &self.filtered_accesses {
+            for other_filtered in &other.filtered_accesses {
                 if !filtered.is_compatible(other_filtered) {
                     return false;
                 }
@@ -1367,39 +1359,13 @@ impl FilteredAccessSet {
         // if the unfiltered access is incompatible, must check each pair
         let mut conflicts = AccessConflicts::empty();
         if !self.combined_access.is_compatible(other.combined_access()) {
-            // benilla: the pairs with an entry that touches no component conflict on exactly their
-            // resource conflicts, which distribute over a union: one check per side covers them.
-            conflicts.add(&self.plain_access().get_conflicts(other.combined_access()));
-            conflicts.add(&self.combined_access.get_conflicts(&other.plain_access()));
-            for filtered in self.component_accesses() {
-                for other_filtered in other.component_accesses() {
+            for filtered in &self.filtered_accesses {
+                for other_filtered in &other.filtered_accesses {
                     conflicts.add(&filtered.get_conflicts(other_filtered));
                 }
             }
         }
         conflicts
-    }
-
-    /// benilla: the union of the entries that touch no component (`Res`, `ResMut` and the like).
-    /// [`FilteredAccess::is_compatible`] checks resources before filters, so such an entry's answer
-    /// against any other is the two accesses' resource answer, whatever either side's filters.
-    fn plain_access(&self) -> Access {
-        let mut plain = Access::new();
-        for filtered in &self.filtered_accesses {
-            if Self::is_plain(filtered) {
-                plain.extend(&filtered.access);
-            }
-        }
-        plain
-    }
-
-    /// benilla: the entries that touch a component, which still need the pairwise check.
-    fn component_accesses(&self) -> impl Iterator<Item = &FilteredAccess> {
-        self.filtered_accesses.iter().filter(|f| !Self::is_plain(f))
-    }
-
-    fn is_plain(filtered: &FilteredAccess) -> bool {
-        !filtered.access.has_any_component_read() && !filtered.access.has_any_component_write()
     }
 
     /// Returns a vector of elements that this set and `other` cannot access at the same time.
@@ -1922,101 +1888,5 @@ mod tests {
         let (s, i) = invertible_difference(true, true);
         // [2, 3, ...] - [1, 3, ...] = [2]
         assert_eq!((s, i), (bit_set(4, [2]), false));
-    }
-
-    /// benilla: the plain-entry shortcut in `FilteredAccessSet::is_compatible` and
-    /// `get_conflicts` answers exactly what upstream's pairwise loop answers, over random sets of
-    /// plain resource entries, filtered component entries, `Or` filters and the "all" accesses.
-    #[test]
-    fn the_plain_entry_shortcut_matches_the_pairwise_loop() {
-        fn upstream_compatible(a: &FilteredAccessSet, b: &FilteredAccessSet) -> bool {
-            a.combined_access().is_compatible(b.combined_access())
-                || a.filtered_accesses().iter().all(|x| {
-                    b.filtered_accesses().iter().all(|y| x.is_compatible(y))
-                })
-        }
-        fn upstream_conflicts(a: &FilteredAccessSet, b: &FilteredAccessSet) -> AccessConflicts {
-            let mut conflicts = AccessConflicts::empty();
-            if !a.combined_access().is_compatible(b.combined_access()) {
-                for x in a.filtered_accesses() {
-                    for y in b.filtered_accesses() {
-                        conflicts.add(&x.get_conflicts(y));
-                    }
-                }
-            }
-            conflicts
-        }
-        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
-        let mut next = move |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % n) as usize
-        };
-        let mut set = |next: &mut dyn FnMut(u64) -> usize| {
-            let mut out = FilteredAccessSet::default();
-            for _ in 0..next(7) {
-                let mut f = FilteredAccess::default();
-                match next(10) {
-                    0..=3 => {
-                        let id = ComponentId::new(12 + next(6));
-                        if next(2) == 0 {
-                            f.add_resource_read(id);
-                        } else {
-                            f.add_resource_write(id);
-                        }
-                    }
-                    4 => {
-                        if next(2) == 0 {
-                            f.access.read_all_resources();
-                        } else {
-                            f.access.write_all_resources();
-                        }
-                    }
-                    5 => {
-                        if next(2) == 0 {
-                            f.read_all_components();
-                        } else {
-                            f.write_all_components();
-                        }
-                        if next(2) == 0 {
-                            f.and_without(ComponentId::new(next(4)));
-                        }
-                    }
-                    _ => {
-                        for _ in 0..1 + next(3) {
-                            let id = ComponentId::new(next(8));
-                            if next(2) == 0 {
-                                f.add_component_read(id);
-                            } else {
-                                f.add_component_write(id);
-                            }
-                        }
-                        if next(3) == 0 {
-                            f.add_resource_read(ComponentId::new(12 + next(6)));
-                        }
-                        match next(4) {
-                            0 => f.and_with(ComponentId::new(8 + next(4))),
-                            1 => f.and_without(ComponentId::new(8 + next(4))),
-                            2 => {
-                                let mut alt = FilteredAccess::default();
-                                alt.and_with(ComponentId::new(8 + next(4)));
-                                f.and_without(ComponentId::new(8 + next(4)));
-                                f.append_or(&alt);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                out.add(f);
-            }
-            out
-        };
-        for _ in 0..20_000 {
-            let a = set(&mut next);
-            let b = set(&mut next);
-            assert_eq!(a.is_compatible(&b), upstream_compatible(&a, &b), "{a:?}\n{b:?}");
-            assert_eq!(a.get_conflicts(&b), upstream_conflicts(&a, &b), "{a:?}\n{b:?}");
-        }
     }
 }
