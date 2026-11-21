@@ -1014,7 +1014,11 @@ impl Plugin for DeathPlugin {
             .add_systems(
                 Update,
                 (
-                    crate::ui_script::raises::then_fire(drain_death).in_set(UiDrain),
+                    // In the press pass after the clicks: the soulstone's cast and GCD reach the
+                    // frame's tick (`0x480410` before `0x495320`).
+                    crate::ui_script::raises::then_fire(drain_death)
+                        .in_set(crate::ui_script::UiPress)
+                        .after(crate::script_calls::apply_script_calls),
                     drive_death_look,
                     // After the transport chain, so a corpse rides this frame's deck pose.
                     resolve_corpse_position

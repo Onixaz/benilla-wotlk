@@ -1123,6 +1123,38 @@ fn the_rune_regen_runs_before_the_tick() {
     assert!(g.before("::tick_runes", Step::Tick.suffix()));
 }
 
+/// The presses that cast outside the script calls run in the press pass after the clicks that
+/// made them and before the frame's feed and tick, as 12340's input pass (`0x480410`, at
+/// `0x47f12d`) precedes the paint (`0x47f163` -> `0x495320`), and their raise step fires the GCD
+/// arm's signals (`0x805d70` -> `0x805ec3`) there: a Create click, a bag click under the item
+/// cursor and the soulstone's item leg each show their sweep in the frame of the press.
+#[test]
+fn the_presses_outside_the_script_calls_cast_before_the_feed_and_tick() {
+    let g = graph_or_skip!();
+    for press in [
+        "::ui_tradeskill::drain_trade_skill",
+        "::targeting::item::commit_item_cast_on_pick",
+        "::death::drain_death",
+    ] {
+        assert!(
+            g.before(Step::UiInput.suffix(), press),
+            "{press} follows the clicks"
+        );
+        assert!(
+            g.before(Step::ScriptCalls.suffix(), press),
+            "{press} follows the script calls"
+        );
+        assert!(
+            g.before(press, Step::UnitFeed.suffix()),
+            "{press} precedes the feed"
+        );
+        assert!(
+            g.before(press, Step::Tick.suffix()),
+            "{press} precedes the tick"
+        );
+    }
+}
+
 /// A cast pressed in a frame shows its GCD in that frame: `ACTIONBAR_UPDATE_COOLDOWN` and
 /// `SPELL_UPDATE_COOLDOWN` fire before the frame's `OnUpdate`, which reads the sweep from
 /// `GetActionCooldown`.
