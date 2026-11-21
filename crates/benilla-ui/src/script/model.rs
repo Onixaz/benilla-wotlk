@@ -1252,12 +1252,14 @@ impl Model {
             .or_else(|| self.unit_by_guid(guid))
     }
 
-    /// Whichever snapshot holds `guid`, the per-guid feed's first.
+    /// Whichever snapshot holds `guid`: the per-guid feed's, else the token push first in token order.
     fn unit_by_guid(&self, guid: u64) -> Option<&UnitState> {
         self.units_by_guid.get(&guid).or_else(|| {
             self.units_by_lower
-                .values()
-                .find(|u| u.exists && u.guid == guid)
+                .iter()
+                .filter(|(_, u)| u.exists && u.guid == guid)
+                .min_by(|a, b| a.0.cmp(b.0))
+                .map(|(_, u)| u)
         })
     }
 
@@ -1290,12 +1292,7 @@ impl Model {
         self.units_by_lower
             .get("focus")
             .filter(|u| u.guid == guid)
-            .or_else(|| self.units_by_guid.get(&guid))
-            .or_else(|| {
-                self.units_by_lower
-                    .values()
-                    .find(|u| u.exists && u.guid == guid)
-            })
+            .or_else(|| self.unit_by_guid(guid))
     }
 
     /// The seated player's vehicle by guid, as the getters look its object up (`0x468460`):
@@ -2403,5 +2400,32 @@ impl std::ops::DerefMut for ModelCell {
     fn deref_mut(&mut self) -> &mut Model {
         self.epoch = self.epoch.wrapping_add(1);
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A guid several token pushes hold, with no per-guid entry, reads the same push every time:
+    /// the first in token order, whatever the map's order.
+    #[test]
+    fn a_guid_held_by_several_pushes_reads_the_first_token() {
+        const GUID: u64 = 0x21;
+        for _ in 0..32 {
+            let mut m = Model::new();
+            for token in ["target", "raid2", "party1", "mouseover"] {
+                let unit = UnitState {
+                    exists: true,
+                    guid: GUID,
+                    name: Some(token.into()),
+                    ..Default::default()
+                };
+                m.units_by_lower.insert(token.into(), unit);
+            }
+            m.focus = GUID;
+            let name = m.unit("focus").and_then(|u| u.name.clone());
+            assert_eq!(name.as_deref(), Some("mouseover"));
+        }
     }
 }
