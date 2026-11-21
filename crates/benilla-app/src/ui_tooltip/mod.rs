@@ -106,6 +106,8 @@ fn skill_lock_line(
     }
 }
 
+use benilla_ui::script::world_loan::in_turn_or_now;
+
 fn drive_mouseover_tooltip(
     mut script: crate::ui_script::InTurn,
     hovered: Res<Hovered>,
@@ -180,7 +182,10 @@ fn drive_mouseover_tooltip(
         script.set_unit("mouseover", Some(state));
         *published = true;
         if *last != LastHover::Unit(guid) || last_lines.as_ref() != Some(&key) {
-            script.world_tooltip_unit("mouseover");
+            // The builder runs Lua: at the raise step after the feed, with the `World` lent.
+            in_turn_or_now(&mut script, |s| {
+                s.world_tooltip_unit("mouseover");
+            });
             *last = LastHover::Unit(guid);
             *last_lines = Some(key);
         }
@@ -207,7 +212,7 @@ fn drive_mouseover_tooltip(
         // A bone pile with nothing to take publishes no mouseover: no plate, no brighten.
         if !crate::target::corpse_mouseover_eligible(store) {
             if !matches!(*last, LastHover::None) {
-                script.world_tooltip_fade();
+                in_turn_or_now(&mut script, |s| s.world_tooltip_fade());
                 *last = LastHover::None;
             }
             return;
@@ -230,7 +235,9 @@ fn drive_mouseover_tooltip(
         ) else {
             return;
         };
-        script.world_tooltip_gameobject(&plate, &[], false);
+        in_turn_or_now(&mut script, move |s| {
+            s.world_tooltip_gameobject(&plate, &[], false);
+        });
         *last = LastHover::Corpse(guid);
         return;
     }
@@ -346,13 +353,16 @@ fn drive_mouseover_tooltip(
                 _ => {}
             }
         }
-        script.world_tooltip_gameobject(&template.name, &lines, cursor_seated);
+        let name = template.name.clone();
+        in_turn_or_now(&mut script, move |s| {
+            s.world_tooltip_gameobject(&name, &lines, cursor_seated);
+        });
         *last = LastHover::Go(guid);
         return;
     }
     if !matches!(*last, LastHover::None) {
         // Hover lost: arm the fade.
-        script.world_tooltip_fade();
+        in_turn_or_now(&mut script, |s| s.world_tooltip_fade());
         *last = LastHover::None;
     }
 }
