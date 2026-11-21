@@ -129,13 +129,36 @@ pub(crate) fn run_lock_step<I: Send + 'static, M>(
     }
 }
 
-/// [`lock_now`] for a step that holds the `World` while it raises in turn (an applier inside its
-/// call): the write and its edge run together at the step's raise, the `World` lent again there.
-pub(crate) fn lock_in_turn(script: &mut benilla_ui::script::UiScript, lock: LockStep) {
+/// Run `step` on the lent `World` in the caller's turn: for a step that holds the `World` while it
+/// raises in turn (an applier inside its call), behind the raises made so far; at once otherwise.
+pub(crate) fn world_in_turn(
+    script: &mut benilla_ui::script::UiScript,
+    step: impl FnOnce(&mut World) + Send + Sync + 'static,
+) {
     benilla_ui::script::world_loan::in_turn_or_now(script, move |_| {
-        crate::ui_script::safe_world::with_world(|w| lock_now(w, lock))
-            .expect("a lock in turn runs where the `World` is lent");
+        crate::ui_script::safe_world::with_world(step)
+            .expect("a step in turn runs where the `World` is lent");
     });
+}
+
+/// The lock and its edge, then the send it guards, both in the caller's turn (`0x6e0136` before
+/// `0x6e016e`).
+pub(crate) fn lock_then_send_in_turn(
+    script: &mut benilla_ui::script::UiScript,
+    lock: LockStep,
+    send: crate::net::ClientCommand,
+) {
+    world_in_turn(script, move |w| {
+        lock_now(w, lock);
+        send_now(w, send);
+    });
+}
+
+/// Put `send` on the wire.
+pub(crate) fn send_now(world: &World, send: crate::net::ClientCommand) {
+    if let Some(commands) = world.get_resource::<crate::net::NetCommands>() {
+        let _ = commands.0.send(send);
+    }
 }
 
 /// The item unlock (`0x513770` -> `0x707020`): a locked item unlocks and signals at its place; an unlocked or absent one does nothing.
