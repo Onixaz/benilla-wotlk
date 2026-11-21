@@ -520,12 +520,19 @@ pub(super) fn drive_blip_tooltip(
     match (&show, &*last) {
         // Same blip: the cursor mode's layer update keeps the plate on the pointer.
         (Some((t, _)), Some(lt)) if t == lt => {}
+        // The tooltip runs its handlers: at the raise step after the feed, with the `World` lent,
+        // behind a world hover's plate queued this frame.
         (Some((t, grey)), _) => {
-            script.minimap_tooltip(t, *grey);
+            let (text, grey) = (t.clone(), *grey);
+            benilla_ui::script::world_loan::in_turn_or_now(&mut script, move |s| {
+                s.minimap_tooltip(&text, grey);
+            });
             *last = Some(t.clone());
         }
         (None, Some(_)) => {
-            script.minimap_tooltip_hide();
+            benilla_ui::script::world_loan::in_turn_or_now(&mut script, |s| {
+                s.minimap_tooltip_hide();
+            });
             *last = None;
         }
         (None, None) => {}
@@ -559,6 +566,48 @@ fn object_tooltip_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The blip driver is a feed that holds the VM in turn: the tooltip's show and its hover-loss
+    /// hide run their handlers at the raise step after it, never inside the step.
+    #[test]
+    fn the_blip_tooltip_runs_its_handlers_at_the_raise() {
+        use benilla_ui::script::UiScript;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut w = World::new();
+        w.init_resource::<NameCache>();
+        w.init_resource::<crate::ui_script::live::UiEvents>();
+        w.insert_resource(NetCommands(tx));
+        w.insert_resource(MinimapBlipHover::Landmark("Stormwind".into()));
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                r#"
+                Seen = {}
+                UIParent = CreateFrame("Frame", "UIParent"); UIParent:SetAllPoints()
+                CreateFrame("Frame", "Minimap", UIParent)
+                local tt = CreateFrame("GameTooltip", "GameTooltip", UIParent); tt:Hide()
+                tt:SetScript("OnShow", function() Seen[#Seen + 1] = "show" end)
+                tt:SetScript("OnHide", function() Seen[#Seen + 1] = "hide" end)
+            "#,
+            )
+            .unwrap();
+        w.insert_non_send_resource(script);
+        let seen = |w: &World| {
+            w.non_send_resource::<UiScript>()
+                .eval::<String>("return table.concat(Seen, ',')")
+                .unwrap()
+        };
+        // One system across both runs: its memory of the last blip arms the hide.
+        let drive = w.register_system(drive_blip_tooltip);
+        w.run_system(drive).unwrap();
+        assert_eq!(seen(&w), "", "nothing runs inside the feed");
+        crate::ui_script::raises::fire_raises(&mut w);
+        assert_eq!(seen(&w), "show");
+        *w.resource_mut::<MinimapBlipHover>() = MinimapBlipHover::None;
+        w.run_system(drive).unwrap();
+        crate::ui_script::raises::fire_raises(&mut w);
+        assert_eq!(seen(&w), "show,hide");
+    }
 
     /// The raid list is the roster outside our own subgroup; the party slots carry the rest.
     #[test]

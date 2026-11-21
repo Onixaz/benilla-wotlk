@@ -315,7 +315,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let model = crate::script::model_mut_of(lua);
-            if model.unit_guids.player == 0 {
+            if model.player_guid() == 0 {
                 return Ok(());
             }
             if let Some(held) = find_item(&model, &query, 0) {
@@ -339,7 +339,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "EquipItemByName",
         lua.create_function(|lua, (item, slot): (Value, Value)| {
             let model = crate::script::model_mut_of(lua);
-            if model.unit_guids.player == 0 {
+            if model.player_guid() == 0 {
                 return Ok(());
             }
             let dst = match slot {
@@ -504,7 +504,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if model.unit_guids.player == 0
+            if model.player_guid() == 0
                 || !(-1..=11).contains(&bag)
                 || (bag == BANK as i32 && !super::bank::bank_open())
             {

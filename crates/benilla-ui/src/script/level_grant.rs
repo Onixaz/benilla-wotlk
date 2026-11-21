@@ -77,7 +77,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let guid = super::unit_menu::guid_of(&model, &unit).unwrap_or(0);
             let code = super::unit_menu::summon_friend_refusal(&model, &unit, now);
-            let target = model.unit_guids.target;
+            let target = model.target_guid();
             let spell = model.refer_a_friend.summon_spell;
             model.unit_requests.push(match code {
                 0 => UnitRequest::SummonFriend {
@@ -97,7 +97,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let unit = string_arg(lua, unit, "Usage: ReportPlayerIsPVPAFK(\"unit\")")?;
             let mut model = crate::script::model_mut_of(lua);
             let guid = super::unit_menu::guid_of(&model, &unit).unwrap_or(0);
-            let me = model.unit_guids.player;
+            let me = model.player_guid();
             if me != 0 && guid != me && super::unit_menu::in_my_group(&model, guid) {
                 model.unit_requests.push(UnitRequest::ReportPvpAfk(guid));
             }

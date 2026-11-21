@@ -222,7 +222,7 @@ fn skill_ups(model: &Model, skill_id: u32) -> u32 {
 
 /// `AddSkillUp` (`0x5cdbf0`): one more point on the line, if the rank and the points allow it.
 fn add_skill_up(model: &mut Model, index: usize) -> bool {
-    let Some(e) = entry_at(model, index).filter(|_| model.unit_guids.player != 0) else {
+    let Some(e) = entry_at(model, index).filter(|_| model.player_guid() != 0) else {
         return false;
     };
     let (id, ups) = (e.skill_id, skill_ups(model, e.skill_id));
@@ -240,7 +240,7 @@ fn add_skill_up(model: &mut Model, index: usize) -> bool {
 
 /// `RemoveSkillUp` (`0x5cdd20`): one point back off the line.
 fn remove_skill_up(model: &mut Model, index: usize) -> bool {
-    let Some(e) = entry_at(model, index).filter(|_| model.unit_guids.player != 0) else {
+    let Some(e) = entry_at(model, index).filter(|_| model.player_guid() != 0) else {
         return false;
     };
     let (id, ups) = (e.skill_id, skill_ups(model, e.skill_id));
@@ -468,7 +468,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(if model.unit_guids.player == 0 {
+            Ok(if model.player_guid() == 0 {
                 0
             } else {
                 i64::from(model.skills.points) - i64::from(model.skill_up_points)

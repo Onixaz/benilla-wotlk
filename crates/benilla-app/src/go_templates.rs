@@ -64,12 +64,15 @@ pub(crate) struct MeetingStoneTemplate {
     pub(crate) area: u32,
 }
 
-/// A MO_TRANSPORT template's path tuple (`gameobject_template.data0..2`).
+/// A MO_TRANSPORT template's path tuple (`gameobject_template.data0..2`) and its rocking row
+/// (`data5`, property 99, `0x711b50`).
 #[derive(Clone, Copy)]
 pub(crate) struct MoTransport {
     pub(crate) taxi_path_id: u32,
     pub(crate) move_speed: f32,
     pub(crate) accel_rate: f32,
+    /// `TransportPhysics.dbc`'s `ID`; 0 is none.
+    pub(crate) physics_id: u32,
 }
 
 /// A TEXT template's readable head (AzerothCore `GameObjectTemplate::text`; 12340 property `0x11`
@@ -175,6 +178,7 @@ impl GameObjectTemplates {
             taxi_path_id: data[0].max(0) as u32,
             move_speed: data[1].max(0) as f32,
             accel_rate: data[2].max(0) as f32,
+            physics_id: data[5].max(0) as u32,
         });
         // The page, its language and its material, 12340 props `0xf`, `0x10` and `0x11`: TEXT's
         // `data[0..=2]`, GOOBER's `data[7..=9]` (`0x746190`).

@@ -38,6 +38,16 @@ pub(crate) fn set_fixture_player(
     _script.set_player_req_state(_state);
 }
 
+/// A harness's stand-in resolver tables (`UiScript::set_unit_guids`) for a VM with no game behind
+/// it, which the player build compiles out with the fixtures.
+pub(crate) fn set_fixture_units(
+    _script: &mut benilla_ui::script::UiScript,
+    _guids: benilla_ui::script::UnitGuids,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_unit_guids(&_guids);
+}
+
 /// A fixture's stand-in action slot (`UiScript::set_action`), compiled out of the player build with
 /// the fixtures. These four are live in every test build too, where the dev-dependencies turn the
 /// fixtures on: the addon harness's tests seat a session through them.

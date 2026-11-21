@@ -891,6 +891,8 @@ pub(super) fn seed_ui_fixture(
                     // The faction-name line, white, between level and PvP.
                     faction_name: Some("Stormwind".into()),
                     pvp: true,
+                    // The hovered unit the demo feed's stand-in tables name.
+                    guid: crate::ui_script::DEMO_MOUSEOVER_GUID,
                     ..Default::default()
                 }),
             );
@@ -905,8 +907,7 @@ pub(super) fn seed_ui_fixture(
                 return;
             };
             // A ranked player under the cursor, pushed as the mouseover feed does, then the call
-            // `drive_mouseover_tooltip` makes: the title is the reference name decorator's rank leg
-            // over the name, "Sergeant Bob".
+            // `drive_mouseover_tooltip` makes: titled "Bob", the chosen title's leg being empty.
             script.set_unit(
                 "mouseover",
                 Some(benilla_ui::script::UnitState {
@@ -919,6 +920,8 @@ pub(super) fn seed_ui_fixture(
                     pvp_rank: 7,
                     pvp_team: 1,
                     sex: 2,
+                    // The hovered unit the demo feed's stand-in tables name.
+                    guid: crate::ui_script::DEMO_MOUSEOVER_GUID,
                     ..Default::default()
                 }),
             );
