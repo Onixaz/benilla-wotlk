@@ -125,6 +125,54 @@ pub(crate) fn read_loot_frame(world: &mut bevy::prelude::World) {
     world.insert_resource(LootFrameShown(shown));
 }
 
+/// The streamed units and objects other than us, as the probes' scan reads them.
+pub(crate) type Seen = Vec<(
+    crate::net::Guid,
+    crate::net::NetEntity,
+    crate::net::ObjectStore,
+    bevy::prelude::Transform,
+)>;
+
+/// [`Seen`] this frame, for an exclusive probe.
+pub(crate) fn seen(world: &mut bevy::prelude::World) -> Seen {
+    use bevy::prelude::*;
+    world
+        .query_filtered::<(
+            &crate::net::Guid,
+            &crate::net::NetEntity,
+            &crate::net::ObjectStore,
+            &Transform,
+        ), Without<crate::net::SelfPlayer>>()
+        .iter(world)
+        .map(|(g, n, s, t)| (*g, *n, s.clone(), *t))
+        .collect()
+}
+
+/// Our store this frame, `None` before we are in the world.
+pub(crate) fn self_store(world: &mut bevy::prelude::World) -> Option<crate::net::ObjectStore> {
+    use bevy::prelude::*;
+    world
+        .query_filtered::<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .cloned()
+}
+
+/// Whether we are in the world (our player is streamed).
+pub(crate) fn in_world(world: &mut bevy::prelude::World) -> bool {
+    use bevy::prelude::*;
+    world
+        .query_filtered::<(), With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .is_some()
+}
+
+/// `f` over the lent `World`, read between a probe's calls into Lua.
+pub(crate) fn read<R>(f: impl FnOnce(&mut bevy::prelude::World) -> R) -> R {
+    crate::ui_script::safe_world::with_world(f).expect("a probe reads inside its loan")
+}
+
 /// Run `f` on the VM (`None` without one) with the `World` lent to every verb it reaches: an
 /// exclusive probe's calls into Lua.
 pub(crate) fn with_vm<R>(

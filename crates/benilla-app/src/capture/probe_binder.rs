@@ -20,10 +20,8 @@ use bevy::prelude::*;
 use benilla_protocol::EntityKind;
 use benilla_ui::script::UiScript;
 
-use super::probes::ProbeClock;
 use crate::area::AreaTableRes;
-use crate::net::SelfPlayer;
-use crate::net::{ChatKind, ClientCommand, Guid, HomeBind, NetCommands, NetEntity, ObjectStore};
+use crate::net::{ChatKind, ClientCommand, HomeBind, NetCommands};
 use crate::player::Player;
 use crate::ui_binder::BinderState;
 use crate::ui_gossip::GossipState;
@@ -192,28 +190,83 @@ fn vm_bind_location(script: &UiScript) -> String {
         .unwrap_or_default()
 }
 
-fn binder_probe(
-    time: ProbeClock,
-    mut probe: ResMut<BinderProbe>,
-    binder: Res<BinderState>,
-    home: Res<HomeBind>,
-    areas: Option<Res<AreaTableRes>>,
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_player: Query<(), With<SelfPlayer>>,
-    player: Res<Player>,
-    units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    net: Res<NetCommands>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if self_player.is_empty() {
+/// What a frame of the binder probe reads off the `World` before its calls into Lua.
+struct BinderCtx {
+    now: f64,
+    /// The gossip globals as the verbs read them.
+    gossip: GossipState,
+    binder_npc: Option<u64>,
+    home_area: Option<u32>,
+    home_changed: bool,
+    home_name: String,
+    units: super::probes::Seen,
+    pos: Vec3,
+    net: NetCommands,
+}
+
+fn binder_probe(world: &mut World, home: &mut bevy::ecs::system::SystemState<Res<HomeBind>>) {
+    if !super::probes::in_world(world) {
         return; // not in-world yet
     }
-    let Some(script) = script else {
-        return; // no UI VM in this build, so nothing to drive
+    let (home_area, home_changed) = {
+        let home = home.get(world);
+        (home.0, home.is_changed())
     };
-    // The gossip globals as the verbs read them, through the view this system lends.
-    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
-    let now = time.elapsed_secs_f64();
+    let cx = BinderCtx {
+        now: f64::from(super::probes::probe_secs(world)),
+        gossip: world
+            .get_resource::<GossipState>()
+            .cloned()
+            .unwrap_or_default(),
+        binder_npc: world.resource::<BinderState>().npc(),
+        home_area,
+        home_changed,
+        home_name: home_area
+            .and_then(|id| world.get_resource::<AreaTableRes>()?.0.name(id))
+            .unwrap_or_default()
+            .to_string(),
+        units: super::probes::seen(world),
+        pos: world.resource::<Player>().pos,
+        net: NetCommands(world.resource::<NetCommands>().0.clone()),
+    };
+    let Some(mut probe) = world.remove_resource::<BinderProbe>() else {
+        return;
+    };
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        // No UI VM in this build, so nothing to drive.
+        if let Some(script) = script {
+            binder_step(&mut probe, script, &cx, &mut exit);
+        }
+    });
+    world.insert_resource(probe);
+    for e in exit {
+        world.write_message(e);
+    }
+}
+
+/// One frame of the probe on the VM, the `World` lent.
+fn binder_step(
+    probe: &mut BinderProbe,
+    script: &mut UiScript,
+    cx: &BinderCtx,
+    exit: &mut Vec<AppExit>,
+) {
+    let &BinderCtx {
+        now,
+        binder_npc,
+        home_area,
+        home_changed,
+        pos,
+        ..
+    } = cx;
+    let BinderCtx {
+        gossip,
+        home_name,
+        units,
+        net,
+        ..
+    } = cx;
     let phase = probe.phase;
 
     match phase {
@@ -257,7 +310,7 @@ fn binder_probe(
             if now - sent_at < SETTLE_SECS {
                 return;
             }
-            let me = player.pos;
+            let me = pos;
             let found = units.iter().find(|(_, net_e, store, tf)| {
                 net_e.kind == EntityKind::Unit
                     && (store.0.object_entry() == Some(INNKEEPER_ENTRY)
@@ -309,7 +362,7 @@ fn binder_probe(
                         .join(" ")
                 );
                 probe.passes += 1;
-                assert_icon_and_select(&mut probe, &gossip, &script, &net, innkeeper, now);
+                assert_icon_and_select(probe, &gossip, &script, &net, innkeeper, now);
             } else if now - sent_at > MENU_TIMEOUT_SECS {
                 error!(
                     "PROBE_BINDER: FAIL (2 menu) — no gossip menu for {innkeeper:#x} within \
@@ -330,7 +383,7 @@ fn binder_probe(
                 probe.phase = Phase::Done;
                 return;
             };
-            let pending = binder.npc() == Some(innkeeper);
+            let pending = binder_npc == Some(innkeeper);
             let fired = events_len(&script) > events_baseline;
             let area = last_event(&script);
             if pending && fired && !area.is_empty() {
@@ -351,7 +404,7 @@ fn binder_probe(
                      {innkeeper:#x}), CONFIRM_BINDER fired={fired}, arg1={area:?}. A packet with \
                      no parse arm at all falls through to \
                      ServerPacket::Other — that is what this reading looks like.",
-                    binder.npc()
+                    binder_npc
                 );
                 probe.fails += 1;
                 probe.phase = Phase::Done;
@@ -361,7 +414,7 @@ fn binder_probe(
             if !sent {
                 // A rebind to the same area re-sends an identical `SMSG_BINDPOINTUPDATE`, so the
                 // write after the answer, not the value, proves a fresh packet.
-                probe.baseline_area = home.0;
+                probe.baseline_area = home_area;
                 if let Err(e) = script.run("ConfirmBinder()") {
                     warn!(
                         "PROBE_BINDER: SKIP (6 bind) — ConfirmBinder() would not run in the live \
@@ -381,17 +434,13 @@ fn binder_probe(
                 };
                 return;
             }
-            let name = home
-                .0
-                .and_then(|id| areas.as_deref()?.0.name(id))
-                .unwrap_or_default()
-                .to_string();
+            let name = home_name.clone();
             let vm = vm_bind_location(&script);
-            if home.is_changed() && !name.is_empty() && vm == name {
+            if home_changed && !name.is_empty() && vm == name {
                 info!(
                     "PROBE_BINDER: PASS (6 bind) — HomeBind repopulated to area {:?} = {name:?} \
                      (was {:?}), and the VM's GetBindLocation() agrees: {vm:?}",
-                    home.0, probe.baseline_area
+                    home_area, probe.baseline_area
                 );
                 probe.passes += 1;
                 probe.bound_name = name;
@@ -401,7 +450,7 @@ fn binder_probe(
                     "PROBE_BINDER: FAIL (6 bind) — the hearthstone did not take within \
                      {BIND_TIMEOUT_SECS}s of ConfirmBinder(): HomeBind={:?} AreaTable name={name:?} \
                      GetBindLocation()={vm:?} (was area {:?} before the clear)",
-                    home.0, probe.baseline_area
+                    home_area, probe.baseline_area
                 );
                 probe.fails += 1;
                 probe.phase = Phase::Done;
@@ -435,7 +484,7 @@ fn binder_probe(
             );
             // `ProbeExitPlugin::fire_probe_exit`'s pattern: `AppExit` plus a hard backstop, so a
             // teardown hang cannot leave a client holding the probe account.
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_BINDER: still alive 5s after AppExit — hard exit");

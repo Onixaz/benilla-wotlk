@@ -97,7 +97,7 @@ pub(crate) struct Patch {
 }
 
 /// One of the three lists.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct AuctionListSlot {
     pub(crate) entries: Vec<AuctionEntry>,
     /// The match count before the page cap.
@@ -129,7 +129,7 @@ pub(crate) struct MultiSell {
 }
 
 /// What the live probe reads to tell an empty answer from none; the client never reads it.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct AuctionWireLog {
     /// List results landed, per list, in [`LIST`]/[`BIDDER`]/[`OWNER`] order.
     pub(crate) list_results: [u32; 3],
@@ -148,7 +148,7 @@ pub(crate) struct AuctionWireLog {
 }
 
 /// The open auctioneer session; cleared on a client-side close, on walking away and on disconnect.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct AuctionOpen {
     pub(crate) auctioneer: Option<u64>,
     /// The `AuctionHouse.dbc` row, which keys the deposit rate.
